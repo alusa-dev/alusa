@@ -1,0 +1,36 @@
+{
+  "name": "@alusa/finance",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./wizard-client": "./dist/wizard-client.js",
+    "./*": "./dist/*.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -w -p tsconfig.build.json",
+    "pretypecheck": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test:unit": "dotenv -e ../../.env.test -- vitest run",
+    "test:watch": "dotenv -e ../../.env.test -- vitest"
+  },
+  "dependencies": {
+    "@alusa/asaas": "workspace:*",
+    "@alusa/asaas-gateway": "workspace:*",
+    "@alusa/database": "workspace:*",
+    "@alusa/domain": "workspace:*",
+    "@alusa/lib": "workspace:*",
+    "@alusa/shared": "workspace:*",
+    "@prisma/client": "^5.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.0.5"
+  }
+}

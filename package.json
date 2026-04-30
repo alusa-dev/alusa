@@ -1,0 +1,78 @@
+{
+  "name": "alusa-monorepo",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "audit:dtos": "node scripts/audit-dto-usage.mjs",
+    "check:nul-bytes": "node scripts/check-nul-bytes.mjs",
+    "lint": "pnpm -r exec eslint .",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "prettier --write .",
+    "build": "pnpm -r run build",
+    "build:web": "pnpm -F @alusa/web build",
+    "build:clean": "pnpm --filter @alusa/web build:clean",
+    "dev": "pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm --filter @alusa/web dev:raw",
+    "dev:web": "pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm -F @alusa/web dev:raw",
+    "dev:clean": "pnpm --filter @alusa/web dev:clean",
+    "dev:prisma": "pnpm dlx prisma studio",
+    "test": "pnpm -r run test",
+    "test:unit:all": "pnpm -r --filter ./apps/web run test:unit",
+    "test:unit": "pnpm --filter @alusa/web run test:unit",
+    "test:unit:watch": "pnpm --filter @alusa/web run test:unit:watch",
+    "test:e2e": "pnpm -r --filter ./apps/web run test:e2e",
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --name init --schema=prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate dev --schema=prisma/schema.prisma --name matriculas",
+    "db:migrate:matriculas": "prisma migrate dev --schema=prisma/schema.prisma --name matriculas",
+    "db:seed": "prisma db seed --schema=prisma/schema.prisma",
+    "db:migrate:test": "pnpm --filter @alusa/web run db:migrate:test",
+    "db:reset:test": "pnpm --filter @alusa/web run db:reset:test",
+    "db:seed:test": "pnpm --filter @alusa/web run db:seed:test",
+    "db:verify:test": "dotenv -e .env.test -- node scripts/verify-test-db.mjs",
+    "mcp": "dotenv -e .env -- tsx mcp/alusadb/src/index.ts",
+    "mcp:alusadb": "dotenv -e .env -- tsx mcp/alusadb/src/index.ts",
+    "mcp:alusadb:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
+    "mcp:build": "tsc -p mcp/alusadb/tsconfig.json",
+    "mcp:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
+    "mcp:asaas": "dotenv -e .env -- tsx mcp/asaas/server.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@modelcontextprotocol/sdk": "^1.19.1",
+    "@types/bcryptjs": "2.4.6",
+    "@types/node": "^22.10.1",
+    "@types/pg": "^8.16.0",
+    "bcryptjs": "^2.4.3",
+    "dotenv-cli": "^11.0.0",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "pg": "^8.17.1",
+    "prisma": "5.18.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.28.0",
+    "zod": "^3.23.8"
+  },
+  "pnpm": {
+    "overrides": {}
+  },
+  "dependencies": {
+    "@luquinhasbrito/asaas-api-sdk-typescript": "^1.0.1",
+    "@prisma/client": "5.18.0",
+    "dotenv": "^17.2.3",
+    "node-fetch": "^3.3.2"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
+}

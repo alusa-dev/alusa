@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "StatusCobranca" ADD VALUE IF NOT EXISTS 'PROCESSANDO';

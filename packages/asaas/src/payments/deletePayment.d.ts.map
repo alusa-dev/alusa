@@ -1,0 +1,1 @@
+{"version":3,"file":"deletePayment.d.ts","sourceRoot":"","sources":["deletePayment.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAEnD,MAAM,WAAW,mBAAmB;IAClC,MAAM,EAAE,MAAM,CAAC;IACf,SAAS,EAAE,MAAM,CAAC;CACnB;AAED,wBAAsB,aAAa,CAAC,MAAM,EAAE,mBAAmB,GAAG,OAAO,CAAC,YAAY,CAAC,CAGtF"}

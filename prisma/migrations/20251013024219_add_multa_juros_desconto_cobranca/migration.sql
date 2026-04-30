@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Cobranca" ADD COLUMN     "desconto" DECIMAL(12,2) DEFAULT 0,
+ADD COLUMN     "juros" DECIMAL(12,2) DEFAULT 0,
+ADD COLUMN     "multa" DECIMAL(12,2) DEFAULT 0,
+ADD COLUMN     "valorFinal" DECIMAL(12,2);

@@ -1,0 +1,1128 @@
+/* por quê: define fundação Tailwind + tokens CSS custom para fallback */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* NOTA: Os estilos do editor (.editor-wrapper, .page-a4, .ProseMirror) 
+   estão definidos mais abaixo na seção "Editor A4 Page Styles" */
+
+/* Tabelas no editor */
+.editor-table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 1em 0;
+}
+
+.editor-table td,
+.editor-table th {
+	border: 1px solid #e2e8f0;
+	padding: 8px 12px;
+	min-width: 100px;
+}
+
+.editor-table th {
+	background-color: #f8fafc;
+	font-weight: 600;
+	text-align: left;
+}
+
+/* Menções (chips de variáveis) */
+.mention-chip {
+	user-select: none;
+	cursor: default;
+}
+
+/* Highlight no editor */
+.editor-highlight {
+	padding: 2px 0;
+	border-radius: 2px;
+}
+
+/* Forçar sombra permanente no container de autenticação */
+[data-static-shadow="true"] {
+	box-shadow: rgba(0, 0, 0, 0.16) 0px 10px 36px 0px, rgba(0, 0, 0, 0.06) 0px 0px 0px 1px !important;
+	transition: none !important;
+}
+
+/* Garantir que estados interativos não alterem a sombra */
+[data-static-shadow="true"]:hover,
+[data-static-shadow="true"]:active,
+[data-static-shadow="true"]:focus,
+[data-static-shadow="true"]:focus-within {
+	box-shadow: rgba(0, 0, 0, 0.16) 0px 10px 36px 0px, rgba(0, 0, 0, 0.06) 0px 0px 0px 1px !important;
+	transition: none !important;
+}
+
+/* Linha horizontal */
+.editor-hr {
+	border: none;
+	border-top: 1px solid #e2e8f0;
+	margin: 1em 0;
+}
+
+/* --- Outline overrides (global) ---
+	 Removemos qualquer contorno visual que possa surgir de `.outline-none`
+	 do Tailwind (que por padrão aplica `outline: 2px solid transparent` e
+	 `outline-offset: 2px`) e também de estados :hover/:focus/:focus-visible. */
+@layer utilities {
+
+	/* Desativa totalmente outlines para a classe utilitária */
+	.outline-none,
+	.outline-none:hover,
+	.outline-none:focus,
+	.outline-none:focus-visible,
+	.outline-none:active {
+		outline: 0 !important;
+		outline-offset: 0 !important;
+	}
+
+	/* Corrige variantes com prefixos do Tailwind */
+	.focus\:outline-none:focus,
+	.focus\:outline-none:focus-visible,
+	.focus-visible\:outline-none:focus-visible {
+		outline: 0 !important;
+		outline-offset: 0 !important;
+	}
+
+	/* Hard kill para elementos interativos comuns em todos os estados */
+	:is(input, select, textarea, button, a, [role='button'], [data-radix-collection-item]) {
+		outline: 0 !important;
+		outline-offset: 0 !important;
+	}
+
+	:is(input, select, textarea, button, a, [role='button'], [data-radix-collection-item]):is(:hover, :focus, :focus-visible, :active) {
+		outline: 0 !important;
+		outline-offset: 0 !important;
+	}
+}
+
+/* Estabilização do layout SPA - evita flash durante carregamento */
+.spa-layout-stable {
+	min-height: 100vh;
+	background-color: white;
+	overflow-x: hidden;
+}
+
+:root {
+	--brand-bg: #3e1f63;
+	/* updated per request */
+	--brand-primary: #19143A;
+	--brand-accent: #5c2f91;
+	--brand-muted: #686868;
+	--brand-muted2: #828282;
+	--brand-stroke: #DDDDDD;
+
+	/* Largura padrão do sidebar (usada para deslocar o conteúdo) */
+	--sidebar-w: 262px;
+
+	/* Theming tokens */
+	--app-bg: #F7F5F8;
+	/* default light background (fora do card) */
+	--sidebar-bg: #F7F5F8;
+	/* light sidebar */
+	--sidebar-text: #2b2634;
+	--sidebar-hover: #EEE6F4;
+	--sidebar-active-bg: #2b2634;
+	--sidebar-active-text: #FFFFFF;
+	/* Fundo leve para estado ativo/selecionado (pílula) no sidebar - LIGHT */
+	--sidebar-active-bg-light: #EEE6F4;
+
+	/* Scrollbar tokens (usam brand-accent como base) */
+	--scrollbar-thumb: var(--brand-accent);
+	/* hover ligeiramente mais escuro; mantém coerência com "brand-600" */
+	--scrollbar-thumb-hover: color-mix(in oklab, var(--brand-accent) 78%, #000);
+
+	/* Toast palette (coerente / suave) */
+	--toast-success-bg: #E9F9F1;
+	--toast-success-icon-bg: #D6F3E5;
+	--toast-success-fg: #146B3A;
+	--toast-success-icon-fg: #1B7F47;
+
+	--toast-error-bg: #FCECEF;
+	--toast-error-icon-bg: #F8D9DF;
+	--toast-error-fg: #7F1D2D;
+	--toast-error-icon-fg: #9A2539;
+
+	--toast-warning-bg: #FFF7E8;
+	--toast-warning-icon-bg: #FDEBCF;
+	--toast-warning-fg: #7A4E00;
+	--toast-warning-icon-fg: #945E00;
+
+	--toast-info-bg: #F0F3FF;
+	--toast-info-icon-bg: #E1E8FE;
+	--toast-info-fg: #223868;
+	--toast-info-icon-fg: #2F4A84;
+
+	/* Theme transition tokens */
+	--theme-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--theme-duration: 400ms;
+	/* inclui background (shorthand) + cores comuns para um fade coerente */
+	--theme-transition-all: background var(--theme-duration) var(--theme-ease),
+		background-color var(--theme-duration) var(--theme-ease),
+		color var(--theme-duration) var(--theme-ease),
+		border-color var(--theme-duration) var(--theme-ease),
+		outline-color var(--theme-duration) var(--theme-ease),
+		text-decoration-color var(--theme-duration) var(--theme-ease),
+		caret-color var(--theme-duration) var(--theme-ease),
+		fill var(--theme-duration) var(--theme-ease),
+		stroke var(--theme-duration) var(--theme-ease),
+		box-shadow var(--theme-duration) var(--theme-ease);
+}
+
+html,
+body {
+	font-family: var(--font-inter, 'Inter'), system-ui, sans-serif;
+	font-weight: 400;
+	background: var(--brand-bg);
+	color: #0F0F1A;
+	transition: var(--theme-transition-all);
+}
+
+@keyframes toast-panel-in {
+	from {
+		opacity: 0;
+		transform: translate3d(0, -14px, 0) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+}
+
+@keyframes toast-panel-out {
+	from {
+		opacity: 1;
+		transform: translate3d(0, 0, 0) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translate3d(0, -14px, 0) scale(0.985);
+	}
+}
+
+.animate-toast-panel {
+	animation: toast-panel-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	transform-origin: top right;
+}
+
+.auth-toaster {
+	top: calc(env(safe-area-inset-top, 0px) + 25px) !important;
+	left: 50% !important;
+	right: auto !important;
+	transform: translateX(-50%) !important;
+	width: min(92vw, 360px) !important;
+	max-width: min(92vw, 360px) !important;
+}
+
+.auth-toaster [data-custom-toast] {
+	transform-origin: top center;
+}
+
+.auth-toaster [data-sonner-toast] {
+	display: flex !important;
+	justify-content: center !important;
+}
+
+.auth-toaster [data-sonner-toast][data-removed="true"] [data-custom-toast] {
+	transform-origin: top center;
+}
+
+@media (min-width: 1024px) {
+	.auth-toaster {
+		top: 25px !important;
+		left: 75% !important;
+	}
+}
+
+[data-sonner-toast] {
+	transition-property: transform, opacity, height, box-shadow !important;
+	transition-duration: 420ms !important;
+	transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
+[data-sonner-toast][data-removed="true"] [data-custom-toast] {
+	animation: toast-panel-out 380ms cubic-bezier(0.32, 0, 0.2, 1) both;
+	transform-origin: top right;
+}
+
+[data-sonner-toast][data-removed="true"] {
+	transition-duration: 380ms !important;
+	transition-timing-function: cubic-bezier(0.32, 0, 0.2, 1) !important;
+}
+
+/* Scrollbars globais (Firefox) */
+html {
+	scrollbar-width: thin;
+	scrollbar-color: #e5e7eb transparent;
+}
+
+/* Scrollbars globais (WebKit: Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+	width: 3px;
+	height: 3px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background-color: #d1d5db;
+	border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: #9ca3af;
+}
+
+::-webkit-scrollbar-button {
+	width: 0;
+	height: 0;
+	display: none;
+}
+
+/* Scrollbar fino dentro dos cards de Configurações */
+.settings-scroll-area {
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: thin;
+	scrollbar-color: #d1d5db transparent;
+}
+
+.settings-scroll-area::-webkit-scrollbar {
+	width: 3px;
+	height: 3px;
+}
+
+.settings-scroll-area::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.settings-scroll-area::-webkit-scrollbar-thumb {
+	background-color: #d1d5db;
+	border-radius: 999px;
+}
+
+.settings-scroll-area::-webkit-scrollbar-thumb:hover {
+	background-color: #9ca3af;
+}
+
+/* Scrollbar fino na área de conteúdo principal do app */
+.app-content-scroll {
+	overflow-y: auto;
+	overflow-x: hidden;
+	scrollbar-width: thin;
+	scrollbar-color: #d1d5db transparent;
+}
+
+.app-content-scroll::-webkit-scrollbar {
+	width: 3px;
+	height: 3px;
+}
+
+.app-content-scroll::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.app-content-scroll::-webkit-scrollbar-thumb {
+	background-color: #d1d5db;
+	border-radius: 999px;
+}
+
+.app-content-scroll::-webkit-scrollbar-thumb:hover {
+	background-color: #9ca3af;
+}
+
+/* Remove outline/focus ring de todos os elementos */
+*:focus,
+*:focus-visible,
+*:active,
+button:focus,
+button:focus-visible,
+button:active,
+input:focus,
+input:focus-visible,
+input:active,
+textarea:focus,
+textarea:focus-visible,
+textarea:active,
+select:focus,
+select:focus-visible,
+select:active,
+[role="button"]:focus,
+[role="button"]:focus-visible,
+[role="button"]:active,
+[role="combobox"]:focus,
+[role="combobox"]:focus-visible,
+[role="combobox"]:active,
+[tabindex]:focus,
+[tabindex]:focus-visible,
+[tabindex]:active,
+[data-radix-select-trigger]:focus,
+[data-radix-select-trigger]:focus-visible,
+[data-radix-select-trigger]:active,
+[data-radix-select-content]:focus,
+[data-radix-select-content]:focus-visible,
+[data-radix-select-item]:focus,
+[data-radix-select-item]:focus-visible,
+div[role="button"]:focus,
+div[role="button"]:focus-visible,
+div[role="button"]:active {
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: inherit !important;
+}
+
+/* Força remoção de outline para todos os elementos de formulário */
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="tel"]:focus,
+input[type="search"]:focus,
+input[type="url"]:focus,
+textarea:focus,
+select:focus {
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: #d1d5db !important;
+	/* border-gray-300 */
+}
+
+/* Remove outline de elementos com máscara */
+.react-imask-input:focus,
+[data-mask]:focus {
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: #d1d5db !important;
+}
+
+/* react-day-picker base styles (importado aqui para evitar import em componente) */
+.rdp {
+	margin: 0;
+}
+
+.rdp table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.rdp-months {
+	display: flex;
+	gap: 12px;
+}
+
+.rdp-caption {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 6px 8px;
+}
+
+.rdp-head_cell {
+	font-size: 11px;
+	color: #64748B;
+	font-weight: 600;
+	padding: 6px 0;
+}
+
+.rdp-cell {
+	padding: 1px;
+}
+
+.rdp-day {
+	height: 32px;
+	width: 32px;
+	border-radius: 6px;
+	display: grid;
+	place-items: center;
+	font-size: 12px;
+	color: #0F172A;
+}
+
+.rdp-day:hover {
+	background: #F1F5F9;
+}
+
+.rdp-day_selected,
+.rdp-day_selected:hover {
+	background: #7C3AED;
+	color: white;
+}
+
+.rdp-day_outside {
+	color: #94A3B8;
+}
+
+.rdp-nav_button {
+	height: 28px;
+	width: 28px;
+	border-radius: 6px;
+	display: grid;
+	place-items: center;
+	color: #475569;
+}
+
+.rdp-nav_button:hover {
+	background: #F1F5F9;
+}
+
+.rdp-dropdowns select {
+	border: 1px solid #E2E8F0;
+	border-radius: 6px;
+	padding: 4px 6px;
+	font-size: 12px;
+}
+
+
+
+/* utilitários tipográficos coerentes (pesos padronizados) */
+.font-display-2xl {
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.font-display-xl {
+	font-weight: 700;
+	letter-spacing: -0.01em;
+}
+
+.font-display-lg {
+	font-weight: 600;
+}
+
+.font-display-md {
+	font-weight: 600;
+}
+
+.font-text {
+	font-weight: 400;
+}
+
+.font-text-medium {
+	font-weight: 500;
+}
+
+.font-text-bold {
+	font-weight: 600;
+}
+
+/* Layout auth: passthrough — AuthShell controla o layout full-page */
+.auth-shell {
+	min-height: 100dvh;
+	width: 100%;
+}
+
+/* Cards auth reutilizáveis */
+.auth-card {
+	@apply bg-white rounded-[40px] shadow-card w-[420px] max-w-[92vw] p-10 sm:p-12;
+}
+
+/* Inputs auth padronizados */
+.auth-input {
+	@apply w-full border border-brand-stroke rounded-md px-4 py-2 text-sm placeholder:text-brand-muted transition-all duration-200 hover:border-purple-300 hover:bg-purple-25 focus:outline-none focus:ring-0 focus:shadow-none focus:border-brand-stroke focus:bg-white bg-white;
+}
+
+.auth-button-primary {
+	@apply w-full bg-brand-primary text-white font-medium rounded-md py-2.5 text-sm transition-all duration-200 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-0;
+}
+
+.auth-link {
+	@apply text-brand-accent hover:underline;
+}
+
+/* Tema escuro controlado por data-theme="dark" */
+[data-theme="dark"] {
+	--brand-bg: #1b0b2a;
+	/* faixa da imagem 2 (aprox) para body fora do container */
+	--sidebar-bg: #2A004A;
+	/* sidebar mais escura, como no print 2 (ativo) */
+	--app-bg: var(--sidebar-bg);
+	/* fundo atrás do card igual ao sidebar */
+	--sidebar-text: #FFFFFF;
+	--sidebar-hover: rgba(255, 255, 255, 0.06);
+	--sidebar-active-bg: #53217F;
+	/* tom roxo mais claro que o fundo p/ seleção */
+	--sidebar-active-text: #FFFFFF;
+	/* Fundo leve para estado ativo/selecionado (pílula) no sidebar - DARK */
+	--sidebar-active-bg-light: rgba(255, 255, 255, 0.09);
+}
+
+/* Transições suaves de tema aplicadas nas principais superfícies e globalmente */
+aside,
+nav,
+.app-surface-bg,
+.sidebar-surface-bg,
+.sidebar-text,
+.sidebar-active {
+	transition: var(--theme-transition-all);
+}
+
+/* aplica às crianças quando data-theme alterna (fade simultâneo) */
+[data-theme] *,
+[data-theme] *::before,
+[data-theme] *::after {
+	transition: var(--theme-transition-all);
+}
+
+/* Evitar transição durante a pintura inicial (antes de habilitar no body) */
+html:not(.theme-ready),
+body:not(.theme-ready),
+html:not(.theme-ready) [data-theme] *,
+html:not(.theme-ready) [data-theme] *::before,
+html:not(.theme-ready) [data-theme] *::after {
+	transition: none !important;
+}
+
+/* Respeita usuários com redução de movimento */
+@media (prefers-reduced-motion: reduce) {
+
+	html,
+	body,
+	aside,
+	nav,
+	.app-surface-bg,
+	.sidebar-surface-bg,
+	.sidebar-text,
+	.sidebar-active,
+	[data-theme] *,
+	[data-theme] *::before,
+	[data-theme] *::after {
+		transition: none !important;
+	}
+}
+
+/* Utilitário global para usar bg do app conforme tema */
+.app-surface-bg {
+	background: var(--app-bg);
+}
+
+.sidebar-surface-bg {
+	background: var(--sidebar-bg);
+}
+
+.sidebar-text {
+	color: var(--sidebar-text);
+}
+
+.sidebar-hover:hover {
+	background: var(--sidebar-hover);
+}
+
+.sidebar-active {
+	background: var(--sidebar-active-bg);
+	color: var(--sidebar-active-text);
+}
+
+/* Container principal quando há sidebar fixo à esquerda */
+.with-sidebar {
+	/* permite um espaçamento adicional opcional via --sidebar-gap */
+	padding-left: calc(var(--sidebar-w) + var(--sidebar-gap, 0px));
+	transition: padding-left var(--theme-duration) var(--theme-ease);
+}
+
+/* Garantir dropdowns acima do card */
+.z-overlay {
+	z-index: 60;
+}
+
+/* Estilos para autocomplete - manter fundo branco e contraste adequado */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus,
+select:-webkit-autofill:active {
+	-webkit-box-shadow: 0 0 0 30px white inset !important;
+	-webkit-text-fill-color: #111827 !important;
+	/* text-gray-900 */
+	background-color: white !important;
+	background-image: none !important;
+}
+
+/* Para navegadores que suportam ::autofill */
+input::autofill,
+textarea::autofill,
+select::autofill {
+	background-color: white !important;
+	color: #111827 !important;
+	/* text-gray-900 */
+}
+
+/* Estilos para selects nativos */
+select {
+	background-color: white !important;
+	color: #111827 !important;
+	/* text-gray-900 */
+}
+
+/* Estilos para options dos selects nativos */
+select option {
+	background-color: white;
+	color: #111827;
+	/* text-gray-900 */
+	padding: 8px 12px;
+}
+
+select option:checked,
+select option:hover {
+	background-color: #A94DFF !important;
+	color: white !important;
+}
+
+/* Para navegadores webkit */
+select option:checked {
+	background: #A94DFF linear-gradient(0deg, #A94DFF 0%, #A94DFF 100%) !important;
+	color: white !important;
+}
+
+/* Estilos específicos para selects do Radix UI */
+[data-radix-select-trigger] {
+	background-color: white !important;
+	color: #111827 !important;
+	/* text-gray-900 */
+	border-color: #d1d5db !important;
+	/* border-gray-300 */
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+[data-radix-select-trigger]:hover {
+	background-color: #faf5ff !important;
+	/* purple-50 */
+	border-color: #c4b5fd !important;
+	/* purple-300 */
+	transition: all 0.2s ease;
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+[data-radix-select-trigger]:focus {
+	outline: none !important;
+	box-shadow: none !important;
+	border-color: #d1d5db !important;
+	/* border-gray-300 */
+	background-color: white !important;
+}
+
+[data-radix-select-content] {
+	background-color: white !important;
+	color: #111827 !important;
+	border: 1px solid #e5e7eb !important;
+	/* border-gray-200 */
+	border-radius: 8px !important;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+	outline: none !important;
+}
+
+[data-radix-select-item] {
+	background-color: white !important;
+	color: #111827 !important;
+	transition: all 0.2s ease;
+	outline: none !important;
+	border-radius: 4px !important;
+	margin: 2px 4px !important;
+}
+
+[data-radix-select-item]:hover,
+[data-radix-select-item][data-highlighted] {
+	background-color: #faf5ff !important;
+	/* purple-50 */
+	color: #7c3aed !important;
+	/* purple-600 */
+	outline: none !important;
+}
+
+[data-radix-select-item][data-state="checked"] {
+	background-color: #A94DFF !important;
+	color: white !important;
+	outline: none !important;
+}
+
+[data-radix-select-item][data-state="checked"]:hover,
+[data-radix-select-item][data-state="checked"][data-highlighted] {
+	background-color: #A94DFF !important;
+	color: white !important;
+	outline: none !important;
+}
+
+/* Estilos para checkboxes */
+input[type="checkbox"] {
+	accent-color: #A94DFF;
+	background-color: white;
+	border: 1px solid #d1d5db;
+	/* border-gray-300 */
+}
+
+input[type="checkbox"]:checked {
+	background-color: #A94DFF;
+	border-color: #A94DFF;
+}
+
+input[type="checkbox"]:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(169, 77, 255, 0.2);
+}
+
+/* Força estilos para componentes Radix Select específicos */
+[data-radix-select-trigger],
+.radix-select-trigger,
+button[data-radix-select-trigger][data-state] {
+	background-color: white !important;
+	color: #111827 !important;
+}
+
+/* Força fundo branco nos placeholders dos selects */
+[data-radix-select-value],
+[data-placeholder] {
+	color: #9ca3af !important;
+	/* text-gray-400 para placeholder */
+}
+
+/* Força fundo branco quando tem valor selecionado */
+[data-radix-select-value]:not([data-placeholder]) {
+	color: #111827 !important;
+	/* text-gray-900 para valor selecionado */
+}
+
+/* Sobrescreve qualquer tema escuro que possa estar sendo aplicado */
+* {
+	color-scheme: light !important;
+}
+
+/* Para garantir que nenhum select apareça com fundo escuro */
+select,
+[role="combobox"],
+[data-radix-select-trigger] {
+	background-color: white !important;
+	color: #111827 !important;
+}
+
+/* Hover melhorado para inputs */
+input:hover:not(:focus):not(:disabled) {
+	border-color: #c4b5fd !important;
+	/* purple-300 */
+	background-color: #fefcff !important;
+	/* purple-25 */
+	transition: all 0.2s ease;
+}
+
+/* Hover melhorado para selects nativos */
+select:hover:not(:focus):not(:disabled) {
+	border-color: #c4b5fd !important;
+	/* purple-300 */
+	background-color: #fefcff !important;
+	/* purple-25 */
+	transition: all 0.2s ease;
+}
+
+/* Hover melhorado para botões */
+button:hover:not(:disabled) {
+	transition: all 0.2s ease;
+}
+
+/* Remove qualquer outline ou border preto de hover */
+*:hover {
+	outline: none !important;
+}
+
+/* Remove hover de ícones - sem animações nos ícones */
+svg:hover,
+[data-icon]:hover,
+.icon:hover {
+	transform: none !important;
+	transition: none !important;
+}
+
+/* Hover específico para elementos interativos */
+[role="button"]:hover,
+[tabindex]:hover {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+/* Estilos específicos para dropdowns e menus */
+[role="menu"],
+[role="menuitem"],
+[role="option"],
+[data-radix-dropdown-menu-content],
+[data-radix-dropdown-menu-item],
+[data-radix-select-content],
+[data-radix-select-item] {
+	outline: none !important;
+}
+
+/* Hover coerente para itens de menu */
+[role="menuitem"]:hover,
+[role="option"]:hover,
+[data-radix-dropdown-menu-item]:hover,
+[data-radix-dropdown-menu-item][data-highlighted] {
+	background-color: #faf5ff !important;
+	/* purple-50 */
+	color: #7c3aed !important;
+	/* purple-600 */
+	outline: none !important;
+	transition: all 0.2s ease;
+}
+
+/* Estilos para elementos focados via teclado */
+[role="menuitem"]:focus,
+[role="option"]:focus,
+[data-radix-dropdown-menu-item]:focus,
+[data-radix-select-item]:focus {
+	background-color: #faf5ff !important;
+	/* purple-50 */
+	color: #7c3aed !important;
+	/* purple-600 */
+	outline: none !important;
+}
+
+/* Para elementos com estado ativo/selecionado */
+[role="menuitem"][data-state="checked"],
+[role="option"][aria-selected="true"],
+[data-radix-dropdown-menu-item][data-state="checked"] {
+	background-color: #A94DFF !important;
+	color: white !important;
+	outline: none !important;
+}
+
+/* Estilos globais para todos os componentes Radix */
+[data-radix-dropdown-menu-trigger],
+[data-radix-select-trigger],
+[data-radix-popover-trigger],
+[data-radix-dialog-trigger] {
+	outline: none !important;
+	transition: all 0.2s ease;
+}
+
+[data-radix-dropdown-menu-trigger]:hover,
+[data-radix-popover-trigger]:hover,
+[data-radix-dialog-trigger]:hover {
+	outline: none !important;
+}
+
+/* Força remoção de outline em todos os estados */
+[data-radix-dropdown-menu-content] *,
+[data-radix-select-content] *,
+[data-radix-popover-content] *,
+[data-radix-dialog-content] * {
+	outline: none !important;
+}
+
+/* Força cor consistente para todos os itens de dropdown */
+[data-radix-dropdown-menu-item],
+[data-radix-select-item] {
+	color: #111827 !important;
+	/* text-gray-900 */
+	background-color: white !important;
+}
+
+[data-radix-dropdown-menu-item]:hover,
+[data-radix-dropdown-menu-item][data-highlighted],
+[data-radix-select-item]:hover,
+[data-radix-select-item][data-highlighted] {
+	background-color: #faf5ff !important;
+	/* purple-50 */
+	color: #7c3aed !important;
+	/* purple-600 */
+}
+
+/* Estilos para cmdk (autocomplete) - cores mais suaves */
+[cmdk-item] {
+	color: #111827 !important;
+	/* text-gray-900 */
+	background-color: white !important;
+	transition: background-color 0.15s ease;
+}
+
+[cmdk-item]:hover,
+[cmdk-item][data-highlighted],
+[cmdk-item][aria-selected="true"],
+[cmdk-item][data-selected="true"] {
+	background-color: #f3f4f6 !important;
+	/* gray-100 - suave */
+	color: #111827 !important;
+	/* text-gray-900 */
+}
+
+[cmdk-item]:active {
+	background-color: #e5e7eb !important;
+	/* gray-200 */
+}
+
+/* ========================
+   PDF Viewer Styles 
+   ======================== */
+
+.pdf-viewer-container {
+	background-color: #f1f5f9;
+}
+
+.pdf-page {
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Print styles para PDF */
+@media print {
+	.pdf-viewer-container {
+		background: white;
+	}
+
+	.pdf-controls {
+		display: none !important;
+	}
+}
+
+/* ========================
+   Calendar Scheduler Styles 
+   ======================== */
+
+.calendar-scheduler-wrapper .fc-header-toolbar {
+	display: none !important;
+	margin: 0 !important;
+	padding: 0 !important;
+}
+
+.calendar-scheduler-wrapper .fc,
+.calendar-scheduler-wrapper .fc-view-harness,
+.calendar-scheduler-wrapper .fc-view,
+.calendar-scheduler-wrapper .fc-scroller {
+	margin: 0 !important;
+	padding: 0 !important;
+}
+
+.calendar-scheduler-wrapper .fc-theme-standard td,
+.calendar-scheduler-wrapper .fc-theme-standard th {
+	border-color: #f1f5f9;
+	/* slate-100 */
+}
+
+/* Remove espessura e borda dupla das células do canto */
+.calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid td:first-child,
+.calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid th:first-child {
+	border-left: none !important;
+}
+
+.calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid td:last-child,
+.calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid th:last-child {
+	border-right: none !important;
+}
+
+.calendar-scheduler-wrapper .fc-scrollgrid-section-header>th,
+.calendar-scheduler-wrapper .fc-scrollgrid-section-header>td {
+	border-top: none !important;
+	padding: 0 !important;
+}
+
+.calendar-scheduler-wrapper .fc-scrollgrid {
+	border-top-width: 0 !important;
+	border-top: none !important;
+	margin-top: 0 !important;
+}
+
+/* Remove padding fantasma dos headers externos do FullCalendar */
+.calendar-scheduler-wrapper .fc-theme-standard th {
+	padding: 0;
+	background: transparent;
+	font-family: inherit;
+}
+
+/* Aplica o estilo de cabeçalho apenas às células finais dos dias e da coluna de horas */
+.calendar-scheduler-wrapper .fc-col-header-cell,
+.calendar-scheduler-wrapper .fc-timegrid-axis {
+	padding: 12px 0 !important;
+	color: #64748b;
+	background-color: rgba(248, 250, 252, 0.8) !important;
+	border-bottom: 1px solid #e2e8f0 !important;
+	font-weight: 600;
+	text-transform: uppercase;
+	font-size: 11px;
+	vertical-align: middle;
+}
+
+.calendar-scheduler-wrapper .fc-col-header-cell-cushion {
+	padding: 0;
+}
+
+.calendar-scheduler-wrapper .fc-daygrid-day-number {
+	font-size: 13px;
+	color: #475569;
+	/* slate-600 */
+	font-weight: 500;
+	padding: 6px 10px;
+}
+
+.calendar-scheduler-wrapper .fc-timegrid-slot-label-cushion {
+	font-size: 12px;
+	color: #94a3b8;
+	/* slate-400 */
+}
+
+.calendar-scheduler-wrapper .fc-event {
+	border: none;
+	background: transparent;
+	padding: 1px;
+}
+
+.calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid {
+	border: none !important;
+	border-radius: 0;
+	overflow: hidden;
+}
+
+/* Esconde linha extra acima dos dias se houver divisa */
+.calendar-scheduler-wrapper .fc-scrollgrid-section-divider {
+	display: none !important;
+}
+
+.calendar-scheduler-wrapper--month-detailed .fc-daygrid-day-frame {
+	min-height: 148px;
+}
+
+.calendar-scheduler-wrapper--month-compact .fc-daygrid-day-frame {
+	min-height: 108px;
+}
+
+.calendar-scheduler-wrapper--month-compact .fc-daygrid-event-harness {
+	margin-top: 2px;
+}
+
+.calendar-scheduler-wrapper .calendar-scheduler-day-detailed {
+	background: linear-gradient(180deg, rgba(248, 250, 252, 0.7) 0%, rgba(255, 255, 255, 1) 100%);
+}
+
+.calendar-scheduler-wrapper .calendar-scheduler-day-compact {
+	background: #fcfcfd;
+}
+
+.calendar-scheduler-wrapper {
+	--fc-today-bg-color: transparent;
+}
+
+.calendar-scheduler-wrapper .fc-day-today {
+	background-color: transparent !important;
+}
+
+.calendar-scheduler-wrapper .fc-day-today .fc-col-header-cell-cushion {
+	color: var(--brand-accent);
+	font-weight: 700;
+}
+
+.calendar-scheduler-wrapper .fc-day-today .fc-daygrid-day-number {
+	background-color: var(--brand-accent);
+	color: white !important;
+	border-radius: 50%;
+	min-width: 26px;
+	height: 26px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	margin: 4px;
+}

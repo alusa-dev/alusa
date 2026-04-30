@@ -1,0 +1,1 @@
+{"version":3,"file":"deleteCustomer.d.ts","sourceRoot":"","sources":["deleteCustomer.ts"],"names":[],"mappings":"AAAA;;GAEG;AAGH,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,gBAAgB,CAAC;AAEpD,MAAM,WAAW,oBAAoB;IACnC,MAAM,EAAE,MAAM,CAAC;IACf,UAAU,EAAE,MAAM,CAAC;CACpB;AAED;;;;;;GAMG;AACH,wBAAsB,cAAc,CAAC,MAAM,EAAE,oBAAoB,GAAG,OAAO,CAAC,aAAa,CAAC,CAMzF"}

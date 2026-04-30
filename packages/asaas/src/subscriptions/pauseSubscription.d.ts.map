@@ -1,0 +1,1 @@
+{"version":3,"file":"pauseSubscription.d.ts","sourceRoot":"","sources":["pauseSubscription.ts"],"names":[],"mappings":"AAAA;;GAEG;AAGH,OAAO,KAAK,EAAE,iBAAiB,EAAE,MAAM,gBAAgB,CAAC;AAExD,MAAM,WAAW,uBAAuB;IACtC,MAAM,EAAE,MAAM,CAAC;IACf,cAAc,EAAE,MAAM,CAAC;CACxB;AAED,wBAAsB,iBAAiB,CAAC,MAAM,EAAE,uBAAuB,GAAG,OAAO,CAAC,iBAAiB,CAAC,CAGnG"}

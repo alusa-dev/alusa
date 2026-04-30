@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "StatusMatricula" ADD VALUE IF NOT EXISTS 'PAUSADA';

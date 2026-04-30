@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "alusadb": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env",
+        "--",
+        "tsx",
+        "mcp/alusadb/src/index.ts"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    "asaas7": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env",
+        "--",
+        "tsx",
+        "mcp/asaas/server.ts"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    "tiptap": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env",
+        "--",
+        "tsx",
+        "mcp/tiptap/server.ts"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    "prosemirror": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env",
+        "--",
+        "tsx",
+        "mcp/prosemirror/server.ts"
+      ],
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}

@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: alusa
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+    env:
+      # Banco de desenvolvimento para testes/integrações
+      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa', 'postgresql') }}
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'pnpm'
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      # Prisma — verificar e aplicar migrations, e gerar client
+      - name: Prisma migrate status
+        run: npx prisma migrate status --schema prisma/schema.prisma
+
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy --schema prisma/schema.prisma
+
+      - name: Prisma generate
+        run: npx prisma generate --schema prisma/schema.prisma
+
+      # Pipeline padrão do monorepo (fail-fast)
+      - name: Lint
+        run: pnpm -w lint
+
+      - name: Typecheck
+        run: pnpm -w typecheck
+
+      - name: Unit tests
+        run: pnpm -w test:unit
+
+      - name: Build
+        run: pnpm -w build
+
+      # Playwright E2E — depende da configuração do webServer em apps/web/playwright.config.ts
+      - name: Install Playwright deps
+        run: npx playwright install --with-deps
+
+      - name: E2E tests
+        run: pnpm -w test:e2e
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+          run_install: true
+      - name: Copy env
+        run: cp .env.example .env
+      - name: Generate Prisma Client
+        run: pnpm exec prisma generate
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit Tests
+        run: pnpm test:unit -- --run
+      - name: Build
+        run: pnpm build
+      - name: E2E Tests
+        run: pnpm --filter @alusa/web test:e2e -- --reporter=line
+        env:
+          CI: true

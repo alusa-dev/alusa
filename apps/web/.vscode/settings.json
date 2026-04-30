@@ -1,0 +1,27 @@
+{
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/dist": true,
+    "**/coverage": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/dist": true,
+    "**/coverage": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/dist/**": true,
+    "**/coverage/**": true
+  },
+  "typescript.tsserver.maxTsServerMemory": 3072,
+  "typescript.tsserver.experimental.enableProjectDiagnostics": false,
+  "typescript.tsserver.watchOptions": {
+    "watchFile": "useFsEventsOnParentDirectory",
+    "watchDirectory": "useFsEvents",
+    "synchronousWatchDirectory": false
+  }
+}

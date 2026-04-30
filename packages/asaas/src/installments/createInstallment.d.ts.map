@@ -1,0 +1,1 @@
+{"version":3,"file":"createInstallment.d.ts","sourceRoot":"","sources":["createInstallment.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,KAAK,EAAE,gBAAgB,EAAE,sBAAsB,EAAE,MAAM,gBAAgB,CAAC;AAE/E,MAAM,WAAW,uBAAuB;IACtC,MAAM,EAAE,MAAM,CAAC;IACf,IAAI,EAAE,sBAAsB,CAAC;IAC7B,cAAc,CAAC,EAAE,MAAM,CAAC;CACzB;AAED,wBAAsB,iBAAiB,CAAC,MAAM,EAAE,uBAAuB,GAAG,OAAO,CAAC,gBAAgB,CAAC,CASlG"}

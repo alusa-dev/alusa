@@ -1,0 +1,1 @@
+-- Manual migration placeholder (intentionally empty)

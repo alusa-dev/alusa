@@ -1,0 +1,563 @@
+'use client';
+
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { pushToast } from '@/components/ui/toast';
+import { ChevronRight, CreditCard, DollarSign, Search } from '@/components/icons/icons';
+import { cn } from '@/lib/utils';
+import type {
+  AnticipationCandidate,
+  AnticipationLimits,
+  AnticipationSimulation,
+  ListAnticipationCandidatesResponse,
+} from './types';
+import { formatBillingType, formatCurrency, formatDate, sourceLabel } from './utils';
+
+const PAGE_SIZE = 50;
+const CANDIDATE_TABLE_GRID = 'grid-cols-[28px_minmax(320px,1.9fr)_180px_170px_120px]';
+const CANDIDATE_TABLE_GUTTER = 'gap-x-3 px-4 md:px-5';
+
+function normalizeCandidateText(value: string | null | undefined): string | null {
+  if (!value) return null;
+
+  const normalized = value.replace(/\[NEEDS_REVIEW\]/gi, '').trim();
+  if (!normalized || /^needs_review$/i.test(normalized) || /sem vínculo local/i.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function LimitCard({
+  title,
+  total,
+  available,
+}: {
+  title: string;
+  total: number;
+  available: number;
+}) {
+  const percentage = total > 0 ? Math.min(100, Math.max(0, (available / total) * 100)) : 0;
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        <span className="text-xs text-slate-500">{percentage.toFixed(0)}% livre</span>
+      </div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+        <div className="h-full rounded-full bg-brand-accent" style={{ width: `${percentage}%` }} />
+      </div>
+      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+        <span>Disponível {formatCurrency(available)}</span>
+        <span>Total {formatCurrency(total)}</span>
+      </div>
+    </div>
+  );
+}
+
+function CandidateRow({
+  candidate,
+  checked,
+  onToggle,
+}: {
+  candidate: AnticipationCandidate;
+  checked: boolean;
+  onToggle: (_candidate: AnticipationCandidate, _checked: boolean) => void;
+}) {
+  const hasLocalLink = Boolean(candidate.localId);
+  const normalizedDescription = normalizeCandidateText(candidate.description);
+  const normalizedPayerName = normalizeCandidateText(candidate.payerName);
+  const candidateTitle = normalizedDescription ?? (hasLocalLink ? sourceLabel(candidate.source) : 'Recebível sem vínculo local');
+  const candidateIdentifier = candidate.payment ?? candidate.installment ?? candidate.id;
+  const payerLabel = normalizedPayerName ?? (hasLocalLink ? 'Pagador não identificado' : 'Disponível apenas no Asaas');
+
+  return (
+    <div
+      className={cn(
+        'grid min-w-[850px] items-center py-4 transition',
+        CANDIDATE_TABLE_GUTTER,
+        CANDIDATE_TABLE_GRID,
+        checked ? 'bg-[#f7f2ff] shadow-[inset_2px_0_0_#8b5cf6]' : 'bg-white hover:bg-slate-50',
+      )}
+    >
+      <div className="flex items-center justify-start">
+        <Checkbox
+          checked={checked}
+          aria-label={`Selecionar ${candidateTitle}`}
+          className="h-4.5 w-4.5 rounded-md border-slate-300"
+          onCheckedChange={(value) => onToggle(candidate, value)}
+        />
+      </div>
+
+      <div className="min-w-0 pr-2">
+        <p className="truncate text-sm font-semibold text-slate-900">{candidateTitle}</p>
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-5 text-slate-500">
+          <span>{payerLabel}</span>
+          <span className="text-slate-300">•</span>
+          <span className="truncate">ID {candidateIdentifier}</span>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm text-slate-700">{formatBillingType(candidate.billingType)}</p>
+      </div>
+
+      <div>
+        <p className="text-sm text-slate-700">{formatDate(candidate.dueDate)}</p>
+      </div>
+
+      <div className="justify-self-end text-right">
+        <p className="text-sm font-semibold text-slate-900">{formatCurrency(candidate.value)}</p>
+      </div>
+    </div>
+  );
+}
+
+function SummaryPanel({
+  selected,
+  selectedCount,
+  selectedValue,
+  selectedNetValue,
+  simulation,
+  simulating,
+  submitting,
+  documentFile,
+  onDocumentFile,
+  onRequest,
+}: {
+  selected: AnticipationCandidate | null;
+  selectedCount: number;
+  selectedValue: number;
+  selectedNetValue: number | null;
+  simulation: AnticipationSimulation | null;
+  simulating: boolean;
+  submitting: boolean;
+  documentFile: File | null;
+  onDocumentFile: (_file: File | null) => void;
+  onRequest: () => void;
+}) {
+  const singleSelection = selectedCount === 1;
+  const feeValue =
+    singleSelection && simulation
+      ? simulation.fee
+      : selectedNetValue != null
+        ? Number(Math.max(0, selectedValue - selectedNetValue).toFixed(2))
+        : null;
+  const canSubmit = Boolean(singleSelection && selected && simulation && !simulating && !submitting);
+
+  return (
+    <aside className="rounded-xl border border-slate-200 bg-white p-5">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634]">
+          <DollarSign className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">Resumo</h2>
+          <p className="text-xs text-slate-500">Valores oficiais da simulação</p>
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-3 border-t border-slate-100 pt-4">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-slate-500">Total selecionado</span>
+          <span className="font-medium text-slate-900">{formatCurrency(singleSelection ? (simulation?.value ?? selectedValue) : selectedValue)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-slate-500">Taxa</span>
+          <span className="font-medium text-slate-900">{feeValue == null ? '-' : formatCurrency(feeValue)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-slate-500">Valor a receber</span>
+          <span className="font-semibold text-emerald-700">
+            {singleSelection
+              ? formatCurrency(simulation?.netValue ?? selectedNetValue ?? 0)
+              : selectedNetValue == null
+                ? '-'
+                : formatCurrency(selectedNetValue)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-slate-500">Data prevista</span>
+          <span className="font-medium text-slate-900">{singleSelection ? formatDate(simulation?.anticipationDate ?? null) : '-'}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-slate-500">Dias antecipados</span>
+          <span className="font-medium text-slate-900">{singleSelection ? (simulation?.anticipationDays ?? '-') : '-'}</span>
+        </div>
+      </div>
+
+      {selectedCount > 1 ? (
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+          A seleção em massa serve para conferência da lista. Para solicitar a antecipação, deixe apenas um recebível marcado.
+        </div>
+      ) : null}
+
+      {singleSelection && simulation?.isDocumentationRequired ? (
+        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm font-medium text-amber-900">Documento obrigatório</p>
+          <p className="mt-1 text-xs leading-5 text-amber-800">
+            O Asaas exige nota fiscal ou contrato para analisar esta solicitação.
+          </p>
+          <Input
+            type="file"
+            className="mt-3 h-10 rounded-lg bg-white"
+            onChange={(event) => onDocumentFile(event.target.files?.[0] ?? null)}
+          />
+          {documentFile ? <p className="mt-2 text-xs text-amber-800">{documentFile.name}</p> : null}
+        </div>
+      ) : null}
+
+      <Button
+        className="mt-5 h-10 w-full rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+        disabled={!canSubmit || (simulation?.isDocumentationRequired && !documentFile)}
+        onClick={onRequest}
+      >
+        {submitting ? 'Solicitando...' : simulating ? 'Simulando...' : 'Solicitar antecipação'}
+      </Button>
+
+      <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+        Sujeito a análise de crédito pelo Asaas.
+      </p>
+    </aside>
+  );
+}
+
+export function AnteciparRecebimentoPage() {
+  const [candidates, setCandidates] = useState<ListAnticipationCandidatesResponse | null>(null);
+  const [limits, setLimits] = useState<AnticipationLimits | null>(null);
+  const [billingType, setBillingType] = useState<'ALL' | 'CREDIT_CARD' | 'BOLETO' | 'PIX'>('ALL');
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [simulation, setSimulation] = useState<AnticipationSimulation | null>(null);
+  const [simulating, setSimulating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ page: '1', pageSize: String(PAGE_SIZE), billingType });
+      if (search.trim()) params.set('search', search.trim());
+
+      const [candidatesResponse, limitsResponse] = await Promise.all([
+        fetch(`/api/financeiro/antecipacoes/candidatos?${params.toString()}`, { cache: 'no-store' }),
+        fetch('/api/financeiro/antecipacoes/limites', { cache: 'no-store' }),
+      ]);
+
+      if (!candidatesResponse.ok) throw new Error('Falha ao carregar recebíveis');
+      setCandidates(await candidatesResponse.json());
+
+      if (limitsResponse.ok) {
+        const payload = await limitsResponse.json();
+        setLimits(payload.data ?? null);
+      }
+    } catch (error) {
+      pushToast({
+        title: 'Não foi possível carregar recebíveis',
+        description: error instanceof Error ? error.message : 'Tente novamente.',
+        variant: 'error',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [billingType, search]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const candidateItems = candidates?.items ?? [];
+
+  const selectedItems = useMemo(
+    () => candidateItems.filter((candidate) => selectedIds.includes(candidate.id)),
+    [candidateItems, selectedIds],
+  );
+
+  const selectedCandidate = selectedItems.length === 1 ? selectedItems[0] : null;
+
+  const selectedPayload = useMemo(() => {
+    if (!selectedCandidate) return null;
+    return {
+      targetType: selectedCandidate.targetType,
+      payment: selectedCandidate.payment ?? undefined,
+      installment: selectedCandidate.installment ?? undefined,
+    };
+  }, [selectedCandidate]);
+
+  const selectedValue = useMemo(
+    () => Number(selectedItems.reduce((total, item) => total + item.value, 0).toFixed(2)),
+    [selectedItems],
+  );
+
+  const selectedNetValue = useMemo(() => {
+    if (!selectedItems.length || selectedItems.some((item) => item.netValue == null)) return null;
+    return Number(selectedItems.reduce((total, item) => total + (item.netValue ?? 0), 0).toFixed(2));
+  }, [selectedItems]);
+
+  const allVisibleSelected = candidateItems.length > 0 && candidateItems.every((candidate) => selectedIds.includes(candidate.id));
+
+  function resetSelection() {
+    setSelectedIds([]);
+    setSimulation(null);
+    setDocumentFile(null);
+    setSimulating(false);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runSimulation(candidate: AnticipationCandidate) {
+      setSimulation(null);
+      setDocumentFile(null);
+      setSimulating(true);
+      try {
+        const response = await fetch('/api/financeiro/antecipacoes/simular', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetType: candidate.targetType,
+            payment: candidate.payment ?? undefined,
+            installment: candidate.installment ?? undefined,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error === 'ERRO_ASAAS' ? 'O Asaas recusou a simulação para este recebível.' : 'Falha ao simular');
+        }
+        if (!cancelled) setSimulation(payload.data);
+      } catch (error) {
+        if (!cancelled) {
+          pushToast({
+            title: 'Simulação indisponível',
+            description: error instanceof Error ? error.message : 'Escolha outro recebível.',
+            variant: 'warning',
+          });
+        }
+      } finally {
+        if (!cancelled) setSimulating(false);
+      }
+    }
+
+    if (!selectedCandidate) {
+      setSimulation(null);
+      setDocumentFile(null);
+      setSimulating(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void runSimulation(selectedCandidate);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCandidate]);
+
+  function handleCandidateSelection(candidate: AnticipationCandidate, checked: boolean) {
+    setDocumentFile(null);
+    setSimulation(null);
+    setSelectedIds((current) => {
+      if (checked) {
+        return current.includes(candidate.id) ? current : [...current, candidate.id];
+      }
+      return current.filter((id) => id !== candidate.id);
+    });
+  }
+
+  function handleToggleAllCandidates(checked: boolean) {
+    setDocumentFile(null);
+    setSimulation(null);
+    setSelectedIds(checked ? candidateItems.map((candidate) => candidate.id) : []);
+  }
+
+  async function handleRequest() {
+    if (!selectedPayload) return;
+    if (simulation?.isDocumentationRequired && !documentFile) {
+      pushToast({
+        title: 'Documento obrigatório',
+        description: 'Anexe a nota fiscal ou contrato para enviar a solicitação.',
+        variant: 'warning',
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const body = new FormData();
+      body.set('targetType', selectedPayload.targetType);
+      if (selectedPayload.payment) body.set('payment', selectedPayload.payment);
+      if (selectedPayload.installment) body.set('installment', selectedPayload.installment);
+      if (documentFile) body.set('document', documentFile);
+
+      const response = await fetch('/api/financeiro/antecipacoes/solicitar', {
+        method: 'POST',
+        body,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error === 'ERRO_ASAAS' ? 'Solicitação rejeitada pelo Asaas.' : 'Falha ao solicitar');
+      }
+
+      pushToast({ title: 'Antecipação solicitada', variant: 'success' });
+      resetSelection();
+      await load();
+    } catch (error) {
+      pushToast({
+        title: 'Não foi possível solicitar',
+        description: error instanceof Error ? error.message : 'Tente novamente.',
+        variant: 'error',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-5 pr-4 xl:pr-6">
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Antecipações</p>
+            <h1 className="mt-1 text-[22px] font-semibold text-gray-900 md:text-[24px]">Antecipar recebimento</h1>
+            <p className="mt-1 text-[13px] leading-5 text-slate-600">
+              Selecione um recebível elegível, simule o valor líquido e envie a solicitação para análise.
+            </p>
+          </div>
+          <Button asChild variant="outline" className="h-10 rounded-xl border-slate-200">
+            <Link href="/antecipacoes/minhas">
+              Minhas antecipações
+              <ChevronRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <LimitCard
+          title="Limite de cartão"
+          total={limits?.creditCard?.total ?? 0}
+          available={limits?.creditCard?.available ?? 0}
+        />
+        <LimitCard
+          title="Limite de boleto"
+          total={limits?.bankSlip?.total ?? 0}
+          available={limits?.bankSlip?.available ?? 0}
+        />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="border-b border-slate-100 bg-gray-50 px-4 py-4 md:px-5">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Disponível para antecipar</p>
+                <p className="mt-1 text-xs text-slate-500">{candidates?.total ?? 0} recebível(is) elegíveis no Asaas</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,320px)_180px]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Buscar por aluno, cobrança ou ID..."
+                    className="h-10 rounded-lg border-slate-200 bg-white pl-9"
+                  />
+                </div>
+                <Select value={billingType} onValueChange={(value) => setBillingType(value as typeof billingType)}>
+                  <SelectTrigger className="h-10 rounded-lg border-slate-200 bg-white">
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    <SelectValue placeholder="Forma" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Todas</SelectItem>
+                    <SelectItem value="CREDIT_CARD">Cartão</SelectItem>
+                    <SelectItem value="BOLETO">Boleto</SelectItem>
+                    <SelectItem value="PIX">Pix</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="space-y-3 p-5">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <div key={index} className="h-16 animate-pulse rounded-xl bg-slate-100" />
+              ))}
+            </div>
+          ) : candidateItems.length ? (
+            <div className="overflow-x-auto">
+              <div className="min-w-[844px]">
+                <div
+                  className={cn(
+                    'grid items-center border-b border-slate-200 bg-slate-50/80 py-3',
+                    CANDIDATE_TABLE_GUTTER,
+                    CANDIDATE_TABLE_GRID,
+                  )}
+                >
+                  <div className="flex items-center justify-start">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      aria-label="Selecionar todos os recebíveis visíveis"
+                      className="h-4.5 w-4.5 rounded-md border-slate-300"
+                      onCheckedChange={handleToggleAllCandidates}
+                    />
+                  </div>
+                  <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Recebível</span>
+                  <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Forma</span>
+                  <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Vencimento</span>
+                  <span className="justify-self-end text-right text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                    Valor
+                  </span>
+                </div>
+
+                <div className="divide-y divide-slate-100">
+                  {candidateItems.map((candidate) => (
+                    <CandidateRow
+                      key={candidate.id}
+                      candidate={candidate}
+                      checked={selectedIds.includes(candidate.id)}
+                      onToggle={handleCandidateSelection}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634]">
+                <DollarSign className="h-7 w-7" />
+              </div>
+              <h2 className="mt-5 text-lg font-semibold text-slate-900">Nenhum recebível elegível</h2>
+              <p className="mt-2 max-w-lg text-sm leading-6 text-slate-500">
+                Quando o Asaas liberar cobranças para antecipação, elas aparecerão nesta lista.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <SummaryPanel
+          selected={selectedCandidate}
+          selectedCount={selectedItems.length}
+          selectedValue={selectedValue}
+          selectedNetValue={selectedNetValue}
+          simulation={simulation}
+          simulating={simulating}
+          submitting={submitting}
+          documentFile={documentFile}
+          onDocumentFile={setDocumentFile}
+          onRequest={handleRequest}
+        />
+      </div>
+    </div>
+  );
+}

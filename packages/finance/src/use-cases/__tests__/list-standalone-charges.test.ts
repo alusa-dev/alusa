@@ -1,0 +1,179 @@
+import { describe, it, expect, vi } from 'vitest';
+import { listStandaloneCharges } from '../list-standalone-charges';
+
+// ---------------------------------------------------------------------------
+// Mock Prisma via DI
+// ---------------------------------------------------------------------------
+
+function createMockDb() {
+  return {
+    charge: {
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
+    },
+  } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+
+// ---------------------------------------------------------------------------
+// Factory
+// ---------------------------------------------------------------------------
+
+function makeCharge(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ch_1',
+    status: 'OPEN',
+    asaasPaymentId: 'pay_asaas_1',
+    payerName: 'Maria Silva',
+    description: 'Taxa extra',
+    value: 150,
+    dueDate: new Date('2025-06-20'),
+    billingType: 'PIX',
+    invoiceUrl: 'https://asaas.com/pay/123',
+    standaloneInstallmentPlanId: null,
+    createdAt: new Date('2025-06-01'),
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('listStandaloneCharges', () => {
+  it('retorna lista vazia quando não há charges', async () => {
+    const db = createMockDb();
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(result.items).toEqual([]);
+    expect(result.total).toBe(0);
+    expect(result.page).toBe(1);
+  });
+
+  it('normaliza charge status OPEN → PENDING', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([makeCharge()]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].status).toBe('PENDING');
+    expect(result.items[0].payerName).toBe('Maria Silva');
+    expect(result.items[0].value).toBe(150);
+  });
+
+  it('normaliza charge status PAID', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([
+      makeCharge({ status: 'PAID' }),
+    ]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges(
+      { contaId: 'ct_1', statusView: 'paid' },
+      db,
+    );
+
+    expect(result.items[0].status).toBe('PAID');
+  });
+
+  it('identifica charges de parcelamento via isInstallment', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([
+      makeCharge({ standaloneInstallmentPlanId: 'sip_1' }),
+    ]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].isInstallment).toBe(true);
+  });
+
+  it('charge sem plano tem isInstallment=false', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([makeCharge()]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].isInstallment).toBe(false);
+  });
+
+  it('filtra cobrancaId=null na query (apenas standalone)', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.cobrancaId).toBeNull();
+    expect(where.contaId).toBe('ct_1');
+  });
+
+  it('statusView=open filtra status CREATED/OPEN/OVERDUE', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1', statusView: 'open' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.status).toEqual({ in: ['CREATED', 'OPEN', 'OVERDUE'] });
+  });
+
+  it('statusView=paid filtra status PAID', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1', statusView: 'paid' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('PAID');
+  });
+
+  it('statusView=all não filtra status', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1', statusView: 'all' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.status).toBeUndefined();
+  });
+
+  it('busca textual é passada como OR payerName/description', async () => {
+    const db = createMockDb();
+    await listStandaloneCharges({ contaId: 'ct_1', search: 'silva' }, db);
+
+    const where = db.charge.findMany.mock.calls[0][0].where;
+    expect(where.OR).toBeDefined();
+    expect(where.OR).toHaveLength(2);
+    expect(where.OR[0].payerName.contains).toBe('silva');
+  });
+
+  it('paginação funciona corretamente', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([makeCharge()]);
+    db.charge.count.mockResolvedValue(25);
+
+    const result = await listStandaloneCharges(
+      { contaId: 'ct_1', page: 2, pageSize: 10 },
+      db,
+    );
+
+    expect(result.page).toBe(2);
+    expect(result.pageSize).toBe(10);
+    expect(result.total).toBe(25);
+    expect(result.totalPages).toBe(3);
+
+    // Verifica skip/take
+    const call = db.charge.findMany.mock.calls[0][0];
+    expect(call.skip).toBe(10);
+    expect(call.take).toBe(10);
+  });
+
+  it('preenche fallback para payerName e description', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([
+      makeCharge({ payerName: null, description: null, value: null }),
+    ]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].payerName).toBe('Cliente');
+    expect(result.items[0].description).toBe('Cobrança Avulsa');
+    expect(result.items[0].value).toBe(0);
+  });
+});

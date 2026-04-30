@@ -1,0 +1,1 @@
+{"version":3,"file":"getMyAccountStatus.d.ts","sourceRoot":"","sources":["getMyAccountStatus.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAGH,OAAO,KAAK,EAAE,oBAAoB,EAAE,MAAM,gBAAgB,CAAC;AAE3D,MAAM,WAAW,wBAAwB;IACvC,MAAM,EAAE,MAAM,CAAC;CAChB;AAED,wBAAsB,kBAAkB,CAAC,MAAM,EAAE,wBAAwB,GAAG,OAAO,CAAC,oBAAoB,CAAC,CAKxG"}

@@ -1,0 +1,48 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "next", "@types/react", "@types/react-dom"],
+    "allowJs": false,
+    "noEmit": true,
+    "incremental": false,
+    "jsx": "preserve",
+    "paths": {
+      "@/*": ["./*"],
+      "@alusa/ui": ["../../packages/ui/src/index.ts"],
+      "@alusa/ui/*": ["../../packages/ui/src/*"],
+      "@alusa/asaas": ["../../packages/asaas/src/index.ts"],
+      "@alusa/asaas/*": ["../../packages/asaas/src/*"],
+      "@alusa/finance": ["../../packages/finance/src/index.ts"],
+      "@alusa/finance/*": ["../../packages/finance/src/*"],
+      "@alusa/shared": ["../../packages/shared/src/index.ts"],
+      "@alusa/shared/*": ["../../packages/shared/src/*"],
+      "@alusa/lib": ["../../packages/lib/src/index.ts"],
+      "@alusa/lib/*": ["../../packages/lib/src/*"]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "app/api/users/count/users-count"
+  ],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "e2e",
+    "tests",
+    "tests/e2e",
+    // TODO(refactor): reativar verificação após estabilizar RHF wizard
+    "components/colaboradores/ColaboradorWizardDialog.tsx",
+    "context7",
+    "../../context7"
+  ]
+}

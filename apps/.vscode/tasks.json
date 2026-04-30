@@ -1,0 +1,146 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build-and-test-colab",
+			"type": "shell",
+			"command": "pnpm -w -C .. build && pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent && pnpm -w -C .. -r test --silent",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-and-test-web",
+			"type": "shell",
+			"command": "pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-and-test-web-2",
+			"type": "shell",
+			"command": "pnpm -w -C .. build && pnpm -w -C web typecheck && pnpm -w -C web test:unit --silent",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-only",
+			"type": "shell",
+			"command": "pnpm -w -C web typecheck",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && rm -f tsconfig.tsbuildinfo 2>/dev/null || del /Q tsconfig.tsbuildinfo 2>nul && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && del /Q tsconfig.tsbuildinfo 2>nul && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node -e \"try{require('fs').readFileSync('./components/alunos/AlunoWizardDialog.tsx'); console.log('read ok');}catch(e){console.error(e)}\" && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "typecheck-web-local-no-pnpm",
+			"type": "shell",
+			"command": "cd web && node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "e2e-colaborador-wizard",
+			"type": "shell",
+			"command": "pnpm -C web test:e2e -g \"Wizard Colaborador - fluxo completo\"",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "dev-server",
+			"type": "shell",
+			"command": "cd web && pnpm dev",
+			"isBackground": true,
+			"group": "build"
+		}
+	]
+}

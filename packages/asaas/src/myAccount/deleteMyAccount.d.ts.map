@@ -1,0 +1,1 @@
+{"version":3,"file":"deleteMyAccount.d.ts","sourceRoot":"","sources":["deleteMyAccount.ts"],"names":[],"mappings":"AAAA;;;;;;;;GAQG;AAIH,MAAM,WAAW,qBAAqB;IACpC,MAAM,EAAE,MAAM,CAAC;IACf,YAAY,EAAE,MAAM,CAAC;CACtB;AAED,MAAM,MAAM,uBAAuB,GAAG;IACpC,YAAY,CAAC,EAAE,MAAM,CAAC;CACvB,CAAC;AAEF,wBAAsB,eAAe,CAAC,MAAM,EAAE,qBAAqB,GAAG,OAAO,CAAC,uBAAuB,CAAC,CAKrG"}

@@ -1,0 +1,30 @@
+-- Migration: auth_init
+DROP TABLE IF EXISTS "User" CASCADE;
+DO $$ BEGIN
+CREATE TYPE "Status" AS ENUM ('ATIVO','INATIVO');
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+DO $$ BEGIN
+CREATE TYPE "Role" AS ENUM ('ADMIN','FINANCEIRO','RECEPCAO','PROFESSOR','RESPONSAVEL');
+EXCEPTION WHEN duplicate_object THEN null; END $$;
+CREATE TABLE IF NOT EXISTS "Conta" (
+  "id" TEXT PRIMARY KEY,
+  "nome" TEXT NOT NULL,
+  "cpfCnpj" TEXT NOT NULL,
+  "status" "Status" NOT NULL DEFAULT 'ATIVO',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "Conta_cpfCnpj_idx" ON "Conta"("cpfCnpj");
+CREATE TABLE IF NOT EXISTS "Usuario" (
+  "id" TEXT PRIMARY KEY,
+  "contaId" TEXT NOT NULL REFERENCES "Conta"("id") ON DELETE CASCADE,
+  "nome" TEXT NOT NULL,
+  "email" TEXT NOT NULL UNIQUE,
+  "telefone" TEXT,
+  "senhaHash" TEXT NOT NULL,
+  "role" "Role" NOT NULL DEFAULT 'RESPONSAVEL',
+  "status" "Status" NOT NULL DEFAULT 'ATIVO',
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "Usuario_contaId_idx" ON "Usuario"("contaId");

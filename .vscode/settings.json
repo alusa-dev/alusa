@@ -1,0 +1,96 @@
+{
+  // Excluir do explorador
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true,
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.next": true,
+    "**/.turbo": true,
+    "**/.cache": true,
+    "**/.vscode": true,
+    "**/.idea": true,
+    "**/coverage": true,
+    "**/storybook-static": true,
+    "**/prisma/migrations": true
+  },
+  // Evitar que o watcher fique consumindo CPU
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/dist/**": true,
+    "**/build/**": true,
+    "**/.next/**": true,
+    "**/.turbo/**": true,
+    "**/.cache/**": true,
+    "**/coverage/**": true,
+    "**/storybook-static/**": true,
+    "**/prisma/migrations/**": true
+  },
+  // Ignorar em buscas
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.next": true,
+    "**/.turbo": true,
+    "**/.cache": true,
+    "**/coverage": true,
+    "**/storybook-static": true,
+    "**/prisma/migrations": true
+  },
+  "chat.mcp.serverSampling": {
+    "alusa/.vscode/mcp.json: alusadb": {
+      "allowedModels": [
+        "copilot/claude-sonnet-4.5",
+        "copilot/auto",
+        "copilot/claude-haiku-4.5",
+        "copilot/claude-opus-4.5",
+        "copilot/claude-sonnet-4",
+        "copilot/gemini-2.5-pro",
+        "copilot/gemini-3-flash-preview",
+        "copilot/gemini-3-pro-preview",
+        "copilot/gpt-4.1",
+        "copilot/gpt-4o",
+        "copilot/gpt-5",
+        "copilot/gpt-5-mini",
+        "copilot/gpt-5-codex",
+        "copilot/gpt-5.1",
+        "copilot/gpt-5.1-codex",
+        "copilot/gpt-5.1-codex-max",
+        "copilot/gpt-5.1-codex-mini",
+        "copilot/gpt-5.2",
+        "copilot/grok-code-fast-1",
+        "copilot/oswe-vscode-prime"
+      ]
+    },
+    "alusa/.vscode/mcp.json: shadcn": {
+      "allowedModels": [
+        "copilot/claude-sonnet-4.5",
+        "copilot/auto",
+        "copilot/claude-haiku-4.5",
+        "copilot/claude-opus-4.5",
+        "copilot/claude-sonnet-4",
+        "copilot/gemini-2.5-pro",
+        "copilot/gemini-3-flash-preview",
+        "copilot/gemini-3-pro-preview",
+        "copilot/gpt-4.1",
+        "copilot/gpt-4o",
+        "copilot/gpt-5",
+        "copilot/gpt-5-mini",
+        "copilot/gpt-5-codex",
+        "copilot/gpt-5.1",
+        "copilot/gpt-5.1-codex",
+        "copilot/gpt-5.1-codex-max",
+        "copilot/gpt-5.1-codex-mini",
+        "copilot/gpt-5.2",
+        "copilot/grok-code-fast-1",
+        "copilot/oswe-vscode-prime"
+      ]
+    }
+  },
+  "prisma.pinToPrisma6": true
+}

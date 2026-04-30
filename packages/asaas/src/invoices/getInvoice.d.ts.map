@@ -1,0 +1,1 @@
+{"version":3,"file":"getInvoice.d.ts","sourceRoot":"","sources":["getInvoice.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAEnD,MAAM,WAAW,gBAAgB;IAC/B,MAAM,EAAE,MAAM,CAAC;IACf,EAAE,EAAE,MAAM,CAAC;CACZ;AAED,wBAAsB,UAAU,CAAC,MAAM,EAAE,gBAAgB,GAAG,OAAO,CAAC,YAAY,CAAC,CAGhF"}

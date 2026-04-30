@@ -1,0 +1,3126 @@
+// Prisma schema inicial
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Models de autentica��o
+
+enum Status {
+  ATIVO
+  INATIVO
+}
+
+enum AuthActionTokenType {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+// Formas de pagamento compatíveis com Asaas billingType
+// Referência: https://docs.asaas.com/reference/criar-nova-cobranca
+// Apenas 4 tipos suportados pelo Asaas em pagamentos básicos
+enum FormaPagamento {
+  BOLETO // Sincronizado com BOLETO do Asaas - "Boleto Bancário / Pix"
+  PIX // Sincronizado com PIX do Asaas - "Pix"
+  CARTAO_CREDITO // Sincronizado com CREDIT_CARD do Asaas - "Cartão de Crédito"
+  INDEFINIDO // Sincronizado com UNDEFINED do Asaas - "Pergunte ao cliente"
+}
+
+// Lancamentos financeiros (Receita/Despesa)
+enum TipoLancamento {
+  RECEITA
+  DESPESA
+}
+
+enum OrigemLancamento {
+  SISTEMA
+  MANUAL
+}
+
+enum StatusLancamento {
+  RECEBIDO
+  PREVISTO
+  PAGO
+  PENDENTE
+  ESTORNADO
+}
+
+enum FormaPagamentoLancamento {
+  PIX
+  BOLETO
+  CARTAO_CREDITO
+  CARTAO_DEBITO
+  DINHEIRO
+  TRANSFERENCIA
+  TED
+  DOC
+  DEBITO_AUTOMATICO
+  CHEQUE
+  VOUCHER
+  OUTRO
+}
+
+enum CentroCustoTipo {
+  RECEITA
+  DESPESA
+  MISTO
+}
+
+enum StatusMatricula {
+  PENDENTE_TAXA
+  AGUARDANDO_CONFIRMACAO
+  ATIVA
+  PAUSADA
+  RECUSADA
+  CANCELADA
+}
+
+enum CalendarEventType {
+  AULA
+  REPOSICAO
+  EVENTO_INTERNO
+  EVENTO_EXTERNO
+  WORKSHOP
+  FERIADO
+  PAUSA
+  CANCELAMENTO
+  SUBSTITUICAO
+}
+
+enum CalendarEventStatus {
+  AGENDADO
+  CANCELADO
+  REALIZADO
+}
+
+enum AttendanceStatus {
+  PRESENTE
+  FALTA
+  FALTA_JUSTIFICADA
+  ATRASO
+  REPOSICAO
+}
+
+enum MakeupClassStatus {
+  AGENDADA
+  REALIZADA
+  CANCELADA
+}
+
+enum MakeupClassScope {
+  INDIVIDUAL
+  COLETIVA
+}
+
+enum AulasOperationLogLevel {
+  INFO
+  WARNING
+  ERROR
+}
+
+// Política de ativação de matrícula por conta/instituição
+enum MatriculaActivationPolicy {
+  IMMEDIATE // Matrícula é ativada imediatamente ao ser criada
+  REQUIRES_PAYMENT // Matrícula aguarda pagamento da taxa para ativar
+}
+
+enum RematriculaDebtPolicy {
+  PERMITIR_NORMALMENTE
+  PERMITIR_COM_AVISO
+  PERMITIR_COM_AUTORIZACAO_ADMINISTRATIVA
+  BLOQUEAR_REMATRICULA
+}
+
+enum RematriculaDebtScope {
+  QUALQUER_COBRANCA_EM_ABERTO
+  SOMENTE_ATRASADAS
+}
+
+enum RematriculaActionStatus {
+  LIBERADA
+  LIBERADA_COM_AVISO
+  REQUER_OVERRIDE
+  BLOQUEADA
+}
+
+enum RematriculaBlockReason {
+  SEM_BLOQUEIO
+  COBRANCA_EM_ABERTO
+  COBRANCA_ATRASADA
+  MULTIPLAS_COBRANCAS
+  AGUARDANDO_RECONCILIACAO
+  POLITICA_DA_ESCOLA
+  OUTRO
+}
+
+enum StatusTaxaMatricula {
+  PENDENTE
+  PAGO
+  EXPIRADO
+  ISENTO
+}
+
+enum TipoCobranca {
+  TAXA_MATRICULA
+  MENSALIDADE
+  EXTRA
+  AVULSA // Sincronizado com DETACHED do Asaas
+  PARCELADA // Sincronizado com INSTALLMENT do Asaas
+  RECORRENTE // Sincronizado com RECURRENT do Asaas
+}
+
+enum StatusCobranca {
+  A_VENCER // Cobrança criada, vencimento futuro
+  PENDENTE // Vencimento chegou, aguardando pagamento
+  PROCESSANDO // Pagamento em análise/processamento
+  PAGO // Pagamento confirmado
+  ATRASADO // Vencimento passou, sem pagamento
+  CANCELAMENTO_PENDENTE // Aguardando confirmação de cancelamento no Asaas
+  CANCELADO // Cobrança cancelada
+  ESTORNADO // Pagamento estornado/reembolsado
+  ESTORNADO_PARCIAL // Estorno parcial do pagamento
+}
+
+// Status de liquidação (saldo disponível) - separado do status de cobrança
+// Permite rastrear quando o valor está efetivamente disponível na conta
+enum LiquidacaoStatus {
+  NAO_APLICAVEL // Cobrança não paga ou cancelada
+  PENDENTE // Pagamento confirmado, saldo ainda não disponível
+  DISPONIVEL // Saldo creditado na conta
+}
+
+enum StatusFinanceiro {
+  ADIMPLENTE
+  PENDENTE_TAXA
+  PENDENTE_FINANCEIRO // Estado intermediário: aguardando confirmação de operação financeira
+  INADIMPLENTE
+  SUSPENSO // Matrículas com cobranças suspensas temporariamente
+}
+
+enum StatusContrato {
+  AGUARDANDO_ASSINATURA
+  ATIVO
+  EXPIRADO
+  CANCELADO
+}
+
+enum StatusAssinatura {
+  PENDENTE // Aguardando assinatura
+  ASSINADO // Contrato assinado
+  EXPIRADO // Link de assinatura expirou
+  CANCELADO // Assinatura cancelada
+}
+
+// ==================== Finance (Whitelabel) ====================
+
+enum CustomerPayerType {
+  ALUNO
+  RESPONSAVEL
+}
+
+// Modo de cobrança da matrícula
+// INDIVIDUAL: cobrança direta do aluno/responsável
+// SHARED_PLAN: compartilha plano com irmãos (desconto família)
+enum BillingMode {
+  INDIVIDUAL
+  SHARED_PLAN
+}
+
+// Status de sincronização com integração financeira
+enum IntegrationSyncStatus {
+  PENDENTE_SINCRONISMO
+  SINCRONIZADO
+  DIVERGENTE
+}
+
+// Tipo de operação de matrícula
+enum TipoOperacaoMatricula {
+  PAUSA
+  REATIVACAO
+  CANCELAMENTO
+  RECONCILIACAO
+}
+
+// Origem da operação
+enum OrigemOperacao {
+  USER
+  WEBHOOK
+  JOB
+}
+
+// Status de uma operação
+enum StatusOperacao {
+  PENDENTE_SINCRONISMO
+  SINCRONIZADO
+  ERRO
+  DIVERGENTE
+}
+
+// Status de operação de troca de pagador
+enum PayerChangeOperacaoStatus {
+  PENDING // Operação criada, validações passaram
+  OLD_SUB_CANCELLED // Assinatura antiga cancelada
+  NEW_SUB_CREATED // Nova assinatura criada
+  COMMITTED // Operação concluída com sucesso
+  FAILED // Falha recuperável
+  ROLLED_BACK // Rollback executado
+}
+
+enum RematriculaOperacaoStatus {
+  PENDING // Operação criada, validações passaram
+  PENDING_FINANCE // Aguardando resposta do gateway
+  COMMITTED // Assinatura criada com sucesso, origem cancelada
+  DONE // Webhook confirmou pagamento (legado)
+  FAILED // Falha recuperável (permite retry)
+  CANCELLED // Cancelada manualmente
+}
+
+enum RematriculaOperacaoStep {
+  VALIDATED // Validações passaram
+  NEW_MATRICULA_CREATED // Nova matrícula criada (provisória)
+  SUBSCRIPTION_CREATED // Assinatura criada no gateway
+  ORIGIN_CANCELLED // Matrícula origem cancelada
+  COMPLETED // Fluxo completo
+}
+
+enum ChargeStatus {
+  CREATED
+  PENDING_SYNC
+  OPEN
+  PAID
+  OVERDUE
+  CANCELED
+  REFUNDED
+}
+
+enum AsaasIntegrationJobStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum AsaasIntegrationJobType {
+  CREATE_PAYMENT
+  CREATE_INSTALLMENT
+  CREATE_SUBSCRIPTION
+}
+
+enum TransferStatus {
+  REQUESTED
+  PENDING
+  BLOCKED
+  PROCESSING
+  DONE
+  CANCELED
+  FAILED
+}
+
+enum PixTransferSessionStatus {
+  WAITING_PREVIEW
+  PREVIEW_READY
+  PREVIEW_UNAVAILABLE
+  WAITING_CONFIRM
+  DONE
+  FAILED
+  EXPIRED
+}
+
+enum SubscriptionStatus {
+  REQUESTED
+  ACTIVE
+  INACTIVE
+  EXPIRED
+  DELETED
+  FAILED
+}
+
+enum InstallmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELED
+}
+
+enum AsaasNotificationEvent {
+  PAYMENT_CREATED
+  PAYMENT_UPDATED
+  PAYMENT_DUEDATE_WARNING
+  SEND_LINHA_DIGITAVEL
+  PAYMENT_OVERDUE
+  PAYMENT_RECEIVED
+}
+
+enum NotificationCategory {
+  ENROLLMENT
+  BILLING
+  PAYMENT
+  SYSTEM
+}
+
+enum NotificationSeverity {
+  INFO
+  SUCCESS
+  WARNING
+  CRITICAL
+}
+
+enum NotificationType {
+  ENROLLMENT_CREATED
+  BILLING_CREATED
+  BILLING_OVERDUE
+  BILLING_CANCELLED
+  PAYMENT_CONFIRMED
+  PAYMENT_REFUNDED
+  SYSTEM_ATTENTION
+  TRANSFER_DONE
+  TRANSFER_FAILED
+  TRANSFER_CANCELLED
+  BALANCE_BLOCKED
+  ACCESS_TOKEN_ALERT
+  WEBHOOK_INTERRUPTED
+  WEBHOOK_DLQ
+}
+
+enum PeriodicidadePlano {
+  SEMANAL
+  QUINZENAL
+  MENSAL
+  TRIMESTRAL
+  ANUAL
+}
+
+enum Role {
+  ADMIN
+  FINANCEIRO
+  RECEPCAO
+  PROFESSOR
+  RESPONSAVEL
+}
+
+enum Genero {
+  MASCULINO
+  FEMININO
+  NAO_BINARIO
+  OUTRO
+  PREFERE_NAO_INFORMAR
+}
+
+// --- Colaboradores ---
+
+enum CargoColaborador {
+  PROFESSOR
+  RECEPCAO
+  FINANCEIRO
+  ADMINISTRATIVO
+  OUTRO
+}
+
+enum StatusColaborador {
+  ATIVO
+  INATIVO
+}
+
+model Colaborador {
+  id      String @id @default(cuid())
+  contaId String
+
+  // Identificação
+  foto       String?
+  nome       String
+  nomeSocial String?
+  dataNasc   DateTime?
+  genero     Genero?
+
+  // Documentos
+  cpf          String?
+  rg           String?
+  orgaoEmissor String?
+  dataEmissao  DateTime?
+
+  // Contato
+  email                     String?
+  telefone1                 String?
+  contatoEmergenciaTelefone String?
+
+  // Endereço
+  enderecoCep         String? @db.Char(8)
+  enderecoLogradouro  String?
+  enderecoNumero      String?
+  enderecoComplemento String?
+  enderecoBairro      String?
+  enderecoCidade      String?
+  enderecoUf          String? @db.Char(2)
+
+  // Vínculo
+  cargo            CargoColaborador
+  especialidade    String?
+  status           StatusColaborador @default(ATIVO)
+  dataAdmissao     DateTime?
+  dataDesligamento DateTime?
+  observacoes      String?
+  salario          Decimal?          @db.Decimal(12, 2)
+
+  // Acesso ao sistema
+  temAcesso Boolean  @default(false)
+  usuarioId String?  @unique
+  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  // Unicidade por conta (multi-tenant)
+  @@unique([contaId, cpf])
+  @@unique([contaId, email])
+  @@index([contaId])
+}
+
+model Conta {
+  id                           String                        @id @default(cuid())
+  nome                         String
+  cpfCnpj                      String?
+  status                       Status                        @default(ATIVO)
+  financeStatus                FinanceStatus                 @default(FINANCE_NOT_STARTED)
+  deletedAt                    DateTime?
+  deletedByUserId              String?
+  deletedByUser                Usuario?                      @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
+  deleteReason                 String?
+  createdAt                    DateTime                      @default(now())
+  updatedAt                    DateTime                      @updatedAt
+  // Dono (owner) da conta — imutável na lógica de negócio
+  ownerUserId                  String?
+  ownerUser                    Usuario?                      @relation("ContaOwner", fields: [ownerUserId], references: [id])
+  usuarios                     Usuario[]                     @relation("ContaUsuarios")
+  usuariosConta                UsuarioConta[]
+  invites                      Invite[]
+  alunos                       Aluno[]
+  turmas                       Turma[]
+  planos                       Plano[]
+  combos                       Combo[]
+  descontos                    Desconto[]
+  webhooks                     WebhookAsaas[]
+  webhooksArchive              WebhookAsaasArchive[]
+  logsFinanceiros              LogFinanceiro[]
+  logsIntegracao               LogIntegracao[]
+  asaasIntegrationJobs         AsaasIntegrationJob[]
+  asaasNotificationPreferences AsaasNotificationPreference[]
+  // Núcleo financeiro whitelabel (Fases 0+)
+  financeProfile               FinanceProfile?
+  tenantFeatureFlags           TenantFeatureFlags?
+  auditLogs                    AuditLog[]
+  notifications                Notification[]
+  notificationRecipients       NotificationRecipient[]
+  customers                    Customer[]
+  charges                      Charge[]
+  chargeReadModels             ChargeReadModel[]
+  invoices                     Invoice[]
+  subscriptions                Subscription[]
+  installmentPlans             InstallmentPlan[]
+  standaloneInstallmentPlans   StandaloneInstallmentPlan[]
+  standaloneSubscriptions      StandaloneSubscription[]
+  transferRequests             TransferRequest[]
+  pixTransferSessions          PixTransferSession[]
+  professores                  Professor[]
+  colaboradores                Colaborador[]
+  responsaveis                 Responsavel[]
+  modalidades                  Modalidade[]
+  salas                        Sala[]
+  lancamentos                  Lancamento[]
+  centrosCusto                 CentroCusto[]
+  categoriasLancamento         CategoriaLancamento[]
+  portalEventos                PortalEvento[]
+  contratoTemplates            ContratoTemplate[]
+  contratoModelos              ContratoModelo[]
+  rematriculaOperacoes         RematriculaOperacao[]
+  payerChangeOperacoes         PayerChangeOperacao[]
+  matriculaOperacoes           MatriculaOperacao[]
+  calendarEvents               CalendarEvent[]
+  attendanceRecords            AttendanceRecord[]
+  makeupClasses                MakeupClass[]
+  aulasOperationLogs           AulasOperationLog[]
+  // Loja / Vendas
+  products                     Product[]
+  productCategories            ProductCategory[]
+  sales                        Sale[]
+  inventoryBalances            InventoryBalance[]
+  inventoryMovements           InventoryMovement[]
+  restockOrders                RestockOrder[]
+  // Campos de endereco da conta (escola)
+  enderecoCep                  String?                       @db.Char(8)
+  enderecoLogradouro           String?
+  enderecoNumero               String?
+  enderecoBairro               String?
+  enderecoCidade               String?
+  enderecoUf                   String?                       @db.Char(2)
+  // Credenciais de integração (criptografadas em repouso). Armazenamos separadamente para permitir rotação.
+  asaasApiKeyEncrypted         String?
+  asaasWebhookSecretEncrypted  String?
+  asaasCredsUpdatedAt          DateTime?
+  // Política de ativação de matrícula
+  matriculaActivationPolicy    MatriculaActivationPolicy     @default(IMMEDIATE)
+  financialPolicy              ContaFinancialPolicy?
+
+  @@index([cpfCnpj])
+  @@index([ownerUserId])
+  @@index([deletedAt])
+  @@index([deletedByUserId])
+}
+
+model ContaFinancialPolicy {
+  id                                 String                @id @default(cuid())
+  contaId                            String                @unique
+  rematriculaDebtPolicy              RematriculaDebtPolicy @default(PERMITIR_NORMALMENTE)
+  allowNewFinancialCycleWithOpenDebt Boolean               @default(true)
+  debtScope                          RematriculaDebtScope  @default(QUALQUER_COBRANCA_EM_ABERTO)
+  overrideRoles                      String[]              @default(["ADMIN", "FINANCEIRO"])
+  requireOverrideReason              Boolean               @default(true)
+  requireFullAudit                   Boolean               @default(true)
+  blockOnUnknownFinancialStatus      Boolean               @default(true)
+  createdAt                          DateTime              @default(now())
+  updatedAt                          DateTime              @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId])
+}
+
+model AsaasNotificationPreference {
+  id                              String                 @id @default(cuid())
+  contaId                         String
+  event                           AsaasNotificationEvent
+  scheduleOffset                  Int                    @default(0)
+  enabled                         Boolean                @default(true)
+  emailEnabledForProvider         Boolean                @default(false)
+  smsEnabledForProvider           Boolean                @default(false)
+  emailEnabledForCustomer         Boolean                @default(true)
+  smsEnabledForCustomer           Boolean                @default(true)
+  whatsappEnabledForCustomer      Boolean                @default(false)
+  phoneCallEnabledForCustomer     Boolean                @default(false)
+  whatsappCapabilitySupported     Boolean                @default(true)
+  whatsappCapabilityLastCheckedAt DateTime?
+  whatsappCapabilityLastErrorCode String?
+  whatsappCapabilityEnvironment   String?
+  createdAt                       DateTime               @default(now())
+  updatedAt                       DateTime               @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, event, scheduleOffset])
+  @@index([contaId])
+}
+
+/// Modelo de Professor com foco em multi-tenant via contaId.
+/// Decisões:
+/// - status como String com default "ATIVO" (evita acoplamento a enum para flexibilidade futura).
+/// - email opcional porém único globalmente (Postgres permite vários NULLs em índice único).
+/// - nome terá validação de tamanho mínimo (>= 2) aplicada na camada de aplicação (Zod), não no schema.
+/// - Relação futura com TurmaProfessor (campo `turmas`) ficará comentada até o modelo existir.
+enum StatusContratual {
+  EFETIVO
+  TEMPORARIO
+  PRESTADOR
+  VOLUNTARIO
+}
+
+model Professor {
+  id      String @id @default(cuid())
+  contaId String
+
+  // Dados pessoais
+  nome          String
+  cpf           String?
+  rg            String?
+  dataNasc      DateTime
+  sexo          String?
+  estadoCivil   String?
+  nacionalidade String?
+
+  // Contato
+  email        String?
+  telefoneCel  String
+  telefoneFixo String?
+
+  // Endereço
+  cep         String?
+  logradouro  String?
+  numero      String?
+  complemento String?
+  bairro      String?
+  cidade      String?
+  uf          String? @db.Char(2)
+
+  // Profissional
+  formacao         String?
+  especialidades   String[]          @default([])
+  dataAdmissao     DateTime?
+  statusContratual StatusContratual?
+  cargaHoraria     Int?
+  miniBio          String?
+  foto             String?
+
+  status    Status   @default(ATIVO)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta                    Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  turmas                   TurmaProfessor[]
+  calendarEventProfessores CalendarEventProfessor[]
+
+  // Multi-tenant: unicidade por conta
+  @@unique([contaId, cpf])
+  @@unique([contaId, email])
+  @@index([contaId], name: "idx_professor_conta")
+}
+
+model Usuario {
+  id                   String    @id @default(cuid())
+  contaId              String
+  conta                Conta     @relation("ContaUsuarios", fields: [contaId], references: [id], onDelete: Cascade)
+  // Backrelation: contas onde este usuário é o owner
+  ownedContas          Conta[]   @relation("ContaOwner")
+  deletedContas        Conta[]   @relation("ContaDeletedBy")
+  nome                 String
+  email                String    @unique
+  telefone             String?
+  birthDate            DateTime?
+  foto                 String?
+  bio                  String?
+  locale               String    @default("pt-BR")
+  theme                String    @default("system")
+  notifyEmailProduct   Boolean   @default(true)
+  notifyEmailSecurity  Boolean   @default(true)
+  notifyEmailMarketing Boolean   @default(false)
+  notifyWhatsapp       Boolean   @default(true)
+  notifySms            Boolean   @default(false)
+  senhaHash            String
+  emailVerifiedAt      DateTime?
+  role                 Role      @default(RESPONSAVEL)
+  status               Status    @default(ATIVO)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  colaborador           Colaborador?
+  // Backrelation para vínculo opcional com Responsavel (1-1)
+  responsavel           Responsavel?
+  // Backrelation para vínculo opcional com Aluno (1-1)
+  aluno                 Aluno?
+  checkoutLinksCriados  CheckoutLink[]
+  matriculaLogs         MatriculaLog[]
+  logsFinanceiros       LogFinanceiro[]
+  lancamentosCriados    Lancamento[]
+  rematriculasOperacoes RematriculaOperacao[]
+  payerChangeOperacoes  PayerChangeOperacao[]
+  matriculaOperacoes    MatriculaOperacao[]
+  notifications         NotificationRecipient[]
+  attendanceRecorded    AttendanceRecord[]      @relation("AttendanceRecordedBy")
+  makeupClassesCreated  MakeupClass[]           @relation("MakeupClassCreatedBy")
+  authActionTokens      AuthActionToken[]
+  salesOperated         Sale[]                  @relation("SalesOperated")
+  inventoryMovementsCreated InventoryMovement[] @relation("InventoryMovementActor")
+  restockOrdersCreated  RestockOrder[]          @relation("RestockOrderCreatedBy")
+  acessosConta          UsuarioConta[]          @relation("UsuarioContaUsuario")
+  acessosConvidados     UsuarioConta[]          @relation("UsuarioContaInvitedBy")
+
+  @@index([contaId])
+}
+
+model UsuarioConta {
+  id             String   @id @default(cuid())
+  usuarioId      String
+  contaId        String
+  role           Role
+  status         Status   @default(ATIVO)
+  invitedById    String?
+  inviteId       String?  @unique
+  lastAccessedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  usuario   Usuario @relation("UsuarioContaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  conta     Conta   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  invitedBy Usuario? @relation("UsuarioContaInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  invite    Invite? @relation("UsuarioContaInvite", fields: [inviteId], references: [id], onDelete: SetNull)
+
+  @@unique([usuarioId, contaId])
+  @@index([contaId, role, status], name: "idx_usuario_conta_conta_role_status")
+  @@index([usuarioId, status], name: "idx_usuario_conta_usuario_status")
+}
+
+// --- Modelos de dom�nio Escola ---
+
+model Aluno {
+  id                             String    @id @default(cuid())
+  contaId                        String
+  nome                           String
+  nomeSocial                     String?
+  dataNasc                       DateTime
+  cpf                            String?
+  email                          String?
+  telefone                       String?
+  foto                           String?
+  // Vinculação opcional com um usuário do sistema (para acesso/portal do aluno)
+  usuarioId                      String?   @unique
+  usuario                        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+  // Campos de endere�o estruturados
+  enderecoCep                    String?   @db.Char(8)
+  enderecoLogradouro             String?
+  enderecoNumero                 String?
+  enderecoComplemento            String?
+  enderecoBairro                 String?
+  enderecoCidade                 String?
+  enderecoUf                     String?   @db.Char(2)
+  observacao                     String?
+  genero                         Genero?
+  modalidadePrincipal            String?
+  nivel                          String?
+  alergias                       String?
+  restricoesMedicas              String?
+  contatoEmergenciaNome          String?
+  contatoEmergenciaTelefone      String?
+  origemCadastro                 String?
+  bolsaDescontoPercent           Decimal?  @db.Decimal(5, 2)
+  isentoTaxaMatricula            Boolean   @default(false)
+  consentimentoImagem            Boolean   @default(false)
+  dataConsentimentoImagem        DateTime?
+  consentimentoComunicacoes      Boolean   @default(true)
+  tamanhoCamiseta                String?
+  tamanhoCalcado                 String?
+  codigoInterno                  String?
+  tags                           String[]  @default([])
+  status                         Status    @default(ATIVO)
+  asaasId                        String?   @unique
+  asaasCustomerId                String?   @unique
+  asaasCustomerExternalReference String?
+  dataInativacao                 DateTime?
+  motivoInativacao               String?
+  createdAt                      DateTime  @default(now())
+  updatedAt                      DateTime  @updatedAt
+
+  conta             Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  inscricoesEvento  PortalEventoInscricao[]
+  responsaveis      AlunoResponsavel[]
+  matriculas        Matricula[]
+  attendanceRecords AttendanceRecord[]
+  makeupClasses     MakeupClass[]
+  sales             Sale[]
+
+  @@unique([contaId, cpf])
+  @@unique([contaId, email])
+  @@unique([contaId, codigoInterno])
+  @@unique([contaId, asaasCustomerExternalReference])
+  @@index([contaId])
+}
+
+model Responsavel {
+  id                             String    @id @default(cuid())
+  contaId                        String // Multi-tenant: cada responsável pertence a uma conta
+  nome                           String
+  cpf                            String
+  email                          String
+  telefone                       String
+  // Campos de endereço estruturados
+  enderecoCep                    String?
+  enderecoLogradouro             String?
+  enderecoNumero                 String?
+  enderecoComplemento            String?
+  enderecoBairro                 String?
+  enderecoCidade                 String?
+  enderecoUf                     String?
+  financeiro                     Boolean   @default(false)
+  asaasId                        String?
+  asaasCustomerId                String?
+  asaasCustomerExternalReference String?
+  asaasCreditCardToken           String? // Token do cartão para débito automático
+  // Metadados do cartão (para exibição, não contém dados sensíveis)
+  creditCardBrand                String? // Bandeira do cartão (Visa, Mastercard, etc)
+  creditCardLast4                String? // Últimos 4 dígitos
+  creditCardExpiryMonth          Int? // Mês de expiração (1-12)
+  creditCardExpiryYear           Int? // Ano de expiração (4 dígitos)
+  creditCardUpdatedAt            DateTime? // Data da última atualização do cartão
+  preferredBillingType           String? // Tipo de cobrança preferido (BOLETO, PIX, CREDIT_CARD)
+  // Vinculação opcional com um usuário do sistema (para acesso via portal)
+  usuarioId                      String?   @unique
+  usuario                        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  conta                 Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  alunos                AlunoResponsavel[]
+  matriculasFinanceiras Matricula[]        @relation("MatriculaResponsavelFinanceiro")
+  sales                 Sale[]
+
+  // Multi-tenant: unicidade por conta
+  @@unique([contaId, cpf])
+  @@unique([contaId, email])
+  @@unique([contaId, asaasCustomerExternalReference])
+  @@index([contaId])
+}
+
+model AlunoResponsavel {
+  id            String @id @default(cuid())
+  alunoId       String
+  responsavelId String
+  tipoVinculo   String
+
+  aluno       Aluno       @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  responsavel Responsavel @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+
+  @@index([alunoId])
+  @@index([responsavelId])
+}
+
+model Turma {
+  id           String   @id @default(cuid())
+  contaId      String
+  nome         String
+  modalidadeId String
+  salaId       String
+  diasSemana   String[]
+  horaInicio   String
+  horaFim      String
+  idadeMin     Int?
+  idadeMax     Int?
+  capacidade   Int
+  status       String   @default("ATIVO")
+  observacao   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conta                Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  modalidade           Modalidade       @relation(fields: [modalidadeId], references: [id])
+  sala                 Sala             @relation(fields: [salaId], references: [id])
+  matriculas           Matricula[]
+  combos               ComboTurma[]
+  professores          TurmaProfessor[]
+  matriculaTurmas      MatriculaTurma[]
+  calendarEvents       CalendarEvent[]
+  makeupClassesOrigem  MakeupClass[]    @relation("MakeupClassTurmaOrigem")
+  makeupClassesDestino MakeupClass[]    @relation("MakeupClassTurmaDestino")
+
+  @@unique([contaId, nome], name: "uq_turma_conta_nome")
+  @@index([contaId], name: "idx_turma_conta")
+  @@index([modalidadeId])
+  @@index([salaId])
+}
+
+model Modalidade {
+  id        String   @id @default(cuid())
+  contaId   String
+  nome      String
+  descricao String?
+  status    String   @default("ATIVO")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta  Conta   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  turmas Turma[]
+
+  @@unique([contaId, nome], name: "uq_modalidade_conta_nome")
+  @@index([contaId], name: "idx_modalidade_conta")
+}
+
+model Sala {
+  id         String   @id @default(cuid())
+  contaId    String
+  nome       String
+  descricao  String?
+  capacidade Int
+  status     Status   @default(ATIVO)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  conta          Conta           @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  turmas         Turma[]
+  calendarEvents CalendarEvent[]
+
+  @@unique([contaId, nome], name: "uq_sala_conta_nome")
+  @@index([contaId], name: "idx_sala_conta")
+}
+
+model TurmaProfessor {
+  id          String   @id @default(cuid())
+  turmaId     String
+  professorId String
+  createdAt   DateTime @default(now())
+
+  turma     Turma     @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+  professor Professor @relation(fields: [professorId], references: [id])
+
+  @@unique([turmaId, professorId], name: "uq_turmaprofessor_unique")
+  @@index([turmaId], name: "idx_turmaprofessor_turma")
+  @@index([professorId], name: "idx_turmaprofessor_professor")
+}
+
+model CalendarEvent {
+  id               String              @id @default(cuid())
+  contaId          String
+  tipo             CalendarEventType
+  status           CalendarEventStatus @default(AGENDADO)
+  source           String?
+  sourceRuleKey    String?
+  manuallyAdjusted Boolean             @default(false)
+  titulo           String
+  descricao        String?
+  startAt          DateTime
+  endAt            DateTime
+  turmaId          String?
+  salaId           String?
+  externalProvider String?
+  externalEventId  String?
+  syncedAt         DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  conta                Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  turma                Turma?                   @relation(fields: [turmaId], references: [id], onDelete: SetNull)
+  sala                 Sala?                    @relation(fields: [salaId], references: [id], onDelete: SetNull)
+  professores          CalendarEventProfessor[]
+  attendanceRecords    AttendanceRecord[]
+  makeupClassesOrigem  MakeupClass[]            @relation("MakeupClassEventoOrigem")
+  makeupClassesDestino MakeupClass[]            @relation("MakeupClassEventoDestino")
+
+  @@unique([contaId, sourceRuleKey, startAt], name: "uq_calendar_event_source_rule_start")
+  @@unique([contaId, externalProvider, externalEventId], name: "uq_calendar_event_external")
+  @@index([contaId, startAt], name: "idx_calendar_event_conta_start")
+  @@index([contaId, endAt], name: "idx_calendar_event_conta_end")
+  @@index([contaId, tipo, status], name: "idx_calendar_event_conta_tipo_status")
+  @@index([turmaId, startAt], name: "idx_calendar_event_turma_start")
+  @@index([salaId, startAt], name: "idx_calendar_event_sala_start")
+}
+
+model CalendarEventProfessor {
+  id              String   @id @default(cuid())
+  calendarEventId String
+  professorId     String
+  createdAt       DateTime @default(now())
+
+  calendarEvent CalendarEvent @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
+  professor     Professor     @relation(fields: [professorId], references: [id], onDelete: Cascade)
+
+  @@unique([calendarEventId, professorId], name: "uq_calendar_event_professor")
+  @@index([calendarEventId], name: "idx_calendar_event_professor_event")
+  @@index([professorId], name: "idx_calendar_event_professor_professor")
+}
+
+model AttendanceRecord {
+  id               String           @id @default(cuid())
+  contaId          String
+  calendarEventId  String
+  alunoId          String
+  matriculaId      String?
+  status           AttendanceStatus
+  observacao       String?
+  recordedAt       DateTime
+  recordedByUserId String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  conta         Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  calendarEvent CalendarEvent @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
+  aluno         Aluno         @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  matricula     Matricula?    @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
+  recordedBy    Usuario?      @relation("AttendanceRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([calendarEventId, alunoId], name: "uq_attendance_event_aluno")
+  @@index([contaId, recordedAt], name: "idx_attendance_conta_recorded")
+  @@index([calendarEventId], name: "idx_attendance_event")
+  @@index([alunoId], name: "idx_attendance_aluno")
+  @@index([matriculaId], name: "idx_attendance_matricula")
+}
+
+model MakeupClass {
+  id              String            @id @default(cuid())
+  contaId         String
+  scope           MakeupClassScope  @default(INDIVIDUAL)
+  alunoId         String?
+  matriculaId     String?
+  eventoOrigemId  String
+  eventoDestinoId String
+  turmaOrigemId   String
+  turmaDestinoId  String
+  status          MakeupClassStatus @default(AGENDADA)
+  observacao      String?
+  createdByUserId String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  conta         Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  aluno         Aluno?        @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  matricula     Matricula?    @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
+  eventoOrigem  CalendarEvent @relation("MakeupClassEventoOrigem", fields: [eventoOrigemId], references: [id], onDelete: Cascade)
+  eventoDestino CalendarEvent @relation("MakeupClassEventoDestino", fields: [eventoDestinoId], references: [id], onDelete: Cascade)
+  turmaOrigem   Turma         @relation("MakeupClassTurmaOrigem", fields: [turmaOrigemId], references: [id], onDelete: Cascade)
+  turmaDestino  Turma         @relation("MakeupClassTurmaDestino", fields: [turmaDestinoId], references: [id], onDelete: Cascade)
+  createdBy     Usuario?      @relation("MakeupClassCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, createdAt], name: "idx_makeup_class_conta_created")
+  @@index([alunoId], name: "idx_makeup_class_aluno")
+  @@index([matriculaId], name: "idx_makeup_class_matricula")
+  @@index([eventoOrigemId], name: "idx_makeup_class_evento_origem")
+  @@index([eventoDestinoId], name: "idx_makeup_class_evento_destino")
+  @@index([turmaOrigemId], name: "idx_makeup_class_turma_origem")
+  @@index([turmaDestinoId], name: "idx_makeup_class_turma_destino")
+}
+
+model AulasOperationLog {
+  id         String                 @id @default(cuid())
+  contaId    String
+  level      AulasOperationLogLevel @default(INFO)
+  action     String
+  entityType String?
+  entityId   String?
+  message    String
+  details    Json?
+  createdAt  DateTime               @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, createdAt], name: "idx_aulas_operation_log_conta_created")
+  @@index([contaId, action], name: "idx_aulas_operation_log_conta_action")
+  @@index([entityType, entityId], name: "idx_aulas_operation_log_entity")
+}
+
+model Plano {
+  id            String             @id @default(cuid())
+  contaId       String
+  nome          String
+  descricao     String?
+  periodicidade PeriodicidadePlano @default(MENSAL)
+  valor         Decimal            @db.Decimal(12, 2)
+  status        Status             @default(ATIVO)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  conta      Conta       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  matriculas Matricula[]
+
+  @@unique([contaId, nome], name: "uq_plano_conta_nome")
+  @@index([contaId], name: "idx_plano_conta")
+}
+
+model Matricula {
+  id                      String                @id @default(cuid())
+  alunoId                 String
+  responsavelFinanceiroId String?
+  turmaId                 String?
+  planoId                 String? // Opcional quando comboId é fornecido (combo define valor/periodicidade)
+  comboId                 String?
+  rematriculadaDeId       String? // Referência à matrícula origem (rematrícula)
+  dataInicio              DateTime
+  dataFim                 DateTime?
+  dataFimContrato         DateTime
+  status                  StatusMatricula       @default(ATIVA)
+  statusFinanceiro        StatusFinanceiro      @default(PENDENTE_TAXA)
+  statusContrato          StatusContrato        @default(AGUARDANDO_ASSINATURA)
+  contratoAtualId         String?               @unique
+  taxaMatricula           Decimal               @db.Decimal(12, 2)
+  taxaStatus              StatusTaxaMatricula   @default(PENDENTE)
+  taxaIsenta              Boolean               @default(false)
+  taxaJustificativa       String?
+  formaPagamento          FormaPagamento?       @default(BOLETO)
+  formaPagamentoTaxa      FormaPagamento?       @default(BOLETO)
+  vencimentoDia           Int                   @default(5)
+  // Configurações financeiras de juros, multa e desconto (padrão Asaas API)
+  // @see https://docs.asaas.com/docs/criando-uma-assinatura
+  jurosMensal             Decimal?              @db.Decimal(5, 2) // Ex: 1.0 = 1% ao mês
+  jurosTipo               String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  multaPercentual         Decimal?              @db.Decimal(5, 2) // Ex: 2.0 = 2%
+  multaTipo               String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  descontoAntecipado      Decimal?              @db.Decimal(5, 2) // Ex: 5.0 = 5% de desconto
+  descontoTipo            String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  prazoDesconto           Int?                  @default(0) // Quantos dias antes do vencimento para aplicar desconto
+  asaasId                 String?               @unique
+  asaasSubscriptionId     String?               @unique
+  billingMode             BillingMode           @default(INDIVIDUAL) // Modo de cobrança (PR2)
+  timeoutAppliedAt        DateTime? // Quando timeout foi aplicado (PR3)
+  // Campos de pausa
+  pausaAtiva              Boolean               @default(false)
+  dataInicioPausa         DateTime?
+  dataRetornoPrevista     DateTime?
+  manterVaga              Boolean               @default(true)
+  cobrarDurantePausa      Boolean               @default(false)
+  motivoPausa             String?
+  integrationStatus       IntegrationSyncStatus @default(SINCRONIZADO)
+  warningCode             String?
+  version                 Int                   @default(0)
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  aluno                      Aluno                 @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  responsavelFinanceiro      Responsavel?          @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
+  turma                      Turma?                @relation(fields: [turmaId], references: [id])
+  plano                      Plano?                @relation(fields: [planoId], references: [id])
+  combo                      Combo?                @relation(fields: [comboId], references: [id])
+  descontos                  DescontoMatricula[]
+  cobrancas                  Cobranca[]
+  checkoutLinks              CheckoutLink[]
+  logs                       MatriculaLog[]
+  matriculaTurmas            MatriculaTurma[]
+  contratos                  Contrato[]            @relation("MatriculaContratos")
+  contratoAtual              Contrato?             @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
+  subscriptions              Subscription[]
+  installmentPlans           InstallmentPlan[]
+  operacoes                  MatriculaOperacao[]
+  rematriculadaDe            Matricula?            @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
+  rematriculasDerivadas      Matricula[]           @relation("RematriculaHistorico")
+  rematriculaOperacoesOrigem RematriculaOperacao[] @relation("RematriculaOrigem")
+  rematriculaOperacoesNova   RematriculaOperacao[] @relation("RematriculaNova")
+  payerChangeOperacoes       PayerChangeOperacao[]
+  attendanceRecords          AttendanceRecord[]
+  makeupClasses              MakeupClass[]
+  sales                      Sale[]
+
+  @@index([alunoId], name: "idx_matricula_aluno")
+  @@index([responsavelFinanceiroId], name: "idx_matricula_responsavel")
+  @@index([turmaId], name: "idx_matricula_turma")
+  @@index([planoId], name: "idx_matricula_plano")
+  @@index([comboId], name: "idx_matricula_combo")
+  @@index([status], name: "idx_matricula_status")
+  @@index([statusContrato], name: "idx_matricula_status_contrato")
+  @@index([dataFimContrato], name: "idx_matricula_fim_contrato")
+  @@index([contratoAtualId], name: "idx_matricula_contrato_atual")
+}
+
+model MatriculaTurma {
+  id          String   @id @default(cuid())
+  matriculaId String
+  turmaId     String
+  createdAt   DateTime @default(now())
+
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  turma     Turma     @relation(fields: [turmaId], references: [id])
+
+  @@unique([matriculaId, turmaId], name: "uq_matriculaturma_unique")
+  @@index([matriculaId], name: "idx_matriculaturma_matricula")
+  @@index([turmaId], name: "idx_matriculaturma_turma")
+}
+
+model Desconto {
+  id        String   @id @default(cuid())
+  contaId   String
+  nome      String
+  tipo      String
+  valor     Decimal  @db.Decimal(12, 2)
+  escopo    String
+  status    String   @default("ATIVO")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta      Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  matriculas DescontoMatricula[]
+
+  @@unique([contaId, nome], name: "uq_desconto_conta_nome")
+  @@index([contaId], name: "idx_desconto_conta")
+}
+
+model DescontoMatricula {
+  id          String   @id @default(cuid())
+  matriculaId String
+  descontoId  String
+  valorFinal  Decimal  @db.Decimal(12, 2)
+  createdAt   DateTime @default(now())
+
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  desconto  Desconto  @relation(fields: [descontoId], references: [id])
+
+  @@unique([matriculaId, descontoId], name: "uq_descontomatricula_unique")
+  @@index([matriculaId], name: "idx_descontomatricula_matricula")
+  @@index([descontoId], name: "idx_descontomatricula_desconto")
+}
+
+model Combo {
+  id            String             @id @default(cuid())
+  contaId       String
+  nome          String
+  descricao     String?
+  valor         Decimal            @db.Decimal(12, 2) // Valor do ciclo (conforme periodicidade)
+  periodicidade PeriodicidadePlano @default(MENSAL) // Ciclo de cobrança (Asaas)
+  status        String             @default("ATIVO")
+  vagasLimite   Int?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  conta      Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  turmas     ComboTurma[]
+  matriculas Matricula[]
+
+  @@unique([contaId, nome], name: "uq_combo_conta_nome")
+  @@index([contaId], name: "idx_combo_conta")
+}
+
+model ComboTurma {
+  id        String   @id @default(cuid())
+  comboId   String
+  turmaId   String
+  createdAt DateTime @default(now())
+
+  combo Combo @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  turma Turma @relation(fields: [turmaId], references: [id])
+
+  @@index([turmaId], name: "idx_comboturma_turma")
+}
+
+model Cobranca {
+  id                String         @id @default(cuid())
+  matriculaId       String
+  tipo              TipoCobranca   @default(MENSALIDADE)
+  descricao         String?
+  competenciaInicio DateTime
+  competenciaFim    DateTime
+  valor             Decimal        @db.Decimal(12, 2)
+  vencimento        DateTime
+  dataPagamento     DateTime?
+  formaPagamento    FormaPagamento @default(BOLETO)
+  status            StatusCobranca @default(PENDENTE)
+  asaasId           String?        @unique
+  asaasPaymentId    String?        @unique
+
+  // Campos financeiros adicionais - Juros
+  jurosPercentual Decimal? @default(0) @db.Decimal(5, 2) // Percentual de juros ao mês (%)
+  jurosValorFixo  Decimal? @default(0) @db.Decimal(12, 2) // Valor fixo de juros ao mês (R$)
+  juros           Decimal? @default(0) @db.Decimal(12, 2) // Valor total de juros acumulados
+
+  // Campos financeiros adicionais - Multa
+  multaTipo       String?  @default("VALOR_FIXO") // VALOR_FIXO ou PERCENTUAL
+  multaPercentual Decimal? @default(0) @db.Decimal(5, 2) // Percentual de multa (%)
+  multaValorFixo  Decimal? @default(0) @db.Decimal(12, 2) // Valor fixo da multa (R$)
+  multa           Decimal? @default(0) @db.Decimal(12, 2) // Valor total da multa aplicada
+
+  // Campos financeiros adicionais - Desconto
+  descontoTipo        String?  @default("VALOR_FIXO") // VALOR_FIXO ou PERCENTUAL
+  descontoPercentual  Decimal? @default(0) @db.Decimal(5, 2) // Percentual de desconto (%)
+  descontoValorFixo   Decimal? @default(0) @db.Decimal(12, 2) // Valor fixo do desconto (R$)
+  descontoPrazoMaximo String?  @default("ATE_VENCIMENTO") // ATE_VENCIMENTO, 1_DIA, 3_DIAS, 7_DIAS, 15_DIAS, 30_DIAS
+  desconto            Decimal? @default(0) @db.Decimal(12, 2) // Valor total do desconto aplicado
+
+  valorFinal Decimal? @db.Decimal(12, 2) // Valor final com multa, juros e desconto aplicados
+
+  // Campos de auditoria para rastreabilidade completa
+  pagoEm          DateTime? // Data/hora em que o pagamento foi confirmado
+  pagoPor         String? // Forma de pagamento real utilizada (pode diferir da esperada)
+  canceladoEm     DateTime? // Data/hora do cancelamento
+  canceladoMotivo String? // Motivo do cancelamento
+  canceladoPor    String? // Usuário ou sistema que cancelou
+  estornadoEm     DateTime? // Data/hora do estorno (total ou parcial)
+  estornadoMotivo String? // Motivo do estorno
+  estornadoValor  Decimal?  @db.Decimal(12, 2) // Valor estornado (para estornos parciais)
+  estornadoPor    String? // Usuário ou sistema que estornou
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Campos Asaas - Snapshot do estado remoto (NÃO alteram status/valor interno)
+  // Populados via webhook ou reconciliação; GETs são read-only
+  // ─────────────────────────────────────────────────────────────────────────────
+  asaasStatus              String? // Snapshot do status Asaas (PENDING/CONFIRMED/RECEIVED/OVERDUE...)
+  asaasValue               Decimal?  @db.Decimal(12, 2) // Valor bruto retornado pelo Asaas
+  asaasNetValue            Decimal?  @db.Decimal(12, 2) // Valor líquido após taxa (netValue)
+  asaasOriginalValue       Decimal?  @db.Decimal(12, 2) // Valor original se houve desconto antecipado
+  asaasFeeValue            Decimal?  @db.Decimal(12, 2) // Taxa Asaas = asaasValue - asaasNetValue
+  asaasCreditDate          DateTime? // Data em que o saldo foi/será creditado
+  asaasEstimatedCreditDate DateTime? // Data estimada de crédito (antes de liquidar)
+  lastAsaasFetchAt         DateTime? // Última busca no Asaas (throttle)
+  lastAsaasFetchHash       String? // Hash do payload para evitar writes redundantes
+
+  // Liquidação (saldo disponível) - sem alterar status interno
+  liquidacaoStatus LiquidacaoStatus @default(NAO_APLICAVEL)
+  liquidadoEm      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  pagamentos           Pagamento[]
+  logsFinanceiros      LogFinanceiro[]
+  arquivos             ArquivoCobranca[]
+  charge               Charge?
+  asaasIntegrationJobs AsaasIntegrationJob[]
+
+  @@index([matriculaId], name: "idx_cobranca_matricula")
+  @@index([status], name: "idx_cobranca_status")
+  @@index([tipo], name: "idx_cobranca_tipo")
+  @@index([lastAsaasFetchAt], name: "idx_cobranca_last_asaas_fetch")
+}
+
+model ArquivoCobranca {
+  id           String   @id @default(cuid())
+  cobrancaId   String
+  nomeOriginal String
+  nomeArquivo  String   @unique // Nome do arquivo no storage
+  mimetype     String
+  tamanho      Int // Em bytes
+  url          String
+  uploadPor    String? // ID do usuário que fez upload
+  createdAt    DateTime @default(now())
+
+  cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Cascade)
+
+  @@index([cobrancaId], name: "idx_arquivo_cobranca")
+}
+
+model CheckoutLink {
+  id          String    @id @default(cuid())
+  matriculaId String
+  token       String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String
+  channel     String    @default("PORTAL")
+  createdAt   DateTime  @default(now())
+
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  createdBy Usuario   @relation(fields: [createdById], references: [id])
+
+  @@index([matriculaId], name: "idx_checkoutlink_matricula")
+  @@index([expiresAt], name: "idx_checkoutlink_expiration")
+}
+
+model MatriculaLog {
+  id          String   @id @default(cuid())
+  matriculaId String
+  action      String
+  actorId     String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  actor     Usuario?  @relation(fields: [actorId], references: [id])
+
+  @@index([matriculaId], name: "idx_matriculalog_matricula")
+  @@index([action], name: "idx_matriculalog_action")
+}
+
+model MatriculaOperacao {
+  id              String                @id @default(cuid())
+  matriculaId     String
+  contaId         String
+  tipo            TipoOperacaoMatricula
+  origem          OrigemOperacao
+  status          StatusOperacao        @default(PENDENTE_SINCRONISMO)
+  correlationId   String                @unique @default(cuid())
+  payloadEnviado  Json?
+  payloadRecebido Json?
+  erro            String?
+  actorId         String?
+  observacao      String?
+  metadata        Json?
+  processedAt     DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  actor     Usuario?  @relation(fields: [actorId], references: [id])
+
+  @@index([matriculaId], name: "idx_operacao_matricula")
+  @@index([contaId], name: "idx_operacao_conta")
+  @@index([tipo], name: "idx_operacao_tipo")
+  @@index([status], name: "idx_operacao_status")
+  @@index([correlationId], name: "idx_operacao_correlation")
+}
+
+model Pagamento {
+  id             String    @id @default(cuid())
+  cobrancaId     String
+  dataPagamento  DateTime?
+  formaPagamento String
+  valorPago      Decimal   @db.Decimal(12, 2)
+  status         String    @default("CONFIRMADO")
+  comprovante    String?
+  asaasPaymentId String?   @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Cascade)
+
+  @@index([cobrancaId], name: "idx_pagamento_cobranca")
+}
+
+model WebhookAsaas {
+  id           String    @id @default(cuid())
+  contaId      String
+  evento       String
+  eventId      String?
+  payloadHash  String?
+  payload      Json
+  recebidoEm   DateTime  @default(now())
+  processadoEm DateTime?
+  status       String    @default("PENDENTE")
+
+  // Campos de correlação para rastreio de recursos
+  asaasPaymentId      String?
+  asaasSubscriptionId String?
+  asaasTransferId     String?
+
+  tentativas        Int       @default(0)
+  ultimaTentativaEm DateTime?
+  nextRetryAt       DateTime?
+  duracaoMs         Int?
+  ultimoErro        String?
+  attemptsLog       Json?
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, eventId], name: "uq_webhookasaas_conta_event")
+  @@unique([contaId, payloadHash], name: "uq_webhookasaas_conta_hash")
+  @@index([contaId], name: "idx_webhookasaas_conta")
+  @@index([status], name: "idx_webhookasaas_status")
+  @@index([contaId, status, recebidoEm], name: "idx_webhookasaas_conta_status_recebido")
+  @@index([contaId, evento, recebidoEm], name: "idx_webhookasaas_conta_evento_recebido")
+  @@index([asaasPaymentId], name: "idx_webhookasaas_payment")
+  @@index([asaasSubscriptionId], name: "idx_webhookasaas_subscription")
+  @@index([asaasTransferId], name: "idx_webhookasaas_transfer")
+  @@index([recebidoEm], name: "idx_webhookasaas_recebido_em")
+}
+
+model WebhookAsaasArchive {
+  id           String    @id
+  contaId      String
+  evento       String
+  eventId      String?
+  payloadHash  String?
+  payload      Json
+  recebidoEm   DateTime
+  processadoEm DateTime?
+  status       String
+
+  asaasPaymentId      String?
+  asaasSubscriptionId String?
+  asaasTransferId     String?
+
+  tentativas        Int
+  ultimaTentativaEm DateTime?
+  nextRetryAt       DateTime?
+  duracaoMs         Int?
+  ultimoErro        String?
+  attemptsLog       Json?
+  archivedAt        DateTime  @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId], name: "idx_webhookasaas_archive_conta")
+  @@index([contaId, recebidoEm], name: "idx_webhookasaas_archive_conta_recebido")
+  @@index([status], name: "idx_webhookasaas_archive_status")
+  @@index([eventId], name: "idx_webhookasaas_archive_event_id")
+  @@index([payloadHash], name: "idx_webhookasaas_archive_payload_hash")
+  @@index([archivedAt], name: "idx_webhookasaas_archive_archived_at")
+}
+
+// Webhooks rejeitados sem tenant identificável (token inválido, JSON inválido, etc.)
+// Sem FK para Conta — permite persistir auditoria quando contaId é desconhecido.
+model WebhookAsaasRejection {
+  id          String   @id @default(cuid())
+  contaId     String?
+  evento      String?
+  eventId     String?
+  payloadHash String?
+  payload     Json
+  reason      String
+  recebidoEm  DateTime @default(now())
+
+  @@index([contaId], name: "idx_webhookasaas_rejection_conta")
+  @@index([recebidoEm], name: "idx_webhookasaas_rejection_recebido")
+}
+
+model LogFinanceiro {
+  id         String   @id @default(cuid())
+  contaId    String
+  usuarioId  String
+  cobrancaId String?
+  acao       String // DELETAR, PAUSAR, REENVIAR, SEGUNDA_VIA, CONFIRMAR_MANUAL, REFUND, REATIVAR
+  detalhes   Json?
+  createdAt  DateTime @default(now())
+
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  usuario  Usuario   @relation(fields: [usuarioId], references: [id])
+  cobranca Cobranca? @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
+
+  @@index([contaId], name: "idx_logfinanceiro_conta")
+  @@index([usuarioId], name: "idx_logfinanceiro_usuario")
+  @@index([cobrancaId], name: "idx_logfinanceiro_cobranca")
+  @@index([acao], name: "idx_logfinanceiro_acao")
+  @@index([createdAt], name: "idx_logfinanceiro_createdat")
+}
+
+model LogIntegracao {
+  id             String   @id @default(cuid())
+  contaId        String
+  tipoOperacao   String // CREATE_CUSTOMER, UPDATE_CUSTOMER, DELETE_CUSTOMER, CREATE_SUBSCRIPTION, SUSPEND_SUBSCRIPTION, ACTIVATE_SUBSCRIPTION, DELETE_SUBSCRIPTION, RECEIVE_IN_CASH, CREATE_PAYMENT, etc
+  entidade       String // ALUNO, RESPONSAVEL, MATRICULA, COBRANCA
+  entidadeId     String
+  asaasId        String? // ID retornado pelo Asaas (customerId, subscriptionId, paymentId)
+  status         String // SUCCESS, ERROR
+  httpStatus     Int? // Status HTTP da resposta
+  request        Json? // Payload enviado
+  response       Json? // Resposta do Asaas
+  errorMessage   String?
+  idempotencyKey String? // Idempotency-Key usado na request
+  duration       Int? // Duração da request em ms
+  createdAt      DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, tipoOperacao], name: "idx_logintegracao_conta_tipo")
+  @@index([entidade, entidadeId], name: "idx_logintegracao_entidade")
+  @@index([status], name: "idx_logintegracao_status")
+  @@index([createdAt], name: "idx_logintegracao_createdat")
+  @@index([asaasId], name: "idx_logintegracao_asaasid")
+}
+
+model AsaasIntegrationJob {
+  id             String                    @id @default(cuid())
+  contaId        String
+  type           AsaasIntegrationJobType
+  status         AsaasIntegrationJobStatus @default(PENDING)
+  idempotencyKey String
+  payload        Json
+  attempts       Int                       @default(0)
+  nextAttemptAt  DateTime                  @default(now())
+  lastError      String?
+  lastErrorAt    DateTime?
+  processingAt   DateTime?
+  doneAt         DateTime?
+
+  chargeId          String?
+  cobrancaId        String?
+  subscriptionId    String?
+  installmentPlanId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta           Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  charge          Charge?          @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  cobranca        Cobranca?        @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
+  subscription    Subscription?    @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  installmentPlan InstallmentPlan? @relation(fields: [installmentPlanId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, type, idempotencyKey], name: "uq_asaas_integration_job")
+  @@index([status, nextAttemptAt], name: "idx_asaas_job_status_next")
+  @@index([contaId], name: "idx_asaas_job_conta")
+}
+
+// --- Lancamentos financeiros ---
+model Lancamento {
+  id             String                    @id @default(cuid())
+  contaId        String
+  tipo           TipoLancamento
+  origem         OrigemLancamento
+  status         StatusLancamento
+  valor          Decimal                   @db.Decimal(14, 2)
+  descricao      String
+  referencia     String?
+  centroCustoId  String?
+  categoriaId    String?
+  subcategoriaId String?
+  formaPagamento FormaPagamentoLancamento?
+  dataEfetiva    DateTime?
+  dataPrevista   DateTime?
+  isEstorno      Boolean                   @default(false)
+  parentId       String?
+  dataEstorno    DateTime?
+  motivoEstorno  String?
+  observacao     String?
+  anexoUrl       String?
+  externalRef    String?
+  createdById    String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  conta        Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  centroCusto  CentroCusto?         @relation(fields: [centroCustoId], references: [id])
+  categoria    CategoriaLancamento? @relation("CategoriaLancamentoCategoria", fields: [categoriaId], references: [id])
+  subcategoria CategoriaLancamento? @relation("CategoriaLancamentoSubcategoria", fields: [subcategoriaId], references: [id])
+  parent       Lancamento?          @relation("LancamentoEstorno", fields: [parentId], references: [id])
+  estornos     Lancamento[]         @relation("LancamentoEstorno")
+  createdBy    Usuario?             @relation(fields: [createdById], references: [id])
+
+  @@index([contaId, tipo, status], name: "idx_lancamento_conta_tipo_status")
+  @@index([contaId, dataEfetiva], name: "idx_lancamento_conta_data")
+  @@index([externalRef], name: "idx_lancamento_external_ref")
+}
+
+model CentroCusto {
+  id        String          @id @default(cuid())
+  contaId   String
+  nome      String
+  tipo      CentroCustoTipo
+  descricao String?
+  status    Status          @default(ATIVO)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  lancamentos Lancamento[]
+
+  @@unique([contaId, nome, tipo], name: "uq_centrocusto_nome_tipo_conta")
+  @@index([contaId, tipo], name: "idx_centrocusto_conta_tipo")
+}
+
+model CategoriaLancamento {
+  id        String         @id @default(cuid())
+  contaId   String
+  nome      String
+  tipo      TipoLancamento
+  parentId  String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  conta                   Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  parent                  CategoriaLancamento?  @relation("CategoriaLancParent", fields: [parentId], references: [id])
+  children                CategoriaLancamento[] @relation("CategoriaLancParent")
+  lancamentosCategoria    Lancamento[]          @relation("CategoriaLancamentoCategoria")
+  lancamentosSubcategoria Lancamento[]          @relation("CategoriaLancamentoSubcategoria")
+
+  @@unique([contaId, nome, tipo, parentId], name: "uq_categoria_lancamento_nome_tipo_parent")
+  @@index([contaId, tipo], name: "idx_categoria_lancamento_conta_tipo")
+}
+
+// --- Convites de usuário ---
+model Invite {
+  id               String    @id @default(cuid())
+  // A conta do convidador no momento da criação do convite (usada no aceite)
+  contaId          String?
+  email            String? // Opcional para convites de RESPONSAVEL
+  role             Role
+  token            String    @unique
+  invitedById      String
+  status           String    @default("PENDING")
+  expiresAt        DateTime
+  // Auditoria de aceite
+  acceptedByUserId String?
+  acceptedAt       DateTime?
+  metadata         Json? // Armazena dados extras como alunosIds para RESPONSAVEL
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relação opcional para garantir integridade sem quebrar convites antigos
+  conta        Conta?        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  usuarioConta UsuarioConta? @relation("UsuarioContaInvite")
+
+  @@index([email, status], name: "idx_invite_email_status")
+  @@index([expiresAt], name: "idx_invite_expires")
+  @@index([contaId], name: "idx_invite_conta")
+}
+
+model AuthActionToken {
+  id                 String              @id @default(cuid())
+  userId             String
+  user               Usuario             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type               AuthActionTokenType
+  tokenHash          String              @unique
+  email              String
+  expiresAt          DateTime
+  usedAt             DateTime?
+  invalidatedAt      DateTime?
+  requestedByIp      String?
+  requestedByUserAgent String?
+  resendEmailId      String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([userId, type], name: "idx_auth_action_token_user_type")
+  @@index([email, type], name: "idx_auth_action_token_email_type")
+  @@index([expiresAt], name: "idx_auth_action_token_expires")
+}
+
+model PortalEvento {
+  id         String    @id @default(cuid())
+  contaId    String
+  nome       String
+  descricao  String?
+  dataInicio DateTime
+  dataFim    DateTime?
+  local      String?
+  tipo       String?
+  capacidade Int?
+  status     String    @default("ATIVO") // ATIVO, ENCERRADO, CANCELADO
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  conta      Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  inscricoes PortalEventoInscricao[]
+
+  @@index([contaId])
+}
+
+model PortalEventoInscricao {
+  id         String   @id @default(cuid())
+  eventoId   String
+  alunoId    String
+  status     String   @default("PENDENTE") // PENDENTE, CONFIRMADO, CANCELADO
+  quantidade Int      @default(1)
+  valorTotal Decimal  @db.Decimal(12, 2)
+  qrCode     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  evento PortalEvento @relation(fields: [eventoId], references: [id], onDelete: Cascade)
+  aluno  Aluno        @relation(fields: [alunoId], references: [id])
+
+  @@index([eventoId])
+  @@index([alunoId])
+}
+
+// --- Contratos Eletrônicos (PDF-based) ---
+
+// Modelo de contrato: documento PDF reutilizável importado pela instituição
+model ContratoModelo {
+  id                 String   @id @default(cuid())
+  contaId            String
+  nome               String
+  descricao          String?
+  arquivoOriginalUrl String? // URL do arquivo original (DOCX se convertido)
+  arquivoPdfUrl      String // URL do PDF final
+  mimeType           String   @default("application/pdf")
+  hashSha256         String // Hash SHA-256 para integridade
+  tamanhoBytes       Int?
+  versao             Int      @default(1)
+  status             Status   @default(ATIVO)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  contratos Contrato[]
+
+  @@unique([contaId, nome, versao], name: "uq_contrato_modelo_conta_nome_versao")
+  @@index([contaId], name: "idx_contrato_modelo_conta")
+  @@index([status], name: "idx_contrato_modelo_status")
+}
+
+// @deprecated - Mantido temporariamente para migração de dados
+// TODO: Remover após migração completa dos templates antigos
+model ContratoTemplate {
+  id        String   @id @default(cuid())
+  contaId   String
+  nome      String
+  conteudo  String   @db.Text // HTML com placeholders {{aluno.nome}}, etc
+  versao    Int      @default(1)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, nome], name: "uq_contrato_template_conta_nome")
+  @@index([contaId], name: "idx_contrato_template_conta")
+}
+
+model Contrato {
+  id               String  @id @default(cuid())
+  matriculaId      String
+  modeloId         String? // Referência ao modelo de contrato usado
+  contratoOrigemId String?
+
+  // PDF final do contrato (imutável após assinatura)
+  arquivoPdfUrl String // URL do PDF gerado para este aluno
+  hashPdf       String // SHA-256 do PDF para prova de integridade
+
+  // @deprecated - Campo legado para migração
+  conteudoFinal String? @db.Text // HTML renderizado (contratos antigos)
+  templateId    String? // Referência legada
+
+  status StatusAssinatura @default(PENDENTE)
+
+  // Dados da assinatura eletrônica
+  assinadoPor       String? // Nome de quem assinou
+  assinadoEmail     String? // Email
+  assinadoCpf       String? // CPF (validado)
+  assinadoIp        String? // IP da assinatura
+  assinadoEm        DateTime? // Timestamp
+  assinadoUserAgent String? // Navegador/device
+  hashAssinatura    String? // SHA-256 do PDF + dados da assinatura
+
+  // Link de compartilhamento
+  tokenPublico  String    @unique @default(cuid())
+  tokenExpiraEm DateTime? // Expiração do link (padrão: 7 dias)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matricula              Matricula         @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Cascade)
+  modelo                 ContratoModelo?   @relation(fields: [modeloId], references: [id])
+  contratoOrigem         Contrato?         @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
+  aditivos               Contrato[]        @relation("ContratoAditivo")
+  matriculaContratoAtual Matricula?        @relation("MatriculaContratoAtual")
+  subscriptions          Subscription[]
+  installmentPlans       InstallmentPlan[]
+
+  @@index([matriculaId], name: "idx_contrato_matricula")
+  @@index([modeloId], name: "idx_contrato_modelo")
+  @@index([status], name: "idx_contrato_status")
+  @@index([tokenPublico], name: "idx_contrato_token")
+  @@index([tokenExpiraEm], name: "idx_contrato_token_expira")
+  @@index([status, matriculaId], name: "idx_contrato_status_matricula")
+}
+
+// ==================== ASAAS WHITE LABEL (NOVO NÚCLEO) ====================
+
+enum FinanceStatus {
+  FINANCE_NOT_STARTED
+  FINANCE_ONBOARDING_STARTED
+  FINANCE_PROFILE_COMPLETED
+  FINANCE_IN_ANALYSIS
+  FINANCE_APPROVED
+  FINANCE_REJECTED
+}
+
+enum FinancialOnboardingStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  READY_FOR_PROVISIONING
+  PROVISIONING
+  CREATED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  PROVISIONING_FAILED
+}
+
+enum KycProcessStatus {
+  NOT_STARTED
+  WAITING_MIN_TIMEOUT
+  PENDING_DOCUMENTS
+  EXTERNAL_IN_PROGRESS
+  INTERNAL_UPLOADING
+  UNDER_REVIEW
+  REJECTED
+  APPROVED
+}
+
+enum KycSubmissionMethod {
+  EXTERNAL_ONBOARDING_URL
+  INTERNAL_UPLOAD
+}
+
+enum KycDocumentStatus {
+  NOT_SENT
+  PENDING
+  APPROVED
+  REJECTED
+  IGNORED
+}
+
+enum AsaasAccountDeletionState {
+  NOT_REQUESTED
+  DELETING
+  DELETION_FAILED
+  PENDING_EXTERNAL_DELETE
+  DELETED_EXTERNALLY
+  DELETED
+}
+
+enum AsaasCommercialInfoStatus {
+  EXPIRING_SOON
+  EXPIRED
+}
+
+enum AsaasApiKeyStatus {
+  CONNECTED
+  MISSING
+  REVOKED
+}
+
+enum FinanceProfileRegulatoryStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum InvoiceStatus {
+  REQUESTED
+  ISSUED
+  CANCELING
+  CANCELED
+  ERROR
+}
+
+enum AuditActorType {
+  SYSTEM
+  USER
+  ADMIN
+}
+
+model FinanceProfile {
+  id      String @id @default(cuid())
+  contaId String @unique
+
+  // Estado regulatório derivado do Asaas (/v3/myAccount/status)
+  asaasAccountId        String?
+  status                FinanceProfileRegulatoryStatus @default(PENDING)
+  isOnboardingCompleted Boolean                        @default(false)
+  onboardingCompletedAt DateTime?
+  lastAsaasSyncAt       DateTime?
+
+  // ================== Wizard Onboarding (draft antes de criar subconta) ==================
+  // O wizard coleta dados em steps progressivos. Nenhuma chamada Asaas ocorre até primeira ação financeira.
+  wizardStep        Int       @default(0) // 0=não iniciado, 1=tipo conta, 2=identificação, 3=contato, 4=endereço, 5=info financeira, 6=concluído
+  wizardCompletedAt DateTime?
+  draftPersonType   String? // 'PF' ou 'PJ'
+  draftCpfCnpj      String? // CPF (11 dígitos) ou CNPJ (14 dígitos), apenas dígitos
+  draftBirthDate    String? // YYYY-MM-DD (obrigatório para PF)
+
+  // Dados mínimos para provisionar subconta (whitelabel.md)
+  // Nome e dados opcionais do cadastro financeiro (não confundir com dados de perfil/conta do Alusa)
+  asaasName        String? // legado
+  asaasOwnerName   String?
+  asaasCompanyName String?
+  asaasLoginEmail  String?
+  asaasPhone       String?
+  asaasSite        String?
+
+  mobilePhone   String?
+  landlinePhone String?
+  incomeValue   Decimal? @db.Decimal(12, 2)
+  address       String?
+  addressNumber String?
+  province      String?
+  addressCity   String?
+  addressState  String?  @db.Char(2)
+  postalCode    String?  @db.Char(8)
+  complement    String?
+  companyType   String? // MEI, LIMITED, INDIVIDUAL, ASSOCIATION (Necessário para PJ)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  asaasAccount    AsaasAccount?
+  asaasCredential AsaasCredential?
+
+  @@index([contaId])
+  @@index([asaasAccountId])
+  @@index([status])
+}
+
+model AsaasAccount {
+  id               String @id @default(cuid())
+  financeProfileId String @unique
+
+  // Pode começar como placeholder (antes da criação remota no Asaas)
+  asaasAccountId    String? @unique
+  externalReference String? @unique
+
+  status          FinancialOnboardingStatus @default(NOT_STARTED)
+  statusUpdatedAt DateTime                  @default(now())
+
+  // Marca quando a subconta foi provisionada no Asaas (para respeitar delay recomendado antes de consultar /myAccount/documents)
+  provisionedAt DateTime?
+
+  // Observabilidade: tentativas de provisionamento
+  provisionAttempts       Int       @default(0)
+  provisionLastAttemptAt  DateTime?
+  provisionLastError      String?
+  provisionLastHttpStatus Int?
+
+  // Status da confirmação anual de dados comerciais (webhooks COMMERCIAL_INFO_*).
+  commercialInfoStatus        AsaasCommercialInfoStatus?
+  commercialInfoScheduledDate String?
+
+  // API key da subconta (criptografada). Usada para autenticação com /myAccount.
+  apiKeyEncrypted String?
+  apiKeyStatus    AsaasApiKeyStatus @default(MISSING)
+
+  // Email principal da subconta no Asaas (usado como fallback em atualizações anuais).
+  asaasAccountEmail String?
+
+  // Cache best-effort da resposta do Asaas para /myAccount/documents
+  documentsCache          Json?
+  documentsCacheUpdatedAt DateTime?
+
+  // Webhook (Fase 2): authToken configurado no Asaas (persistido como hash)
+  webhookAuthTokenHash String? @unique
+
+  // ==================== Delete Account (external-first) ====================
+  deletionState          AsaasAccountDeletionState @default(NOT_REQUESTED)
+  deletionRequestedAt    DateTime?
+  deletionLastAttemptAt  DateTime?
+  deletionAttempts       Int                       @default(0)
+  deletionLastHttpStatus Int?
+  deletionLastErrors     Json?
+  deletedExternallyAt    DateTime?
+  deletedLocallyAt       DateTime?
+  deletedAsaasAccountId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  financeProfile FinanceProfile @relation(fields: [financeProfileId], references: [id], onDelete: Cascade)
+
+  kycProcess KycProcess?
+
+  statusHistory AsaasAccountStatusHistory[]
+
+  @@index([financeProfileId])
+  @@index([asaasAccountId])
+  @@index([status])
+  @@index([deletionState])
+}
+
+model AsaasAccountStatusHistory {
+  id             String @id @default(cuid())
+  asaasAccountId String
+
+  oldStatus FinancialOnboardingStatus?
+  newStatus FinancialOnboardingStatus
+
+  event     String
+  payloadId String?
+
+  createdAt DateTime @default(now())
+
+  asaasAccount AsaasAccount @relation(fields: [asaasAccountId], references: [id], onDelete: Cascade)
+
+  @@index([asaasAccountId])
+  @@index([newStatus])
+  @@index([event])
+}
+
+model AsaasCredential {
+  id               String @id @default(cuid())
+  financeProfileId String @unique
+
+  // API key da subconta (sempre criptografada em repouso)
+  apiKeyEncrypted String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  financeProfile FinanceProfile @relation(fields: [financeProfileId], references: [id], onDelete: Cascade)
+
+  @@index([financeProfileId])
+}
+
+model KycProcess {
+  id String @id @default(cuid())
+
+  asaasAccountId String @unique
+
+  status                 KycProcessStatus @default(NOT_STARTED)
+  rejectReasons          String[]
+  nextAllowedDocsFetchAt DateTime?
+  lastWebhookEventId     String?
+  lastAsaasSyncAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  asaasAccount AsaasAccount     @relation(fields: [asaasAccountId], references: [id], onDelete: Cascade)
+  requirements KycRequirement[]
+
+  @@index([asaasAccountId])
+  @@index([status])
+}
+
+model KycRequirement {
+  id String @id @default(cuid())
+
+  processId String
+  groupId   String
+
+  type        String?
+  title       String?
+  description String?
+
+  submissionMethod KycSubmissionMethod
+  status           KycDocumentStatus   @default(NOT_SENT)
+
+  responsibleName String?
+  responsibleType String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  process KycProcess @relation(fields: [processId], references: [id], onDelete: Cascade)
+  slots   KycSlot[]
+
+  @@unique([processId, groupId])
+  @@index([processId])
+  @@index([status])
+}
+
+model KycSlot {
+  id String @id @default(cuid())
+
+  requirementId String
+  slotId        String
+
+  status         KycDocumentStatus @default(NOT_SENT)
+  uploadedFileId String?
+  uiLabel        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  requirement KycRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, slotId])
+  @@index([requirementId])
+}
+
+model Customer {
+  id      String @id @default(cuid())
+  contaId String
+
+  payerType CustomerPayerType
+  payerId   String
+
+  externalReference String
+  asaasCustomerId   String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta                      Conta                       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  charges                    Charge[]
+  standaloneInstallmentPlans StandaloneInstallmentPlan[]
+  standaloneSubscriptions    StandaloneSubscription[]
+
+  @@unique([contaId, payerType, payerId])
+  @@index([contaId])
+  @@index([asaasCustomerId])
+}
+
+model Charge {
+  id      String @id @default(cuid())
+  contaId String
+
+  cobrancaId String? @unique
+
+  externalReference String @unique
+
+  status          ChargeStatus @default(CREATED)
+  statusUpdatedAt DateTime     @default(now())
+
+  asaasPaymentId String? @unique
+
+  // Campos para listagem de standalone charges (sem vínculo com Cobranca)
+  // Preenchidos na criação para evitar consultas externas
+  payerName   String? // Nome do pagador (aluno ou responsável)
+  description String? // Descrição da cobrança
+  value       Decimal?  @db.Decimal(12, 2) // Valor da cobrança
+  dueDate     DateTime? // Data de vencimento
+  billingType String? // PIX, BOLETO, CREDIT_CARD, etc.
+  customerId  String? // ID do Customer local (para referência)
+  invoiceUrl  String? // Link de pagamento (invoiceUrl do Asaas)
+
+  standaloneInstallmentPlanId String?
+  standaloneSubscriptionId    String?
+
+  invoice Invoice?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta                     Conta                      @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  cobranca                  Cobranca?                  @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
+  customer                  Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
+  standaloneSubscription    StandaloneSubscription?    @relation(fields: [standaloneSubscriptionId], references: [id], onDelete: SetNull)
+  arquivos                  ArquivoCharge[]
+  asaasIntegrationJobs      AsaasIntegrationJob[]
+  sale                      Sale?
+
+  @@index([contaId])
+  @@index([status])
+  @@index([contaId, status, dueDate], name: "idx_charge_conta_status_due")
+  @@index([contaId, standaloneInstallmentPlanId, dueDate], name: "idx_charge_conta_plan_due")
+  @@index([contaId, createdAt], name: "idx_charge_conta_created")
+  @@index([asaasPaymentId])
+  @@index([customerId])
+  @@index([standaloneInstallmentPlanId])
+  @@index([standaloneSubscriptionId])
+}
+
+model ChargeReadModel {
+  id      String @id
+  contaId String
+
+  sourceKind String
+  sourceId   String
+
+  origin     String
+  chargeType String
+  linkStatus String  @default("LINKED")
+  groupId    String?
+
+  description String?
+  payerName   String
+  value       Decimal   @db.Decimal(12, 2)
+  dueDate     DateTime?
+  billingType String?
+  status      String
+
+  asaasPaymentId String?
+  matriculaId    String?
+  alunoId        String?
+
+  tipo             String?
+  isGroup          Boolean @default(false)
+  installmentCount Int?
+  installmentsPaid Int?
+
+  createdAt   DateTime
+  updatedAt   DateTime
+  projectedAt DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, sourceKind, sourceId], name: "uq_charge_read_model_source")
+  @@index([contaId], name: "idx_charge_read_model_conta")
+  @@index([contaId, status, dueDate], name: "idx_charge_read_model_conta_status_due")
+  @@index([contaId, chargeType, createdAt], name: "idx_charge_read_model_conta_type_created")
+  @@index([contaId, groupId], name: "idx_charge_read_model_conta_group")
+  @@index([asaasPaymentId], name: "idx_charge_read_model_asaas_payment")
+}
+
+model StandaloneInstallmentPlan {
+  id      String @id @default(cuid())
+  contaId String
+
+  customerId String
+
+  externalReference String @unique
+  idempotencyKey    String
+
+  status          InstallmentStatus @default(ACTIVE)
+  statusUpdatedAt DateTime          @default(now())
+
+  asaasInstallmentId String? @unique
+
+  installmentCount Int
+  billingType      String
+  value            Decimal  @db.Decimal(12, 2)
+  firstDueDate     DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  charges  Charge[]
+
+  @@unique([contaId, idempotencyKey])
+  @@index([contaId])
+  @@index([status])
+  @@index([contaId, status, firstDueDate], name: "idx_standalone_installment_conta_status_due")
+  @@index([asaasInstallmentId])
+  @@index([customerId])
+}
+
+model StandaloneSubscription {
+  id      String @id @default(cuid())
+  contaId String
+
+  customerId String
+
+  externalReference String @unique
+  idempotencyKey    String
+
+  status          SubscriptionStatus @default(REQUESTED)
+  statusUpdatedAt DateTime           @default(now())
+
+  asaasSubscriptionId String? @unique
+
+  cycle       String
+  billingType String
+  value       Decimal   @db.Decimal(12, 2)
+  nextDueDate DateTime
+  endDate     DateTime?
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  charges  Charge[]
+
+  @@unique([contaId, idempotencyKey])
+  @@index([contaId])
+  @@index([status])
+  @@index([contaId, status, nextDueDate], name: "idx_standalone_subscription_conta_status_due")
+  @@index([asaasSubscriptionId])
+  @@index([customerId])
+}
+
+model ArquivoCharge {
+  id           String   @id @default(cuid())
+  chargeId     String
+  nomeOriginal String
+  nomeArquivo  String   @unique
+  mimetype     String
+  tamanho      Int
+  url          String
+  uploadPor    String?
+  createdAt    DateTime @default(now())
+
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([chargeId])
+}
+
+model Invoice {
+  /// Nota fiscal (NFS-e) emitida no Asaas.
+  ///
+  /// Fase 8: opt-in por tenant via enableInvoices.
+  /// ADR-006: externalReference determinístico.
+  id      String @id
+  contaId String
+
+  chargeId String @unique
+
+  externalReference String  @unique
+  asaasInvoiceId    String? @unique
+
+  status          InvoiceStatus @default(REQUESTED)
+  statusUpdatedAt DateTime      @default(now())
+
+  // Snapshot mínimo
+  value         Decimal?  @db.Decimal(12, 2)
+  deductions    Decimal?  @db.Decimal(12, 2)
+  effectiveDate DateTime?
+
+  municipalServiceCode String?
+  municipalServiceName String?
+
+  pdfUrl String?
+  xmlUrl String?
+  number String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta  Conta  @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+
+  @@index([contaId])
+  @@index([status])
+  @@index([asaasInvoiceId])
+}
+
+model Subscription {
+  id      String @id @default(cuid())
+  contaId String
+
+  contratoId  String?
+  matriculaId String
+
+  externalReference String @unique
+
+  status          SubscriptionStatus @default(REQUESTED)
+  statusUpdatedAt DateTime           @default(now())
+
+  asaasSubscriptionId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  contrato             Contrato?             @relation(fields: [contratoId], references: [id], onDelete: Cascade)
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  asaasIntegrationJobs AsaasIntegrationJob[]
+
+  @@unique([contaId, contratoId])
+  @@unique([contaId, matriculaId])
+  @@index([contaId])
+  @@index([status])
+  @@index([contaId, status, createdAt], name: "idx_subscription_conta_status_created")
+  @@index([asaasSubscriptionId])
+}
+
+model InstallmentPlan {
+  id      String @id @default(cuid())
+  contaId String
+
+  contratoId  String
+  matriculaId String
+
+  externalReference String @unique
+
+  status          InstallmentStatus @default(ACTIVE)
+  statusUpdatedAt DateTime          @default(now())
+
+  asaasInstallmentId String? @unique
+
+  installmentCount Int
+  billingType      String
+  value            Decimal  @db.Decimal(12, 2)
+  firstDueDate     DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  contrato             Contrato              @relation(fields: [contratoId], references: [id], onDelete: Cascade)
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  asaasIntegrationJobs AsaasIntegrationJob[]
+
+  @@unique([contaId, contratoId])
+  @@unique([contaId, matriculaId])
+  @@index([contaId])
+  @@index([status])
+  @@index([contaId, status, firstDueDate], name: "idx_installmentplan_conta_status_due")
+  @@index([asaasInstallmentId])
+}
+
+model TransferRequest {
+  id      String @id @default(cuid())
+  contaId String
+
+  value Decimal @db.Decimal(12, 2)
+
+  // Snapshot do pedido (para auditoria/replay seguro)
+  destination  Json
+  description  String?
+  scheduleDate DateTime?
+
+  externalReference String  @unique
+  asaasTransferId   String? @unique
+
+  // Idempotência (ADR-009): suportar retries com a mesma chave
+  idempotencyKey String
+
+  status          TransferStatus @default(REQUESTED)
+  statusUpdatedAt DateTime       @default(now())
+
+  // Campos oficiais do Asaas — persistidos via webhook e GET confirmation
+  rawAsaasStatus        String?
+  authorized            Boolean?
+  failReason            String?
+  transactionReceiptUrl String?
+  effectiveDate         String?
+  endToEndIdentifier    String?   // E2E único no Bacen (PIX)
+  feeValue              Decimal?  @db.Decimal(12, 2) // Taxa cobrada pelo Asaas (transferFee)
+  netValue              Decimal?  @db.Decimal(12, 2) // Valor líquido (value - transferFee)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  pixTransferSession PixTransferSession?
+
+  @@unique([contaId, idempotencyKey])
+  @@index([contaId])
+  @@index([status])
+  @@index([asaasTransferId])
+}
+
+model PixTransferSession {
+  id      String @id @default(cuid())
+  contaId String
+
+  amount           Decimal  @db.Decimal(12, 2)
+  pixKeyOriginal   String
+  pixKeyNormalized String
+  pixKeyType       String
+  description      String?
+  scheduleDate     DateTime?
+
+  status PixTransferSessionStatus @default(WAITING_PREVIEW)
+
+  previewAsaasTransferId   String? @unique
+  confirmTransferRequestId String? @unique
+
+  recipientName           String?
+  recipientDocumentMasked String?
+  recipientBank           String?
+  recipientPixKeyMasked   String?
+
+  confirmationToken String
+  confirmedAt       DateTime?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  confirmTransferRequest TransferRequest? @relation(fields: [confirmTransferRequestId], references: [id], onDelete: SetNull)
+
+  @@index([contaId])
+  @@index([contaId, status, createdAt], name: "idx_pixtransfersession_conta_status_created")
+  @@index([contaId, pixKeyNormalized, createdAt], name: "idx_pixtransfersession_conta_key_created")
+}
+
+model TenantFeatureFlags {
+  id      String @id @default(cuid())
+  contaId String @unique
+
+  enableSubscriptions      Boolean @default(false)
+  enableInstallments       Boolean @default(false)
+  enableManualWithdraw     Boolean @default(false)
+  enablePixTransfer        Boolean @default(false)
+  enableBankTransfer       Boolean @default(false)
+  enableSplitPayments      Boolean @default(false)
+  enableEscrow             Boolean @default(false)
+  enableInvoices           Boolean @default(false)
+  enablePaymentLinks       Boolean @default(false)
+  enableChargebackHandling Boolean @default(false)
+  enableDunning            Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId])
+}
+
+model AuditLog {
+  id      String @id @default(cuid())
+  contaId String
+
+  actorType AuditActorType
+  actorId   String?
+
+  action        String
+  entityType    String?
+  entityId      String?
+  correlationId String?
+  metadata      Json?
+
+  createdAt DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@index([contaId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([correlationId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id          String               @id @default(cuid())
+  contaId     String
+  type        NotificationType
+  category    NotificationCategory
+  severity    NotificationSeverity @default(INFO)
+  title       String
+  message     String
+  dedupeKey   String
+  relatedPath String?
+  entityType  String?
+  entityId    String?
+  sourceType  String?
+  sourceId    String?
+  actorType   AuditActorType?
+  actorId     String?
+  metadata    Json?
+  triggeredAt DateTime             @default(now())
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  conta      Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  recipients NotificationRecipient[]
+
+  @@unique([contaId, dedupeKey])
+  @@index([contaId, triggeredAt])
+  @@index([type])
+  @@index([entityType, entityId])
+}
+
+model NotificationRecipient {
+  id             String    @id @default(cuid())
+  notificationId String
+  contaId        String
+  userId         String
+  readAt         DateTime?
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  conta        Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  user         Usuario      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([contaId, userId, archivedAt, readAt])
+  @@index([userId, createdAt])
+}
+
+// ==================== Rematrícula ====================
+
+model RematriculaOperacao {
+  id                String                    @id @default(cuid())
+  correlationId     String                    @unique
+  contaId           String
+  matriculaOrigemId String
+  matriculaNovaId   String?
+  status            RematriculaOperacaoStatus @default(PENDING)
+  step              RematriculaOperacaoStep   @default(VALIDATED)
+
+  // Idempotência: permite retry seguro
+  idempotencyKey String? @unique
+
+  // IDs externos (provedor de pagamentos)
+  oldSubscriptionId String?
+  newSubscriptionId String?
+  customerId        String?
+
+  // Snapshot operacional da decisão
+  policySnapshot       Json?
+  financialSnapshot    Json?
+  actionStatus         RematriculaActionStatus?
+  blockReason          RematriculaBlockReason?  @default(SEM_BLOQUEIO)
+  overrideUsed         Boolean                  @default(false)
+  overrideReason       String?
+  overrideApprovedById String?
+  evaluatedAt          DateTime?
+  blockedAt            DateTime?
+
+  // Pagador (auditoria)
+  payerType CustomerPayerType
+  payerId   String
+
+  // Erro (se houver)
+  errorCode    String?
+  errorMessage String?
+
+  // Retry tracking
+  retryCount  Int       @default(0)
+  lastRetryAt DateTime?
+
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conta           Conta      @relation(fields: [contaId], references: [id])
+  matriculaOrigem Matricula  @relation("RematriculaOrigem", fields: [matriculaOrigemId], references: [id])
+  matriculaNova   Matricula? @relation("RematriculaNova", fields: [matriculaNovaId], references: [id])
+  createdBy       Usuario    @relation(fields: [createdById], references: [id])
+
+  @@index([contaId])
+  @@index([matriculaOrigemId])
+  @@index([status])
+  @@index([idempotencyKey])
+}
+
+// ==================== Troca de Pagador (PR4) ====================
+
+model PayerChangeOperacao {
+  id            String                    @id @default(cuid())
+  correlationId String                    @unique
+  contaId       String
+  matriculaId   String
+  status        PayerChangeOperacaoStatus @default(PENDING)
+
+  // Pagador anterior
+  oldPayerType      CustomerPayerType
+  oldPayerId        String
+  oldSubscriptionId String?
+
+  // Novo pagador
+  newPayerType      CustomerPayerType
+  newPayerId        String
+  newSubscriptionId String?
+  newCustomerId     String?
+
+  // Idempotência
+  idempotencyKey String? @unique
+
+  // Erro (se houver)
+  errorCode    String?
+  errorMessage String?
+
+  // Retry tracking
+  retryCount  Int       @default(0)
+  lastRetryAt DateTime?
+
+  // Auditoria
+  reason      String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  conta     Conta     @relation(fields: [contaId], references: [id])
+  matricula Matricula @relation(fields: [matriculaId], references: [id])
+  createdBy Usuario   @relation(fields: [createdById], references: [id])
+
+  @@index([contaId])
+  @@index([matriculaId])
+  @@index([status])
+}
+
+// ─── Loja / Vendas ───
+
+enum SaleStatus {
+  CONCLUIDA
+  PENDENTE
+  VINCULADA_MENSALIDADE
+  CANCELADA
+}
+
+enum SaleFinalizationType {
+  RECEBIMENTO_PRESENCIAL
+  COBRANCA
+  MENSALIDADE
+}
+
+enum SalePaymentMethod {
+  DINHEIRO
+  PIX_PRESENCIAL
+  CARTAO_DEBITO
+  CARTAO_CREDITO
+}
+
+enum SaleInventoryMode {
+  IMMEDIATE
+  RESERVE
+}
+
+enum SaleInventoryStatus {
+  FULFILLED
+  RESERVED
+  CANCELED
+  RETURNED_PARTIAL
+  RETURNED_TOTAL
+}
+
+enum InventoryMovementType {
+  OPENING_IN
+  ENTRY_IN
+  RESTOCK_IN
+  SALE_OUT
+  RESERVE
+  RELEASE
+  RETURN_IN
+  ADJUST_IN
+  ADJUST_OUT
+  LOSS_OUT
+}
+
+enum RestockOrderStatus {
+  PLANEJADO
+  RECEBIDO_PARCIAL
+  RECEBIDO
+  CANCELADO
+}
+
+model ProductCategory {
+  id      String @id @default(cuid())
+  contaId String
+  name    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([contaId, name])
+  @@index([contaId])
+}
+
+model Product {
+  id      String @id @default(cuid())
+  contaId String
+
+  name              String
+  description       String?
+  sku               String?
+  price             Decimal  @db.Decimal(12, 2)
+  stock             Int      @default(0)
+  lowStockThreshold Int      @default(5)
+  categoryId        String?
+  hasVariants       Boolean  @default(false)
+
+  isActive   Boolean   @default(true)
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta     Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  category  ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  saleItems SaleItem[]
+  images    ProductImage[]
+  options   ProductOption[]
+  variants  ProductVariant[]
+  inventoryBalances InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  restockOrderItems RestockOrderItem[]
+
+  @@index([contaId])
+  @@index([contaId, archivedAt])
+  @@unique([contaId, sku])
+}
+
+model Sale {
+  id      String @id @default(cuid())
+  contaId String
+  uiRequestId String?
+
+  saleNumber Int
+  status     SaleStatus @default(PENDENTE)
+
+  // Cliente
+  customerType  String // 'ALUNO' | 'RESPONSAVEL' | 'AVULSO'
+  alunoId       String?
+  responsavelId String?
+  walkInName    String?
+  walkInPhone   String?
+  walkInNotes   String?
+
+  // Valores
+  subtotal Decimal @db.Decimal(12, 2)
+  discount Decimal @default(0) @db.Decimal(12, 2)
+  total    Decimal @db.Decimal(12, 2)
+  totalCost   Decimal? @db.Decimal(12, 2)
+  grossProfit Decimal? @db.Decimal(12, 2)
+  grossMargin Decimal? @db.Decimal(9, 4)
+
+  // Finalização
+  finalizationType SaleFinalizationType
+  inventoryMode    SaleInventoryMode   @default(IMMEDIATE)
+  inventoryStatus  SaleInventoryStatus @default(FULFILLED)
+
+  // Recebimento presencial
+  paymentMethod  SalePaymentMethod?
+  amountReceived Decimal?           @db.Decimal(12, 2)
+  changeGiven    Decimal?           @db.Decimal(12, 2)
+
+  // Vínculo financeiro
+  chargeId    String? @unique
+  matriculaId String?
+
+  // Operador
+  operadorId String
+
+  // Cancelamento
+  canceledAt   DateTime?
+  cancelReason String?
+  canceledById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  charge      Charge?      @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  matricula   Matricula?   @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
+  operador    Usuario      @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: Restrict)
+  items       SaleItem[]
+
+  @@unique([contaId, uiRequestId])
+  @@unique([contaId, saleNumber])
+  @@index([contaId])
+  @@index([contaId, status])
+  @@index([contaId, createdAt])
+  @@index([chargeId])
+  @@index([saleNumber, contaId])
+}
+
+model SaleItem {
+  id     String @id @default(cuid())
+  saleId String
+
+  productId   String?
+  variantId   String?
+  productName String
+  quantity    Int
+  returnedQuantity Int @default(0)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  subtotal    Decimal @db.Decimal(12, 2)
+  unitCostAtSale     Decimal? @db.Decimal(12, 4)
+  totalCostAtSale    Decimal? @db.Decimal(12, 2)
+  discountShareAtSale Decimal? @db.Decimal(12, 2)
+  netSubtotalAtSale  Decimal? @db.Decimal(12, 2)
+  grossProfitAtSale  Decimal? @db.Decimal(12, 2)
+  marginAtSale       Decimal? @db.Decimal(9, 4)
+
+  createdAt DateTime @default(now())
+
+  sale    Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model InventoryBalance {
+  id               String   @id @default(cuid())
+  contaId          String
+  inventoryItemKey String
+  productId        String
+  variantId        String?
+  onHand           Int      @default(0)
+  reserved         Int      @default(0)
+  incoming         Int      @default(0)
+  averageCost      Decimal  @default(0) @db.Decimal(12, 4)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  conta   Conta           @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, inventoryItemKey])
+  @@index([contaId])
+  @@index([productId])
+  @@index([variantId])
+  @@unique([variantId])
+}
+
+model InventoryMovement {
+  id               String                @id @default(cuid())
+  contaId          String
+  inventoryItemKey String
+  productId        String
+  variantId        String?
+  movementType     InventoryMovementType
+  onHandBefore     Int
+  onHandDelta      Int
+  onHandAfter      Int
+  reservedBefore   Int
+  reservedDelta    Int
+  reservedAfter    Int
+  incomingBefore   Int
+  incomingDelta    Int
+  incomingAfter    Int
+  unitCost         Decimal?              @db.Decimal(12, 4)
+  totalCost        Decimal?              @db.Decimal(14, 4)
+  originType       String
+  originId         String
+  originLineId     String                @default("ROOT")
+  originActionKey  String
+  actorUserId      String?
+  reason           String?
+  createdAt        DateTime              @default(now())
+
+  conta   Conta           @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  actor   Usuario?        @relation("InventoryMovementActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, originType, originId, originLineId, originActionKey, movementType])
+  @@index([contaId])
+  @@index([productId])
+  @@index([variantId])
+  @@index([createdAt])
+  @@index([movementType])
+}
+
+model RestockOrder {
+  id             String             @id @default(cuid())
+  contaId        String
+  status         RestockOrderStatus @default(PLANEJADO)
+  supplierName   String?
+  expectedAt     DateTime?
+  notes          String?
+  createdById    String
+  canceledAt     DateTime?
+  canceledReason String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  conta     Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  createdBy Usuario           @relation("RestockOrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  items     RestockOrderItem[]
+
+  @@index([contaId])
+  @@index([contaId, status])
+  @@index([expectedAt])
+}
+
+model RestockOrderItem {
+  id                String   @id @default(cuid())
+  restockOrderId    String
+  productId         String
+  variantId         String?
+  quantityExpected  Int
+  quantityReceived  Int      @default(0)
+  estimatedUnitCost Decimal? @db.Decimal(12, 4)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  restockOrder RestockOrder   @relation(fields: [restockOrderId], references: [id], onDelete: Cascade)
+  product      Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([restockOrderId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  url       String
+  altText   String?
+  sortOrder Int      @default(0)
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model ProductOption {
+  id        String @id @default(cuid())
+  productId String
+  name      String
+  sortOrder Int    @default(0)
+
+  product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  values  ProductOptionValue[]
+
+  @@index([productId])
+  @@unique([productId, name])
+}
+
+model ProductOptionValue {
+  id        String @id @default(cuid())
+  optionId  String
+  value     String
+  sortOrder Int    @default(0)
+
+  option   ProductOption          @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  variants ProductVariantOption[]
+
+  @@index([optionId])
+  @@unique([optionId, value])
+}
+
+model ProductVariant {
+  id                String   @id @default(cuid())
+  productId         String
+  title             String
+  sku               String?
+  price             Decimal? @db.Decimal(12, 2)
+  stock             Int      @default(0)
+  lowStockThreshold Int      @default(5)
+  imageUrl          String?
+  isDefault         Boolean  @default(false)
+  sortOrder         Int      @default(0)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  product   Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options   ProductVariantOption[]
+  saleItems SaleItem[]
+  inventoryBalances InventoryBalance[]
+  inventoryMovements InventoryMovement[]
+  restockOrderItems RestockOrderItem[]
+
+  @@index([productId])
+  @@unique([productId, sku])
+}
+
+model ProductVariantOption {
+  variantId     String
+  optionValueId String
+
+  variant     ProductVariant     @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  optionValue ProductOptionValue @relation(fields: [optionValueId], references: [id], onDelete: Cascade)
+
+  @@id([variantId, optionValueId])
+}

@@ -1,0 +1,516 @@
+/**
+ * Helper para sincronizar alunos com Asaas automaticamente
+ *
+ * Cria customer no Asaas ao cadastrar aluno (se credenciais configuradas).
+ *
+ * Regra de negócio:
+ * - Aluno MENOR de 18 anos: cria customer apenas para o responsável financeiro
+ * - Aluno MAIOR de 18 anos: cria customer para o próprio aluno
+ * - Nunca cria dois customers para o mesmo vínculo
+ */
+
+import { prisma } from '../prisma';
+import {
+  createCustomer,
+  deleteCustomer,
+  getCustomer,
+  updateCustomer,
+  type AsaasCustomer,
+  type CreateCustomerInput,
+} from '@alusa/asaas';
+
+async function createAsaasCustomer(
+  customerData: CreateCustomerInput,
+  contaId: string,
+  idempotencyKey: string,
+  _entidade?: 'ALUNO' | 'RESPONSAVEL',
+  _entidadeId?: string,
+): Promise<AsaasCustomer> {
+  return createCustomer(customerData, { contaId, idempotencyKey });
+}
+
+async function getAsaasCustomerById(
+  customerId: string,
+  contaId: string,
+): Promise<AsaasCustomer | null> {
+  try {
+    return await getCustomer(customerId, { contaId });
+  } catch {
+    return null;
+  }
+}
+
+async function updateAsaasCustomer(
+  customerId: string,
+  customerData: Partial<CreateCustomerInput>,
+  contaId: string,
+): Promise<AsaasCustomer> {
+  return updateCustomer(customerId, customerData, { contaId });
+}
+
+async function deleteAsaasCustomer(
+  customerId: string,
+  contaId: string,
+  _entidade?: 'ALUNO' | 'RESPONSAVEL',
+  _entidadeId?: string,
+): Promise<boolean> {
+  try {
+    await deleteCustomer(customerId, { contaId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface SyncAlunoAsaasInput {
+  alunoId: string;
+  contaId: string;
+}
+
+/**
+ * Calcula idade baseado na data de nascimento
+ */
+function calcularIdade(dataNascimento: Date): number {
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - dataNascimento.getFullYear();
+  const mesAtual = hoje.getMonth();
+  const mesNascimento = dataNascimento.getMonth();
+
+  // Ajusta idade se ainda não fez aniversário este ano
+  if (
+    mesAtual < mesNascimento ||
+    (mesAtual === mesNascimento && hoje.getDate() < dataNascimento.getDate())
+  ) {
+    idade--;
+  }
+
+  return idade;
+}
+
+/**
+ * Sincroniza aluno com Asaas (cria customer se não existir)
+ *
+ * Chamada automaticamente após criar aluno.
+ * Fail-safe: não quebra se Asaas falhar.
+ */
+export async function syncAlunoWithAsaas(input: SyncAlunoAsaasInput): Promise<void> {
+  try {
+    // Buscar aluno com responsáveis
+    const aluno = await prisma.aluno.findUnique({
+      where: { id: input.alunoId },
+      include: {
+        responsaveis: {
+          include: {
+            responsavel: true,
+          },
+        },
+      },
+    });
+
+    if (!aluno) {
+      console.warn('[SyncAlunoAsaas] Aluno não encontrado:', input.alunoId);
+      return;
+    }
+
+    const idade = calcularIdade(aluno.dataNasc);
+    const isMenor = idade < 18;
+
+    console.log('[SyncAlunoAsaas] Processando sincronização:', {
+      alunoId: aluno.id,
+      nome: aluno.nome,
+      idade,
+      isMenor,
+    });
+
+    // Se aluno é MENOR de 18 anos
+    if (isMenor) {
+      // Buscar responsável financeiro
+      const responsavelFinanceiro = aluno.responsaveis.find(
+        (ar) => ar.responsavel.financeiro,
+      )?.responsavel;
+
+      if (!responsavelFinanceiro) {
+        console.warn('[SyncAlunoAsaas] Aluno menor de idade sem responsável financeiro cadastrado');
+        return;
+      }
+
+      // Verificar se responsável já tem customer no Asaas
+      if (responsavelFinanceiro.asaasCustomerId) {
+        // Validar se o customer realmente existe no Asaas
+        const existingCustomer = await getAsaasCustomerById(
+          responsavelFinanceiro.asaasCustomerId,
+          input.contaId,
+        );
+
+        if (existingCustomer) {
+          console.log('[SyncAlunoAsaas] Responsável já possui customer ativo no Asaas:', {
+            responsavelId: responsavelFinanceiro.id,
+            asaasCustomerId: responsavelFinanceiro.asaasCustomerId,
+          });
+          return;
+        }
+
+        // Customer não existe ou foi deletado - remover ID e criar novo
+        console.warn(
+          '[SyncAlunoAsaas] Customer não encontrado/deletado, criando novo:',
+          responsavelFinanceiro.asaasCustomerId,
+        );
+        await prisma.responsavel.update({
+          where: { id: responsavelFinanceiro.id },
+          data: { asaasCustomerId: null },
+        });
+      }
+
+      // Validar dados obrigatórios do responsável
+      if (!responsavelFinanceiro.cpf || !responsavelFinanceiro.email) {
+        console.warn('[SyncAlunoAsaas] Responsável sem CPF ou email, pulando sincronização');
+        return;
+      }
+
+      // Criar customer para o RESPONSÁVEL com externalReference do ALUNO
+      // Fluxo ideal: dados do pagador (responsável) + identificador do aluno
+      const customerData: CreateCustomerInput = {
+        name: responsavelFinanceiro.nome,
+        email: responsavelFinanceiro.email,
+        cpfCnpj: responsavelFinanceiro.cpf.replace(/\D/g, ''),
+        phone: responsavelFinanceiro.telefone?.replace(/\D/g, '') || undefined,
+        mobilePhone: responsavelFinanceiro.telefone?.replace(/\D/g, '') || undefined,
+        address: responsavelFinanceiro.enderecoLogradouro || undefined,
+        addressNumber: responsavelFinanceiro.enderecoNumero || undefined,
+        complement: responsavelFinanceiro.enderecoComplemento || undefined,
+        province: responsavelFinanceiro.enderecoBairro || undefined,
+        postalCode: responsavelFinanceiro.enderecoCep?.replace(/\D/g, '') || undefined,
+        // ✅ CRITICAL: externalReference = ID do aluno, não do responsável
+        externalReference: `aluno-${aluno.id}`,
+      };
+
+      const customer = await createAsaasCustomer(
+        customerData,
+        input.contaId,
+        `aluno-${aluno.id}`, // Idempotency key = ID do aluno
+        'ALUNO', // Entidade = ALUNO (para logs)
+        aluno.id, // EntidadeId = ID do aluno
+      );
+
+      // ✅ Atualizar AMBOS: responsável e aluno com o mesmo asaasCustomerId
+      await prisma.$transaction([
+        prisma.responsavel.update({
+          where: { id: responsavelFinanceiro.id },
+          data: { asaasCustomerId: customer.id },
+        }),
+        prisma.aluno.update({
+          where: { id: aluno.id },
+          data: { asaasCustomerId: customer.id },
+        }),
+      ]);
+
+      console.log('[SyncAlunoAsaas] Customer criado para RESPONSÁVEL (aluno menor de idade):', {
+        customerId: customer.id,
+        responsavelId: responsavelFinanceiro.id,
+        responsavelNome: responsavelFinanceiro.nome,
+        alunoId: aluno.id,
+        alunoNome: aluno.nome,
+        externalReference: `aluno-${aluno.id}`,
+        fluxo: 'Pagador = Responsável | Identificador = Aluno',
+      });
+    } else {
+      // Aluno é MAIOR de 18 anos
+
+      // Verificar se aluno já tem customer no Asaas
+      if (aluno.asaasCustomerId) {
+        // Validar se o customer realmente existe no Asaas
+        const existingCustomer = await getAsaasCustomerById(aluno.asaasCustomerId, input.contaId);
+
+        if (existingCustomer) {
+          console.log('[SyncAlunoAsaas] Aluno já possui customer ativo no Asaas:', {
+            alunoId: aluno.id,
+            asaasCustomerId: aluno.asaasCustomerId,
+          });
+          return;
+        }
+
+        // Customer não existe ou foi deletado - remover ID e criar novo
+        console.warn(
+          '[SyncAlunoAsaas] Customer não encontrado/deletado, criando novo:',
+          aluno.asaasCustomerId,
+        );
+        await prisma.aluno.update({
+          where: { id: input.alunoId },
+          data: { asaasCustomerId: null },
+        });
+      }
+
+      // Validar dados obrigatórios do aluno
+      if (!aluno.cpf || !aluno.email) {
+        console.warn('[SyncAlunoAsaas] Aluno sem CPF ou email, pulando sincronização');
+        return;
+      }
+
+      // Criar customer para o ALUNO (maior de idade)
+      // Fluxo ideal: dados do pagador (aluno) + identificador do aluno
+      const customerData: CreateCustomerInput = {
+        name: aluno.nome,
+        email: aluno.email,
+        cpfCnpj: aluno.cpf.replace(/\D/g, ''),
+        phone: aluno.telefone?.replace(/\D/g, '') || undefined,
+        mobilePhone: aluno.telefone?.replace(/\D/g, '') || undefined,
+        address: aluno.enderecoLogradouro || undefined,
+        addressNumber: aluno.enderecoNumero || undefined,
+        complement: aluno.enderecoComplemento || undefined,
+        province: aluno.enderecoBairro || undefined,
+        postalCode: aluno.enderecoCep?.replace(/\D/g, '') || undefined,
+        // ✅ CRITICAL: externalReference = ID do aluno
+        externalReference: `aluno-${aluno.id}`,
+      };
+
+      const customer = await createAsaasCustomer(
+        customerData,
+        input.contaId,
+        `aluno-${aluno.id}`, // Idempotency key = ID do aluno
+        'ALUNO', // Entidade = ALUNO
+        aluno.id, // EntidadeId = ID do aluno
+      );
+
+      // Atualizar aluno com asaasCustomerId
+      await prisma.aluno.update({
+        where: { id: input.alunoId },
+        data: { asaasCustomerId: customer.id },
+      });
+
+      console.log('[SyncAlunoAsaas] Customer criado para ALUNO (maior de idade):', {
+        customerId: customer.id,
+        alunoId: aluno.id,
+        alunoNome: aluno.nome,
+        externalReference: `aluno-${aluno.id}`,
+        fluxo: 'Pagador = Aluno | Identificador = Aluno',
+      });
+    }
+  } catch (error) {
+    // Fail-safe: não quebrar criação do aluno se Asaas falhar
+    console.error('[SyncAlunoAsaas] Erro ao sincronizar com Asaas:', error);
+  }
+}
+
+export interface UnsyncAlunoAsaasInput {
+  alunoId: string;
+  contaId: string;
+}
+
+/**
+ * Remove a sincronização do aluno com Asaas (deleta customer)
+ *
+ * Chamada automaticamente antes de deletar aluno.
+ * Fail-safe: não quebra se Asaas falhar.
+ *
+ * @see https://docs.asaas.com/reference/remover-cliente - DELETE /v3/customers/{id}
+ */
+export async function unsyncAlunoFromAsaas(input: UnsyncAlunoAsaasInput): Promise<void> {
+  try {
+    // Buscar aluno com asaasCustomerId
+    const aluno = await prisma.aluno.findUnique({
+      where: { id: input.alunoId },
+      select: {
+        id: true,
+        nome: true,
+        asaasCustomerId: true,
+        dataNasc: true,
+        responsaveis: {
+          include: {
+            responsavel: {
+              select: {
+                id: true,
+                nome: true,
+                asaasCustomerId: true,
+                financeiro: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!aluno) {
+      console.warn('[UnsyncAlunoAsaas] Aluno não encontrado:', input.alunoId);
+      return;
+    }
+
+    const idade = calcularIdade(aluno.dataNasc);
+    const isMenor = idade < 18;
+
+    console.log('[UnsyncAlunoAsaas] Processando remoção de sincronização:', {
+      alunoId: aluno.id,
+      nome: aluno.nome,
+      idade,
+      isMenor,
+      asaasCustomerId: aluno.asaasCustomerId,
+    });
+
+    // Se aluno tem asaasCustomerId, deletar no Asaas
+    if (aluno.asaasCustomerId) {
+      const deleted = await deleteAsaasCustomer(
+        aluno.asaasCustomerId,
+        input.contaId,
+        'ALUNO',
+        aluno.id,
+      );
+
+      if (deleted) {
+        console.log('[UnsyncAlunoAsaas] Customer deletado no Asaas:', {
+          asaasCustomerId: aluno.asaasCustomerId,
+          alunoId: aluno.id,
+        });
+
+        // Limpar asaasCustomerId do aluno
+        await prisma.aluno.update({
+          where: { id: aluno.id },
+          data: { asaasCustomerId: null },
+        });
+
+        // Se aluno era menor, limpar também do responsável financeiro
+        if (isMenor) {
+          const responsavelFinanceiro = aluno.responsaveis.find(
+            (ar) => ar.responsavel.financeiro && ar.responsavel.asaasCustomerId === aluno.asaasCustomerId,
+          )?.responsavel;
+
+          if (responsavelFinanceiro) {
+            await prisma.responsavel.update({
+              where: { id: responsavelFinanceiro.id },
+              data: { asaasCustomerId: null },
+            });
+            console.log('[UnsyncAlunoAsaas] asaasCustomerId removido do responsável:', {
+              responsavelId: responsavelFinanceiro.id,
+            });
+          }
+        }
+      } else {
+        console.warn('[UnsyncAlunoAsaas] Falha ao deletar customer no Asaas:', {
+          asaasCustomerId: aluno.asaasCustomerId,
+        });
+      }
+    } else {
+      console.log('[UnsyncAlunoAsaas] Aluno não tinha customer no Asaas:', {
+        alunoId: aluno.id,
+      });
+    }
+  } catch (error) {
+    // Fail-safe: não quebrar deleção do aluno se Asaas falhar
+    console.error('[UnsyncAlunoAsaas] Erro ao remover sincronização com Asaas:', error);
+  }
+}
+
+export interface UpdateAlunoAsaasInput {
+  alunoId: string;
+  contaId: string;
+}
+
+/**
+ * Atualiza os dados do customer no Asaas quando o aluno é editado
+ *
+ * Chamada automaticamente após atualizar aluno.
+ * Fail-safe: não quebra se Asaas falhar.
+ *
+ * @see https://docs.asaas.com/reference/atualizar-cliente - POST /v3/customers/{id}
+ */
+export async function updateAlunoInAsaas(input: UpdateAlunoAsaasInput): Promise<void> {
+  try {
+    // Buscar aluno com dados completos
+    const aluno = await prisma.aluno.findUnique({
+      where: { id: input.alunoId },
+      include: {
+        responsaveis: {
+          include: {
+            responsavel: true,
+          },
+        },
+      },
+    });
+
+    if (!aluno) {
+      console.warn('[UpdateAlunoAsaas] Aluno não encontrado:', input.alunoId);
+      return;
+    }
+
+    // Se aluno não tem asaasCustomerId, não há nada para atualizar
+    if (!aluno.asaasCustomerId) {
+      console.log('[UpdateAlunoAsaas] Aluno não possui customer no Asaas, pulando atualização');
+      return;
+    }
+
+    const idade = calcularIdade(aluno.dataNasc);
+    const isMenor = idade < 18;
+
+    console.log('[UpdateAlunoAsaas] Processando atualização:', {
+      alunoId: aluno.id,
+      nome: aluno.nome,
+      idade,
+      isMenor,
+      asaasCustomerId: aluno.asaasCustomerId,
+    });
+
+    // Montar dados para atualização
+    let customerData: Partial<CreateCustomerInput>;
+
+    if (isMenor) {
+      // Se aluno é menor, os dados do customer são do responsável financeiro
+      const responsavelFinanceiro = aluno.responsaveis.find(
+        (ar) => ar.responsavel.financeiro,
+      )?.responsavel;
+
+      if (!responsavelFinanceiro) {
+        console.warn('[UpdateAlunoAsaas] Aluno menor sem responsável financeiro');
+        return;
+      }
+
+      customerData = {
+        name: responsavelFinanceiro.nome,
+        email: responsavelFinanceiro.email || undefined,
+        phone: responsavelFinanceiro.telefone?.replace(/\D/g, '') || undefined,
+        mobilePhone: responsavelFinanceiro.telefone?.replace(/\D/g, '') || undefined,
+        address: responsavelFinanceiro.enderecoLogradouro || undefined,
+        addressNumber: responsavelFinanceiro.enderecoNumero || undefined,
+        complement: responsavelFinanceiro.enderecoComplemento || undefined,
+        province: responsavelFinanceiro.enderecoBairro || undefined,
+        postalCode: responsavelFinanceiro.enderecoCep?.replace(/\D/g, '') || undefined,
+      };
+    } else {
+      // Se aluno é maior, os dados do customer são do próprio aluno
+      customerData = {
+        name: aluno.nome,
+        email: aluno.email || undefined,
+        phone: aluno.telefone?.replace(/\D/g, '') || undefined,
+        mobilePhone: aluno.telefone?.replace(/\D/g, '') || undefined,
+        address: aluno.enderecoLogradouro || undefined,
+        addressNumber: aluno.enderecoNumero || undefined,
+        complement: aluno.enderecoComplemento || undefined,
+        province: aluno.enderecoBairro || undefined,
+        postalCode: aluno.enderecoCep?.replace(/\D/g, '') || undefined,
+      };
+    }
+
+    // Filtrar campos undefined
+    const filteredData = Object.fromEntries(
+      Object.entries(customerData).filter(([, v]) => v !== undefined),
+    ) as Partial<AsaasCustomerData>;
+
+    if (Object.keys(filteredData).length === 0) {
+      console.log('[UpdateAlunoAsaas] Nenhum campo para atualizar');
+      return;
+    }
+
+    // Atualizar no Asaas
+    const updated = await updateAsaasCustomer(
+      aluno.asaasCustomerId,
+      filteredData,
+      input.contaId,
+    );
+
+    console.log('[UpdateAlunoAsaas] Customer atualizado no Asaas:', {
+      asaasCustomerId: updated.id,
+      alunoId: aluno.id,
+      campos: Object.keys(filteredData),
+    });
+  } catch (error) {
+    // Fail-safe: não quebrar atualização do aluno se Asaas falhar
+    console.error('[UpdateAlunoAsaas] Erro ao atualizar no Asaas:', error);
+  }
+}

@@ -1,0 +1,65 @@
+node_modules/
+**/node_modules/
+
+.next/
+**/.next/
+
+dist/
+**/dist/
+
+build/
+**/build/
+
+coverage/
+**/coverage/
+
+.turbo/
+**/.turbo/
+
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+*.env
+.env
+.env.*
+
+# env files (nunca versionar segredos)
+**/.env*
+!.env.example
+!.env.*.example
+!.env.local.template
+!.env.test.example
+
+# secret/key dumps
+scripts/*key*out*.txt
+scripts/*secret*.txt
+scripts/*.local.*
+scripts/*tmp*.mjs
+
+# testes/relatórios
+apps/**/test-results/
+**/test-results/
+**/playwright-report/
+**/.playwright/
+.playwright-mcp/
+*.tsbuildinfo
+
+# caches
+mcp/**/cache/*
+!mcp/**/cache/.gitkeep
+
+# uploads gerados em runtime
+**/public/uploads/
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+
+.cursor/
+
+# utilitários
+*-tree.txt
+debug-*.png
+*.zip

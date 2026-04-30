@@ -1,0 +1,265 @@
+# Criar chave de API para uma subconta
+
+<Callout icon="🚧" theme="warn">
+  **Atenção**
+
+  * Esse endpoint necessita de liberação via interface WEB. Para mais detalhes sobre a liberação acesse nosso guia sobre [gerenciamento das chaves de API de subcontas](https://docs.asaas.com/update/docs/gerenciamento-de-chaves-de-api-de-subcontas#/).
+  * Ele só pode ser acessado por seu sistema e caso você tenha a configuração de Whitelist de IPs habilitada. Confira mais detalhes sobre a funcionalidade de [Whitelist de IPs](https://docs.asaas.com/docs/mecanismos-de-seguranca#/whitelist-de-ips).
+</Callout>
+
+<Callout icon="🚧">
+  **Armazenamento das chaves**
+
+  A chave de API é retornada apenas uma vez na resposta desta requisição. O Asaas não fornecerá essa credencial em formato visível posteriormente.
+
+  **Boas práticas de segurança**
+
+  * Configure sua aplicação para capturar o `access_token` da resposta e enviá-lo diretamente para seu sistema de armazenamento seguro.
+  * Recomendamos o uso de serviços de gerenciamento de segredos (como AWS Secrets Manager, Google Secret Manager ou Azure Key Vault) ou variáveis de ambiente criptografadas.
+  * Garanta que sua aplicação não registre o corpo da resposta desta requisição em logs de sistema ou depuração para evitar o vazamento da credencial em texto plano.
+  * Nunca deixe chaves de API "hardcoded" no código-fonte ou em arquivos de configuração públicos.
+  * Se você perder essa chave, será necessário revogá-la e gerar uma nova, o que pode impactar a operação da subconta até a atualização.
+</Callout>
+
+# OpenAPI definition
+
+```json
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Asaas",
+    "description": "API pública de integração com a plataforma Asaas.",
+    "version": "3.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api-sandbox.asaas.com",
+      "description": "Sandbox"
+    }
+  ],
+  "security": [
+    {
+      "Authorization": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Subcontas Asaas"
+    }
+  ],
+  "paths": {
+    "/v3/accounts/{id}/accessTokens": {
+      "post": {
+        "tags": [
+          "Subcontas Asaas"
+        ],
+        "summary": "Criar chave de API para uma subconta",
+        "description": "",
+        "operationId": "criar-chave-de-api-para-uma-subconta",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identificador único da subconta no Asaas",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "b6bff0c5-38c6-496a-a3a8-105b31d5bcfe"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Nome da chave de API",
+                    "example": "My API Access Token",
+                    "deprecated": false
+                  },
+                  "expirationDate": {
+                    "type": "string",
+                    "description": "Data de expiração da chave de API",
+                    "format": "date-time",
+                    "example": "2026-12-31 12:30:50",
+                    "deprecated": false
+                  }
+                },
+                "x-readme-ref-name": "CustomerApiAccessTokenSaveRequestDTO"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "description": "ID da chave de API",
+                      "example": "b6bff0c5-38c6-496a-a3a8-105b31d5bcfe",
+                      "deprecated": false
+                    },
+                    "name": {
+                      "type": "string",
+                      "description": "Nome da chave de API",
+                      "example": "My API Access Token",
+                      "deprecated": false
+                    },
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Indica se a chave de API está habilitada",
+                      "example": false,
+                      "deprecated": false
+                    },
+                    "expirationDate": {
+                      "type": "string",
+                      "description": "Data de expiração da chave de API",
+                      "format": "date-time",
+                      "example": "2026-12-31 12:30:50",
+                      "deprecated": false
+                    },
+                    "dateCreated": {
+                      "type": "string",
+                      "description": "Data de criação da chave de API",
+                      "format": "date-time",
+                      "example": "2026-01-01 08:00:00",
+                      "deprecated": false
+                    },
+                    "projectedExpirationDateByLackOfUse": {
+                      "type": "string",
+                      "description": "Data prevista de expiração por falta de uso da chave de API",
+                      "format": "date",
+                      "example": "2026-06-01",
+                      "deprecated": false
+                    },
+                    "apiKey": {
+                      "type": "string",
+                      "description": "Chave de API",
+                      "example": "$aact_hmlg_xxxxx",
+                      "deprecated": false
+                    }
+                  },
+                  "x-readme-ref-name": "CustomerApiAccessTokenSaveResponseDTO"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "description": "Lista de objetos",
+                      "deprecated": false,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "description": "Código do erro",
+                            "deprecated": false,
+                            "example": null
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "Descrição do erro",
+                            "deprecated": false,
+                            "example": null
+                          }
+                        },
+                        "description": "Lista de objetos",
+                        "deprecated": false,
+                        "x-readme-ref-name": "ErrorResponseItemDTO"
+                      }
+                    }
+                  },
+                  "x-readme-ref-name": "ErrorResponseDTO"
+                },
+                "example": {
+                  "errors": [
+                    {
+                      "code": "error_code",
+                      "description": "Descrição do erro"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "errors": {
+                      "type": "array",
+                      "description": "Lista de objetos",
+                      "deprecated": false,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string",
+                            "description": "Código do erro",
+                            "deprecated": false,
+                            "example": null
+                          },
+                          "description": {
+                            "type": "string",
+                            "description": "Descrição do erro",
+                            "deprecated": false,
+                            "example": null
+                          }
+                        },
+                        "description": "Lista de objetos",
+                        "deprecated": false,
+                        "x-readme-ref-name": "ErrorResponseItemDTO"
+                      }
+                    }
+                  },
+                  "x-readme-ref-name": "ErrorResponseDTO"
+                },
+                "example": {
+                  "errors": [
+                    {
+                      "code": "invalid_access_token",
+                      "description": "A chave de API fornecida é inválida"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "deprecated": false
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "Authorization": {
+        "type": "apiKey",
+        "name": "access_token",
+        "in": "header"
+      }
+    }
+  }
+}
+```

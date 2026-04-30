@@ -1,0 +1,1 @@
+{"version":3,"file":"cancelInvoice.d.ts","sourceRoot":"","sources":["cancelInvoice.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,KAAK,EAAE,YAAY,EAAE,MAAM,gBAAgB,CAAC;AAEnD,MAAM,WAAW,mBAAmB;IAClC,MAAM,EAAE,MAAM,CAAC;IACf,EAAE,EAAE,MAAM,CAAC;CACZ;AAED,wBAAsB,aAAa,CAAC,MAAM,EAAE,mBAAmB,GAAG,OAAO,CAAC,YAAY,CAAC,CAGtF"}

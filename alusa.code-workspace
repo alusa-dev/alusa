@@ -1,0 +1,47 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.git": true,
+      "**/.turbo": true,
+      "**/.next": true,
+      "**/dist": true,
+      "**/build": true,
+      "**/coverage": true,
+      "**/test-results": true,
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/.next": true,
+      "**/dist": true,
+      "**/build": true,
+      "**/coverage": true,
+      "**/test-results": true,
+    },
+    "files.watcherExclude": {
+      "**/node_modules/**": true,
+      "**/.next/**": true,
+      "**/dist/**": true,
+      "**/build/**": true,
+      "**/.turbo/**": true,
+    },
+    "typescript.tsserver.maxTsServerMemory": 4096,
+    "typescript.tsdk": "node_modules/typescript/lib",
+    "eslint.workingDirectories": [
+      "apps/web",
+      "packages/lib",
+      "packages/ui"
+    ],
+    "terminal.integrated.defaultProfile.windows": "Git Bash",
+    "editor.formatOnSave": true,
+    "prettier.requireConfig": true,
+    "editor.inlineSuggest.enabled": true,
+    "github.copilot.inlineSuggest.enable": true,
+    "chatgpt.openOnStartup": true,
+    "prisma.pinToPrisma6": true,
+  },
+}

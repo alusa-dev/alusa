@@ -1,0 +1,1 @@
+{"version":3,"file":"billing.d.ts","sourceRoot":"","sources":["billing.ts"],"names":[],"mappings":"AAAA;;GAEG;AAEH,eAAO,MAAM,aAAa;;;;;CAKhB,CAAC;AAEX,MAAM,MAAM,WAAW,GAAG,CAAC,OAAO,aAAa,CAAC,CAAC,MAAM,OAAO,aAAa,CAAC,CAAC;AAE7E,eAAO,MAAM,gBAAgB;;;;;;CAMnB,CAAC;AAEX,MAAM,MAAM,aAAa,GAAG,CAAC,OAAO,gBAAgB,CAAC,CAAC,MAAM,OAAO,gBAAgB,CAAC,CAAC"}

@@ -1,0 +1,86 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "vitest:unit:web",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@alusa/web",
+				"test:unit"
+			]
+		},
+		{
+			"label": "typecheck:web+lib",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"-w",
+				"-s",
+				"-C",
+				"apps/web",
+				"typecheck",
+				"&&",
+				"pnpm",
+				"-w",
+				"-s",
+				"-C",
+				"packages/lib",
+				"typecheck"
+			],
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": {
+				"kind": "test",
+				"isDefault": true
+			}
+		},
+		{
+			"label": "vitest:unit:web",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@alusa/web",
+				"test:unit"
+			],
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "vitest:unit:web",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@alusa/web",
+				"test:unit"
+			],
+			"group": "test"
+		},
+		{
+			"label": "vitest:unit:web",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@alusa/web",
+				"test:unit"
+			],
+			"group": "test"
+		},
+		{
+			"label": "vitest:unit:web",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@alusa/web",
+				"test:unit"
+			],
+			"group": "test"
+		}
+	]
+}

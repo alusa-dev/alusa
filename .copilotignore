@@ -1,0 +1,25 @@
+# Dependências
+node_modules/
+.pnpm-store/
+
+# Builds e distribuições
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+coverage/
+storybook-static/
+
+# Configs e IDEs
+.vscode/
+.idea/
+
+# Logs e temporários
+*.log
+*.tmp
+*.swp
+
+# DB / schema / cache
+prisma/migrations/
