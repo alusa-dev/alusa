@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { ClipboardDocumentCheck as Receipt, Eye } from '@/components/icons/icons';
-import { getUnifiedBadgeStatus } from '@alusa/finance';
+import { getUnifiedBadgeStatus } from '@alusa/finance/client';
 
 interface Pagamento {
   id: string;
@@ -332,4 +332,3 @@ export function PagamentoDetalhesDialog({
     </>
   );
 }
-

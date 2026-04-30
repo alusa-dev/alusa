@@ -5,3 +5,4 @@ export {
   CHARGE_ACTION_LABELS,
 } from './guards/charge-status-guard';
 export type { ChargeAction } from './guards/charge-status-guard';
+export { getUnifiedBadgeStatus } from './mappers/charge-status';

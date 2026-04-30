@@ -15,7 +15,7 @@ import {
 } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { getUnifiedBadgeStatus } from '@alusa/finance';
+import { getUnifiedBadgeStatus } from '@alusa/finance/client';
 import type { PortalFinanceiroListItemDTO } from '@/features/portal/dtos';
 
 const PAYMENT_NOTICE =
