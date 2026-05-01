@@ -25,7 +25,7 @@ const updatePayloadSchema = updateCurrentProfileInputDTOSchema.extend({
   name: z.string().min(2).max(120),
   locale: z.enum(PROFILE_LOCALE_VALUES),
   theme: z.enum(PROFILE_THEME_VALUES),
-  foto: z.union([z.string().url(), z.literal(null)]).optional(),
+  foto: updateCurrentProfileInputDTOSchema.shape.foto,
 });
 
 export type UpdateProfilePayload = {
