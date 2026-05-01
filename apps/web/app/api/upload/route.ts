@@ -6,6 +6,13 @@ import { getSessionUser } from '@/lib/auth/session';
 import { jsonNoStore } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import {
+  deleteStorageObject,
+  isR2Configured,
+  putStorageObject,
+  storageKeyFromUrl,
+  storageUrlForKey,
+} from '@/lib/r2-storage';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const DEFAULT_MAX_MB = 15;
@@ -51,8 +58,6 @@ export async function POST(req: Request) {
       return jsonNoStore({ error: 'Muitas tentativas. Aguarde alguns minutos.' }, { status: 429 });
     }
 
-    await ensureDir();
-
     const formData = await req.formData();
     const file = formData.get('file');
 
@@ -82,12 +87,25 @@ export async function POST(req: Request) {
     }
 
     const filename = `${user.contaId}-${user.id}-${randomUUID()}${binaryValidation.extension}`;
-    const filePath = path.join(UPLOAD_DIR, filename);
-
-    await fs.writeFile(filePath, bytes);
+    let url: string;
+    if (isR2Configured()) {
+      const key = `uploads/avatars/${filename}`;
+      await putStorageObject({
+        key,
+        body: bytes,
+        contentType: binaryValidation.detectedMimeType,
+        contentLength: file.size,
+      });
+      url = storageUrlForKey(key);
+    } else {
+      await ensureDir();
+      const filePath = path.join(UPLOAD_DIR, filename);
+      await fs.writeFile(filePath, bytes);
+      url = `/uploads/${filename}`;
+    }
 
     const result = {
-      url: `/uploads/${filename}`,
+      url,
       size: file.size,
       type: binaryValidation.detectedMimeType,
     };
@@ -121,11 +139,12 @@ export async function DELETE(req: Request) {
       return jsonNoStore({ error: 'URL inválida.' }, { status: 400 });
     }
 
-    if (!/^\/uploads\/[^/]+$/.test(url)) {
+    const r2Key = storageKeyFromUrl(url);
+    if (!r2Key && !/^\/uploads\/[^/]+$/.test(url)) {
       return jsonNoStore({ error: 'Caminho não permitido.' }, { status: 400 });
     }
 
-    const filename = path.basename(url);
+    const filename = r2Key ? path.basename(r2Key) : path.basename(url);
     const filePath = path.join(UPLOAD_DIR, filename);
 
     const resolvedPath = path.resolve(filePath);
@@ -154,10 +173,14 @@ export async function DELETE(req: Request) {
       return jsonNoStore({ error: 'Você só pode remover seus próprios arquivos.' }, { status: 403 });
     }
 
-    try {
-      await fs.unlink(filePath);
-    } catch {
-      // Arquivo não existe, tudo bem.
+    if (r2Key) {
+      await deleteStorageObject(r2Key).catch(() => null);
+    } else {
+      try {
+        await fs.unlink(filePath);
+      } catch {
+        // Arquivo não existe, tudo bem.
+      }
     }
 
     return jsonNoStore({ success: true });

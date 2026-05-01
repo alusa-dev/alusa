@@ -13,6 +13,13 @@ import {
   uploadCobrancaArquivoResultDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaArquivoToDTO } from '@/features/financeiro/cobrancas/mappers';
+import {
+  deleteStorageObject,
+  isR2Configured,
+  putStorageObject,
+  storageKeyFromUrl,
+  storageUrlForKey,
+} from '@/lib/r2-storage';
 
 // Configuração de upload
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -174,15 +181,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const ext = file.name.split('.').pop();
     const nomeArquivo = `${timestamp}_${randomString}.${ext}`;
 
-    // Criar diretório se não existir
-    if (!existsSync(UPLOAD_DIR)) {
-      await mkdir(UPLOAD_DIR, { recursive: true });
-    }
-
-    // Salvar arquivo
     const buffer = Buffer.from(await file.arrayBuffer());
-    const filePath = join(UPLOAD_DIR, nomeArquivo);
-    await writeFile(filePath, new Uint8Array(buffer));
+    const storageKey = `uploads/cobrancas/${nomeArquivo}`;
+    const storageUrl = storageUrlForKey(storageKey);
+
+    if (isR2Configured()) {
+      await putStorageObject({
+        key: storageKey,
+        body: buffer,
+        contentType: file.type,
+        contentLength: file.size,
+      });
+    } else {
+      // Criar diretório se não existir
+      if (!existsSync(UPLOAD_DIR)) {
+        await mkdir(UPLOAD_DIR, { recursive: true });
+      }
+
+      // Salvar arquivo
+      const filePath = join(UPLOAD_DIR, nomeArquivo);
+      await writeFile(filePath, new Uint8Array(buffer));
+    }
 
     // Criar registro no banco
     const arquivoChargeClient = (
@@ -204,7 +223,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             nomeArquivo,
             mimetype: file.type,
             tamanho: file.size,
-            url: `/uploads/cobrancas/${nomeArquivo}`,
+            url: isR2Configured() ? storageUrl : `/uploads/cobrancas/${nomeArquivo}`,
             uploadPor: session.user.id,
           },
         })
@@ -215,7 +234,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             nomeArquivo,
             mimetype: file.type,
             tamanho: file.size,
-            url: `/uploads/cobrancas/${nomeArquivo}`,
+            url: isR2Configured() ? storageUrl : `/uploads/cobrancas/${nomeArquivo}`,
             uploadPor: session.user.id,
           },
         });
@@ -289,11 +308,17 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       return NextResponse.json({ error: 'Arquivo não encontrado' }, { status: 404 });
     }
 
-    // Remover arquivo do sistema de arquivos
-    const filePath = join(UPLOAD_DIR, (arquivoCobranca ?? arquivoCharge)!.nomeArquivo);
-    if (existsSync(filePath)) {
+    // Remover arquivo do storage
+    const arquivo = (arquivoCobranca ?? arquivoCharge)!;
+    const r2Key = storageKeyFromUrl(String(arquivo.url ?? ''));
+    if (r2Key) {
+      await deleteStorageObject(r2Key).catch(() => null);
+    } else {
+      const filePath = join(UPLOAD_DIR, arquivo.nomeArquivo);
+      if (existsSync(filePath)) {
       const { unlink } = await import('fs/promises');
       await unlink(filePath);
+      }
     }
 
     // Remover registro do banco

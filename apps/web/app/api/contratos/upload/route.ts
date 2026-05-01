@@ -7,6 +7,7 @@ import { uploadContratoArquivoResultDTOSchema } from '@/features/contratos/dtos'
 import { jsonNoStore } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { isR2Configured, putStorageObject, storageUrlForKey } from '@/lib/r2-storage';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads', 'contratos');
 const MAX_SIZE = 25 * 1024 * 1024; // 25MB
@@ -61,8 +62,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await ensureDir();
-
     const formData = await req.formData();
     const file = formData.get('file');
 
@@ -104,12 +103,25 @@ export async function POST(req: NextRequest) {
     const hashSha256 = generateSha256(buffer);
 
     const filename = `${user.contaId}-${user.id}-${randomUUID()}${binaryValidation.extension}`;
-    const filePath = path.join(UPLOAD_DIR, filename);
-
-    await fs.writeFile(filePath, bytes);
+    let url: string;
+    if (isR2Configured()) {
+      const key = `uploads/contratos/${filename}`;
+      await putStorageObject({
+        key,
+        body: bytes,
+        contentType: binaryValidation.detectedMimeType,
+        contentLength: file.size,
+      });
+      url = storageUrlForKey(key);
+    } else {
+      await ensureDir();
+      const filePath = path.join(UPLOAD_DIR, filename);
+      await fs.writeFile(filePath, bytes);
+      url = `/uploads/contratos/${filename}`;
+    }
 
     const result = {
-      url: `/uploads/contratos/${filename}`,
+      url,
       hashSha256,
       size: file.size,
       mimeType: binaryValidation.detectedMimeType,
