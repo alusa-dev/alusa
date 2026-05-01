@@ -73,7 +73,13 @@ export const updateCurrentProfileInputDTOSchema = z
         z
           .string()
           .trim()
-          .refine((value) => /^https?:\/\//i.test(value) || value.startsWith('/uploads/'), 'URL invalida'),
+          .refine(
+            (value) =>
+              /^https?:\/\//i.test(value) ||
+              value.startsWith('/uploads/') ||
+              value.startsWith('/api/files/'),
+            'URL invalida',
+          ),
         z.literal(null),
       ])
       .optional(),
