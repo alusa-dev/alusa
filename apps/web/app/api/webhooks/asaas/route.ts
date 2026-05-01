@@ -5,8 +5,9 @@ import {
   inspectWebhookProcessingRuntimeStatus,
   processAsaasWebhookQueue,
   resolveAsaasWebhookAccessToken,
-  extractClientIp,
+  extractClientIps,
   isAsaasWebhookIpAllowed,
+  shouldBlockAsaasWebhookByIp,
   globalWebhookRateLimiter,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
@@ -29,10 +30,21 @@ function isJsonContentType(value: string | null): boolean {
 
 export async function POST(req: NextRequest) {
   try {
-    // IP whitelist check (desabilitado em dev/test)
-    const clientIp = extractClientIp(req.headers);
-    if (!isAsaasWebhookIpAllowed(clientIp)) {
-      console.warn('[Asaas Webhook] IP rejeitado', { clientIp });
+    // IP allowlist é diagnóstica por padrão. O authToken do webhook é a
+    // barreira primária; bloquear por IP em serverless pode pausar filas se
+    // o sandbox usar IP adicional ou a CDN alterar X-Forwarded-For.
+    const clientIps = extractClientIps(req.headers);
+    const clientIp = clientIps[0] ?? null;
+    const ipAllowed = isAsaasWebhookIpAllowed(clientIps.length > 0 ? clientIps : null);
+    if (!ipAllowed) {
+      console.warn('[Asaas Webhook] IP fora da allowlist diagnóstica', {
+        clientIp,
+        candidateCount: clientIps.length,
+        strict: process.env.ASAAS_WEBHOOK_IP_CHECK === 'strict',
+      });
+    }
+
+    if (shouldBlockAsaasWebhookByIp(clientIps.length > 0 ? clientIps : null)) {
       return NextResponse.json(
         { success: false, error: 'FORBIDDEN' },
         { status: 403 },

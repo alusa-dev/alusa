@@ -930,7 +930,9 @@ export type {
 // Webhook IP Whitelist
 export {
   extractClientIp,
+  extractClientIps,
   isAsaasWebhookIpAllowed,
+  shouldBlockAsaasWebhookByIp,
   getAsaasWebhookIps,
 } from './webhooks/webhook-ip-whitelist';
 
