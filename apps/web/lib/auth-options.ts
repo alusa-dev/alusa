@@ -23,12 +23,19 @@ const creds = z.object({
   contaId: z.string().optional().nullable(),
 });
 // Lazy getter: validado em runtime, não no nível do módulo.
-// Isso evita que o `next build` falhe durante análise estática quando
-// NEXTAUTH_SECRET não está disponível no ambiente de build (ex: Vercel sem env var).
+// Durante o `next build` (NEXT_PHASE=phase-production-build), o Next.js faz análise
+// estática de todas as rotas. Retornar um placeholder evita erros de prerender;
+// getServerSession com secret inválido simplesmente retorna null → rotas respondem 401.
 function getSecret(): string {
   const s =
     process.env.NEXTAUTH_SECRET ?? (process.env.NODE_ENV === 'test' ? 'test-secret' : undefined);
-  if (!s) throw new Error('NEXTAUTH_SECRET ausente. Defina NEXTAUTH_SECRET nas variáveis de ambiente.');
+  if (!s) {
+    // Build-time: não lançar; retornar placeholder para que análise estática passe.
+    if (process.env.NEXT_PHASE === 'phase-production-build') {
+      return '__build_placeholder__do_not_use_in_prod__';
+    }
+    throw new Error('NEXTAUTH_SECRET ausente. Defina NEXTAUTH_SECRET nas variáveis de ambiente.');
+  }
   return s;
 }
 
