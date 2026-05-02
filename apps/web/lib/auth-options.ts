@@ -22,12 +22,18 @@ const creds = z.object({
   password: z.string().min(6),
   contaId: z.string().optional().nullable(),
 });
-const secret =
-  process.env.NEXTAUTH_SECRET ?? (process.env.NODE_ENV === 'test' ? 'test-secret' : undefined);
-if (!secret) throw new Error('NEXTAUTH_SECRET ausente. Defina em apps/web/.env.local');
+// Lazy getter: validado em runtime, não no nível do módulo.
+// Isso evita que o `next build` falhe durante análise estática quando
+// NEXTAUTH_SECRET não está disponível no ambiente de build (ex: Vercel sem env var).
+function getSecret(): string {
+  const s =
+    process.env.NEXTAUTH_SECRET ?? (process.env.NODE_ENV === 'test' ? 'test-secret' : undefined);
+  if (!s) throw new Error('NEXTAUTH_SECRET ausente. Defina NEXTAUTH_SECRET nas variáveis de ambiente.');
+  return s;
+}
 
 export const authOptions: NextAuthOptions = {
-  secret,
+  get secret() { return getSecret(); },
   pages: { signIn: '/auth/login' },
   session: { strategy: 'jwt', maxAge: 60 * 60 * 24 * 7, updateAge: 60 * 60 },
   providers: [
