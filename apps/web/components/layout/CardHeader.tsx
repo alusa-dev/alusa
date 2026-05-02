@@ -150,6 +150,7 @@ export default function CardHeader(): JSX.Element {
         </div>
         <input
           id={searchId}
+          name="app-search"
           type="search"
           placeholder="Pesquise aqui"
           aria-label="Pesquisar"

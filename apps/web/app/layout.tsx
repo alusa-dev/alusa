@@ -4,6 +4,24 @@ import { AppProviders } from "./providers";
 import React from "react";
 import Script from "next/script";
 import { cookies } from "next/headers";
+import type { Metadata, Viewport } from "next";
+
+export const metadata: Metadata = {
+  title: {
+    default: "Alusa",
+    template: "%s | Alusa",
+  },
+  description: "Gestão escolar, matrículas, cobranças e financeiro em uma operação integrada.",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
+};
+
+export const viewport: Viewport = {
+  colorScheme: "light dark",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = cookies();
@@ -11,7 +29,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR" className="h-full" data-theme={themeCookie}>
       <head>
-        <meta name="color-scheme" content="dark light" />
         {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar) */}
         <Script id="theme-init" strategy="beforeInteractive">
           {`(function(){try{var d=document.documentElement;if(d.hasAttribute('data-theme'))return;var t=localStorage.getItem('alusa.theme');if(!t){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}d.setAttribute('data-theme',t);}catch(e){}})();`}

@@ -1,6 +1,6 @@
 'use client';
 
-import { startTransition, useCallback, useEffect, useState } from 'react';
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from '@/components/ui/toast';
 import type {
   NotificationAction,
@@ -46,6 +46,7 @@ export function useNotificationsFeed(params?: {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const lastLoadedAtRef = useRef(0);
 
   const applyLocalAction = useCallback((notificationId: string, action: NotificationAction) => {
     setItems((currentItems) => {
@@ -98,11 +99,15 @@ export function useNotificationsFeed(params?: {
     }
   }, [items]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!enabled) {
       setItems([]);
       setUnreadCount(0);
       setTotalCount(0);
+      setLoading(false);
+      return;
+    }
+    if (!force && Date.now() - lastLoadedAtRef.current < 15_000) {
       setLoading(false);
       return;
     }
@@ -115,9 +120,10 @@ export function useNotificationsFeed(params?: {
       });
       const response = await fetch(`/api/notifications?${searchParams.toString()}`, {
         method: 'GET',
-        cache: 'no-store',
+        headers: { Accept: 'application/json' },
       });
       const data = await parseResponse<NotificationListResponse>(response);
+      lastLoadedAtRef.current = Date.now();
       setItems(data.items);
       setUnreadCount(data.unreadCount);
       setTotalCount(data.totalCount);
@@ -159,7 +165,7 @@ export function useNotificationsFeed(params?: {
       } catch (error) {
         console.error('[Notifications][update]', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a notificação.');
-        await load();
+        await load(true);
       } finally {
         setSubmitting(false);
       }
@@ -188,7 +194,7 @@ export function useNotificationsFeed(params?: {
     } catch (error) {
       console.error('[Notifications][markAllAsRead]', error);
       toast.error(error instanceof Error ? error.message : 'Não foi possível marcar as notificações como lidas.');
-      await load();
+      await load(true);
     } finally {
       setSubmitting(false);
     }
@@ -206,7 +212,7 @@ export function useNotificationsFeed(params?: {
       } catch (error) {
         console.error('[Notifications][delete]', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível excluir a notificação.');
-        await load();
+        await load(true);
       } finally {
         setSubmitting(false);
       }
@@ -220,7 +226,7 @@ export function useNotificationsFeed(params?: {
     totalCount,
     loading,
     submitting,
-    reload: load,
+    reload: () => load(true),
     updateNotification,
     deleteNotification,
     markAllAsRead,

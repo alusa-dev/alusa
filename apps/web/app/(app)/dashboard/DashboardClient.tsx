@@ -43,7 +43,7 @@ export default function DashboardClient() {
       try {
         const params = new URLSearchParams({ contaId: user.contaId ?? '' });
         const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
-          cache: 'no-store',
+          headers: { Accept: 'application/json' },
         });
         const raw = (await response.json()) as Record<string, unknown>;
         const data = mapDashboardMetricsResultToDTO(raw);
@@ -225,7 +225,7 @@ export default function DashboardClient() {
         {/* Atalhos Administrativos */}
         <motion.div variants={kpiItemVariants} className="h-[260px]">
           <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm flex h-full flex-col">
-            <h3 className="text-sm font-semibold text-gray-900 mb-0.5">Atalhos Administrativos</h3>
+            <h2 className="text-sm font-semibold text-gray-900 mb-0.5">Atalhos Administrativos</h2>
             <p className="text-xs text-gray-500 mb-4">Acesse os módulos mais usados na operação</p>
 
             <div className="flex flex-1 flex-col justify-center space-y-2">

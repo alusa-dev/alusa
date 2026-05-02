@@ -9,8 +9,11 @@ type FinanceUser = { id: string; contaId: string; role: string };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
-export function json(status: number, body: unknown) {
-  return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
+export function json(status: number, body: unknown, headers?: Record<string, string>) {
+  return NextResponse.json(body, {
+    status,
+    headers: { 'cache-control': 'no-store', ...headers },
+  });
 }
 
 export function anticipationErrorResponse(error: AnticipationError) {

@@ -17,7 +17,10 @@ async function fetchVerification(
   fresh = false,
 ): Promise<{ data: AccountVerificationResponse | null; reason?: string; retryAfterMs?: number }> {
   const url = fresh ? '/api/account/verification-status?fresh=1' : '/api/account/verification-status';
-  const res = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    cache: fresh ? 'no-store' : 'default',
+  });
   const json = await res.json().catch(() => null);
   const retryAfterMs = parseRetryAfterMs(res.headers.get('Retry-After'));
 

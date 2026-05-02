@@ -7,11 +7,13 @@ import { getAccountVerificationStatus } from '@alusa/finance/use-cases/kyc/get-a
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN']);
+const CACHE_TTL_MS = 30_000;
+const verificationCache = new Map<string, { expiresAt: number; body: unknown }>();
 
 function json(status: number, body: unknown, headers?: Record<string, string>) {
   return NextResponse.json(body, {
     status,
-    headers: { 'cache-control': 'no-store', ...headers },
+    headers: { 'cache-control': 'private, max-age=30, stale-while-revalidate=60', ...headers },
   });
 }
 
@@ -37,6 +39,14 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const fresh = url.searchParams.get('fresh') === '1';
+    const cacheKey = user.contaId;
+
+    if (!fresh) {
+      const cached = verificationCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return json(200, cached.body, { 'x-alusa-cache': 'HIT' });
+      }
+    }
 
     const result = await getAccountVerificationStatus(user.contaId, { fresh });
 
@@ -44,7 +54,15 @@ export async function GET(req: Request) {
       return json(202, { data: null, reason: 'NOT_READY' }, { 'Retry-After': '2' });
     }
 
-    return json(200, { data: result.data });
+    const body = { data: result.data };
+    if (!fresh) {
+      verificationCache.set(cacheKey, {
+        expiresAt: Date.now() + CACHE_TTL_MS,
+        body,
+      });
+    }
+
+    return json(200, body, { 'x-alusa-cache': 'MISS' });
   } catch (error) {
     console.error('[Account Verification Status][GET]', error);
     return json(500, { error: 'ERRO_INTERNO' });

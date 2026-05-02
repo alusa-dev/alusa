@@ -721,12 +721,13 @@ function Sidebar() {
           ].join(' ')}
           aria-hidden={collapsed ? true : undefined}
         >
-          <Link href="/dashboard" aria-label="Alusa" tabIndex={collapsed ? -1 : 0}>
+          <Link href="/dashboard" aria-label="Alusa" tabIndex={collapsed ? -1 : 0} prefetch={false}>
             <img
               src={isDark ? '/brand/logo-sidebar-dark.svg' : '/brand/logo-sidebar.svg'}
               alt="Alusa"
               width={132}
               height={40}
+              fetchPriority="high"
               className="h-10 w-auto select-none transition-all duration-300"
               style={{
                 opacity: collapsed ? 0 : 1,
@@ -771,6 +772,7 @@ function Sidebar() {
             <li className="relative">
               <Link
                 href={role === 'ALUNO' || role === 'RESPONSAVEL' ? '/portal' : '/dashboard'}
+                prefetch={false}
                 aria-label={role === 'ALUNO' || role === 'RESPONSAVEL' ? 'Início' : 'Dashboard'}
                 className={[
                   'group relative mx-auto flex items-center rounded-[10px] text-[16px] outline-none select-none transition-[width,padding,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
@@ -939,6 +941,7 @@ function Sidebar() {
                           ) : (
                             <Link
                               href={item.href}
+                              prefetch={false}
                               aria-label={item.label}
                               data-testid={item.href === '/planos' ? 'sidebar-planos' : undefined}
                               className={[
@@ -1036,6 +1039,7 @@ function Sidebar() {
               ) : (
                 <Link
                   href="/admin/configuracoes"
+                  prefetch={false}
                   aria-label="Configurações"
                   className={[
                     'group relative mx-auto flex items-center rounded-[10px] text-[16px] outline-none select-none transition-[width,padding,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',

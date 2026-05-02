@@ -119,10 +119,10 @@ export default function CobrancasTodasPage() {
       // "paid"/"all" → rota legada que aceita statusView
       const isOperational = statusView === 'open';
       const url = isOperational
-        ? `/api/finance/charges/operational?page=1&pageSize=200`
+        ? `/api/finance/charges/operational?page=1&pageSize=50`
         : `/api/financeiro/cobrancas?statusView=${statusView}`;
 
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         const errorMsg =

@@ -816,6 +816,8 @@ model Aluno {
   @@unique([contaId, codigoInterno])
   @@unique([contaId, asaasCustomerExternalReference])
   @@index([contaId])
+  @@index([contaId, status], name: "idx_aluno_conta_status")
+  @@index([contaId, createdAt], name: "idx_aluno_conta_created_at")
 }
 
 model Responsavel {
@@ -989,6 +991,7 @@ model CalendarEvent {
   @@unique([contaId, externalProvider, externalEventId], name: "uq_calendar_event_external")
   @@index([contaId, startAt], name: "idx_calendar_event_conta_start")
   @@index([contaId, endAt], name: "idx_calendar_event_conta_end")
+  @@index([contaId, startAt, endAt], name: "idx_calendar_event_conta_range")
   @@index([contaId, tipo, status], name: "idx_calendar_event_conta_tipo_status")
   @@index([turmaId, startAt], name: "idx_calendar_event_turma_start")
   @@index([salaId, startAt], name: "idx_calendar_event_sala_start")
@@ -1182,6 +1185,8 @@ model Matricula {
   @@index([planoId], name: "idx_matricula_plano")
   @@index([comboId], name: "idx_matricula_combo")
   @@index([status], name: "idx_matricula_status")
+  @@index([status, createdAt], name: "idx_matricula_status_created_at")
+  @@index([status, updatedAt], name: "idx_matricula_status_updated_at")
   @@index([statusContrato], name: "idx_matricula_status_contrato")
   @@index([dataFimContrato], name: "idx_matricula_fim_contrato")
   @@index([contratoAtualId], name: "idx_matricula_contrato_atual")
@@ -1342,7 +1347,10 @@ model Cobranca {
 
   @@index([matriculaId], name: "idx_cobranca_matricula")
   @@index([status], name: "idx_cobranca_status")
+  @@index([status, vencimento], name: "idx_cobranca_status_vencimento")
   @@index([tipo], name: "idx_cobranca_tipo")
+  @@index([tipo, status, dataPagamento], name: "idx_cobranca_tipo_status_data_pagamento")
+  @@index([createdAt], name: "idx_cobranca_created_at")
   @@index([lastAsaasFetchAt], name: "idx_cobranca_last_asaas_fetch")
 }
 
@@ -1438,6 +1446,7 @@ model Pagamento {
   cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Cascade)
 
   @@index([cobrancaId], name: "idx_pagamento_cobranca")
+  @@index([status, dataPagamento], name: "idx_pagamento_status_data_pagamento")
 }
 
 model WebhookAsaas {

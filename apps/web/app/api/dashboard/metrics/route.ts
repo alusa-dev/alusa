@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
-import { getFinanceiroKpisFromAsaas } from '@alusa/finance';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
@@ -77,6 +76,24 @@ function buildTodayLessonSummary(events: DashboardLessonEvent[]) {
   return { aulasHoje, pendencias };
 }
 
+function toNumber(value: unknown): number {
+  if (value === null || value === undefined) return 0;
+  return Number(value);
+}
+
+function publicImageUrl(value: string | null | undefined) {
+  if (!value) return null;
+  return value.startsWith('data:image/') ? null : value;
+}
+
+function jsonWithShortPrivateCache(body: unknown) {
+  return NextResponse.json(body, {
+    headers: {
+      'cache-control': 'private, max-age=15, stale-while-revalidate=45',
+    },
+  });
+}
+
 export async function GET(_request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -109,28 +126,6 @@ export async function GET(_request: NextRequest) {
     const next7Days = new Date(now);
     next7Days.setDate(next7Days.getDate() + 7);
 
-    // Total de alunos
-    const totalAlunos = await prisma.aluno.count({ where: alunoFilter });
-
-    // Alunos ativos (com pelo menos uma matrícula ativa)
-    const alunosAtivos = await prisma.aluno.count({
-      where: {
-        ...alunoFilter,
-        matriculas: {
-          some: {
-            status: 'ATIVA',
-          },
-        },
-      },
-    });
-
-    const turmasAtivas = await prisma.turma.count({
-      where: {
-        contaId,
-        status: 'ATIVO',
-      },
-    });
-
     await autoCloseAgendaEventsInRange({
       contaId,
       start: startOfToday,
@@ -138,37 +133,176 @@ export async function GET(_request: NextRequest) {
       prismaClient: prisma,
     });
 
-    const lessonEvents = await prisma.calendarEvent.findMany({
-      where: {
-        contaId,
-        startAt: { lt: endOfToday },
-        endAt: { gt: startOfToday },
-        tipo: {
-          in: ['AULA', 'REPOSICAO'],
-        },
-      },
-      select: {
-        turmaId: true,
-        status: true,
-        startAt: true,
-        endAt: true,
-      },
+    const weeklyWindows = Array.from({ length: 7 }, (_, index) => {
+      const i = 6 - index;
+      const dia = new Date(now);
+      dia.setDate(dia.getDate() - i);
+      const inicioDia = new Date(dia.setHours(0, 0, 0, 0));
+      const fimDia = new Date(dia.setHours(23, 59, 59, 999));
+      return { inicioDia, fimDia };
     });
+
+    const [
+      totalAlunos,
+      alunosAtivos,
+      turmasAtivas,
+      lessonEvents,
+      aniversariantesDoMesData,
+      totalMatriculas,
+      matriculasAtivas,
+      cobrancasPendentes,
+      cobrancasVencidas,
+      receitaMesAggregate,
+      aguardandoPagamentoData,
+      taxasMatriculaRecebidasAno,
+      receitaTotalAggregate,
+      proximosVencimentos,
+      totalCobrancas,
+      weeklyResults,
+      ultimasCobrancasData,
+      alunosRecentesData,
+    ] = await Promise.all([
+      prisma.aluno.count({ where: alunoFilter }),
+      prisma.aluno.count({
+        where: {
+          ...alunoFilter,
+          matriculas: { some: { status: 'ATIVA' } },
+        },
+      }),
+      prisma.turma.count({ where: { contaId, status: 'ATIVO' } }),
+      prisma.calendarEvent.findMany({
+        where: {
+          contaId,
+          startAt: { lt: endOfToday },
+          endAt: { gt: startOfToday },
+          tipo: { in: ['AULA', 'REPOSICAO'] },
+        },
+        select: {
+          turmaId: true,
+          status: true,
+          startAt: true,
+          endAt: true,
+        },
+      }),
+      prisma.aluno.findMany({
+        where: {
+          ...alunoFilter,
+          status: 'ATIVO',
+        },
+        select: {
+          id: true,
+          nome: true,
+          foto: true,
+          dataNasc: true,
+        },
+      }),
+      prisma.matricula.count({ where: matriculaFilter }),
+      prisma.matricula.count({ where: { ...matriculaFilter, status: 'ATIVA' } }),
+      prisma.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE' } }),
+      prisma.cobranca.count({
+        where: {
+          ...cobrancaFilter,
+          status: 'PENDENTE',
+          vencimento: { lt: now },
+        },
+      }),
+      prisma.pagamento.aggregate({
+        where: {
+          status: { in: ['CONFIRMADO', 'PAGO'] },
+          dataPagamento: { gte: startOfMonth, lte: endOfMonth },
+          cobranca: cobrancaFilter,
+        },
+        _sum: { valorPago: true },
+      }),
+      prisma.cobranca.findMany({
+        where: {
+          ...cobrancaFilter,
+          status: 'PENDENTE',
+          vencimento: { gte: startOfToday, lte: next30Days },
+        },
+        select: { valor: true, valorFinal: true },
+      }),
+      prisma.cobranca.findMany({
+        where: {
+          ...cobrancaFilter,
+          tipo: 'TAXA_MATRICULA',
+          status: 'PAGO',
+          OR: [
+            { dataPagamento: { gte: startOfYear, lte: now } },
+            { pagoEm: { gte: startOfYear, lte: now } },
+          ],
+        },
+        select: { valor: true, valorFinal: true },
+      }),
+      prisma.pagamento.aggregate({
+        where: {
+          status: { in: ['CONFIRMADO', 'PAGO'] },
+          cobranca: cobrancaFilter,
+        },
+        _sum: { valorPago: true },
+      }),
+      prisma.cobranca.count({
+        where: {
+          ...cobrancaFilter,
+          status: 'PENDENTE',
+          vencimento: { gte: now, lte: next7Days },
+        },
+      }),
+      prisma.cobranca.count({ where: cobrancaFilter }),
+      Promise.all(
+        weeklyWindows.map(({ inicioDia, fimDia }) =>
+          Promise.all([
+            prisma.pagamento.aggregate({
+              where: {
+                status: { in: ['CONFIRMADO', 'PAGO'] },
+                dataPagamento: { gte: inicioDia, lte: fimDia },
+                cobranca: cobrancaFilter,
+              },
+              _sum: { valorPago: true },
+            }),
+            prisma.matricula.count({
+              where: { ...matriculaFilter, createdAt: { gte: inicioDia, lte: fimDia } },
+            }),
+            prisma.matricula.count({
+              where: {
+                ...matriculaFilter,
+                status: 'CANCELADA',
+                updatedAt: { gte: inicioDia, lte: fimDia },
+              },
+            }),
+          ]),
+        ),
+      ),
+      prisma.cobranca.findMany({
+        take: 5,
+        where: cobrancaFilter,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          valor: true,
+          vencimento: true,
+          status: true,
+          matricula: {
+            select: {
+              aluno: { select: { nome: true } },
+            },
+          },
+        },
+      }),
+      prisma.aluno.findMany({
+        take: 3,
+        where: alunoFilter,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          nome: true,
+          foto: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
     const { aulasHoje, pendencias } = buildTodayLessonSummary(lessonEvents);
-
-    const aniversariantesDoMesData = await prisma.aluno.findMany({
-      where: {
-        ...alunoFilter,
-        status: 'ATIVO',
-      },
-      select: {
-        id: true,
-        nome: true,
-        foto: true,
-        dataNasc: true,
-      },
-    });
 
     const aniversariantesDoMes = aniversariantesDoMesData
       .sort((a, b) => {
@@ -183,7 +317,7 @@ export async function GET(_request: NextRequest) {
       .map((aluno) => ({
         id: aluno.id,
         nome: aluno.nome,
-        foto: aluno.foto,
+        foto: publicImageUrl(aluno.foto),
         dia: aluno.dataNasc.getDate(),
         mes: aluno.dataNasc.getMonth() + 1,
         dataNascimento: aluno.dataNasc.toISOString(),
@@ -193,204 +327,22 @@ export async function GET(_request: NextRequest) {
       (a) => a.mes === now.getMonth() + 1,
     ).length;
 
-    // Total de matrículas
-    const totalMatriculas = await prisma.matricula.count({ where: matriculaFilter });
-
-    // Matrículas ativas
-    const matriculasAtivas = await prisma.matricula.count({
-      where: {
-        ...matriculaFilter,
-        status: 'ATIVA',
-      },
-    });
-
-    // Cobranças pendentes
-    const cobrancasPendentes = await prisma.cobranca.count({
-      where: {
-        ...cobrancaFilter,
-        status: 'PENDENTE',
-      },
-    });
-
-    // Cobranças vencidas (pendentes com vencimento anterior a hoje)
-    const cobrancasVencidas = await prisma.cobranca.count({
-      where: {
-        ...cobrancaFilter,
-        status: 'PENDENTE',
-        vencimento: {
-          lt: now,
-        },
-      },
-    });
-
-    // Receita do mês atual (cobranças pagas neste mês)
-    const pagamentosMes = await prisma.pagamento.findMany({
-      where: {
-        status: {
-          in: ['CONFIRMADO', 'PAGO'],
-        },
-        dataPagamento: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
-        cobranca: cobrancaFilter,
-      },
-      select: {
-        valorPago: true,
-      },
-    });
-
-    const receitaMes = pagamentosMes.reduce((sum, p) => sum + Number(p.valorPago), 0);
-
-    const financeiroKpis = await getFinanceiroKpisFromAsaas({
-      contaId,
-      mesAtual: startOfMonth,
-      proximoMes: new Date(now.getFullYear(), now.getMonth() + 1, 1),
-      startOfToday,
-      endOfNext30Days: next30Days,
-    });
-
-    const aguardandoPagamentoProximos30Dias =
-      financeiroKpis.data.aguardandoPagamento.valorBruto;
-
-    const taxasMatriculaRecebidasAno = await prisma.cobranca.findMany({
-      where: {
-        ...cobrancaFilter,
-        tipo: 'TAXA_MATRICULA',
-        status: 'PAGO',
-        OR: [
-          {
-            dataPagamento: {
-              gte: startOfYear,
-              lte: now,
-            },
-          },
-          {
-            pagoEm: {
-              gte: startOfYear,
-              lte: now,
-            },
-          },
-        ],
-      },
-      select: {
-        valor: true,
-        valorFinal: true,
-      },
-    });
-
-    const taxaMatriculaRecebidaAno = taxasMatriculaRecebidasAno.reduce((sum, cobranca) => {
-      const valorEfetivo = cobranca.valorFinal ? Number(cobranca.valorFinal) : Number(cobranca.valor);
-      return sum + valorEfetivo;
+    const receitaMes = toNumber(receitaMesAggregate._sum.valorPago);
+    const aguardandoPagamentoProximos30Dias = aguardandoPagamentoData.reduce((sum, cobranca) => {
+      return sum + toNumber(cobranca.valorFinal ?? cobranca.valor);
     }, 0);
-
-    // Receita total (todos os pagamentos confirmados)
-    const pagamentosTotal = await prisma.pagamento.findMany({
-      where: {
-        status: {
-          in: ['CONFIRMADO', 'PAGO'],
-        },
-        cobranca: cobrancaFilter,
-      },
-      select: {
-        valorPago: true,
-      },
-    });
-
-    const receitaTotal = pagamentosTotal.reduce((sum, p) => sum + Number(p.valorPago), 0);
-
-    // Próximos vencimentos (7 dias)
-    const proximosVencimentos = await prisma.cobranca.count({
-      where: {
-        ...cobrancaFilter,
-        status: 'PENDENTE',
-        vencimento: {
-          gte: now,
-          lte: next7Days,
-        },
-      },
-    });
-
-    // Taxa de inadimplência (cobranças vencidas / total de cobranças * 100)
-    const totalCobrancas = await prisma.cobranca.count({ where: cobrancaFilter });
+    const taxaMatriculaRecebidaAno = taxasMatriculaRecebidasAno.reduce((sum, cobranca) => {
+      return sum + toNumber(cobranca.valorFinal ?? cobranca.valor);
+    }, 0);
+    const receitaTotal = toNumber(receitaTotalAggregate._sum.valorPago);
     const taxaInadimplencia = totalCobrancas > 0 ? (cobrancasVencidas / totalCobrancas) * 100 : 0;
-
-    // Receita semanal (últimos 7 dias)
-    const receitaSemanal: number[] = [];
-    const matriculasNovasSemanal: number[] = [];
-    const matriculasCanceladasSemanal: number[] = [];
-
-    for (let i = 6; i >= 0; i--) {
-      const dia = new Date(now);
-      dia.setDate(dia.getDate() - i);
-      const inicioDia = new Date(dia.setHours(0, 0, 0, 0));
-      const fimDia = new Date(dia.setHours(23, 59, 59, 999));
-
-      // Receita do dia
-      const pagamentosDia = await prisma.pagamento.findMany({
-        where: {
-          status: {
-            in: ['CONFIRMADO', 'PAGO'],
-          },
-          dataPagamento: {
-            gte: inicioDia,
-            lte: fimDia,
-          },
-          cobranca: cobrancaFilter,
-        },
-        select: {
-          valorPago: true,
-        },
-      });
-
-      const totalDia = pagamentosDia.reduce((sum, p) => sum + Number(p.valorPago), 0);
-      receitaSemanal.push(totalDia);
-
-      // Matrículas novas do dia
-      const matriculasNovasDia = await prisma.matricula.count({
-        where: {
-          ...matriculaFilter,
-          createdAt: {
-            gte: inicioDia,
-            lte: fimDia,
-          },
-        },
-      });
-      matriculasNovasSemanal.push(matriculasNovasDia);
-
-      // Matrículas canceladas do dia
-      const matriculasCanceladasDia = await prisma.matricula.count({
-        where: {
-          ...matriculaFilter,
-          status: 'CANCELADA',
-          updatedAt: {
-            gte: inicioDia,
-            lte: fimDia,
-          },
-        },
-      });
-      matriculasCanceladasSemanal.push(matriculasCanceladasDia);
-    }
-
-    // Últimas 5 cobranças
-    const ultimasCobrancasData = await prisma.cobranca.findMany({
-      take: 5,
-      where: cobrancaFilter,
-      orderBy: {
-        createdAt: 'desc',
-      },
-      include: {
-        matricula: {
-          include: {
-            aluno: {
-              select: {
-                nome: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const receitaSemanal = weeklyResults.map(([pagamentosDia]) =>
+      toNumber(pagamentosDia._sum.valorPago),
+    );
+    const matriculasNovasSemanal = weeklyResults.map(([, matriculasNovasDia]) => matriculasNovasDia);
+    const matriculasCanceladasSemanal = weeklyResults.map(
+      ([, , matriculasCanceladasDia]) => matriculasCanceladasDia,
+    );
 
     const ultimasCobrancas = ultimasCobrancasData.map((cobranca) => ({
       id: cobranca.id,
@@ -400,25 +352,10 @@ export async function GET(_request: NextRequest) {
       status: cobranca.status,
     }));
 
-    // Últimos 3 alunos cadastrados (para o card de avatares)
-    const alunosRecentesData = await prisma.aluno.findMany({
-      take: 3,
-      where: alunoFilter,
-      orderBy: {
-        createdAt: 'desc',
-      },
-      select: {
-        id: true,
-        nome: true,
-        foto: true,
-        createdAt: true,
-      },
-    });
-
     const alunosRecentes = alunosRecentesData.map((aluno) => ({
       id: aluno.id,
       nome: aluno.nome,
-      foto: aluno.foto,
+      foto: publicImageUrl(aluno.foto),
       tipo: 'Novo cadastro',
     }));
 
@@ -447,11 +384,13 @@ export async function GET(_request: NextRequest) {
       aniversariantesDoMes,
     };
 
-    return NextResponse.json(
-      dashboardMetricsResultDTOSchema.parse(mapDashboardMetricsResultToDTO({
-      success: true,
-      data: metrics,
-      })),
+    return jsonWithShortPrivateCache(
+      dashboardMetricsResultDTOSchema.parse(
+        mapDashboardMetricsResultToDTO({
+          success: true,
+          data: metrics,
+        }),
+      ),
     );
   } catch (error) {
     console.error('[GET /api/dashboard/metrics] Erro:', error);

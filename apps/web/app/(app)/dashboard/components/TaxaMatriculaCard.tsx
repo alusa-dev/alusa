@@ -15,6 +15,12 @@ type TaxaMatriculaData = {
   serieAcumulada: number[];
 };
 
+const TAXA_CACHE_TTL_MS = 30_000;
+const taxaMatriculaCache = new Map<
+  string,
+  { expiresAt: number; promise: Promise<TaxaMatriculaData | null> }
+>();
+
 // Hook para buscar taxas de matrícula
 function useTaxaMatricula(periodo: PeriodoTaxaMatricula | null) {
   const { user } = useCurrentUser();
@@ -28,12 +34,30 @@ function useTaxaMatricula(periodo: PeriodoTaxaMatricula | null) {
     setLoading(true);
     try {
       const periodoParam = periodo || '30d';
-      const response = await fetch(`/api/dashboard/taxa-matricula?contaId=${contaId}&periodo=${periodoParam}`);
-      const result = await response.json();
+      const cacheKey = `${contaId}:${periodoParam}`;
+      const cached = taxaMatriculaCache.get(cacheKey);
+      const promise =
+        cached && cached.expiresAt > Date.now()
+          ? cached.promise
+          : fetch(`/api/dashboard/taxa-matricula?contaId=${contaId}&periodo=${periodoParam}`, {
+              headers: { Accept: 'application/json' },
+            })
+              .then(async (response) => {
+                const result = await response.json();
+                return result.success ? (result.data as TaxaMatriculaData) : null;
+              })
+              .catch((error) => {
+                taxaMatriculaCache.delete(cacheKey);
+                throw error;
+              });
 
-      if (result.success) {
-        setData(result.data);
-      }
+      taxaMatriculaCache.set(cacheKey, {
+        expiresAt: Date.now() + TAXA_CACHE_TTL_MS,
+        promise,
+      });
+
+      const result = await promise;
+      if (result) setData(result);
     } catch (error) {
       console.error('Erro ao buscar taxas de matrícula:', error);
     } finally {
@@ -146,7 +170,7 @@ function TaxaMatriculaToggle({
             aria-pressed={isActive}
             aria-label={`Filtrar por ${opt.label}`}
             className={`relative z-10 rounded-full px-3 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-brand-accent transition-colors duration-150 ${
-              isActive ? "text-[#2b2634]" : "text-[#2b2634]/60 hover:text-[#2b2634]"
+              isActive ? "text-[#2b2634]" : "text-[#4c4459] hover:text-[#2b2634]"
             }`}
             onClick={() => onPeriodoChange?.(opt.value)}
           >

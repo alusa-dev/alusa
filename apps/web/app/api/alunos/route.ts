@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { listAlunos, createAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
+import { prisma } from '@/lib/prisma';
+import { createAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
 import {
   createAlunoInputDTOSchema,
   alunoDetailDTOSchema,
@@ -11,6 +12,10 @@ import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/
 
 // Util simples para limpar dígitos
 const digits = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
+const publicImageUrl = (value: string | null | undefined) => {
+  if (!value) return null;
+  return value.startsWith('data:image/') ? null : value;
+};
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -27,18 +32,41 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
 
-    const alunos = await listAlunos(contaId);
-    type AlunoListItem = Awaited<ReturnType<typeof listAlunos>>[number];
+    const alunos = await prisma.aluno.findMany({
+      where: {
+        contaId,
+        ...(q
+          ? {
+              OR: [
+                { nome: { contains: q, mode: 'insensitive' as const } },
+                ...(q.replace(/\D/g, '')
+                  ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
+                  : []),
+              ],
+            }
+          : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        nome: true,
+        email: true,
+        telefone: true,
+        status: true,
+        foto: true,
+        cpf: true,
+        consentimentoImagem: true,
+        dataConsentimentoImagem: true,
+        isentoTaxaMatricula: true,
+        bolsaDescontoPercent: true,
+        tags: true,
+        dataInativacao: true,
+        motivoInativacao: true,
+      },
+    });
 
-    const items = (alunos as AlunoListItem[])
-      .filter((aluno: AlunoListItem) => {
-        if (!q) return true;
-        const nome = (aluno.nome || '').toLowerCase();
-        const cpf = (aluno.cpf || '').replace(/\D/g, '');
-        const qDigits = q.replace(/\D/g, '');
-        return nome.includes(q) || (qDigits && cpf.includes(qDigits));
-      })
-      .map((aluno: AlunoListItem) => {
+    const items = alunos.map((aluno) => {
         const bolsaRaw = aluno.bolsaDescontoPercent;
         const bolsaDescontoPercent =
           bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
@@ -49,7 +77,7 @@ export async function GET(request: NextRequest) {
           email: aluno.email ?? null,
           telefone: aluno.telefone ?? null,
           status: aluno.status ?? 'ATIVO',
-          foto: aluno.foto ?? null,
+          foto: publicImageUrl(aluno.foto),
           cpf: aluno.cpf ?? null,
           consentimentoImagem: aluno.consentimentoImagem ?? null,
           dataConsentimentoImagem: aluno.dataConsentimentoImagem
@@ -64,6 +92,11 @@ export async function GET(request: NextRequest) {
       listAlunosResultDTOSchema.parse({
         items: items.map((item) => mapAlunoListItemToDTO(item)),
       }),
+      {
+        headers: {
+          'cache-control': 'private, max-age=20, stale-while-revalidate=60',
+        },
+      },
     );
   } catch (error) {
     console.error('Erro ao listar alunos:', error);

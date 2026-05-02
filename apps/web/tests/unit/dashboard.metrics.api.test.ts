@@ -3,7 +3,6 @@ import { NextRequest } from 'next/server';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockAutoCloseAgendaEventsInRange = vi.hoisted(() => vi.fn());
-const mockGetFinanceiroKpisFromAsaas = vi.hoisted(() => vi.fn());
 const prismaMock = vi.hoisted(() => ({
   aluno: {
     count: vi.fn(),
@@ -20,7 +19,7 @@ const prismaMock = vi.hoisted(() => ({
     findMany: vi.fn(),
   },
   pagamento: {
-    findMany: vi.fn(),
+    aggregate: vi.fn(),
   },
   calendarEvent: {
     findMany: vi.fn(),
@@ -41,10 +40,6 @@ vi.mock('@/lib/prisma', () => ({
 
 vi.mock('@/src/server/aulas/agenda/agenda-event-auto-close.service', () => ({
   autoCloseAgendaEventsInRange: mockAutoCloseAgendaEventsInRange,
-}));
-
-vi.mock('@alusa/finance', () => ({
-  getFinanceiroKpisFromAsaas: mockGetFinanceiroKpisFromAsaas,
 }));
 
 import { GET } from '@/app/api/dashboard/metrics/route';
@@ -72,16 +67,19 @@ describe('GET /api/dashboard/metrics', () => {
           valor: 150,
           valorFinal: null,
         },
+        {
+          valor: 125,
+          valorFinal: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          valor: 150,
+          valorFinal: null,
+        },
       ])
       .mockResolvedValueOnce([]);
-    mockGetFinanceiroKpisFromAsaas.mockResolvedValue({
-      data: {
-        aguardandoPagamento: {
-          valorBruto: 275,
-        },
-      },
-    });
-    prismaMock.pagamento.findMany.mockResolvedValue([]);
+    prismaMock.pagamento.aggregate.mockResolvedValue({ _sum: { valorPago: 0 } });
     prismaMock.calendarEvent.findMany.mockResolvedValue([
       {
         turmaId: 'turma-1',
@@ -123,10 +121,6 @@ describe('GET /api/dashboard/metrics', () => {
         contaId: 'conta-1',
       }),
     );
-    expect(mockGetFinanceiroKpisFromAsaas).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contaId: 'conta-1',
-      }),
-    );
+    expect(prismaMock.pagamento.aggregate).toHaveBeenCalled();
   });
 });
