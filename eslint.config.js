@@ -4,6 +4,7 @@ import * as tseslint from 'typescript-eslint';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import prettier from 'eslint-config-prettier';
+import tenantSafety from './eslint-plugin-tenant-safety.mjs';
 
 export default [
   js.configs.recommended,
@@ -67,6 +68,19 @@ export default [
   {
     files: ['apps/web/lib/**/*.{ts,tsx}'],
     languageOptions: { parserOptions: { project: null } }
+  },
+  // ─── Regras de Segurança Multitenant ────────────────────────────────────────
+  // Aplica verificações de isolamento de tenant em route handlers e server actions.
+  // A regra 'no-unscoped-prisma-query' avisa quando uma query Prisma num modelo
+  // tenant-aware não contém 'contaId' no where, prevenindo vazamento cross-tenant.
+  {
+    files: ['apps/web/app/api/**/*.{ts,tsx}', 'apps/web/app/(app)/**/*.{ts,tsx}', 'apps/web/features/**/*.{ts,tsx}'],
+    plugins: { 'tenant-safety': tenantSafety },
+    rules: {
+      'tenant-safety/no-unscoped-prisma-query': 'warn',
+      // Descomente para exigir o uso do cliente tenant em route handlers:
+      // 'tenant-safety/prefer-tenant-client': 'warn',
+    },
   }
   // (Opcional futuramente) adicionar override tipado para src somente
 ];

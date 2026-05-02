@@ -22,7 +22,11 @@
     "db:seed:test": "dotenv -e ../../.env.test -- prisma db seed --schema=../../prisma/schema.prisma",
     "storybook": "storybook dev -p 6006",
     "build:storybook": "storybook build",
-    "mcp": "npx shadcn@latest mcp"
+    "mcp": "npx shadcn@latest mcp",
+    "tenant:audit": "dotenv -e ../../.env -- tsx scripts/audit-tenant-orphans.ts",
+    "tenant:audit:json": "dotenv -e ../../.env -- tsx scripts/audit-tenant-orphans.ts --json",
+    "db:setup-rls": "dotenv -e ../../.env -- tsx scripts/setup-rls.ts",
+    "db:setup-rls:dry": "dotenv -e ../../.env -- tsx scripts/setup-rls.ts --dry-run"
   },
   "dependencies": {
     "@alusa/asaas": "workspace:*",
