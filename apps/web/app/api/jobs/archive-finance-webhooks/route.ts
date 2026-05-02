@@ -48,6 +48,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: true, result });
   } catch (error) {
     console.error('[Job Archive Finance Webhooks] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Falha ao arquivar webhooks financeiros.');
   }
 }

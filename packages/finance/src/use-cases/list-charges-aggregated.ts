@@ -277,6 +277,7 @@ export async function listChargesAggregated(
     shouldGroup && includeAcademic
       ? _db.charge.findMany({
           where: {
+            contaId,
             cobrancaId: { not: null },
             OR: [
               { externalReference: { startsWith: 'installmentPlan:' } },
@@ -407,7 +408,7 @@ export async function listChargesAggregated(
     const installmentPlans =
       planIds.length > 0
         ? await _db.installmentPlan.findMany({
-            where: { id: { in: planIds } },
+            where: { contaId, id: { in: planIds } },
             select: {
               id: true,
               installmentCount: true,

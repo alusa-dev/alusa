@@ -8,6 +8,16 @@ import {
 import { mapPublicContratoRecordToDTO } from '@/features/contratos/mappers';
 import { jsonSensitive } from '@/lib/http-security';
 
+function withPublicFileToken(url: string, token: string): string {
+  const protectedUrl = url.startsWith('/uploads/')
+    ? `/api/files${url}`
+    : url;
+
+  if (!protectedUrl.startsWith('/api/files/')) return protectedUrl;
+  const separator = protectedUrl.includes('?') ? '&' : '?';
+  return `${protectedUrl}${separator}contratoToken=${encodeURIComponent(token)}`;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { token: string } },
@@ -48,8 +58,12 @@ export async function GET(
       return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
     }
 
+    const dto = mapPublicContratoRecordToDTO(contrato);
     return jsonSensitive(
-      contratoPublicoDTOSchema.parse(mapPublicContratoRecordToDTO(contrato)),
+      contratoPublicoDTOSchema.parse({
+        ...dto,
+        arquivoPdfUrl: withPublicFileToken(dto.arquivoPdfUrl, token),
+      }),
     );
   } catch (error) {
     console.error('[PUBLIC_CONTRATO_GET]', error);

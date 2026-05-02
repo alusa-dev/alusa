@@ -166,4 +166,76 @@ describe('admin jobs multi-tenant isolation', () => {
     expect(response.status).toBe(400);
     expect(encerrarContratosExpirados).not.toHaveBeenCalled();
   });
+
+  it('não expõe erro interno ao falhar o processamento de webhooks financeiros', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(processAsaasWebhookQueue).mockRejectedValueOnce(new Error('DATABASE_URL com segredo'));
+
+    try {
+      const response = await postProcessWebhooks(
+        makeRequest('http://localhost/api/jobs/process-finance-webhooks'),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(body)).not.toContain('DATABASE_URL');
+      expect(body.error.message).toBe('Falha ao processar fila de webhooks financeiros.');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('não expõe erro interno ao falhar a reconciliação financeira', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(reconcileWithAsaas).mockRejectedValueOnce(new Error('ASAAS_API_KEY inválida'));
+
+    try {
+      const response = await postReconcileWebhooks(
+        makeRequest('http://localhost/api/jobs/reconcile-finance-webhooks'),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(body)).not.toContain('ASAAS_API_KEY');
+      expect(body.error.message).toBe('Falha ao reconciliar webhooks financeiros.');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('não expõe erro interno ao falhar o arquivamento de webhooks financeiros', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(archiveProcessedWebhooks).mockRejectedValueOnce(new Error('stack com payload'));
+
+    try {
+      const response = await postArchiveWebhooks(
+        makeRequest('http://localhost/api/jobs/archive-finance-webhooks'),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(body)).not.toContain('payload');
+      expect(body.error.message).toBe('Falha ao arquivar webhooks financeiros.');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('não expõe erro interno ao falhar a reconciliação de contas financeiras', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(reconcileAsaasAccountsJob).mockRejectedValueOnce(new Error('token interno'));
+
+    try {
+      const response = await postReconcileAccounts(
+        makeRequest('http://localhost/api/jobs/reconcile-finance-accounts'),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(JSON.stringify(body)).not.toContain('token interno');
+      expect(body.error.message).toBe('Falha ao reconciliar contas financeiras.');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });

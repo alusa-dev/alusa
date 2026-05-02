@@ -57,6 +57,12 @@ export default async function middleware(req: NextRequest) {
 
   const pathname = req.nextUrl.pathname;
 
+  if (pathname === '/uploads' || pathname.startsWith('/uploads/')) {
+    const url = req.nextUrl.clone();
+    url.pathname = `/api/files${pathname}`;
+    return NextResponse.rewrite(url);
+  }
+
   if (pathname === '/developer' || pathname.startsWith('/developer/')) {
     const developerLoginUrl = new URL('/developer/login', req.nextUrl.origin);
     const developerDashboardUrl = new URL('/developer/dashboard', req.nextUrl.origin);
@@ -174,6 +180,8 @@ export const config = {
     '/matriculas/:path*',
     '/dashboard/:path*',
     '/portal/:path*',
+    '/uploads',
+    '/uploads/:path*',
     '/vendas/:path*',
     '/finance/wizard/:path*',
     '/financeiro/:path*',

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { TotalAlunosCard } from './components/TotalAlunosCard';
@@ -41,8 +40,7 @@ export default function DashboardClient() {
     const fetchMetrics = async () => {
       setLoading(true);
       try {
-        const params = new URLSearchParams({ contaId: user.contaId ?? '' });
-        const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
+        const response = await fetch('/api/dashboard/metrics', {
           cache: 'no-store',
         });
         const raw = (await response.json()) as Record<string, unknown>;
@@ -127,24 +125,6 @@ export default function DashboardClient() {
       };
 
   const showKycCard = !verificationLoading && Boolean(verification) && !isApproved && !kycCardDismissed;
-
-  if (loading) {
-    return (
-      <section aria-label="Conteúdo do Dashboard" className="flex flex-col gap-6 pb-8">
-        <div>
-          <Skeleton className="h-9 w-48 mb-2" />
-          <Skeleton className="h-5 w-80" />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <TotalAlunosCard total={0} ativos={0} onAddAluno={handleGoToCadastro} loading />
-          <RecebidasKpiCard data={null} loading />
-          <AguardandoPagamentoCard data={null} loading />
-          <TaxaMatriculaCard periodo={periodoTaxaMatricula} />
-        </div>
-      </section>
-    );
-  }
 
   return (
     <section aria-label="Conteúdo do Dashboard" className="flex flex-col gap-6 pb-8">

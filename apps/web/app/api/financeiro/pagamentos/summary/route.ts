@@ -8,6 +8,7 @@ import {
   reconcileAcademicCharges,
   resolveAcademicDisplayedStatus,
   resolveAcademicHistoricalPayment,
+  shouldReconcileAsaasOnRead,
 } from '@/src/server/finance/academic-payment-history';
 
 export const dynamic = 'force-dynamic';
@@ -139,13 +140,15 @@ export async function GET(req: NextRequest) {
     const statusFilters = url.searchParams.getAll('status');
 
     let cobrancas = await loadCobrancas({ contaId: user.contaId, search });
-    const reconciliation = await reconcileAcademicCharges({
-      contaId: user.contaId,
-      cobrancas,
-      limit: PAYMENT_SUMMARY_RECONCILE_LIMIT,
-    });
-    if (reconciliation.attempted > 0) {
-      cobrancas = await loadCobrancas({ contaId: user.contaId, search });
+    if (shouldReconcileAsaasOnRead(url.searchParams)) {
+      const reconciliation = await reconcileAcademicCharges({
+        contaId: user.contaId,
+        cobrancas,
+        limit: PAYMENT_SUMMARY_RECONCILE_LIMIT,
+      });
+      if (reconciliation.attempted > 0) {
+        cobrancas = await loadCobrancas({ contaId: user.contaId, search });
+      }
     }
 
     // Agrupar histórico de pagamentos por aluno
@@ -223,7 +226,6 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     console.error('[API Financeiro Pagamentos Summary] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Erro ao carregar resumo de pagamentos');
   }
 }
-

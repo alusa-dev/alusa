@@ -57,6 +57,6 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error('[Job Process Finance Webhooks] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Falha ao processar fila de webhooks financeiros.');
   }
 }

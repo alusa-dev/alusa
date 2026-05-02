@@ -10,16 +10,21 @@ const nextConfig = {
   },
   transpilePackages: ['@alusa/lib', '@alusa/ui'],
   async rewrites() {
-    return [
-      { source: '/auth/login', destination: '/login' },
-      { source: '/auth/register', destination: '/register' },
-      { source: '/auth/accept', destination: '/accept' },
-      { source: '/auth/complete-profile', destination: '/complete-profile' },
-      { source: '/auth/confirm-email', destination: '/confirm-email' },
-      { source: '/auth/verify-email', destination: '/verify-email' },
-      { source: '/auth/forgot-password', destination: '/forgot-password' },
-      { source: '/auth/reset-password', destination: '/reset-password' },
-    ];
+    return {
+      beforeFiles: [
+        { source: '/uploads/:path*', destination: '/api/files/uploads/:path*' },
+      ],
+      afterFiles: [
+        { source: '/auth/login', destination: '/login' },
+        { source: '/auth/register', destination: '/register' },
+        { source: '/auth/accept', destination: '/accept' },
+        { source: '/auth/complete-profile', destination: '/complete-profile' },
+        { source: '/auth/confirm-email', destination: '/confirm-email' },
+        { source: '/auth/verify-email', destination: '/verify-email' },
+        { source: '/auth/forgot-password', destination: '/forgot-password' },
+        { source: '/auth/reset-password', destination: '/reset-password' },
+      ],
+    };
   },
   webpack: (config) => {
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)

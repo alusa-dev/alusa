@@ -5,6 +5,8 @@ import prisma from '@/lib/prisma';
 import { listAlunosForResponsavelResultDTOSchema } from '@/features/cadastro/alunos/dtos';
 import { mapAlunoForResponsavelToDTO } from '@/features/cadastro/alunos/mappers';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -73,4 +75,3 @@ function calcularIdade(dataNasc: Date): number {
   }
   return idade;
 }
-

@@ -5,6 +5,8 @@ import { prisma } from '@/lib/prisma';
 import { dashboardPeriodoDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardSerieResultToDTO } from '@/features/dashboard/mappers';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);

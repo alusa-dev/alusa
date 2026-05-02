@@ -157,11 +157,12 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET')) {
+      console.error('[Asaas Webhook][POST] Configuração obrigatória ausente');
       return NextResponse.json(
         {
           success: false,
           error: 'ENV_NOT_CONFIGURED',
-          message: error.message,
+          message: 'Configuração obrigatória do webhook indisponível.',
         },
         { status: 200 },
       );

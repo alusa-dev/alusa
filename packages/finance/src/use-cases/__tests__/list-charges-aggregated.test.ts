@@ -112,6 +112,15 @@ describe('listChargesAggregated', () => {
         }),
       }),
     );
+
+    expect(prisma.charge.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'tenant-123',
+          cobrancaId: { not: null },
+        }),
+      }),
+    );
   });
 
   it('deve mapear status corretamente', async () => {
@@ -263,6 +272,14 @@ describe('listChargesAggregated', () => {
     const result = await listChargesAggregated({ contaId: 'c1' });
 
     expect(result.items.some((i) => i.isGroup && i.installmentPlanId === 'ip1')).toBe(true);
+    expect(prisma.installmentPlan.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'c1',
+          id: { in: ['ip1'] },
+        }),
+      }),
+    );
     delete process.env.FINANCE_GROUP_INSTALLMENTS_V2;
   });
 

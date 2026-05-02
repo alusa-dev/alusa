@@ -72,4 +72,15 @@ describe('auth middleware', () => {
 
     expect(response.headers.get('location')).toBeNull();
   });
+
+  it('reescreve /uploads para a rota autorizada de arquivos antes de exigir sessão', async () => {
+    const response = await middleware(
+      new NextRequest('http://localhost:3000/uploads/contratos/contrato.pdf?contratoToken=tok_1'),
+    );
+
+    expect(response.headers.get('x-middleware-rewrite')).toBe(
+      'http://localhost:3000/api/files/uploads/contratos/contrato.pdf?contratoToken=tok_1',
+    );
+    expect(getTokenMock).not.toHaveBeenCalled();
+  });
 });

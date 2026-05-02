@@ -6,6 +6,8 @@ import prisma from '@/lib/prisma';
 import { contaFormaPagamentoResultDTOSchema } from '@/features/conta/dtos';
 import { mapContaFormaPagamentoResultToDTO } from '@/features/conta/mappers';
 
+export const dynamic = 'force-dynamic';
+
 const billingTypeMap: Record<string, FormaPagamento> = {
   BOLETO: FormaPagamento.BOLETO,
   PIX: FormaPagamento.PIX,
@@ -264,5 +266,4 @@ export async function GET(_req: NextRequest) {
     );
   }
 }
-
 

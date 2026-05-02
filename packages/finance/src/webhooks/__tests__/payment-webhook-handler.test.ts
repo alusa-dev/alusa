@@ -33,6 +33,7 @@ vi.mock('@alusa/database', () => ({
     charge: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
     },
     subscription: {
@@ -84,6 +85,7 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
+    vi.mocked(prisma.charge.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   it('deve promover statusFinanceiro quando a taxa de matrícula for confirmada', async () => {
@@ -163,6 +165,57 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.logIntegracao.create).toHaveBeenCalledTimes(1);
   });
 
+  it('deve tratar corrida ao materializar Pagamento com mesmo asaasPaymentId', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'c_race',
+      matriculaId: 'm_race',
+      status: 'PENDENTE',
+      asaasPaymentId: 'pay_race',
+      tipo: 'MENSALIDADE',
+      formaPagamento: 'PIX',
+    } as never);
+
+    vi.mocked(prisma.cobranca.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.pagamento.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: 'pg_race' } as never);
+    vi.mocked(prisma.pagamento.create).mockRejectedValueOnce({ code: 'P2002' });
+    vi.mocked(prisma.pagamento.update).mockResolvedValueOnce({ id: 'pg_race' } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_race',
+        status: 'CONFIRMED',
+        value: 100,
+        netValue: 95,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.pagamento.create).toHaveBeenCalledTimes(1);
+    expect(prisma.pagamento.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pg_race' },
+        data: expect.objectContaining({
+          valorPago: 100,
+          status: 'CONFIRMADO',
+        }),
+      }),
+    );
+    expect(prisma.logIntegracao.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: 'pay_race',
+          response: expect.objectContaining({ pagamentoId: 'pg_race' }),
+        }),
+      }),
+    );
+  });
+
   it('deve vincular taxa pela externalReference legada mesmo sem charge local previa', async () => {
     const { prisma } = await import('@alusa/database');
 
@@ -188,7 +241,7 @@ describe('handlePaymentWebhook', () => {
         netValue: 80,
         externalReference: 'charge:cobranca_legacy',
         billingType: 'PIX',
-        dueDate: '2026-04-05',
+        dueDate: '2099-04-05',
         invoiceUrl: 'https://asaas.test/i/pay_taxa_legacy',
       },
     });
@@ -365,8 +418,6 @@ describe('handlePaymentWebhook', () => {
       asaasPaymentId: 'pay_1',
     } as never);
 
-    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_1', status: 'CANCELED' } as never);
-
     const result = await handlePaymentWebhook('conta-1', {
       event: 'PAYMENT_DELETED',
       payment: {
@@ -380,9 +431,9 @@ describe('handlePaymentWebhook', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(prisma.charge.update).toHaveBeenCalledWith(
+    expect(prisma.charge.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'ch_1' },
+        where: { id: 'ch_1', contaId: 'conta-1' },
         data: expect.objectContaining({ status: 'CANCELED' }),
       }),
     );
@@ -398,8 +449,6 @@ describe('handlePaymentWebhook', () => {
       asaasPaymentId: 'pay_cash_undo',
     } as never);
 
-    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_cash_undo', status: 'OVERDUE' } as never);
-
     const result = await handlePaymentWebhook('conta-1', {
       event: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
       payment: {
@@ -411,10 +460,47 @@ describe('handlePaymentWebhook', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(prisma.charge.update).toHaveBeenCalledWith(
+    expect(prisma.charge.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'ch_cash_undo' },
+        where: { id: 'ch_cash_undo', contaId: 'conta-1' },
         data: expect.objectContaining({ status: 'OVERDUE' }),
+      }),
+    );
+  });
+
+  it('deve auditar regressão bloqueada em charge standalone', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { auditLogService } = await import('../../foundation/audit-log.service');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_paid',
+      cobrancaId: null,
+      status: 'PAID',
+      asaasPaymentId: 'pay_paid',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_OVERDUE',
+      payment: {
+        id: 'pay_paid',
+        status: 'OVERDUE',
+        value: 100,
+        netValue: 100,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'conta-1',
+        action: 'finance.webhook.payment_status_regression_blocked',
+        entity: { type: 'Charge', id: 'ch_paid' },
+        metadata: expect.objectContaining({
+          asaasPaymentId: 'pay_paid',
+          currentStatus: 'PAID',
+          attemptedStatus: 'OVERDUE',
+        }),
       }),
     );
   });

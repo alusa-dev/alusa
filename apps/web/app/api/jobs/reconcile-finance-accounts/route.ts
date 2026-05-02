@@ -81,6 +81,6 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error('[Job Reconcile Finance Accounts] Erro:', error);
-    return jsonError(500, 'ERRO_JOB', (error as Error).message);
+    return jsonError(500, 'ERRO_JOB', 'Falha ao reconciliar contas financeiras.');
   }
 }

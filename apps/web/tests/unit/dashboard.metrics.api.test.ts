@@ -3,7 +3,6 @@ import { NextRequest } from 'next/server';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockAutoCloseAgendaEventsInRange = vi.hoisted(() => vi.fn());
-const mockGetFinanceiroKpisFromAsaas = vi.hoisted(() => vi.fn());
 const prismaMock = vi.hoisted(() => ({
   aluno: {
     count: vi.fn(),
@@ -17,6 +16,9 @@ const prismaMock = vi.hoisted(() => ({
   },
   cobranca: {
     count: vi.fn(),
+    findMany: vi.fn(),
+  },
+  charge: {
     findMany: vi.fn(),
   },
   pagamento: {
@@ -43,10 +45,6 @@ vi.mock('@/src/server/aulas/agenda/agenda-event-auto-close.service', () => ({
   autoCloseAgendaEventsInRange: mockAutoCloseAgendaEventsInRange,
 }));
 
-vi.mock('@alusa/finance', () => ({
-  getFinanceiroKpisFromAsaas: mockGetFinanceiroKpisFromAsaas,
-}));
-
 import { GET } from '@/app/api/dashboard/metrics/route';
 
 describe('GET /api/dashboard/metrics', () => {
@@ -69,18 +67,18 @@ describe('GET /api/dashboard/metrics', () => {
     prismaMock.cobranca.findMany
       .mockResolvedValueOnce([
         {
+          valor: 250,
+          valorFinal: null,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
           valor: 150,
           valorFinal: null,
         },
       ])
       .mockResolvedValueOnce([]);
-    mockGetFinanceiroKpisFromAsaas.mockResolvedValue({
-      data: {
-        aguardandoPagamento: {
-          valorBruto: 275,
-        },
-      },
-    });
+    prismaMock.charge.findMany.mockResolvedValue([{ value: 25 }]);
     prismaMock.pagamento.findMany.mockResolvedValue([]);
     prismaMock.calendarEvent.findMany.mockResolvedValue([
       {
@@ -123,9 +121,13 @@ describe('GET /api/dashboard/metrics', () => {
         contaId: 'conta-1',
       }),
     );
-    expect(mockGetFinanceiroKpisFromAsaas).toHaveBeenCalledWith(
+    expect(prismaMock.charge.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        contaId: 'conta-1',
+        where: expect.objectContaining({
+          contaId: 'conta-1',
+          cobrancaId: null,
+          status: 'OPEN',
+        }),
       }),
     );
   });

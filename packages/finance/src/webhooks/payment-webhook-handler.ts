@@ -80,6 +80,15 @@ const SENSITIVE_PAYMENT_EVENTS = new Set([
   'PAYMENT_SPLIT_DIVERGENCE_BLOCK_FINISHED',
 ]);
 
+function isPrismaUniqueConstraintError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002',
+  );
+}
+
 async function resolveLocalCustomerPayerName(
   contaId: string,
   customerId: string | null | undefined,
@@ -102,7 +111,7 @@ async function resolveLocalCustomerPayerName(
   }
 
   const responsavel = await prisma.responsavel.findFirst({
-    where: { id: customer.payerId },
+    where: { id: customer.payerId, contaId },
     select: { nome: true },
   });
   return responsavel?.nome ?? null;
@@ -438,6 +447,22 @@ async function handleStandaloneChargeWebhook(
       event: payload.event,
       deleted: payload.payment.deleted ?? null,
     });
+
+    await auditLogService.record({
+      contaId,
+      action: 'finance.webhook.payment_status_regression_blocked',
+      entity: { type: 'Charge', id: charge.id },
+      metadata: {
+        event: payload.event,
+        asaasPaymentId: payload.payment.id,
+        asaasStatus: payload.payment.status,
+        currentStatus: charge.status,
+        attemptedStatus: nextStatusCharge,
+        internalStatus,
+        deleted: payload.payment.deleted ?? null,
+      },
+    });
+
     return { success: true };
   }
 
@@ -470,10 +495,19 @@ async function handleStandaloneChargeWebhook(
     updateData.asaasPaymentId = p.id;
   }
 
-  await prisma.charge.update({
-    where: { id: charge.id },
+  const updatedCharge = await prisma.charge.updateMany({
+    where: { id: charge.id, contaId },
     data: updateData,
   });
+
+  if (updatedCharge.count !== 1) {
+    console.warn('[finance][handlePaymentWebhook][standalone-charge-not-updated]', {
+      contaId,
+      chargeId: charge.id,
+      asaasPaymentId: p.id,
+    });
+    return { success: false, error: 'Charge não encontrada para a conta informada' };
+  }
 
   await refreshReadModel({ chargeId: charge.id });
 
@@ -1710,17 +1744,42 @@ export async function handlePaymentWebhook(
         });
         pagamentoId = updated.id;
       } else {
-        const created = await prisma.pagamento.create({
-          data: {
-            cobrancaId: cobranca.id,
-            dataPagamento: paymentDate,
-            formaPagamento: cobranca.formaPagamento as unknown as string,
-            valorPago: p.value,
-            status: 'CONFIRMADO',
-            asaasPaymentId: p.id,
-          },
-        });
-        pagamentoId = created.id;
+        try {
+          const created = await prisma.pagamento.create({
+            data: {
+              cobrancaId: cobranca.id,
+              dataPagamento: paymentDate,
+              formaPagamento: cobranca.formaPagamento as unknown as string,
+              valorPago: p.value,
+              status: 'CONFIRMADO',
+              asaasPaymentId: p.id,
+            },
+          });
+          pagamentoId = created.id;
+        } catch (error) {
+          if (!isPrismaUniqueConstraintError(error)) {
+            throw error;
+          }
+
+          const concurrentPagamento = await prisma.pagamento.findFirst({
+            where: { asaasPaymentId: p.id },
+            select: { id: true },
+          });
+
+          if (!concurrentPagamento) {
+            throw error;
+          }
+
+          const updated = await prisma.pagamento.update({
+            where: { id: concurrentPagamento.id },
+            data: {
+              dataPagamento: paymentDate,
+              valorPago: p.value,
+              status: 'CONFIRMADO',
+            },
+          });
+          pagamentoId = updated.id;
+        }
       }
     }
 

@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { collectOperationalMetrics, toPrometheusText } from '@alusa/finance';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/admin/webhooks/metrics/operational
  *

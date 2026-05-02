@@ -219,6 +219,10 @@ export function collectAcademicChargeReconciliationIds(params: {
   return Array.from(new Set(ids)).slice(0, limit);
 }
 
+export function shouldReconcileAsaasOnRead(searchParams: URLSearchParams): boolean {
+  return searchParams.get('syncAsaas') === 'true';
+}
+
 export async function reconcileAsaasPaymentIds(params: {
   contaId: string;
   asaasPaymentIds: Array<string | null | undefined>;

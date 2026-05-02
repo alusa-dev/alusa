@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
-import { getFinanceiroKpisFromAsaas } from '@alusa/finance';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+
+export const dynamic = 'force-dynamic';
 
 type DashboardLessonEvent = {
   turmaId: string | null;
@@ -75,6 +76,52 @@ function buildTodayLessonSummary(events: DashboardLessonEvent[]) {
   ).length;
 
   return { aulasHoje, pendencias };
+}
+
+function cobrancaAmount(cobranca: { valor: unknown; valorFinal?: unknown | null }): number {
+  return Number(cobranca.valorFinal ?? cobranca.valor ?? 0);
+}
+
+async function getAguardandoPagamentoProximos30DiasLocal(params: {
+  contaId: string;
+  startOfToday: Date;
+  next30Days: Date;
+}) {
+  const [cobrancas, standaloneCharges] = await Promise.all([
+    prisma.cobranca.findMany({
+      where: {
+        matricula: { aluno: { contaId: params.contaId } },
+        status: 'PENDENTE',
+        vencimento: {
+          gte: params.startOfToday,
+          lte: params.next30Days,
+        },
+      },
+      select: {
+        valor: true,
+        valorFinal: true,
+      },
+    }),
+    prisma.charge.findMany({
+      where: {
+        contaId: params.contaId,
+        cobrancaId: null,
+        status: 'OPEN',
+        dueDate: {
+          gte: params.startOfToday,
+          lte: params.next30Days,
+        },
+      },
+      select: {
+        value: true,
+      },
+    }),
+  ]);
+
+  const academicTotal = cobrancas.reduce((sum, cobranca) => sum + cobrancaAmount(cobranca), 0);
+  const standaloneTotal = standaloneCharges.reduce((sum, charge) => sum + Number(charge.value ?? 0), 0);
+
+  return academicTotal + standaloneTotal;
 }
 
 export async function GET(_request: NextRequest) {
@@ -242,16 +289,11 @@ export async function GET(_request: NextRequest) {
 
     const receitaMes = pagamentosMes.reduce((sum, p) => sum + Number(p.valorPago), 0);
 
-    const financeiroKpis = await getFinanceiroKpisFromAsaas({
+    const aguardandoPagamentoProximos30Dias = await getAguardandoPagamentoProximos30DiasLocal({
       contaId,
-      mesAtual: startOfMonth,
-      proximoMes: new Date(now.getFullYear(), now.getMonth() + 1, 1),
       startOfToday,
-      endOfNext30Days: next30Days,
+      next30Days,
     });
-
-    const aguardandoPagamentoProximos30Dias =
-      financeiroKpis.data.aguardandoPagamento.valorBruto;
 
     const taxasMatriculaRecebidasAno = await prisma.cobranca.findMany({
       where: {

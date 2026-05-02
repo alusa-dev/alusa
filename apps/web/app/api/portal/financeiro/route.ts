@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import type { NextRequest } from 'next/server';
 import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
 import { portalFinanceiroListResultDTOSchema } from '@/features/portal/dtos';
 import {
@@ -9,10 +10,11 @@ import { listPortalStandaloneCharges } from '@/features/portal/finance-standalon
 import {
   reconcileAsaasPaymentIds,
   resolveAcademicDisplayedStatus,
+  shouldReconcileAsaasOnRead,
 } from '@/src/server/finance/academic-payment-history';
 import { jsonNoStore } from '@/lib/http-security';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -82,16 +84,18 @@ export async function GET() {
     }
 
     let { cobrancas, standaloneCharges } = await loadPortalFinanceData();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: portalUser.contaId,
-      asaasPaymentIds: [
-        ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
-        ...standaloneCharges.map((charge) => charge.asaasId),
-      ],
-      limit: 100,
-    });
-    if (reconciliation.attempted > 0) {
-      ({ cobrancas, standaloneCharges } = await loadPortalFinanceData());
+    if (shouldReconcileAsaasOnRead(req.nextUrl.searchParams)) {
+      const reconciliation = await reconcileAsaasPaymentIds({
+        contaId: portalUser.contaId,
+        asaasPaymentIds: [
+          ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
+          ...standaloneCharges.map((charge) => charge.asaasId),
+        ],
+        limit: 100,
+      });
+      if (reconciliation.attempted > 0) {
+        ({ cobrancas, standaloneCharges } = await loadPortalFinanceData());
+      }
     }
 
     // 5. Formatar dados e atualizar status de atrasadas

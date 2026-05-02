@@ -3,7 +3,10 @@ import { safeGetServerSession } from '@/lib/safe-server-session';
 import { prisma } from '@/src/prisma';
 import { listFinanceiroPagamentosResultDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroPagamentoRecordToDTO } from '@/features/financeiro/mappers';
-import { reconcileAsaasPaymentIds } from '@/src/server/finance/academic-payment-history';
+import {
+  reconcileAsaasPaymentIds,
+  shouldReconcileAsaasOnRead,
+} from '@/src/server/finance/academic-payment-history';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -69,16 +72,18 @@ export async function GET(req: NextRequest) {
     }
 
     let [total, pagamentos] = await loadPagamentos();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: user.contaId,
-      asaasPaymentIds: pagamentos.flatMap((pagamento) => [
-        pagamento.asaasPaymentId,
-        pagamento.cobranca.asaasPaymentId,
-      ]),
-      limit: pageSize,
-    });
-    if (reconciliation.attempted > 0) {
-      [total, pagamentos] = await loadPagamentos();
+    if (shouldReconcileAsaasOnRead(url.searchParams)) {
+      const reconciliation = await reconcileAsaasPaymentIds({
+        contaId: user.contaId,
+        asaasPaymentIds: pagamentos.flatMap((pagamento) => [
+          pagamento.asaasPaymentId,
+          pagamento.cobranca.asaasPaymentId,
+        ]),
+        limit: pageSize,
+      });
+      if (reconciliation.attempted > 0) {
+        [total, pagamentos] = await loadPagamentos();
+      }
     }
 
     const items = pagamentos.map((p) => ({
@@ -115,6 +120,6 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     console.error('[API Financeiro Pagamentos] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return err(500, 'ERRO_INTERNO', 'Erro ao carregar pagamentos');
   }
 }

@@ -22,8 +22,9 @@ vi.mock('@alusa/finance', () => ({
   resolveAsaasWebhookAccessToken: vi.fn((headers: Pick<Headers, 'get'>) =>
     headers.get('asaas-access-token') ?? headers.get('x-asaas-access-token')
   ),
-  extractClientIp: vi.fn(() => '127.0.0.1'),
+  extractClientIps: vi.fn(() => ['127.0.0.1']),
   isAsaasWebhookIpAllowed: vi.fn(() => true),
+  shouldBlockAsaasWebhookByIp: vi.fn(() => false),
   globalWebhookRateLimiter: {
     check: vi.fn(() => ({ allowed: true, resetMs: 0 })),
   },
@@ -165,5 +166,27 @@ describe('POST /api/webhooks/asaas', () => {
 
     const json = await res.json();
     expect(json).toMatchObject({ success: true, message: 'ok' });
+  });
+
+  it('não expõe detalhe de configuração quando o segredo do webhook está ausente', async () => {
+    vi.mocked(handleAsaasWebhookEvent).mockRejectedValueOnce(
+      new Error('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET não configurado'),
+    );
+
+    const req = createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      signatureHeader: { name: 'asaas-access-token', value: 'token' },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json).toMatchObject({
+      success: false,
+      error: 'ENV_NOT_CONFIGURED',
+      message: 'Configuração obrigatória do webhook indisponível.',
+    });
+    expect(JSON.stringify(json)).not.toContain('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET');
   });
 });

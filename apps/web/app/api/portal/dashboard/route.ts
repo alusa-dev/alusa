@@ -10,6 +10,7 @@ import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/p
 import {
   reconcileAsaasPaymentIds,
   resolveAcademicDisplayedStatus,
+  shouldReconcileAsaasOnRead,
 } from '@/src/server/finance/academic-payment-history';
 
 export async function GET(req: NextRequest) {
@@ -65,16 +66,18 @@ export async function GET(req: NextRequest) {
     }
 
     let { matriculas, cobrancas, standaloneCharges } = await loadDashboardData();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: portalUser.contaId,
-      asaasPaymentIds: [
-        ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
-        ...standaloneCharges.map((charge) => charge.asaasId),
-      ],
-      limit: 100,
-    });
-    if (reconciliation.attempted > 0) {
-      ({ matriculas, cobrancas, standaloneCharges } = await loadDashboardData());
+    if (shouldReconcileAsaasOnRead(req.nextUrl.searchParams)) {
+      const reconciliation = await reconcileAsaasPaymentIds({
+        contaId: portalUser.contaId,
+        asaasPaymentIds: [
+          ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
+          ...standaloneCharges.map((charge) => charge.asaasId),
+        ],
+        limit: 100,
+      });
+      if (reconciliation.attempted > 0) {
+        ({ matriculas, cobrancas, standaloneCharges } = await loadDashboardData());
+      }
     }
 
     // 4. Calcular métricas
