@@ -8,7 +8,7 @@
     "dev:raw": "next dev",
     "dev:light": "pnpm -C ../.. --filter @alusa/ui build && pnpm -C ../.. --filter @alusa/database build && pnpm -C ../.. --filter @alusa/lib build && pnpm -C ../.. --filter @alusa/finance build && cross-env NODE_OPTIONS=--max-old-space-size=4096 NEXT_TELEMETRY_DISABLED=1 next dev -p 3000",
     "dev:clean": "rimraf .next && pnpm -C ../.. --filter @alusa/ui build && pnpm -C ../.. --filter @alusa/database build && pnpm -C ../.. --filter @alusa/lib build && pnpm -C ../.. --filter @alusa/finance build && next dev",
-    "build": "next build",
+    "build": "prisma generate --schema=../../prisma/schema.prisma && next build",
     "build:clean": "rimraf .next && next build",
     "start": "next start",
     "lint": "eslint .",
