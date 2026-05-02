@@ -4,14 +4,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/hooks/use-current-user';
-import { TotalAlunosCard } from './components/TotalAlunosCard';
-import { AniversariantesMesCard } from './components/AniversariantesMesCard';
-import { KycDashboardCard } from '@/features/kyc/components/KycDashboardCard';
-import {
-  AguardandoPagamentoCard,
-} from './components/FinanceiroKpiCards';
-import { RecebidasKpiCard } from './components/RecebidasKpiCard';
-import { TaxaMatriculaCard, type PeriodoTaxaMatricula } from './components/TaxaMatriculaCard';
+// Optamos por usar next/dynamic para carregar as métricas do Dashboard sob demanda
+// Isso fragmenta o EvaluateScript inicial e quebra as Long Tasks no render.
+import dynamic from 'next/dynamic';
+const TotalAlunosCardDynamic = dynamic(() => import('./components/TotalAlunosCard').then((mod) => mod.TotalAlunosCard));
+const AniversariantesMesCardDynamic = dynamic(() => import('./components/AniversariantesMesCard').then((mod) => mod.AniversariantesMesCard));
+const KycDashboardCardDynamic = dynamic(() => import('@/features/kyc/components/KycDashboardCard').then((mod) => mod.KycDashboardCard));
+const AguardandoPagamentoCardDynamic = dynamic(() => import('./components/FinanceiroKpiCards').then((mod) => mod.AguardandoPagamentoCard));
+const RecebidasKpiCardDynamic = dynamic(() => import('./components/RecebidasKpiCard').then((mod) => mod.RecebidasKpiCard));
+const TaxaMatriculaCardDynamic = dynamic(() => import('./components/TaxaMatriculaCard').then((mod) => mod.TaxaMatriculaCard));
+import type { PeriodoTaxaMatricula } from './components/TaxaMatriculaCard';
 import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
@@ -147,12 +149,12 @@ export default function DashboardClient() {
       >
         {showKycCard ? (
           <motion.div variants={kpiItemVariants} className="md:col-span-2 xl:col-span-2">
-            <KycDashboardCard onDismiss={() => setKycCardDismissed(true)} />
+            <KycDashboardCardDynamic onDismiss={() => setKycCardDismissed(true)} />
           </motion.div>
         ) : null}
 
         <motion.div variants={kpiItemVariants}>
-          <TotalAlunosCard
+          <TotalAlunosCardDynamic
             total={metrics?.alunosAtivos ?? 0}
             ativos={metrics?.alunosAtivos ?? 0}
             recentStudents={(metrics?.alunosRecentes || []).map((aluno) => ({
@@ -168,21 +170,21 @@ export default function DashboardClient() {
         </motion.div>
 
         <motion.div variants={kpiItemVariants}>
-          <RecebidasKpiCard data={metrics} loading={loading} />
+          <RecebidasKpiCardDynamic data={metrics} loading={loading} />
         </motion.div>
 
         <motion.div
           variants={kpiItemVariants}
           className={showKycCard ? 'xl:col-span-2' : undefined}
         >
-          <AguardandoPagamentoCard data={metrics} loading={loading} />
+          <AguardandoPagamentoCardDynamic data={metrics} loading={loading} />
         </motion.div>
 
         <motion.div
           variants={kpiItemVariants}
           className={showKycCard ? 'xl:col-span-2' : undefined}
         >
-          <TaxaMatriculaCard
+          <TaxaMatriculaCardDynamic
             periodo={periodoTaxaMatricula}
             onPeriodoChange={(periodo) => {
               if (periodo) setPeriodoTaxaMatricula(periodo);
@@ -199,7 +201,7 @@ export default function DashboardClient() {
         variants={kpiGroupVariants}
       >
         <motion.div variants={kpiItemVariants} className="h-[260px]">
-          <AniversariantesMesCard aniversariantes={metrics?.aniversariantesDoMes ?? []} />
+          <AniversariantesMesCardDynamic aniversariantes={metrics?.aniversariantesDoMes ?? []} />
         </motion.div>
 
         {/* Atalhos Administrativos */}
