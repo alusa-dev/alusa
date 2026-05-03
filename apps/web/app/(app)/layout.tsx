@@ -54,28 +54,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         root.style.setProperty('--sidebar-w', '262px');
       }
 
-      const updateToastOffset = () => {
-        const contentArea = document.querySelector('.app-content-scroll') as HTMLElement | null;
-
-        if (!contentArea) {
-          root.style.setProperty('--app-toast-right-offset', `${OUTER_PADDING_RIGHT_PX + CARD_PADDING_PX}px`);
-          return;
-        }
-
-        const { right } = contentArea.getBoundingClientRect();
-        const offsetRight = Math.max(window.innerWidth - right, 0);
-        root.style.setProperty('--app-toast-right-offset', `${offsetRight}px`);
-      };
-
-      updateToastOffset();
-      window.addEventListener('resize', updateToastOffset);
-
-      const frame = window.requestAnimationFrame(updateToastOffset);
-
-      return () => {
-        window.cancelAnimationFrame(frame);
-        window.removeEventListener('resize', updateToastOffset);
-      };
+      root.style.setProperty('--app-toast-right-offset', `${OUTER_PADDING_RIGHT_PX + CARD_PADDING_PX}px`);
     }
   }, []);
 

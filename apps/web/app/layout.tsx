@@ -5,6 +5,7 @@ import React from "react";
 import Script from "next/script";
 import { cookies } from "next/headers";
 import type { Metadata, Viewport } from "next";
+import { WebVitalsReporter } from "./WebVitalsReporter";
 
 export const metadata: Metadata = {
   title: {
@@ -42,6 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AppProviders>
           {children}
         </AppProviders>
+        <WebVitalsReporter />
       </body>
     </html>
   );

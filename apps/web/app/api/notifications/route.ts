@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { listNotifications, markAllNotificationsAsRead, type NotificationFeedView } from '@alusa/lib';
+import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
+import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
 
 type SessionUser = {
   id?: string;
@@ -18,6 +20,10 @@ const listQuerySchema = z.object({
 });
 const bulkActionSchema = z.object({
   action: z.literal('markAllRead'),
+});
+const notificationsCache = new PrivateMemoryCache<unknown>({
+  maxAgeSeconds: 15,
+  staleWhileRevalidateSeconds: 45,
 });
 
 function json(status: number, body: unknown) {
@@ -44,6 +50,7 @@ async function resolveAuth(): Promise<SessionUser | null> {
 }
 
 export async function GET(req: NextRequest) {
+  const timer = createPerfTimer('api/notifications');
   try {
     const user = await resolveAuth();
     if (!user?.id || !user.contaId) {
@@ -67,15 +74,44 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const result = await listNotifications({
-      contaId: user.contaId,
-      userId: user.id,
-      limit: parsed.data.limit,
-      page: parsed.data.page,
-      view: parsed.data.view as NotificationFeedView | undefined,
-    });
+    const cacheKey = [
+      user.contaId,
+      user.id,
+      parsed.data.view ?? 'active',
+      parsed.data.limit ?? 'default',
+      parsed.data.page ?? 'default',
+    ].join(':');
+    const cached = notificationsCache.get(cacheKey);
+    if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
+      timer.end('GET /notifications (cache hit)', { cacheState: cached.state });
+      return privateJson(cached.body, {
+        maxAgeSeconds: 15,
+        staleWhileRevalidateSeconds: 45,
+        cacheState: cached.state,
+      });
+    }
 
-    return json(200, serialize(result));
+    const result = await withPerfTimer(
+      'notifications',
+      'listNotifications',
+      () => listNotifications({
+        contaId: user.contaId!,
+        userId: user.id!,
+        limit: parsed.data.limit,
+        page: parsed.data.page,
+        view: parsed.data.view as NotificationFeedView | undefined,
+      }),
+      { contaId: user.contaId }
+    );
+
+    const body = serialize(result);
+    notificationsCache.set(cacheKey, body);
+    timer.end('GET /notifications (cache miss)');
+    return privateJson(body, {
+      maxAgeSeconds: 15,
+      staleWhileRevalidateSeconds: 45,
+      cacheState: 'MISS',
+    });
   } catch (error) {
     console.error('[Notifications][GET]', error);
     return json(500, { error: 'ERRO_INTERNO', message: 'Não foi possível carregar as notificações.' });
@@ -102,11 +138,17 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const updatedCount = await markAllNotificationsAsRead({
-      contaId: user.contaId,
-      userId: user.id,
-    });
+    const updatedCount = await withPerfTimer(
+      'notifications',
+      'markAllNotificationsAsRead',
+      () => markAllNotificationsAsRead({
+        contaId: user.contaId!,
+        userId: user.id!,
+      }),
+      { contaId: user.contaId }
+    );
 
+    notificationsCache.clear();
     return json(200, { success: true, updatedCount });
   } catch (error) {
     console.error('[Notifications][PATCH]', error);

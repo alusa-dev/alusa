@@ -21,6 +21,19 @@ const nextConfig = {
       { source: '/auth/reset-password', destination: '/reset-password' },
     ];
   },
+  async headers() {
+    return [
+      {
+        source: '/brand/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+    ];
+  },
   webpack: (config) => {
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)
     config.resolve = config.resolve || {};

@@ -5,6 +5,13 @@ import { prisma } from '@/lib/prisma';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
+import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
+
+const dashboardMetricsCache = new PrivateMemoryCache<unknown>({
+  maxAgeSeconds: 15,
+  staleWhileRevalidateSeconds: 60,
+});
 
 type DashboardLessonEvent = {
   turmaId: string | null;
@@ -87,14 +94,15 @@ function publicImageUrl(value: string | null | undefined) {
 }
 
 function jsonWithShortPrivateCache(body: unknown) {
-  return NextResponse.json(body, {
-    headers: {
-      'cache-control': 'private, max-age=15, stale-while-revalidate=45',
-    },
+  return privateJson(body, {
+    maxAgeSeconds: 15,
+    staleWhileRevalidateSeconds: 60,
+    cacheState: 'MISS',
   });
 }
 
 export async function GET(_request: NextRequest) {
+  const timer = createPerfTimer('api/dashboard/metrics');
   try {
     const session = await getServerSession(authOptions);
     const contaIdFromSession = (session?.user as { contaId?: string | null } | undefined)?.contaId;
@@ -108,6 +116,15 @@ export async function GET(_request: NextRequest) {
     }
 
     const contaId = contaIdFromSession;
+    const cached = dashboardMetricsCache.get(contaId);
+    if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
+      timer.end('GET /dashboard/metrics (cache hit)', { cacheState: cached.state });
+      return privateJson(cached.body, {
+        maxAgeSeconds: 15,
+        staleWhileRevalidateSeconds: 60,
+        cacheState: cached.state,
+      });
+    }
 
     const alunoFilter = { contaId };
     const matriculaFilter = { aluno: { contaId } };
@@ -126,12 +143,14 @@ export async function GET(_request: NextRequest) {
     const next7Days = new Date(now);
     next7Days.setDate(next7Days.getDate() + 7);
 
-    await autoCloseAgendaEventsInRange({
-      contaId,
-      start: startOfToday,
-      end: endOfToday,
-      prismaClient: prisma,
-    });
+    await withPerfTimer('api/dashboard/metrics', 'autoCloseAgendaEvents', () => 
+      autoCloseAgendaEventsInRange({
+        contaId,
+        start: startOfToday,
+        end: endOfToday,
+        prismaClient: prisma,
+      })
+    );
 
     const weeklyWindows = Array.from({ length: 7 }, (_, index) => {
       const i = 6 - index;
@@ -141,6 +160,7 @@ export async function GET(_request: NextRequest) {
       const fimDia = new Date(dia.setHours(23, 59, 59, 999));
       return { inicioDia, fimDia };
     });
+    const startOfWeeklyWindow = weeklyWindows[0]?.inicioDia ?? startOfToday;
 
     const [
       totalAlunos,
@@ -158,10 +178,11 @@ export async function GET(_request: NextRequest) {
       receitaTotalAggregate,
       proximosVencimentos,
       totalCobrancas,
-      weeklyResults,
+      pagamentosSemanaData,
+      matriculasSemanaData,
       ultimasCobrancasData,
       alunosRecentesData,
-    ] = await Promise.all([
+    ] = await withPerfTimer('api/dashboard/metrics', 'prisma Promise.all', () => Promise.all([
       prisma.aluno.count({ where: alunoFilter }),
       prisma.aluno.count({
         where: {
@@ -249,30 +270,31 @@ export async function GET(_request: NextRequest) {
         },
       }),
       prisma.cobranca.count({ where: cobrancaFilter }),
-      Promise.all(
-        weeklyWindows.map(({ inicioDia, fimDia }) =>
-          Promise.all([
-            prisma.pagamento.aggregate({
-              where: {
-                status: { in: ['CONFIRMADO', 'PAGO'] },
-                dataPagamento: { gte: inicioDia, lte: fimDia },
-                cobranca: cobrancaFilter,
-              },
-              _sum: { valorPago: true },
-            }),
-            prisma.matricula.count({
-              where: { ...matriculaFilter, createdAt: { gte: inicioDia, lte: fimDia } },
-            }),
-            prisma.matricula.count({
-              where: {
-                ...matriculaFilter,
-                status: 'CANCELADA',
-                updatedAt: { gte: inicioDia, lte: fimDia },
-              },
-            }),
-          ]),
-        ),
-      ),
+      prisma.pagamento.findMany({
+        where: {
+          status: { in: ['CONFIRMADO', 'PAGO'] },
+          dataPagamento: { gte: startOfWeeklyWindow, lte: endOfToday },
+          cobranca: cobrancaFilter,
+        },
+        select: {
+          dataPagamento: true,
+          valorPago: true,
+        },
+      }),
+      prisma.matricula.findMany({
+        where: {
+          ...matriculaFilter,
+          OR: [
+            { createdAt: { gte: startOfWeeklyWindow, lte: endOfToday } },
+            { status: 'CANCELADA', updatedAt: { gte: startOfWeeklyWindow, lte: endOfToday } },
+          ],
+        },
+        select: {
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
       prisma.cobranca.findMany({
         take: 5,
         where: cobrancaFilter,
@@ -300,7 +322,7 @@ export async function GET(_request: NextRequest) {
           createdAt: true,
         },
       }),
-    ]);
+    ]));
 
     const { aulasHoje, pendencias } = buildTodayLessonSummary(lessonEvents);
 
@@ -336,12 +358,24 @@ export async function GET(_request: NextRequest) {
     }, 0);
     const receitaTotal = toNumber(receitaTotalAggregate._sum.valorPago);
     const taxaInadimplencia = totalCobrancas > 0 ? (cobrancasVencidas / totalCobrancas) * 100 : 0;
-    const receitaSemanal = weeklyResults.map(([pagamentosDia]) =>
-      toNumber(pagamentosDia._sum.valorPago),
+    const receitaSemanal = weeklyWindows.map(({ inicioDia, fimDia }) =>
+      pagamentosSemanaData.reduce((sum, pagamento) => {
+        const dataPagamento = pagamento.dataPagamento;
+        if (!dataPagamento || dataPagamento < inicioDia || dataPagamento > fimDia) return sum;
+        return sum + toNumber(pagamento.valorPago);
+      }, 0),
     );
-    const matriculasNovasSemanal = weeklyResults.map(([, matriculasNovasDia]) => matriculasNovasDia);
-    const matriculasCanceladasSemanal = weeklyResults.map(
-      ([, , matriculasCanceladasDia]) => matriculasCanceladasDia,
+    const matriculasNovasSemanal = weeklyWindows.map(({ inicioDia, fimDia }) =>
+      matriculasSemanaData.filter((matricula) => (
+        matricula.createdAt >= inicioDia && matricula.createdAt <= fimDia
+      )).length,
+    );
+    const matriculasCanceladasSemanal = weeklyWindows.map(({ inicioDia, fimDia }) =>
+      matriculasSemanaData.filter((matricula) => (
+        matricula.status === 'CANCELADA' &&
+        matricula.updatedAt >= inicioDia &&
+        matricula.updatedAt <= fimDia
+      )).length,
     );
 
     const ultimasCobrancas = ultimasCobrancasData.map((cobranca) => ({
@@ -384,14 +418,16 @@ export async function GET(_request: NextRequest) {
       aniversariantesDoMes,
     };
 
-    return jsonWithShortPrivateCache(
-      dashboardMetricsResultDTOSchema.parse(
-        mapDashboardMetricsResultToDTO({
-          success: true,
-          data: metrics,
-        }),
-      ),
+    const body = dashboardMetricsResultDTOSchema.parse(
+      mapDashboardMetricsResultToDTO({
+        success: true,
+        data: metrics,
+      }),
     );
+    dashboardMetricsCache.set(contaId, body);
+
+    timer.end('GET /dashboard/metrics (success)');
+    return jsonWithShortPrivateCache(body);
   } catch (error) {
     console.error('[GET /api/dashboard/metrics] Erro:', error);
     return NextResponse.json(
@@ -403,3 +439,4 @@ export async function GET(_request: NextRequest) {
     );
   }
 }
+

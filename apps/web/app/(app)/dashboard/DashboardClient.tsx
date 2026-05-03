@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { motion, useReducedMotion } from 'framer-motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/hooks/use-current-user';
@@ -20,7 +19,6 @@ import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
 export default function DashboardClient() {
   const router = useRouter();
   const { user } = useCurrentUser();
-  const shouldReduceMotion = useReducedMotion();
   const [metrics, setMetrics] = useState<DashboardMetricsDataDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [kycCardDismissed, setKycCardDismissed] = useState(false);
@@ -97,57 +95,11 @@ export default function DashboardClient() {
       .slice(0, 2);
   };
 
-  const kpiGroupVariants = shouldReduceMotion
-    ? undefined
-    : {
-        hidden: {},
-        visible: {
-          transition: {
-            staggerChildren: 0.08,
-            delayChildren: 0.05,
-          },
-        },
-      };
-
-  const kpiItemVariants = shouldReduceMotion
-    ? undefined
-    : {
-        hidden: {
-          opacity: 0,
-          y: 24,
-        },
-        visible: {
-          opacity: 1,
-          y: 0,
-          transition: {
-            duration: 0.42,
-            ease: [0.22, 1, 0.36, 1] as const,
-          },
-        },
-      };
-
   const showKycCard = !verificationLoading && Boolean(verification) && !isApproved && !kycCardDismissed;
-
-  if (loading) {
-    return (
-      <section aria-label="Conteúdo do Dashboard" className="flex flex-col gap-6 pb-8">
-        <div>
-          <Skeleton className="h-9 w-48 mb-2" />
-          <Skeleton className="h-5 w-80" />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-          <TotalAlunosCard total={0} ativos={0} onAddAluno={handleGoToCadastro} loading />
-          <RecebidasKpiCard data={null} loading />
-          <AguardandoPagamentoCard data={null} loading />
-          <TaxaMatriculaCard periodo={periodoTaxaMatricula} />
-        </div>
-      </section>
-    );
-  }
+  const isMetricsLoading = loading && !metrics;
 
   return (
-    <section aria-label="Conteúdo do Dashboard" className="flex flex-col gap-6 pb-8">
+    <section aria-label="Conteúdo do Dashboard" aria-busy={isMetricsLoading} className="flex flex-col gap-6 pb-8">
       {/* Título */}
       <header>
         <h1 className="text-2xl font-semibold text-gray-900">
@@ -159,19 +111,16 @@ export default function DashboardClient() {
       </header>
 
       {/* Grid de 4 KPIs principais */}
-      <motion.div
+      <div
         className="grid auto-rows-fr grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4"
-        initial={shouldReduceMotion ? false : 'hidden'}
-        animate={shouldReduceMotion ? undefined : 'visible'}
-        variants={kpiGroupVariants}
       >
         {showKycCard ? (
-          <motion.div variants={kpiItemVariants} className="md:col-span-2 xl:col-span-2">
+          <div className="md:col-span-2 xl:col-span-2">
             <KycDashboardCard onDismiss={() => setKycCardDismissed(true)} />
-          </motion.div>
+          </div>
         ) : null}
 
-        <motion.div variants={kpiItemVariants}>
+        <div>
           <TotalAlunosCard
             total={metrics?.alunosAtivos ?? 0}
             ativos={metrics?.alunosAtivos ?? 0}
@@ -183,47 +132,38 @@ export default function DashboardClient() {
             }))}
             onAddAluno={handleGoToCadastro}
             disableAddAluno={!verificationLoading && Boolean(verification) && !isApproved}
-            loading={loading}
+            loading={isMetricsLoading}
           />
-        </motion.div>
+        </div>
 
-        <motion.div variants={kpiItemVariants}>
-          <RecebidasKpiCard data={metrics} loading={loading} />
-        </motion.div>
+        <div>
+          <RecebidasKpiCard data={metrics} loading={isMetricsLoading} />
+        </div>
 
-        <motion.div
-          variants={kpiItemVariants}
-          className={showKycCard ? 'xl:col-span-2' : undefined}
-        >
-          <AguardandoPagamentoCard data={metrics} loading={loading} />
-        </motion.div>
+        <div className={showKycCard ? 'xl:col-span-2' : undefined}>
+          <AguardandoPagamentoCard data={metrics} loading={isMetricsLoading} />
+        </div>
 
-        <motion.div
-          variants={kpiItemVariants}
-          className={showKycCard ? 'xl:col-span-2' : undefined}
-        >
+        <div className={showKycCard ? 'xl:col-span-2' : undefined}>
           <TaxaMatriculaCard
             periodo={periodoTaxaMatricula}
             onPeriodoChange={(periodo) => {
               if (periodo) setPeriodoTaxaMatricula(periodo);
             }}
           />
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
 
       {/* Grid de Atalhos e Acesso Rápido */}
-      <motion.div
+      <div
         className="grid grid-cols-1 gap-6 lg:grid-cols-4"
-        initial={shouldReduceMotion ? false : 'hidden'}
-        animate={shouldReduceMotion ? undefined : 'visible'}
-        variants={kpiGroupVariants}
       >
-        <motion.div variants={kpiItemVariants} className="h-[260px]">
+        <div className="h-[260px]">
           <AniversariantesMesCard aniversariantes={metrics?.aniversariantesDoMes ?? []} />
-        </motion.div>
+        </div>
 
         {/* Atalhos Administrativos */}
-        <motion.div variants={kpiItemVariants} className="h-[260px]">
+        <div className="h-[260px]">
           <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm flex h-full flex-col">
             <h2 className="text-sm font-semibold text-gray-900 mb-0.5">Atalhos Administrativos</h2>
             <p className="text-xs text-gray-500 mb-4">Acesse os módulos mais usados na operação</p>
@@ -252,10 +192,10 @@ export default function DashboardClient() {
               </button>
             </div>
           </div>
-        </motion.div>
+        </div>
 
         {/* Acesso Rápido */}
-        <motion.div variants={kpiItemVariants} className="h-[260px] lg:col-span-2">
+        <div className="h-[260px] lg:col-span-2">
           <div className="rounded-2xl bg-white border border-gray-200 overflow-hidden shadow-sm flex h-full flex-col">
             <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
               <h2 className="text-sm font-semibold text-gray-900">Acesso Rápido</h2>
@@ -313,18 +253,16 @@ export default function DashboardClient() {
               </button>
             </div>
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
 
       {/* Seção Inferior: Tabelas e Listas */}
-      <motion.div
+      {isMetricsLoading ? <DashboardSecondarySkeleton /> : (
+      <div
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6"
-        initial={shouldReduceMotion ? false : 'hidden'}
-        animate={shouldReduceMotion ? undefined : 'visible'}
-        variants={kpiGroupVariants}
       >
         {/* Últimas Cobranças */}
-        <motion.div variants={kpiItemVariants} className="md:col-span-2 lg:col-span-3">
+        <div className="md:col-span-2 lg:col-span-3">
           <div className="rounded-2xl bg-white border border-gray-200 overflow-hidden shadow-sm h-fit">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h2 className="text-base font-semibold text-gray-900">Últimas Cobranças</h2>
@@ -403,10 +341,10 @@ export default function DashboardClient() {
               </table>
             </div>
           </div>
-        </motion.div>
+        </div>
 
         {/* Alunos Recentes */}
-        <motion.div variants={kpiItemVariants} className="md:col-span-2 lg:col-span-1">
+        <div className="md:col-span-2 lg:col-span-1">
           <div className="rounded-2xl bg-white border border-gray-200 overflow-hidden shadow-sm h-full flex flex-col">
             <div className="px-5 py-4 border-b border-gray-100">
               <h2 className="text-base font-semibold text-gray-900">Alunos Recentes</h2>
@@ -458,8 +396,32 @@ export default function DashboardClient() {
               </button>
             </div>
           </div>
-        </motion.div>
-      </motion.div>
+        </div>
+      </div>
+      )}
     </section>
+  );
+}
+
+function DashboardSecondarySkeleton() {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+      <div className="md:col-span-2 lg:col-span-3 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <Skeleton className="mb-5 h-5 w-40" />
+        <div className="space-y-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      </div>
+      <div className="md:col-span-2 lg:col-span-1 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <Skeleton className="mb-5 h-5 w-36" />
+        <div className="space-y-3">
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+          <Skeleton className="h-12 w-full" />
+        </div>
+      </div>
+    </div>
   );
 }

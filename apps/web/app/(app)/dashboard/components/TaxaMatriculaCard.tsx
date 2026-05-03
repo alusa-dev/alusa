@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { animate, motion, useMotionValue } from 'framer-motion';
+import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
 import { formatCurrency } from "./utils";
@@ -90,87 +89,22 @@ function TaxaMatriculaToggle({
     { label: "15D", value: "15d" },
   ];
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const buttonRefs = useRef<Map<PeriodoTaxaMatricula, HTMLButtonElement>>(new Map());
-  const initialized = useRef(false);
-
-  const indicatorLeft = useMotionValue(0);
-  const indicatorWidth = useMotionValue(0);
-
-  const moveIndicator = useCallback((value: PeriodoTaxaMatricula, instant = false) => {
-    const btn = buttonRefs.current.get(value);
-    const container = containerRef.current;
-    if (!btn || !container) return;
-
-    // offsetLeft relativo ao container (desconta padding de 4px do p-1)
-    const left = btn.offsetLeft;
-    const width = btn.offsetWidth;
-
-    if (instant) {
-      indicatorLeft.set(left);
-      indicatorWidth.set(width);
-    } else {
-      animate(indicatorLeft, left, {
-        type: "spring",
-        stiffness: 300,
-        damping: 30,
-        mass: 0.8,
-      });
-      animate(indicatorWidth, width, {
-        type: "spring",
-        stiffness: 400,
-        damping: 35,
-        mass: 0.6,
-      });
-    }
-  }, [indicatorLeft, indicatorWidth]);
-
-  // Inicialização: posiciona sem animação
-  useEffect(() => {
-    const active = periodo ?? "30d";
-    if (initialized.current) return;
-    // Aguarda o layout do DOM
-    const frame = requestAnimationFrame(() => {
-      moveIndicator(active, true);
-      initialized.current = true;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [periodo, moveIndicator]);
-
-  // Quando periodo muda (após inicializado), anima
-  useEffect(() => {
-    if (!initialized.current) return;
-    const active = periodo ?? "30d";
-    moveIndicator(active, false);
-  }, [periodo, moveIndicator]);
-
   return (
     <div
-      ref={containerRef}
       className="relative inline-flex w-fit items-center rounded-full bg-[#eadcf8] p-1"
       role="group"
       aria-label="Selecionar período da taxa de matrícula"
     >
-      {/* Indicador deslizante — posicionado absolutamente no container */}
-      <motion.span
-        aria-hidden="true"
-        className="pointer-events-none absolute top-1 bottom-1 rounded-full bg-[#f8f3fd] shadow-sm"
-        style={{ left: indicatorLeft, width: indicatorWidth }}
-      />
-
       {options.map((opt) => {
         const isActive = periodo === opt.value;
         return (
           <button
             key={opt.value}
-            ref={(el) => {
-              if (el) buttonRefs.current.set(opt.value, el);
-            }}
             type="button"
             aria-pressed={isActive}
             aria-label={`Filtrar por ${opt.label}`}
-            className={`relative z-10 rounded-full px-3 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-brand-accent transition-colors duration-150 ${
-              isActive ? "text-[#2b2634]" : "text-[#4c4459] hover:text-[#2b2634]"
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+              isActive ? "bg-[#f8f3fd] text-[#2b2634] shadow-sm" : "text-[#4c4459] hover:text-[#2b2634]"
             }`}
             onClick={() => onPeriodoChange?.(opt.value)}
           >
