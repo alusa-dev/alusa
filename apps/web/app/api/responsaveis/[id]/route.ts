@@ -134,7 +134,7 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       const existente = await prisma.responsavel.findFirst({
         where: {
           contaId,
-          id: { not: params.id },
+          id: { not: id },
           OR: [...(cpf ? [{ cpf }] : []), ...(email ? [{ email }] : [])],
         },
         select: { cpf: true, email: true },
