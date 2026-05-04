@@ -81,6 +81,8 @@ function formatAddress(responsavel: ResponsavelDetail) {
     .join('\n');
 }
 
+const detailSectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+
 export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: string }) {
   const router = useRouter();
   const [responsavel, setResponsavel] = useState<ResponsavelDetail | null>(null);
@@ -95,19 +97,12 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   const load = useCallback(async () => {
     const controller = new AbortController();
     setLoading(true);
+    setOverview(null);
+    setAlunos([]);
 
     try {
-      const [detail, nextOverview, alunosResponse] = await Promise.all([
-        getResponsavel({ id: responsavelId, signal: controller.signal }),
-        getResponsavelOverview({ id: responsavelId, signal: controller.signal }),
-        fetch(`/api/responsaveis/${responsavelId}/alunos`, {
-          cache: 'no-store',
-          signal: controller.signal,
-        }),
-      ]);
-
+      const detail = await getResponsavel({ id: responsavelId, signal: controller.signal });
       setResponsavel(detail);
-      setOverview(nextOverview);
       setForm({
         nome: detail.nome,
         cpf: detail.cpf,
@@ -116,11 +111,21 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
         financeiro: detail.financeiro,
       });
 
-      if (alunosResponse.ok) {
-        const json = await alunosResponse.json().catch(() => ({ items: [] }));
+      const [overviewResult, alunosResult] = await Promise.allSettled([
+        getResponsavelOverview({ id: responsavelId, signal: controller.signal }),
+        fetch(`/api/responsaveis/${responsavelId}/alunos`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        }),
+      ]);
+
+      if (overviewResult.status === 'fulfilled') {
+        setOverview(overviewResult.value);
+      }
+
+      if (alunosResult.status === 'fulfilled' && alunosResult.value.ok) {
+        const json = await alunosResult.value.json().catch(() => ({ items: [] }));
         setAlunos(Array.isArray(json.items) ? json.items : []);
-      } else {
-        setAlunos([]);
       }
     } catch (error) {
       if ((error as { name?: string }).name !== 'AbortError') {
@@ -192,66 +197,76 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-3">
+    <div className="h-full overflow-y-auto">
+      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+        <div className="mb-8">
           <Button
             variant="ghost"
-            className="h-9 px-2 text-slate-600 hover:bg-slate-50"
+            className="mb-5 h-9 px-2 text-slate-600 hover:bg-slate-50"
             onClick={() => router.push('/responsaveis')}
           >
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Responsáveis
+            Voltar
           </Button>
-          <div className="flex items-center gap-4">
-            <Avatar className="h-14 w-14">
-              <AvatarFallback className="bg-violet-100 text-base font-semibold text-violet-700">
-                {formatInitials(responsavel.nome)}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
-                  {responsavel.nome}
-                </h1>
-                {responsavel.financeiro ? (
-                  <Badge variant="info">Responsável financeiro</Badge>
-                ) : null}
-                {responsavel.asaasCustomerId ? (
-                  <Badge variant="success">Customer financeiro</Badge>
-                ) : null}
-              </div>
-              <p className="mt-1 text-[13px] text-gray-500">
-                Hub familiar para alunos, matrículas, contratos e cobranças consolidadas.
+
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex-1">
+              <h1 className="mb-2 text-3xl font-bold leading-tight text-gray-900">
+                Detalhes do responsável
+              </h1>
+              <p className="text-base text-gray-600">
+                Gerencie cadastro, alunos vinculados, rematrículas e dados financeiros familiares.
               </p>
+              <div className="mt-4 flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
+                <Avatar className="h-14 w-14">
+                  <AvatarFallback className="bg-violet-100 text-base font-semibold text-violet-700">
+                    {formatInitials(responsavel.nome)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="truncate text-xl font-semibold tracking-tight text-gray-900">
+                      {responsavel.nome}
+                    </h2>
+                    {responsavel.financeiro ? (
+                      <Badge variant="info">Responsável financeiro</Badge>
+                    ) : null}
+                    {responsavel.asaasCustomerId ? (
+                      <Badge variant="success">Customer financeiro</Badge>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {responsavel.email || 'E-mail não informado'} · {formatPhone(responsavel.telefone)}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                className="h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 shadow-none hover:bg-slate-50"
+                onClick={() => setEditOpen(true)}
+              >
+                <Edit className="mr-2 h-4 w-4" />
+                Editar
+              </Button>
+              <Button
+                className="h-10 rounded-md bg-brand-accent px-4 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90"
+                disabled={!rematriculaDisponivel}
+                onClick={() => setRematriculaOpen(true)}
+                title={
+                  rematriculaDisponivel
+                    ? 'Iniciar novo lote de rematrícula familiar'
+                    : 'Nenhum aluno elegível para rematrícula familiar'
+                }
+              >
+                <ClipboardDocumentCheck className="mr-2 h-4 w-4" />
+                Iniciar rematrícula familiar
+              </Button>
             </div>
           </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            className="h-10 rounded-lg border-slate-200 bg-white shadow-none"
-            onClick={() => setEditOpen(true)}
-          >
-            <Edit className="mr-2 h-4 w-4" />
-            Editar dados
-          </Button>
-          <Button
-            className="h-10 rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
-            disabled={!rematriculaDisponivel}
-            onClick={() => setRematriculaOpen(true)}
-            title={
-              rematriculaDisponivel
-                ? 'Iniciar novo lote de rematrícula familiar'
-                : 'Nenhum aluno elegível para rematrícula familiar'
-            }
-          >
-            <ClipboardDocumentCheck className="mr-2 h-4 w-4" />
-            Iniciar rematrícula familiar
-          </Button>
-        </div>
-      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <MetricCard
@@ -272,7 +287,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <section className="rounded-xl border bg-white p-5">
+        <section className={detailSectionClass}>
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Dados cadastrais</h2>
@@ -298,7 +313,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
           </div>
         </section>
 
-        <section className="rounded-xl border bg-white p-5">
+        <section className={detailSectionClass}>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Alunos vinculados</h2>
@@ -354,7 +369,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
         </section>
       </div>
 
-      <section className="rounded-xl border bg-white p-5">
+      <section className={detailSectionClass}>
         <h2 className="text-sm font-semibold text-slate-900">Visão financeira familiar</h2>
         <p className="mt-1 text-xs text-slate-500">
           Cobranças abertas, grupos familiares já processados e alunos aptos para a próxima rematrícula.
@@ -621,6 +636,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
           setRematriculaOpen(false);
         }}
       />
+      </div>
     </div>
   );
 }
@@ -848,25 +864,29 @@ function RematriculaFamiliarDialog({
 
 function ResponsavelDetalhesSkeleton() {
   return (
-    <div className="space-y-5">
-      <div className="space-y-4">
-        <Skeleton className="h-9 w-32" />
-        <div className="flex items-center gap-4">
-          <Skeleton className="h-14 w-14 rounded-full" />
-          <div className="space-y-2">
-            <Skeleton className="h-7 w-72" />
-            <Skeleton className="h-4 w-96" />
+    <div className="h-full overflow-y-auto">
+      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+        <div className="mb-8 space-y-4">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-72" />
+          <Skeleton className="h-5 w-[30rem] max-w-full" />
+          <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
+            <Skeleton className="h-14 w-14 rounded-full" />
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-72" />
+              <Skeleton className="h-4 w-96 max-w-full" />
+            </div>
           </div>
         </div>
-      </div>
-      <div className="grid gap-4 md:grid-cols-3">
-        {[...Array(3)].map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid gap-5 xl:grid-cols-2">
-        <Skeleton className="h-80 rounded-xl" />
-        <Skeleton className="h-80 rounded-xl" />
+        <div className="grid gap-4 md:grid-cols-3">
+          {[...Array(3)].map((_, index) => (
+            <Skeleton key={index} className="h-24 rounded-xl" />
+          ))}
+        </div>
+        <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <Skeleton className="h-80 rounded-xl" />
+          <Skeleton className="h-80 rounded-xl" />
+        </div>
       </div>
     </div>
   );

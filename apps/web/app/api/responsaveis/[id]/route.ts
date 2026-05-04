@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import type { Prisma } from '@prisma/client';
 
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
@@ -32,14 +33,11 @@ const responsavelDetailSelect = {
   enderecoUf: true,
   createdAt: true,
   updatedAt: true,
-  _count: {
-    select: {
-      alunos: true,
-      matriculasFinanceiras: true,
-      sales: true,
-    },
-  },
 } as const;
+
+type ResponsavelDetailRecord = Prisma.ResponsavelGetPayload<{
+  select: typeof responsavelDetailSelect;
+}>;
 
 function getContaId(session: Awaited<ReturnType<typeof getServerSession>>) {
   return (session as { user?: { contaId?: string } })?.user?.contaId ?? null;
@@ -50,6 +48,35 @@ type IdParams = Promise<{ id: string }> | { id: string };
 async function resolveResponsavelId(params: IdParams) {
   const { id } = await Promise.resolve(params);
   return typeof id === 'string' ? id : '';
+}
+
+async function getResponsavelMetrics(id: string, contaId: string) {
+  const [alunos, matriculasFinanceiras, vendas] = await Promise.all([
+    prisma.alunoResponsavel.count({ where: { responsavelId: id } }),
+    prisma.matricula.count({
+      where: {
+        responsavelFinanceiroId: id,
+        aluno: { contaId },
+      },
+    }),
+    prisma.sale.count({ where: { responsavelId: id, contaId } }),
+  ]);
+
+  return { alunos, matriculasFinanceiras, sales: vendas };
+}
+
+async function buildResponsavelDetailDTO(
+  responsavel: ResponsavelDetailRecord | null,
+  contaId: string,
+) {
+  if (!responsavel) return null;
+  const metrics = await getResponsavelMetrics(responsavel.id, contaId);
+  return responsavelDetailDTOSchema.parse(
+    mapResponsavelRecordToDetailDTO({
+      ...responsavel,
+      _count: metrics,
+    }),
+  );
 }
 
 export async function GET(_req: NextRequest, context: { params: IdParams }) {
@@ -75,7 +102,11 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
-    const dto = responsavelDetailDTOSchema.parse(mapResponsavelRecordToDetailDTO(responsavel));
+    const dto = await buildResponsavelDetailDTO(responsavel, contaId);
+    if (!dto) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
     return NextResponse.json(dto);
   } catch (error) {
     console.error('[GET /api/responsaveis/[id]]', error);
@@ -154,7 +185,11 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       select: responsavelDetailSelect,
     });
 
-    const dto = responsavelDetailDTOSchema.parse(mapResponsavelRecordToDetailDTO(responsavel));
+    const dto = await buildResponsavelDetailDTO(responsavel, contaId);
+    if (!dto) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
     return NextResponse.json(dto);
   } catch (error) {
     console.error('[PATCH /api/responsaveis/[id]]', error);
