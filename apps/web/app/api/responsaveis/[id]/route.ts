@@ -45,8 +45,20 @@ function getContaId(session: Awaited<ReturnType<typeof getServerSession>>) {
   return (session as { user?: { contaId?: string } })?.user?.contaId ?? null;
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+type IdParams = Promise<{ id: string }> | { id: string };
+
+async function resolveResponsavelId(params: IdParams) {
+  const { id } = await Promise.resolve(params);
+  return typeof id === 'string' ? id : '';
+}
+
+export async function GET(_req: NextRequest, context: { params: IdParams }) {
   try {
+    const id = await resolveResponsavelId(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
     const session = await getServerSession(authOptions);
     const contaId = getContaId(session);
 
@@ -55,7 +67,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     }
 
     const responsavel = await prisma.responsavel.findFirst({
-      where: { id: params.id, contaId },
+      where: { id, contaId },
       select: responsavelDetailSelect,
     });
 
@@ -71,8 +83,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, context: { params: IdParams }) {
   try {
+    const id = await resolveResponsavelId(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
     const session = await getServerSession(authOptions);
     const contaId = getContaId(session);
 
@@ -94,7 +111,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 
     const atual = await prisma.responsavel.findFirst({
-      where: { id: params.id, contaId },
+      where: { id, contaId },
       select: { id: true },
     });
 
@@ -132,7 +149,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 
     const responsavel = await prisma.responsavel.update({
-      where: { id: params.id },
+      where: { id },
       data,
       select: responsavelDetailSelect,
     });

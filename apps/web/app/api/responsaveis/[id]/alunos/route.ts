@@ -5,18 +5,20 @@ import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { id: string } },
-) {
+type IdParams = Promise<{ id: string }> | { id: string };
+
+export async function GET(_req: NextRequest, context: { params: IdParams }) {
   try {
+    const { id: responsavelId } = await Promise.resolve(context.params);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
     const session = await getServerSession(authOptions);
     const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
-
-    const responsavelId = params.id;
 
     // Validate responsável belongs to this conta (multi-tenant)
     const responsavel = await prisma.responsavel.findFirst({

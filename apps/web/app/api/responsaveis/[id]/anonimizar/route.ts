@@ -7,8 +7,15 @@ import {
   anonymizeResponsavelResultDTOSchema,
 } from '@/features/responsaveis/dtos';
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+type IdParams = Promise<{ id: string }> | { id: string };
+
+export async function POST(req: Request, context: { params: IdParams }) {
   try {
+    const { id } = await Promise.resolve(context.params);
+    if (!id) {
+      return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
+    }
+
     const session = await getServerSession(authOptions);
     const user = (session as { user?: { id?: string; contaId?: string; role?: string } })?.user;
     if (!user?.id || !user?.contaId) {
@@ -29,7 +36,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     }
 
     const responsavel = await anonimizarResponsavel({
-      id: params.id,
+      id,
       contaId: user.contaId,
       motivo: parsed.data.motivo,
       actorId: user.id,
