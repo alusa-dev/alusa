@@ -18,6 +18,29 @@ export default [
     languageOptions: { globals: { module: true, require: true, process: true, console: true, fetch: true, setTimeout: true } }
   },
   {
+    files: ['packages/asaas/src/**/*.js'],
+    languageOptions: {
+      globals: {
+        Blob: true,
+        FormData: true,
+        URL: true,
+        console: true,
+        fetch: true,
+        process: true,
+        setTimeout: true,
+      },
+    },
+  },
+  {
+    files: ['packages/database/src/**/*.js'],
+    languageOptions: {
+      globals: {
+        Buffer: true,
+        process: true,
+      },
+    },
+  },
+  {
     plugins: { 'react-hooks': reactHooks },
     rules: {
       'react-hooks/rules-of-hooks': 'error',
@@ -28,7 +51,7 @@ export default [
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'warn',
       'react/prop-types': 'off',
-      'react/no-unknown-property': ['error', { ignore: ['jsx'] }],
+      'react/no-unknown-property': ['error', { ignore: ['jsx', 'global'] }],
       'no-restricted-imports': [
         'warn',
         {

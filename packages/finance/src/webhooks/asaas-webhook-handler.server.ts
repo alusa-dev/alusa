@@ -827,7 +827,7 @@ export async function processAsaasWebhookQueue(params?: {
   let attempted = 0;
   let processed = 0;
   let failed = 0;
-  let skipped = 0;
+  const skipped = 0;
 
   for (const hook of hooks) {
     attempted += 1;

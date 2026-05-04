@@ -21,8 +21,13 @@ const MAX_TOKEN_LENGTH = 512;
  */
 function isValidTokenFormat(token: string): boolean {
   if (token.length < MIN_TOKEN_LENGTH || token.length > MAX_TOKEN_LENGTH) return false;
-  // Rejeitar NUL bytes e caracteres de controle
-  if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(token)) return false;
+  // Rejeitar NUL bytes e caracteres de controle sem usar regex com control chars.
+  for (const char of token) {
+    const code = char.charCodeAt(0);
+    if ((code >= 0x00 && code <= 0x08) || code === 0x0b || code === 0x0c || (code >= 0x0e && code <= 0x1f)) {
+      return false;
+    }
+  }
   return true;
 }
 

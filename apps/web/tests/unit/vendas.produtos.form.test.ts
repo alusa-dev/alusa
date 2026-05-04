@@ -24,7 +24,7 @@ function validate(values: ProductFormValues): Partial<Record<keyof ProductFormVa
 }
 
 function normalizePrice(raw: string): string {
-  return raw.replace(/[^\d,\.]/g, '').replace(',', '.');
+  return raw.replace(/[^\d,.]/g, '').replace(',', '.');
 }
 
 // ── Tests: validação do formulário ────────────────────────────────

@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -10,9 +10,11 @@ const globalForPrisma = globalThis as unknown as {
 // client even if globalThis.prisma survived a hot-reload.
 const SCHEMA_VERSION = (() => {
   try {
-    const { Prisma } = require('@prisma/client');
     const models = Prisma.dmmf?.datamodel?.models ?? [];
-    const fieldCount = models.reduce((acc: number, m: { fields: unknown[] }) => acc + m.fields.length, 0);
+    const fieldCount = models.reduce(
+      (acc: number, m: { fields: readonly unknown[] }) => acc + m.fields.length,
+      0,
+    );
     return String(fieldCount);
   } catch {
     return 'unknown';

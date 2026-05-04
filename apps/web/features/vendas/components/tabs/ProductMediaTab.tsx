@@ -151,7 +151,6 @@ export function ProductMediaTab({
                 img.isPrimary && 'ring-2 ring-[#A94DFF]',
               )}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={img.url}
                 alt={img.altText ?? 'Imagem do produto'}
@@ -198,7 +197,6 @@ export function ProductMediaTab({
               key={`${file.name}-${i}`}
               className="group relative overflow-hidden rounded-xl border border-dashed border-[#A94DFF]/40 bg-[#A94DFF]/5 aspect-square"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={URL.createObjectURL(file)}
                 alt={file.name}
