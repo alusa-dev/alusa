@@ -65,6 +65,10 @@ function getAcademicInvoiceUrl(cobranca: Record<string, unknown>): string | null
   return charge.invoiceUrl;
 }
 
+function hasOfficialAccessLink(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 function getAcademicBillingType(cobranca: Record<string, unknown>): string | null {
   const charge = getAcademicChargeRecord(cobranca);
   if (typeof charge?.billingType === 'string' && charge.billingType.trim().length > 0) {
@@ -134,7 +138,8 @@ export function buildStandaloneAsaasData(charge: Record<string, unknown>) {
     paymentDate: null,
     clientPaymentDate: null,
     creditDate: null,
-    invoiceUrl: typeof charge.invoiceUrl === 'string' ? charge.invoiceUrl : null,
+    invoiceUrl: hasOfficialAccessLink(charge.invoiceUrl) ? String(charge.invoiceUrl) : null,
+    bankSlipUrl: null,
     billingType: mapFormaPagamentoToBillingType(charge.billingType as string | null | undefined),
   };
 }
@@ -180,6 +185,12 @@ export function shouldFetchStandaloneAsaasDetail(params: {
 
   const localStatus = String(params.charge.status ?? '');
   if (localStatus === 'CREATED' || localStatus === 'PAID') return true;
+  if (
+    (localStatus === 'OPEN' || localStatus === 'OVERDUE') &&
+    !hasOfficialAccessLink(params.charge.invoiceUrl)
+  ) {
+    return true;
+  }
 
   const freshnessAnchor =
     (params.charge.updatedAt as Date | null | undefined) ??

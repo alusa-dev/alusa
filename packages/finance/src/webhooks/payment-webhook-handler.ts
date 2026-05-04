@@ -13,6 +13,7 @@ import { auditLogService } from '../foundation/audit-log.service';
 import { findStandaloneSubscription } from '../foundation/standalone-subscription-store';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
+import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import type {
   ChargeStatus,
   LiquidacaoStatus,
@@ -210,6 +211,44 @@ function resolveChargeInvoiceUrlUpdate(invoiceUrl?: string | null): string | und
 
   const normalized = invoiceUrl.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function hasOfficialAccessLink(payment: PaymentWebhookPayload['payment']): boolean {
+  return Boolean(
+    resolveChargeInvoiceUrlUpdate(payment.invoiceUrl) ||
+      resolveChargeInvoiceUrlUpdate(payment.bankSlipUrl),
+  );
+}
+
+async function enrichPaymentWithOfficialLinks(
+  contaId: string,
+  payment: PaymentWebhookPayload['payment'],
+): Promise<PaymentWebhookPayload['payment']> {
+  if (!isAsaasEnabled() || hasOfficialAccessLink(payment)) {
+    return payment;
+  }
+
+  try {
+    const officialPayment = await getPayment(payment.id, { contaId });
+    return {
+      ...payment,
+      invoiceUrl: payment.invoiceUrl ?? officialPayment.invoiceUrl ?? null,
+      bankSlipUrl: payment.bankSlipUrl ?? officialPayment.bankSlipUrl ?? null,
+      transactionReceiptUrl: payment.transactionReceiptUrl ?? officialPayment.transactionReceiptUrl ?? null,
+      billingType: payment.billingType ?? officialPayment.billingType ?? null,
+      description: payment.description ?? officialPayment.description ?? null,
+      dueDate: payment.dueDate ?? officialPayment.dueDate ?? null,
+      creditDate: payment.creditDate ?? officialPayment.creditDate ?? null,
+      estimatedCreditDate: payment.estimatedCreditDate ?? officialPayment.estimatedCreditDate ?? null,
+    };
+  } catch (error) {
+    console.warn('[Asaas Webhook] Falha ao enriquecer payment sem link oficial', {
+      contaId,
+      asaasPaymentId: payment.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return payment;
+  }
 }
 
 function resolveChargeDueDateUpdate(dueDate?: string | null): Date | undefined {
@@ -509,6 +548,11 @@ export async function handlePaymentWebhook(
   payload: PaymentWebhookPayload
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    payload = {
+      ...payload,
+      payment: await enrichPaymentWithOfficialLinks(contaId, payload.payment),
+    };
+
     // A validação de origem/assinatura do webhook deve acontecer no handler principal
     // (com base no rawBody) para evitar recomputar HMAC em JSON reconstruído.
 

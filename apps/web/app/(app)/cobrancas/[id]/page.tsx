@@ -197,6 +197,36 @@ type LiquidacaoInfo = {
   tone: 'warning' | 'success';
 };
 
+type OfficialChargeLinks = {
+  invoiceUrl: string | null;
+  bankSlipUrl: string | null;
+  transactionReceiptUrl: string | null;
+};
+
+function resolveOfficialLinksFromCharge(cobranca: CobrancaDetalhes | null): OfficialChargeLinks {
+  return {
+    invoiceUrl:
+      typeof cobranca?.asaasData?.invoiceUrl === 'string' && cobranca.asaasData.invoiceUrl
+        ? cobranca.asaasData.invoiceUrl
+        : null,
+    bankSlipUrl:
+      typeof cobranca?.asaasData?.bankSlipUrl === 'string' && cobranca.asaasData.bankSlipUrl
+        ? cobranca.asaasData.bankSlipUrl
+        : null,
+    transactionReceiptUrl:
+      typeof cobranca?.asaasData?.transactionReceiptUrl === 'string' && cobranca.asaasData.transactionReceiptUrl
+        ? cobranca.asaasData.transactionReceiptUrl
+        : null,
+  };
+}
+
+function openOfficialChargeLink(links: OfficialChargeLinks): boolean {
+  const url = links.transactionReceiptUrl || links.invoiceUrl || links.bankSlipUrl;
+  if (!url) return false;
+  window.open(url, '_blank', 'noopener,noreferrer');
+  return true;
+}
+
 function getCreditDateFromSnapshot(asaasData?: Record<string, unknown>): string | null {
   return typeof asaasData?.creditDate === 'string' ? asaasData.creditDate : null;
 }
@@ -598,7 +628,42 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
     }
   };
 
-  const handleVisualizarFatura = () => {
+  async function fetchFreshOfficialLinks(): Promise<OfficialChargeLinks> {
+    const response = await fetch(`/api/cobrancas/${params.id}?fresh=1`, { cache: 'no-store' });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Erro ao buscar cobrança no Asaas');
+    }
+
+    const nextCobranca = payload.data as CobrancaDetalhes;
+    setCobranca(nextCobranca);
+    return resolveOfficialLinksFromCharge(nextCobranca);
+  }
+
+  async function syncOfficialLinks(): Promise<OfficialChargeLinks> {
+    const response = await fetch(`/api/cobrancas/${params.id}/sync-asaas`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || 'Erro ao sincronizar cobrança com o Asaas');
+    }
+
+    await loadCobranca();
+    return {
+      invoiceUrl: typeof payload.invoiceUrl === 'string' && payload.invoiceUrl ? payload.invoiceUrl : null,
+      bankSlipUrl: typeof payload.bankSlipUrl === 'string' && payload.bankSlipUrl ? payload.bankSlipUrl : null,
+      transactionReceiptUrl:
+        typeof payload.transactionReceiptUrl === 'string' && payload.transactionReceiptUrl
+          ? payload.transactionReceiptUrl
+          : null,
+    };
+  }
+
+  const handleVisualizarFatura = async () => {
     if (!cobranca) return;
 
     // Se a cobrança está paga, verificar se há comprovante
@@ -614,22 +679,24 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
         }
         
         // Se não houver comprovante, mas tem invoiceUrl do provedor, mostrar
-        const invoiceUrlFromAsaas = cobranca?.asaasData?.invoiceUrl as string | undefined;
-        const bankSlipUrlFromAsaas = cobranca?.asaasData?.bankSlipUrl as string | undefined;
-        const transactionReceiptUrl = cobranca?.asaasData?.transactionReceiptUrl as string | undefined;
-        
-        if (transactionReceiptUrl) {
-          window.open(transactionReceiptUrl, '_blank');
-          return;
-        }
-        
-        if (invoiceUrlFromAsaas) {
-          window.open(invoiceUrlFromAsaas, '_blank');
+        if (openOfficialChargeLink(resolveOfficialLinksFromCharge(cobranca))) {
           return;
         }
 
-        if (bankSlipUrlFromAsaas) {
-          window.open(bankSlipUrlFromAsaas, '_blank');
+        try {
+          const freshLinks = await fetchFreshOfficialLinks();
+          if (openOfficialChargeLink(freshLinks)) return;
+
+          if (cobranca.asaasPaymentId) {
+            const syncedLinks = await syncOfficialLinks();
+            if (openOfficialChargeLink(syncedLinks)) return;
+          }
+        } catch (error) {
+          pushToast({
+            title: 'Erro',
+            description: error instanceof Error ? error.message : 'Falha ao buscar o comprovante oficial.',
+            variant: 'error',
+          });
           return;
         }
         
@@ -644,10 +711,24 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
     }
 
     // Se não está paga, verificar se tem link de fatura do provedor
-    const invoiceUrlFromAsaas = cobranca?.asaasData?.invoiceUrl as string | undefined;
-    const bankSlipUrlFromAsaas = cobranca?.asaasData?.bankSlipUrl as string | undefined;
+    if (!openOfficialChargeLink(resolveOfficialLinksFromCharge(cobranca))) {
+      try {
+        const freshLinks = await fetchFreshOfficialLinks();
+        if (openOfficialChargeLink(freshLinks)) return;
 
-    if (!invoiceUrlFromAsaas && !bankSlipUrlFromAsaas) {
+        if (cobranca.asaasPaymentId) {
+          const syncedLinks = await syncOfficialLinks();
+          if (openOfficialChargeLink(syncedLinks)) return;
+        }
+      } catch (error) {
+        pushToast({
+          title: 'Erro',
+          description: error instanceof Error ? error.message : 'Falha ao buscar a fatura oficial.',
+          variant: 'error',
+        });
+        return;
+      }
+
       // Cobrança não integrada com provedor de pagamentos
       if (!cobranca.asaasPaymentId) {
         pushToast({
@@ -664,8 +745,6 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
       }
       return;
     }
-
-    window.open(invoiceUrlFromAsaas ?? bankSlipUrlFromAsaas, '_blank');
   };
 
   const handleConfirmarRecebimento = async () => {

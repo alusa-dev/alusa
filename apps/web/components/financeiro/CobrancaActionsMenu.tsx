@@ -95,6 +95,7 @@ function normalizeStatus(status: string, atrasado?: boolean): NormalizedStatus {
 type OfficialChargeLinks = {
   invoiceUrl: string | null;
   bankSlipUrl: string | null;
+  transactionReceiptUrl?: string | null;
 };
 
 function getKnownOfficialLinks(cobranca: CobrancaActionData): OfficialChargeLinks {
@@ -104,8 +105,9 @@ function getKnownOfficialLinks(cobranca: CobrancaActionData): OfficialChargeLink
   };
 }
 
-async function fetchOfficialChargeLinks(cobrancaId: string): Promise<OfficialChargeLinks> {
-  const response = await fetch(`/api/cobrancas/${cobrancaId}`, { cache: 'no-store' });
+async function fetchOfficialChargeLinks(cobrancaId: string, options: { fresh?: boolean } = {}): Promise<OfficialChargeLinks> {
+  const suffix = options.fresh ? '?fresh=1' : '';
+  const response = await fetch(`/api/cobrancas/${cobrancaId}${suffix}`, { cache: 'no-store' });
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok || !payload?.success) {
@@ -124,11 +126,38 @@ async function fetchOfficialChargeLinks(cobrancaId: string): Promise<OfficialCha
       (typeof data.bankSlipUrl === 'string' && data.bankSlipUrl) ||
       (typeof data.asaasData?.bankSlipUrl === 'string' && data.asaasData.bankSlipUrl) ||
       null,
+    transactionReceiptUrl:
+      (typeof data.transactionReceiptUrl === 'string' && data.transactionReceiptUrl) ||
+      (typeof data.asaasData?.transactionReceiptUrl === 'string' && data.asaasData.transactionReceiptUrl) ||
+      null,
+  };
+}
+
+async function syncOfficialChargeLinks(cobrancaId: string): Promise<OfficialChargeLinks> {
+  const response = await fetch(`/api/cobrancas/${cobrancaId}/sync-asaas`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok || !payload?.success) {
+    const message =
+      payload?.message || payload?.error?.message || payload?.error || 'Falha ao sincronizar a cobrança com o Asaas.';
+    throw new Error(message);
+  }
+
+  return {
+    invoiceUrl: typeof payload.invoiceUrl === 'string' && payload.invoiceUrl ? payload.invoiceUrl : null,
+    bankSlipUrl: typeof payload.bankSlipUrl === 'string' && payload.bankSlipUrl ? payload.bankSlipUrl : null,
+    transactionReceiptUrl:
+      typeof payload.transactionReceiptUrl === 'string' && payload.transactionReceiptUrl
+        ? payload.transactionReceiptUrl
+        : null,
   };
 }
 
 function openOfficialChargeLink(links: OfficialChargeLinks) {
-  const url = links.invoiceUrl || links.bankSlipUrl;
+  const url = links.transactionReceiptUrl || links.invoiceUrl || links.bankSlipUrl;
   if (!url) return false;
   window.open(url, '_blank', 'noopener,noreferrer');
   return true;
@@ -228,8 +257,21 @@ export function CobrancaActionsMenu({
           return;
         }
 
-        const remoteLinks = await fetchOfficialChargeLinks(cobranca.id);
-        if (!openOfficialChargeLink(remoteLinks)) {
+        const remoteLinks = await fetchOfficialChargeLinks(cobranca.id, { fresh: true });
+        if (openOfficialChargeLink(remoteLinks)) {
+          await onActionComplete?.();
+          router.refresh();
+          return;
+        }
+
+        const syncedLinks = await syncOfficialChargeLinks(cobranca.id);
+        if (openOfficialChargeLink(syncedLinks)) {
+          await onActionComplete?.();
+          router.refresh();
+          return;
+        }
+
+        if (!openOfficialChargeLink(syncedLinks)) {
           pushToast({ title: 'Erro', description: 'Fatura não disponível para esta cobrança.', variant: 'error' });
         }
       } catch (error) {

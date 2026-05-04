@@ -7,6 +7,8 @@ import crypto from 'crypto';
 
 import { createAsaasPayment } from './create-payment';
 import { ensureCustomer } from './ensure-customer';
+import { listPayments } from './asaas-ops';
+import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
 import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
@@ -28,6 +30,56 @@ import type {
   NotificationWarning,
 } from '../services/customer-notification.service';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
+
+async function materializeFirstSubscriptionPayment(params: {
+  contaId: string;
+  subscriptionId: string;
+  expectedDueDate?: string;
+}) {
+  try {
+    const payments = await listPayments(
+      {
+        subscription: params.subscriptionId,
+        limit: 10,
+        offset: 0,
+      },
+      { contaId: params.contaId },
+    );
+
+    const candidate =
+      payments.data.find((payment) => payment.dueDate === params.expectedDueDate) ??
+      payments.data.find((payment) => payment.status === 'PENDING') ??
+      payments.data[0];
+
+    if (!candidate?.id) {
+      console.info('[createStandaloneCharge] Assinatura criada sem payment listável imediatamente', {
+        contaId: params.contaId,
+        asaasSubscriptionId: params.subscriptionId,
+      });
+      return;
+    }
+
+    const syncResult = await syncPaymentStateFromAsaas({
+      contaId: params.contaId,
+      asaasPaymentId: candidate.id,
+    });
+
+    if (!syncResult.success) {
+      console.warn('[createStandaloneCharge] Falha ao materializar payment inicial da assinatura', {
+        contaId: params.contaId,
+        asaasSubscriptionId: params.subscriptionId,
+        asaasPaymentId: candidate.id,
+        error: syncResult.error,
+      });
+    }
+  } catch (error) {
+    console.warn('[createStandaloneCharge] Não foi possível consultar payments iniciais da assinatura', {
+      contaId: params.contaId,
+      asaasSubscriptionId: params.subscriptionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 // =============================================================================
 // Types
@@ -710,6 +762,12 @@ export async function createStandaloneCharge(
           localCustomerId: customerResult.data.localCustomerId,
           expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
         },
+      });
+
+      await materializeFirstSubscriptionPayment({
+        contaId: input.contaId,
+        subscriptionId: subscription.id,
+        expectedDueDate: input.nextDueDate,
       });
 
       return ok({

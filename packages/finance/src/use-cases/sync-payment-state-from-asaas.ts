@@ -12,8 +12,12 @@ export type SyncPaymentStateFromAsaasInput = {
 export type SyncPaymentStateFromAsaasOutput =
   | {
       success: true;
+      asaasPaymentId: string;
       paymentStatus: string;
       appliedEvent: string;
+      invoiceUrl: string | null;
+      bankSlipUrl: string | null;
+      transactionReceiptUrl: string | null;
     }
   | {
       success: false;
@@ -94,7 +98,11 @@ export async function syncPaymentStateFromAsaas(
   }
   return {
     success: true,
+    asaasPaymentId: payment.id,
     paymentStatus: payment.status,
     appliedEvent,
+    invoiceUrl: payment.invoiceUrl ?? null,
+    bankSlipUrl: payment.bankSlipUrl ?? null,
+    transactionReceiptUrl: payment.transactionReceiptUrl ?? null,
   };
 }
