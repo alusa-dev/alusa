@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { listGlobalAdminSupportCases } from '@/features/global-admin/support/queries';
+import { GlobalAdminLiveRefresh } from '@/features/global-admin/shared/GlobalAdminLiveRefresh';
 import { GlobalAdminEmptyState, GlobalAdminMetricCard, GlobalAdminPageIntro, GlobalAdminPanel, GlobalAdminSeverityBadge } from '@/features/global-admin/shared/GlobalAdminUI';
 
 export const dynamic = 'force-dynamic';
@@ -10,6 +11,8 @@ export default async function DeveloperProblemsPage() {
 
   return (
     <div className="space-y-6">
+      <GlobalAdminLiveRefresh intervalMs={60_000} />
+
       <GlobalAdminPageIntro
         eyebrow="Atendimento"
         title="Problemas do dia a dia"

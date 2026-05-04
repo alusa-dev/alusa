@@ -1,11 +1,12 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { CreditCard, Calendar, User, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalDashboardResultDTO } from '@/features/portal/dtos';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { AlunoSelector } from './components/AlunoSelector';
 
 export function PortalDashboardFeature() {
@@ -18,34 +19,44 @@ export function PortalDashboardFeature() {
   const user = session?.user as { role?: string } | undefined;
   const isResponsavel = user?.role === 'RESPONSAVEL';
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        let url = '/api/portal/dashboard';
-        
-        // Se um aluno específico foi selecionado, adicionar como query param
-        if (selectedAlunoId) {
-          url += `?alunoId=${selectedAlunoId}`;
-        }
-        
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error('Erro ao carregar dados');
-        }
-        const result = await response.json();
-        setData(result);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    }
+  const loadData = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      let url = '/api/portal/dashboard';
 
-    if (session?.user) {
-      loadData();
+      // Se um aluno específico foi selecionado, adicionar como query param
+      if (selectedAlunoId) {
+        url += `?alunoId=${selectedAlunoId}`;
+      }
+
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('Erro ao carregar dados');
+      }
+      const result = await response.json();
+      setData(result);
+      setError(null);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      if (!silent) setLoading(false);
     }
-  }, [session, selectedAlunoId]);
+  }, [selectedAlunoId]);
+
+  useEffect(() => {
+    if (session?.user) {
+      void loadData();
+    }
+  }, [session?.user, loadData]);
+
+  useLiveRefresh(
+    () => loadData(true),
+    {
+      enabled: Boolean(session?.user) && !loading,
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const userName = session?.user?.name || 'Aluno';
   const greeting = getGreeting();

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { listGlobalAdminWebhookLogs } from '@/features/global-admin/logs/queries';
+import { GlobalAdminLiveRefresh } from '@/features/global-admin/shared/GlobalAdminLiveRefresh';
 import { GlobalAdminEmptyState, GlobalAdminPageIntro, GlobalAdminPanel, GlobalAdminSeverityBadge } from '@/features/global-admin/shared/GlobalAdminUI';
 
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,8 @@ export default async function DeveloperWebhooksPage({
 
   return (
     <div className="space-y-6">
+      <GlobalAdminLiveRefresh intervalMs={45_000} />
+
       <GlobalAdminPageIntro
         eyebrow="Asaas"
         title="Logs de webhooks"

@@ -15,6 +15,7 @@ import { TaxaMatriculaCard, type PeriodoTaxaMatricula } from './components/TaxaM
 import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 export default function DashboardClient() {
   const router = useRouter();
@@ -28,42 +29,45 @@ export default function DashboardClient() {
     router.push('/alunos');
   }, [router]);
 
-  useEffect(() => {
+  const fetchMetrics = useCallback(async (silent = false) => {
     if (!user?.contaId) {
       setMetrics(null);
       return;
     }
 
-    let cancelled = false;
+    if (!silent) setLoading(true);
+    try {
+      const params = new URLSearchParams({ contaId: user.contaId ?? '' });
+      const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
+        headers: { Accept: 'application/json' },
+      });
+      const raw = (await response.json()) as Record<string, unknown>;
+      const data = mapDashboardMetricsResultToDTO(raw);
 
-    const fetchMetrics = async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({ contaId: user.contaId ?? '' });
-        const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
-          headers: { Accept: 'application/json' },
-        });
-        const raw = (await response.json()) as Record<string, unknown>;
-        const data = mapDashboardMetricsResultToDTO(raw);
-
-        if (!cancelled && data.success) {
-          setMetrics(data.data);
-        } else if (!cancelled) {
-          console.error('[DashboardClient] Erro na resposta:', data);
-        }
-      } catch (error) {
-        if (!cancelled) console.error('[DashboardClient] Erro ao buscar métricas:', error);
-      } finally {
-        if (!cancelled) setLoading(false);
+      if (data.success) {
+        setMetrics(data.data);
+      } else {
+        console.error('[DashboardClient] Erro na resposta:', data);
       }
-    };
-
-    fetchMetrics();
-
-    return () => {
-      cancelled = true;
-    };
+    } catch (error) {
+      console.error('[DashboardClient] Erro ao buscar métricas:', error);
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [user?.contaId]);
+
+  useEffect(() => {
+    void fetchMetrics();
+  }, [fetchMetrics]);
+
+  useLiveRefresh(
+    () => fetchMetrics(true),
+    {
+      enabled: Boolean(user?.contaId) && !loading,
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   useEffect(() => {
     if (verificationLoading) return;

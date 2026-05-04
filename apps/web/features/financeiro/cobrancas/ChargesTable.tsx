@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 // Helper para formatar tipo de cobrança
 function formatarTipo(tipo: string): string {
@@ -51,8 +52,8 @@ export default function ChargesTable() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
@@ -70,7 +71,7 @@ export default function ChargesTable() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, pageSize, debounced, statusFilters, tipoFilters, router]);
 
@@ -91,12 +92,17 @@ export default function ChargesTable() {
   }, [search]);
 
   useEffect(() => {
-    let cancelled = false;
     void fetchData().catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
   }, [fetchData]);
+
+  useLiveRefresh(
+    () => fetchData(true),
+    {
+      enabled: !loading,
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 

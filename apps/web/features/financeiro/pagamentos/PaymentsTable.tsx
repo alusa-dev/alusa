@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 interface PaymentRow {
   id: string;
@@ -49,35 +50,40 @@ export default function PaymentsTable() {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-        if (debounced) params.set('q', debounced);
-        statusFilters.forEach((s) => params.append('status', s));
-        formaFilters.forEach((f) => params.append('formaPagamento', f));
-        const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`Erro ${res.status}`);
-        const json: ApiResponse = await res.json();
-        if (cancelled) return;
-        setRows(json.data);
-        setTotal(json.total);
-      } catch (e) {
-        if (!cancelled) setError((e as Error).message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      if (debounced) params.set('q', debounced);
+      statusFilters.forEach((s) => params.append('status', s));
+      formaFilters.forEach((f) => params.append('formaPagamento', f));
+      const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const json: ApiResponse = await res.json();
+      setRows(json.data);
+      setTotal(json.total);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      if (!silent) setLoading(false);
     }
-    load();
-    return () => {
-      cancelled = true;
-    };
   }, [page, pageSize, debounced, statusFilters, formaFilters]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useLiveRefresh(
+    () => load(true),
+    {
+      enabled: !loading,
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 

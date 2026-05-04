@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import { ArrowLeft, ReceiptText, XCircle } from 'lucide-react';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { TransferDetailResultDTO } from '@alusa/finance';
 
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
@@ -174,68 +175,50 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [canceling, setCanceling] = useState(false);
 
-  useEffect(() => {
-    let active = true;
+  const loadTransfer = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true);
+      setError(null);
 
-    async function load() {
-      try {
-        setLoading(true);
-        setError(null);
+      const response = await fetch(`/api/finance/transfers/${transferId}`, {
+        cache: 'no-store',
+      });
+      const json = (await response.json().catch(() => ({}))) as {
+        data?: TransferDetailResultDTO;
+        error?: string;
+      };
 
-        const response = await fetch(`/api/finance/transfers/${transferId}`, {
-          cache: 'no-store',
-        });
-        const json = (await response.json().catch(() => ({}))) as {
-          data?: TransferDetailResultDTO;
-          error?: string;
-        };
-
-        if (!response.ok || !json.data) {
-          throw new Error(json.error || `Erro ${response.status}`);
-        }
-
-        if (active) {
-          setData(json.data);
-        }
-      } catch (nextError) {
-        if (active) {
-          setError(nextError instanceof Error ? nextError.message : 'ERRO_INTERNO');
-        }
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
+      if (!response.ok || !json.data) {
+        throw new Error(json.error || `Erro ${response.status}`);
       }
+
+      setData(json.data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : 'ERRO_INTERNO');
+    } finally {
+      if (!silent) setLoading(false);
     }
-
-    void load();
-
-    return () => {
-      active = false;
-    };
   }, [transferId]);
+
+  useEffect(() => {
+    void loadTransfer();
+  }, [loadTransfer]);
 
   const status = useMemo(() => (data ? mapTransferStatus(data.status) : null), [data]);
   const transferInfoFields = useMemo(() => (data ? buildTransferInfoFields(data) : []), [data]);
   const recipientFields = useMemo(() => (data ? buildRecipientFields(data) : []), [data]);
   const allowCancel = Boolean(data && canCancelTransfer(data.status));
 
-  async function reloadTransfer() {
-    const response = await fetch(`/api/finance/transfers/${transferId}`, {
-      cache: 'no-store',
-    });
-    const json = (await response.json().catch(() => ({}))) as {
-      data?: TransferDetailResultDTO;
-      error?: string;
-    };
+  const isTransferFinal = data?.status === 'DONE' || data?.status === 'FAILED' || data?.status === 'CANCELED';
 
-    if (!response.ok || !json.data) {
-      throw new Error(json.error || `Erro ${response.status}`);
-    }
-
-    setData(json.data);
-    setError(null);
-  }
+  useLiveRefresh(
+    () => loadTransfer(true),
+    {
+      enabled: Boolean(data) && !loading && !canceling && !isTransferFinal,
+      intervalMs: 30_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   async function handleCancelTransfer() {
     if (!data) return;
@@ -253,7 +236,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
       });
 
       setCancelDialogOpen(false);
-      await reloadTransfer();
+      await loadTransfer(true);
     } catch (nextError) {
       pushToast({
         title: 'Não foi possível cancelar a transferência',

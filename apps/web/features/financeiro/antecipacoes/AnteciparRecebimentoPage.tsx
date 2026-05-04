@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
 import { ChevronRight, CreditCard, DollarSign, Search } from '@/components/icons/icons';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { cn } from '@/lib/utils';
 import type {
   AnticipationCandidate,
@@ -241,8 +242,8 @@ export function AnteciparRecebimentoPage() {
   const [submitting, setSubmitting] = useState(false);
   const [documentFile, setDocumentFile] = useState<File | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({ page: '1', pageSize: String(PAGE_SIZE), billingType });
       if (search.trim()) params.set('search', search.trim());
@@ -266,13 +267,22 @@ export function AnteciparRecebimentoPage() {
         variant: 'error',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [billingType, search]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveRefresh(
+    () => load(true),
+    {
+      enabled: !loading && !submitting && !simulating,
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const candidateItems = candidates?.items ?? [];
 

@@ -45,6 +45,7 @@ import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -112,8 +113,8 @@ export default function CobrancasTodasPage() {
     }
   }, [shouldOpenCreateModal]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       // "open" → fila operacional (PENDING/OVERDUE, vencimento ≤ fim do mês)
       // "paid"/"all" → rota legada que aceita statusView
@@ -194,13 +195,22 @@ export default function CobrancasTodasPage() {
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setCobrancas([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [statusView]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveRefresh(
+    () => load(true),
+    {
+      enabled: !loading,
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const handleStatusViewChange = useCallback(
     (value: string) => {

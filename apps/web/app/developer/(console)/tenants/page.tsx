@@ -2,6 +2,7 @@ import Link from 'next/link';
 
 import { Badge } from '@/components/ui/badge';
 import { getGlobalAdminDashboard } from '@/features/global-admin/dashboard/queries';
+import { GlobalAdminLiveRefresh } from '@/features/global-admin/shared/GlobalAdminLiveRefresh';
 import { GlobalAdminEmptyState, GlobalAdminPageIntro, GlobalAdminPanel, GlobalAdminSeverityBadge } from '@/features/global-admin/shared/GlobalAdminUI';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +12,8 @@ export default async function DeveloperTenantsPage() {
 
   return (
     <div className="space-y-6">
+      <GlobalAdminLiveRefresh intervalMs={60_000} />
+
       <GlobalAdminPageIntro
         eyebrow="Contas"
         title="Contas que pedem atenção"

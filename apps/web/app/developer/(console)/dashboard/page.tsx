@@ -2,6 +2,7 @@ import Link from 'next/link';
 
 import { getGlobalAdminDashboard } from '@/features/global-admin/dashboard/queries';
 import { listGlobalAdminRequestLogs } from '@/features/global-admin/logs/queries';
+import { GlobalAdminLiveRefresh } from '@/features/global-admin/shared/GlobalAdminLiveRefresh';
 import { GlobalAdminEmptyState, GlobalAdminMetricCard, GlobalAdminPageIntro, GlobalAdminPanel, GlobalAdminSeverityBadge } from '@/features/global-admin/shared/GlobalAdminUI';
 import { listGlobalAdminSupportCases } from '@/features/global-admin/support/queries';
 
@@ -61,6 +62,8 @@ export default async function DeveloperDashboardPage() {
 
   return (
     <div className="space-y-6">
+      <GlobalAdminLiveRefresh intervalMs={60_000} />
+
       <GlobalAdminPageIntro
         title="Visão geral da Alusa"
         description="Acompanhe o que precisa de ação hoje, localize contas com problema e veja sinais importantes da operação sem precisar abrir o banco ou o Asaas primeiro."

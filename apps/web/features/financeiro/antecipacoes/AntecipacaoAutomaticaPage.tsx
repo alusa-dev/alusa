@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { pushToast } from '@/components/ui/toast';
 import { CheckCircle, CreditCard, Warning } from '@/components/icons/icons';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { AnticipationConfiguration, AnticipationLimits } from './types';
 import { formatCurrency } from './utils';
 
@@ -38,8 +39,8 @@ export function AntecipacaoAutomaticaPage() {
   const automaticBlockedByPersonType =
     configuration?.automaticCreditCardReason === 'PERSON_TYPE_MUST_BE_PJ';
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [configResponse, limitsResponse] = await Promise.all([
         fetch('/api/financeiro/antecipacoes/configuracao', { cache: 'no-store' }),
@@ -61,13 +62,22 @@ export function AntecipacaoAutomaticaPage() {
         variant: 'error',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useLiveRefresh(
+    () => load(true),
+    {
+      enabled: !loading && !saving,
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   async function updateConfiguration(nextEnabled: boolean) {
     if (nextEnabled && !automaticEligible) {

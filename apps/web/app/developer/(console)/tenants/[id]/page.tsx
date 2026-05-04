@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { GlobalAdminActionCenter } from '@/features/global-admin/shared/GlobalAdminActionCenter';
+import { GlobalAdminLiveRefresh } from '@/features/global-admin/shared/GlobalAdminLiveRefresh';
 import { GlobalAdminEmptyState, GlobalAdminMetricCard, GlobalAdminPageIntro, GlobalAdminPanel, GlobalAdminSeverityBadge } from '@/features/global-admin/shared/GlobalAdminUI';
 import { getGlobalAdminTenant360 } from '@/features/global-admin/tenants/queries';
 
@@ -17,6 +18,8 @@ export default async function DeveloperTenantPage({
 
   return (
     <div className="space-y-6">
+      <GlobalAdminLiveRefresh intervalMs={60_000} />
+
       <GlobalAdminPageIntro
         eyebrow="Conta 360"
         title={data.tenant.nome}
