@@ -170,6 +170,8 @@ export const createRematriculaInputDTOSchema = z.object({
   formaPagamento: rematriculaFormaPagamentoDTOSchema.optional(),
   formaPagamentoTaxa: rematriculaFormaPagamentoDTOSchema.optional(),
   vencimentoDia: z.union([z.number(), z.string()]).optional(),
+  billingMode: z.enum(['INDIVIDUAL', 'SHARED_PLAN']).optional(),
+  valorMensalidadeOverride: z.union([z.number(), z.string()]).optional(),
   taxaMatricula: z.union([z.number(), z.string()]).optional(),
   taxaIsenta: z.union([z.boolean(), z.string()]).optional(),
   taxaJustificativa: z.string().trim().optional(),

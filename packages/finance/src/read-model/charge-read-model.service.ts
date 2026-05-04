@@ -33,6 +33,26 @@ function inferGroupId(params: { standaloneInstallmentPlanId?: string | null; ext
   return null;
 }
 
+function resolveGroupId(params: {
+  familyGroupId?: string | null;
+  standaloneInstallmentPlanGroupId?: string | null;
+  standaloneSubscriptionGroupId?: string | null;
+  matriculaFamiliarId?: string | null;
+  standaloneInstallmentPlanId?: string | null;
+  externalReference?: string | null;
+}): string | null {
+  return (
+    params.familyGroupId ??
+    params.standaloneInstallmentPlanGroupId ??
+    params.standaloneSubscriptionGroupId ??
+    params.matriculaFamiliarId ??
+    inferGroupId({
+      standaloneInstallmentPlanId: params.standaloneInstallmentPlanId,
+      externalReference: params.externalReference,
+    })
+  );
+}
+
 function inferLinkStatus(asaasPaymentId: string | null): LinkStatus {
   return asaasPaymentId ? 'LINKED' : 'NEEDS_REVIEW';
 }
@@ -60,17 +80,24 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
           matricula: {
             include: {
               aluno: { select: { id: true, nome: true } },
+              responsavelFinanceiro: { select: { nome: true } },
             },
           },
         },
       },
+      standaloneInstallmentPlan: { select: { familyGroupId: true } },
+      standaloneSubscription: { select: { familyGroupId: true } },
     },
   });
 
   if (!charge) return;
 
   const origin = charge.cobrancaId ? 'ACADEMIC' : 'STANDALONE';
-  const payerName = charge.payerName ?? charge.cobranca?.matricula.aluno.nome ?? 'Cliente';
+  const payerName =
+    charge.payerName ??
+    charge.cobranca?.matricula.responsavelFinanceiro?.nome ??
+    charge.cobranca?.matricula.aluno.nome ??
+    'Cliente';
   const value = charge.value != null ? Number(charge.value) : Number(charge.cobranca?.valor ?? 0);
   const dueDate = charge.dueDate ?? charge.cobranca?.vencimento ?? null;
   const billingType = charge.billingType ?? charge.cobranca?.formaPagamento ?? null;
@@ -79,7 +106,11 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
     externalReference: charge.externalReference,
     cobrancaTipo: charge.cobranca?.tipo ?? null,
   });
-  const groupId = inferGroupId({
+  const groupId = resolveGroupId({
+    familyGroupId: charge.familyGroupId,
+    standaloneInstallmentPlanGroupId: charge.standaloneInstallmentPlan?.familyGroupId ?? null,
+    standaloneSubscriptionGroupId: charge.standaloneSubscription?.familyGroupId ?? null,
+    matriculaFamiliarId: charge.cobranca?.matricula.matriculaFamiliarId ?? null,
     standaloneInstallmentPlanId: charge.standaloneInstallmentPlanId,
     externalReference: charge.externalReference,
   });
@@ -107,7 +138,7 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       matriculaId: charge.cobranca?.matriculaId ?? null,
       alunoId: charge.cobranca?.matricula.aluno.id ?? null,
       tipo: charge.cobranca?.tipo ?? (chargeType === 'INSTALLMENT' ? 'PARCELADA' : chargeType === 'SUBSCRIPTION' ? 'RECORRENTE' : 'AVULSA'),
-      isGroup: false,
+      isGroup: Boolean(groupId),
       installmentCount: null,
       installmentsPaid: null,
       createdAt: charge.createdAt,
@@ -133,7 +164,7 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       matriculaId: charge.cobranca?.matriculaId ?? null,
       alunoId: charge.cobranca?.matricula.aluno.id ?? null,
       tipo: charge.cobranca?.tipo ?? (chargeType === 'INSTALLMENT' ? 'PARCELADA' : chargeType === 'SUBSCRIPTION' ? 'RECORRENTE' : 'AVULSA'),
-      isGroup: false,
+      isGroup: Boolean(groupId),
       installmentCount: null,
       installmentsPaid: null,
       createdAt: charge.createdAt,
@@ -150,7 +181,10 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
     where: { id: cobrancaId },
     include: {
       matricula: {
-        include: { aluno: { select: { id: true, nome: true, contaId: true } } },
+        include: {
+          aluno: { select: { id: true, nome: true, contaId: true } },
+          responsavelFinanceiro: { select: { nome: true } },
+        },
       },
     },
   });
@@ -158,7 +192,7 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
 
   const linkedCharge = await prisma.charge.findFirst({
     where: { cobrancaId: cobranca.id },
-    select: { id: true, externalReference: true, asaasPaymentId: true },
+    select: { id: true, externalReference: true, asaasPaymentId: true, familyGroupId: true },
   });
 
   const chargeType = inferChargeType({
@@ -167,6 +201,11 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
   });
 
   const contaId = cobranca.matricula.aluno.contaId;
+  const groupId = resolveGroupId({
+    familyGroupId: linkedCharge?.familyGroupId ?? null,
+    matriculaFamiliarId: cobranca.matricula.matriculaFamiliarId ?? null,
+    externalReference: linkedCharge?.externalReference ?? null,
+  });
 
   await prisma.chargeReadModel.upsert({
     where: {
@@ -180,9 +219,9 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       origin: 'ACADEMIC',
       chargeType,
       linkStatus: inferLinkStatus(cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null),
-      groupId: inferGroupId({ externalReference: linkedCharge?.externalReference ?? null }),
+      groupId,
       description: cobranca.descricao ?? cobranca.tipo,
-      payerName: cobranca.matricula.aluno.nome,
+      payerName: cobranca.matricula.responsavelFinanceiro?.nome ?? cobranca.matricula.aluno.nome,
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
@@ -191,7 +230,7 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       matriculaId: cobranca.matriculaId,
       alunoId: cobranca.matricula.aluno.id,
       tipo: cobranca.tipo,
-      isGroup: false,
+      isGroup: Boolean(groupId),
       installmentCount: null,
       installmentsPaid: null,
       createdAt: cobranca.createdAt,
@@ -206,9 +245,9 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       origin: 'ACADEMIC',
       chargeType,
       linkStatus: inferLinkStatus(cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null),
-      groupId: inferGroupId({ externalReference: linkedCharge?.externalReference ?? null }),
+      groupId,
       description: cobranca.descricao ?? cobranca.tipo,
-      payerName: cobranca.matricula.aluno.nome,
+      payerName: cobranca.matricula.responsavelFinanceiro?.nome ?? cobranca.matricula.aluno.nome,
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
@@ -217,7 +256,7 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       matriculaId: cobranca.matriculaId,
       alunoId: cobranca.matricula.aluno.id,
       tipo: cobranca.tipo,
-      isGroup: false,
+      isGroup: Boolean(groupId),
       installmentCount: null,
       installmentsPaid: null,
       createdAt: cobranca.createdAt,

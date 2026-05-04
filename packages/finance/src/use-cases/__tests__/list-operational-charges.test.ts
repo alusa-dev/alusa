@@ -59,6 +59,8 @@ function makeCobranca(overrides: Record<string, unknown> = {}) {
     matricula: {
       id: 'mat_1',
       aluno: { id: 'alu_1', nome: 'João Silva' },
+      responsavelFinanceiro: null,
+      matriculaFamiliarId: null,
     },
     ...overrides,
   };
@@ -80,6 +82,8 @@ function makeCharge(overrides: Record<string, unknown> = {}) {
     dueDate: new Date('2025-06-20'),
     billingType: 'PIX',
     standaloneInstallmentPlanId: null,
+    standaloneSubscriptionId: null,
+    familyGroupId: null,
     invoiceUrl: null,
     customer: null,
     ...overrides,
@@ -164,6 +168,54 @@ describe('listOperationalCharges', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].origin).toBe('STANDALONE');
     expect(result.items[0].isGroup).toBe(false);
+  });
+
+  it('marca cobrança acadêmica shared plan com agrupamento familiar e pagador responsável', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([
+      makeCobranca({
+        id: 'cob_family_1',
+        matricula: {
+          id: 'mat_family_1',
+          aluno: { id: 'alu_family_1', nome: 'Aluno Filho' },
+          responsavelFinanceiro: { nome: 'Maria Família' },
+          matriculaFamiliarId: 'fam_1',
+        },
+      }),
+    ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'cob_family_1',
+      payerName: 'Maria Família',
+      isGroup: true,
+      groupId: 'fam_1',
+    });
+  });
+
+  it('marca cobrança standalone consolidada com familyGroupId', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany
+      .mockResolvedValueOnce([
+        makeCharge({
+          id: 'ch_family_1',
+          familyGroupId: 'fam_1',
+          payerName: 'Maria Família',
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'ch_family_1',
+      isGroup: true,
+      groupId: 'fam_1',
+    });
   });
 
   it('inclui fatura acadêmica recém-gerada mesmo com vencimento no próximo mês', async () => {

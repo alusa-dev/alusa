@@ -22,10 +22,7 @@ import {
   createRematriculaRequest,
   type CreateRematriculaInput,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
-import {
-  createContrato,
-  getContratos,
-} from '@/features/contratos/services/contratos-service';
+import { createContrato, getContratos } from '@/features/contratos/services/contratos-service';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 
@@ -107,7 +104,10 @@ function getFirstValidStartDate(contractEndDate: string | Date): Date {
   return todayOnly > contractEnd ? todayOnly : contractEnd;
 }
 
-function formatTurmaHorario(horaInicio: string | null | undefined, horaFim: string | null | undefined): string {
+function formatTurmaHorario(
+  horaInicio: string | null | undefined,
+  horaFim: string | null | undefined,
+): string {
   if (horaInicio && horaFim) return `${horaInicio} às ${horaFim}`;
   if (horaInicio) return `A partir de ${horaInicio}`;
   if (horaFim) return `Até ${horaFim}`;
@@ -221,10 +221,12 @@ export function RematriculaDialog({
     setTaxaMatricula(financeiro?.taxaMatricula != null ? String(financeiro.taxaMatricula) : '');
     setTaxaIsenta(Boolean(financeiro?.taxaIsenta));
     setTaxaJustificativa(financeiro?.taxaJustificativa ?? '');
-    setMultaPercentual(financeiro?.multaPercentual != null ? String(financeiro.multaPercentual) : '');
+    setMultaPercentual(
+      financeiro?.multaPercentual != null ? String(financeiro.multaPercentual) : '',
+    );
     setJurosMensal(financeiro?.jurosMensal != null ? String(financeiro.jurosMensal) : '');
     setDescontoAntecipado(
-      financeiro?.descontoAntecipado != null ? String(financeiro.descontoAntecipado) : ''
+      financeiro?.descontoAntecipado != null ? String(financeiro.descontoAntecipado) : '',
     );
     setPrazoDesconto(financeiro?.prazoDesconto != null ? String(financeiro.prazoDesconto) : '');
     setDiasTolerancia(financeiro?.diasTolerancia != null ? String(financeiro.diasTolerancia) : '');
@@ -315,6 +317,7 @@ export function RematriculaDialog({
         : new Date(item.dataFimContrato).toISOString(),
       planoId: planoId !== item.plano?.id ? planoId : undefined,
       turmaId: turmaId || undefined,
+      billingMode: 'INDIVIDUAL',
     };
 
     if (vencimentoDia && typeof vencimentoDia === 'number') {
@@ -401,7 +404,9 @@ export function RematriculaDialog({
             <CustomToast
               variant="warning"
               title="Rematrícula criada"
-              description={sanitizeMessage((error as Error).message || 'Falha ao gerar o contrato automaticamente.')}
+              description={sanitizeMessage(
+                (error as Error).message || 'Falha ao gerar o contrato automaticamente.',
+              )}
               onClose={() => toast.dismiss(t)}
             />
           ));
@@ -422,7 +427,9 @@ export function RematriculaDialog({
         <CustomToast
           variant="error"
           title="Erro ao rematricular"
-          description={sanitizeMessage((error as Error).message || 'Não foi possível concluir a rematrícula.')}
+          description={sanitizeMessage(
+            (error as Error).message || 'Não foi possível concluir a rematrícula.',
+          )}
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -483,7 +490,9 @@ export function RematriculaDialog({
                 </div>
               </div>
 
-              {(item.financeiro.rematriculaActionStatus === 'LIBERADA_COM_AVISO' || needsOverride || blockedByPolicy) ? (
+              {item.financeiro.rematriculaActionStatus === 'LIBERADA_COM_AVISO' ||
+              needsOverride ||
+              blockedByPolicy ? (
                 <div className={sectionClass}>
                   <span className="text-sm font-semibold text-slate-700">Validação financeira</span>
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -496,7 +505,8 @@ export function RematriculaDialog({
                     </p>
                     <p className="mt-1 text-xs text-amber-800">{item.financeiro.actionMessage}</p>
                     <p className="mt-2 text-xs text-amber-800">
-                      Em aberto: {item.financeiro.cobrancasEmAberto} • Atrasadas: {item.financeiro.cobrancasAtrasadas}
+                      Em aberto: {item.financeiro.cobrancasEmAberto} • Atrasadas:{' '}
+                      {item.financeiro.cobrancasAtrasadas}
                     </p>
                   </div>
 
@@ -557,7 +567,12 @@ export function RematriculaDialog({
                               {turmaSelecionada.nome}
                             </span>
                             <span className="truncate text-xs text-slate-500">
-                              ({formatTurmaHorario(turmaSelecionada.horaInicio, turmaSelecionada.horaFim)})
+                              (
+                              {formatTurmaHorario(
+                                turmaSelecionada.horaInicio,
+                                turmaSelecionada.horaFim,
+                              )}
+                              )
                             </span>
                           </div>
                         ) : (
@@ -565,7 +580,9 @@ export function RematriculaDialog({
                         )}
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="null" className="group">Sem turma definida</SelectItem>
+                        <SelectItem value="null" className="group">
+                          Sem turma definida
+                        </SelectItem>
                         {turmasFiltradas.map((turma) => {
                           const lotada = turma.vagasOcupadas >= turma.capacidade;
                           return (
@@ -595,9 +612,7 @@ export function RematriculaDialog({
                     {turmaLotada(turmaId) && (
                       <p className="text-xs text-red-600">Esta turma está sem vagas disponíveis.</p>
                     )}
-                    <p className="text-xs text-slate-500">
-                      Selecione uma turma ativa disponível.
-                    </p>
+                    <p className="text-xs text-slate-500">Selecione uma turma ativa disponível.</p>
                   </div>
                 </div>
               </div>
@@ -720,7 +735,10 @@ export function RematriculaDialog({
                     onCheckedChange={(checked) => setTaxaIsenta(Boolean(checked))}
                   />
                   <div className="space-y-0.5">
-                    <label htmlFor="taxa-isenta" className="text-sm font-medium text-slate-700 cursor-pointer">
+                    <label
+                      htmlFor="taxa-isenta"
+                      className="text-sm font-medium text-slate-700 cursor-pointer"
+                    >
                       Isentar taxa nesta rematrícula
                     </label>
                     <p className="text-xs text-slate-500">
@@ -773,7 +791,6 @@ export function RematriculaDialog({
                     className={textAreaClass}
                   />
                 </div>
-
               </div>
 
               {/* Regras Financeiras */}
@@ -835,7 +852,9 @@ export function RematriculaDialog({
                       placeholder="0–100"
                       className={controlClass}
                     />
-                    <p className="text-xs text-slate-500">Percentual aplicado antes do vencimento.</p>
+                    <p className="text-xs text-slate-500">
+                      Percentual aplicado antes do vencimento.
+                    </p>
                   </div>
                   <div className="space-y-1">
                     <label className={labelClass}>Dias antes do vencimento</label>
@@ -848,7 +867,9 @@ export function RematriculaDialog({
                       placeholder="0–30"
                       className={controlClass}
                     />
-                    <p className="text-xs text-slate-500">Quantidade de dias antes do vencimento para aplicar o desconto.</p>
+                    <p className="text-xs text-slate-500">
+                      Quantidade de dias antes do vencimento para aplicar o desconto.
+                    </p>
                   </div>
                 </div>
               </div>

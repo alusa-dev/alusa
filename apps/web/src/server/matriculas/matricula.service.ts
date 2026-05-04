@@ -1,4 +1,5 @@
 import {
+  BillingMode,
   FormaPagamento,
   Prisma,
   StatusCobranca,
@@ -9,7 +10,14 @@ import {
 } from '@prisma/client';
 import type { Cobranca } from '@prisma/client';
 import { prisma } from '@/src/prisma';
-import { resolvePayer, validarCapacidade, validarConflitosHorario, validarDatasContrato, validateTransition, canEditStructural } from '@alusa/domain';
+import {
+  resolvePayer,
+  validarCapacidade,
+  validarConflitosHorario,
+  validarDatasContrato,
+  validateTransition,
+  canEditStructural,
+} from '@alusa/domain';
 import { buildSeatOccupancyWhereClause } from '@alusa/lib';
 
 export class MatriculaConflictError extends Error {
@@ -70,11 +78,7 @@ export function calcularPrecoMatricula(input: CalcularPrecoInput): CalcularPreco
 
   const hasCumulativo = descontos.some((d) => d.cumulativo);
 
-  const descontosAplicados = hasCumulativo
-    ? valores
-    : valores.length
-      ? [Math.max(...valores)]
-      : [];
+  const descontosAplicados = hasCumulativo ? valores : valores.length ? [Math.max(...valores)] : [];
 
   const totalDescontos = round2(descontosAplicados.reduce((acc, n) => acc + n, 0));
   const planoLiquido = Math.max(0, round2(plano - totalDescontos));
@@ -188,11 +192,11 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
     ...(input.status?.length ? { status: { in: input.status } } : {}),
     ...(input.search?.trim()
       ? {
-        OR: [
-          { aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } } },
-          { aluno: { cpf: { contains: input.search.trim() } } },
-        ],
-      }
+          OR: [
+            { aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } } },
+            { aluno: { cpf: { contains: input.search.trim() } } },
+          ],
+        }
       : {}),
   };
 
@@ -215,15 +219,21 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
       include: {
         aluno: { select: { id: true, nome: true, cpf: true } },
         plano: { select: { id: true, nome: true, valor: true, periodicidade: true } },
-        turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+        turma: {
+          select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+        },
         matriculaTurmas: {
           include: {
-            turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+            turma: {
+              select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+            },
           },
         },
         combo: { select: { id: true, nome: true, periodicidade: true, valor: true } },
         cobrancas: { orderBy: { vencimento: 'asc' } },
-        responsavelFinanceiro: { select: { id: true, nome: true, cpf: true, email: true, telefone: true } },
+        responsavelFinanceiro: {
+          select: { id: true, nome: true, cpf: true, email: true, telefone: true },
+        },
         contratos: {
           orderBy: { createdAt: 'desc' },
           take: 1,
@@ -264,6 +274,8 @@ export type CriarMatriculaInput = {
   pagarTaxaAgora: boolean;
   gerarCobrancaTaxa: boolean;
   criarCobranca: boolean;
+  billingMode?: BillingMode | null;
+  valorMensalidadeOverride?: number | null;
   formaPagamento?: FormaPagamento;
   formaPagamentoTaxa?: FormaPagamento;
   createdById: string;
@@ -392,12 +404,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   });
 
   // Validar datas de contrato
-  const datasResult = validarDatasContrato(input.dataInicio, input.dataFimContrato, { permitirInicioPassado: true });
+  const datasResult = validarDatasContrato(input.dataInicio, input.dataFimContrato, {
+    permitirInicioPassado: true,
+  });
   if (!datasResult.success) {
     throw new Error(
       datasResult.error === 'DATA_FIM_ANTES_INICIO'
         ? 'Data de fim do contrato deve ser posterior à data de início.'
-        : 'Data de início não pode ser no passado.'
+        : 'Data de início não pode ser no passado.',
     );
   }
 
@@ -420,21 +434,28 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   const [plano, combo, turma] = await Promise.all([
     input.planoId
       ? prisma.plano.findFirst({
-        where: { id: input.planoId, contaId: input.contaId },
-        select: { id: true, valor: true, periodicidade: true },
-      })
+          where: { id: input.planoId, contaId: input.contaId },
+          select: { id: true, valor: true, periodicidade: true },
+        })
       : Promise.resolve(null),
     input.comboId
       ? prisma.combo.findFirst({
-        where: { id: input.comboId, contaId: input.contaId },
-        select: { id: true, valor: true, periodicidade: true, vagasLimite: true },
-      })
+          where: { id: input.comboId, contaId: input.contaId },
+          select: { id: true, valor: true, periodicidade: true, vagasLimite: true },
+        })
       : Promise.resolve(null),
     input.turmaId
       ? prisma.turma.findFirst({
-        where: { id: input.turmaId, contaId: input.contaId },
-        select: { id: true, nome: true, capacidade: true, diasSemana: true, horaInicio: true, horaFim: true },
-      })
+          where: { id: input.turmaId, contaId: input.contaId },
+          select: {
+            id: true,
+            nome: true,
+            capacidade: true,
+            diasSemana: true,
+            horaInicio: true,
+            horaFim: true,
+          },
+        })
       : Promise.resolve(null),
   ]);
 
@@ -443,7 +464,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     const ocupadas = await prisma.matricula.count({
       where: { turmaId: turma.id, ...buildSeatOccupancyWhereClause() },
     });
-    const capResult = validarCapacidade([{ id: turma.id, nome: turma.nome, capacidade: turma.capacidade, matriculasOcupantes: ocupadas }]);
+    const capResult = validarCapacidade([
+      {
+        id: turma.id,
+        nome: turma.nome,
+        capacidade: turma.capacidade,
+        matriculasOcupantes: ocupadas,
+      },
+    ]);
     if (!capResult.success) {
       throw new MatriculaConflictError(
         'TURMA_SEM_VAGAS',
@@ -457,7 +485,10 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       const comboOcupadas = await prisma.matricula.count({
         where: { comboId: combo.id, ...buildSeatOccupancyWhereClause() },
       });
-      const capResult = validarCapacidade([], { vagasLimite: (combo as { vagasLimite?: number | null }).vagasLimite, matriculasOcupantes: comboOcupadas });
+      const capResult = validarCapacidade([], {
+        vagasLimite: (combo as { vagasLimite?: number | null }).vagasLimite,
+        matriculasOcupantes: comboOcupadas,
+      });
       if (!capResult.success) {
         throw new MatriculaConflictError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis.');
       }
@@ -469,7 +500,9 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     const matriculasExistentes = await prisma.matricula.findMany({
       where: { alunoId: input.alunoId, ...buildSeatOccupancyWhereClause() },
       include: {
-        turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+        turma: {
+          select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+        },
       },
     });
     const turmasExistentes = matriculasExistentes
@@ -485,7 +518,15 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     }
   }
 
-  const planoValor = combo ? Number(combo.valor) : plano ? Number(plano.valor) : 0;
+  const valorOverride = Number(input.valorMensalidadeOverride ?? 0);
+  const planoValor =
+    Number.isFinite(valorOverride) && valorOverride > 0
+      ? valorOverride
+      : combo
+        ? Number(combo.valor)
+        : plano
+          ? Number(plano.valor)
+          : 0;
 
   const primeiroVencimento = resolveFirstDueDate(input.dataInicio, input.vencimentoDia);
 
@@ -532,6 +573,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         turmaId: input.turmaId ?? undefined,
         planoId: input.planoId ?? undefined,
         comboId: input.comboId ?? undefined,
+        billingMode: input.billingMode ?? BillingMode.INDIVIDUAL,
         dataInicio: input.dataInicio,
         dataFimContrato: input.dataFimContrato,
         taxaMatricula: input.taxaMatricula,
@@ -541,7 +583,9 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         vencimentoDia: input.vencimentoDia,
         status: statusInicial,
         taxaStatus: input.taxaIsenta ? StatusTaxaMatricula.ISENTO : StatusTaxaMatricula.PENDENTE,
-        statusFinanceiro: input.taxaIsenta ? StatusFinanceiro.ADIMPLENTE : StatusFinanceiro.PENDENTE_TAXA,
+        statusFinanceiro: input.taxaIsenta
+          ? StatusFinanceiro.ADIMPLENTE
+          : StatusFinanceiro.PENDENTE_TAXA,
         // Campos de juros, multa e desconto
         jurosMensal: input.jurosMensal ?? null,
         multaPercentual: input.multaPercentual ?? null,
@@ -845,7 +889,10 @@ export async function editarMatricula(input: {
         });
 
         if (!capacidadeComboResult.success) {
-          throw new MatriculaConflictError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis.');
+          throw new MatriculaConflictError(
+            'COMBO_SEM_VAGAS',
+            'Combo não possui vagas disponíveis.',
+          );
         }
       }
     }

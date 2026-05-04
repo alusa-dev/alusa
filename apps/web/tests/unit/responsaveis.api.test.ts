@@ -36,9 +36,7 @@ describe('/api/responsaveis', () => {
   it('retorna 401 no GET quando não autenticado', async () => {
     vi.mocked(getServerSession).mockResolvedValueOnce(null as never);
 
-    const response = await GET(
-      new NextRequest('http://localhost/api/responsaveis?q=maria'),
-    );
+    const response = await GET(new NextRequest('http://localhost/api/responsaveis?q=maria'));
 
     expect(response.status).toBe(401);
   });
@@ -55,12 +53,11 @@ describe('/api/responsaveis', () => {
         email: 'maria@example.com',
         telefone: '92999999999',
         financeiro: true,
+        alunosCount: 0,
       },
     ]);
 
-    const response = await GET(
-      new NextRequest('http://localhost/api/responsaveis?q=Maria'),
-    );
+    const response = await GET(new NextRequest('http://localhost/api/responsaveis?q=Maria'));
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -73,6 +70,7 @@ describe('/api/responsaveis', () => {
           email: 'maria@example.com',
           telefone: '92999999999',
           financeiro: true,
+          alunosCount: 0,
         },
       ],
     });
@@ -112,6 +110,7 @@ describe('/api/responsaveis', () => {
       email: 'maria@example.com',
       telefone: '92999999999',
       financeiro: true,
+      alunosCount: 0,
     });
 
     const response = await POST(
@@ -136,6 +135,7 @@ describe('/api/responsaveis', () => {
       email: 'maria@example.com',
       telefone: '92999999999',
       financeiro: true,
+      alunosCount: 0,
     });
     expect(prismaMock.responsavel.create).toHaveBeenCalledWith(
       expect.objectContaining({

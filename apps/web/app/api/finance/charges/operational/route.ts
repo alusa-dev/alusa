@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { listOperationalCharges } from '@alusa/finance';
+import { withPerfTimer } from '@/lib/perf-logger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -44,12 +45,17 @@ export async function GET(req: NextRequest) {
     const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || '20')));
     const search = url.searchParams.get('q')?.trim() || undefined;
 
-    const result = await listOperationalCharges({
-      contaId: user.contaId,
-      page,
-      pageSize,
-      search,
-    });
+    const result = await withPerfTimer(
+      'finance',
+      'listOperationalCharges',
+      () => listOperationalCharges({
+        contaId: user.contaId!,
+        page,
+        pageSize,
+        search,
+      }),
+      { contaId: user.contaId }
+    );
 
     return NextResponse.json(
       {

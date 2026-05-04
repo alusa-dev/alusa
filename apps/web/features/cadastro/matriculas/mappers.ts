@@ -82,13 +82,16 @@ function mapCobrancaRecordToDTO(cobranca: Record<string, unknown>) {
     status: cobranca.status,
     formaPagamento: cobranca.formaPagamento,
     tipo: cobranca.tipo,
-    vencimento: toIsoString(cobranca.vencimento as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    vencimento:
+      toIsoString(cobranca.vencimento as Nullable<Date | string>) ?? new Date(0).toISOString(),
     descricao: cobranca.descricao ? String(cobranca.descricao) : null,
     asaasPaymentId: cobranca.asaasPaymentId ? String(cobranca.asaasPaymentId) : null,
     asaasId: cobranca.asaasId ? String(cobranca.asaasId) : null,
-    createdAt: toIsoString(cobranca.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    createdAt:
+      toIsoString(cobranca.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     competenciaInicio:
-      toIsoString(cobranca.competenciaInicio as Nullable<Date | string>) ?? new Date(0).toISOString(),
+      toIsoString(cobranca.competenciaInicio as Nullable<Date | string>) ??
+      new Date(0).toISOString(),
     competenciaFim:
       toIsoString(cobranca.competenciaFim as Nullable<Date | string>) ?? new Date(0).toISOString(),
     dataPagamento: toIsoString(cobranca.dataPagamento as Nullable<Date | string>),
@@ -102,7 +105,8 @@ function mapContratoRecordToDTO(contrato: Record<string, unknown>) {
     id: String(contrato.id ?? ''),
     status: contrato.status,
     tokenPublico: String(contrato.tokenPublico ?? ''),
-    createdAt: toIsoString(contrato.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    createdAt:
+      toIsoString(contrato.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
     template: template ? { nome: String(template.nome ?? '') } : undefined,
   };
@@ -113,13 +117,14 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
   const plano = (matricula.plano as Nullable<Record<string, unknown>>) ?? null;
   const turma = (matricula.turma as Nullable<Record<string, unknown>>) ?? null;
   const combo = (matricula.combo as Nullable<Record<string, unknown>>) ?? null;
-  const responsavel = (matricula.responsavelFinanceiro as Nullable<Record<string, unknown>>) ?? null;
+  const responsavel =
+    (matricula.responsavelFinanceiro as Nullable<Record<string, unknown>>) ?? null;
   const turmas = Array.isArray(matricula.turmas)
     ? (matricula.turmas as Record<string, unknown>[])
     : Array.isArray(matricula.matriculaTurmas)
-      ? (matricula.matriculaTurmas as Record<string, unknown>[])
+      ? ((matricula.matriculaTurmas as Record<string, unknown>[])
           .map((item) => (item.turma as Nullable<Record<string, unknown>>) ?? null)
-          .filter(Boolean) as Record<string, unknown>[]
+          .filter(Boolean) as Record<string, unknown>[])
       : [];
 
   const dto = {
@@ -127,7 +132,8 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
     status: matricula.status,
     statusFinanceiro: matricula.statusFinanceiro ?? null,
     statusContrato: matricula.statusContrato ?? null,
-    dataInicio: toIsoString(matricula.dataInicio as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    dataInicio:
+      toIsoString(matricula.dataInicio as Nullable<Date | string>) ?? new Date(0).toISOString(),
     dataFimContrato: toIsoString(matricula.dataFimContrato as Nullable<Date | string>),
     taxaMatricula: Number(matricula.taxaMatricula ?? 0),
     taxaStatus: matricula.taxaStatus ?? StatusTaxaMatricula.PENDENTE,
@@ -157,9 +163,7 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
       ? {
           id: String(turma.id ?? ''),
           nome: String(turma.nome ?? ''),
-          diasSemana: Array.isArray(turma.diasSemana)
-            ? (turma.diasSemana as string[])
-            : [],
+          diasSemana: Array.isArray(turma.diasSemana) ? (turma.diasSemana as string[]) : [],
           horaInicio: String(turma.horaInicio ?? ''),
           horaFim: String(turma.horaFim ?? ''),
         }
@@ -187,7 +191,9 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
           mapContratoRecordToDTO(contrato),
         )
       : [],
-    asaasSubscriptionId: matricula.asaasSubscriptionId ? String(matricula.asaasSubscriptionId) : null,
+    asaasSubscriptionId: matricula.asaasSubscriptionId
+      ? String(matricula.asaasSubscriptionId)
+      : null,
     pausaAtiva: Boolean(matricula.pausaAtiva),
     dataInicioPausa: toIsoString(matricula.dataInicioPausa as Nullable<Date | string>),
     dataRetornoPrevista: toIsoString(matricula.dataRetornoPrevista as Nullable<Date | string>),
@@ -197,7 +203,9 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
         ? Boolean(matricula.cobrarDurantePausa)
         : false,
     motivoPausa: matricula.motivoPausa ? String(matricula.motivoPausa) : null,
-    integrationStatus: matricula.integrationStatus ? String(matricula.integrationStatus) : 'SINCRONIZADO',
+    integrationStatus: matricula.integrationStatus
+      ? String(matricula.integrationStatus)
+      : 'SINCRONIZADO',
     warningCode: matricula.warningCode ? String(matricula.warningCode) : null,
     jurosMensal: toNumber(matricula.jurosMensal, null),
     jurosTipo: matricula.jurosTipo ? String(matricula.jurosTipo) : null,
@@ -229,7 +237,10 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
                 Date | string
               >,
             ),
-            deleted: toBoolean((matricula.assinaturaSnapshot as Record<string, unknown>).deleted, false),
+            deleted: toBoolean(
+              (matricula.assinaturaSnapshot as Record<string, unknown>).deleted,
+              false,
+            ),
             syncError:
               (matricula.assinaturaSnapshot as Record<string, unknown>).syncError != null
                 ? String((matricula.assinaturaSnapshot as Record<string, unknown>).syncError)
@@ -277,7 +288,8 @@ export function mapMatriculaRecordToCoreDTO(matricula: Record<string, unknown>) 
     status: matricula.status ?? StatusMatricula.ATIVA,
     statusContrato: matricula.statusContrato ?? null,
     statusFinanceiro: matricula.statusFinanceiro ?? null,
-    dataInicio: toIsoString(matricula.dataInicio as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    dataInicio:
+      toIsoString(matricula.dataInicio as Nullable<Date | string>) ?? new Date(0).toISOString(),
     dataFimContrato: toIsoString(matricula.dataFimContrato as Nullable<Date | string>),
     taxaMatricula: Number(matricula.taxaMatricula ?? 0),
     taxaStatus: matricula.taxaStatus ?? StatusTaxaMatricula.PENDENTE,
@@ -285,9 +297,13 @@ export function mapMatriculaRecordToCoreDTO(matricula: Record<string, unknown>) 
     taxaJustificativa: matricula.taxaJustificativa ? String(matricula.taxaJustificativa) : null,
     vencimentoDia: Number(matricula.vencimentoDia ?? 0),
     asaasId: matricula.asaasId ? String(matricula.asaasId) : null,
-    asaasSubscriptionId: matricula.asaasSubscriptionId ? String(matricula.asaasSubscriptionId) : null,
-    createdAt: toIsoString(matricula.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
-    updatedAt: toIsoString(matricula.updatedAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    asaasSubscriptionId: matricula.asaasSubscriptionId
+      ? String(matricula.asaasSubscriptionId)
+      : null,
+    createdAt:
+      toIsoString(matricula.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
+    updatedAt:
+      toIsoString(matricula.updatedAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
   });
 }
 
@@ -322,10 +338,12 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     pagarTaxaAgora: pagarTaxaAgoraValue,
     gerarCobrancaTaxa: gerarCobrancaTaxaValue,
     criarCobranca: criarCobrancaValue,
+    billingMode: parsed.billingMode,
+    valorMensalidadeOverride: toNumber(parsed.valorMensalidadeOverride, null),
     dataInicio: dataInicioValue,
     dataFimContrato: dataFimContratoValue,
     vencimento: toDate(parsed.vencimento),
-    vencimentoDia: (toNumber(parsed.vencimentoDia, 5) ?? 5),
+    vencimentoDia: toNumber(parsed.vencimentoDia, 5) ?? 5,
     formaPagamento: normalizeFormaPagamentoInput(parsed.formaPagamento),
     formaPagamentoTaxa: normalizeFormaPagamentoInput(parsed.formaPagamentoTaxa),
     createdById: input.createdById,
@@ -355,27 +373,23 @@ export function mapCreateMatriculaResultToDTO(input: {
     responsavelFinanceiro: Record<string, unknown> | null;
     primeiroVencimento: Date;
   };
-  taxaSync:
-    | {
-        success: boolean;
-        error?: string;
-        asaasPaymentId?: string;
-        invoiceUrl?: string | null;
-        bankSlipUrl?: string | null;
-      }
-    | null;
-  subscriptionSync:
-    | {
-        success: boolean;
-        error?: string;
-        asaasSubscriptionId?: string | null;
-        asaasPaymentId?: string | null;
-        invoiceUrl?: string | null;
-        bankSlipUrl?: string | null;
-        message?: string;
-        expectedWebhooks?: string[];
-      }
-    | null;
+  taxaSync: {
+    success: boolean;
+    error?: string;
+    asaasPaymentId?: string;
+    invoiceUrl?: string | null;
+    bankSlipUrl?: string | null;
+  } | null;
+  subscriptionSync: {
+    success: boolean;
+    error?: string;
+    asaasSubscriptionId?: string | null;
+    asaasPaymentId?: string | null;
+    invoiceUrl?: string | null;
+    bankSlipUrl?: string | null;
+    message?: string;
+    expectedWebhooks?: string[];
+  } | null;
 }) {
   const { result, taxaSync, subscriptionSync } = input;
   return createMatriculaResultDTOSchema.parse({
@@ -433,12 +447,17 @@ export function mapEditMatriculaResultToDTO(matricula: Record<string, unknown>) 
       turmaId: matricula.turmaId ? String(matricula.turmaId) : null,
       comboId: matricula.comboId ? String(matricula.comboId) : null,
       planoId: matricula.planoId ? String(matricula.planoId) : null,
-      asaasSubscriptionId: matricula.asaasSubscriptionId ? String(matricula.asaasSubscriptionId) : null,
+      asaasSubscriptionId: matricula.asaasSubscriptionId
+        ? String(matricula.asaasSubscriptionId)
+        : null,
     },
   });
 }
 
-export function mapMatriculaStatusSyncResultToDTO(result: Record<string, unknown>, message: string) {
+export function mapMatriculaStatusSyncResultToDTO(
+  result: Record<string, unknown>,
+  message: string,
+) {
   return matriculaStatusSyncResultDTOSchema.parse({
     success: true,
     message,

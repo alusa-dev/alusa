@@ -127,6 +127,8 @@ export const createMatriculaInputDTOSchema = z.object({
   pagarTaxaAgora: booleanLikeDTOSchema.optional(),
   gerarCobrancaTaxa: booleanLikeDTOSchema.optional(),
   criarCobranca: booleanLikeDTOSchema.optional(),
+  billingMode: z.enum(['INDIVIDUAL', 'SHARED_PLAN']).optional(),
+  valorMensalidadeOverride: numberLikeDTOSchema.optional().nullable(),
   formaPagamento: z.string().trim().optional(),
   formaPagamentoTaxa: z.string().trim().optional(),
   jurosMensal: numberLikeDTOSchema.optional().nullable(),
@@ -143,14 +145,16 @@ export const createMatriculaInputDTOSchema = z.object({
 });
 export type CreateMatriculaInputDTO = z.input<typeof createMatriculaInputDTOSchema>;
 
-export const updateMatriculaInputDTOSchema = z.object({
-  contaId: z.string().trim().optional().nullable(),
-  status: matriculaStatusDTOSchema.optional(),
-  dataInicio: dateStringDTOSchema.optional(),
-  vencimentoDia: z.number().int().min(1).max(28).optional(),
-}).refine((value) => value.status || value.dataInicio || value.vencimentoDia, {
-  message: 'Informe pelo menos um campo para atualização.',
-});
+export const updateMatriculaInputDTOSchema = z
+  .object({
+    contaId: z.string().trim().optional().nullable(),
+    status: matriculaStatusDTOSchema.optional(),
+    dataInicio: dateStringDTOSchema.optional(),
+    vencimentoDia: z.number().int().min(1).max(28).optional(),
+  })
+  .refine((value) => value.status || value.dataInicio || value.vencimentoDia, {
+    message: 'Informe pelo menos um campo para atualização.',
+  });
 export type UpdateMatriculaInputDTO = z.input<typeof updateMatriculaInputDTOSchema>;
 
 export const editMatriculaInputDTOSchema = z.object({
@@ -166,12 +170,17 @@ export const updateMatriculaStatusSyncInputDTOSchema = z.object({
   status: z.enum(['ATIVA', 'PAUSADA', 'CANCELADA']),
   motivo: z.string().trim().optional(),
 });
-export type UpdateMatriculaStatusSyncInputDTO = z.input<typeof updateMatriculaStatusSyncInputDTOSchema>;
+export type UpdateMatriculaStatusSyncInputDTO = z.input<
+  typeof updateMatriculaStatusSyncInputDTOSchema
+>;
 
 export const pausarMatriculaInputDTOSchema = z.object({
   motivoPausa: z.string().trim().min(1, 'Motivo é obrigatório'),
   dataInicioPausa: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
-  dataRetornoPrevista: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  dataRetornoPrevista: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   manterVaga: z.boolean(),
   cobrarDurantePausa: z.boolean(),
   observacao: z.string().trim().optional(),
@@ -179,7 +188,9 @@ export const pausarMatriculaInputDTOSchema = z.object({
 export type PausarMatriculaInputDTO = z.infer<typeof pausarMatriculaInputDTOSchema>;
 
 export const reativarMatriculaInputDTOSchema = z.object({
-  dataRetornoEfetiva: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
+  dataRetornoEfetiva: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data deve estar no formato YYYY-MM-DD'),
   nextDueDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data da próxima cobrança deve estar no formato YYYY-MM-DD'),
@@ -198,7 +209,9 @@ export const updateMatriculaBillingTypeInputDTOSchema = z.object({
   contaId: z.string().trim().optional().nullable(),
   billingType: matriculaBillingTypeDTOSchema,
 });
-export type UpdateMatriculaBillingTypeInputDTO = z.input<typeof updateMatriculaBillingTypeInputDTOSchema>;
+export type UpdateMatriculaBillingTypeInputDTO = z.input<
+  typeof updateMatriculaBillingTypeInputDTOSchema
+>;
 
 export const matriculaAdjustmentDTOSchema = z.object({
   value: z.number(),
@@ -219,14 +232,18 @@ export const updateMatriculaJurosMultaInputDTOSchema = z.object({
   fine: matriculaAdjustmentDTOSchema.optional(),
   discount: matriculaDiscountDTOSchema.optional(),
 });
-export type UpdateMatriculaJurosMultaInputDTO = z.input<typeof updateMatriculaJurosMultaInputDTOSchema>;
+export type UpdateMatriculaJurosMultaInputDTO = z.input<
+  typeof updateMatriculaJurosMultaInputDTOSchema
+>;
 
 export const matriculaNotificationChannelsDTOSchema = z.object({
   email: z.boolean(),
   sms: z.boolean(),
   whatsapp: z.boolean(),
 });
-export type MatriculaNotificationChannelsDTO = z.infer<typeof matriculaNotificationChannelsDTOSchema>;
+export type MatriculaNotificationChannelsDTO = z.infer<
+  typeof matriculaNotificationChannelsDTOSchema
+>;
 
 export const matriculaNotificationWarningDTOSchema = z.object({
   notificationId: z.string(),
@@ -607,7 +624,9 @@ export const matriculaReenviarCobrancaResultDTOSchema = z.object({
   pixQrCodeUrl: nullableStringDTOSchema.default(null),
   pixCopyPaste: nullableStringDTOSchema.default(null),
 });
-export type MatriculaReenviarCobrancaResultDTO = z.infer<typeof matriculaReenviarCobrancaResultDTOSchema>;
+export type MatriculaReenviarCobrancaResultDTO = z.infer<
+  typeof matriculaReenviarCobrancaResultDTOSchema
+>;
 
 export const matriculaGerarPixResultDTOSchema = z.object({
   success: z.boolean(),
@@ -630,7 +649,9 @@ export const matriculaSubscriptionValueUpdateResultDTOSchema = z.object({
     updatePendingPayments: z.boolean(),
   }),
 });
-export type MatriculaSubscriptionValueUpdateResultDTO = z.infer<typeof matriculaSubscriptionValueUpdateResultDTOSchema>;
+export type MatriculaSubscriptionValueUpdateResultDTO = z.infer<
+  typeof matriculaSubscriptionValueUpdateResultDTOSchema
+>;
 
 export const matriculaSubscriptionBillingTypeUpdateResultDTOSchema = z.object({
   success: z.boolean(),
@@ -639,7 +660,9 @@ export const matriculaSubscriptionBillingTypeUpdateResultDTOSchema = z.object({
     billingType: matriculaBillingTypeDTOSchema,
   }),
 });
-export type MatriculaSubscriptionBillingTypeUpdateResultDTO = z.infer<typeof matriculaSubscriptionBillingTypeUpdateResultDTOSchema>;
+export type MatriculaSubscriptionBillingTypeUpdateResultDTO = z.infer<
+  typeof matriculaSubscriptionBillingTypeUpdateResultDTOSchema
+>;
 
 export const matriculaSubscriptionTermsUpdateResultDTOSchema = z.object({
   success: z.boolean(),
@@ -659,4 +682,6 @@ export const matriculaSubscriptionTermsUpdateResultDTOSchema = z.object({
     }),
   }),
 });
-export type MatriculaSubscriptionTermsUpdateResultDTO = z.infer<typeof matriculaSubscriptionTermsUpdateResultDTOSchema>;
+export type MatriculaSubscriptionTermsUpdateResultDTO = z.infer<
+  typeof matriculaSubscriptionTermsUpdateResultDTOSchema
+>;

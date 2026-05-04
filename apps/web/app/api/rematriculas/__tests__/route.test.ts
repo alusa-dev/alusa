@@ -154,7 +154,8 @@ describe('POST /api/rematriculas', () => {
     evaluateRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'REQUER_OVERRIDE',
       blockReason: 'NOVO_CICLO_BLOQUEADO',
-      message: 'A rematrícula precisa de autorização administrativa para abrir um novo ciclo financeiro.',
+      message:
+        'A rematrícula precisa de autorização administrativa para abrir um novo ciclo financeiro.',
       canCurrentUserOverride: true,
       requiresOverrideReason: true,
     });
@@ -235,6 +236,8 @@ describe('POST /api/rematriculas', () => {
         dataInicio: '2025-02-01',
         dataFimContrato: '2025-12-31',
         formaPagamento: 'BOLETO',
+        billingMode: 'SHARED_PLAN',
+        valorMensalidadeOverride: 300,
         overrideReason: 'Autorizado pela coordenação financeira.',
       }),
     );
@@ -246,6 +249,8 @@ describe('POST /api/rematriculas', () => {
     expect(rematricularAlunoMock).toHaveBeenCalledWith(
       expect.objectContaining({
         overrideReason: 'Autorizado pela coordenação financeira.',
+        billingMode: 'SHARED_PLAN',
+        valorMensalidadeOverride: 300,
         policyContext: expect.objectContaining({
           actionStatus: 'REQUER_OVERRIDE',
           blockReason: 'NOVO_CICLO_BLOQUEADO',

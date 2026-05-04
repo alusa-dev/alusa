@@ -92,6 +92,12 @@ const GROUPS: Group[] = [
         iconSolid: <UserSolid className="h-5 w-5" />,
       },
       {
+        label: 'Responsáveis',
+        href: '/responsaveis',
+        icon: <UsersIcon className="h-5 w-5" />,
+        iconSolid: <UsersSolid className="h-5 w-5" />,
+      },
+      {
         label: 'Colaboradores',
         href: '/colaboradores',
         icon: <UsersIcon className="h-5 w-5" />,
@@ -432,14 +438,20 @@ const PERMISSIONS: Record<
   },
   FINANCEIRO: {
     allowDashboard: true,
-    allowGroups: [{ key: 'cobrancas' }, { key: 'meu-dinheiro' }, { key: 'antecipacoes' }, { key: 'financeiro' }, { key: 'relatorios' }],
+    allowGroups: [
+      { key: 'cobrancas' },
+      { key: 'meu-dinheiro' },
+      { key: 'antecipacoes' },
+      { key: 'financeiro' },
+      { key: 'relatorios' },
+    ],
     allowPortal: false,
     allowSettings: false,
   },
   RECEPCAO: {
     allowDashboard: true,
     allowGroups: [
-      { key: 'cadastro', items: ['/alunos', '/colaboradores'] },
+      { key: 'cadastro', items: ['/alunos', '/responsaveis', '/colaboradores'] },
       { key: 'matriculas' },
       { key: 'aulas' },
       { key: 'vendas' },

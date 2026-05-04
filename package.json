@@ -42,7 +42,8 @@
     "mcp:alusadb:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
     "mcp:build": "tsc -p mcp/alusadb/tsconfig.json",
     "mcp:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
-    "mcp:asaas": "dotenv -e .env -- tsx mcp/asaas/server.ts"
+    "mcp:asaas": "dotenv -e .env -- tsx mcp/asaas/server.ts",
+    "sandbox:asaas:add-balance": "dotenv -e .env.local -- node scripts/asaas/sandbox-add-wallet-balance.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

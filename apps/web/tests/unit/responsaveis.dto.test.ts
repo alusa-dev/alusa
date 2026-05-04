@@ -60,6 +60,7 @@ describe('responsaveis DTOs', () => {
       email: 'maria@example.com',
       telefone: '92999999999',
       financeiro: true,
+      alunosCount: 0,
     });
   });
 

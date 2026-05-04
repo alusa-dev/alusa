@@ -1,8 +1,8 @@
 /**
  * RematricularAlunoUseCase — Fluxo SAGA/2-fases de rematrícula
- * 
+ *
  * Arquitetura escalável e "à prova de falha":
- * 
+ *
  * FASE 1 (Prepare):
  * 1. Validar acadêmico (capacidade, conflitos, datas, elegibilidade)
  * 2. Resolver pagador (regra imutável: maior = aluno, menor = responsável)
@@ -10,17 +10,17 @@
  * 4. Resolver/criar customer (no provedor)
  * 5. Criar nova matrícula em estado PROVISÓRIO (AGUARDANDO_CONFIRMACAO)
  * 6. Criar nova assinatura no gateway
- * 
+ *
  * FASE 2 (Commit) — somente após gateway OK:
  * 7. Ativar nova matrícula (status ATIVA)
  * 8. Cancelar matrícula origem + assinatura origem
  * 9. Atualizar operação para COMMITTED
- * 
+ *
  * Em caso de FALHA na Fase 1:
  * - NÃO cancela origem
  * - Marca operação como FAILED
  * - Permite retry idempotente via retryRematricula()
- * 
+ *
  * Invariantes:
  * - Nenhum termo do provedor vaza para resposta
  * - Status financeiro só muda via webhook
@@ -48,7 +48,12 @@ import {
   type TurmaInfo,
   type TurmaHorario,
 } from '@alusa/domain';
-import type { PaymentsProviderPort, BillingCycle, BillingType } from '../ports/PaymentsProviderPort';
+import type {
+  PaymentsProviderPort,
+  BillingCycle,
+  BillingType,
+} from '../ports/PaymentsProviderPort';
+import type { ProviderCreateSubscriptionResult } from '../ports/PaymentsProviderPort';
 
 // ============================================================================
 // TIPOS
@@ -71,6 +76,9 @@ export interface RematricularAlunoInput {
   taxaIsenta?: boolean;
   taxaJustificativa?: string;
   formaPagamentoTaxa?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO';
+  criarCobranca?: boolean;
+  valorMensalidadeOverride?: number;
+  billingMode?: 'INDIVIDUAL' | 'SHARED_PLAN';
   // Configurações financeiras opcionais
   descontos?: Array<{ id: string; cumulativo?: boolean }>;
   multaPercentual?: number;
@@ -202,10 +210,7 @@ async function resolveRematriculaDescontos(
   }));
 }
 
-function calcularValorPlanoLiquido(
-  valorPlano: number,
-  descontos: DescontoResolvido[],
-) {
+function calcularValorPlanoLiquido(valorPlano: number, descontos: DescontoResolvido[]) {
   const descontosAplicados = descontos.map((desconto) => {
     if (desconto.tipo === 'PERCENTUAL') {
       return round2(valorPlano * (desconto.valor / 100));
@@ -311,7 +316,7 @@ function buildRematriculaIdempotencyKey(input: RematricularAlunoInput): string {
 
 export async function rematricularAluno(
   input: RematricularAlunoInput,
-  deps: RematricularAlunoDeps
+  deps: RematricularAlunoDeps,
 ): Promise<RematricularAlunoResult> {
   const { prisma, paymentsProvider } = deps;
   const correlationId = randomUUID();
@@ -334,7 +339,10 @@ export async function rematricularAluno(
     };
   }
 
-  if (operacaoPorIdempotencia && ['PENDING', 'PENDING_FINANCE'].includes(operacaoPorIdempotencia.status)) {
+  if (
+    operacaoPorIdempotencia &&
+    ['PENDING', 'PENDING_FINANCE'].includes(operacaoPorIdempotencia.status)
+  ) {
     return { success: false, error: { code: 'OPERACAO_EM_ANDAMENTO' } };
   }
 
@@ -453,14 +461,17 @@ export async function rematricularAluno(
 
   // 2.1 Elegibilidade
   const diasRestantes = Math.ceil(
-    (matriculaOrigem.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000)
+    (matriculaOrigem.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
   );
   const elegibilidadeResult = validarElegibilidadeRematricula({
     status: matriculaOrigem.status,
     contratoExpirado: diasRestantes < 0,
   });
   if (!elegibilidadeResult.success) {
-    return { success: false, error: { code: 'STATUS_INVALIDO', details: elegibilidadeResult.error } };
+    return {
+      success: false,
+      error: { code: 'STATUS_INVALIDO', details: elegibilidadeResult.error },
+    };
   }
 
   // 2.2 Datas
@@ -485,49 +496,51 @@ export async function rematricularAluno(
     return { success: false, error: { code: 'PLANO_NAO_ENCONTRADO' } };
   }
 
-  const turmaDestino = input.turmaId === null
-    ? null
-    : input.turmaId
-      ? await prisma.turma.findFirst({
-          where: { id: input.turmaId, contaId: input.contaId, status: 'ATIVO' },
-          select: {
-            id: true,
-            nome: true,
-            capacidade: true,
-            diasSemana: true,
-            horaInicio: true,
-            horaFim: true,
-          },
-        })
-      : matriculaOrigem.turma;
+  const turmaDestino =
+    input.turmaId === null
+      ? null
+      : input.turmaId
+        ? await prisma.turma.findFirst({
+            where: { id: input.turmaId, contaId: input.contaId, status: 'ATIVO' },
+            select: {
+              id: true,
+              nome: true,
+              capacidade: true,
+              diasSemana: true,
+              horaInicio: true,
+              horaFim: true,
+            },
+          })
+        : matriculaOrigem.turma;
 
   if (input.turmaId && !turmaDestino) {
     return { success: false, error: { code: 'TURMA_NAO_ENCONTRADA' } };
   }
 
-  const comboDestino = input.comboId === null
-    ? null
-    : input.comboId
-      ? await prisma.combo.findFirst({
-          where: { id: input.comboId, contaId: input.contaId, status: 'ATIVO' },
-          include: {
-            turmas: {
-              include: {
-                turma: {
-                  select: {
-                    id: true,
-                    nome: true,
-                    capacidade: true,
-                    diasSemana: true,
-                    horaInicio: true,
-                    horaFim: true,
+  const comboDestino =
+    input.comboId === null
+      ? null
+      : input.comboId
+        ? await prisma.combo.findFirst({
+            where: { id: input.comboId, contaId: input.contaId, status: 'ATIVO' },
+            include: {
+              turmas: {
+                include: {
+                  turma: {
+                    select: {
+                      id: true,
+                      nome: true,
+                      capacidade: true,
+                      diasSemana: true,
+                      horaInicio: true,
+                      horaFim: true,
+                    },
                   },
                 },
               },
             },
-          },
-        })
-      : matriculaOrigem.combo;
+          })
+        : matriculaOrigem.combo;
 
   if (input.comboId && !comboDestino) {
     return { success: false, error: { code: 'COMBO_NAO_ENCONTRADO' } };
@@ -538,7 +551,11 @@ export async function rematricularAluno(
   const turmasParaValidar: (TurmaInfo & TurmaHorario)[] = [];
   if (turmaDestino) {
     const count = await prisma.matricula.count({
-      where: { turmaId: turmaDestino.id, status: { in: seatStatuses }, id: { not: input.matriculaId } },
+      where: {
+        turmaId: turmaDestino.id,
+        status: { in: seatStatuses },
+        id: { not: input.matriculaId },
+      },
     });
     turmasParaValidar.push({
       ...turmaDestino,
@@ -549,10 +566,7 @@ export async function rematricularAluno(
     for (const ct of comboDestino.turmas) {
       const count = await prisma.matricula.count({
         where: {
-          OR: [
-            { turmaId: ct.turma.id },
-            { combo: { turmas: { some: { turmaId: ct.turma.id } } } },
-          ],
+          OR: [{ turmaId: ct.turma.id }, { combo: { turmas: { some: { turmaId: ct.turma.id } } } }],
           status: { in: seatStatuses },
           id: { not: input.matriculaId },
         },
@@ -567,7 +581,11 @@ export async function rematricularAluno(
   // 2.3 Capacidade
   const comboMatriculasAtivas = comboDestino
     ? await prisma.matricula.count({
-        where: { comboId: comboDestino.id, status: { in: seatStatuses }, id: { not: input.matriculaId } },
+        where: {
+          comboId: comboDestino.id,
+          status: { in: seatStatuses },
+          id: { not: input.matriculaId },
+        },
       })
     : 0;
 
@@ -581,7 +599,11 @@ export async function rematricularAluno(
     if (capacidadeResult.error === 'TURMA_SEM_VAGAS') {
       return {
         success: false,
-        error: { code: 'TURMA_SEM_VAGAS', turmaId: capacidadeResult.turmaId, turmaNome: capacidadeResult.turmaNome },
+        error: {
+          code: 'TURMA_SEM_VAGAS',
+          turmaId: capacidadeResult.turmaId,
+          turmaNome: capacidadeResult.turmaNome,
+        },
       };
     }
     return { success: false, error: { code: 'COMBO_SEM_VAGAS' } };
@@ -589,14 +611,22 @@ export async function rematricularAluno(
 
   // 2.4 Conflitos de horário (considera apenas matrículas ativas para conflito)
   const turmasExistentes = await prisma.matricula.findMany({
-    where: { alunoId: matriculaOrigem.alunoId, status: { in: seatStatuses }, id: { not: input.matriculaId } },
+    where: {
+      alunoId: matriculaOrigem.alunoId,
+      status: { in: seatStatuses },
+      id: { not: input.matriculaId },
+    },
     include: {
-      turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+      turma: {
+        select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+      },
       combo: {
         include: {
           turmas: {
             include: {
-              turma: { select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true } },
+              turma: {
+                select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+              },
             },
           },
         },
@@ -624,7 +654,11 @@ export async function rematricularAluno(
   if (!conflitosResult.success) {
     return {
       success: false,
-      error: { code: 'CONFLITO_HORARIO', turma1: conflitosResult.turma1, turma2: conflitosResult.turma2 },
+      error: {
+        code: 'CONFLITO_HORARIO',
+        turma1: conflitosResult.turma1,
+        turma2: conflitosResult.turma2,
+      },
     };
   }
 
@@ -649,45 +683,44 @@ export async function rematricularAluno(
   // 4. CRIAR OPERAÇÃO (FASE 1 - PREPARE)
   // -------------------------------------------------------------------------
 
-  const operacao = await prisma.rematriculaOperacao.create({
-    data: {
-      correlationId,
-      contaId: input.contaId,
-      matriculaOrigemId: input.matriculaId,
-      status: 'PENDING',
-      step: 'VALIDATED',
-      idempotencyKey,
-      payerType: payer.type as CustomerPayerType,
-      payerId: payer.id,
-      oldSubscriptionId: matriculaOrigem.asaasSubscriptionId,
-      policySnapshot: input.policyContext?.policySnapshot,
-      financialSnapshot: input.policyContext?.financialSnapshot,
-      actionStatus: input.policyContext?.actionStatus,
-      blockReason: input.policyContext?.blockReason ?? 'SEM_BLOQUEIO',
-      overrideUsed: input.policyContext?.overrideUsed ?? false,
-      overrideReason: input.overrideReason,
-      overrideApprovedById: input.policyContext?.overrideApprovedById,
-      evaluatedAt: new Date(),
-      createdById: input.createdById,
-    },
-  }).catch(async (error: unknown) => {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
-      const concurrentOperation = await prisma.rematriculaOperacao.findFirst({
-        where: { idempotencyKey },
-      });
+  const operacao = await prisma.rematriculaOperacao
+    .create({
+      data: {
+        correlationId,
+        contaId: input.contaId,
+        matriculaOrigemId: input.matriculaId,
+        status: 'PENDING',
+        step: 'VALIDATED',
+        idempotencyKey,
+        payerType: payer.type as CustomerPayerType,
+        payerId: payer.id,
+        oldSubscriptionId: matriculaOrigem.asaasSubscriptionId,
+        policySnapshot: input.policyContext?.policySnapshot,
+        financialSnapshot: input.policyContext?.financialSnapshot,
+        actionStatus: input.policyContext?.actionStatus,
+        blockReason: input.policyContext?.blockReason ?? 'SEM_BLOQUEIO',
+        overrideUsed: input.policyContext?.overrideUsed ?? false,
+        overrideReason: input.overrideReason,
+        overrideApprovedById: input.policyContext?.overrideApprovedById,
+        evaluatedAt: new Date(),
+        createdById: input.createdById,
+      },
+    })
+    .catch(async (error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const concurrentOperation = await prisma.rematriculaOperacao.findFirst({
+          where: { idempotencyKey },
+        });
 
-      if (concurrentOperation?.status === 'COMMITTED' && concurrentOperation.matriculaNovaId) {
-        return concurrentOperation;
+        if (concurrentOperation?.status === 'COMMITTED' && concurrentOperation.matriculaNovaId) {
+          return concurrentOperation;
+        }
+
+        throw new Error('OPERACAO_EM_ANDAMENTO');
       }
 
-      throw new Error('OPERACAO_EM_ANDAMENTO');
-    }
-
-    throw error;
-  });
+      throw error;
+    });
 
   if (operacao.status === 'COMMITTED' && operacao.matriculaNovaId) {
     return {
@@ -732,37 +765,38 @@ export async function rematricularAluno(
     // 5. RESOLVER/CRIAR CUSTOMER
     // -------------------------------------------------------------------------
 
-    const payerData = payer.type === 'ALUNO'
-      ? {
-          type: 'ALUNO' as const,
-          id: matriculaOrigem.aluno.id,
-          name: matriculaOrigem.aluno.nome,
-          cpfCnpj: matriculaOrigem.aluno.cpf ?? '',
-          email: matriculaOrigem.aluno.email ?? undefined,
-          phone: matriculaOrigem.aluno.telefone ?? undefined,
-          address: {
-            postalCode: matriculaOrigem.aluno.enderecoCep ?? undefined,
-            street: matriculaOrigem.aluno.enderecoLogradouro ?? undefined,
-            number: matriculaOrigem.aluno.enderecoNumero ?? undefined,
-            complement: matriculaOrigem.aluno.enderecoComplemento ?? undefined,
-            neighborhood: matriculaOrigem.aluno.enderecoBairro ?? undefined,
-          },
-        }
-      : {
-          type: 'RESPONSAVEL' as const,
-          id: matriculaOrigem.responsavelFinanceiro!.id,
-          name: matriculaOrigem.responsavelFinanceiro!.nome,
-          cpfCnpj: matriculaOrigem.responsavelFinanceiro!.cpf,
-          email: matriculaOrigem.responsavelFinanceiro!.email ?? undefined,
-          phone: matriculaOrigem.responsavelFinanceiro!.telefone ?? undefined,
-          address: {
-            postalCode: matriculaOrigem.responsavelFinanceiro!.enderecoCep ?? undefined,
-            street: matriculaOrigem.responsavelFinanceiro!.enderecoLogradouro ?? undefined,
-            number: matriculaOrigem.responsavelFinanceiro!.enderecoNumero ?? undefined,
-            complement: matriculaOrigem.responsavelFinanceiro!.enderecoComplemento ?? undefined,
-            neighborhood: matriculaOrigem.responsavelFinanceiro!.enderecoBairro ?? undefined,
-          },
-        };
+    const payerData =
+      payer.type === 'ALUNO'
+        ? {
+            type: 'ALUNO' as const,
+            id: matriculaOrigem.aluno.id,
+            name: matriculaOrigem.aluno.nome,
+            cpfCnpj: matriculaOrigem.aluno.cpf ?? '',
+            email: matriculaOrigem.aluno.email ?? undefined,
+            phone: matriculaOrigem.aluno.telefone ?? undefined,
+            address: {
+              postalCode: matriculaOrigem.aluno.enderecoCep ?? undefined,
+              street: matriculaOrigem.aluno.enderecoLogradouro ?? undefined,
+              number: matriculaOrigem.aluno.enderecoNumero ?? undefined,
+              complement: matriculaOrigem.aluno.enderecoComplemento ?? undefined,
+              neighborhood: matriculaOrigem.aluno.enderecoBairro ?? undefined,
+            },
+          }
+        : {
+            type: 'RESPONSAVEL' as const,
+            id: matriculaOrigem.responsavelFinanceiro!.id,
+            name: matriculaOrigem.responsavelFinanceiro!.nome,
+            cpfCnpj: matriculaOrigem.responsavelFinanceiro!.cpf,
+            email: matriculaOrigem.responsavelFinanceiro!.email ?? undefined,
+            phone: matriculaOrigem.responsavelFinanceiro!.telefone ?? undefined,
+            address: {
+              postalCode: matriculaOrigem.responsavelFinanceiro!.enderecoCep ?? undefined,
+              street: matriculaOrigem.responsavelFinanceiro!.enderecoLogradouro ?? undefined,
+              number: matriculaOrigem.responsavelFinanceiro!.enderecoNumero ?? undefined,
+              complement: matriculaOrigem.responsavelFinanceiro!.enderecoComplemento ?? undefined,
+              neighborhood: matriculaOrigem.responsavelFinanceiro!.enderecoBairro ?? undefined,
+            },
+          };
 
     const externalReference = `${payer.type.toLowerCase()}-${payer.id}`;
 
@@ -800,11 +834,15 @@ export async function rematricularAluno(
     // Isso evita cancelar a origem antes de garantir que a nova está ok.
 
     const vencimentoDia = input.vencimentoDia ?? matriculaOrigem.vencimentoDia ?? 5;
-    const valorPlano = comboDestino
-      ? Number(comboDestino.valor)
-      : planoDestino
-        ? Number(planoDestino.valor)
-        : 0;
+    const valorOverride = input.valorMensalidadeOverride ?? 0;
+    const valorPlano =
+      Number.isFinite(valorOverride) && valorOverride > 0
+        ? valorOverride
+        : comboDestino
+          ? Number(comboDestino.valor)
+          : planoDestino
+            ? Number(planoDestino.valor)
+            : 0;
     const descontosResolvidos = await resolveRematriculaDescontos(
       prisma,
       input.contaId,
@@ -818,7 +856,7 @@ export async function rematricularAluno(
 
     const taxaIsenta = input.taxaIsenta ?? false;
     const taxaValor = taxaIsenta ? 0 : (input.taxaMatricula ?? 0);
-    const taxaStatus = taxaIsenta ? 'ISENTO' : (taxaValor > 0 ? 'PENDENTE' : 'ISENTO');
+    const taxaStatus = taxaIsenta ? 'ISENTO' : taxaValor > 0 ? 'PENDENTE' : 'ISENTO';
 
     const novaMatricula = await prisma.matricula.create({
       data: {
@@ -827,6 +865,7 @@ export async function rematricularAluno(
         turmaId: turmaDestino?.id ?? null,
         planoId: planoDestino?.id ?? null,
         comboId: comboDestino?.id ?? null,
+        billingMode: input.billingMode ?? 'INDIVIDUAL',
         rematriculadaDeId: input.matriculaId,
         dataInicio: input.dataInicio,
         dataFimContrato: input.dataFimContrato,
@@ -838,7 +877,8 @@ export async function rematricularAluno(
         taxaIsenta,
         taxaStatus,
         taxaJustificativa: input.taxaJustificativa ?? null,
-        formaPagamentoTaxa: input.formaPagamentoTaxa ?? matriculaOrigem.formaPagamentoTaxa ?? 'BOLETO',
+        formaPagamentoTaxa:
+          input.formaPagamentoTaxa ?? matriculaOrigem.formaPagamentoTaxa ?? 'BOLETO',
         vencimentoDia,
         jurosMensal: input.jurosMensal ?? matriculaOrigem.jurosMensal,
         multaPercentual: input.multaPercentual ?? matriculaOrigem.multaPercentual,
@@ -857,7 +897,7 @@ export async function rematricularAluno(
 
     await prisma.rematriculaOperacao.update({
       where: { id: operacao.id },
-      data: { 
+      data: {
         matriculaNovaId: novaMatricula.id,
         step: 'NEW_MATRICULA_CREATED',
       },
@@ -876,63 +916,77 @@ export async function rematricularAluno(
       },
     });
 
-    // -------------------------------------------------------------------------
-    // 7. CRIAR NOVA ASSINATURA NO GATEWAY
-    // -------------------------------------------------------------------------
+    const shouldCreateFinancialCycle = input.criarCobranca !== false && valorPlanoLiquido > 0;
+    let subscriptionResult: ProviderCreateSubscriptionResult | null = null;
 
-    const nextDueDate = resolveFirstDueDate(input.dataInicio, vencimentoDia);
+    if (shouldCreateFinancialCycle) {
+      // -------------------------------------------------------------------------
+      // 7. CRIAR NOVA ASSINATURA NO GATEWAY
+      // -------------------------------------------------------------------------
 
-    const subscriptionResult = await paymentsProvider.createSubscription({
-      contaId: input.contaId,
-      customerId: customerResult.customerId,
-      value: valorPlanoLiquido,
-      nextDueDate: formatDateYYYYMMDD(nextDueDate),
-      cycle: periodicidadeToCycle(periodicidade),
-      billingType: formaPagamentoToBillingType(input.formaPagamento),
-      description: `Mensalidade - ${matriculaOrigem.aluno.nome}`,
-      externalReference: `rematricula-${operacao.id}`,
-      endDate: formatDateYYYYMMDD(input.dataFimContrato),
-      discount: input.descontoAntecipado
-        ? { value: input.descontoAntecipado, dueDateLimitDays: input.prazoDesconto ?? 0, type: 'PERCENTAGE' }
-        : undefined,
-      interest: input.jurosMensal ? { value: input.jurosMensal } : undefined,
-      fine: input.multaPercentual ? { value: input.multaPercentual, type: 'PERCENTAGE' } : undefined,
-    });
+      const nextDueDate = resolveFirstDueDate(input.dataInicio, vencimentoDia);
 
-    // Atualizar matrícula com subscriptionId
-    await prisma.matricula.update({
-      where: { id: novaMatricula.id },
-      data: { asaasSubscriptionId: subscriptionResult.subscriptionId },
-    });
+      subscriptionResult = await paymentsProvider.createSubscription({
+        contaId: input.contaId,
+        customerId: customerResult.customerId,
+        value: valorPlanoLiquido,
+        nextDueDate: formatDateYYYYMMDD(nextDueDate),
+        cycle: periodicidadeToCycle(periodicidade),
+        billingType: formaPagamentoToBillingType(input.formaPagamento),
+        description: `Mensalidade - ${matriculaOrigem.aluno.nome}`,
+        externalReference: `rematricula-${operacao.id}`,
+        endDate: formatDateYYYYMMDD(input.dataFimContrato),
+        discount: input.descontoAntecipado
+          ? {
+              value: input.descontoAntecipado,
+              dueDateLimitDays: input.prazoDesconto ?? 0,
+              type: 'PERCENTAGE',
+            }
+          : undefined,
+        interest: input.jurosMensal ? { value: input.jurosMensal } : undefined,
+        fine: input.multaPercentual
+          ? { value: input.multaPercentual, type: 'PERCENTAGE' }
+          : undefined,
+      });
 
-    // Atualizar operação - assinatura criada
-    await prisma.rematriculaOperacao.update({
-      where: { id: operacao.id },
-      data: {
-        newSubscriptionId: subscriptionResult.subscriptionId,
-        step: 'SUBSCRIPTION_CREATED',
-      },
-    });
+      await prisma.matricula.update({
+        where: { id: novaMatricula.id },
+        data: { asaasSubscriptionId: subscriptionResult.subscriptionId },
+      });
 
-    await prisma.matriculaLog.create({
-      data: {
-        matriculaId: novaMatricula.id,
-        action: 'REMATRICULA_PRIMEIRO_CICLO_AGUARDANDO_WEBHOOK',
-        actorId: input.createdById,
-        metadata: {
-          correlationId,
-          asaasSubscriptionId: subscriptionResult.subscriptionId,
-          nextDueDate: subscriptionResult.nextDueDate,
-          expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+      await prisma.rematriculaOperacao.update({
+        where: { id: operacao.id },
+        data: {
+          newSubscriptionId: subscriptionResult.subscriptionId,
+          step: 'SUBSCRIPTION_CREATED',
         },
-      },
-    });
+      });
+
+      await prisma.matriculaLog.create({
+        data: {
+          matriculaId: novaMatricula.id,
+          action: 'REMATRICULA_PRIMEIRO_CICLO_AGUARDANDO_WEBHOOK',
+          actorId: input.createdById,
+          metadata: {
+            correlationId,
+            asaasSubscriptionId: subscriptionResult.subscriptionId,
+            nextDueDate: subscriptionResult.nextDueDate,
+            expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+          },
+        },
+      });
+    } else {
+      await prisma.rematriculaOperacao.update({
+        where: { id: operacao.id },
+        data: { step: 'SUBSCRIPTION_CREATED' },
+      });
+    }
 
     // -------------------------------------------------------------------------
     // 7.2 CRIAR TAXA DE MATRÍCULA AVULSA (quando não isenta)
     // -------------------------------------------------------------------------
 
-    if (!taxaIsenta && taxaValor > 0) {
+    if (shouldCreateFinancialCycle && !taxaIsenta && taxaValor > 0) {
       const taxaDueDate = formatDateYYYYMMDD(input.dataInicio);
       const taxaExternalReference = `taxa-rematricula-${operacao.id}`;
       const taxaBillingType = formaPagamentoToBillingType(input.formaPagamentoTaxa);
@@ -1101,7 +1155,7 @@ export async function rematricularAluno(
           correlationId,
           operacaoId: operacao.id,
           matriculaOrigemId: input.matriculaId,
-          subscriptionId: subscriptionResult.subscriptionId,
+          subscriptionId: subscriptionResult?.subscriptionId ?? null,
           customerId: customerResult.customerId,
           overrideUsed: input.policyContext?.overrideUsed ?? false,
           overrideReason: input.overrideReason ?? null,
@@ -1188,7 +1242,7 @@ export type RetryRematriculaResult =
 
 /**
  * Retry idempotente de uma operação de rematrícula que falhou.
- * 
+ *
  * Regras:
  * - Só pode fazer retry de operações com status FAILED
  * - Retoma do step onde parou
@@ -1196,7 +1250,7 @@ export type RetryRematriculaResult =
  */
 export async function retryRematricula(
   input: RetryRematriculaInput,
-  deps: RematricularAlunoDeps
+  deps: RematricularAlunoDeps,
 ): Promise<RetryRematriculaResult> {
   const { prisma, paymentsProvider } = deps;
 
@@ -1322,7 +1376,10 @@ export async function retryRematricula(
     const novaMatricula = operacao.matriculaNova;
 
     // Se não tem matrícula nova, precisa criar
-    if (!novaMatricula && (currentStep === 'VALIDATED' || currentStep === 'NEW_MATRICULA_CREATED')) {
+    if (
+      !novaMatricula &&
+      (currentStep === 'VALIDATED' || currentStep === 'NEW_MATRICULA_CREATED')
+    ) {
       // Precisa recriar a matrícula - isso é mais complexo
       // Por segurança, retornar erro e pedir nova tentativa completa
       return {
@@ -1352,7 +1409,10 @@ export async function retryRematricula(
       const descontosResolvidos = mapDescontosAplicadosDaMatricula(novaMatricula.descontos);
       const { valorPlanoLiquido } = calcularValorPlanoLiquido(valorPlano, descontosResolvidos);
       const periodicidade = combo?.periodicidade ?? plano?.periodicidade ?? 'MENSAL';
-      const nextDueDate = resolveFirstDueDate(novaMatricula.dataInicio, novaMatricula.vencimentoDia);
+      const nextDueDate = resolveFirstDueDate(
+        novaMatricula.dataInicio,
+        novaMatricula.vencimentoDia,
+      );
 
       const subscriptionResult = await paymentsProvider.createSubscription({
         contaId: input.contaId,

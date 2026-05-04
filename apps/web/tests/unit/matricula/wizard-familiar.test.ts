@@ -67,9 +67,7 @@ describe('useMatriculaWizard — getSteps', () => {
 // ─── useMatriculaFamiliarSubmit ───────────────────────────────────────────────
 
 describe('useMatriculaFamiliarSubmit', async () => {
-  const { useMatriculaFamiliarSubmit } = await import(
-    '@/hooks/use-matricula-familiar-submit'
-  );
+  const { useMatriculaFamiliarSubmit } = await import('@/hooks/use-matricula-familiar-submit');
 
   const baseState: WizardState = {
     contaId: 'conta-1',
@@ -104,11 +102,16 @@ describe('useMatriculaFamiliarSubmit', async () => {
   it('retorna success para todos os alunos quando API responde OK', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ matricula: { id: 'mat-x' } }),
+      json: async () => ({
+        results: [
+          { alunoId: 'a1', alunoNome: 'João', status: 'success', matriculaId: 'mat-1' },
+          { alunoId: 'a2', alunoNome: 'Ana', status: 'success', matriculaId: 'mat-2' },
+        ],
+      }),
     });
     vi.stubGlobal('fetch', mockFetch);
 
-    // modeloId undefined => createContrato não é chamado; apenas 2 fetches
+    // modeloId undefined => createContrato não é chamado
     const stateWithoutModelo = { ...baseState, modeloId: undefined };
 
     const { result } = renderHook(() => useMatriculaFamiliarSubmit());
@@ -120,10 +123,15 @@ describe('useMatriculaFamiliarSubmit', async () => {
     expect(results).toHaveLength(2);
     expect(results![0].status).toBe('success');
     expect(results![1].status).toBe('success');
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const firstPayload = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(firstPayload.responsavelId).toBe('resp-1');
+    expect(firstPayload.alunos).toHaveLength(2);
+    expect(firstPayload.criarCobranca).toBe(true);
+    expect(firstPayload.taxaMatricula).toBe(50);
   });
 
-  it('retorna erro para aluno que falha, sucesso para os demais (tolerância parcial)', async () => {
+  it('interrompe o fluxo quando a matrícula principal da cobrança familiar falha', async () => {
     let callCount = 0;
     const mockFetch = vi.fn().mockImplementation(async () => {
       callCount++;
@@ -142,7 +150,8 @@ describe('useMatriculaFamiliarSubmit', async () => {
 
     expect(results![0].status).toBe('error');
     expect(results![0].errorMessage).toContain('Aluno já matriculado');
-    expect(results![1].status).toBe('success');
+    expect(results).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('sanitiza menção a Asaas nas mensagens de erro', async () => {

@@ -80,7 +80,9 @@ async function loadRematriculaDecision(params: {
         statusFinanceiro: true,
         cobrancas: {
           where: {
-            status: { in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+            status: {
+              in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
+            },
           },
           select: { status: true },
         },
@@ -158,6 +160,12 @@ function parseInteger(value: unknown) {
   return parsed !== undefined ? Math.trunc(parsed) : undefined;
 }
 
+function normalizeRematriculaBillingMode(value: unknown) {
+  if (value === 'SHARED_PLAN') return 'SHARED_PLAN';
+  if (value === 'INDIVIDUAL') return 'INDIVIDUAL';
+  return undefined;
+}
+
 function toDate(value: unknown) {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim().length) {
@@ -203,7 +211,11 @@ export async function GET(req: Request) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
     if (!auth.user?.id || !auth.user.role || !allowedRoles.has(auth.user.role.toUpperCase())) {
-      return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para consultar rematrículas.');
+      return jsonError(
+        403,
+        'PERMISSAO_NEGADA',
+        'Usuário não tem permissão para consultar rematrículas.',
+      );
     }
 
     const queryDTO = listRematriculasQueryDTOSchema.parse({
@@ -217,10 +229,11 @@ export async function GET(req: Request) {
     const dias = queryDTO.diasAntecedencia;
     const referenciaParam = queryDTO.referencia;
     const statusContratoParam = queryDTO.statusContrato;
-    const statusContratoValue = statusContratoParam &&
+    const statusContratoValue =
+      statusContratoParam &&
       Object.values(StatusContrato).includes(statusContratoParam as StatusContrato)
-      ? (statusContratoParam as StatusContrato)
-      : undefined;
+        ? (statusContratoParam as StatusContrato)
+        : undefined;
 
     const result = await listarRematriculasElegiveis({
       contaId: auth.contaId,
@@ -290,8 +303,7 @@ export async function POST(req: Request) {
       return jsonError(400, 'MATRICULA_OBRIGATORIA', 'matriculaId é obrigatório.');
     }
 
-    const dataInicioValue =
-      toDate(body.dataInicio) ?? new Date();
+    const dataInicioValue = toDate(body.dataInicio) ?? new Date();
     const dataFimContratoValue = toDate(body.dataFimContrato);
     if (!dataFimContratoValue) {
       return jsonError(400, 'DATA_FIM_CONTRATO_OBRIGATORIA', 'dataFimContrato é obrigatório.');
@@ -309,7 +321,8 @@ export async function POST(req: Request) {
 
     const policySnapshot = serializePolicySnapshot(rematriculaDecision.policy);
     const financialSnapshot = serializeFinancialSnapshot(rematriculaDecision.financialSnapshot);
-    const overrideReason = typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
+    const overrideReason =
+      typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
 
     if (rematriculaDecision.decision.actionStatus === 'BLOQUEADA') {
       await auditBlockedAttempt({
@@ -321,15 +334,10 @@ export async function POST(req: Request) {
         decisionMessage: rematriculaDecision.decision.message,
       });
 
-      return jsonError(
-        409,
-        'REMATRICULA_BLOQUEADA',
-        rematriculaDecision.decision.message,
-        {
-          actionStatus: rematriculaDecision.decision.actionStatus,
-          blockReason: rematriculaDecision.decision.blockReason,
-        },
-      );
+      return jsonError(409, 'REMATRICULA_BLOQUEADA', rematriculaDecision.decision.message, {
+        actionStatus: rematriculaDecision.decision.actionStatus,
+        blockReason: rematriculaDecision.decision.blockReason,
+      });
     }
 
     if (rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE') {
@@ -344,7 +352,11 @@ export async function POST(req: Request) {
           overrideReason,
         });
 
-        return jsonError(403, 'OVERRIDE_SEM_PERMISSAO', 'Seu perfil não pode autorizar esta rematrícula.');
+        return jsonError(
+          403,
+          'OVERRIDE_SEM_PERMISSAO',
+          'Seu perfil não pode autorizar esta rematrícula.',
+        );
       }
 
       if (rematriculaDecision.decision.requiresOverrideReason && !overrideReason) {
@@ -357,7 +369,11 @@ export async function POST(req: Request) {
           decisionMessage: rematriculaDecision.decision.message,
         });
 
-        return jsonError(422, 'OVERRIDE_MOTIVO_OBRIGATORIO', 'Informe o motivo da autorização administrativa.');
+        return jsonError(
+          422,
+          'OVERRIDE_MOTIVO_OBRIGATORIO',
+          'Informe o motivo da autorização administrativa.',
+        );
       }
     }
 
@@ -381,10 +397,15 @@ export async function POST(req: Request) {
         responsavelFinanceiroId: body.responsavelFinanceiroId ?? null,
         formaPagamento: formaPagamento ? formaPagamentoMap[formaPagamento] : undefined,
         vencimentoDia: parseInteger(body.vencimentoDia),
+        billingMode: normalizeRematriculaBillingMode(body.billingMode),
+        valorMensalidadeOverride: parseNumber(body.valorMensalidadeOverride),
         taxaMatricula: parseNumber(body.taxaMatricula),
         taxaIsenta: body.taxaIsenta === true || body.taxaIsenta === 'true',
-        taxaJustificativa: typeof body.taxaJustificativa === 'string' ? body.taxaJustificativa.trim() : undefined,
-        formaPagamentoTaxa: body.formaPagamentoTaxa ? formaPagamentoMap[body.formaPagamentoTaxa] : undefined,
+        taxaJustificativa:
+          typeof body.taxaJustificativa === 'string' ? body.taxaJustificativa.trim() : undefined,
+        formaPagamentoTaxa: body.formaPagamentoTaxa
+          ? formaPagamentoMap[body.formaPagamentoTaxa]
+          : undefined,
         descontos: Array.isArray(body.descontos)
           ? body.descontos
               .map((desconto) => ({
@@ -405,7 +426,9 @@ export async function POST(req: Request) {
           financialSnapshot,
           overrideUsed: rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE',
           overrideApprovedById:
-            rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE' ? auth.user.id : undefined,
+            rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE'
+              ? auth.user.id
+              : undefined,
         },
       },
       {
@@ -513,14 +536,20 @@ export async function POST(req: Request) {
 function mapRematriculaErrorToResponse(error: RematricularAlunoError) {
   const errorMap: Record<string, { status: number; message: string }> = {
     MATRICULA_NAO_ENCONTRADA: { status: 404, message: 'Matrícula não encontrada.' },
-    MATRICULA_PERTENCE_OUTRA_CONTA: { status: 403, message: 'Matrícula não pertence a esta conta.' },
+    MATRICULA_PERTENCE_OUTRA_CONTA: {
+      status: 403,
+      message: 'Matrícula não pertence a esta conta.',
+    },
     STATUS_INVALIDO: { status: 422, message: 'Status da matrícula não permite rematrícula.' },
     TURMA_SEM_VAGAS: { status: 422, message: 'Turma não possui vagas disponíveis.' },
     COMBO_SEM_VAGAS: { status: 422, message: 'Combo atingiu limite de vagas.' },
     CONFLITO_HORARIO: { status: 422, message: 'Conflito de horário detectado.' },
     DATA_INICIO_INVALIDA: { status: 422, message: 'Data de início inválida.' },
     DATA_FIM_ANTES_INICIO: { status: 422, message: 'Data fim deve ser posterior à data início.' },
-    RESPONSAVEL_OBRIGATORIO_MENOR: { status: 422, message: 'Aluno menor de idade requer responsável financeiro.' },
+    RESPONSAVEL_OBRIGATORIO_MENOR: {
+      status: 422,
+      message: 'Aluno menor de idade requer responsável financeiro.',
+    },
     PLANO_NAO_ENCONTRADO: { status: 404, message: 'Plano não encontrado.' },
     TURMA_NAO_ENCONTRADA: { status: 404, message: 'Turma não encontrada.' },
     COMBO_NAO_ENCONTRADO: { status: 404, message: 'Combo não encontrado.' },
@@ -529,7 +558,8 @@ function mapRematriculaErrorToResponse(error: RematricularAlunoError) {
   };
 
   const mapped = errorMap[error.code] ?? { status: 500, message: 'Erro desconhecido.' };
-  const details = 'message' in error ? error.message : 'details' in error ? error.details : undefined;
+  const details =
+    'message' in error ? error.message : 'details' in error ? error.details : undefined;
 
   return jsonError(mapped.status, error.code, mapped.message, details);
 }

@@ -63,6 +63,11 @@ export async function GET(req: NextRequest) {
         email: true,
         telefone: true,
         financeiro: true,
+        _count: {
+          select: {
+            alunos: true,
+          },
+        },
       },
       orderBy: { nome: 'asc' },
       take: filters.take,
@@ -132,6 +137,11 @@ export async function POST(req: NextRequest) {
         email: true,
         telefone: true,
         financeiro: true,
+        _count: {
+          select: {
+            alunos: true,
+          },
+        },
       },
     });
 

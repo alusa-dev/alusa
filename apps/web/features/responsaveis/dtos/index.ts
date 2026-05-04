@@ -15,6 +15,7 @@ export const responsavelSummaryDTOSchema = z.object({
   email: z.string(),
   telefone: z.string(),
   financeiro: z.boolean(),
+  alunosCount: z.number().int().nonnegative().optional().default(0),
 });
 
 export type ResponsavelSummaryDTO = z.infer<typeof responsavelSummaryDTOSchema>;
@@ -32,6 +33,92 @@ export type CreateResponsavelInputDTO = z.infer<typeof createResponsavelInputDTO
 export const createResponsavelResultDTOSchema = responsavelSummaryDTOSchema;
 
 export type CreateResponsavelResultDTO = z.infer<typeof createResponsavelResultDTOSchema>;
+
+export const updateResponsavelInputDTOSchema = responsavelSchema
+  .omit({ id: true })
+  .partial()
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'Informe ao menos um campo para atualizar.',
+  });
+
+export type UpdateResponsavelInputDTO = z.infer<typeof updateResponsavelInputDTOSchema>;
+
+export const responsavelDetailDTOSchema = responsavelSummaryDTOSchema.extend({
+  asaasCustomerId: z.string().nullable(),
+  usuarioId: z.string().nullable(),
+  endereco: z.object({
+    cep: z.string().nullable(),
+    logradouro: z.string().nullable(),
+    numero: z.string().nullable(),
+    complemento: z.string().nullable(),
+    bairro: z.string().nullable(),
+    cidade: z.string().nullable(),
+    uf: z.string().nullable(),
+  }),
+  metrics: z.object({
+    alunos: z.number().int().nonnegative(),
+    matriculasFinanceiras: z.number().int().nonnegative(),
+    vendas: z.number().int().nonnegative(),
+  }),
+  createdAt: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+});
+
+export type ResponsavelDetailDTO = z.infer<typeof responsavelDetailDTOSchema>;
+
+export const responsavelOverviewSummaryDTOSchema = z.object({
+  familyEnrollments: z.number().int().nonnegative(),
+  familyReenrollments: z.number().int().nonnegative(),
+  openCharges: z.number().int().nonnegative(),
+  overdueCharges: z.number().int().nonnegative(),
+  totalOpenValue: z.number().nonnegative(),
+});
+
+export const responsavelFamilyAggregateDTOSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(['MATRICULA', 'REMATRICULA']),
+  status: z.string().min(1),
+  totalAlunos: z.number().int().nonnegative(),
+  valorMensalidadeTotal: z.number().nonnegative(),
+  valorTaxaMatriculaTotal: z.number().nonnegative(),
+  standaloneSubscriptionId: z.string().nullable(),
+  standaloneEnrollmentChargeId: z.string().nullable(),
+  createdAt: z.string().datetime().or(z.string().min(1)),
+});
+
+export const responsavelFamilyChargeDTOSchema = z.object({
+  id: z.string().min(1),
+  description: z.string().nullable(),
+  status: z.string().min(1),
+  value: z.number().nonnegative(),
+  dueDate: z.string().nullable(),
+  invoiceUrl: z.string().nullable(),
+  familyGroupId: z.string().nullable(),
+});
+
+export const responsavelRematriculaCandidateDTOSchema = z.object({
+  matriculaId: z.string().min(1),
+  alunoId: z.string().min(1),
+  alunoNome: z.string().min(1),
+  dataFimContrato: z.string().min(1),
+  planoNome: z.string().nullable(),
+  comboNome: z.string().nullable(),
+  turmaNome: z.string().nullable(),
+  actionStatus: z.string().min(1),
+  blockReason: z.string().nullable(),
+  message: z.string().min(1),
+  podeRenovar: z.boolean(),
+});
+
+export const responsavelOverviewDTOSchema = z.object({
+  summary: responsavelOverviewSummaryDTOSchema,
+  families: z.array(responsavelFamilyAggregateDTOSchema),
+  reenrollments: z.array(responsavelFamilyAggregateDTOSchema),
+  charges: z.array(responsavelFamilyChargeDTOSchema),
+  rematriculaCandidates: z.array(responsavelRematriculaCandidateDTOSchema),
+});
+
+export type ResponsavelOverviewDTO = z.infer<typeof responsavelOverviewDTOSchema>;
 
 export const linkAlunoResponsavelInputDTOSchema = z.object({
   responsavelId: z.string().trim().min(1),

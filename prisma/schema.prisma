@@ -232,6 +232,22 @@ enum BillingMode {
   SHARED_PLAN
 }
 
+enum FamilyBillingStatus {
+  PENDENTE
+  PROCESSANDO
+  ATIVO
+  PARCIAL
+  FALHO
+  CANCELADO
+}
+
+enum FamilyBillingOutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
 // Status de sincronização com integração financeira
 enum IntegrationSyncStatus {
   PENDENTE_SINCRONISMO
@@ -541,6 +557,9 @@ model Conta {
   rematriculaOperacoes         RematriculaOperacao[]
   payerChangeOperacoes         PayerChangeOperacao[]
   matriculaOperacoes           MatriculaOperacao[]
+  matriculasFamiliares         MatriculaFamiliar[]
+  rematriculasFamiliares       RematriculaFamiliar[]
+  familyBillingOutboxEvents    FamilyBillingOutbox[]
   calendarEvents               CalendarEvent[]
   attendanceRecords            AttendanceRecord[]
   makeupClasses                MakeupClass[]
@@ -854,6 +873,8 @@ model Responsavel {
   conta                 Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
   alunos                AlunoResponsavel[]
   matriculasFinanceiras Matricula[]        @relation("MatriculaResponsavelFinanceiro")
+  matriculasFamiliares  MatriculaFamiliar[]
+  rematriculasFamiliares RematriculaFamiliar[]
   sales                 Sale[]
 
   // Multi-tenant: unicidade por conta
@@ -1141,6 +1162,7 @@ model Matricula {
   asaasId                 String?               @unique
   asaasSubscriptionId     String?               @unique
   billingMode             BillingMode           @default(INDIVIDUAL) // Modo de cobrança (PR2)
+  matriculaFamiliarId     String?
   timeoutAppliedAt        DateTime? // Quando timeout foi aplicado (PR3)
   // Campos de pausa
   pausaAtiva              Boolean               @default(false)
@@ -1157,6 +1179,7 @@ model Matricula {
 
   aluno                      Aluno                 @relation(fields: [alunoId], references: [id], onDelete: Cascade)
   responsavelFinanceiro      Responsavel?          @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
+  matriculaFamiliar         MatriculaFamiliar?    @relation(fields: [matriculaFamiliarId], references: [id], onDelete: SetNull)
   turma                      Turma?                @relation(fields: [turmaId], references: [id])
   plano                      Plano?                @relation(fields: [planoId], references: [id])
   combo                      Combo?                @relation(fields: [comboId], references: [id])
@@ -1178,6 +1201,9 @@ model Matricula {
   attendanceRecords          AttendanceRecord[]
   makeupClasses              MakeupClass[]
   sales                      Sale[]
+  matriculaFamiliarItems     MatriculaFamiliarItem[]
+  rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemOrigem")
+  rematriculaFamiliarItemsNova   RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemNova")
 
   @@index([alunoId], name: "idx_matricula_aluno")
   @@index([responsavelFinanceiroId], name: "idx_matricula_responsavel")
@@ -1190,6 +1216,136 @@ model Matricula {
   @@index([statusContrato], name: "idx_matricula_status_contrato")
   @@index([dataFimContrato], name: "idx_matricula_fim_contrato")
   @@index([contratoAtualId], name: "idx_matricula_contrato_atual")
+  @@index([matriculaFamiliarId], name: "idx_matricula_familiar")
+}
+
+model MatriculaFamiliar {
+  id                         String              @id @default(cuid())
+  contaId                    String
+  responsavelId              String
+  billingMode                BillingMode         @default(SHARED_PLAN)
+  status                     FamilyBillingStatus @default(PENDENTE)
+  totalAlunos                Int                 @default(0)
+  valorMensalidadeTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  valorTaxaMatriculaTotal    Decimal             @default(0) @db.Decimal(12, 2)
+  formaPagamento             String?
+  ciclo                      String?
+  diaVencimento              Int?
+  dataInicio                 DateTime?
+  dataFimContrato            DateTime?
+  standaloneSubscriptionId   String?
+  standaloneEnrollmentChargeId String?
+  ultimoErro                 String?
+  actorId                    String?
+  uiRequestId                String?
+  createdAt                  DateTime            @default(now())
+  updatedAt                  DateTime            @updatedAt
+
+  conta         Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsavel   Responsavel            @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  matriculas    Matricula[]
+  items         MatriculaFamiliarItem[]
+  outboxEvents  FamilyBillingOutbox[]
+
+  @@index([contaId], name: "idx_matricula_familiar_conta")
+  @@index([responsavelId], name: "idx_matricula_familiar_responsavel")
+  @@index([status], name: "idx_matricula_familiar_status")
+  @@unique([contaId, uiRequestId], name: "uq_matricula_familiar_conta_request")
+}
+
+model MatriculaFamiliarItem {
+  id                  String   @id @default(cuid())
+  matriculaFamiliarId String
+  matriculaId         String
+  orderIndex          Int      @default(0)
+  createdAt           DateTime @default(now())
+
+  matriculaFamiliar MatriculaFamiliar @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
+  matricula         Matricula         @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+
+  @@unique([matriculaFamiliarId, matriculaId], name: "uq_matricula_familiar_item")
+  @@index([matriculaId], name: "idx_matricula_familiar_item_matricula")
+}
+
+model RematriculaFamiliar {
+  id                           String              @id @default(cuid())
+  contaId                      String
+  responsavelId                String
+  billingMode                  BillingMode         @default(SHARED_PLAN)
+  status                       FamilyBillingStatus @default(PENDENTE)
+  totalAlunos                  Int                 @default(0)
+  valorMensalidadeTotal        Decimal             @default(0) @db.Decimal(12, 2)
+  valorTaxaMatriculaTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  formaPagamento               String?
+  ciclo                        String?
+  diaVencimento                Int?
+  dataInicio                   DateTime?
+  dataFimContrato              DateTime?
+  standaloneSubscriptionId     String?
+  standaloneEnrollmentChargeId String?
+  ultimoErro                   String?
+  actorId                      String?
+  uiRequestId                  String?
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
+
+  conta        Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsavel  Responsavel             @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  items        RematriculaFamiliarItem[]
+  outboxEvents FamilyBillingOutbox[]
+
+  @@index([contaId], name: "idx_rematricula_familiar_conta")
+  @@index([responsavelId], name: "idx_rematricula_familiar_responsavel")
+  @@index([status], name: "idx_rematricula_familiar_status")
+  @@unique([contaId, uiRequestId], name: "uq_rematricula_familiar_conta_request")
+}
+
+model RematriculaFamiliarItem {
+  id                    String   @id @default(cuid())
+  rematriculaFamiliarId String
+  matriculaOrigemId     String
+  novaMatriculaId       String?
+  orderIndex            Int      @default(0)
+  status                String   @default("PENDENTE")
+  erro                  String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  rematriculaFamiliar RematriculaFamiliar @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
+  matriculaOrigem     Matricula           @relation("RematriculaFamiliarItemOrigem", fields: [matriculaOrigemId], references: [id], onDelete: Cascade)
+  novaMatricula       Matricula?          @relation("RematriculaFamiliarItemNova", fields: [novaMatriculaId], references: [id], onDelete: SetNull)
+
+  @@unique([rematriculaFamiliarId, matriculaOrigemId], name: "uq_rematricula_familiar_item")
+  @@index([matriculaOrigemId], name: "idx_rematricula_familiar_item_origem")
+  @@index([novaMatriculaId], name: "idx_rematricula_familiar_item_nova")
+}
+
+model FamilyBillingOutbox {
+  id                    String                   @id @default(cuid())
+  contaId               String
+  aggregateType         String
+  aggregateId           String
+  eventType             String
+  payload               Json
+  status                FamilyBillingOutboxStatus @default(PENDING)
+  attempts              Int                      @default(0)
+  availableAt           DateTime                 @default(now())
+  lockedAt              DateTime?
+  processedAt           DateTime?
+  lastAttemptAt         DateTime?
+  lastError             String?
+  matriculaFamiliarId   String?
+  rematriculaFamiliarId String?
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  conta               Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  matriculaFamiliar   MatriculaFamiliar?  @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
+  rematriculaFamiliar RematriculaFamiliar? @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, status, availableAt], name: "idx_family_billing_outbox_queue")
+  @@index([matriculaFamiliarId], name: "idx_family_billing_outbox_matricula")
+  @@index([rematriculaFamiliarId], name: "idx_family_billing_outbox_rematricula")
 }
 
 model MatriculaTurma {
@@ -2217,6 +2373,7 @@ model Charge {
   billingType String? // PIX, BOLETO, CREDIT_CARD, etc.
   customerId  String? // ID do Customer local (para referência)
   invoiceUrl  String? // Link de pagamento (invoiceUrl do Asaas)
+  familyGroupId String?
 
   standaloneInstallmentPlanId String?
   standaloneSubscriptionId    String?
@@ -2244,6 +2401,7 @@ model Charge {
   @@index([customerId])
   @@index([standaloneInstallmentPlanId])
   @@index([standaloneSubscriptionId])
+  @@index([familyGroupId])
 }
 
 model ChargeReadModel {
@@ -2306,6 +2464,7 @@ model StandaloneInstallmentPlan {
   billingType      String
   value            Decimal  @db.Decimal(12, 2)
   firstDueDate     DateTime
+  familyGroupId    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2320,6 +2479,7 @@ model StandaloneInstallmentPlan {
   @@index([contaId, status, firstDueDate], name: "idx_standalone_installment_conta_status_due")
   @@index([asaasInstallmentId])
   @@index([customerId])
+  @@index([familyGroupId])
 }
 
 model StandaloneSubscription {
@@ -2342,6 +2502,7 @@ model StandaloneSubscription {
   nextDueDate DateTime
   endDate     DateTime?
   description String?
+  familyGroupId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2356,6 +2517,7 @@ model StandaloneSubscription {
   @@index([contaId, status, nextDueDate], name: "idx_standalone_subscription_conta_status_due")
   @@index([asaasSubscriptionId])
   @@index([customerId])
+  @@index([familyGroupId])
 }
 
 model ArquivoCharge {

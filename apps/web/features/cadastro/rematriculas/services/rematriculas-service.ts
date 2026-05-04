@@ -14,11 +14,7 @@ import {
   type RematriculaTurmaDTO as RematriculaTurma,
 } from '../dtos';
 
-export type {
-  FormaPagamentoValue,
-  RematriculaElegivelItem,
-  StatusContrato,
-};
+export type { FormaPagamentoValue, RematriculaElegivelItem, StatusContrato };
 
 export interface ListRematriculasParams {
   contaId: string;
@@ -70,7 +66,12 @@ function parseDate(value: unknown) {
 function parseFormaPagamento(value: unknown): FormaPagamentoValue | null {
   if (typeof value !== 'string') return null;
   const normalized = value.toUpperCase();
-  if (normalized === 'BOLETO' || normalized === 'PIX' || normalized === 'CARTAO_CREDITO' || normalized === 'INDEFINIDO') {
+  if (
+    normalized === 'BOLETO' ||
+    normalized === 'PIX' ||
+    normalized === 'CARTAO_CREDITO' ||
+    normalized === 'INDEFINIDO'
+  ) {
     return normalized as FormaPagamentoValue;
   }
   return null;
@@ -98,13 +99,17 @@ function normalizeFinanceiro(raw: unknown): RematriculaFinanceiro {
     cobrancasEmAberto: parseNumber(record.cobrancasEmAberto, 0),
     cobrancasAtrasadas: parseNumber(record.cobrancasAtrasadas, 0),
     financialStatus:
-      typeof record.financialStatus === 'string' ? record.financialStatus as RematriculaFinanceiro['financialStatus'] : 'REGULAR',
+      typeof record.financialStatus === 'string'
+        ? (record.financialStatus as RematriculaFinanceiro['financialStatus'])
+        : 'REGULAR',
     rematriculaActionStatus:
       typeof record.rematriculaActionStatus === 'string'
-        ? record.rematriculaActionStatus as RematriculaFinanceiro['rematriculaActionStatus']
+        ? (record.rematriculaActionStatus as RematriculaFinanceiro['rematriculaActionStatus'])
         : 'LIBERADA',
     blockReason:
-      typeof record.blockReason === 'string' ? record.blockReason as RematriculaFinanceiro['blockReason'] : 'SEM_BLOQUEIO',
+      typeof record.blockReason === 'string'
+        ? (record.blockReason as RematriculaFinanceiro['blockReason'])
+        : 'SEM_BLOQUEIO',
     actionMessage: typeof record.actionMessage === 'string' ? record.actionMessage : '',
     canCurrentUserOverride: parseBoolean(record.canCurrentUserOverride, false),
     requiresOverrideReason: parseBoolean(record.requiresOverrideReason, false),
@@ -151,9 +156,7 @@ function normalizeTurma(raw: unknown): RematriculaTurma | null {
   return {
     id: String(record.id ?? ''),
     nome: String(record.nome ?? ''),
-    diasSemana: Array.isArray(record.diasSemana)
-      ? (record.diasSemana as string[])
-      : [],
+    diasSemana: Array.isArray(record.diasSemana) ? (record.diasSemana as string[]) : [],
     horaInicio: String(record.horaInicio ?? ''),
     horaFim: String(record.horaFim ?? ''),
   };
@@ -187,7 +190,7 @@ function normalizeItem(raw: unknown): RematriculaElegivelItem {
     podeRenovar: parseBoolean(record.podeRenovar, false),
     eligibilityStatus:
       typeof record.eligibilityStatus === 'string'
-        ? record.eligibilityStatus as RematriculaElegivelItem['eligibilityStatus']
+        ? (record.eligibilityStatus as RematriculaElegivelItem['eligibilityStatus'])
         : 'ELEGIVEL',
     aluno: normalizeAluno(record.aluno),
     plano: normalizePlano(record.plano),
@@ -202,7 +205,8 @@ export async function listRematriculasElegiveisRequest(
 ): Promise<ListRematriculasResponse> {
   const searchParams = new URLSearchParams({ contaId: params.contaId });
   if (params.search) searchParams.set('q', params.search);
-  if (params.diasAntecedencia) searchParams.set('diasAntecedencia', String(params.diasAntecedencia));
+  if (params.diasAntecedencia)
+    searchParams.set('diasAntecedencia', String(params.diasAntecedencia));
   if (params.statusContrato) searchParams.set('statusContrato', params.statusContrato);
   if (params.referencia) searchParams.set('referencia', params.referencia);
 
@@ -242,6 +246,8 @@ export interface CreateRematriculaInput {
   formaPagamento?: string;
   formaPagamentoTaxa?: string;
   vencimentoDia?: number;
+  billingMode?: 'INDIVIDUAL' | 'SHARED_PLAN';
+  valorMensalidadeOverride?: number;
   taxaMatricula?: number;
   taxaIsenta?: boolean;
   taxaJustificativa?: string;

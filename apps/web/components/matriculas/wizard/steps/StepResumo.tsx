@@ -14,7 +14,7 @@ interface StepResumoProps {
 }
 
 export function StepResumo({ ctx }: StepResumoProps) {
-  const { state, update } = ctx;
+  const { state } = ctx;
 
   // Familiar mode
   if (state.modoMatricula === 'FAMILIAR') {
@@ -45,7 +45,8 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
   );
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
-  const totalTaxas = (state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0)) * state.alunosFamiliares.length;
+  const totalTaxas =
+    (state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0)) * state.alunosFamiliares.length;
   const totalMensalidades = valorMensalidadeLiquido * state.alunosFamiliares.length;
 
   const formaPagamentoLabel = (forma: string | undefined) => {
@@ -75,7 +76,9 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
             <p className="text-xs font-medium uppercase tracking-wide text-violet-500 mb-1">
               Responsável financeiro
             </p>
-            <p className="text-sm font-semibold text-violet-900">{state.responsavelFamiliar.nome}</p>
+            <p className="text-sm font-semibold text-violet-900">
+              {state.responsavelFamiliar.nome}
+            </p>
           </div>
         )}
 
@@ -93,9 +96,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
               .join('');
 
             const turmaOuCombo =
-              state.modoTurmas === 'COMBO'
-                ? aluno.comboLabel ?? '—'
-                : aluno.turmaLabel ?? '—';
+              state.modoTurmas === 'COMBO' ? (aluno.comboLabel ?? '—') : (aluno.turmaLabel ?? '—');
 
             return (
               <div
@@ -139,6 +140,18 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
             <span>Total mensalidades</span>
             <span>{formatter.format(totalMensalidades)}</span>
           </div>
+          {state.criarCobranca ? (
+            <div className="flex justify-between text-xs text-violet-700">
+              <span>Cobranças recorrentes que serão criadas</span>
+              <span>1 cobrança consolidada</span>
+            </div>
+          ) : null}
+          {!state.taxaIsenta && (state.gerarCobrancaTaxa ?? false) && totalTaxas > 0 ? (
+            <div className="flex justify-between text-xs text-violet-700">
+              <span>Taxa de matrícula</span>
+              <span>1 cobrança consolidada</span>
+            </div>
+          ) : null}
           <div className="flex justify-between text-xs text-slate-500">
             <span>Forma de pagamento</span>
             <span>{formaPagamentoLabel(state.formaPagamento)}</span>
@@ -197,10 +210,12 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
     [],
   );
 
-  const valorMensalidade = state.modoTurmas === 'COMBO'
-    ? (state.comboValor ?? 0)
-    : (state.planoValor ?? 0);
-  const valorBeneficio = calcularValorDescontoBeneficio(valorMensalidade, state.beneficioSelecionado);
+  const valorMensalidade =
+    state.modoTurmas === 'COMBO' ? (state.comboValor ?? 0) : (state.planoValor ?? 0);
+  const valorBeneficio = calcularValorDescontoBeneficio(
+    valorMensalidade,
+    state.beneficioSelecionado,
+  );
   const valorMensalidadeLiquido = calcularValorLiquidoComBeneficio(
     valorMensalidade,
     state.beneficioSelecionado,
@@ -282,19 +297,35 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
                 </p>
               )}
               <p className="text-gray-600">
-                Pagamento: <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+                Pagamento:{' '}
+                <span className="font-medium text-gray-900">
+                  {formaPagamentoLabel(state.formaPagamento)}
+                </span>
               </p>
               {turmaId && (
                 <p className="text-gray-600">
-                  Turma: <span className="font-medium text-gray-900">{state.turmaLabel || turmaId}</span>
+                  Turma:{' '}
+                  <span className="font-medium text-gray-900">{state.turmaLabel || turmaId}</span>
                 </p>
               )}
               <p className="text-gray-600">
-                Início: <span className="font-medium text-gray-900">{state.dataInicio ? new Date(state.dataInicio).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'}</span>
+                Início:{' '}
+                <span className="font-medium text-gray-900">
+                  {state.dataInicio
+                    ? new Date(state.dataInicio).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })
+                    : '—'}
+                </span>
               </p>
               {state.dataFimContrato && (
                 <p className="text-gray-600">
-                  Fim: <span className="font-medium text-gray-900">{new Date(state.dataFimContrato).toLocaleDateString('pt-BR')}</span>
+                  Fim:{' '}
+                  <span className="font-medium text-gray-900">
+                    {new Date(state.dataFimContrato).toLocaleDateString('pt-BR')}
+                  </span>
                 </p>
               )}
             </div>
@@ -315,12 +346,16 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
               </p>
               {!state.taxaIsenta && state.formaPagamentoTaxa && (
                 <p className="text-gray-600">
-                  Pagamento: <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamentoTaxa)}</span>
+                  Pagamento:{' '}
+                  <span className="font-medium text-gray-900">
+                    {formaPagamentoLabel(state.formaPagamentoTaxa)}
+                  </span>
                 </p>
               )}
               {state.taxaIsenta && state.taxaJustificativa && (
                 <p className="text-gray-600">
-                  Justificativa: <span className="font-medium text-gray-900">{state.taxaJustificativa}</span>
+                  Justificativa:{' '}
+                  <span className="font-medium text-gray-900">{state.taxaJustificativa}</span>
                 </p>
               )}
             </div>
@@ -345,7 +380,10 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
                 </p>
               )}
               <p className="text-gray-600">
-                Pagamento: <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+                Pagamento:{' '}
+                <span className="font-medium text-gray-900">
+                  {formaPagamentoLabel(state.formaPagamento)}
+                </span>
               </p>
             </div>
           </div>
@@ -363,7 +401,8 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
               )}
               {temJuros && (
                 <p className="text-gray-600">
-                  Juros: <span className="font-medium text-gray-900">{state.jurosMensal}% a.m.</span>
+                  Juros:{' '}
+                  <span className="font-medium text-gray-900">{state.jurosMensal}% a.m.</span>
                 </p>
               )}
               {temDesconto && (
