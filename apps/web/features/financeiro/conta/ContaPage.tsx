@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
 import type { GetAccountOverviewOutput } from '@alusa/finance';
 
+import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
 import {
   TransferWizardDialog,
@@ -652,17 +653,12 @@ export function ContaPage() {
     void loadInitialData(1);
   }, [loadInitialData]);
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      void refreshOverview().catch((error) => {
-        console.error('[ContaPage] refreshOverview', error);
-      });
-    }, 30000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [refreshOverview]);
+  useFinanceLiveRefresh(
+    () => refreshOverview().catch((error) => {
+      console.error('[ContaPage] refreshOverview', error);
+    }),
+    { intervalMs: 30_000, minIntervalMs: 8_000 },
+  );
 
   const refreshCurrentView = useCallback(async () => {
     await Promise.all([loadOverviewAndRecipients(), loadTransfers(page)]);

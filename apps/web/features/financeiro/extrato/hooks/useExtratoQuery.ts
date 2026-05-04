@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ExtratoResponse } from '../dtos';
 import type { ExtratoFiltersState } from './useExtratoFilters';
 import { fetchExtrato } from '../services/get-extrato';
+import { useFinanceLiveRefresh } from '../../hooks/useFinanceLiveRefresh';
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -54,13 +55,16 @@ export function useExtratoQuery(filters: ExtratoFiltersState) {
   );
 
   useEffect(() => {
-    load();
-    const interval = setInterval(() => load(true), REFRESH_INTERVAL);
+    void load();
     return () => {
-      clearInterval(interval);
       abortRef.current?.abort();
     };
   }, [load]);
+
+  useFinanceLiveRefresh(
+    () => load(true),
+    { intervalMs: REFRESH_INTERVAL, minIntervalMs: 8_000 },
+  );
 
   return { data, loading, error, refetch: load };
 }

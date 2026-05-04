@@ -2,21 +2,28 @@
 
 ## Visão Geral
 
-O sistema de webhooks da Alusa é o mecanismo oficial de atualização de estados financeiros. Nenhum estado financeiro (pagamento, inadimplência, cancelamento) é inferido localmente — todos são confirmados por eventos oficiais do Asaas via webhook.
+O sistema de webhooks da Alusa recebe eventos oficiais do Asaas para atualizar estados operacionais, registrar auditoria e disparar reconciliação quando necessário. Para domínios que o Asaas mantém como fonte transacional direta, como **saldo**, **extrato/ledger** e **antecipações**, a UI continua lendo a API oficial do Asaas e usa os webhooks como sinal de rastreabilidade, invalidação ou refetch.
+
+Este contrato segue as recomendações oficiais do Asaas:
+- webhooks têm entrega `at least once`, então todo handler precisa ser idempotente;
+- o endpoint deve persistir o evento e responder `200` rapidamente;
+- o processamento pesado deve ser assíncrono;
+- o header `asaas-access-token` deve ser validado;
+- o Asaas aguarda cerca de 10 segundos pela resposta, pausa a fila após falhas recorrentes e retém eventos por 14 dias.
 
 ## Hierarquia de Fonte de Verdade
 
 O modelo operacional da integração segue esta ordem:
-1. `webhook` é a fonte primária de mudança de estado.
-2. `read model` serve UI e consulta o banco local por padrão.
-3. `command preflight` faz leitura oficial do Asaas apenas para validar comando crítico.
-4. `reconciliation` corrige drift entre banco e Asaas.
-5. `manual repair` existe para ação corretiva explícita.
-6. `authoritative document` consulta a origem quando o documento precisa refletir o estado oficial atual.
+1. `webhook` é a fonte primária para transições locais de cobranças/assinaturas.
+2. `read model` serve UI onde existe estado local seguro e idempotente.
+3. `official read` consulta o Asaas quando a origem é saldo, ledger/extrato, antecipações ou documento autoritativo.
+4. `command preflight` faz leitura oficial do Asaas apenas para validar comando crítico.
+5. `reconciliation` corrige drift entre banco e Asaas.
+6. `manual repair` existe para ação corretiva explícita.
 
 Isso evita dois problemas clássicos:
-- usar polling/leitura remota como substituto do webhook
-- usar sync corretivo como fonte de estado de tela
+- duplicar localmente ledger/saldo que já são fonte oficial do Asaas;
+- usar sync corretivo como caminho feliz de produto.
 
 ### Gatilhos Permitidos por Categoria
 
@@ -128,6 +135,8 @@ Em caso de requests simultâneas do mesmo evento:
 | `TRANSFER_*` | `handleTransferWebhook` | Transferência |
 | `ACCOUNT_STATUS_*` | `handleAccountWebhook` | AsaasAccount |
 | `INTERNAL_TRANSFER_*` | `handleInternalTransferWebhook` | Auditoria apenas |
+| `RECEIVABLE_ANTICIPATION_*` | Auditoria no handler principal | AuditLog; estado é lido do Asaas sob demanda |
+| `BALANCE_VALUE_*` | Notificação + auditoria | Alertas operacionais; saldo é lido do Asaas sob demanda |
 | `INSTALLMENT_*` (via payment) | `handleInstallmentWebhook` | InstallmentPlan |
 | Outros | Fallback (aceita, registra, sem efeito) | WebhookAsaas |
 
@@ -189,11 +198,11 @@ Todos os 105 eventos oficiais do Asaas estão catalogados em `asaas-event-regist
 | INTERNAL_TRANSFER | 2 | Sim | Transferências internas |
 | INVOICE | 8 | Não | Notas fiscais (não usado na Alusa) |
 | BILL | 7 | Não | Contas/pagamentos de boleto (não usado) |
-| ANTICIPATION | 8 | Não | Antecipações (não usado) |
+| ANTICIPATION | 8 | Auditoria | Antecipações são lidas do Asaas sob demanda |
 | PHONE_RECHARGE | 4 | Não | Recargas de celular (não usado) |
 | CHECKOUT | 4 | Não | Links de pagamento (não usado) |
-| BALANCE | 2 | Não | Bloqueio/desbloqueio de saldo |
-| ACCESS_TOKEN | 6 | Não | Tokens de acesso (substitui API_KEY) |
+| BALANCE | 2 | Notificação | Bloqueio/desbloqueio de saldo |
+| ACCESS_TOKEN | 6 | Notificação | Tokens de acesso (substitui API_KEY) |
 | PIX_AUTOMATIC | 10 | Não | Pix automático/recorrente |
 
 ### Validação em CI
@@ -259,6 +268,21 @@ Webhooks identificados como stuck são resetados para status `ERRO` com mensagem
 ### Reconciliação com Asaas
 
 `reconcileWithAsaas()`: verifica estado real no Asaas para cobranças/assinaturas com drift potencial.
+
+## Reflexão de UI e Fonte Oficial
+
+As telas financeiras usam leituras oficiais com `cache-control: no-store` onde o dado é transacional:
+- **saldo**: `GET /api/financeiro/saldo` lê o saldo atual no Asaas;
+- **extrato**: `getExtrato()` deriva a tela do ledger oficial do Asaas;
+- **antecipações**: `listReceivableAnticipations()` lê status, taxas e previsão diretamente no Asaas.
+
+Para melhorar a percepção de atualização sem duplicar estado financeiro, páginas sensíveis usam `useFinanceLiveRefresh()`:
+- revalidação periódica leve;
+- refetch quando o usuário volta para a aba (`visibilitychange`);
+- refetch quando a janela ganha foco;
+- refetch quando o navegador volta a ficar online.
+
+Esse padrão é deliberadamente **pull/read-through**. Webhooks podem disparar auditoria, notificação e invalidação futura, mas não devem criar saldo, extrato ou antecipação local que contradiga o ledger oficial do Asaas.
 
 ### Archiving
 

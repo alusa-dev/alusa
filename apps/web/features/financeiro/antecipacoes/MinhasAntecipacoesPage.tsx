@@ -10,6 +10,7 @@ import { pushToast } from '@/components/ui/toast';
 import { ChevronRight, DollarSign, Filter, Search } from '@/components/icons/icons';
 import { cn } from '@/lib/utils';
 import type { AnticipationItem, AnticipationStatus, ListAnticipationsResponse } from './types';
+import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
 import {
   formatAnticipationStatus,
   formatCurrency,
@@ -157,33 +158,42 @@ function AnticipationsTable({
 export function MinhasAntecipacoesPage() {
   const [data, setData] = useState<ListAnticipationsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [status, setStatus] = useState<string>(ALL_STATUS);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
       if (status !== ALL_STATUS) params.set('status', status);
       const response = await fetch(`/api/financeiro/antecipacoes?${params.toString()}`, { cache: 'no-store' });
       if (!response.ok) throw new Error('Falha ao carregar antecipações');
       setData(await response.json());
+      setLastSyncedAt(new Date());
     } catch (error) {
-      pushToast({
-        title: 'Não foi possível carregar antecipações',
-        description: error instanceof Error ? error.message : 'Tente novamente.',
-        variant: 'error',
-      });
+      if (!silent) {
+        pushToast({
+          title: 'Não foi possível carregar antecipações',
+          description: error instanceof Error ? error.message : 'Tente novamente.',
+          variant: 'error',
+        });
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, status]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(
+    () => load(true),
+    { intervalMs: 30_000, minIntervalMs: 8_000 },
+  );
 
   const visibleItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -222,6 +232,10 @@ export function MinhasAntecipacoesPage() {
     }
   }
 
+  const lastSyncLabel = lastSyncedAt
+    ? lastSyncedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : null;
+
   return (
     <div className="space-y-5 pr-4 xl:pr-6">
       <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
@@ -254,9 +268,12 @@ export function MinhasAntecipacoesPage() {
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div>
               <p className="text-sm font-semibold text-slate-900">Lista de antecipações</p>
-              <p className="mt-1 text-xs text-slate-500">{data?.total ?? 0} registro(s) no Asaas</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {data?.total ?? 0} registro(s) no Asaas
+                {lastSyncLabel ? ` • atualizado às ${lastSyncLabel}` : ''}
+              </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,320px)_180px]">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,320px)_180px_auto]">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <Input
@@ -287,6 +304,14 @@ export function MinhasAntecipacoesPage() {
                   <SelectItem value="OVERDUE">Vencida</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                className="h-10 rounded-lg"
+                disabled={loading}
+                onClick={() => void load()}
+              >
+                Atualizar
+              </Button>
             </div>
           </div>
         </div>

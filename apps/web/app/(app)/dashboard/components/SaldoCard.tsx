@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { formatCurrency } from './utils';
 
 interface SaldoData {
@@ -17,10 +18,10 @@ function useSaldoAsaas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSaldo = useCallback(async () => {
+  const fetchSaldo = useCallback(async (silent = false) => {
     if (!user?.contaId) return;
 
-    setLoading(true);
+    if (!silent) setLoading(true);
     // Não limpa o erro anterior imediatamente para evitar flicker se for revalidação
     // Mas como é first load na maioria das vezes, ok.
 
@@ -37,16 +38,18 @@ function useSaldoAsaas() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [user?.contaId]);
 
   useEffect(() => {
-    fetchSaldo();
-    // Refresh automatico a cada 60s
-    const interval = setInterval(fetchSaldo, 60000);
-    return () => clearInterval(interval);
+    void fetchSaldo();
   }, [fetchSaldo]);
+
+  useFinanceLiveRefresh(
+    () => fetchSaldo(true),
+    { enabled: Boolean(user?.contaId), intervalMs: 60_000, minIntervalMs: 10_000 },
+  );
 
   return { data, loading, error };
 }

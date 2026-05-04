@@ -26,6 +26,9 @@ import {
 import { getWebhookHealthStatus, type WebhookHealthStatus } from './webhook-health.service';
 import { hasWebhookAuthTokenConfig } from '../use-cases/asaas-account/webhook-auth-token.server';
 
+const ASAAS_WEBHOOK_READ_TIMEOUT_SECONDS = 10;
+const ASAAS_WEBHOOK_FAILURES_BEFORE_PAUSE = 15;
+
 export interface WebhookOperationalRecommendation {
   code: string;
   severity: 'info' | 'warning' | 'critical';
@@ -156,6 +159,35 @@ export async function getWebhookOperationalDiagnostics(
       code: 'WEBHOOK_SECRET_MISSING',
       severity: 'critical',
       message: 'ASAAS_WEBHOOK_AUTH_TOKEN ou ASAAS_WEBHOOK_AUTH_TOKEN_SECRET não está configurada.',
+    }),
+  );
+  pushRecommendation(
+    recommendations,
+    fromBoolean(!processing.useAsyncQueue, {
+      code: 'WEBHOOK_ASYNC_QUEUE_DISABLED',
+      severity: processing.isProduction ? 'critical' : 'warning',
+      message:
+        `O Asaas aguarda resposta do webhook por cerca de ${ASAAS_WEBHOOK_READ_TIMEOUT_SECONDS}s; ` +
+        'prefira sempre enfileirar e responder 200 após persistir o evento.',
+    }),
+  );
+  pushRecommendation(
+    recommendations,
+    fromBoolean(processing.isProduction && process.env.ASAAS_WEBHOOK_IP_CHECK !== 'strict', {
+      code: 'WEBHOOK_IP_STRICT_NOT_ENABLED',
+      severity: 'info',
+      message:
+        'Em produção, avalie ASAAS_WEBHOOK_IP_CHECK=strict após validar que o proxy repassa IPs oficiais do Asaas corretamente.',
+    }),
+  );
+  pushRecommendation(
+    recommendations,
+    fromBoolean(processing.isProduction && processing.inlineDrain, {
+      code: 'WEBHOOK_INLINE_DRAIN_PRODUCTION',
+      severity: 'warning',
+      message:
+        `Após ${ASAAS_WEBHOOK_FAILURES_BEFORE_PAUSE} falhas consecutivas o Asaas pode pausar a fila; ` +
+        'mantenha processamento pesado fora da request de entrega.',
     }),
   );
   pushRecommendation(
