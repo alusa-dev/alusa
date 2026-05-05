@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
+import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,8 +10,8 @@ type IdParams = Promise<{ id: string }> | { id: string };
 
 export async function GET(_req: NextRequest, context: { params: IdParams }) {
   try {
-    const { id: responsavelId } = await Promise.resolve(context.params);
-    if (!responsavelId) {
+    const { id } = await Promise.resolve(context.params);
+    if (!id) {
       return NextResponse.json({ error: 'Identificador inválido' }, { status: 400 });
     }
 
@@ -20,13 +21,8 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    // Validate responsável belongs to this conta (multi-tenant)
-    const responsavel = await prisma.responsavel.findFirst({
-      where: { id: responsavelId, contaId },
-      select: { id: true },
-    });
-
-    if (!responsavel) {
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 

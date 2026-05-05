@@ -6,6 +6,7 @@ import {
   anonymizeResponsavelInputDTOSchema,
   anonymizeResponsavelResultDTOSchema,
 } from '@/features/responsaveis/dtos';
+import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
 type IdParams = Promise<{ id: string }> | { id: string };
 
@@ -35,8 +36,13 @@ export async function POST(req: Request, context: { params: IdParams }) {
       );
     }
 
+    const responsavelId = await resolveResponsavelRouteId(id, user.contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
     const responsavel = await anonimizarResponsavel({
-      id,
+      id: responsavelId,
       contaId: user.contaId,
       motivo: parsed.data.motivo,
       actorId: user.id,

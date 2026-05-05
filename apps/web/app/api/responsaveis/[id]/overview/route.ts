@@ -8,6 +8,7 @@ import {
   evaluateRematriculaDecision,
   getContaFinancialPolicy,
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
+import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -79,8 +80,13 @@ export async function GET(
 
   try {
     const { id } = await Promise.resolve(context.params);
+    const responsavelId = await resolveResponsavelRouteId(id, user.contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: { message: 'Responsável não encontrado.' } }, { status: 404 });
+    }
+
     const responsavel = await prisma.responsavel.findFirst({
-      where: { id, contaId: user.contaId },
+      where: { id: responsavelId, contaId: user.contaId },
       select: { id: true, nome: true },
     });
 
@@ -90,7 +96,7 @@ export async function GET(
 
     const [families, reenrollments, customerIds, alunosVinculados] = await Promise.all([
       prisma.matriculaFamiliar.findMany({
-        where: { contaId: user.contaId, responsavelId: id },
+        where: { contaId: user.contaId, responsavelId },
         orderBy: { createdAt: 'desc' },
         take: 10,
         select: {
@@ -105,7 +111,7 @@ export async function GET(
         },
       }),
       prisma.rematriculaFamiliar.findMany({
-        where: { contaId: user.contaId, responsavelId: id },
+        where: { contaId: user.contaId, responsavelId },
         orderBy: { createdAt: 'desc' },
         take: 10,
         select: {
@@ -123,7 +129,7 @@ export async function GET(
         where: {
           contaId: user.contaId,
           payerType: 'RESPONSAVEL',
-          payerId: id,
+          payerId: responsavelId,
         },
         select: { id: true },
       }),
@@ -131,7 +137,7 @@ export async function GET(
         where: {
           contaId: user.contaId,
           responsaveis: {
-            some: { responsavelId: id },
+            some: { responsavelId },
           },
         },
         select: {

@@ -12,6 +12,7 @@ import {
   mapResponsavelRecordToDetailDTO,
   mapUpdateResponsavelDTOToData,
 } from '@/features/responsaveis/mappers';
+import { resolveResponsavelRouteId } from '../_lib/resolve-responsavel-route-id';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,8 +32,6 @@ const responsavelDetailSelect = {
   enderecoBairro: true,
   enderecoCidade: true,
   enderecoUf: true,
-  createdAt: true,
-  updatedAt: true,
 } as const;
 
 type ResponsavelDetailRecord = Prisma.ResponsavelGetPayload<{
@@ -74,6 +73,8 @@ async function buildResponsavelDetailDTO(
   return responsavelDetailDTOSchema.parse(
     mapResponsavelRecordToDetailDTO({
       ...responsavel,
+      createdAt: null,
+      updatedAt: null,
       _count: metrics,
     }),
   );
@@ -93,8 +94,13 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
     const responsavel = await prisma.responsavel.findFirst({
-      where: { id, contaId },
+      where: { id: responsavelId, contaId },
       select: responsavelDetailSelect,
     });
 
@@ -141,8 +147,13 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       );
     }
 
+    const responsavelId = await resolveResponsavelRouteId(id, contaId);
+    if (!responsavelId) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
+
     const atual = await prisma.responsavel.findFirst({
-      where: { id, contaId },
+      where: { id: responsavelId, contaId },
       select: { id: true },
     });
 
@@ -165,7 +176,7 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       const existente = await prisma.responsavel.findFirst({
         where: {
           contaId,
-          id: { not: id },
+          id: { not: responsavelId },
           OR: [...(cpf ? [{ cpf }] : []), ...(email ? [{ email }] : [])],
         },
         select: { cpf: true, email: true },
@@ -180,7 +191,7 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
     }
 
     const responsavel = await prisma.responsavel.update({
-      where: { id },
+      where: { id: responsavelId },
       data,
       select: responsavelDetailSelect,
     });
