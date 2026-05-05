@@ -81,6 +81,15 @@ export function mapUpdateResponsavelDTOToData(dto: UpdateResponsavelInputDTO) {
   if (typeof dto.email === 'string') data.email = dto.email.trim() || undefined;
   if (typeof dto.telefone === 'string') data.telefone = onlyDigits(dto.telefone);
   if (typeof dto.financeiro === 'boolean') data.financeiro = dto.financeiro;
+  if (dto.endereco && typeof dto.endereco === 'object') {
+    if (typeof dto.endereco.cep === 'string') data.enderecoCep = dto.endereco.cep.trim();
+    if (typeof dto.endereco.logradouro === 'string') data.enderecoLogradouro = dto.endereco.logradouro.trim();
+    if (typeof dto.endereco.numero === 'string') data.enderecoNumero = dto.endereco.numero.trim();
+    if (typeof dto.endereco.complemento === 'string') data.enderecoComplemento = dto.endereco.complemento.trim();
+    if (typeof dto.endereco.bairro === 'string') data.enderecoBairro = dto.endereco.bairro.trim();
+    if (typeof dto.endereco.cidade === 'string') data.enderecoCidade = dto.endereco.cidade.trim();
+    if (typeof dto.endereco.uf === 'string') data.enderecoUf = dto.endereco.uf.trim().toUpperCase();
+  }
 
   return data;
 }

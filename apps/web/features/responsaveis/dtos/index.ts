@@ -37,6 +37,19 @@ export type CreateResponsavelResultDTO = z.infer<typeof createResponsavelResultD
 export const updateResponsavelInputDTOSchema = responsavelSchema
   .omit({ id: true })
   .partial()
+  .extend({
+    endereco: z
+      .object({
+        cep: z.string().optional(),
+        logradouro: z.string().optional(),
+        numero: z.string().optional(),
+        complemento: z.string().optional(),
+        bairro: z.string().optional(),
+        cidade: z.string().optional(),
+        uf: z.string().optional(),
+      })
+      .optional(),
+  })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'Informe ao menos um campo para atualizar.',
   });

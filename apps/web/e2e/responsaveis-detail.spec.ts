@@ -164,12 +164,12 @@ test.describe('Detalhe de responsáveis', () => {
 
     await expect(page).toHaveURL(new RegExp(`/responsaveis/${ids.responsavelFluxoAlunoId}$`));
     await expect(page.getByRole('heading', { name: 'Detalhes do responsável' })).toBeVisible();
-    await expect(page.getByText(ids.responsavelFluxoAlunoNome)).toBeVisible();
+    await expect(page.getByLabel('Nome Completo')).toHaveValue(ids.responsavelFluxoAlunoNome);
     await expect(page.getByText('Responsável não encontrado.')).toHaveCount(0);
 
     await page.goto(`/responsaveis/${ids.vinculoFluxoAlunoId}`);
     await expect(page.getByRole('heading', { name: 'Detalhes do responsável' })).toBeVisible();
-    await expect(page.getByText(ids.responsavelFluxoAlunoNome)).toBeVisible();
+    await expect(page.getByLabel('Nome Completo')).toHaveValue(ids.responsavelFluxoAlunoNome);
     await expect(page.getByText('Responsável não encontrado.')).toHaveCount(0);
 
     await page.goto('/responsaveis');
@@ -184,7 +184,7 @@ test.describe('Detalhe de responsáveis', () => {
     await dialog.getByRole('button', { name: 'Salvar responsável' }).click();
 
     await expect(page.getByRole('heading', { name: 'Detalhes do responsável' })).toBeVisible();
-    await expect(page.getByText(modalResponsavelNome)).toBeVisible();
+    await expect(page.getByLabel('Nome Completo')).toHaveValue(modalResponsavelNome);
     await expect(page.getByText('Responsável não encontrado.')).toHaveCount(0);
   });
 });

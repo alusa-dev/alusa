@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -21,16 +22,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   ArrowLeft,
   ClipboardDocumentCheck,
-  CreditCard,
-  Edit,
   ExternalLink,
-  Mail,
-  Phone,
   UserPlus,
   Users,
 } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
 import { formatInitials, maskCpf } from '@alusa/lib/client';
+import { cn } from '@/lib/utils';
 
 import {
   getResponsavel,
@@ -56,32 +54,46 @@ type EditFormState = {
   email: string;
   telefone: string;
   financeiro: boolean;
+  enderecoCep: string;
+  enderecoLogradouro: string;
+  enderecoNumero: string;
+  enderecoComplemento: string;
+  enderecoBairro: string;
+  enderecoCidade: string;
+  enderecoUf: string;
 };
 
-function formatPhone(value: string | null | undefined) {
-  const digits = (value ?? '').replace(/\D/g, '');
-  if (digits.length === 10)
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  if (digits.length === 11)
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-  return value || '-';
-}
+type EditSection = 'foto' | 'responsavel' | 'complementares' | null;
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('pt-BR');
 }
 
-function formatAddress(responsavel: ResponsavelDetail) {
-  const endereco = responsavel.endereco;
-  const linha1 = [endereco.logradouro, endereco.numero].filter(Boolean).join(', ');
-  const linha2 = [endereco.bairro, endereco.cidade, endereco.uf].filter(Boolean).join(' · ');
-  return [linha1, endereco.complemento, linha2, endereco.cep ? `CEP ${endereco.cep}` : null]
-    .filter(Boolean)
-    .join('\n');
-}
+const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+const labelClass = 'text-xs font-medium text-slate-600';
+const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50';
+const controlClass =
+  'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 disabled:bg-slate-50 disabled:text-slate-700 disabled:cursor-not-allowed disabled:opacity-100';
+const disabledControlClass =
+  'h-10 w-full rounded-lg border border-gray-200 bg-gray-100 px-3 text-sm text-gray-500 shadow-none disabled:opacity-100 disabled:cursor-not-allowed';
 
-const detailSectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+function buildFormState(detail: ResponsavelDetail): EditFormState {
+  return {
+    nome: detail.nome,
+    cpf: detail.cpf,
+    email: detail.email,
+    telefone: detail.telefone,
+    financeiro: detail.financeiro,
+    enderecoCep: detail.endereco.cep ?? '',
+    enderecoLogradouro: detail.endereco.logradouro ?? '',
+    enderecoNumero: detail.endereco.numero ?? '',
+    enderecoComplemento: detail.endereco.complemento ?? '',
+    enderecoBairro: detail.endereco.bairro ?? '',
+    enderecoCidade: detail.endereco.cidade ?? '',
+    enderecoUf: detail.endereco.uf ?? '',
+  };
+}
 
 export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: string }) {
   const router = useRouter();
@@ -90,7 +102,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   const [alunos, setAlunos] = useState<AlunoVinculado[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
+  const [editSection, setEditSection] = useState<EditSection>(null);
   const [rematriculaOpen, setRematriculaOpen] = useState(false);
   const [form, setForm] = useState<EditFormState | null>(null);
 
@@ -103,13 +115,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
     try {
       const detail = await getResponsavel({ id: responsavelId, signal: controller.signal });
       setResponsavel(detail);
-      setForm({
-        nome: detail.nome,
-        cpf: detail.cpf,
-        email: detail.email,
-        telefone: detail.telefone,
-        financeiro: detail.financeiro,
-      });
+      setForm(buildFormState(detail));
 
       const [overviewResult, alunosResult] = await Promise.allSettled([
         getResponsavelOverview({ id: responsavelId, signal: controller.signal }),
@@ -146,19 +152,45 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
     void load();
   }, [load]);
 
-  const endereco = useMemo(() => (responsavel ? formatAddress(responsavel) : ''), [responsavel]);
   const rematriculaDisponivel = useMemo(
     () => Boolean(overview?.rematriculaCandidates.some((candidate) => candidate.podeRenovar)),
     [overview],
   );
 
+  const avatarFallback = useMemo(() => formatInitials(form?.nome || responsavel?.nome || 'Responsável'), [form?.nome, responsavel?.nome]);
+
+  function updateField<K extends keyof EditFormState>(field: K, value: EditFormState[K]) {
+    setForm((current) => (current ? { ...current, [field]: value } : current));
+  }
+
+  function resetForm() {
+    if (responsavel) setForm(buildFormState(responsavel));
+    setEditSection(null);
+  }
+
   async function handleSave() {
     if (!form) return;
     setSaving(true);
     try {
-      const updated = await updateResponsavel(responsavelId, form);
+      const updated = await updateResponsavel(responsavelId, {
+        nome: form.nome,
+        cpf: form.cpf,
+        email: form.email,
+        telefone: form.telefone,
+        financeiro: form.financeiro,
+        endereco: {
+          cep: form.enderecoCep,
+          logradouro: form.enderecoLogradouro,
+          numero: form.enderecoNumero,
+          complemento: form.enderecoComplemento,
+          bairro: form.enderecoBairro,
+          cidade: form.enderecoCidade,
+          uf: form.enderecoUf,
+        },
+      });
       setResponsavel(updated);
-      setEditOpen(false);
+      setForm(buildFormState(updated));
+      setEditSection(null);
       pushToast({
         title: 'Responsável atualizado',
         variant: 'success',
@@ -200,14 +232,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
     <div className="h-full overflow-y-auto">
       <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
         <div className="mb-8">
-          <Button
-            variant="ghost"
-            className="mb-5 h-9 px-2 text-slate-600 hover:bg-slate-50"
-            onClick={() => router.push('/responsaveis')}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Voltar
-          </Button>
+          <BackButton onClick={() => router.push('/responsaveis')} />
 
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex-1">
@@ -217,182 +242,170 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
               <p className="text-base text-gray-600">
                 Gerencie cadastro, alunos vinculados, rematrículas e dados financeiros familiares.
               </p>
-              <div className="mt-4 flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
-                <Avatar className="h-14 w-14">
-                  <AvatarFallback className="bg-violet-100 text-base font-semibold text-violet-700">
-                    {formatInitials(responsavel.nome)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-xl font-semibold tracking-tight text-gray-900">
-                      {responsavel.nome}
-                    </h2>
-                    {responsavel.financeiro ? (
-                      <Badge variant="info">Responsável financeiro</Badge>
-                    ) : null}
-                    {responsavel.asaasCustomerId ? (
-                      <Badge variant="success">Customer financeiro</Badge>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-sm text-gray-500">
-                    {responsavel.email || 'E-mail não informado'} · {formatPhone(responsavel.telefone)}
-                  </p>
-                </div>
-              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <Button
+              className="h-10 rounded-md bg-brand-accent px-4 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90"
+              disabled={!rematriculaDisponivel}
+              onClick={() => setRematriculaOpen(true)}
+              title={
+                rematriculaDisponivel
+                  ? 'Iniciar novo lote de rematrícula familiar'
+                  : 'Nenhum aluno elegível para rematrícula familiar'
+              }
+            >
+              <ClipboardDocumentCheck className="mr-2 h-4 w-4" />
+              Iniciar rematrícula familiar
+            </Button>
+          </div>
+        </div>
+
+        <div className="space-y-8">
+          <EditableSection
+            title="Foto"
+            editSection="foto"
+            activeSection={editSection}
+            saving={saving}
+            onEdit={setEditSection}
+            onCancel={resetForm}
+            onSave={() => setEditSection(null)}
+            hideActions={editSection !== 'foto'}
+          >
+            <div className="flex flex-col gap-5 md:flex-row md:items-center">
+              <div className="flex items-center justify-center">
+                <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white text-lg font-semibold text-slate-500 shadow-sm">
+                  {avatarFallback}
+                </div>
+              </div>
+
+              <div className="flex-1 space-y-3">
+                <p className="text-sm text-slate-600">
+                  A foto ajuda na identificação rápida do responsável em cadastros familiares, cobranças e relatórios internos.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50" disabled>
+                    Editar
+                  </Button>
+                  <Button type="button" variant="outline" className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50" disabled>
+                    Enviar foto
+                  </Button>
+                  <Button type="button" variant="destructive" className="bg-red-50 text-red-600 shadow-none hover:bg-red-100" disabled>
+                    Remover
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-500">
+                  O cadastro de responsável ainda não possui armazenamento de foto. A tela mantém a mesma estrutura visual do aluno.
+                </p>
+              </div>
+            </div>
+          </EditableSection>
+
+          {form ? (
+            <>
+              <EditableSection
+                title="Dados do Responsável"
+                editSection="responsavel"
+                activeSection={editSection}
+                saving={saving}
+                onEdit={setEditSection}
+                onCancel={resetForm}
+                onSave={handleSave}
+              >
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Field label="Nome Completo" value={form.nome} editing={editSection === 'responsavel'} onChange={(value) => updateField('nome', value)} />
+                  <Field label="CPF" value={form.cpf} editing={editSection === 'responsavel'} onChange={(value) => updateField('cpf', value)} />
+                  <Field label="E-mail" type="email" value={form.email} editing={editSection === 'responsavel'} onChange={(value) => updateField('email', value)} />
+                  <Field label="Telefone" value={form.telefone} editing={editSection === 'responsavel'} onChange={(value) => updateField('telefone', value)} />
+                  <BooleanField label="Responsável financeiro" checked={form.financeiro} editing={editSection === 'responsavel'} onChange={(value) => updateField('financeiro', value)} />
+                  <LockedField label="Customer Asaas" value={responsavel.asaasCustomerId || 'Não sincronizado'} />
+                </div>
+              </EditableSection>
+
+              <EditableSection
+                title="Informações complementares"
+                editSection="complementares"
+                activeSection={editSection}
+                saving={saving}
+                onEdit={setEditSection}
+                onCancel={resetForm}
+                onSave={handleSave}
+              >
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                  <Field label="CEP" value={form.enderecoCep} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoCep', value)} />
+                  <Field label="Rua" value={form.enderecoLogradouro} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoLogradouro', value)} className="md:col-span-2" />
+                  <Field label="Número" value={form.enderecoNumero} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoNumero', value)} />
+                  <Field label="Complemento" value={form.enderecoComplemento} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoComplemento', value)} />
+                  <Field label="Bairro" value={form.enderecoBairro} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoBairro', value)} />
+                  <Field label="Cidade" value={form.enderecoCidade} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoCidade', value)} />
+                  <Field label="UF" value={form.enderecoUf} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoUf', value)} />
+                  <LockedField label="Atualizado em" value={formatDate(responsavel.updatedAt)} />
+                </div>
+              </EditableSection>
+            </>
+          ) : null}
+
+          <section className={sectionClass}>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700">Alunos vinculados</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Alunos cadastrados no fluxo de aluno ou vinculados diretamente a este responsável.
+                </p>
+              </div>
               <Button
                 variant="outline"
                 className="h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 shadow-none hover:bg-slate-50"
-                onClick={() => setEditOpen(true)}
+                disabled
+                title="Vínculo direto será habilitado após consolidar a API de edição familiar."
               >
-                <Edit className="mr-2 h-4 w-4" />
-                Editar
-              </Button>
-              <Button
-                className="h-10 rounded-md bg-brand-accent px-4 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90"
-                disabled={!rematriculaDisponivel}
-                onClick={() => setRematriculaOpen(true)}
-                title={
-                  rematriculaDisponivel
-                    ? 'Iniciar novo lote de rematrícula familiar'
-                    : 'Nenhum aluno elegível para rematrícula familiar'
-                }
-              >
-                <ClipboardDocumentCheck className="mr-2 h-4 w-4" />
-                Iniciar rematrícula familiar
+                <UserPlus className="mr-2 h-4 w-4" />
+                Vincular aluno
               </Button>
             </div>
-          </div>
-        </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <MetricCard
-          label="Alunos vinculados"
-          value={responsavel.metrics.alunos}
-          icon={<Users className="h-5 w-5" />}
-        />
-        <MetricCard
-          label="Matrículas como pagador"
-          value={responsavel.metrics.matriculasFinanceiras}
-          icon={<ClipboardDocumentCheck className="h-5 w-5" />}
-        />
-        <MetricCard
-          label="Vendas vinculadas"
-          value={responsavel.metrics.vendas}
-          icon={<CreditCard className="h-5 w-5" />}
-        />
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <section className={detailSectionClass}>
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">Dados cadastrais</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Contato principal e identificação do responsável.
-              </p>
-            </div>
-          </div>
-          <div className="space-y-4 text-sm">
-            <InfoRow label="CPF" value={maskCpf(responsavel.cpf)} />
-            <InfoRow
-              label="E-mail"
-              value={responsavel.email || '-'}
-              icon={<Mail className="h-4 w-4" />}
-            />
-            <InfoRow
-              label="Telefone"
-              value={formatPhone(responsavel.telefone)}
-              icon={<Phone className="h-4 w-4" />}
-            />
-            <InfoRow label="Endereço" value={endereco || 'Endereço não informado'} multiline />
-            <InfoRow label="Atualizado em" value={formatDate(responsavel.updatedAt)} />
-          </div>
-        </section>
-
-        <section className={detailSectionClass}>
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">Alunos vinculados</h2>
-              <p className="mt-1 text-xs text-slate-500">
-                Alunos cadastrados no fluxo de aluno ou vinculados diretamente a este responsável.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              className="h-9 rounded-lg border-slate-200 bg-white shadow-none"
-              disabled
-              title="Vínculo direto será habilitado após consolidar a API de edição familiar."
-            >
-              <UserPlus className="mr-2 h-4 w-4" />
-              Vincular aluno
-            </Button>
-          </div>
-
-          {alunos.length > 0 ? (
-            <div className="divide-y divide-slate-100">
-              {alunos.map((aluno) => (
-                <Link
-                  key={aluno.id}
-                  href={`/alunos/${aluno.id}`}
-                  className="flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-slate-50"
-                >
-                  <Avatar className="h-10 w-10">
-                    {aluno.foto ? <AvatarImage src={aluno.foto} alt={aluno.nome} /> : null}
-                    <AvatarFallback className="bg-slate-100 text-slate-700">
-                      {formatInitials(aluno.nome)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-900">{aluno.nome}</div>
-                    <div className="text-xs text-slate-500">
-                      {aluno.cpf ? maskCpf(aluno.cpf) : 'CPF não informado'}
+            {alunos.length > 0 ? (
+              <div className="divide-y divide-slate-100">
+                {alunos.map((aluno) => (
+                  <Link
+                    key={aluno.id}
+                    href={`/alunos/${aluno.id}`}
+                    className="flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-slate-50"
+                  >
+                    <Avatar className="h-10 w-10">
+                      {aluno.foto ? <AvatarImage src={aluno.foto} alt={aluno.nome} /> : null}
+                      <AvatarFallback className="bg-slate-100 text-slate-700">
+                        {formatInitials(aluno.nome)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-slate-900">{aluno.nome}</div>
+                      <div className="text-xs text-slate-500">
+                        {aluno.cpf ? maskCpf(aluno.cpf) : 'CPF não informado'}
+                      </div>
                     </div>
-                  </div>
-                  <Badge status={aluno.ativo ? 'ATIVO' : 'INATIVO'} size="sm" />
-                  <ExternalLink className="h-4 w-4 text-slate-400" />
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-8 text-center">
-              <Users className="mx-auto mb-3 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-medium text-slate-700">Nenhum aluno vinculado</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Responsáveis criados aqui aparecerão disponíveis no fluxo de cadastro de aluno.
-              </p>
-            </div>
-          )}
-        </section>
-      </div>
+                    <Badge status={aluno.ativo ? 'ATIVO' : 'INATIVO'} size="sm" />
+                    <ExternalLink className="h-4 w-4 text-slate-400" />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-8 text-center">
+                <Users className="mx-auto mb-3 h-8 w-8 text-slate-300" />
+                <p className="text-sm font-medium text-slate-700">Nenhum aluno vinculado</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Responsáveis criados aqui aparecerão disponíveis no fluxo de cadastro de aluno.
+                </p>
+              </div>
+            )}
+          </section>
 
-      <section className={detailSectionClass}>
-        <h2 className="text-sm font-semibold text-slate-900">Visão financeira familiar</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Cobranças abertas, grupos familiares já processados e alunos aptos para a próxima rematrícula.
-        </p>
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <MetricCard
-            label="Lotes familiares"
-            value={(overview?.summary.familyEnrollments ?? 0) + (overview?.summary.familyReenrollments ?? 0)}
-            icon={<ClipboardDocumentCheck className="h-5 w-5" />}
-          />
-          <MetricCard
-            label="Cobranças abertas"
-            value={overview?.summary.openCharges ?? 0}
-            icon={<CreditCard className="h-5 w-5" />}
-          />
-          <MetricCard
-            label="Rematrículas elegíveis"
-            value={overview?.rematriculaCandidates.filter((candidate) => candidate.podeRenovar).length ?? 0}
-            icon={<Users className="h-5 w-5" />}
-          />
-        </div>
+          <section className={sectionClass}>
+            <h2 className="text-sm font-semibold text-slate-700">Visão financeira familiar</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Cobranças abertas, grupos familiares já processados e alunos aptos para a próxima rematrícula.
+            </p>
 
-        <div className="mt-5 grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="mt-5 grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-4">
             <div className="rounded-xl border border-slate-200">
               <div className="border-b border-slate-100 px-4 py-3">
@@ -499,132 +512,8 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             </div>
           </div>
         </div>
-      </section>
-
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Editar responsável</DialogTitle>
-            <DialogDescription>
-              Atualize os dados usados em cobranças familiares, contratos e comunicações.
-            </DialogDescription>
-          </DialogHeader>
-
-          {form ? (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label
-                  className="mb-1.5 block text-xs font-medium text-slate-600"
-                  htmlFor="edit-responsavel-nome"
-                >
-                  Nome completo
-                </label>
-                <Input
-                  id="edit-responsavel-nome"
-                  value={form.nome}
-                  onChange={(event) =>
-                    setForm((current) =>
-                      current ? { ...current, nome: event.target.value } : current,
-                    )
-                  }
-                  className="h-10 rounded-lg border-slate-200 shadow-none"
-                />
-              </div>
-              <div>
-                <label
-                  className="mb-1.5 block text-xs font-medium text-slate-600"
-                  htmlFor="edit-responsavel-cpf"
-                >
-                  CPF
-                </label>
-                <Input
-                  id="edit-responsavel-cpf"
-                  value={form.cpf}
-                  onChange={(event) =>
-                    setForm((current) =>
-                      current ? { ...current, cpf: event.target.value } : current,
-                    )
-                  }
-                  className="h-10 rounded-lg border-slate-200 shadow-none"
-                />
-              </div>
-              <div>
-                <label
-                  className="mb-1.5 block text-xs font-medium text-slate-600"
-                  htmlFor="edit-responsavel-telefone"
-                >
-                  Telefone
-                </label>
-                <Input
-                  id="edit-responsavel-telefone"
-                  value={form.telefone}
-                  onChange={(event) =>
-                    setForm((current) =>
-                      current ? { ...current, telefone: event.target.value } : current,
-                    )
-                  }
-                  className="h-10 rounded-lg border-slate-200 shadow-none"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label
-                  className="mb-1.5 block text-xs font-medium text-slate-600"
-                  htmlFor="edit-responsavel-email"
-                >
-                  E-mail
-                </label>
-                <Input
-                  id="edit-responsavel-email"
-                  type="email"
-                  value={form.email}
-                  onChange={(event) =>
-                    setForm((current) =>
-                      current ? { ...current, email: event.target.value } : current,
-                    )
-                  }
-                  className="h-10 rounded-lg border-slate-200 shadow-none"
-                />
-              </div>
-              <label className="sm:col-span-2 flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  className="mt-1 h-4 w-4 rounded border-slate-300 text-brand-accent"
-                  checked={form.financeiro}
-                  onChange={(event) =>
-                    setForm((current) =>
-                      current ? { ...current, financeiro: event.target.checked } : current,
-                    )
-                  }
-                />
-                <span>
-                  <span className="block font-medium text-slate-800">Responsável financeiro</span>
-                  <span className="block text-xs text-slate-500">
-                    Usado como pagador padrão nos fluxos familiares.
-                  </span>
-                </span>
-              </label>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="h-10 rounded-lg border-slate-200 shadow-none"
-              onClick={() => setEditOpen(false)}
-              disabled={saving}
-            >
-              Cancelar
-            </Button>
-            <Button
-              className="h-10 rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? 'Salvando...' : 'Salvar alterações'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </section>
+        </div>
 
       <RematriculaFamiliarDialog
         open={rematriculaOpen}
@@ -648,41 +537,147 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
-function MetricCard({ label, value, icon }: { label: string; value: number; icon: ReactNode }) {
+function BackButton({ onClick }: { onClick: () => void }) {
   return (
-    <div className="rounded-xl border bg-white p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium text-slate-500">{label}</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{value}</p>
-        </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-50 text-violet-700">
-          {icon}
-        </div>
+    <button
+      onClick={onClick}
+      className="mb-5 flex items-center gap-2 text-sm text-gray-600 transition-colors hover:text-gray-900"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Voltar
+    </button>
+  );
+}
+
+function EditableSection({
+  title,
+  editSection,
+  activeSection,
+  saving,
+  onEdit,
+  onCancel,
+  onSave,
+  children,
+  hideActions = false,
+}: {
+  title: string;
+  editSection: Exclude<EditSection, null>;
+  activeSection: EditSection;
+  saving: boolean;
+  onEdit: (_section: EditSection) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  children: ReactNode;
+  hideActions?: boolean;
+}) {
+  const editing = activeSection === editSection;
+  return (
+    <section className={sectionClass}>
+      <div className="mb-4 flex items-start justify-between">
+        <span className="text-sm font-semibold text-slate-700">{title}</span>
+        {!hideActions ? (
+          editing ? (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onCancel}
+                disabled={saving}
+                className="border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={onSave}
+                disabled={saving}
+                className="bg-[#A94DFF] text-white shadow-none hover:bg-[#A94DFF]/90"
+              >
+                {saving ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={Boolean(activeSection)}
+              onClick={() => onEdit(editSection)}
+              className={editButtonClass}
+            >
+              Editar
+            </Button>
+          )
+        ) : null}
       </div>
+      {children}
+    </section>
+  );
+}
+
+function Field({
+  label,
+  value,
+  editing,
+  onChange,
+  type = 'text',
+  className,
+}: {
+  label: string;
+  value: string;
+  editing: boolean;
+  onChange?: (_value: string) => void;
+  type?: string;
+  className?: string;
+}) {
+  const inputId = useId();
+
+  return (
+    <div className={cn('space-y-1', className)}>
+      <label className={labelClass} htmlFor={inputId}>
+        {label}
+      </label>
+      <Input
+        id={inputId}
+        type={type}
+        value={value}
+        onChange={(event) => onChange?.(event.target.value)}
+        disabled={!editing}
+        placeholder="Não informado"
+        className={editing ? controlClass : disabledControlClass}
+      />
     </div>
   );
 }
 
-function InfoRow({
+function LockedField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1">
+      <label className={labelClass}>{label}</label>
+      <Input value={value} disabled className={disabledControlClass} readOnly />
+    </div>
+  );
+}
+
+function BooleanField({
   label,
-  value,
-  icon,
-  multiline,
+  checked,
+  editing,
+  onChange,
 }: {
   label: string;
-  value: string;
-  icon?: ReactNode;
-  multiline?: boolean;
+  checked: boolean;
+  editing: boolean;
+  onChange: (_value: boolean) => void;
 }) {
   return (
-    <div className="grid gap-1 border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
-      <span className="flex items-start gap-2 text-slate-800">
-        {icon ? <span className="mt-0.5 text-slate-400">{icon}</span> : null}
-        <span className={multiline ? 'whitespace-pre-line' : ''}>{value}</span>
-      </span>
-    </div>
+    <label className="flex h-10 items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
+      <Checkbox
+        checked={checked}
+        disabled={!editing}
+        onCheckedChange={(value) => onChange(Boolean(value))}
+      />
+      <span>{label}</span>
+    </label>
   );
 }
 
