@@ -10,6 +10,7 @@ import {
   type RematriculaFormaPagamentoDTO as FormaPagamentoValue,
   type RematriculaItemDTO as RematriculaElegivelItem,
   type RematriculaPlanoDTO as RematriculaPlano,
+  type RematriculaResponsavelDTO as RematriculaResponsavel,
   type RematriculaStatusContratoDTO as StatusContrato,
   type RematriculaTurmaDTO as RematriculaTurma,
 } from '../dtos';
@@ -142,6 +143,20 @@ function normalizeAluno(raw: unknown): RematriculaAluno {
   };
 }
 
+function normalizeResponsavel(raw: unknown): RematriculaResponsavel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  if (!record.id) return null;
+  return {
+    id: String(record.id ?? ''),
+    nome: (record.nome as string | null) ?? null,
+    cpf: (record.cpf as string | null) ?? null,
+    email: (record.email as string | null) ?? null,
+    telefone: (record.telefone as string | null) ?? null,
+    foto: (record.foto as string | null) ?? null,
+  };
+}
+
 function normalizePlano(raw: unknown): RematriculaPlano {
   const record = (raw as Record<string, unknown>) || {};
   return {
@@ -181,6 +196,7 @@ function normalizeItem(raw: unknown): RematriculaElegivelItem {
 
   return rematriculaItemDTOSchema.parse({
     id: String(record.id ?? ''),
+    matriculaFamiliarId: record.matriculaFamiliarId ? String(record.matriculaFamiliarId) : null,
     status: (record.status as MatriculaStatus) ?? 'ATIVA',
     statusContrato: (record.statusContrato as StatusContrato) ?? 'AGUARDANDO_ASSINATURA',
     dataInicio: parseDate(record.dataInicio) ?? new Date().toISOString(),
@@ -193,6 +209,7 @@ function normalizeItem(raw: unknown): RematriculaElegivelItem {
         ? (record.eligibilityStatus as RematriculaElegivelItem['eligibilityStatus'])
         : 'ELEGIVEL',
     aluno: normalizeAluno(record.aluno),
+    responsavelFinanceiro: normalizeResponsavel(record.responsavelFinanceiro),
     plano: normalizePlano(record.plano),
     turma: normalizeTurma(record.turma),
     combo: normalizeCombo(record.combo),
@@ -319,5 +336,111 @@ export async function createRematriculaRequest(
     historicoContrato: payload.historicoContrato,
     primeiroVencimento: payload.primeiroVencimento,
     responsavelFinanceiro: payload.responsavelFinanceiro,
+  };
+}
+
+export type RematriculaFamiliarModoTurmas = 'TURMAS' | 'COMBO';
+
+export interface RematriculaFamiliarItemInput {
+  matriculaId: string;
+  turmaId?: string | null;
+  /** Em modo COMBO, combo por aluno (alternativa ao combo global). */
+  comboId?: string | null;
+}
+
+export interface CreateRematriculaFamiliarInput {
+  contaId: string;
+  responsavelId: string;
+  /**
+   * Define qual produto financeiro vai consolidar a cobrança familiar:
+   * - `TURMAS`: requer `planoId` global e `turmaId` por item.
+   * - `COMBO`: `comboId` em cada item e/ou `comboId` global (itens sem combo herdam o global).
+   */
+  modoTurmas: RematriculaFamiliarModoTurmas;
+  /** Plano global aplicado a todos os itens em modo TURMAS. */
+  planoId?: string | null;
+  /** Combo global em modo COMBO (opcional se cada item tiver `comboId`). */
+  comboId?: string | null;
+  itens: RematriculaFamiliarItemInput[];
+  dataInicio: string;
+  dataFimContrato: string;
+  formaPagamento: Exclude<FormaPagamentoValue, 'INDEFINIDO'>;
+  formaPagamentoTaxa?: Exclude<FormaPagamentoValue, 'INDEFINIDO'>;
+  vencimentoDia: number;
+  taxaMatricula?: number;
+  taxaIsenta?: boolean;
+  taxaJustificativa?: string;
+  descontos?: Array<{ id: string; cumulativo?: boolean }>;
+  multaPercentual?: number;
+  jurosMensal?: number;
+  descontoAntecipado?: number;
+  prazoDesconto?: number;
+  overrideReason?: string;
+  notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
+  notificationChannelsConfigured?: boolean;
+  uiRequestId?: string;
+}
+
+export interface CreateRematriculaFamiliarResponse {
+  familyId: string;
+  status: string;
+  results: Array<{
+    matriculaId: string;
+    alunoId: string;
+    alunoNome: string;
+    status: 'success' | 'error';
+    novaMatriculaId?: string | null;
+    errorMessage?: string | null;
+  }>;
+}
+
+export async function createRematriculaFamiliarRequest(
+  input: CreateRematriculaFamiliarInput,
+): Promise<CreateRematriculaFamiliarResponse> {
+  const isCombo = input.modoTurmas === 'COMBO';
+  const planoId = !isCombo ? input.planoId ?? null : null;
+  const comboIdGlobal = isCombo ? input.comboId ?? null : null;
+
+  const requestBody = {
+    ...input,
+    planoId,
+    comboId: comboIdGlobal,
+    itens: input.itens.map((item) => ({
+      matriculaId: item.matriculaId,
+      turmaId: item.turmaId ?? null,
+      planoId: !isCombo ? planoId : null,
+      comboId: isCombo ? item.comboId ?? comboIdGlobal : null,
+    })),
+  };
+
+  const response = await fetch('/api/rematriculas/familiar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  const json = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível concluir a rematrícula familiar.',
+    );
+  }
+
+  const payload = json as Partial<CreateRematriculaFamiliarResponse>;
+  return {
+    familyId: String(payload.familyId ?? ''),
+    status: String(payload.status ?? ''),
+    results: Array.isArray(payload.results)
+      ? payload.results.map((result) => ({
+          matriculaId: String(result.matriculaId ?? ''),
+          alunoId: String(result.alunoId ?? ''),
+          alunoNome: String(result.alunoNome ?? ''),
+          status: result.status === 'success' ? 'success' : 'error',
+          novaMatriculaId: result.novaMatriculaId ? String(result.novaMatriculaId) : null,
+          errorMessage: result.errorMessage ? String(result.errorMessage) : null,
+        }))
+      : [],
   };
 }

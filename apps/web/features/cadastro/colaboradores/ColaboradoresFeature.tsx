@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 // Skeleton manual substituído pelos skeletons do DataTable
-import { Trash2, Plus, Edit3, Eye, EyeOff } from '@/components/icons/icons';
+import { Trash2, Plus, Edit3 } from '@/components/icons/icons';
 // Dropdown de ordenação incorporado no EntityFiltersBar
 import ColaboradorWizardDialog from '@/components/colaboradores/ColaboradorWizardDialog';
 import ColaboradorEditDialog, {
@@ -26,7 +26,7 @@ import { useColaboradores } from './hooks/use-colaboradores';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
 import type { ColaboradorListItem } from './services/colaboradores-service';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
-import { formatFirstLast, formatInitials, maskCpf } from '@alusa/lib/client';
+import { formatFirstLast, formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
 import { toast } from '@/components/ui/toast';
 import useCurrentUser from '@/hooks/use-current-user';
 
@@ -79,7 +79,6 @@ export function ColaboradoresFeature() {
     },
   });
 
-  const [hideSensitive, setHideSensitive] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
   const {
     search: searchTerm,
@@ -126,10 +125,6 @@ export function ColaboradoresFeature() {
     setSortOrder(sort);
   }, [sort]);
 
-  const shouldBlur = (value: string | null | undefined) =>
-    Boolean(hideSensitive && value && value !== '-');
-  const blurClass = 'inline-block filter blur-[3px] px-1 -mx-1 py-0.5 -my-0.5 leading-[20px]';
-
   return (
     <TableLayout
       title="Gestão de Colaboradores"
@@ -144,27 +139,6 @@ export function ColaboradoresFeature() {
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Novo colaborador
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setHideSensitive((v) => !v)}
-            className="h-10 px-4 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-none [&_svg]:transition-none"
-            title={
-              hideSensitive ? 'Mostrar CPF, e-mail e telefone' : 'Ocultar CPF, e-mail e telefone'
-            }
-            aria-pressed={hideSensitive}
-          >
-            {hideSensitive ? (
-              <>
-                <Eye className="h-4 w-4 mr-2 transition-none" />
-                Mostrar dados
-              </>
-            ) : (
-              <>
-                <EyeOff className="h-4 w-4 mr-2 transition-none" />
-                Ocultar dados
-              </>
-            )}
           </Button>
         </>
       }
@@ -186,8 +160,6 @@ export function ColaboradoresFeature() {
       <div className="bg-white rounded-xl border overflow-hidden">
         <ColaboradoresTable
           colaboradores={paginated}
-          shouldBlur={shouldBlur}
-          blurClass={blurClass}
           onEdit={(colaborador) => {
             editDialog.openDialog(mapToColaboradorEdit(colaborador));
           }}
@@ -269,15 +241,11 @@ export function ColaboradoresFeature() {
 
 function ColaboradoresTable({
   colaboradores,
-  shouldBlur,
-  blurClass,
   onEdit,
   onDelete,
   loading,
 }: {
   colaboradores: ColaboradorListItem[];
-  shouldBlur: (_value: string | null | undefined) => boolean;
-  blurClass: string;
   onEdit: (_colaborador: ColaboradorListItem) => void;
   onDelete: (_colaborador: ColaboradorListItem) => void;
   loading: boolean;
@@ -345,14 +313,9 @@ function ColaboradoresTable({
       header: 'CPF',
       width: 'w-[11%]',
       align: 'center',
-      render: (c) => {
-        const cpfMasked = maskCpf(c.cpf ?? '');
-        return (
-          <span className={shouldBlur(c.cpf) ? blurClass : 'leading-[20px]'}>
-            {c.cpf ? cpfMasked : '-'}
-          </span>
-        );
-      },
+      render: (c) => (
+        <span className="tabular-nums leading-[20px]">{c.cpf ? maskCpf(c.cpf) : '-'}</span>
+      ),
       skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
     },
     {
@@ -361,14 +324,14 @@ function ColaboradoresTable({
       width: 'w-[22%]',
       align: 'center',
       noWrap: false,
-      render: (c) =>
-        shouldBlur(c.email) ? (
-          <span className={blurClass}>{c.email ?? '-'}</span>
-        ) : (
-          <span className="inline-block max-w-full truncate leading-[20px]" title={c.email ?? ''}>
-            {c.email ?? '-'}
-          </span>
-        ),
+      render: (c) => (
+        <span
+          className="inline-block max-w-full truncate leading-[20px]"
+          title={c.email ?? undefined}
+        >
+          {c.email ?? '-'}
+        </span>
+      ),
       skeleton: <div className="h-4 w-40 bg-gray-200 rounded mx-auto" />,
     },
     {
@@ -377,9 +340,7 @@ function ColaboradoresTable({
       width: 'w-[13%]',
       align: 'center',
       render: (c) => (
-        <span className={shouldBlur(c.telefone1) ? blurClass : 'leading-[20px]'}>
-          {c.telefone1 || '-'}
-        </span>
+        <span className="tabular-nums leading-[20px]">{maskPhone(c.telefone1) || '-'}</span>
       ),
       skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
     },

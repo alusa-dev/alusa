@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { WizardFamiliarSubmitResult, WizardState } from '@/components/matriculas/wizard/types';
 import { createContrato } from '@/features/contratos/services/contratos-service';
 
@@ -16,7 +16,14 @@ const sanitizeMessage = (message: string) =>
     .replace(/provedor/gi, 'serviço financeiro')
     .trim();
 
-function buildPayload(state: WizardState): Record<string, unknown> {
+function generateRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildPayload(state: WizardState, uiRequestId: string): Record<string, unknown> {
   const normalizePayment = (value: unknown) => {
     if (typeof value !== 'string') return value;
     return value === 'CARTAO' ? 'CARTAO_CREDITO' : value;
@@ -56,20 +63,25 @@ function buildPayload(state: WizardState): Record<string, unknown> {
     descontoAntecipado: state.descontoAntecipado,
     descontoTipo: state.descontoTipo,
     prazoDesconto: state.prazoDesconto,
-    uiRequestId:
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}`,
+    uiRequestId,
   };
 }
 
 export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOptions = {}) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<WizardFamiliarSubmitResult[]>([]);
+  // Mantém o uiRequestId estável entre tentativas para garantir idempotência
+  // ponta-a-ponta (mesmo se o usuário clicar duas vezes ou der refresh).
+  const requestIdRef = useRef<string | null>(null);
 
   const submit = async (state: WizardState) => {
     setLoading(true);
     setResults([]);
+
+    if (!requestIdRef.current) {
+      requestIdRef.current = generateRequestId();
+    }
+    const uiRequestId = requestIdRef.current;
 
     try {
       if (state.alunosFamiliares.length === 0) {
@@ -79,7 +91,7 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
       const response = await fetch('/api/matriculas/familiar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload(state)),
+        body: JSON.stringify(buildPayload(state, uiRequestId)),
       });
 
       const payload = await response.json().catch(() => ({}));
@@ -120,6 +132,9 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
         }
       }
 
+      // Sucesso: zera para que um novo wizard gere novo uiRequestId.
+      requestIdRef.current = null;
+
       setResults(allResults);
       options.onSuccess?.(allResults);
       return allResults;
@@ -132,5 +147,10 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
     }
   };
 
-  return { submit, loading, results };
+  const reset = () => {
+    requestIdRef.current = null;
+    setResults([]);
+  };
+
+  return { submit, loading, results, reset };
 }

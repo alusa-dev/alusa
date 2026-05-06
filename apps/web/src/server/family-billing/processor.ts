@@ -5,11 +5,24 @@ import {
 } from '@alusa/finance';
 import { FamilyBillingOutboxStatus, FamilyBillingStatus } from '@prisma/client';
 
-type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
-type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';
-type SupportedCycle = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'YEARLY';
+export type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
+export type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';
+export type SupportedCycle =
+  | 'WEEKLY'
+  | 'BIWEEKLY'
+  | 'MONTHLY'
+  | 'QUARTERLY'
+  | 'YEARLY';
 
-type FamilyBillingPayload = {
+export type DiscountPayload = {
+  value: number;
+  type: 'FIXED' | 'PERCENTAGE';
+  dueDateLimitDays?: number;
+};
+export type InterestPayload = { value: number };
+export type FinePayload = { value: number; type: 'FIXED' | 'PERCENTAGE' };
+
+export type FamilyBillingPayload = {
   aggregateType: 'MATRICULA_FAMILIAR' | 'REMATRICULA_FAMILIAR';
   aggregateId: string;
   contaId: string;
@@ -19,6 +32,7 @@ type FamilyBillingPayload = {
   monthlyValue: number;
   enrollmentFeeValue: number;
   billingType: SupportedBillingType;
+  enrollmentFeeBillingType?: SupportedBillingType | null;
   cycle: SupportedCycle;
   nextDueDate: string;
   endDate: string;
@@ -28,9 +42,59 @@ type FamilyBillingPayload = {
   uiRequestId?: string | null;
   notificationChannels?: SupportedNotificationChannel[];
   notificationChannelsConfigured?: boolean;
+  discount?: DiscountPayload | null;
+  interest?: InterestPayload | null;
+  fine?: FinePayload | null;
 };
 
-function parsePayload(raw: unknown): FamilyBillingPayload {
+export type FamilyBillingExecutionResult = {
+  standaloneSubscriptionId: string | null;
+  standaloneEnrollmentChargeId: string | null;
+};
+
+function parseSupportedBillingType(value: unknown, fallback?: SupportedBillingType | null) {
+  if (value === 'BOLETO' || value === 'PIX' || value === 'CREDIT_CARD') return value;
+  if (value === undefined || value === null) return fallback ?? null;
+  throw new Error('Forma de pagamento familiar inválida.');
+}
+
+function parsePositiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function parseDiscount(raw: unknown): DiscountPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const payload = raw as Record<string, unknown>;
+  const value = parsePositiveNumber(payload.value);
+  if (!value) return null;
+
+  return {
+    value,
+    type: payload.type === 'FIXED' ? 'FIXED' : 'PERCENTAGE',
+    dueDateLimitDays: Math.max(0, Number(payload.dueDateLimitDays ?? 0) || 0),
+  };
+}
+
+function parseInterest(raw: unknown): InterestPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = parsePositiveNumber((raw as Record<string, unknown>).value);
+  return value ? { value } : null;
+}
+
+function parseFine(raw: unknown): FinePayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const payload = raw as Record<string, unknown>;
+  const value = parsePositiveNumber(payload.value);
+  if (!value) return null;
+
+  return {
+    value,
+    type: payload.type === 'FIXED' ? 'FIXED' : 'PERCENTAGE',
+  };
+}
+
+export function parseFamilyBillingPayload(raw: unknown): FamilyBillingPayload {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Payload do outbox familiar inválido.');
   }
@@ -40,10 +104,14 @@ function parsePayload(raw: unknown): FamilyBillingPayload {
     payload.aggregateType === 'REMATRICULA_FAMILIAR'
       ? 'REMATRICULA_FAMILIAR'
       : 'MATRICULA_FAMILIAR';
-  const billingType = payload.billingType;
-  if (billingType !== 'BOLETO' && billingType !== 'PIX' && billingType !== 'CREDIT_CARD') {
+  const billingType = parseSupportedBillingType(payload.billingType);
+  if (!billingType) {
     throw new Error('Forma de pagamento familiar inválida.');
   }
+  const enrollmentFeeBillingType = parseSupportedBillingType(
+    payload.enrollmentFeeBillingType,
+    billingType,
+  );
 
   const cycle = payload.cycle;
   if (
@@ -66,6 +134,7 @@ function parsePayload(raw: unknown): FamilyBillingPayload {
     monthlyValue: Number(payload.monthlyValue ?? 0),
     enrollmentFeeValue: Number(payload.enrollmentFeeValue ?? 0),
     billingType,
+    enrollmentFeeBillingType,
     cycle,
     nextDueDate: String(payload.nextDueDate ?? ''),
     endDate: String(payload.endDate ?? ''),
@@ -80,6 +149,9 @@ function parsePayload(raw: unknown): FamilyBillingPayload {
         )
       : [],
     notificationChannelsConfigured: payload.notificationChannelsConfigured === true,
+    discount: parseDiscount(payload.discount),
+    interest: parseInterest(payload.interest),
+    fine: parseFine(payload.fine),
   };
 }
 
@@ -194,6 +266,10 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
 
 function buildStandaloneBaseInput(
   payload: FamilyBillingPayload,
+  overrides?: {
+    billingType?: SupportedBillingType | null;
+    description?: string;
+  },
 ): Pick<
   CreateStandaloneChargeInput,
   | 'contaId'
@@ -210,23 +286,65 @@ function buildStandaloneBaseInput(
       type: 'responsavel',
       responsavelId: payload.responsavelId,
     },
-    billingType: payload.billingType,
-    description: payload.description,
+    billingType: overrides?.billingType ?? payload.billingType,
+    description: overrides?.description ?? payload.description,
     actor: { type: 'USER', id: payload.actorId },
     notificationChannels: payload.notificationChannels,
     notificationChannelsConfigured: payload.notificationChannelsConfigured,
   };
 }
 
-async function processSyncFamilyBilling(payload: FamilyBillingPayload) {
+function buildBillingAdjustments(
+  payload: FamilyBillingPayload,
+): Pick<CreateStandaloneChargeInput, 'discount' | 'interest' | 'fine'> {
+  return {
+    discount: payload.discount ?? undefined,
+    interest: payload.interest ?? undefined,
+    fine: payload.fine ?? undefined,
+  };
+}
+
+/**
+ * Executa a cobrança consolidada da família (taxa avulsa + assinatura recorrente)
+ * de forma idempotente. Pode ser chamado inline (rota /api/matriculas/familiar)
+ * ou via outbox (cron de retry/recovery).
+ *
+ * Ordem importa: a taxa avulsa é criada PRIMEIRO. Se ela falhar, a assinatura
+ * NÃO é criada, evitando assinaturas órfãs no Asaas. Em caso de retry, ambas
+ * as chamadas são idempotentes pelo `uiRequestId` derivado.
+ */
+export async function executeFamilyBilling(
+  payload: FamilyBillingPayload,
+): Promise<FamilyBillingExecutionResult> {
   const monthlyValue = ensurePositiveMoney(payload.monthlyValue);
   const enrollmentFeeValue = ensurePositiveMoney(payload.enrollmentFeeValue);
   let standaloneSubscriptionId: string | null = null;
   let standaloneEnrollmentChargeId: string | null = null;
 
+  if (enrollmentFeeValue > 0) {
+    const enrollmentResult = await createStandaloneCharge({
+      ...buildStandaloneBaseInput(payload, {
+        billingType: payload.enrollmentFeeBillingType,
+        description: `Taxa de matrícula familiar · ${payload.responsavelNome} · ${payload.totalAlunos} alunos`,
+      }),
+      ...buildBillingAdjustments(payload),
+      chargeType: 'ONE_TIME',
+      value: enrollmentFeeValue,
+      dueDate: payload.enrollmentFeeDueDate,
+      uiRequestId: `${payload.aggregateId}:enrollment-fee:${payload.uiRequestId ?? 'shared'}`,
+    });
+
+    if (!enrollmentResult.success) {
+      throw new Error(`Falha ao criar taxa familiar: ${enrollmentResult.error}`);
+    }
+
+    standaloneEnrollmentChargeId = enrollmentResult.data.chargeId;
+  }
+
   if (monthlyValue > 0) {
     const subscriptionResult = await createStandaloneCharge({
       ...buildStandaloneBaseInput(payload),
+      ...buildBillingAdjustments(payload),
       chargeType: 'SUBSCRIPTION',
       value: monthlyValue,
       nextDueDate: payload.nextDueDate,
@@ -242,22 +360,6 @@ async function processSyncFamilyBilling(payload: FamilyBillingPayload) {
     standaloneSubscriptionId = subscriptionResult.data.chargeId;
   }
 
-  if (enrollmentFeeValue > 0) {
-    const enrollmentResult = await createStandaloneCharge({
-      ...buildStandaloneBaseInput(payload),
-      chargeType: 'ONE_TIME',
-      value: enrollmentFeeValue,
-      dueDate: payload.enrollmentFeeDueDate,
-      uiRequestId: `${payload.aggregateId}:enrollment-fee:${payload.uiRequestId ?? 'shared'}`,
-    });
-
-    if (!enrollmentResult.success) {
-      throw new Error(`Falha ao criar taxa familiar: ${enrollmentResult.error}`);
-    }
-
-    standaloneEnrollmentChargeId = enrollmentResult.data.chargeId;
-  }
-
   await updateGroupMetadata({
     contaId: payload.contaId,
     familyGroupId: payload.aggregateId,
@@ -270,6 +372,21 @@ async function processSyncFamilyBilling(payload: FamilyBillingPayload) {
     subscriptionId: standaloneSubscriptionId,
     enrollmentChargeId: standaloneEnrollmentChargeId,
   });
+
+  return { standaloneSubscriptionId, standaloneEnrollmentChargeId };
+}
+
+/**
+ * Marca o aggregate familiar como FALHO sem lançar erro adicional.
+ * Útil para o caminho inline da rota: a cobrança falhou, mas as matrículas
+ * já estão criadas; o cliente recebe uma resposta com status FALHO ao invés
+ * de um 500.
+ */
+export async function markFamilyBillingFailed(
+  payload: FamilyBillingPayload,
+  message: string,
+) {
+  await persistAggregateFailure(payload, message);
 }
 
 export async function processFamilyBillingOutboxEvent(eventId: string) {
@@ -298,10 +415,10 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     return { processed: false, reason: 'CLAIMED_BY_OTHER_WORKER' as const };
   }
 
-  const payload = parsePayload(event.payload);
+  const payload = parseFamilyBillingPayload(event.payload);
 
   try {
-    await processSyncFamilyBilling(payload);
+    await executeFamilyBilling(payload);
 
     await prisma.familyBillingOutbox.update({
       where: { id: eventId },

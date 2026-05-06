@@ -79,6 +79,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           className="h-full overflow-visible"
         >
           <div
+            data-app-shell-card
             className="flex h-full w-full flex-col overflow-hidden transition-[width] duration-300 ease-in-out"
             style={{
               height: `calc(100vh - ${OUTER_PADDING_TOP_PX + OUTER_PADDING_BOTTOM_PX}px)`,
@@ -86,6 +87,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               borderRadius: CARD_RADIUS_PX,
               padding: CARD_PADDING_PX,
               boxShadow: CARD_SHADOW,
+              ['--app-shell-card-shadow' as string]: CARD_SHADOW,
               position: 'relative',
               zIndex: 1,
             }}

@@ -96,6 +96,7 @@ type MatriculaDetalhes = {
     descontoPercentual?: number | null;
     descontoValorFixo?: number | null;
     asaasPaymentId?: string | null;
+    origin?: 'ACADEMIC' | 'STANDALONE';
   }>;
 };
 

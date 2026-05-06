@@ -22,7 +22,8 @@ import {
   formatIsoDate,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
-  resolveFirstDueDate,
+  resolveChargeableFirstDueDate,
+  resolveEnrollmentFeeDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 import { processFamilyBillingOutboxEvent } from '@/src/server/family-billing/processor';
 
@@ -40,10 +41,21 @@ const descontoSchema = z.object({
   cumulativo: z.boolean().optional().default(false),
 });
 
-const createRematriculaFamiliarInputSchema = z.object({
-  contaId: z.string().min(1).optional(),
-  responsavelId: z.string().min(1),
-  itens: z.array(rematriculaItemSchema).min(2),
+const createRematriculaFamiliarInputSchema = z
+  .object({
+    contaId: z.string().min(1).optional(),
+    responsavelId: z.string().min(1),
+    /**
+     * Quando informado, força que todos os itens usem o mesmo produto financeiro
+     * (plano global em `TURMAS` ou combo global em `COMBO`). Para retro-
+     * compatibilidade aceita ausente: cada item pode trazer plano/combo próprios.
+     */
+    modoTurmas: z.enum(['TURMAS', 'COMBO']).optional(),
+    /** Plano global obrigatório quando `modoTurmas === 'TURMAS'`. */
+    planoId: z.string().min(1).optional().nullable(),
+    /** Combo global obrigatório quando `modoTurmas === 'COMBO'`. */
+    comboId: z.string().min(1).optional().nullable(),
+    itens: z.array(rematriculaItemSchema).min(1),
   dataInicio: z.string().min(1),
   dataFimContrato: z.string().min(1),
   formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']),
@@ -61,7 +73,44 @@ const createRematriculaFamiliarInputSchema = z.object({
   notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
   uiRequestId: z.string().trim().min(1).max(120).optional(),
-});
+  })
+  .superRefine((value, ctx) => {
+    if (!value.modoTurmas) return;
+    if (value.modoTurmas === 'TURMAS') {
+      if (!value.planoId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['planoId'],
+          message: 'Plano global é obrigatório quando modoTurmas é TURMAS.',
+        });
+      }
+      if (value.comboId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['comboId'],
+          message: 'Combo não pode ser informado quando modoTurmas é TURMAS.',
+        });
+      }
+    } else if (value.modoTurmas === 'COMBO') {
+      if (value.planoId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['planoId'],
+          message: 'Plano não pode ser informado quando modoTurmas é COMBO.',
+        });
+      }
+      const hasGlobalCombo = Boolean(value.comboId);
+      const eachItemHasCombo = value.itens.every((item) => Boolean(item.comboId));
+      if (!hasGlobalCombo && !eachItemHasCombo) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['comboId'],
+          message:
+            'Informe um combo global ou selecione um combo para cada aluno quando modoTurmas é COMBO.',
+        });
+      }
+    }
+  });
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -208,18 +257,22 @@ async function resolveFamilyPricing(params: {
     const source = sourceById.get(item.matriculaId);
     if (!source) continue;
 
-    const plano = item.planoId
+    const hasExplicitPlan = Boolean(item.planoId);
+    const hasExplicitCombo = Boolean(item.comboId);
+    const plano = hasExplicitPlan
       ? await prisma.plano.findFirst({
-          where: { id: item.planoId, contaId: params.contaId },
+          where: { id: item.planoId!, contaId: params.contaId },
           select: { id: true, nome: true, valor: true, periodicidade: true },
         })
       : source.plano;
-    const combo = item.comboId
+    const combo = hasExplicitCombo
       ? await prisma.combo.findFirst({
-          where: { id: item.comboId, contaId: params.contaId },
+          where: { id: item.comboId!, contaId: params.contaId },
           select: { id: true, nome: true, valor: true, periodicidade: true },
         })
-      : source.combo;
+      : hasExplicitPlan
+        ? null
+        : source.combo;
 
     const periodicidade = combo?.periodicidade ?? plano?.periodicidade;
     const valorBase = Number(combo?.valor ?? plano?.valor ?? 0);
@@ -315,25 +368,19 @@ export async function POST(request: Request) {
       ? normalizeFormaPagamento(body.formaPagamentoTaxa)
       : formaPagamento;
 
-    const pricing = await resolveFamilyPricing({
-      contaId,
-      itens: body.itens,
-      descontos: body.descontos,
-    });
-
     const family = await prisma.rematriculaFamiliar.create({
       data: {
         contaId,
         responsavelId: responsavel.id,
         billingMode: BillingMode.SHARED_PLAN,
         status: FamilyBillingStatus.PENDENTE,
-        totalAlunos: body.itens.length,
-        valorMensalidadeTotal: pricing.totalMensalidade,
+        totalAlunos: 0,
+        valorMensalidadeTotal: 0,
         valorTaxaMatriculaTotal: body.taxaIsenta
           ? 0
-          : Number((body.taxaMatricula * body.itens.length).toFixed(2)),
+          : 0,
         formaPagamento,
-        ciclo: pricing.cycle,
+        ciclo: null,
         diaVencimento: body.vencimentoDia,
         dataInicio,
         dataFimContrato,
@@ -364,7 +411,23 @@ export async function POST(request: Request) {
 
     const matriculaById = new Map(matriculas.map((item) => [item.id, item]));
 
-    for (const [index, item] of body.itens.entries()) {
+    // Quando `modoTurmas` é informado, normalizamos cada item para usar o produto
+    // global (plano OU combo) — garantindo que a precificação e o `rematricularAluno`
+    // recebam exatamente o mesmo produto financeiro para todo o lote familiar.
+    const normalizedItens = body.itens.map((item) => {
+      if (!body.modoTurmas) return item;
+      if (body.modoTurmas === 'TURMAS') {
+        return { ...item, planoId: body.planoId ?? null, comboId: null };
+      }
+      return {
+        ...item,
+        planoId: null,
+        comboId: item.comboId ?? body.comboId ?? null,
+        turmaId: item.turmaId ?? null,
+      };
+    });
+
+    for (const [index, item] of normalizedItens.entries()) {
       const source = matriculaById.get(item.matriculaId);
       if (!source) continue;
 
@@ -506,12 +569,12 @@ export async function POST(request: Request) {
     }
 
     const successCount = results.filter((result) => result.status === 'success').length;
-    if (successCount < 2) {
+    if (successCount < 1) {
       await prisma.rematriculaFamiliar.update({
         where: { id: family.id },
         data: {
           status: FamilyBillingStatus.FALHO,
-          ultimoErro: 'O lote de rematrícula familiar terminou com menos de dois alunos válidos.',
+          ultimoErro: 'O lote de rematrícula familiar terminou sem alunos válidos.',
         },
       });
 
@@ -525,6 +588,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const successMatriculaIds = new Set(
+      results
+        .filter((result) => result.status === 'success')
+        .map((result) => result.matriculaId),
+    );
+    const successfulItens = normalizedItens.filter((item) =>
+      successMatriculaIds.has(item.matriculaId),
+    );
+    const pricing = await resolveFamilyPricing({
+      contaId,
+      itens: successfulItens,
+      descontos: body.descontos,
+    });
+    const enrollmentFeeValue =
+      !body.taxaIsenta && body.taxaMatricula > 0
+        ? Number((body.taxaMatricula * successCount).toFixed(2))
+        : 0;
+
     let financialStatus: FamilyBillingStatus = results.some((result) => result.status === 'error')
       ? FamilyBillingStatus.PARCIAL
       : FamilyBillingStatus.PROCESSANDO;
@@ -537,6 +618,52 @@ export async function POST(request: Request) {
         'Forma de pagamento não suporta cobrança familiar.',
       );
     }
+
+    if (pricing.totalMensalidade > 0) {
+      const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
+      if (previewNextDueDate > dataFimContrato) {
+        await prisma.rematriculaFamiliar.update({
+          where: { id: family.id },
+          data: {
+            status: FamilyBillingStatus.FALHO,
+            ultimoErro: `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}).`,
+          },
+        });
+        return jsonError(
+          422,
+          'DATA_FIM_INVALIDA',
+          `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}). Ajuste a data de término ou o dia de vencimento.`,
+        );
+      }
+    }
+
+    const billingAdjustments = {
+      discount:
+        body.descontoAntecipado && body.descontoAntecipado > 0
+          ? {
+              value: body.descontoAntecipado,
+              type: 'PERCENTAGE' as const,
+              dueDateLimitDays: body.prazoDesconto ?? 0,
+            }
+          : null,
+      interest:
+        body.jurosMensal && body.jurosMensal > 0 ? { value: body.jurosMensal } : null,
+      fine:
+        body.multaPercentual && body.multaPercentual > 0
+          ? { value: body.multaPercentual, type: 'PERCENTAGE' as const }
+          : null,
+    };
+
+    await prisma.rematriculaFamiliar.update({
+      where: { id: family.id },
+      data: {
+        status: financialStatus,
+        totalAlunos: successCount,
+        valorMensalidadeTotal: pricing.totalMensalidade,
+        valorTaxaMatriculaTotal: enrollmentFeeValue,
+        ciclo: pricing.cycle,
+      },
+    });
 
     const event = await prisma.familyBillingOutbox.create({
       data: {
@@ -553,20 +680,20 @@ export async function POST(request: Request) {
           responsavelNome: responsavel.nome,
           totalAlunos: successCount,
           monthlyValue: pricing.totalMensalidade,
-          enrollmentFeeValue:
-            !body.taxaIsenta && body.taxaMatricula > 0
-              ? Number((body.taxaMatricula * successCount).toFixed(2))
-              : 0,
+          enrollmentFeeValue,
           billingType,
           cycle: pricing.cycle,
-          nextDueDate: formatIsoDate(resolveFirstDueDate(dataInicio, body.vencimentoDia)),
+          nextDueDate: formatIsoDate(resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia)),
           endDate: formatIsoDate(dataFimContrato),
-          enrollmentFeeDueDate: formatIsoDate(dataInicio),
+          enrollmentFeeDueDate: formatIsoDate(resolveEnrollmentFeeDueDate(dataInicio)),
           description: `Rematrícula familiar · ${responsavel.nome} · ${successCount} alunos`,
           actorId: user.id,
           uiRequestId: body.uiRequestId ?? null,
           notificationChannels: body.notificationChannels,
           notificationChannelsConfigured: body.notificationChannelsConfigured,
+          discount: billingAdjustments.discount,
+          interest: billingAdjustments.interest,
+          fine: billingAdjustments.fine,
         },
       },
     });

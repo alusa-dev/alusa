@@ -122,12 +122,14 @@ export function GlobalAdminShell({
           }}
         >
           <div
+            data-app-shell-card
             className="flex h-full w-full flex-col overflow-hidden bg-white"
             style={{
               height: `calc(100vh - ${GLOBAL_ADMIN_LAYOUT.outerPaddingTopPx + GLOBAL_ADMIN_LAYOUT.outerPaddingBottomPx}px)`,
               borderRadius: GLOBAL_ADMIN_LAYOUT.cardRadiusPx,
               padding: GLOBAL_ADMIN_LAYOUT.cardPaddingPx,
               boxShadow: GLOBAL_ADMIN_LAYOUT.cardShadow,
+              ['--app-shell-card-shadow' as string]: GLOBAL_ADMIN_LAYOUT.cardShadow,
               position: 'relative',
               zIndex: 1,
             }}

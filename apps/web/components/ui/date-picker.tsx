@@ -37,6 +37,14 @@ export interface DatePickerProps {
   toYear?: number
   /** Se deve mostrar o ícone de calendário no botão */
   showIcon?: boolean
+  /** Data mínima permitida */
+  minDate?: Date
+  /** Data máxima permitida */
+  maxDate?: Date
+  /** Marca visualmente o campo como inválido */
+  invalid?: boolean
+  /** Id de elemento descritivo para acessibilidade */
+  describedBy?: string
 }
 
 function coerceToDate(value: Date | string | undefined, dateFormat: string): Date | undefined {
@@ -51,6 +59,12 @@ function coerceToDate(value: Date | string | undefined, dateFormat: string): Dat
     } catch {
       // ignore
     }
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [year, month, day] = trimmed.split("-").map(Number)
+    const parsed = new Date(year, month - 1, day)
+    if (isValidFn(parsed)) return parsed
   }
 
   const asDate = new Date(trimmed)
@@ -92,6 +106,17 @@ function isValidDate(date: Date | undefined): boolean {
   return !isNaN(date.getTime())
 }
 
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function isWithinRange(date: Date, minDate?: Date, maxDate?: Date) {
+  const current = startOfDay(date).getTime()
+  if (minDate && current < startOfDay(minDate).getTime()) return false
+  if (maxDate && current > startOfDay(maxDate).getTime()) return false
+  return true
+}
+
 function DatePicker({
   value,
   onChange,
@@ -104,10 +129,29 @@ function DatePicker({
   fromYear,
   toYear,
   showIcon = true,
+  minDate,
+  maxDate,
+  invalid = false,
+  describedBy,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false)
   const [month, setMonth] = React.useState<Date | undefined>(coerceToDate(value, dateFormat) ?? new Date())
   const [inputValue, setInputValue] = React.useState(formatDisplayDate(value, dateFormat))
+  const selectedDate = coerceToDate(value, dateFormat)
+  const isOutOfRange = selectedDate ? !isWithinRange(selectedDate, minDate, maxDate) : false
+  const isInvalid = invalid || isOutOfRange
+  const calendarDisabled = React.useMemo(() => {
+    if (minDate && maxDate) {
+      return [{ before: startOfDay(minDate) }, { after: startOfDay(maxDate) }]
+    }
+    if (minDate) {
+      return { before: startOfDay(minDate) }
+    }
+    if (maxDate) {
+      return { after: startOfDay(maxDate) }
+    }
+    return undefined
+  }, [minDate, maxDate])
 
   // Calcula range de anos padrão (10 anos para trás e para frente)
   const currentYear = new Date().getFullYear()
@@ -122,6 +166,9 @@ function DatePicker({
   }, [value, dateFormat])
 
   const handleSelect = (date: Date | undefined) => {
+    if (date && !isWithinRange(date, minDate, maxDate)) {
+      return
+    }
     onChange?.(date)
     setInputValue(formatDisplayDate(date, dateFormat))
     setOpen(false)
@@ -144,7 +191,7 @@ function DatePicker({
     if (masked.length === 10) {
       try {
         const parsed = parse(masked, dateFormat, new Date(), { locale: ptBR })
-        if (isValidFn(parsed)) {
+        if (isValidFn(parsed) && isWithinRange(parsed, minDate, maxDate)) {
           onChange?.(parsed)
           setMonth(parsed)
         }
@@ -163,7 +210,6 @@ function DatePicker({
 
   // Variante com Input
   if (variant === "input") {
-    const selectedDate = coerceToDate(value, dateFormat)
     return (
       <div className="relative w-full">
         <Input
@@ -171,7 +217,13 @@ function DatePicker({
           value={inputValue}
           placeholder={placeholder}
           disabled={disabled}
-          className={cn("pr-10", className)}
+          aria-describedby={describedBy}
+          aria-invalid={isInvalid || undefined}
+          className={cn(
+            "pr-10",
+            isInvalid && "border-red-300 text-red-700 focus-visible:ring-red-500/20",
+            className
+          )}
           onChange={handleInputChange}
           inputMode="numeric"
           maxLength={10}
@@ -199,6 +251,7 @@ function DatePicker({
               <Calendar
                 mode="single"
                 selected={selectedDate}
+                disabled={calendarDisabled}
                 captionLayout="dropdown"
                 month={month}
                 onMonthChange={setMonth}
@@ -214,7 +267,6 @@ function DatePicker({
   }
 
   // Variante padrão com Button
-  const selectedDate = coerceToDate(value, dateFormat)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -222,10 +274,13 @@ function DatePicker({
           id={id}
           variant="outline"
           disabled={disabled}
-          data-empty={!value}
+          aria-describedby={describedBy}
+          aria-invalid={isInvalid || undefined}
+          data-empty={!selectedDate}
           className={cn(
             "w-full justify-start text-left font-normal",
             "data-[empty=true]:text-muted-foreground",
+            isInvalid && "border-red-300 text-red-700 hover:bg-red-50 focus-visible:ring-red-500/20",
             className
           )}
         >
@@ -241,6 +296,7 @@ function DatePicker({
         <Calendar
           mode="single"
           selected={selectedDate}
+          disabled={calendarDisabled}
           captionLayout="dropdown"
           month={month}
           onMonthChange={setMonth}

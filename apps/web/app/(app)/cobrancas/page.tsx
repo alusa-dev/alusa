@@ -425,9 +425,10 @@ export default function CobrancasTodasPage() {
               ) : (
                 orderedCobrancas.slice((page - 1) * pageSize, page * pageSize).map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
+                  const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
 
                   const handleRowClick = () => {
-                    if (cobranca.isGroup && cobranca.groupId) {
+                    if (isInstallmentGroup && cobranca.groupId) {
                       router.push(`/cobrancas/parcelamentos/${cobranca.groupId}`);
                     } else {
                       router.push(`/cobrancas/${cobranca.id}`);
@@ -437,7 +438,7 @@ export default function CobrancasTodasPage() {
                   return (
                     <div key={cobranca.id}>
                       <div
-                        className={`px-6 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${cobranca.isGroup ? 'bg-gray-50/50' : 'bg-white'}`}
+                        className={`px-6 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${isInstallmentGroup ? 'bg-gray-50/50' : 'bg-white'}`}
                         onClick={handleRowClick}
                       >
                         <div className="grid grid-cols-12 gap-4 items-center">
@@ -455,7 +456,7 @@ export default function CobrancasTodasPage() {
                           </div>
                           <div className="col-span-2 text-[13px] text-gray-900 text-center font-semibold">
                             {formatCurrency(cobranca.valor)}
-                            {cobranca.isGroup && cobranca.installmentCount && (
+                            {isInstallmentGroup && cobranca.installmentCount && (
                               <span className="text-[11px] text-gray-500 font-normal ml-1">
                                 ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
                               </span>
@@ -485,7 +486,7 @@ export default function CobrancasTodasPage() {
                             </Badge>
                           </div>
                           <div className="col-span-1 flex justify-center">
-                            {!cobranca.isGroup && (
+                            {!isInstallmentGroup && (
                               <CobrancaActionsMenu
                                 cobranca={{
                                   id: cobranca.id,

@@ -41,10 +41,12 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
     return formatCurrencyInput(Math.round(valor * 100));
   });
   const [justificativa, setJustificativa] = useState(state.taxaJustificativa ?? '');
-  const [formaPagamento, setFormaPagamento] = useState<'PIX_BOLETO' | 'CARTAO'>(
+  const [formaPagamento, setFormaPagamento] = useState<'PIX' | 'BOLETO' | 'CARTAO'>(
     state.formaPagamentoTaxa === 'CARTAO' || state.formaPagamentoTaxa === 'CARTAO_CREDITO'
       ? 'CARTAO'
-      : 'PIX_BOLETO',
+      : state.formaPagamentoTaxa === 'BOLETO'
+        ? 'BOLETO'
+        : 'PIX',
   );
 
   useEffect(() => {
@@ -56,7 +58,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
       !isenta && valorNumerico > 0
         ? formaPagamento === 'CARTAO'
           ? 'CARTAO_CREDITO'
-          : 'PIX'
+          : formaPagamento
         : undefined;
 
     update({
@@ -168,21 +170,32 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
               {valorNumerico > 0 && (
                 <div className="space-y-2">
                   <label className="text-xs text-gray-600">Forma de pagamento</label>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      className={`flex-1 h-9 rounded-md border text-center transition ${
-                        formaPagamento === 'PIX_BOLETO'
+                      className={`h-9 rounded-md border text-center transition ${
+                        formaPagamento === 'PIX'
                           ? 'border-violet-500 bg-violet-50 text-violet-700'
                           : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
                       }`}
-                      onClick={() => setFormaPagamento('PIX_BOLETO')}
+                      onClick={() => setFormaPagamento('PIX')}
                     >
                       <span className="text-sm font-medium">PIX</span>
                     </button>
                     <button
                       type="button"
-                      className={`flex-1 h-9 rounded-md border text-center transition ${
+                      className={`h-9 rounded-md border text-center transition ${
+                        formaPagamento === 'BOLETO'
+                          ? 'border-violet-500 bg-violet-50 text-violet-700'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
+                      }`}
+                      onClick={() => setFormaPagamento('BOLETO')}
+                    >
+                      <span className="text-sm font-medium">Boleto</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`h-9 rounded-md border text-center transition ${
                         formaPagamento === 'CARTAO'
                           ? 'border-violet-500 bg-violet-50 text-violet-700'
                           : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'

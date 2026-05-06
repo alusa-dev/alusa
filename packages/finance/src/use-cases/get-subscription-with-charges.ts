@@ -26,6 +26,7 @@ type StandaloneSubscriptionFindFirstArgs = {
     endDate: true;
     description: true;
     customerId: true;
+    familyGroupId: true;
     createdAt: true;
   };
 };
@@ -45,6 +46,7 @@ function getStandaloneSubscriptionDelegate() {
         endDate: Date | null;
         description: string | null;
         customerId: string;
+        familyGroupId: string | null;
         createdAt: Date;
       } | null>;
     };
@@ -71,6 +73,12 @@ export interface SubscriptionChargeDTO {
   source: 'CHARGE' | 'COBRANCA';
 }
 
+export interface SubscriptionStudentDTO {
+  id: string;
+  nome: string;
+  matriculaId: string;
+}
+
 export interface SubscriptionDetailsDTO {
   id: string;
   asaasSubscriptionId: string | null;
@@ -82,6 +90,7 @@ export interface SubscriptionDetailsDTO {
   clienteTelefone: string | null;
   alunoNome: string;
   alunoId: string;
+  familyStudents?: SubscriptionStudentDTO[];
   valor: number;
   cycle: string;
   cycleLabel: string;
@@ -238,6 +247,7 @@ export async function getSubscriptionWithCharges(
             endDate: true,
             description: true,
             customerId: true,
+            familyGroupId: true,
             createdAt: true,
           },
         })
@@ -283,6 +293,45 @@ export async function getSubscriptionWithCharges(
 
       const statusLabel = STATUS_LABELS[standaloneSub.status] ?? standaloneSub.status;
       const cycleLabel = CYCLE_LABELS[standaloneSub.cycle] ?? standaloneSub.cycle;
+      const familyStudents = standaloneSub.familyGroupId
+        ? await prisma.matriculaFamiliar
+            .findFirst({
+              where: {
+                id: standaloneSub.familyGroupId,
+                contaId,
+                standaloneSubscriptionId: standaloneSub.id,
+              },
+              select: {
+                items: {
+                  orderBy: { orderIndex: 'asc' },
+                  select: {
+                    matriculaId: true,
+                    matricula: {
+                      select: {
+                        aluno: {
+                          select: {
+                            id: true,
+                            nome: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            })
+            .then((family) =>
+              (family?.items ?? []).map((item) => ({
+                id: item.matricula.aluno.id,
+                nome: item.matricula.aluno.nome,
+                matriculaId: item.matriculaId,
+              })),
+            )
+        : [];
+      const standaloneAlunoNome =
+        familyStudents.length > 0
+          ? familyStudents.map((student) => student.nome).join(', ')
+          : 'Cliente';
 
       const data: SubscriptionDetailsDTO = {
         id: standaloneSub.id,
@@ -293,8 +342,9 @@ export async function getSubscriptionWithCharges(
         clienteNome: 'Cliente',
         clienteEmail: null,
         clienteTelefone: null,
-        alunoNome: 'Cliente',
-        alunoId: standaloneSub.customerId,
+        alunoNome: standaloneAlunoNome,
+        alunoId: familyStudents[0]?.id ?? standaloneSub.customerId,
+        familyStudents,
         valor: Number(standaloneSub.value),
         cycle: standaloneSub.cycle,
         cycleLabel,

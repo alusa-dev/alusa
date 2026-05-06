@@ -33,21 +33,29 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
     [],
   );
 
-  const valorMensalidade =
-    state.modoTurmas === 'COMBO' ? (state.comboValor ?? 0) : (state.planoValor ?? 0);
-  const valorBeneficio = calcularValorDescontoBeneficio(
-    valorMensalidade,
-    state.beneficioSelecionado,
-  );
-  const valorMensalidadeLiquido = calcularValorLiquidoComBeneficio(
-    valorMensalidade,
-    state.beneficioSelecionado,
-  );
+  const calcularLiquido = (valorBase: number) =>
+    calcularValorLiquidoComBeneficio(valorBase, state.beneficioSelecionado);
+  const calcularDesconto = (valorBase: number) =>
+    calcularValorDescontoBeneficio(valorBase, state.beneficioSelecionado);
+  const planoValorBase = state.planoValor ?? 0;
+  const valorBeneficio =
+    state.modoTurmas === 'COMBO'
+      ? state.alunosFamiliares.reduce(
+          (total, aluno) => total + calcularDesconto(aluno.comboValor ?? 0),
+          0,
+        )
+      : calcularDesconto(planoValorBase);
+  const totalMensalidades =
+    state.modoTurmas === 'COMBO'
+      ? state.alunosFamiliares.reduce(
+          (total, aluno) => total + calcularLiquido(aluno.comboValor ?? 0),
+          0,
+        )
+      : calcularLiquido(planoValorBase);
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
   const totalTaxas =
     (state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0)) * state.alunosFamiliares.length;
-  const totalMensalidades = valorMensalidadeLiquido * state.alunosFamiliares.length;
 
   const formaPagamentoLabel = (forma: string | undefined) => {
     if (!forma) return '—';
@@ -114,9 +122,13 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-slate-500">Mensalidade</p>
+                  <p className="text-xs text-slate-500">
+                    {state.modoTurmas === 'COMBO' ? 'Combo' : 'Plano familiar'}
+                  </p>
                   <p className="text-sm font-semibold text-slate-800">
-                    {formatter.format(valorMensalidadeLiquido)}
+                    {state.modoTurmas === 'COMBO'
+                      ? formatter.format(calcularLiquido(aluno.comboValor ?? 0))
+                      : 'Incluído'}
                   </p>
                 </div>
               </div>
@@ -133,11 +145,13 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
           {beneficioDescricao && (
             <div className="flex justify-between text-green-700">
               <span>Desconto ({beneficioDescricao})</span>
-              <span>- {formatter.format(valorBeneficio * state.alunosFamiliares.length)}</span>
+              <span>- {formatter.format(valorBeneficio)}</span>
             </div>
           )}
           <div className="flex justify-between font-semibold text-slate-900 border-t pt-1.5">
-            <span>Total mensalidades</span>
+            <span>
+              {state.modoTurmas === 'COMBO' ? 'Total mensalidades' : 'Plano familiar'}
+            </span>
             <span>{formatter.format(totalMensalidades)}</span>
           </div>
           {state.criarCobranca ? (
@@ -256,79 +270,66 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
       <StepHeader title="Resumo" hint="Confirme os dados antes de finalizar a matrícula." />
 
       <div className="space-y-4">
-        {/* Box Aluno + Plano */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          {/* Aluno */}
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
-                {initials || 'A'}
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900">
-                  {state.aluno?.nome ?? 'Aluno não selecionado'}
-                </p>
-                <div className="space-y-0.5 text-xs text-gray-500">
-                  {state.aluno?.dataNasc && (
-                    <p>Nascimento: {new Date(state.aluno.dataNasc).toLocaleDateString('pt-BR')}</p>
-                  )}
-                  {state.aluno?.email && <p>E-mail: {state.aluno.email}</p>}
-                  {state.aluno?.telefone && <p>Telefone: {state.aluno.telefone}</p>}
-                </div>
+        {/* Aluno + detalhes (sem segundo card de plano/combo) */}
+        <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-sm font-semibold text-violet-700">
+              {initials || 'A'}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-900">
+                {state.aluno?.nome ?? 'Aluno não selecionado'}
+              </p>
+              <div className="space-y-0.5 text-xs text-gray-500">
+                {state.aluno?.dataNasc && (
+                  <p>Nascimento: {new Date(state.aluno.dataNasc).toLocaleDateString('pt-BR')}</p>
+                )}
+                {state.aluno?.email && <p>E-mail: {state.aluno.email}</p>}
+                {state.aluno?.telefone && <p>Telefone: {state.aluno.telefone}</p>}
               </div>
             </div>
           </div>
-
-          {/* Plano/Combo */}
-          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
-            <div className="space-y-1 text-sm">
-              <p className="text-gray-600">
-                {state.modoTurmas === 'COMBO' ? 'Combo selecionado' : 'Plano selecionado'}:{' '}
-                <span className="font-semibold text-gray-900">
-                  {state.modoTurmas === 'COMBO' ? state.comboLabel : state.planoLabel}
-                </span>
-              </p>
-              {state.modeloId && (
-                <p className="text-gray-600">
-                  Modelo:{' '}
-                  <span className="font-medium text-gray-900">
-                    {state.modeloNome || 'Selecionado'}
-                  </span>
-                </p>
-              )}
-              <p className="text-gray-600">
-                Pagamento:{' '}
+          <div className="mt-4 space-y-1 border-t border-gray-200 pt-4 text-sm text-gray-600">
+            {state.modeloId && (
+              <p>
+                Modelo:{' '}
                 <span className="font-medium text-gray-900">
-                  {formaPagamentoLabel(state.formaPagamento)}
+                  {state.modeloNome || 'Selecionado'}
                 </span>
               </p>
-              {turmaId && (
-                <p className="text-gray-600">
-                  Turma:{' '}
-                  <span className="font-medium text-gray-900">{state.turmaLabel || turmaId}</span>
-                </p>
-              )}
-              <p className="text-gray-600">
-                Início:{' '}
+            )}
+            <p>
+              Pagamento:{' '}
+              <span className="font-medium text-gray-900">
+                {formaPagamentoLabel(state.formaPagamento)}
+              </span>
+            </p>
+            {turmaId && (
+              <p>
+                Turma:{' '}
+                <span className="font-medium text-gray-900">{state.turmaLabel || turmaId}</span>
+              </p>
+            )}
+            <p>
+              Início:{' '}
+              <span className="font-medium text-gray-900">
+                {state.dataInicio
+                  ? new Date(state.dataInicio).toLocaleDateString('pt-BR', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                    })
+                  : '—'}
+              </span>
+            </p>
+            {state.dataFimContrato && (
+              <p>
+                Fim:{' '}
                 <span className="font-medium text-gray-900">
-                  {state.dataInicio
-                    ? new Date(state.dataInicio).toLocaleDateString('pt-BR', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                      })
-                    : '—'}
+                  {new Date(state.dataFimContrato).toLocaleDateString('pt-BR')}
                 </span>
               </p>
-              {state.dataFimContrato && (
-                <p className="text-gray-600">
-                  Fim:{' '}
-                  <span className="font-medium text-gray-900">
-                    {new Date(state.dataFimContrato).toLocaleDateString('pt-BR')}
-                  </span>
-                </p>
-              )}
-            </div>
+            )}
           </div>
         </div>
 

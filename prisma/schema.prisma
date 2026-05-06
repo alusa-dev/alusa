@@ -846,6 +846,7 @@ model Responsavel {
   cpf                            String
   email                          String
   telefone                       String
+  foto                           String?
   // Campos de endereço estruturados
   enderecoCep                    String?
   enderecoLogradouro             String?

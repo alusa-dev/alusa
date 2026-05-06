@@ -506,6 +506,7 @@ describe('createStandaloneCharge', () => {
         endDate: '2100-12-01',
         cycle: 'MONTHLY',
         description: 'Mensalidade manual',
+        uiRequestId: 'family_'.repeat(12),
       });
 
       expect(result.success).toBe(true);
@@ -514,6 +515,13 @@ describe('createStandaloneCharge', () => {
       expect(result.data.asaasSubscriptionId).toBe('sub_asaas_123');
       expect(result.data.status).toBe('ACTIVE');
       expect(result.data.expectedWebhooks).toEqual(['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED']);
+      expect(createSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({
+          idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
+        }),
+      );
+      const subscriptionCall = vi.mocked(createSubscription).mock.calls[0]?.[0];
+      expect(subscriptionCall?.idempotencyKey).toHaveLength(45);
       expect(prisma.$queryRaw).toHaveBeenCalled();
       expect(listSubscriptionPayments).not.toHaveBeenCalled();
       expect(prisma.charge.upsert).not.toHaveBeenCalled();

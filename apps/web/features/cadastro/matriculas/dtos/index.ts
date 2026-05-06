@@ -339,6 +339,7 @@ export const matriculaCobrancaDTOSchema = z.object({
   competenciaInicio: dateStringDTOSchema,
   competenciaFim: dateStringDTOSchema,
   dataPagamento: nullableDateStringDTOSchema.default(null),
+  origin: z.enum(['ACADEMIC', 'STANDALONE']).default('ACADEMIC').optional(),
 });
 export type MatriculaCobrancaDTO = z.infer<typeof matriculaCobrancaDTOSchema>;
 

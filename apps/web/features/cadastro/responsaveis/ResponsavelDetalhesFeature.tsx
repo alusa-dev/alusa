@@ -1,14 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -21,19 +20,20 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   ArrowLeft,
-  ClipboardDocumentCheck,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
-  UserPlus,
+  Trash,
   Users,
 } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
+import { CustomerNotificationsEditor } from '@/features/cadastro/shared/CustomerNotificationsEditor';
 import { formatInitials, maskCpf } from '@alusa/lib/client';
 import { cn } from '@/lib/utils';
 
 import {
+  deleteResponsavel,
   getResponsavel,
-  getResponsavelOverview,
-  createRematriculaFamiliar,
   updateResponsavel,
   type ResponsavelDetail,
   type ResponsavelOverview,
@@ -53,7 +53,6 @@ type EditFormState = {
   cpf: string;
   email: string;
   telefone: string;
-  financeiro: boolean;
   enderecoCep: string;
   enderecoLogradouro: string;
   enderecoNumero: string;
@@ -63,11 +62,24 @@ type EditFormState = {
   enderecoUf: string;
 };
 
-type EditSection = 'foto' | 'responsavel' | 'complementares' | null;
+type EditSection = 'responsavel' | 'complementares' | null;
+type ResponsavelCharge = ResponsavelOverview['charges'][number];
+type ResponsavelSubscription = ResponsavelOverview['subscriptions'][number];
+type ResponsavelInstallmentPlan = ResponsavelOverview['installmentPlans'][number];
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('pt-BR');
+}
+
+const currencyFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
+
+function formatCurrency(value: number | null | undefined) {
+  if (value === null || value === undefined) return '—';
+  return currencyFormatter.format(value);
 }
 
 const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
@@ -84,7 +96,6 @@ function buildFormState(detail: ResponsavelDetail): EditFormState {
     cpf: detail.cpf,
     email: detail.email,
     telefone: detail.telefone,
-    financeiro: detail.financeiro,
     enderecoCep: detail.endereco.cep ?? '',
     enderecoLogradouro: detail.endereco.logradouro ?? '',
     enderecoNumero: detail.endereco.numero ?? '',
@@ -98,40 +109,50 @@ function buildFormState(detail: ResponsavelDetail): EditFormState {
 export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: string }) {
   const router = useRouter();
   const [responsavel, setResponsavel] = useState<ResponsavelDetail | null>(null);
-  const [overview, setOverview] = useState<ResponsavelOverview | null>(null);
   const [alunos, setAlunos] = useState<AlunoVinculado[]>([]);
+  const [overview, setOverview] = useState<ResponsavelOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editSection, setEditSection] = useState<EditSection>(null);
-  const [rematriculaOpen, setRematriculaOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState<EditFormState | null>(null);
+  const [openPanels, setOpenPanels] = useState({
+    assinaturas: false,
+    parcelamentos: false,
+    cobrancas: true,
+  });
 
   const load = useCallback(async () => {
     const controller = new AbortController();
     setLoading(true);
-    setOverview(null);
     setAlunos([]);
+    setOverview(null);
 
     try {
       const detail = await getResponsavel({ id: responsavelId, signal: controller.signal });
       setResponsavel(detail);
       setForm(buildFormState(detail));
 
-      const [overviewResult, alunosResult] = await Promise.allSettled([
-        getResponsavelOverview({ id: responsavelId, signal: controller.signal }),
+      const [alunosRes, overviewRes] = await Promise.all([
         fetch(`/api/responsaveis/${responsavelId}/alunos`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        }),
+        fetch(`/api/responsaveis/${responsavelId}/overview`, {
           cache: 'no-store',
           signal: controller.signal,
         }),
       ]);
 
-      if (overviewResult.status === 'fulfilled') {
-        setOverview(overviewResult.value);
+      if (alunosRes.ok) {
+        const json = await alunosRes.json().catch(() => ({ items: [] }));
+        setAlunos(Array.isArray(json.items) ? json.items : []);
       }
 
-      if (alunosResult.status === 'fulfilled' && alunosResult.value.ok) {
-        const json = await alunosResult.value.json().catch(() => ({ items: [] }));
-        setAlunos(Array.isArray(json.items) ? json.items : []);
+      if (overviewRes.ok) {
+        const json = await overviewRes.json().catch(() => null);
+        setOverview(json as ResponsavelOverview);
       }
     } catch (error) {
       if ((error as { name?: string }).name !== 'AbortError') {
@@ -152,13 +173,6 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
     void load();
   }, [load]);
 
-  const rematriculaDisponivel = useMemo(
-    () => Boolean(overview?.rematriculaCandidates.some((candidate) => candidate.podeRenovar)),
-    [overview],
-  );
-
-  const avatarFallback = useMemo(() => formatInitials(form?.nome || responsavel?.nome || 'Responsável'), [form?.nome, responsavel?.nome]);
-
   function updateField<K extends keyof EditFormState>(field: K, value: EditFormState[K]) {
     setForm((current) => (current ? { ...current, [field]: value } : current));
   }
@@ -177,7 +191,6 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
         cpf: form.cpf,
         email: form.email,
         telefone: form.telefone,
-        financeiro: form.financeiro,
         endereco: {
           cep: form.enderecoCep,
           logradouro: form.enderecoLogradouro,
@@ -205,6 +218,31 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
       setSaving(false);
     }
   }
+
+  async function handleDeleteResponsavel() {
+    setDeleting(true);
+    try {
+      await deleteResponsavel(responsavelId);
+      pushToast({
+        title: 'Responsável excluído',
+        variant: 'success',
+      });
+      setDeleteOpen(false);
+      router.push('/responsaveis');
+    } catch (error) {
+      pushToast({
+        title: 'Não foi possível excluir',
+        description: error instanceof Error ? error.message : 'Erro inesperado.',
+        variant: 'error',
+      });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const recentCharges = useMemo(() => overview?.charges.slice(0, 4) ?? [], [overview]);
+  const subscriptions = overview?.subscriptions ?? [];
+  const installmentPlans = overview?.installmentPlans ?? [];
 
   if (loading) {
     return <ResponsavelDetalhesSkeleton />;
@@ -240,66 +278,23 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                 Detalhes do responsável
               </h1>
               <p className="text-base text-gray-600">
-                Gerencie cadastro, alunos vinculados, rematrículas e dados financeiros familiares.
+                Gerencie cadastro e alunos vinculados a este responsável.
               </p>
             </div>
 
             <Button
-              className="h-10 rounded-md bg-brand-accent px-4 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90"
-              disabled={!rematriculaDisponivel}
-              onClick={() => setRematriculaOpen(true)}
-              title={
-                rematriculaDisponivel
-                  ? 'Iniciar novo lote de rematrícula familiar'
-                  : 'Nenhum aluno elegível para rematrícula familiar'
-              }
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              className="h-10 rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700"
+              title="Excluir este cadastro de responsável"
             >
-              <ClipboardDocumentCheck className="mr-2 h-4 w-4" />
-              Iniciar rematrícula familiar
+              <Trash className="mr-2 h-4 w-4" />
+              Excluir Responsável
             </Button>
           </div>
         </div>
 
         <div className="space-y-8">
-          <EditableSection
-            title="Foto"
-            editSection="foto"
-            activeSection={editSection}
-            saving={saving}
-            onEdit={setEditSection}
-            onCancel={resetForm}
-            onSave={() => setEditSection(null)}
-            hideActions={editSection !== 'foto'}
-          >
-            <div className="flex flex-col gap-5 md:flex-row md:items-center">
-              <div className="flex items-center justify-center">
-                <div className="relative flex h-28 w-28 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white text-lg font-semibold text-slate-500 shadow-sm">
-                  {avatarFallback}
-                </div>
-              </div>
-
-              <div className="flex-1 space-y-3">
-                <p className="text-sm text-slate-600">
-                  A foto ajuda na identificação rápida do responsável em cadastros familiares, cobranças e relatórios internos.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" variant="outline" className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50" disabled>
-                    Editar
-                  </Button>
-                  <Button type="button" variant="outline" className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50" disabled>
-                    Enviar foto
-                  </Button>
-                  <Button type="button" variant="destructive" className="bg-red-50 text-red-600 shadow-none hover:bg-red-100" disabled>
-                    Remover
-                  </Button>
-                </div>
-                <p className="text-xs text-slate-500">
-                  O cadastro de responsável ainda não possui armazenamento de foto. A tela mantém a mesma estrutura visual do aluno.
-                </p>
-              </div>
-            </div>
-          </EditableSection>
-
           {form ? (
             <>
               <EditableSection
@@ -316,7 +311,6 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                   <Field label="CPF" value={form.cpf} editing={editSection === 'responsavel'} onChange={(value) => updateField('cpf', value)} />
                   <Field label="E-mail" type="email" value={form.email} editing={editSection === 'responsavel'} onChange={(value) => updateField('email', value)} />
                   <Field label="Telefone" value={form.telefone} editing={editSection === 'responsavel'} onChange={(value) => updateField('telefone', value)} />
-                  <BooleanField label="Responsável financeiro" checked={form.financeiro} editing={editSection === 'responsavel'} onChange={(value) => updateField('financeiro', value)} />
                   <LockedField label="Customer Asaas" value={responsavel.asaasCustomerId || 'Não sincronizado'} />
                 </div>
               </EditableSection>
@@ -344,23 +338,52 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             </>
           ) : null}
 
+          <CustomerNotificationsEditor
+            customerId={responsavel.asaasCustomerId}
+            endpoint={`/api/responsaveis/${responsavel.id}/notificacoes`}
+            description="Configuração do customer do responsável no Asaas. Essas preferências são usadas pelas cobranças dos alunos vinculados quando este responsável é o pagador."
+            emptyMessage="Este responsável ainda não possui customer Asaas sincronizado para configurar notificações."
+          />
+
+          <FinancialAccordion
+            title="Assinaturas"
+            open={openPanels.assinaturas}
+            onToggle={() => setOpenPanels((current) => ({ ...current, assinaturas: !current.assinaturas }))}
+            count={subscriptions.length}
+            viewAllHref="/cobrancas/assinaturas"
+            viewAllLabel="Visualizar todas as assinaturas"
+          >
+            <AssinaturasTable assinaturas={subscriptions.slice(0, 4)} />
+          </FinancialAccordion>
+
+          <FinancialAccordion
+            title="Parcelamentos"
+            open={openPanels.parcelamentos}
+            onToggle={() => setOpenPanels((current) => ({ ...current, parcelamentos: !current.parcelamentos }))}
+            count={installmentPlans.length}
+            viewAllHref="/cobrancas/parcelamentos"
+            viewAllLabel="Visualizar todos os parcelamentos"
+          >
+            <ParcelamentosTable parcelamentos={installmentPlans.slice(0, 4)} />
+          </FinancialAccordion>
+
+          <FinancialAccordion
+            title="Cobranças"
+            open={openPanels.cobrancas}
+            onToggle={() => setOpenPanels((current) => ({ ...current, cobrancas: !current.cobrancas }))}
+            count={overview?.charges.length ?? 0}
+            viewAllHref="/cobrancas"
+            viewAllLabel="Visualizar todas as cobranças"
+          >
+            <CobrancasTable cobrancas={recentCharges} />
+          </FinancialAccordion>
+
           <section className={sectionClass}>
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-700">Alunos vinculados</h2>
-                <p className="mt-1 text-xs text-slate-500">
-                  Alunos cadastrados no fluxo de aluno ou vinculados diretamente a este responsável.
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                className="h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 shadow-none hover:bg-slate-50"
-                disabled
-                title="Vínculo direto será habilitado após consolidar a API de edição familiar."
-              >
-                <UserPlus className="mr-2 h-4 w-4" />
-                Vincular aluno
-              </Button>
+            <div className="mb-4">
+              <h2 className="text-sm font-semibold text-slate-700">Alunos vinculados</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Alunos cadastrados no fluxo de aluno ou vinculados diretamente a este responsável.
+              </p>
             </div>
 
             {alunos.length > 0 ? (
@@ -398,143 +421,19 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
               </div>
             )}
           </section>
-
-          <section className={sectionClass}>
-            <h2 className="text-sm font-semibold text-slate-700">Visão financeira familiar</h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Cobranças abertas, grupos familiares já processados e alunos aptos para a próxima rematrícula.
-            </p>
-
-            <div className="mt-5 grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200">
-              <div className="border-b border-slate-100 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-900">Lotes familiares recentes</h3>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {[...(overview?.families ?? []), ...(overview?.reenrollments ?? [])]
-                  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                  .slice(0, 6)
-                  .map((family) => (
-                    <div key={`${family.type}-${family.id}`} className="flex items-start justify-between gap-4 px-4 py-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-slate-900">
-                            {family.type === 'MATRICULA' ? 'Matrícula familiar' : 'Rematrícula familiar'}
-                          </span>
-                          <Badge variant={family.status === 'ATIVO' ? 'success' : family.status === 'FALHO' ? 'destructive' : 'info'}>
-                            {family.status}
-                          </Badge>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {family.totalAlunos} aluno(s) · mensalidade {formatCurrency(family.valorMensalidadeTotal)}
-                          {family.valorTaxaMatriculaTotal > 0
-                            ? ` · taxa ${formatCurrency(family.valorTaxaMatriculaTotal)}`
-                            : ''}
-                        </p>
-                      </div>
-                      <span className="text-xs text-slate-400">{formatDate(family.createdAt)}</span>
-                    </div>
-                  ))}
-
-                {!overview || (overview.families.length === 0 && overview.reenrollments.length === 0) ? (
-                  <div className="px-4 py-6 text-sm text-slate-500">Nenhum lote familiar processado ainda.</div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200">
-              <div className="border-b border-slate-100 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-900">Cobranças abertas</h3>
-              </div>
-              <div className="divide-y divide-slate-100">
-                {(overview?.charges ?? []).slice(0, 6).map((charge) => (
-                  <div key={charge.id} className="flex items-start justify-between gap-4 px-4 py-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-slate-900">
-                          {charge.description || 'Cobrança familiar'}
-                        </span>
-                        <Badge variant={charge.status === 'OVERDUE' ? 'destructive' : 'warning'}>
-                          {charge.status}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {formatCurrency(charge.value)}
-                        {charge.dueDate ? ` · vence em ${formatDate(charge.dueDate)}` : ''}
-                      </p>
-                    </div>
-                    {charge.invoiceUrl ? (
-                      <Link
-                        href={charge.invoiceUrl}
-                        target="_blank"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-brand-accent hover:underline"
-                      >
-                        Abrir
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </Link>
-                    ) : null}
-                  </div>
-                ))}
-
-                {!overview || overview.charges.length === 0 ? (
-                  <div className="px-4 py-6 text-sm text-slate-500">Nenhuma cobrança consolidada em aberto.</div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <h3 className="text-sm font-semibold text-slate-900">Elegibilidade de rematrícula</h3>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {(overview?.rematriculaCandidates ?? []).slice(0, 8).map((candidate) => (
-                <div key={candidate.matriculaId} className="px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-900">{candidate.alunoNome}</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {[candidate.comboNome, candidate.planoNome, candidate.turmaNome].filter(Boolean).join(' · ') || 'Plano atual não identificado'}
-                      </p>
-                    </div>
-                    <Badge variant={candidate.podeRenovar ? 'success' : 'outline'}>
-                      {candidate.podeRenovar ? 'Pode renovar' : 'Bloqueado'}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-slate-500">{candidate.message}</p>
-                </div>
-              ))}
-
-              {!overview || overview.rematriculaCandidates.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-slate-500">Nenhuma matrícula vinculada apareceu para rematrícula.</div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-          </section>
         </div>
 
-      <RematriculaFamiliarDialog
-        open={rematriculaOpen}
-        onOpenChange={setRematriculaOpen}
-        responsavel={responsavel}
-        overview={overview}
-        onCompleted={async () => {
-          await load();
-          setRematriculaOpen(false);
-        }}
+      <ExcluirResponsavelDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        nome={responsavel.nome}
+        deleting={deleting}
+        onConfirm={() => void handleDeleteResponsavel()}
       />
+
       </div>
     </div>
   );
-}
-
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  }).format(value);
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
@@ -658,198 +557,223 @@ function LockedField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function BooleanField({
-  label,
-  checked,
-  editing,
-  onChange,
+function FinancialAccordion({
+  title,
+  open,
+  onToggle,
+  count,
+  viewAllHref,
+  viewAllLabel,
+  children,
 }: {
-  label: string;
-  checked: boolean;
-  editing: boolean;
-  onChange: (_value: boolean) => void;
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  count: number;
+  viewAllHref: string;
+  viewAllLabel: string;
+  children: ReactNode;
 }) {
   return (
-    <label className="flex h-10 items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
-      <Checkbox
-        checked={checked}
-        disabled={!editing}
-        onCheckedChange={(value) => onChange(Boolean(value))}
-      />
-      <span>{label}</span>
-    </label>
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          {title}
+          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </span>
+        <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">
+          {count} registros
+        </span>
+      </button>
+      {open ? (
+        <div className="border-t border-slate-200 bg-white">
+          {children}
+          <div className="border-t border-slate-200 bg-slate-50 px-5 py-4">
+            <Link href={viewAllHref} className="text-sm font-medium text-blue-600 hover:text-blue-700">
+              {viewAllLabel}
+            </Link>
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
-function RematriculaFamiliarDialog({
-  open,
-  onOpenChange,
-  responsavel,
-  overview,
-  onCompleted,
-}: {
-  open: boolean;
-  onOpenChange: (_open: boolean) => void;
-  responsavel: ResponsavelDetail;
-  overview: ResponsavelOverview | null;
-  onCompleted: () => Promise<void>;
-}) {
-  const elegiveis = useMemo(
-    () => (overview?.rematriculaCandidates ?? []).filter((candidate) => candidate.podeRenovar),
-    [overview],
-  );
-  const [selected, setSelected] = useState<string[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [overrideReason, setOverrideReason] = useState('');
-  const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().slice(0, 10));
-  const [dataFimContrato, setDataFimContrato] = useState(() => {
-    const nextYear = new Date();
-    nextYear.setFullYear(nextYear.getFullYear() + 1);
-    return nextYear.toISOString().slice(0, 10);
-  });
-  const [vencimentoDia, setVencimentoDia] = useState('5');
-  const [formaPagamento, setFormaPagamento] = useState<'BOLETO' | 'PIX' | 'CARTAO_CREDITO'>('BOLETO');
-  const [taxaMatricula, setTaxaMatricula] = useState('0');
-
-  useEffect(() => {
-    if (!open) return;
-    setSelected(elegiveis.map((candidate) => candidate.matriculaId));
-  }, [open, elegiveis]);
-
-  async function handleSubmit() {
-    if (selected.length < 2) {
-      pushToast({
-        title: 'Selecione ao menos dois alunos',
-        description: 'A rematrícula familiar exige pelo menos duas matrículas elegíveis.',
-        variant: 'error',
-      });
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await createRematriculaFamiliar({
-        responsavelId: responsavel.id,
-        itens: elegiveis
-          .filter((candidate) => selected.includes(candidate.matriculaId))
-          .map((candidate) => ({ matriculaId: candidate.matriculaId })),
-        dataInicio,
-        dataFimContrato,
-        formaPagamento,
-        formaPagamentoTaxa: formaPagamento,
-        vencimentoDia: Number(vencimentoDia || '5'),
-        taxaMatricula: Number((taxaMatricula || '0').replace(',', '.')),
-        taxaIsenta: Number((taxaMatricula || '0').replace(',', '.')) <= 0,
-        overrideReason: overrideReason.trim() || undefined,
-      });
-
-      pushToast({
-        title: 'Rematrícula familiar criada',
-        description: 'O lote familiar foi enviado e já entrou na fila financeira consolidada.',
-        variant: 'success',
-      });
-      await onCompleted();
-    } catch (error) {
-      pushToast({
-        title: 'Não foi possível iniciar a rematrícula familiar',
-        description: error instanceof Error ? error.message : 'Erro inesperado.',
-        variant: 'error',
-      });
-    } finally {
-      setSaving(false);
-    }
+function CobrancasTable({ cobrancas }: { cobrancas: ResponsavelCharge[] }) {
+  if (!cobrancas.length) {
+    return <EmptyPanel message="Nenhuma cobrança pendente recente." />;
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Rematrícula familiar</DialogTitle>
-          <DialogDescription>
-            Selecione as matrículas elegíveis de {responsavel.nome} para processar um único ciclo financeiro compartilhado.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm">
+        <tbody>
+          {cobrancas.map((cobranca) => (
+            <tr key={cobranca.id} className="border-b border-slate-200 last:border-b-0">
+              <td className="px-5 py-3 font-semibold text-blue-700">{formatCurrency(cobranca.value)}</td>
+              <td className="px-5 py-3 text-slate-800">
+                {cobranca.description || 'Cobrança'}
+                <div className="text-xs text-slate-500">
+                  {cobranca.familyGroupId ? 'Familiar' : 'Avulsa'}
+                </div>
+              </td>
+              <td className="px-5 py-3 text-slate-700">{cobranca.billingType ?? '—'}</td>
+              <td className="px-5 py-3 text-slate-700">{formatDate(cobranca.dueDate)}</td>
+              <td className="px-5 py-3">
+                <Badge status={chargeStatusMap[cobranca.status] ?? 'PENDING'} size="sm" />
+              </td>
+              <td className="px-5 py-3 text-right">
+                <Link href={`/cobrancas/${cobranca.id}`} className="inline-flex items-center text-sm text-brand-accent hover:underline">
+                  Abrir
+                  <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-xl border border-slate-200">
-            <div className="border-b border-slate-100 px-4 py-3">
-              <p className="text-sm font-medium text-slate-900">Alunos elegíveis</p>
-            </div>
-            <div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">
-              {elegiveis.map((candidate) => {
-                const checked = selected.includes(candidate.matriculaId);
-                return (
-                  <label key={candidate.matriculaId} className="flex cursor-pointer items-start gap-3 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      className="mt-1 h-4 w-4 rounded border-slate-300 text-brand-accent"
-                      checked={checked}
-                      onChange={(event) =>
-                        setSelected((current) =>
-                          event.target.checked
-                            ? [...current, candidate.matriculaId]
-                            : current.filter((id) => id !== candidate.matriculaId),
-                        )
-                      }
-                    />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-slate-900">{candidate.alunoNome}</p>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {[candidate.comboNome, candidate.planoNome, candidate.turmaNome].filter(Boolean).join(' · ') || 'Plano atual'}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-500">{candidate.message}</p>
-                    </div>
-                  </label>
-                );
-              })}
-              {elegiveis.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-slate-500">Nenhuma matrícula elegível no momento.</div>
-              ) : null}
-            </div>
+const assinaturaStatusLabels: Record<string, string> = {
+  ACTIVE: 'Ativa',
+  INACTIVE: 'Inativa',
+  EXPIRED: 'Expirada',
+  DELETED: 'Cancelada',
+  REQUESTED: 'Solicitada',
+};
+
+const parcelamentoStatusLabels: Record<string, string> = {
+  ACTIVE: 'Ativo',
+  INACTIVE: 'Inativo',
+  EXPIRED: 'Expirado',
+  DELETED: 'Cancelado',
+  REQUESTED: 'Solicitado',
+  CANCELED: 'Cancelado',
+};
+
+const chargeStatusMap: Record<string, StatusType> = {
+  CREATED: 'PENDING',
+  PENDING_SYNC: 'PROCESSANDO',
+  OPEN: 'PENDING',
+  OVERDUE: 'ATRASADO',
+  PAID: 'PAGO',
+  RECEIVED: 'PAGO',
+  CONFIRMED: 'PAGO',
+  CANCELED: 'CANCELADO',
+  CANCELLED: 'CANCELADO',
+  DELETED: 'CANCELADO',
+};
+
+function getFinancialBadgeLabel(status: string, labels: Record<string, string>) {
+  return labels[status] ?? status;
+}
+
+function AssinaturasTable({ assinaturas }: { assinaturas: ResponsavelSubscription[] }) {
+  if (!assinaturas.length) return <EmptyPanel message="Nenhuma assinatura vinculada." />;
+
+  return (
+    <div className="divide-y divide-slate-200">
+      {assinaturas.map((assinatura) => (
+        <div key={assinatura.id} className="grid grid-cols-1 gap-3 px-5 py-3 text-sm md:grid-cols-5 md:items-center">
+          <div className="md:col-span-2">
+            <p className="font-medium text-slate-900">{assinatura.description || 'Assinatura'}</p>
+            <p className="text-xs text-slate-500">{assinatura.asaasSubscriptionId || assinatura.id}</p>
           </div>
-
-          <div className="space-y-3 rounded-xl border border-slate-200 p-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Data de início</label>
-              <Input type="date" value={dataInicio} onChange={(event) => setDataInicio(event.target.value)} className="h-10 rounded-lg border-slate-200 shadow-none" />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Fim do contrato</label>
-              <Input type="date" value={dataFimContrato} onChange={(event) => setDataFimContrato(event.target.value)} className="h-10 rounded-lg border-slate-200 shadow-none" />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Dia de vencimento</label>
-              <Input value={vencimentoDia} onChange={(event) => setVencimentoDia(event.target.value)} className="h-10 rounded-lg border-slate-200 shadow-none" />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Taxa por aluno</label>
-              <Input value={taxaMatricula} onChange={(event) => setTaxaMatricula(event.target.value)} className="h-10 rounded-lg border-slate-200 shadow-none" />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Forma de pagamento</label>
-              <select
-                value={formaPagamento}
-                onChange={(event) => setFormaPagamento(event.target.value as 'BOLETO' | 'PIX' | 'CARTAO_CREDITO')}
-                className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-none outline-none"
-              >
-                <option value="BOLETO">Boleto</option>
-                <option value="PIX">Pix</option>
-                <option value="CARTAO_CREDITO">Cartão de crédito</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-600">Motivo de override (opcional)</label>
-              <Input value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} className="h-10 rounded-lg border-slate-200 shadow-none" placeholder="Ex.: autorização financeira interna" />
-            </div>
+          <div className="text-slate-600">{formatDate(assinatura.createdAt)}</div>
+          <div><Badge variant={assinatura.status === 'ACTIVE' ? 'success' : 'neutral'} size="sm">{getFinancialBadgeLabel(assinatura.status, assinaturaStatusLabels)}</Badge></div>
+          <div className="text-right">
+            <Link href={`/cobrancas/assinaturas/${assinatura.id}`} className="text-sm text-brand-accent hover:underline">
+              Abrir
+            </Link>
           </div>
         </div>
+      ))}
+    </div>
+  );
+}
 
-        <DialogFooter>
-          <Button variant="outline" className="h-10 rounded-lg border-slate-200 shadow-none" onClick={() => onOpenChange(false)} disabled={saving}>
+function ParcelamentosTable({ parcelamentos }: { parcelamentos: ResponsavelInstallmentPlan[] }) {
+  if (!parcelamentos.length) return <EmptyPanel message="Nenhum parcelamento vinculado." />;
+
+  return (
+    <div className="divide-y divide-slate-200">
+      {parcelamentos.map((parcelamento) => (
+        <div key={parcelamento.id} className="grid grid-cols-1 gap-3 px-5 py-3 text-sm md:grid-cols-5 md:items-center">
+          <div className="md:col-span-2">
+            <p className="font-medium text-slate-900">
+              {parcelamento.installmentCount} parcelas - {formatCurrency(parcelamento.value)}
+            </p>
+            <p className="text-xs text-slate-500">{parcelamento.billingType}</p>
+          </div>
+          <div className="text-slate-600">{formatDate(parcelamento.firstDueDate)}</div>
+          <div><Badge variant={parcelamento.status === 'ACTIVE' ? 'success' : 'neutral'} size="sm">{getFinancialBadgeLabel(parcelamento.status, parcelamentoStatusLabels)}</Badge></div>
+          <div className="text-right">
+            <Link href={`/cobrancas/parcelamentos/${parcelamento.id}`} className="text-sm text-brand-accent hover:underline">
+              Abrir
+            </Link>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyPanel({ message }: { message: string }) {
+  return <div className="px-5 py-8 text-center text-sm text-slate-500">{message}</div>;
+}
+
+function ExcluirResponsavelDialog({
+  open,
+  onOpenChange,
+  nome,
+  deleting,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (_open: boolean) => void;
+  nome: string;
+  deleting: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Excluir responsável</DialogTitle>
+          <DialogDescription className="space-y-2 pt-1 text-left text-slate-600">
+            <span className="block">
+              Tem certeza de que deseja excluir <span className="font-medium text-slate-900">{nome}</span>? Esta ação não
+              pode ser desfeita.
+            </span>
+            <span className="block text-sm">
+              A exclusão só é permitida quando não houver alunos vinculados, cobranças em aberto ou pendentes, matrículas
+              financeiras ativas, lotes familiares em andamento ou vendas pendentes.
+            </span>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-lg border-slate-200 shadow-none"
+            onClick={() => onOpenChange(false)}
+            disabled={deleting}
+          >
             Cancelar
           </Button>
-          <Button className="h-10 rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90" onClick={handleSubmit} disabled={saving || elegiveis.length < 2}>
-            {saving ? 'Processando...' : 'Criar rematrícula familiar'}
+          <Button
+            type="button"
+            onClick={onConfirm}
+            disabled={deleting}
+            className="h-10 rounded-lg bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700 disabled:opacity-50"
+          >
+            {deleting ? 'Excluindo...' : 'Excluir'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -878,10 +802,7 @@ function ResponsavelDetalhesSkeleton() {
             <Skeleton key={index} className="h-24 rounded-xl" />
           ))}
         </div>
-        <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <Skeleton className="h-80 rounded-xl" />
-          <Skeleton className="h-80 rounded-xl" />
-        </div>
+        <Skeleton className="mt-5 h-48 rounded-xl" />
       </div>
     </div>
   );

@@ -63,7 +63,9 @@ export function StepBolsaBeneficios({ ctx, contaId }: StepBolsaBeneficiosProps) 
   );
 
   const valorBase = state.modoTurmas === 'COMBO'
-    ? (state.comboValor ?? 0)
+    ? state.modoMatricula === 'FAMILIAR'
+      ? state.alunosFamiliares.reduce((total, aluno) => total + (aluno.comboValor ?? 0), 0)
+      : (state.comboValor ?? 0)
     : (state.planoValor ?? 0);
 
   const modoBeneficio = state.modoBeneficio ?? (state.beneficioSelecionado ? 'COM' : 'SEM');

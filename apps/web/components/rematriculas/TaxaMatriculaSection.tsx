@@ -23,6 +23,7 @@ interface TaxaMatriculaSectionProps {
     valor: number;
     vencimento: string;
     formaPagamento: string;
+    origin?: 'ACADEMIC' | 'STANDALONE';
   }>;
   onRefresh: () => void;
 }
@@ -73,6 +74,8 @@ export function TaxaMatriculaSection({
   }, [cobrancas]);
 
   const isTaxaPaga = taxaCobranca?.status === 'PAGO';
+  const isStandaloneTaxa = taxaCobranca?.origin === 'STANDALONE';
+  const displayedTaxaValue = taxaCobranca ? taxaCobranca.valor : taxaMatricula;
 
   const handleCopyPix = useCallback(async (pixValue: string) => {
     if (!pixValue) return;
@@ -163,7 +166,7 @@ export function TaxaMatriculaSection({
           <div className="space-y-1">
             <label className={labelClass}>Valor da Taxa</label>
             <Input
-              value={currency.format(taxaMatricula)}
+              value={currency.format(displayedTaxaValue)}
               disabled
               className={controlClass}
               readOnly
@@ -248,15 +251,17 @@ export function TaxaMatriculaSection({
                   </div>
 
                   <div className="flex gap-2">
-                    <Button
-                      onClick={handleGerarSegundaVia}
-                      disabled={loadingLinks}
-                      size="sm"
-                      className="flex-1 bg-[#A94DFF] hover:bg-[#A94DFF]/90 text-white shadow-none"
-                    >
-                      <QrCodeIcon className="h-4 w-4 mr-2" />
-                      {loadingLinks ? 'Gerando...' : 'Gerar Segunda Via'}
-                    </Button>
+                    {!isStandaloneTaxa && (
+                      <Button
+                        onClick={handleGerarSegundaVia}
+                        disabled={loadingLinks}
+                        size="sm"
+                        className="flex-1 bg-[#A94DFF] hover:bg-[#A94DFF]/90 text-white shadow-none"
+                      >
+                        <QrCodeIcon className="h-4 w-4 mr-2" />
+                        {loadingLinks ? 'Gerando...' : 'Gerar Segunda Via'}
+                      </Button>
+                    )}
                     <Button
                       onClick={() => window.open(`/cobrancas/${taxaCobranca.id}`, '_blank')}
                       size="sm"

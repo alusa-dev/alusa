@@ -54,6 +54,17 @@ export const rematriculaAlunoDTOSchema = z.object({
 
 export type RematriculaAlunoDTO = z.infer<typeof rematriculaAlunoDTOSchema>;
 
+export const rematriculaResponsavelDTOSchema = z.object({
+  id: z.string(),
+  nome: z.string().nullable(),
+  cpf: z.string().nullable(),
+  email: z.string().nullable().optional(),
+  telefone: z.string().nullable().optional(),
+  foto: z.string().nullable().optional(),
+});
+
+export type RematriculaResponsavelDTO = z.infer<typeof rematriculaResponsavelDTOSchema>;
+
 export const rematriculaPlanoDTOSchema = z.object({
   id: z.string(),
   nome: z.string(),
@@ -114,6 +125,7 @@ export type RematriculaFinanceiroDTO = z.infer<typeof rematriculaFinanceiroDTOSc
 
 export const rematriculaItemDTOSchema = z.object({
   id: z.string(),
+  matriculaFamiliarId: z.string().nullable().optional(),
   status: z.enum([
     'PENDENTE_TAXA',
     'AGUARDANDO_CONFIRMACAO',
@@ -130,6 +142,7 @@ export const rematriculaItemDTOSchema = z.object({
   podeRenovar: z.boolean(),
   eligibilityStatus: rematriculaEligibilityStatusDTOSchema.default('ELEGIVEL'),
   aluno: rematriculaAlunoDTOSchema,
+  responsavelFinanceiro: rematriculaResponsavelDTOSchema.nullable().optional(),
   plano: rematriculaPlanoDTOSchema,
   turma: rematriculaTurmaDTOSchema.nullable(),
   combo: rematriculaComboDTOSchema.nullable(),

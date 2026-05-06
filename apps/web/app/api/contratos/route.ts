@@ -17,7 +17,7 @@ import {
   formatIsoDate,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
-  resolveFirstDueDate,
+  resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 
 export function replaceMentionSpans(html: string) {
@@ -165,6 +165,7 @@ export async function POST(request: NextRequest) {
         multaPercentual: true,
         multaTipo: true,
         asaasSubscriptionId: true,
+        billingMode: true,
         aluno: {
           select: {
             id: true,
@@ -329,6 +330,11 @@ export async function POST(request: NextRequest) {
               })),
             }).planoLiquido;
 
+      // Matrículas SHARED_PLAN (familiar) não geram assinatura individual —
+      // a cobrança já está consolidada na StandaloneSubscription do responsável.
+      if (matricula.billingMode === 'SHARED_PLAN') {
+        subscriptionSync = null;
+      } else {
       const existingSubscription = await prisma.subscription.findFirst({
         where: {
           contaId: user.contaId,
@@ -406,7 +412,7 @@ export async function POST(request: NextRequest) {
             : 'FORMA_PAGAMENTO_INVALIDA',
         };
       } else {
-        const nextDueDateObj = resolveFirstDueDate(matricula.dataInicio, matricula.vencimentoDia);
+        const nextDueDateObj = resolveChargeableFirstDueDate(matricula.dataInicio, matricula.vencimentoDia);
         const nextDueDate = formatIsoDate(nextDueDateObj);
         const endDateObj = matricula.dataFimContrato;
         const endDate = endDateObj >= nextDueDateObj ? formatIsoDate(endDateObj) : undefined;
@@ -463,6 +469,7 @@ export async function POST(request: NextRequest) {
           };
         }
       }
+      } // end else (billingMode !== SHARED_PLAN)
     } catch (syncError) {
       subscriptionSync = {
         success: false,

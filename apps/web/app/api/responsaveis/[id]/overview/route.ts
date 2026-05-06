@@ -166,28 +166,90 @@ export async function GET(
       ...reenrollments.map((family) => family.id),
     ];
 
+    const scopedCustomerIds = customerIds.map((customer) => customer.id);
     const chargeOr = [
-      ...(customerIds.length > 0 ? [{ customerId: { in: customerIds.map((customer) => customer.id) } }] : []),
+      ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
       ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
     ];
 
-    const charges = await prisma.charge.findMany({
-      where: {
-        contaId: user.contaId,
-        ...(chargeOr.length > 0 ? { OR: chargeOr } : { id: '__none__' }),
-      },
-      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
-      take: 20,
-      select: {
-        id: true,
-        description: true,
-        status: true,
-        value: true,
-        dueDate: true,
-        invoiceUrl: true,
-        familyGroupId: true,
-      },
-    });
+    const [charges, standaloneSubscriptions, standaloneInstallmentPlans] = await Promise.all([
+      prisma.charge.findMany({
+        where: {
+          contaId: user.contaId,
+          ...(chargeOr.length > 0 ? { OR: chargeOr } : { id: '__none__' }),
+        },
+        orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+        take: 20,
+        select: {
+          id: true,
+          description: true,
+          status: true,
+          value: true,
+          dueDate: true,
+          billingType: true,
+          invoiceUrl: true,
+          familyGroupId: true,
+          standaloneSubscriptionId: true,
+          standaloneInstallmentPlanId: true,
+          createdAt: true,
+        },
+      }),
+      prisma.standaloneSubscription.findMany({
+        where: {
+          contaId: user.contaId,
+          ...(chargeOr.length > 0
+            ? {
+                OR: [
+                  ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
+                  ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
+                ],
+              }
+            : { id: '__none__' }),
+        },
+        orderBy: [{ nextDueDate: 'asc' }, { createdAt: 'desc' }],
+        take: 20,
+        select: {
+          id: true,
+          status: true,
+          asaasSubscriptionId: true,
+          externalReference: true,
+          cycle: true,
+          billingType: true,
+          value: true,
+          nextDueDate: true,
+          description: true,
+          familyGroupId: true,
+          createdAt: true,
+        },
+      }),
+      prisma.standaloneInstallmentPlan.findMany({
+        where: {
+          contaId: user.contaId,
+          ...(chargeOr.length > 0
+            ? {
+                OR: [
+                  ...(scopedCustomerIds.length > 0 ? [{ customerId: { in: scopedCustomerIds } }] : []),
+                  ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
+                ],
+              }
+            : { id: '__none__' }),
+        },
+        orderBy: [{ firstDueDate: 'asc' }, { createdAt: 'desc' }],
+        take: 20,
+        select: {
+          id: true,
+          status: true,
+          asaasInstallmentId: true,
+          externalReference: true,
+          installmentCount: true,
+          billingType: true,
+          value: true,
+          firstDueDate: true,
+          familyGroupId: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
     const openCharges = charges.filter((charge) => ['CREATED', 'OPEN', 'OVERDUE'].includes(charge.status));
     const overdueCharges = charges.filter((charge) => charge.status === 'OVERDUE');
@@ -247,6 +309,21 @@ export async function GET(
           ...charge,
           value: Number(charge.value ?? 0),
           dueDate: charge.dueDate?.toISOString() ?? null,
+          createdAt: charge.createdAt.toISOString(),
+        })),
+        subscriptions: standaloneSubscriptions.map((subscription) => ({
+          ...subscription,
+          source: 'AVULSA',
+          value: Number(subscription.value ?? 0),
+          nextDueDate: subscription.nextDueDate.toISOString(),
+          createdAt: subscription.createdAt.toISOString(),
+        })),
+        installmentPlans: standaloneInstallmentPlans.map((plan) => ({
+          ...plan,
+          source: 'AVULSO',
+          value: Number(plan.value ?? 0),
+          firstDueDate: plan.firstDueDate.toISOString(),
+          createdAt: plan.createdAt.toISOString(),
         })),
         rematriculaCandidates,
       },

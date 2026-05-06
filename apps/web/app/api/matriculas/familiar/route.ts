@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { BillingMode, FamilyBillingStatus, FormaPagamento, PeriodicidadePlano } from '@prisma/client';
+import { BillingMode, FamilyBillingStatus, FormaPagamento, Prisma } from '@prisma/client';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
@@ -14,9 +14,15 @@ import {
   formatIsoDate,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
-  resolveFirstDueDate,
+  resolveChargeableFirstDueDate,
+  resolveEnrollmentFeeDueDate,
 } from '@/src/server/matriculas/recurring-billing';
-import { processFamilyBillingOutboxEvent } from '@/src/server/family-billing/processor';
+import {
+  executeFamilyBilling,
+  markFamilyBillingFailed,
+  parseFamilyBillingPayload,
+  type FamilyBillingPayload,
+} from '@/src/server/family-billing/processor';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -52,8 +58,12 @@ const createMatriculaFamiliarInputSchema = z.object({
   prazoDesconto: z.number().int().nonnegative().optional(),
   notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
-  uiRequestId: z.string().trim().min(1).max(120).optional(),
+  // uiRequestId obrigatório: garante idempotência ponta-a-ponta entre wizard e
+  // backend mesmo com double-click ou retry de rede.
+  uiRequestId: z.string().trim().min(1).max(120),
 });
+
+type CreateMatriculaFamiliarBody = z.infer<typeof createMatriculaFamiliarInputSchema>;
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -84,6 +94,31 @@ function normalizeFormaPagamento(value: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO') {
     default:
       return FormaPagamento.BOLETO;
   }
+}
+
+function buildBillingAdjustments(body: CreateMatriculaFamiliarBody) {
+  const discountValue = Number(body.descontoAntecipado ?? 0);
+  const interestValue = Number(body.jurosMensal ?? 0);
+  const fineValue = Number(body.multaPercentual ?? 0);
+
+  return {
+    discount:
+      Number.isFinite(discountValue) && discountValue > 0
+        ? {
+            value: discountValue,
+            dueDateLimitDays: body.prazoDesconto ?? 0,
+            type: body.descontoTipo ?? ('PERCENTAGE' as const),
+          }
+        : undefined,
+    interest:
+      Number.isFinite(interestValue) && interestValue > 0
+        ? { value: interestValue }
+        : undefined,
+    fine:
+      Number.isFinite(fineValue) && fineValue > 0
+        ? { value: fineValue, type: 'PERCENTAGE' as const }
+        : undefined,
+  };
 }
 
 async function resolveDescontos(contaId: string, descontoIds: string[]) {
@@ -146,7 +181,7 @@ async function resolveFamilyPricing(params: {
     });
 
     return {
-      totalMensalidade: Number((calculo.planoLiquido * params.alunos.length).toFixed(2)),
+      totalMensalidade: Number(calculo.planoLiquido.toFixed(2)),
       cycle: mapPeriodicidadeToCycle(plano.periodicidade),
       descricao: `Plano familiar ${plano.nome} · ${params.alunos.length} alunos`,
     };
@@ -202,6 +237,30 @@ async function resolveFamilyPricing(params: {
   };
 }
 
+type FamilyResultItem = {
+  alunoId: string;
+  alunoNome: string;
+  status: 'success' | 'error';
+  matriculaId?: string;
+  errorMessage?: string;
+};
+
+function buildIdempotentResponse(
+  family: { id: string; status: FamilyBillingStatus },
+  results: FamilyResultItem[],
+  modeloId?: string | null,
+) {
+  return NextResponse.json(
+    {
+      familyId: family.id,
+      status: family.status,
+      results,
+      modeloId: modeloId ?? null,
+    },
+    { status: 200, headers: { 'cache-control': 'no-store' } },
+  );
+}
+
 export async function POST(request: Request) {
   const user = await getSessionUser();
   if (!user) {
@@ -211,15 +270,52 @@ export async function POST(request: Request) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para matricular famílias.');
   }
 
+  let body: CreateMatriculaFamiliarBody;
   try {
     const raw = await request.json().catch(() => null);
-    const body = createMatriculaFamiliarInputSchema.parse(raw);
-    const contaId = body.contaId?.trim() || user.contaId;
-
-    if (contaId !== user.contaId) {
-      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
+    body = createMatriculaFamiliarInputSchema.parse(raw);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return jsonError(400, 'PAYLOAD_INVALIDO', error.issues[0]?.message ?? 'Payload inválido.', error.issues);
     }
+    return jsonError(400, 'PAYLOAD_INVALIDO', 'Payload inválido.');
+  }
 
+  const contaId = body.contaId?.trim() || user.contaId;
+  if (contaId !== user.contaId) {
+    return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
+  }
+
+  // 1) Idempotência: se já existe uma MatriculaFamiliar com mesmo uiRequestId,
+  //    retorna o estado atual (sem reprocessar nada).
+  const existing = await prisma.matriculaFamiliar.findFirst({
+    where: { contaId, uiRequestId: body.uiRequestId },
+    include: {
+      items: {
+        orderBy: { orderIndex: 'asc' },
+        include: {
+          matricula: {
+            select: {
+              id: true,
+              aluno: { select: { id: true, nome: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (existing) {
+    const idempotentResults: FamilyResultItem[] = existing.items.map((item) => ({
+      alunoId: item.matricula.aluno.id,
+      alunoNome: item.matricula.aluno.nome,
+      status: 'success',
+      matriculaId: item.matricula.id,
+    }));
+    return buildIdempotentResponse({ id: existing.id, status: existing.status }, idempotentResults);
+  }
+
+  try {
     const responsavel = await prisma.responsavel.findFirst({
       where: { id: body.responsavelId, contaId },
       select: { id: true, nome: true },
@@ -227,41 +323,6 @@ export async function POST(request: Request) {
 
     if (!responsavel) {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável familiar não encontrado.');
-    }
-
-    if (body.uiRequestId) {
-      const existing = await prisma.matriculaFamiliar.findFirst({
-        where: { contaId, uiRequestId: body.uiRequestId },
-        include: {
-          items: {
-            orderBy: { orderIndex: 'asc' },
-            include: {
-              matricula: {
-                select: {
-                  id: true,
-                  aluno: { select: { id: true, nome: true } },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      if (existing) {
-        return NextResponse.json(
-          {
-            familyId: existing.id,
-            status: existing.status,
-            results: existing.items.map((item) => ({
-              alunoId: item.matricula.aluno.id,
-              alunoNome: item.matricula.aluno.nome,
-              status: 'success',
-              matriculaId: item.matricula.id,
-            })),
-          },
-          { status: 200, headers: { 'cache-control': 'no-store' } },
-        );
-      }
     }
 
     const dataInicio = parseDate(body.dataInicio);
@@ -292,32 +353,110 @@ export async function POST(request: Request) {
       descontoIds: body.descontoIds,
     });
 
-    const family = await prisma.matriculaFamiliar.create({
-      data: {
-        contaId,
-        responsavelId: responsavel.id,
-        billingMode: BillingMode.SHARED_PLAN,
-        status: FamilyBillingStatus.PENDENTE,
-        totalAlunos: body.alunos.length,
-        valorMensalidadeTotal: pricing.totalMensalidade,
-        valorTaxaMatriculaTotal: body.taxaIsenta ? 0 : Number((body.taxaMatricula * body.alunos.length).toFixed(2)),
-        formaPagamento: formaPagamento,
-        ciclo: pricing.cycle,
-        diaVencimento: body.vencimentoDia,
-        dataInicio,
-        dataFimContrato,
-        actorId: user.id,
-        uiRequestId: body.uiRequestId,
-      },
-    });
+    // 2) Validar formas de pagamento ANTES de qualquer escrita: feedback rápido
+    //    e sem deixar matrículas órfãs.
+    const billingType = mapFormaPagamentoToBillingType(formaPagamento);
+    const enrollmentFeeBillingType = mapFormaPagamentoToBillingType(formaPagamentoTaxa);
+    const willCreateSubscriptionPlanned = body.criarCobranca && pricing.totalMensalidade > 0;
+    const willCreateEnrollmentFeePlanned =
+      !body.taxaIsenta && body.gerarCobrancaTaxa && body.taxaMatricula > 0;
 
-    const results: Array<{
-      alunoId: string;
-      alunoNome: string;
-      status: 'success' | 'error';
-      matriculaId?: string;
-      errorMessage?: string;
-    }> = [];
+    if (willCreateSubscriptionPlanned && (!billingType || billingType === 'UNDEFINED')) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento familiar não suporta cobrança consolidada.',
+      );
+    }
+
+    if (
+      willCreateEnrollmentFeePlanned &&
+      (!enrollmentFeeBillingType || enrollmentFeeBillingType === 'UNDEFINED')
+    ) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de matrícula não suporta cobrança consolidada.',
+      );
+    }
+
+    // 2.1) Validar datas ANTES de criar qualquer registro: evita matrículas órfãs
+    //      com status FALHO quando o Asaas rejeita por DATA_INVALIDA.
+    if (willCreateSubscriptionPlanned) {
+      const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
+      if (previewNextDueDate > dataFimContrato) {
+        return jsonError(
+          422,
+          'DATA_FIM_INVALIDA',
+          `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}). Ajuste a data de término ou o dia de vencimento.`,
+        );
+      }
+    }
+
+    // 3) Criar MatriculaFamiliar de forma atômica via unique (contaId, uiRequestId).
+    //    Em caso de corrida, o segundo POST cai aqui e reaproveita o registro.
+    let family;
+    try {
+      family = await prisma.matriculaFamiliar.create({
+        data: {
+          contaId,
+          responsavelId: responsavel.id,
+          billingMode: BillingMode.SHARED_PLAN,
+          status: FamilyBillingStatus.PENDENTE,
+          totalAlunos: body.alunos.length,
+          valorMensalidadeTotal: pricing.totalMensalidade,
+          valorTaxaMatriculaTotal: body.taxaIsenta
+            ? 0
+            : Number((body.taxaMatricula * body.alunos.length).toFixed(2)),
+          formaPagamento: formaPagamento,
+          ciclo: pricing.cycle,
+          diaVencimento: body.vencimentoDia,
+          dataInicio,
+          dataFimContrato,
+          actorId: user.id,
+          uiRequestId: body.uiRequestId,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const concurrent = await prisma.matriculaFamiliar.findFirst({
+          where: { contaId, uiRequestId: body.uiRequestId },
+          include: {
+            items: {
+              orderBy: { orderIndex: 'asc' },
+              include: {
+                matricula: {
+                  select: {
+                    id: true,
+                    aluno: { select: { id: true, nome: true } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (concurrent) {
+          const concurrentResults: FamilyResultItem[] = concurrent.items.map((item) => ({
+            alunoId: item.matricula.aluno.id,
+            alunoNome: item.matricula.aluno.nome,
+            status: 'success',
+            matriculaId: item.matricula.id,
+          }));
+          return buildIdempotentResponse(
+            { id: concurrent.id, status: concurrent.status },
+            concurrentResults,
+          );
+        }
+      }
+      throw error;
+    }
+
+    // 4) Criar matrículas individuais (sem cobrança/taxa em cada uma — a cobrança
+    //    é consolidada no responsável via createStandaloneCharge).
+    const results: FamilyResultItem[] = [];
 
     const commonInput: Omit<CriarMatriculaInput, 'alunoId' | 'comboId' | 'turmaId'> = {
       contaId,
@@ -416,75 +555,115 @@ export async function POST(request: Request) {
       );
     }
 
-    let financialStatus: FamilyBillingStatus = failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.PROCESSANDO;
+    // 5) Recalcular valores com base apenas nas matrículas que deram certo,
+    //    e disparar a cobrança consolidada (taxa avulsa + assinatura) inline.
+    const successfulAlunoIds = new Set(
+      results.filter((r) => r.status === 'success').map((r) => r.alunoId),
+    );
+    const successfulItems = body.alunos.filter((item) => successfulAlunoIds.has(item.alunoId));
+    const financialPricing = await resolveFamilyPricing({
+      contaId,
+      modoTurmas: body.modoTurmas,
+      planoId: body.planoId,
+      alunos: successfulItems,
+      descontoIds: body.descontoIds,
+    });
+    const enrollmentFeeTotal = willCreateEnrollmentFeePlanned
+      ? Number((body.taxaMatricula * successCount).toFixed(2))
+      : 0;
+    const subscriptionValue = body.criarCobranca ? financialPricing.totalMensalidade : 0;
 
-    const shouldCreateFinancial =
-      body.criarCobranca || (!body.taxaIsenta && body.gerarCobrancaTaxa && body.taxaMatricula > 0);
+    await prisma.matriculaFamiliar.update({
+      where: { id: family.id },
+      data: {
+        totalAlunos: successCount,
+        valorMensalidadeTotal: subscriptionValue,
+        valorTaxaMatriculaTotal: enrollmentFeeTotal,
+      },
+    });
 
-    if (shouldCreateFinancial) {
-      const billingType = mapFormaPagamentoToBillingType(formaPagamento);
-      if (!billingType || billingType === 'UNDEFINED') {
-        return jsonError(
-          422,
-          'FORMA_PAGAMENTO_INVALIDA',
-          'Forma de pagamento familiar não suporta cobrança consolidada.',
+    const shouldCreateSubscription = subscriptionValue > 0;
+    const shouldCreateEnrollmentFee = enrollmentFeeTotal > 0;
+
+    let financialStatus: FamilyBillingStatus =
+      failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
+    let financialError: string | null = null;
+
+    if (shouldCreateSubscription || shouldCreateEnrollmentFee) {
+      const nextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
+      const billingAdjustments = buildBillingAdjustments(body);
+
+      const payloadDraft = {
+        aggregateType: 'MATRICULA_FAMILIAR' as const,
+        aggregateId: family.id,
+        contaId,
+        responsavelId: responsavel.id,
+        responsavelNome: responsavel.nome,
+        totalAlunos: successCount,
+        monthlyValue: shouldCreateSubscription ? subscriptionValue : 0,
+        enrollmentFeeValue: shouldCreateEnrollmentFee ? enrollmentFeeTotal : 0,
+        billingType: (billingType ?? enrollmentFeeBillingType) ?? null,
+        enrollmentFeeBillingType: enrollmentFeeBillingType ?? billingType ?? null,
+        cycle: financialPricing.cycle,
+        nextDueDate: formatIsoDate(nextDueDate),
+        endDate: formatIsoDate(dataFimContrato),
+        enrollmentFeeDueDate: formatIsoDate(resolveEnrollmentFeeDueDate(dataInicio)),
+        description: `${financialPricing.descricao} · ${responsavel.nome}`,
+        actorId: user.id,
+        uiRequestId: body.uiRequestId,
+        notificationChannels: body.notificationChannels,
+        notificationChannelsConfigured: body.notificationChannelsConfigured,
+        discount: billingAdjustments.discount ?? null,
+        interest: billingAdjustments.interest ?? null,
+        fine: billingAdjustments.fine ?? null,
+      } satisfies Record<string, unknown>;
+
+      let payload: FamilyBillingPayload;
+      try {
+        payload = parseFamilyBillingPayload(payloadDraft);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await markFamilyBillingFailed(
+          {
+            ...(payloadDraft as unknown as FamilyBillingPayload),
+          },
+          message,
+        );
+        console.error('[POST /api/matriculas/familiar] Payload financeiro inválido', {
+          familyId: family.id,
+          message,
+        });
+        return NextResponse.json(
+          {
+            familyId: family.id,
+            status: FamilyBillingStatus.FALHO,
+            results,
+            financialError: message,
+          },
+          { status: 422, headers: { 'cache-control': 'no-store' } },
         );
       }
 
-      const event = await prisma.familyBillingOutbox.create({
-        data: {
-          contaId,
-          aggregateType: 'MATRICULA_FAMILIAR',
-          aggregateId: family.id,
-          eventType: 'SYNC_FAMILY_BILLING',
-          matriculaFamiliarId: family.id,
-          payload: {
-            aggregateType: 'MATRICULA_FAMILIAR',
-            aggregateId: family.id,
-            contaId,
-            responsavelId: responsavel.id,
-            responsavelNome: responsavel.nome,
-            totalAlunos: successCount,
-            monthlyValue: body.criarCobranca ? pricing.totalMensalidade : 0,
-            enrollmentFeeValue:
-              !body.taxaIsenta && body.gerarCobrancaTaxa
-                ? Number((body.taxaMatricula * successCount).toFixed(2))
-                : 0,
-            billingType,
-            cycle: pricing.cycle,
-            nextDueDate: formatIsoDate(resolveFirstDueDate(dataInicio, body.vencimentoDia)),
-            endDate: formatIsoDate(dataFimContrato),
-            enrollmentFeeDueDate: formatIsoDate(dataInicio),
-            description: `${pricing.descricao} · ${responsavel.nome}`,
-            actorId: user.id,
-            uiRequestId: body.uiRequestId ?? null,
-            notificationChannels: body.notificationChannels,
-            notificationChannelsConfigured: body.notificationChannelsConfigured,
-          },
-        },
-      });
-
       try {
-        await processFamilyBillingOutboxEvent(event.id);
-        const refreshed = await prisma.matriculaFamiliar.findUnique({
-          where: { id: family.id },
-          select: { status: true },
-        });
-        financialStatus = refreshed?.status ?? FamilyBillingStatus.PROCESSANDO;
+        await executeFamilyBilling(payload);
+        financialStatus =
+          failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
       } catch (error) {
-        console.error('[POST /api/matriculas/familiar] Falha ao processar outbox inline', {
-          familyId: family.id,
-          eventId: event.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        const message = error instanceof Error ? error.message : String(error);
+        financialError = message;
         financialStatus = FamilyBillingStatus.FALHO;
+        await markFamilyBillingFailed(payload, message);
+        console.error('[POST /api/matriculas/familiar] Falha ao gerar cobrança consolidada', {
+          familyId: family.id,
+          message,
+        });
       }
     } else {
+      // Nenhuma cobrança a gerar; marca como ativo (ou parcial se falhou alguma matrícula).
       await prisma.matriculaFamiliar.update({
         where: { id: family.id },
-        data: { status: failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO },
+        data: { status: financialStatus },
       });
-      financialStatus = failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
     }
 
     return NextResponse.json(
@@ -493,14 +672,11 @@ export async function POST(request: Request) {
         status: financialStatus,
         results,
         modeloId: body.modeloId ?? null,
+        financialError,
       },
       { status: 201, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return jsonError(400, 'PAYLOAD_INVALIDO', error.issues[0]?.message ?? 'Payload inválido.', error.issues);
-    }
-
     console.error('[POST /api/matriculas/familiar]', error);
     return jsonError(
       error instanceof MatriculaConflictError ? 409 : 500,

@@ -79,11 +79,18 @@ describe('useMatriculaFamiliarSubmit', async () => {
     planoId: 'plano-1',
     taxaMatricula: 50,
     taxaIsenta: false,
+    gerarCobrancaTaxa: true,
+    formaPagamentoTaxa: 'BOLETO',
     formaPagamento: 'PIX',
     modeloId: 'modelo-1',
     dataInicio: '2025-10-01',
     dataFimContrato: '2026-10-01',
     vencimentoDia: 10,
+    multaPercentual: 2,
+    jurosMensal: 1,
+    descontoAntecipado: 5,
+    descontoTipo: 'PERCENTAGE',
+    prazoDesconto: 0,
     criarCobranca: true,
     confirmacaoRevisao: true,
     notificationChannels: [],
@@ -129,6 +136,13 @@ describe('useMatriculaFamiliarSubmit', async () => {
     expect(firstPayload.alunos).toHaveLength(2);
     expect(firstPayload.criarCobranca).toBe(true);
     expect(firstPayload.taxaMatricula).toBe(50);
+    expect(firstPayload.gerarCobrancaTaxa).toBe(true);
+    expect(firstPayload.formaPagamentoTaxa).toBe('BOLETO');
+    expect(firstPayload.multaPercentual).toBe(2);
+    expect(firstPayload.jurosMensal).toBe(1);
+    expect(firstPayload.descontoAntecipado).toBe(5);
+    expect(firstPayload.descontoTipo).toBe('PERCENTAGE');
+    expect(firstPayload.prazoDesconto).toBe(0);
   });
 
   it('interrompe o fluxo quando a matrícula principal da cobrança familiar falha', async () => {

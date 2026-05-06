@@ -170,7 +170,7 @@ describe('listOperationalCharges', () => {
     expect(result.items[0].isGroup).toBe(false);
   });
 
-  it('marca cobrança acadêmica shared plan com agrupamento familiar e pagador responsável', async () => {
+  it('mantém cobrança acadêmica familiar clicável como cobrança normal e resolve pagador responsável', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -190,12 +190,13 @@ describe('listOperationalCharges', () => {
     expect(result.items[0]).toMatchObject({
       id: 'cob_family_1',
       payerName: 'Maria Família',
-      isGroup: true,
-      groupId: 'fam_1',
+      isGroup: false,
+      groupType: null,
+      groupId: null,
     });
   });
 
-  it('marca cobrança standalone consolidada com familyGroupId', async () => {
+  it('mantém cobrança standalone consolidada por família clicável como cobrança normal', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     db.charge.findMany
@@ -213,8 +214,9 @@ describe('listOperationalCharges', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       id: 'ch_family_1',
-      isGroup: true,
-      groupId: 'fam_1',
+      isGroup: false,
+      groupType: null,
+      groupId: null,
     });
   });
 

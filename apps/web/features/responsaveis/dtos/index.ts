@@ -105,8 +105,41 @@ export const responsavelFamilyChargeDTOSchema = z.object({
   status: z.string().min(1),
   value: z.number().nonnegative(),
   dueDate: z.string().nullable(),
+  billingType: z.string().nullable().optional(),
   invoiceUrl: z.string().nullable(),
   familyGroupId: z.string().nullable(),
+  standaloneSubscriptionId: z.string().nullable().optional(),
+  standaloneInstallmentPlanId: z.string().nullable().optional(),
+  createdAt: z.string().nullable().optional(),
+});
+
+export const responsavelSubscriptionDTOSchema = z.object({
+  id: z.string().min(1),
+  source: z.literal('AVULSA'),
+  status: z.string().min(1),
+  asaasSubscriptionId: z.string().nullable(),
+  externalReference: z.string().nullable(),
+  cycle: z.string().min(1),
+  billingType: z.string().min(1),
+  value: z.number().nonnegative(),
+  nextDueDate: z.string().nullable(),
+  description: z.string().nullable(),
+  familyGroupId: z.string().nullable(),
+  createdAt: z.string().nullable(),
+});
+
+export const responsavelInstallmentPlanDTOSchema = z.object({
+  id: z.string().min(1),
+  source: z.literal('AVULSO'),
+  status: z.string().min(1),
+  asaasInstallmentId: z.string().nullable(),
+  externalReference: z.string().nullable(),
+  installmentCount: z.number().int().nonnegative(),
+  billingType: z.string().min(1),
+  value: z.number().nonnegative(),
+  firstDueDate: z.string().nullable(),
+  familyGroupId: z.string().nullable(),
+  createdAt: z.string().nullable(),
 });
 
 export const responsavelRematriculaCandidateDTOSchema = z.object({
@@ -128,6 +161,8 @@ export const responsavelOverviewDTOSchema = z.object({
   families: z.array(responsavelFamilyAggregateDTOSchema),
   reenrollments: z.array(responsavelFamilyAggregateDTOSchema),
   charges: z.array(responsavelFamilyChargeDTOSchema),
+  subscriptions: z.array(responsavelSubscriptionDTOSchema).default([]),
+  installmentPlans: z.array(responsavelInstallmentPlanDTOSchema).default([]),
   rematriculaCandidates: z.array(responsavelRematriculaCandidateDTOSchema),
 });
 

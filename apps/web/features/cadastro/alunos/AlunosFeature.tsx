@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 // Skeleton manual substituído pelos skeletons do DataTable
-import { Plus, Eye, EyeOff } from '@/components/icons/icons';
+import { Plus } from '@/components/icons/icons';
 // Dropdown de ordenação substituído pelo EntityFiltersBar
 import AlunoWizardDialog from '@/components/alunos/AlunoWizardDialog';
 import { AlunoEditDialog, type EditAluno } from '@/components/alunos/AlunoEditDialog';
@@ -21,7 +21,7 @@ import EntityFiltersBar, {
   type SortOrder as SortOrderEF,
 } from '@/components/layout/EntityFiltersBar';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
-import { formatFirstLast, formatInitials, maskCpf } from '@alusa/lib/client';
+import { formatFirstLast, formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
 import { useDeleteDialog } from '@/hooks/use-delete-dialog';
 import { useEditDialog } from '@/hooks/use-edit-dialog';
 import useCurrentUser from '@/hooks/use-current-user';
@@ -36,12 +36,8 @@ const PAGE_SIZE = 6;
 type SortOrder = 'ASC' | 'DESC';
 type StatusFilter = StatusValue;
 
-type BlurPredicate = (_value: string | null | undefined) => boolean;
-
 interface AlunosTableProps {
   alunos: AlunoListItem[];
-  shouldBlur: BlurPredicate;
-  blurClass: string;
   onEdit: (_aluno: AlunoListItem) => void;
   onDelete: (_aluno: AlunoListItem) => void;
   onOpenDetail: (_aluno: AlunoListItem) => void;
@@ -80,7 +76,6 @@ export function AlunosFeature() {
     void reload();
   }, [reload]);
 
-  const [hideSensitive, setHideSensitive] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC'); // manter para interface com EntityFiltersBar
   // Hook reutilizável para filtragem, busca, status, paginação e ordenação
   const {
@@ -139,10 +134,6 @@ export function AlunosFeature() {
     setWizardOpen(true);
   }, [contaId]);
 
-  const shouldBlur = (value: string | undefined | null) =>
-    Boolean(hideSensitive && value && value !== '-');
-  const blurClass = 'inline-block filter blur-[3px] px-1 -mx-1 py-0.5 -my-0.5 leading-[20px]';
-
   return (
     <TableLayout
       title="Gestão de Alunos"
@@ -158,27 +149,6 @@ export function AlunosFeature() {
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Cadastrar aluno
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setHideSensitive((v) => !v)}
-            className="h-10 px-4 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-none [&_svg]:transition-none"
-            title={
-              hideSensitive ? 'Mostrar CPF, e-mail e telefone' : 'Ocultar CPF, e-mail e telefone'
-            }
-            aria-pressed={hideSensitive}
-          >
-            {hideSensitive ? (
-              <>
-                <Eye className="h-4 w-4 mr-2 transition-none" />
-                Mostrar dados
-              </>
-            ) : (
-              <>
-                <EyeOff className="h-4 w-4 mr-2 transition-none" />
-                Ocultar dados
-              </>
-            )}
           </Button>
         </>
       }
@@ -200,8 +170,6 @@ export function AlunosFeature() {
       <div className="bg-white rounded-xl border overflow-hidden">
         <AlunosTable
           alunos={paginated}
-          shouldBlur={shouldBlur}
-          blurClass={blurClass}
           onEdit={(aluno) => {
             editDialog.openDialog(mapToEditAluno(aluno));
             void loadAlunoDetails(aluno.id, editDialog.setEntity);
@@ -289,8 +257,6 @@ export function AlunosFeature() {
 
 function AlunosTable({
   alunos,
-  shouldBlur,
-  blurClass,
   onEdit,
   onDelete,
   onOpenDetail,
@@ -357,17 +323,11 @@ function AlunosTable({
       header: 'CPF',
       width: 'w-1/6', // ~16.66%
       align: 'center',
-      render: (aluno) => {
-        const cpfMasked = maskCpf(aluno.cpf ?? '');
-        return (
-          <span
-            className={shouldBlur(aluno.cpf) ? blurClass : 'leading-[20px]'}
-            title={aluno.cpf ?? undefined}
-          >
-            {aluno.cpf ? cpfMasked : '-'}
-          </span>
-        );
-      },
+      render: (aluno) => (
+        <span className="tabular-nums leading-[20px]">
+          {aluno.cpf ? maskCpf(aluno.cpf) : '-'}
+        </span>
+      ),
       skeleton: <div className="h-4 w-24 bg-gray-200 rounded" />,
     },
     {
@@ -375,17 +335,14 @@ function AlunosTable({
       header: 'E-mail',
       width: 'w-1/4',
       align: 'left',
-      render: (aluno) =>
-        shouldBlur(aluno.email) ? (
-          <span className={blurClass}>{aluno.email ?? '-'}</span>
-        ) : (
-          <span
-            className="inline-block max-w-full truncate leading-[20px]"
-            title={aluno.email ?? ''}
-          >
-            {aluno.email ?? '-'}
-          </span>
-        ),
+      render: (aluno) => (
+        <span
+          className="inline-block max-w-full truncate leading-[20px]"
+          title={aluno.email ?? undefined}
+        >
+          {aluno.email || '-'}
+        </span>
+      ),
       skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
     },
     {
@@ -394,9 +351,7 @@ function AlunosTable({
       width: 'w-1/6',
       align: 'center',
       render: (aluno) => (
-        <span className={shouldBlur(aluno.telefone) ? blurClass : 'leading-[20px]'}>
-          {aluno.telefone || '-'}
-        </span>
+        <span className="tabular-nums leading-[20px]">{maskPhone(aluno.telefone) || '-'}</span>
       ),
       skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
     },

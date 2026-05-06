@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -21,11 +21,11 @@ import EntityFiltersBar, {
 } from '@/components/layout/EntityFiltersBar';
 import Pagination from '@/components/layout/Pagination';
 import TableLayout from '@/components/layout/TableLayout';
-import { Eye, EyeOff, Plus, UserPlus } from '@/components/icons/icons';
+import { Eye, Plus } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
-import { formatInitials, maskCpf } from '@alusa/lib/client';
+import { formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
 import { actionsColumn } from '@alusa/ui/datatable/columns';
 
 import { useResponsaveis } from './hooks/use-responsaveis';
@@ -51,17 +51,6 @@ const initialFormState: ResponsavelFormState = {
   financeiro: true,
 };
 
-function formatPhone(value: string | null | undefined) {
-  const digits = (value ?? '').replace(/\D/g, '');
-  if (digits.length === 10) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  }
-  if (digits.length === 11) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-  }
-  return value || '-';
-}
-
 export function ResponsaveisFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
@@ -70,7 +59,6 @@ export function ResponsaveisFeature() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<ResponsavelFormState>(initialFormState);
-  const [hideSensitive, setHideSensitive] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
 
   const {
@@ -112,10 +100,6 @@ export function ResponsaveisFeature() {
     setSortOrder(sort);
   }, [sort]);
 
-  const shouldBlur = (value: string | undefined | null) =>
-    Boolean(hideSensitive && value && value !== '-');
-  const blurClass = 'inline-block filter blur-[3px] px-1 -mx-1 py-0.5 -my-0.5 leading-[20px]';
-
   async function handleCreate() {
     setCreating(true);
     try {
@@ -141,11 +125,6 @@ export function ResponsaveisFeature() {
     }
   }
 
-  const totalAlunos = useMemo(
-    () => items.reduce((total, responsavel) => total + (responsavel.alunosCount ?? 0), 0),
-    [items],
-  );
-
   return (
     <TableLayout
       title="Gestão de Responsáveis"
@@ -160,28 +139,6 @@ export function ResponsaveisFeature() {
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Novo responsável
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => setHideSensitive((value) => !value)}
-            className="h-10 px-4 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-none [&_svg]:transition-none"
-            aria-pressed={hideSensitive}
-          >
-            {hideSensitive ? (
-              <>
-                <Eye className="h-4 w-4 mr-2 transition-none" />
-                Mostrar dados
-              </>
-            ) : (
-              <>
-                <EyeOff className="h-4 w-4 mr-2 transition-none" />
-                Ocultar dados
-              </>
-            )}
-          </Button>
-          <div className="hidden lg:flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            <UserPlus className="h-4 w-4 text-slate-400" />
-            {items.length} responsáveis · {totalAlunos} vínculos com alunos
-          </div>
         </>
       }
       filtersBar={
@@ -205,8 +162,6 @@ export function ResponsaveisFeature() {
           responsaveis={paginated}
           loading={loading || userLoading}
           onOpenDetail={(responsavel) => router.push(`/responsaveis/${responsavel.id}`)}
-          shouldBlur={shouldBlur}
-          blurClass={blurClass}
         />
       </div>
 
@@ -337,66 +292,75 @@ function ResponsaveisTable({
   responsaveis,
   loading,
   onOpenDetail,
-  shouldBlur,
-  blurClass,
 }: {
   responsaveis: ResponsavelListItem[];
   loading: boolean;
   onOpenDetail: (_responsavel: ResponsavelListItem) => void;
-  shouldBlur: (_value: string | null | undefined) => boolean;
-  blurClass: string;
 }) {
   const columns: DataTableColumn<ResponsavelListItem>[] = [
     {
       id: 'responsavel',
       header: 'Responsável',
-      width: 'w-1/4',
+      width: 'w-[37%]',
       align: 'left',
       noWrap: false,
       skeleton: (
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-full bg-gray-200" />
-          <div className="flex-1 space-y-2">
-            <div className="h-4 w-40 bg-gray-200 rounded" />
-            <div className="h-4 w-24 bg-gray-200 rounded" />
-          </div>
+          <div className="h-4 w-40 bg-gray-200 rounded" />
         </div>
       ),
       render: (responsavel) => (
         <div className="flex items-center gap-3 min-w-0">
-          <Avatar className="h-10 w-10">
+          <Avatar className="h-10 w-10 shrink-0">
             <AvatarFallback className="bg-violet-100 text-violet-700 font-medium">
               {formatInitials(responsavel.nome ?? '')}
             </AvatarFallback>
           </Avatar>
-          <div className="min-w-0">
-            <div className="font-normal text-gray-900 text-[13px] truncate">{responsavel.nome}</div>
-            <div className="mt-1 flex flex-wrap gap-1">
-              {responsavel.financeiro ? (
-                <Badge variant="info" className="text-[10px] font-bold tracking-widest uppercase">
-                  Financeiro
-                </Badge>
-              ) : null}
-              {(responsavel.alunosCount ?? 0) > 0 ? (
-                <Badge
-                  variant="neutral"
-                  className="text-[10px] font-bold tracking-widest uppercase"
-                >
-                  {responsavel.alunosCount} aluno{responsavel.alunosCount === 1 ? '' : 's'}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
+          <div className="min-w-0 truncate font-normal text-gray-900 text-[13px]">{responsavel.nome}</div>
         </div>
       ),
     },
     {
+      id: 'perfil',
+      header: 'Perfil',
+      width: 'w-[7%]',
+      align: 'center',
+      render: (responsavel) =>
+        responsavel.financeiro ? (
+          <Badge variant="info" className="text-[10px] font-normal capitalize tracking-normal">
+            Financeiro
+          </Badge>
+        ) : (
+          <span className="text-xs text-slate-400">—</span>
+        ),
+      skeleton: <div className="h-6 w-16 bg-gray-200 rounded mx-auto" />,
+    },
+    {
+      id: 'vinculos',
+      header: 'Alunos',
+      width: 'w-[7%]',
+      align: 'center',
+      render: (responsavel) => {
+        const count = responsavel.alunosCount ?? 0;
+        if (count === 0) {
+          return <span className="text-xs text-slate-400">—</span>;
+        }
+        return (
+          <Badge variant="neutral" className="text-[10px] font-normal capitalize tracking-normal">
+            {count} aluno{count === 1 ? '' : 's'}
+          </Badge>
+        );
+      },
+      skeleton: <div className="h-6 w-14 bg-gray-200 rounded mx-auto" />,
+    },
+    {
       id: 'cpf',
       header: 'CPF',
-      width: 'w-1/6',
+      width: 'w-[9%]',
       align: 'center',
       render: (responsavel) => (
-        <span className={shouldBlur(responsavel.cpf) ? blurClass : 'leading-[20px]'}>
+        <span className="tabular-nums leading-[20px]">
           {responsavel.cpf ? maskCpf(responsavel.cpf) : '-'}
         </span>
       ),
@@ -405,48 +369,55 @@ function ResponsaveisTable({
     {
       id: 'email',
       header: 'E-mail',
-      width: 'w-1/4',
+      width: 'w-[16%]',
       align: 'left',
-      render: (responsavel) =>
-        shouldBlur(responsavel.email) ? (
-          <span className={blurClass}>{responsavel.email || '-'}</span>
-        ) : (
-          <span
-            className="inline-block max-w-full truncate leading-[20px]"
-            title={responsavel.email}
-          >
-            {responsavel.email || '-'}
-          </span>
-        ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
+      headerClassName: 'pl-6 pr-2',
+      cellClassName: 'overflow-hidden pl-6 pr-2',
+      render: (responsavel) => (
+        <span
+          className="block w-full truncate text-[13px] leading-5 text-gray-900"
+          title={responsavel.email ?? undefined}
+        >
+          {responsavel.email?.trim() || '—'}
+        </span>
+      ),
+      skeleton: <div className="h-4 w-36 max-w-full bg-gray-200 rounded" />,
     },
     {
       id: 'telefone',
       header: 'Telefone',
-      width: 'w-1/6',
-      align: 'center',
+      width: 'w-[16%]',
+      align: 'left',
+      headerClassName: 'pl-2 pr-6',
+      cellClassName: 'overflow-hidden pl-2 pr-6',
       render: (responsavel) => (
-        <span className={shouldBlur(responsavel.telefone) ? blurClass : 'leading-[20px]'}>
-          {formatPhone(responsavel.telefone)}
+        <span className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900">
+          {maskPhone(responsavel.telefone) || '—'}
         </span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="h-4 w-28 bg-gray-200 rounded" />,
     },
-    actionsColumn<ResponsavelListItem>({
-      onEdit: onOpenDetail,
-      editLabel: 'Ver detalhes',
-      editButtonAriaLabel: (responsavel) => `Ver responsável ${responsavel.nome}`,
-      editIcon: <Eye className="h-4 w-4" />,
-      skeleton: (
-        <div className="flex justify-center">
-          <div className="h-8 w-8 bg-gray-200 rounded" />
-        </div>
-      ),
-    }),
+    {
+      ...actionsColumn<ResponsavelListItem>({
+        onEdit: onOpenDetail,
+        editLabel: 'Ver detalhes',
+        editButtonAriaLabel: (responsavel) => `Ver responsável ${responsavel.nome}`,
+        editIcon: <Eye className="h-4 w-4" />,
+        skeleton: (
+          <div className="flex justify-center">
+            <div className="h-8 w-8 bg-gray-200 rounded" />
+          </div>
+        ),
+      }),
+      width: 'w-[8%]',
+      headerClassName: undefined,
+      cellClassName: undefined,
+    },
   ];
 
   return (
     <DataTable
+      tableClassName="table-fixed"
       columns={columns}
       data={responsaveis}
       rowKey={(responsavel) => responsavel.id}

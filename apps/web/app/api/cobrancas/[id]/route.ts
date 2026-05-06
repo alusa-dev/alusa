@@ -145,7 +145,16 @@ function resolveStandaloneLiquidacaoStatus(params: {
 function resolveStandaloneChargeTipo(params: {
   standaloneInstallmentPlanId?: string | null;
   externalReference?: string | null;
-}): 'AVULSA' | 'PARCELADA' | 'RECORRENTE' {
+  familyGroupId?: string | null;
+  description?: string | null;
+}): 'AVULSA' | 'PARCELADA' | 'RECORRENTE' | 'TAXA_MATRICULA' {
+  if (
+    params.familyGroupId &&
+    params.description?.trim().toLowerCase().startsWith('taxa de matrícula familiar')
+  ) {
+    return 'TAXA_MATRICULA';
+  }
+
   if (
     params.standaloneInstallmentPlanId ||
     params.externalReference?.startsWith('alusa:installment:') ||
@@ -412,6 +421,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         const standaloneTipo = resolveStandaloneChargeTipo({
           standaloneInstallmentPlanId: charge.standaloneInstallmentPlanId,
           externalReference: charge.externalReference,
+          familyGroupId: charge.familyGroupId,
+          description: charge.description,
         });
         const standaloneDescricao =
           charge.description ??

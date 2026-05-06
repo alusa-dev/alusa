@@ -31,7 +31,7 @@ import {
   formatIsoDate,
   mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
-  resolveFirstDueDate,
+  resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 import { syncInitialSubscriptionPaymentFromAsaas } from '@/src/server/matriculas/subscription-payment-materialization';
 
@@ -409,7 +409,7 @@ export async function POST(req: Request) {
         } else {
           const planoOuCombo = recurringContext.combo ?? recurringContext.plano;
           const periodicidade = (planoOuCombo?.periodicidade ?? PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
-          const nextDueDateObj = resolveFirstDueDate(recurringContext.dataInicio, recurringContext.vencimentoDia);
+          const nextDueDateObj = resolveChargeableFirstDueDate(recurringContext.dataInicio, recurringContext.vencimentoDia);
           const nextDueDate = formatIsoDate(nextDueDateObj);
           const endDate =
             recurringContext.dataFimContrato >= nextDueDateObj

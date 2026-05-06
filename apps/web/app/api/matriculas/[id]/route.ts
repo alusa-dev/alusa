@@ -35,6 +35,79 @@ type SessionUser = {
   contaId?: string | null;
 };
 
+function mapFamilyChargeStatus(status: string) {
+  const map: Record<string, string> = {
+    CREATED: 'PENDENTE',
+    OPEN: 'PENDENTE',
+    OVERDUE: 'ATRASADO',
+    PAID: 'PAGO',
+    CANCELED: 'CANCELADO',
+    REFUNDED: 'ESTORNADO',
+  };
+  return map[status] ?? 'PENDENTE';
+}
+
+function mapFamilyBillingType(billingType?: string | null) {
+  if (billingType === 'CREDIT_CARD') return 'CARTAO_CREDITO';
+  if (billingType === 'DEBIT_CARD') return 'CARTAO';
+  if (billingType === 'BOLETO' || billingType === 'PIX') return billingType;
+  return 'INDEFINIDO';
+}
+
+async function loadFamilyEnrollmentCharge(params: {
+  contaId: string;
+  matricula: Record<string, unknown>;
+}) {
+  const family =
+    (params.matricula.matriculaFamiliar as { id?: string; standaloneEnrollmentChargeId?: string | null } | null) ??
+    null;
+  const familyId =
+    typeof params.matricula.matriculaFamiliarId === 'string'
+      ? params.matricula.matriculaFamiliarId
+      : family?.id;
+  const chargeId = family?.standaloneEnrollmentChargeId ?? null;
+
+  if (!familyId || !chargeId) return null;
+
+  const charge = await prisma.charge.findFirst({
+    where: {
+      id: chargeId,
+      contaId: params.contaId,
+      familyGroupId: familyId,
+    },
+    select: {
+      id: true,
+      status: true,
+      value: true,
+      dueDate: true,
+      billingType: true,
+      description: true,
+      asaasPaymentId: true,
+      createdAt: true,
+    },
+  });
+
+  if (!charge) return null;
+
+  const dueDate = charge.dueDate ?? charge.createdAt;
+  return {
+    id: charge.id,
+    valor: Number(charge.value ?? 0),
+    status: mapFamilyChargeStatus(charge.status),
+    formaPagamento: mapFamilyBillingType(charge.billingType),
+    tipo: 'TAXA_MATRICULA',
+    vencimento: dueDate,
+    descricao: charge.description ?? 'Taxa de matrícula familiar',
+    asaasPaymentId: charge.asaasPaymentId ?? null,
+    asaasId: charge.asaasPaymentId ?? null,
+    createdAt: charge.createdAt,
+    competenciaInicio: dueDate,
+    competenciaFim: dueDate,
+    dataPagamento: null,
+    origin: 'STANDALONE',
+  };
+}
+
 function normalizeBillingDay(day: number) {
   return Math.min(28, Math.max(1, day));
 }
@@ -223,12 +296,22 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
       }
     }
 
+    const familyEnrollmentCharge = await loadFamilyEnrollmentCharge({
+      contaId: contaCtx.contaId,
+      matricula: matricula as unknown as Record<string, unknown>,
+    });
+
+    const mappedMatricula = {
+      ...(matricula as unknown as Record<string, unknown>),
+      cobrancas: familyEnrollmentCharge
+        ? [familyEnrollmentCharge, ...((matricula.cobrancas ?? []) as unknown[])]
+        : matricula.cobrancas,
+      assinaturaSnapshot,
+    };
+
     return NextResponse.json(
       {
-        matricula: mapMatriculaRecordToResumoDTO({
-          ...(matricula as unknown as Record<string, unknown>),
-          assinaturaSnapshot,
-        }),
+        matricula: mapMatriculaRecordToResumoDTO(mappedMatricula),
       },
       { headers: { 'cache-control': 'no-store' } },
     );

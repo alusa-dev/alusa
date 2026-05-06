@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { StepAluno } from './wizard/steps/StepAluno';
@@ -16,7 +16,7 @@ import { StepFinanceiro } from './wizard/steps/StepFinanceiro';
 import { StepResumo } from './wizard/steps/StepResumo';
 import { StepTaxa } from './wizard/steps/StepTaxa';
 import { useMatriculaWizard } from './wizard/hooks/useMatriculaWizard';
-import type { WizardContextValue, WizardFamiliarSubmitResult, WizardState } from './wizard/types';
+import type { WizardContextValue, WizardState } from './wizard/types';
 import type { MatriculaCreatedPayload } from '@/features/cadastro/matriculas/services/matriculas-service';
 import { useMatriculaSubmit } from '@/hooks/use-matricula-submit';
 import { useMatriculaFamiliarSubmit } from '@/hooks/use-matricula-familiar-submit';
@@ -102,7 +102,19 @@ function canAdvanceFromBolsaBeneficios(state: WizardState) {
 }
 
 function canAdvanceFromFinanceiro(state: WizardState) {
-  return Boolean(state.formaPagamento && state.dataInicio && state.dataFimContrato && state.modeloId);
+  const dueDayIsValid =
+    typeof state.vencimentoDia === 'number' &&
+    Number.isInteger(state.vencimentoDia) &&
+    state.vencimentoDia >= 1 &&
+    state.vencimentoDia <= 28;
+
+  return Boolean(
+    state.formaPagamento &&
+      state.dataInicio &&
+      state.dataFimContrato &&
+      state.modeloId &&
+      dueDayIsValid,
+  );
 }
 
 function canSubmit(state: WizardState) {
@@ -129,7 +141,6 @@ export function MatriculaWizardFlow({
   const wizard = useMatriculaWizard(contaId);
   const prevOpenRef = useRef<boolean | undefined>(open);
   const prevContaRef = useRef<string | undefined>(contaId);
-  const [familiarResults, setFamiliarResults] = useState<WizardFamiliarSubmitResult[] | null>(null);
 
   // Hook de submissão de matrícula
   const { submit, loading: submitting } = useMatriculaSubmit({
@@ -153,9 +164,9 @@ export function MatriculaWizardFlow({
 
   const { submit: submitFamiliar, loading: submittingFamiliar } = useMatriculaFamiliarSubmit({
     onSuccess: (results) => {
-      setFamiliarResults(results);
-      // Trigger list refresh via onCompleted even for familiar (caller decides how to handle)
       const firstSuccess = results.find((r) => r.status === 'success');
+      wizard.reset({ contaId: contaId ?? '' });
+      onClose?.();
       if (firstSuccess) {
         onCompleted?.({ matricula: { id: firstSuccess.matriculaId ?? '' } } as unknown as MatriculaCreatedPayload);
       }
@@ -274,56 +285,6 @@ export function MatriculaWizardFlow({
     if (wizard.step === 'modo') return;
     wizard.goBack();
   }, [wizard]);
-
-  // Familiar results view after completion
-  if (familiarResults) {
-    const successCount = familiarResults.filter((r) => r.status === 'success').length;
-    const errorCount = familiarResults.filter((r) => r.status === 'error').length;
-    return (
-      <div className="flex flex-col rounded-2xl bg-slate-50 p-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">Matrículas processadas</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {successCount} criada{successCount !== 1 ? 's' : ''} com sucesso
-            {errorCount > 0 ? `, ${errorCount} com erro` : ''}.
-          </p>
-        </div>
-
-        <ul className="space-y-2">
-          {familiarResults.map((r) => (
-            <li
-              key={r.alunoId}
-              className={`flex items-center gap-3 rounded-lg border p-3 text-sm ${
-                r.status === 'success'
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                  : 'border-red-200 bg-red-50 text-red-800'
-              }`}
-            >
-              <span className="font-medium flex-1">{r.alunoNome}</span>
-              {r.status === 'success' ? (
-                <span className="text-emerald-600 text-xs">Matrícula criada</span>
-              ) : (
-                <span className="text-red-600 text-xs">{r.errorMessage ?? 'Erro'}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            onClick={() => {
-              setFamiliarResults(null);
-              wizard.reset({ contaId: contaId ?? '' });
-              onClose?.();
-            }}
-          >
-            Fechar
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div

@@ -53,6 +53,22 @@
 	transition: none !important;
 }
 
+/* Card branco principal (sidebar + conteúdo): mantém sombra estável ao focar/clicar dentro da página. */
+[data-app-shell-card] {
+	box-shadow: var(--app-shell-card-shadow) !important;
+	transition-property: background, background-color, color, border-color, outline-color,
+		text-decoration-color, caret-color, fill, stroke !important;
+	transition-duration: var(--theme-duration) !important;
+	transition-timing-function: var(--theme-ease) !important;
+}
+
+[data-app-shell-card]:hover,
+[data-app-shell-card]:active,
+[data-app-shell-card]:focus,
+[data-app-shell-card]:focus-within {
+	box-shadow: var(--app-shell-card-shadow) !important;
+}
+
 /* Linha horizontal */
 .editor-hr {
 	border: none;
@@ -333,10 +349,15 @@ html {
 	background-color: #9ca3af;
 }
 
-/* Remove outline/focus ring de todos os elementos */
+/* Outline global: não usar box-shadow:none em * — isso apagava a sombra do shell ao clicar/focar dentro do card. */
 *:focus,
 *:focus-visible,
-*:active,
+*:active {
+	outline: none !important;
+	border-color: inherit !important;
+}
+
+/* Ring/sombra de foco só em controles interativos */
 button:focus,
 button:focus-visible,
 button:active,

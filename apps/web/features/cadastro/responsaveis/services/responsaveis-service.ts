@@ -99,6 +99,17 @@ export async function updateResponsavel(id: string, input: UpdateResponsavelInpu
   return responsavelDetailDTOSchema.parse(json);
 }
 
+export async function deleteResponsavel(id: string) {
+  const res = await fetch(`/api/responsaveis/${id}`, {
+    method: 'DELETE',
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(parseErrorPayload(error, 'Erro ao excluir responsável'));
+  }
+}
+
 export async function getResponsavelOverview({
   id,
   signal,

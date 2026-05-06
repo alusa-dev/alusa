@@ -187,7 +187,14 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
     },
     ...(input.alunoId ? { alunoId: input.alunoId } : {}),
     ...(input.planoId ? { planoId: input.planoId } : {}),
-    ...(input.turmaId ? { turmaId: input.turmaId } : {}),
+    ...(input.turmaId
+      ? {
+          OR: [
+            { turmaId: input.turmaId },
+            { matriculaTurmas: { some: { turmaId: input.turmaId } } },
+          ],
+        }
+      : {}),
     ...(input.comboId !== undefined ? { comboId: input.comboId } : {}),
     ...(input.status?.length ? { status: { in: input.status } } : {}),
     ...(input.search?.trim()
@@ -441,7 +448,13 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     input.comboId
       ? prisma.combo.findFirst({
           where: { id: input.comboId, contaId: input.contaId },
-          select: { id: true, valor: true, periodicidade: true, vagasLimite: true },
+          select: {
+            id: true,
+            valor: true,
+            periodicidade: true,
+            vagasLimite: true,
+            turmas: { select: { turmaId: true } },
+          },
         })
       : Promise.resolve(null),
     input.turmaId
@@ -605,6 +618,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       await tx.matriculaTurma.create({
         data: { matriculaId: matricula.id, turmaId: input.turmaId },
       });
+    } else if (combo?.turmas?.length) {
+      await tx.matriculaTurma.createMany({
+        data: combo.turmas.map((ct) => ({
+          matriculaId: matricula.id,
+          turmaId: ct.turmaId,
+        })),
+        skipDuplicates: true,
+      });
     }
 
     await aplicarDescontosMatricula(tx, matricula.id, descontosAplicaveis, planoValor, preco);
@@ -652,6 +673,12 @@ export async function buscarMatriculaPorId(input: { id: string; contaId: string 
       combo: true,
       cobrancas: { orderBy: { vencimento: 'asc' } },
       responsavelFinanceiro: true,
+      matriculaFamiliar: {
+        select: {
+          id: true,
+          standaloneEnrollmentChargeId: true,
+        },
+      },
       matriculaTurmas: { include: { turma: true } },
     },
   });

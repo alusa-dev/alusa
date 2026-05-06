@@ -19,6 +19,7 @@ import {
 } from '../foundation/standalone-subscription-store';
 import {
   buildStandaloneExternalReference,
+  buildSafeAsaasIdempotencyKey,
   deriveDeterministicId,
   isPrismaUniqueViolation,
   withIdempotencyGuard,
@@ -642,6 +643,7 @@ export async function createStandaloneCharge(
       const subscriptionId = deriveDeterministicId('sub', idempotencyKey);
       const subscriptionExternalReference =
         buildStandaloneSubscriptionExternalReference(subscriptionId);
+      const asaasIdempotencyKey = buildSafeAsaasIdempotencyKey(idempotencyKey);
 
       // Verificar duplicidade local
       const existingSubscription = await findStandaloneSubscription(prisma, {
@@ -666,7 +668,7 @@ export async function createStandaloneCharge(
 
       const subscription = await createSubscription({
         apiKey: creds.apiKey,
-        idempotencyKey,
+        idempotencyKey: asaasIdempotencyKey,
         data: {
           customer: asaasCustomerId,
           billingType: input.billingType,

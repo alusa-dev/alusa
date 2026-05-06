@@ -15,6 +15,32 @@ export function resolveFirstDueDate(dataInicio: Date, vencimentoDia: number) {
   return due;
 }
 
+/**
+ * Retorna a primeira data de vencimento >= hoje.
+ * Necessário para cobranças no Asaas, que rejeita datas passadas.
+ */
+export function resolveChargeableFirstDueDate(dataInicio: Date, vencimentoDia: number): Date {
+  const day = Math.min(28, Math.max(1, vencimentoDia));
+  let due = resolveFirstDueDate(dataInicio, day);
+  const today = new Date();
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  while (new Date(due.getFullYear(), due.getMonth(), due.getDate()) < startToday) {
+    due = new Date(due.getFullYear(), due.getMonth() + 1, day);
+  }
+  return due;
+}
+
+/**
+ * Retorna a data de vencimento para a taxa de matrícula avulsa.
+ * Se dataInicio for passada, usa hoje.
+ */
+export function resolveEnrollmentFeeDueDate(dataInicio: Date): Date {
+  const today = new Date();
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const start = new Date(dataInicio.getFullYear(), dataInicio.getMonth(), dataInicio.getDate());
+  return start < startToday ? startToday : start;
+}
+
 export function formatIsoDate(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');

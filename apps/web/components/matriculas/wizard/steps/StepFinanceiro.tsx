@@ -9,10 +9,61 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import type { WizardContextValue } from '../types';
-import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 import { calcularValorLiquidoComBeneficio } from '../beneficios';
+import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
+
+const DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR');
+
+function parseStoredDate(value?: string) {
+  if (!value) return undefined;
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day);
+}
+
+function normalizeDate(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function toIsoDate(date?: Date) {
+  if (!date) return undefined;
+  const normalized = normalizeDate(date);
+  const year = normalized.getFullYear();
+  const month = String(normalized.getMonth() + 1).padStart(2, '0');
+  const day = String(normalized.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function isValidDueDay(value: number) {
+  return Number.isInteger(value) && value >= 1 && value <= 28;
+}
+
+function resolveFirstDueDate(dataInicio: Date, vencimentoDia: number) {
+  const base = normalizeDate(dataInicio);
+  const day = Math.min(28, Math.max(1, vencimentoDia));
+  const due = new Date(base.getFullYear(), base.getMonth(), day);
+  if (due < base) {
+    return new Date(base.getFullYear(), base.getMonth() + 1, day);
+  }
+  return due;
+}
+
+function resolveChargeableFirstDueDate(dataInicio: Date, vencimentoDia: number) {
+  const day = Math.min(28, Math.max(1, vencimentoDia));
+  let due = resolveFirstDueDate(dataInicio, day);
+  const today = normalizeDate(new Date());
+  while (normalizeDate(due) < today) {
+    due = new Date(due.getFullYear(), due.getMonth() + 1, day);
+  }
+  return due;
+}
+
+function formatDateLabel(date?: Date) {
+  return date ? DATE_FORMATTER.format(normalizeDate(date)) : '';
+}
 
 const paymentOptions: Array<{
   value: 'PIX' | 'CARTAO_CREDITO' | 'BOLETO';
@@ -31,34 +82,58 @@ interface StepFinanceiroProps {
 export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
   const { state, update } = ctx;
   const [dataInicio, setDataInicio] = useState<Date | undefined>(
-    state.dataInicio ? new Date(state.dataInicio) : new Date(),
+    state.dataInicio ? parseStoredDate(state.dataInicio) : new Date(),
   );
   const [dataFimContrato, setDataFimContrato] = useState<Date | undefined>(
-    state.dataFimContrato ? new Date(state.dataFimContrato) : undefined,
+    state.dataFimContrato ? parseStoredDate(state.dataFimContrato) : undefined,
   );
   const [vencimento, setVencimento] = useState(state.vencimentoDia?.toString() ?? '5');
   const { modelos, loading: loadingModelos } = useModelos({ activeOnly: true });
 
-  const valorMensalidade = state.modoTurmas === 'COMBO'
-    ? (state.comboValor ?? 0)
-    : (state.planoValor ?? 0);
-  const valorMensalidadeLiquido = calcularValorLiquidoComBeneficio(
-    valorMensalidade,
-    state.beneficioSelecionado,
+  const parsedVencimento = Number(vencimento);
+  const hasDueDay = vencimento.trim().length > 0;
+  const dueDayInvalid = hasDueDay && !isValidDueDay(parsedVencimento);
+
+  const recurringChargeTotal = useMemo(() => {
+    if (state.modoTurmas === 'COMBO') {
+      if (state.modoMatricula === 'FAMILIAR') {
+        return state.alunosFamiliares.reduce(
+          (total, aluno) =>
+            total + calcularValorLiquidoComBeneficio(aluno.comboValor ?? 0, state.beneficioSelecionado),
+          0,
+        );
+      }
+
+      return calcularValorLiquidoComBeneficio(state.comboValor ?? 0, state.beneficioSelecionado);
+    }
+
+    return calcularValorLiquidoComBeneficio(state.planoValor ?? 0, state.beneficioSelecionado);
+  }, [state.alunosFamiliares, state.beneficioSelecionado, state.comboValor, state.modoMatricula, state.modoTurmas, state.planoValor]);
+
+  const normalizedStartDate = dataInicio ? normalizeDate(dataInicio) : undefined;
+  const normalizedEndDate = dataFimContrato ? normalizeDate(dataFimContrato) : undefined;
+  const shouldValidateRecurringEndDate = state.criarCobranca && recurringChargeTotal > 0 && Boolean(normalizedStartDate) && !dueDayInvalid;
+  const firstChargeableDueDate = shouldValidateRecurringEndDate && normalizedStartDate
+    ? resolveChargeableFirstDueDate(normalizedStartDate, parsedVencimento)
+    : undefined;
+  const minimumEndDate = firstChargeableDueDate ?? normalizedStartDate;
+  const contractEndsBeforeStart = Boolean(normalizedStartDate && normalizedEndDate && normalizedEndDate < normalizedStartDate);
+  const contractEndsBeforeFirstDue = Boolean(
+    firstChargeableDueDate && normalizedEndDate && normalizedEndDate < firstChargeableDueDate,
   );
-  const formatter = useMemo(
-    () => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }),
-    [],
-  );
+  const contractEndError = contractEndsBeforeStart
+    ? `A data de término precisa ser igual ou posterior a ${formatDateLabel(normalizedStartDate)}.`
+    : contractEndsBeforeFirstDue
+      ? `Com vencimento no dia ${parsedVencimento}, a primeira cobrança válida será em ${formatDateLabel(firstChargeableDueDate)}. Escolha essa data ou uma posterior.`
+      : null;
 
   useEffect(() => {
-    const parsedVencimento = Number(vencimento);
     update({
-      dataInicio: dataInicio ? dataInicio.toISOString().slice(0, 10) : undefined,
-      dataFimContrato: dataFimContrato ? dataFimContrato.toISOString().slice(0, 10) : undefined,
-      vencimentoDia: Number.isFinite(parsedVencimento) ? parsedVencimento : 5,
+      dataInicio: toIsoDate(dataInicio),
+      dataFimContrato: contractEndError ? undefined : toIsoDate(dataFimContrato),
+      vencimentoDia: dueDayInvalid || !hasDueDay ? undefined : parsedVencimento,
     });
-  }, [dataInicio, dataFimContrato, vencimento, update]);
+  }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, parsedVencimento, update, vencimento]);
 
   return (
     <SectionCard>
@@ -90,7 +165,25 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                 onChange={setDataFimContrato}
                 placeholder="Selecione a data"
                 dateFormat="dd/MM/yyyy"
+                minDate={minimumEndDate}
+                invalid={Boolean(contractEndError)}
+                describedBy="data-fim-contrato-feedback"
+                className={cn(contractEndError && 'border-red-300 text-red-700')}
               />
+              <div
+                id="data-fim-contrato-feedback"
+                aria-live="polite"
+                role={contractEndError ? 'alert' : 'status'}
+                className={cn('text-xs leading-relaxed', contractEndError ? 'text-red-700' : 'text-slate-600')}
+              >
+                <p>
+                  {contractEndError
+                    ? contractEndError
+                    : minimumEndDate
+                      ? `Datas válidas a partir de ${formatDateLabel(minimumEndDate)}.`
+                      : 'Defina a data de início e o dia do vencimento para liberar datas válidas.'}
+                </p>
+              </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-xs text-gray-600">Dia do vencimento</label>
@@ -100,8 +193,22 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                 max={28}
                 value={vencimento}
                 onChange={(e) => setVencimento(e.target.value)}
-                className="h-9 rounded-md border-gray-300 text-sm"
+                aria-invalid={dueDayInvalid || undefined}
+                aria-describedby="vencimento-feedback"
+                className={cn(
+                  'h-9 rounded-md border-gray-300 text-sm',
+                  dueDayInvalid && 'border-red-300 text-red-700 focus-visible:ring-red-500/20',
+                )}
               />
+              <p
+                id="vencimento-feedback"
+                className={cn('text-xs', dueDayInvalid ? 'text-red-600' : 'text-slate-500')}
+                role={dueDayInvalid ? 'alert' : undefined}
+              >
+                {dueDayInvalid
+                  ? 'Informe um dia entre 1 e 28 para evitar rejeição da cobrança.'
+                  : 'Use um dia entre 1 e 28. As datas de término são liberadas conforme esse vencimento.'}
+              </p>
             </div>
           </div>
         </div>
@@ -168,26 +275,6 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               O cliente receberá um link seguro para cadastrar o cartão após a matrícula.
             </p>
           )}
-        </div>
-
-        {/* Box Resumo */}
-        <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs text-gray-600">
-                {state.modoTurmas === 'COMBO' ? 'Combo selecionado' : 'Plano selecionado'}
-              </p>
-              <p className="text-sm font-medium text-gray-900">
-                {state.modoTurmas === 'COMBO' ? state.comboLabel : state.planoLabel || 'Nenhum'}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-xs text-gray-600">Mensalidade</p>
-              <p className="text-lg font-semibold text-violet-700">
-                {formatter.format(valorMensalidadeLiquido)}
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </SectionCard>

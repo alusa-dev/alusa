@@ -12,6 +12,9 @@ vi.mock('@alusa/database', () => {
     charge: {
       findMany: vi.fn(),
     },
+    matriculaFamiliar: {
+      findFirst: vi.fn(),
+    },
     cobranca: {
       findMany: vi.fn(),
     },
@@ -26,6 +29,7 @@ import { getSubscriptionWithCharges } from '../get-subscription-with-charges';
 describe('getSubscriptionWithCharges', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (prisma as any).standaloneSubscription = undefined;
   });
 
   it('retorna assinatura manual via audit log quando nao existe Subscription academica', async () => {
@@ -121,6 +125,71 @@ describe('getSubscriptionWithCharges', () => {
     if (!result.success) return;
     expect(result.data.id).toBe('sub_manual_2');
     expect(result.data.asaasSubscriptionId).toBe('sub_asaas_2');
+  });
+
+  it('retorna alunos vinculados quando assinatura standalone pertence a grupo familiar', async () => {
+    const standaloneFindFirst = vi.fn().mockResolvedValueOnce({
+      id: 'sub_family_1',
+      asaasSubscriptionId: 'asaas_sub_family_1',
+      externalReference: 'alusa:standalone-subscription:sub_family_1',
+      status: 'ACTIVE',
+      cycle: 'MONTHLY',
+      billingType: 'CREDIT_CARD',
+      value: 150,
+      nextDueDate: new Date('2026-05-04T00:00:00.000Z'),
+      endDate: null,
+      description: 'Plano familiar Plano Básico · Vera',
+      customerId: 'customer_1',
+      familyGroupId: 'family_1',
+      createdAt: new Date('2026-04-01T00:00:00.000Z'),
+    });
+    (prisma as any).standaloneSubscription = { findFirst: standaloneFindFirst };
+
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([
+      {
+        id: 'ch_1',
+        status: 'OPEN',
+        value: 150,
+        dueDate: new Date('2026-05-04T00:00:00.000Z'),
+        asaasPaymentId: 'pay_1',
+      },
+    ] as never);
+    vi.mocked(prisma.matriculaFamiliar.findFirst).mockResolvedValueOnce({
+      items: [
+        {
+          matriculaId: 'mat_lara',
+          matricula: { aluno: { id: 'aluno_lara', nome: 'Lara' } },
+        },
+        {
+          matriculaId: 'mat_nicole',
+          matricula: { aluno: { id: 'aluno_nicole', nome: 'Nicole' } },
+        },
+      ],
+    } as never);
+
+    const result = await getSubscriptionWithCharges({
+      contaId: 'conta_1',
+      subscriptionId: 'sub_family_1',
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    expect(result.data.alunoNome).toBe('Lara, Nicole');
+    expect(result.data.familyStudents).toEqual([
+      { id: 'aluno_lara', nome: 'Lara', matriculaId: 'mat_lara' },
+      { id: 'aluno_nicole', nome: 'Nicole', matriculaId: 'mat_nicole' },
+    ]);
+    expect(prisma.matriculaFamiliar.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'family_1',
+          contaId: 'conta_1',
+          standaloneSubscriptionId: 'sub_family_1',
+        }),
+      }),
+    );
   });
 
   it('usa o valor oficial refletido nas cobranças da assinatura acadêmica', async () => {

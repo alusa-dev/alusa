@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import Twilio from 'twilio';
 import { formatarNumeroWhatsApp } from '@/lib/utils/whatsapp';
+import { safeGetServerSession } from '@/lib/safe-server-session';
 
 /**
  * Schema de validação para envio de mensagens
@@ -13,6 +14,7 @@ const sendMessageSchema = z.object({
 });
 
 type SendMessageInput = z.infer<typeof sendMessageSchema>;
+type SessionUser = { id?: string | null; contaId?: string | null };
 
 /**
  * POST /api/twilio/send
@@ -43,7 +45,12 @@ type SendMessageInput = z.infer<typeof sendMessageSchema>;
  */
 export async function POST(req: NextRequest) {
   try {
-    console.log('[Twilio] Iniciando envio de mensagem...');
+    const session = await safeGetServerSession();
+    const user = (session as { user?: SessionUser } | null)?.user;
+
+    if (!user?.id || !user?.contaId) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
 
     // 1. Validar variáveis de ambiente
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -51,14 +58,6 @@ export async function POST(req: NextRequest) {
     const apiKeySid = process.env.TWILIO_API_KEY_SID;
     const apiKeySecret = process.env.TWILIO_API_KEY_SECRET;
     const fromNumber = process.env.TWILIO_FROM_NUMBER;
-
-    console.log('[Twilio] Variáveis de ambiente:', {
-      accountSid: accountSid ? `${accountSid.substring(0, 6)}...` : 'AUSENTE',
-      authToken: authToken ? `${authToken.substring(0, 6)}...` : 'AUSENTE',
-      apiKeySid: apiKeySid ? `${apiKeySid.substring(0, 6)}...` : 'AUSENTE',
-      apiKeySecret: apiKeySecret ? `${apiKeySecret.substring(0, 6)}...` : 'AUSENTE',
-      fromNumber: fromNumber || 'AUSENTE',
-    });
 
     // Validar se temos credenciais válidas (Auth Token OU API Key)
     const hasAuthToken = !!accountSid && !!authToken;
@@ -85,7 +84,6 @@ export async function POST(req: NextRequest) {
 
     // 2. Parsear e validar body
     const body: unknown = await req.json().catch(() => ({}));
-    console.log('[Twilio] Body recebido:', JSON.stringify(body, null, 2));
 
     const validation = sendMessageSchema.safeParse(body);
 
@@ -102,15 +100,15 @@ export async function POST(req: NextRequest) {
     }
 
     const { numero, mensagem } = validation.data as SendMessageInput;
-    console.log('[Twilio] Dados validados:', { numero, mensagemLength: mensagem?.length || 0 });
 
     // 3. Formatar número para padrão Twilio (whatsapp:+55DDDNÚMERO)
     let numeroFormatado: string;
     try {
       numeroFormatado = formatarNumeroWhatsApp(numero);
-      console.log('[Twilio] Número formatado:', { original: numero, formatado: numeroFormatado });
     } catch (error) {
-      console.error('[Twilio] Erro ao formatar número:', error);
+      console.error('[Twilio] Erro ao formatar número:', {
+        message: error instanceof Error ? error.message : 'Formato inválido',
+      });
       return NextResponse.json(
         {
           error: 'Número inválido',
@@ -121,25 +119,16 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Criar cliente Twilio
-    console.log('[Twilio] Criando cliente Twilio...');
-
     // Usar API Key se disponível (mais seguro), senão usar Auth Token
     let client;
     if (apiKeySid && apiKeySecret) {
-      console.log('[Twilio] Usando autenticação via API Key');
       client = Twilio(apiKeySid, apiKeySecret, { accountSid });
     } else {
-      console.log('[Twilio] Usando autenticação via Auth Token');
       client = Twilio(accountSid, authToken);
     }
 
     // 5. Enviar mensagem
     const messageBody = mensagem || 'Olá do Alusa 👋 (teste Twilio WhatsApp)';
-    console.log('[Twilio] Tentando enviar mensagem:', {
-      from: fromNumber,
-      to: numeroFormatado,
-      bodyLength: messageBody.length,
-    });
 
     const message = await client.messages.create({
       from: fromNumber,
@@ -147,11 +136,11 @@ export async function POST(req: NextRequest) {
       body: messageBody,
     });
 
-    console.log('[Twilio] ✅ Mensagem enviada com sucesso:', {
+    console.log('[Twilio] Mensagem enviada', {
+      contaId: user.contaId,
+      actorId: user.id,
       sid: message.sid,
-      to: message.to,
       status: message.status,
-      dateSent: message.dateSent,
     });
 
     return NextResponse.json({
@@ -161,40 +150,33 @@ export async function POST(req: NextRequest) {
       to: message.to,
     });
   } catch (error) {
-    console.error('[Twilio] ❌ Erro ao enviar mensagem:', error);
-    console.error('[Twilio] Stack trace:', error instanceof Error ? error.stack : 'N/A');
-
     // Erros específicos do Twilio
     if (error && typeof error === 'object' && 'code' in error) {
       const twilioError = error as {
         code: number;
-        message: string;
         status?: number;
-        moreInfo?: string;
       };
       console.error('[Twilio] Erro Twilio:', {
         code: twilioError.code,
-        message: twilioError.message,
         status: twilioError.status,
-        moreInfo: twilioError.moreInfo,
       });
 
       return NextResponse.json(
         {
           error: 'Erro ao enviar mensagem via Twilio',
-          message: twilioError.message,
           code: twilioError.code,
-          moreInfo: twilioError.moreInfo,
         },
         { status: twilioError.status || 400 },
       );
     }
 
+    console.error('[Twilio] Erro inesperado ao enviar mensagem', {
+      name: error instanceof Error ? error.name : 'UnknownError',
+    });
+
     return NextResponse.json(
       {
         error: 'Erro ao enviar mensagem',
-        message: error instanceof Error ? error.message : 'Erro desconhecido',
-        details: error instanceof Error ? error.stack : String(error),
       },
       { status: 500 },
     );

@@ -23,12 +23,21 @@ export type RematriculaElegivelItem = {
   contratoExpirado: boolean;
   podeRenovar: boolean;
   eligibilityStatus: 'ELEGIVEL' | 'NAO_ELEGIVEL';
+  matriculaFamiliarId: string | null;
   aluno: {
     id: string;
     nome: string;
     cpf: string | null;
     foto?: string | null;
   };
+  responsavelFinanceiro: {
+    id: string;
+    nome: string;
+    cpf: string | null;
+    email: string | null;
+    telefone: string | null;
+    foto?: string | null;
+  } | null;
   plano: { id: string; nome: string } | null;
   turma: {
     id: string;
@@ -94,12 +103,17 @@ export async function listarRematriculasElegiveis(input: {
       ...(input.statusContrato ? { statusContrato: input.statusContrato } : {}),
       ...(input.search?.trim()
         ? {
-          OR: [
-            {
-              aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } },
-            },
-          ],
-        }
+            OR: [
+              {
+                aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } },
+              },
+              {
+                responsavelFinanceiro: {
+                  nome: { contains: input.search.trim(), mode: 'insensitive' as const },
+                },
+              },
+            ],
+          }
         : {}),
     },
     select: {
@@ -120,7 +134,18 @@ export async function listarRematriculasElegiveis(input: {
       integrationStatus: true,
       statusFinanceiro: true,
       responsavelFinanceiroId: true,
+      matriculaFamiliarId: true,
       aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
+      responsavelFinanceiro: {
+        select: {
+          id: true,
+          nome: true,
+          cpf: true,
+          email: true,
+          telefone: true,
+          foto: true,
+        },
+      },
       plano: { select: { id: true, nome: true } },
       turma: {
         select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
@@ -259,12 +284,23 @@ export async function listarRematriculasElegiveis(input: {
       contratoExpirado,
       podeRenovar,
       eligibilityStatus: decision.eligibilityStatus,
+      matriculaFamiliarId: m.matriculaFamiliarId,
       aluno: {
         id: m.aluno.id,
         nome: m.aluno.nome,
         cpf: m.aluno.cpf,
         foto: m.aluno.foto,
       },
+      responsavelFinanceiro: m.responsavelFinanceiro
+        ? {
+            id: m.responsavelFinanceiro.id,
+            nome: m.responsavelFinanceiro.nome,
+            cpf: m.responsavelFinanceiro.cpf,
+            email: m.responsavelFinanceiro.email,
+            telefone: m.responsavelFinanceiro.telefone,
+            foto: m.responsavelFinanceiro.foto,
+          }
+        : null,
       plano: m.plano ? { id: m.plano.id, nome: m.plano.nome } : null,
       turma: m.turma
         ? {

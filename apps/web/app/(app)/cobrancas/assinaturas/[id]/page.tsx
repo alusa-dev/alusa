@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
 import { Badge, type StatusType } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ChevronLeft as ArrowLeft } from '@/components/icons/icons';
 import {
   ArrowTopRightOnSquareIcon,
@@ -75,6 +76,11 @@ type AssinaturaDetalhes = {
   clienteTelefone: string | undefined;
   alunoNome: string;
   alunoId: string;
+  familyStudents?: Array<{
+    id: string;
+    nome: string;
+    matriculaId: string;
+  }>;
   valor: number;
   cycle: string;
   cycleLabel: string;
@@ -97,6 +103,7 @@ export default function AssinaturaDetalhePage({ params }: { params: { id: string
   const [loading, setLoading] = useState(true);
   const [assinatura, setAssinatura] = useState<AssinaturaDetalhes | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [studentsDialogOpen, setStudentsDialogOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,6 +187,12 @@ export default function AssinaturaDetalhePage({ params }: { params: { id: string
     );
   }
 
+  const familyStudents = assinatura.familyStudents ?? [];
+  const isFamilySubscription = familyStudents.length > 0;
+  const studentNamesLabel = isFamilySubscription
+    ? familyStudents.map((student) => student.nome).join(', ')
+    : assinatura.alunoNome;
+
   return (
     <div className="container mx-auto py-6 px-4 max-w-5xl">
       {/* Header */}
@@ -240,9 +253,21 @@ export default function AssinaturaDetalhePage({ params }: { params: { id: string
             <div>
               <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
                 <UserIcon className="h-4 w-4" />
-                Aluno
+                {isFamilySubscription ? 'Alunos' : 'Aluno'}
               </div>
-              <div className="text-sm font-medium text-gray-900">{assinatura.alunoNome}</div>
+              {isFamilySubscription ? (
+                <button
+                  type="button"
+                  onClick={() => setStudentsDialogOpen(true)}
+                  className="group inline-flex max-w-full items-center gap-1 text-left text-sm font-medium text-gray-900 transition-colors hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 rounded-md"
+                  title={studentNamesLabel}
+                >
+                  <span className="truncate">{studentNamesLabel}</span>
+                  <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5 shrink-0 text-gray-400 transition-colors group-hover:text-brand-accent" />
+                </button>
+              ) : (
+                <div className="text-sm font-medium text-gray-900">{assinatura.alunoNome}</div>
+              )}
             </div>
 
             {/* Valor */}
@@ -403,6 +428,40 @@ export default function AssinaturaDetalhePage({ params }: { params: { id: string
           </div>
         )}
       </div>
+
+      {isFamilySubscription && (
+        <Dialog open={studentsDialogOpen} onOpenChange={setStudentsDialogOpen}>
+          <DialogContent className="max-w-lg overflow-hidden rounded-2xl p-0">
+            <DialogHeader className="border-b border-gray-100 px-6 py-5">
+              <DialogTitle className="text-lg font-semibold text-gray-900">
+                Alunos da assinatura familiar
+              </DialogTitle>
+              <p className="text-sm text-gray-500">
+                {familyStudents.length} aluno{familyStudents.length === 1 ? '' : 's'} vinculado{familyStudents.length === 1 ? '' : 's'} a esta cobrança recorrente.
+              </p>
+            </DialogHeader>
+
+            <div className="divide-y divide-gray-100">
+              {familyStudents.map((student) => (
+                <div key={student.matriculaId} className="flex items-center justify-between gap-4 px-6 py-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-gray-900">{student.nome}</p>
+                    <p className="mt-0.5 text-xs text-gray-500">Matrícula vinculada ao plano familiar</p>
+                  </div>
+                  <Link
+                    href={`/matriculas/${student.matriculaId}`}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-brand-accent/20 text-brand-accent transition-colors hover:bg-brand-accent hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30"
+                    title={`Ver matrícula de ${student.nome}`}
+                    aria-label={`Ver matrícula de ${student.nome}`}
+                  >
+                    <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+                  </Link>
+                </div>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

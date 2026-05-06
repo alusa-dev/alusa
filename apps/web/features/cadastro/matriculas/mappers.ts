@@ -95,6 +95,7 @@ function mapCobrancaRecordToDTO(cobranca: Record<string, unknown>) {
     competenciaFim:
       toIsoString(cobranca.competenciaFim as Nullable<Date | string>) ?? new Date(0).toISOString(),
     dataPagamento: toIsoString(cobranca.dataPagamento as Nullable<Date | string>),
+    origin: cobranca.origin === 'STANDALONE' ? 'STANDALONE' : 'ACADEMIC',
   };
 }
 

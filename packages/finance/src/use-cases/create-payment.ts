@@ -6,6 +6,7 @@ import { ok, err } from '@alusa/shared';
 
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { buildSafeAsaasIdempotencyKey } from '../core';
 
 export type CreatePaymentInput = {
   contaId: string;
@@ -46,7 +47,7 @@ export async function createAsaasPayment(
 
     const payment = await createPayment({
       apiKey: creds.apiKey,
-      idempotencyKey: input.idempotencyKey ?? input.externalReference,
+      idempotencyKey: buildSafeAsaasIdempotencyKey(input.idempotencyKey ?? input.externalReference),
       data: {
         customer: input.customer,
         billingType: input.billingType,
