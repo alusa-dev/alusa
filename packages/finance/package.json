@@ -15,8 +15,8 @@
     "dev": "tsc -w -p tsconfig.build.json",
     "pretypecheck": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
-    "test:unit": "dotenv -e ../../.env.test -- vitest run",
-    "test:watch": "dotenv -e ../../.env.test -- vitest"
+    "test:unit": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest run",
+    "test:watch": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest"
   },
   "dependencies": {
     "@alusa/asaas": "workspace:*",

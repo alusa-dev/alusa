@@ -23,6 +23,18 @@ describe('Aluno Schema Validation', () => {
       expect(result.success).toBe(true);
     });
 
+    it('valida aluno menor com responsável existente selecionado por id', () => {
+      const data = {
+        contaId,
+        nome: 'Aluno Menor Vinculado',
+        dataNasc: new Date('2015-05-15'),
+        responsavelExistenteId: 'resp_existente_1',
+      };
+
+      const result = alunoCreateSchema.safeParse(data);
+      expect(result.success).toBe(true);
+    });
+
     it('rejeita aluno menor SEM responsável', () => {
       const data = {
         contaId,

@@ -1,6 +1,6 @@
 /**
  * Testes para RematricularAlunoUseCase
- * 
+ *
  * Cenários cobertos:
  * - Rematrícula bem-sucedida (fluxo 2-fases)
  * - Validação de elegibilidade
@@ -22,14 +22,14 @@ vi.mock('@alusa/domain', () => ({
     const birthDate = input.alunoDataNasc;
     const age = today.getFullYear() - birthDate.getFullYear();
     const isMenor = age < 18;
-    
+
     if (isMenor && !input.responsavelFinanceiroId) {
       return { success: false };
     }
-    
+
     return {
       success: true,
-      payer: isMenor 
+      payer: isMenor
         ? { type: 'RESPONSAVEL', id: input.responsavelFinanceiroId }
         : { type: 'ALUNO', id: input.alunoId },
     };
@@ -56,6 +56,8 @@ function createMockPrisma() {
     statusFinanceiro: 'EM_DIA',
     statusContrato: 'ATIVO',
     vencimentoDia: 5,
+    formaPagamento: 'BOLETO',
+    formaPagamentoTaxa: 'BOLETO',
     jurosMensal: 1,
     multaPercentual: 2,
     descontoAntecipado: null,
@@ -77,8 +79,22 @@ function createMockPrisma() {
       asaasCustomerId: 'cus_123',
     },
     responsavelFinanceiro: null,
-    plano: { id: 'plano-123', nome: 'Plano Mensal', valor: 150, periodicidade: 'MENSAL', status: 'ATIVO' },
-    turma: { id: 'turma-123', nome: 'Turma A', capacidade: 20, diasSemana: ['SEGUNDA', 'QUARTA'], horaInicio: '08:00', horaFim: '10:00', status: 'ATIVO' },
+    plano: {
+      id: 'plano-123',
+      nome: 'Plano Mensal',
+      valor: 150,
+      periodicidade: 'MENSAL',
+      status: 'ATIVO',
+    },
+    turma: {
+      id: 'turma-123',
+      nome: 'Turma A',
+      capacidade: 20,
+      diasSemana: ['SEGUNDA', 'QUARTA'],
+      horaInicio: '08:00',
+      horaFim: '10:00',
+      status: 'ATIVO',
+    },
     combo: null,
   };
 
@@ -92,19 +108,28 @@ function createMockPrisma() {
         id: 'matricula-nova-123',
         asaasSubscriptionId: null,
       }),
-      update: vi.fn().mockImplementation((args) => Promise.resolve({ ...mockMatricula, ...args.data })),
+      update: vi
+        .fn()
+        .mockImplementation((args) => Promise.resolve({ ...mockMatricula, ...args.data })),
       count: vi.fn().mockResolvedValue(5), // 5 matrículas ativas, turma tem 20 vagas
     },
     rematriculaOperacao: {
       findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: 'operacao-123', correlationId: 'corr-123', status: 'PENDING' }),
+      create: vi
+        .fn()
+        .mockResolvedValue({ id: 'operacao-123', correlationId: 'corr-123', status: 'PENDING' }),
       update: vi.fn().mockResolvedValue({ id: 'operacao-123', status: 'PENDING_FINANCE' }),
     },
     matriculaLog: {
       create: vi.fn().mockResolvedValue({ id: 'log-123' }),
     },
     plano: {
-      findFirst: vi.fn().mockResolvedValue({ id: 'plano-123', nome: 'Plano Mensal', valor: 150, periodicidade: 'MENSAL' }),
+      findFirst: vi.fn().mockResolvedValue({
+        id: 'plano-123',
+        nome: 'Plano Mensal',
+        valor: 150,
+        periodicidade: 'MENSAL',
+      }),
     },
     turma: {
       findFirst: vi.fn().mockResolvedValue({
@@ -132,7 +157,11 @@ function createMockPrisma() {
       update: vi.fn().mockResolvedValue({}),
     },
     cobranca: {
-      create: vi.fn().mockImplementation((args) => Promise.resolve({ id: `cobranca-${Date.now()}`, ...args.data })),
+      create: vi
+        .fn()
+        .mockImplementation((args) =>
+          Promise.resolve({ id: `cobranca-${Date.now()}`, ...args.data }),
+        ),
       update: vi.fn().mockResolvedValue({}),
     },
   } as unknown as Parameters<typeof rematricularAluno>[1]['prisma'];
@@ -201,7 +230,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -222,7 +251,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -237,7 +266,7 @@ describe('rematricularAluno', () => {
       expect(mockProvider.resolveOrCreateCustomerForPayer).toHaveBeenCalledWith(
         expect.objectContaining({
           payer: expect.objectContaining({ type: 'ALUNO' }),
-        })
+        }),
       );
 
       // Verificar que a assinatura anterior foi cancelada (FASE 2)
@@ -254,7 +283,7 @@ describe('rematricularAluno', () => {
         expect.objectContaining({
           where: { id: 'matricula-123' },
           data: expect.objectContaining({ status: 'CANCELADA' }),
-        })
+        }),
       );
     });
 
@@ -277,14 +306,14 @@ describe('rematricularAluno', () => {
           dataFimContrato: new Date('2025-12-31'),
           descontos: [{ id: 'desconto-50' }],
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
       expect(mockProvider.createSubscription).toHaveBeenCalledWith(
         expect.objectContaining({
           value: 75,
-        })
+        }),
       );
       expect(mockPrisma.descontoMatricula.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -292,7 +321,7 @@ describe('rematricularAluno', () => {
             descontoId: 'desconto-50',
             valorFinal: 75,
           }),
-        })
+        }),
       );
     });
 
@@ -305,7 +334,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -317,7 +346,7 @@ describe('rematricularAluno', () => {
             status: 'AGUARDANDO_CONFIRMACAO',
             statusContrato: 'AGUARDANDO_ASSINATURA',
           }),
-        })
+        }),
       );
     });
 
@@ -339,7 +368,7 @@ describe('rematricularAluno', () => {
             financialSnapshot: { financialStatus: 'ATRASADO', overdueChargesCount: 1 },
           },
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(mockPrisma.rematriculaOperacao.create).toHaveBeenCalledWith(
@@ -351,7 +380,7 @@ describe('rematricularAluno', () => {
             overrideReason: 'Acordo aprovado pela coordenação financeira',
             overrideApprovedById: 'user-123',
           }),
-        })
+        }),
       );
     });
 
@@ -368,6 +397,8 @@ describe('rematricularAluno', () => {
         dataFimContrato: new Date('2024-12-31'),
         status: 'ATIVA',
         vencimentoDia: 5,
+        formaPagamento: 'BOLETO',
+        formaPagamentoTaxa: 'BOLETO',
         jurosMensal: 1,
         multaPercentual: 2,
         descontoAntecipado: null,
@@ -401,8 +432,22 @@ describe('rematricularAluno', () => {
           enderecoBairro: 'Centro',
           asaasCustomerId: 'cus_resp_123',
         },
-        plano: { id: 'plano-123', nome: 'Plano Mensal', valor: 150, periodicidade: 'MENSAL', status: 'ATIVO' },
-        turma: { id: 'turma-123', nome: 'Turma A', capacidade: 20, diasSemana: ['SEGUNDA'], horaInicio: '08:00', horaFim: '10:00', status: 'ATIVO' },
+        plano: {
+          id: 'plano-123',
+          nome: 'Plano Mensal',
+          valor: 150,
+          periodicidade: 'MENSAL',
+          status: 'ATIVO',
+        },
+        turma: {
+          id: 'turma-123',
+          nome: 'Turma A',
+          capacidade: 20,
+          diasSemana: ['SEGUNDA'],
+          horaInicio: '08:00',
+          horaFim: '10:00',
+          status: 'ATIVO',
+        },
         combo: null,
       };
 
@@ -416,7 +461,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -425,7 +470,7 @@ describe('rematricularAluno', () => {
       expect(mockProvider.resolveOrCreateCustomerForPayer).toHaveBeenCalledWith(
         expect.objectContaining({
           payer: expect.objectContaining({ type: 'RESPONSAVEL' }),
-        })
+        }),
       );
     });
   });
@@ -442,7 +487,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -460,7 +505,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -483,7 +528,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -526,8 +571,22 @@ describe('rematricularAluno', () => {
           asaasCustomerId: null,
         },
         responsavelFinanceiro: null,
-        plano: { id: 'plano-123', nome: 'Plano Mensal', valor: 150, periodicidade: 'MENSAL', status: 'ATIVO' },
-        turma: { id: 'turma-123', nome: 'Turma A', capacidade: 20, diasSemana: ['SEGUNDA'], horaInicio: '08:00', horaFim: '10:00', status: 'ATIVO' },
+        plano: {
+          id: 'plano-123',
+          nome: 'Plano Mensal',
+          valor: 150,
+          periodicidade: 'MENSAL',
+          status: 'ATIVO',
+        },
+        turma: {
+          id: 'turma-123',
+          nome: 'Turma A',
+          capacidade: 20,
+          diasSemana: ['SEGUNDA'],
+          horaInicio: '08:00',
+          horaFim: '10:00',
+          status: 'ATIVO',
+        },
         combo: null,
       };
 
@@ -541,7 +600,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -554,7 +613,7 @@ describe('rematricularAluno', () => {
   describe('tratamento de erros do provedor', () => {
     it('deve registrar falha quando provedor retorna erro e preservar origem', async () => {
       (mockProvider.createSubscription as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('Erro de conexão com o provedor')
+        new Error('Erro de conexão com o provedor'),
       );
 
       const result = await rematricularAluno(
@@ -565,7 +624,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -577,17 +636,19 @@ describe('rematricularAluno', () => {
       expect(mockPrisma.rematriculaOperacao.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ status: 'FAILED' }),
-        })
+        }),
       );
 
       // IMPORTANTE: Verificar que a matrícula origem NÃO foi cancelada
       // (falha ocorreu antes da FASE 2 - origem preservada)
-      const cancelOrigemCalls = (mockPrisma.matricula.update as ReturnType<typeof vi.fn>).mock.calls
-        .filter((call: unknown[]) => 
-          (call[0] as { where: { id: string } }).where.id === 'matricula-123' && 
-          (call[0] as { data: { status: string } }).data.status === 'CANCELADA'
-        );
-      
+      const cancelOrigemCalls = (
+        mockPrisma.matricula.update as ReturnType<typeof vi.fn>
+      ).mock.calls.filter(
+        (call: unknown[]) =>
+          (call[0] as { where: { id: string } }).where.id === 'matricula-123' &&
+          (call[0] as { data: { status: string } }).data.status === 'CANCELADA',
+      );
+
       // Se falhou, origem não deve ter sido cancelada
       expect(cancelOrigemCalls.length).toBe(0);
     });
@@ -660,7 +721,7 @@ describe('rematricularAluno', () => {
           contaId: 'conta-123',
           createdById: 'user-123',
         },
-        { prisma: mockPrismaRetry, paymentsProvider: mockProvider }
+        { prisma: mockPrismaRetry, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -694,7 +755,7 @@ describe('rematricularAluno', () => {
           contaId: 'conta-123',
           createdById: 'user-123',
         },
-        { prisma: mockPrismaRetry, paymentsProvider: mockProvider }
+        { prisma: mockPrismaRetry, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(false);
@@ -745,6 +806,8 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
           vencimentoDia: 5,
+          formaPagamento: 'BOLETO',
+          formaPagamentoTaxa: 'BOLETO',
           descontos: [
             {
               desconto: {
@@ -785,14 +848,14 @@ describe('rematricularAluno', () => {
           contaId: 'conta-123',
           createdById: 'user-123',
         },
-        { prisma: mockPrismaRetry, paymentsProvider: mockProvider }
+        { prisma: mockPrismaRetry, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
       expect(mockProvider.createSubscription).toHaveBeenCalledWith(
         expect.objectContaining({
           value: 75,
-        })
+        }),
       );
     });
   });
@@ -809,7 +872,7 @@ describe('rematricularAluno', () => {
           taxaIsenta: true,
           taxaJustificativa: 'Aluno bolsista',
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -822,7 +885,7 @@ describe('rematricularAluno', () => {
             taxaStatus: 'ISENTO',
             taxaJustificativa: 'Aluno bolsista',
           }),
-        })
+        }),
       );
 
       // Não deve criar pagamento avulso para taxa isenta
@@ -841,7 +904,7 @@ describe('rematricularAluno', () => {
           taxaIsenta: false,
           formaPagamentoTaxa: 'PIX',
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -854,13 +917,14 @@ describe('rematricularAluno', () => {
             taxaIsenta: false,
             taxaStatus: 'PENDENTE',
           }),
-        })
+        }),
       );
 
       // Deve ter criado cobrança local TAXA_MATRICULA
-      const cobrancaCalls = (mockPrisma.cobranca?.create as ReturnType<typeof vi.fn>)?.mock?.calls ?? [];
+      const cobrancaCalls =
+        (mockPrisma.cobranca?.create as ReturnType<typeof vi.fn>)?.mock?.calls ?? [];
       const taxaCalls = cobrancaCalls.filter(
-        (call: unknown[]) => (call[0] as { data: { tipo: string } }).data.tipo === 'TAXA_MATRICULA'
+        (call: unknown[]) => (call[0] as { data: { tipo: string } }).data.tipo === 'TAXA_MATRICULA',
       );
       // Se cobranca mock exists, taxa should have been created
       if (taxaCalls.length > 0) {
@@ -873,7 +937,7 @@ describe('rematricularAluno', () => {
           contaId: 'conta-123',
           value: 50,
           billingType: 'PIX',
-        })
+        }),
       );
     });
 
@@ -888,11 +952,39 @@ describe('rematricularAluno', () => {
           taxaMatricula: 0,
           taxaIsenta: false,
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
       expect(mockProvider.createPayment).not.toHaveBeenCalled();
+    });
+
+    it('rejeita forma de pagamento indefinida sem cair para boleto', async () => {
+      const origemIndefinida = {
+        ...(await mockPrisma.matricula.findUnique({ where: { id: 'matricula-123' } })),
+        formaPagamento: 'INDEFINIDO',
+        formaPagamentoTaxa: 'INDEFINIDO',
+      };
+      mockPrisma.matricula.findUnique = vi.fn().mockResolvedValue(origemIndefinida);
+
+      const result = await rematricularAluno(
+        {
+          contaId: 'conta-123',
+          matriculaId: 'matricula-123',
+          createdById: 'user-123',
+          dataInicio: new Date('2025-01-01'),
+          dataFimContrato: new Date('2025-12-31'),
+        },
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
+      );
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.code).toBe('FORMA_PAGAMENTO_INVALIDA');
+      }
+      expect(mockPrisma.rematriculaOperacao.create).not.toHaveBeenCalled();
+      expect(mockProvider.resolveOrCreateCustomerForPayer).not.toHaveBeenCalled();
+      expect(mockProvider.createSubscription).not.toHaveBeenCalled();
     });
   });
 
@@ -906,7 +998,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);
@@ -926,7 +1018,7 @@ describe('rematricularAluno', () => {
 
     it('deve continuar sem depender de reconciliação síncrona do primeiro ciclo', async () => {
       (mockProvider.listSubscriptionPayments as ReturnType<typeof vi.fn>).mockRejectedValue(
-        new Error('Timeout na API')
+        new Error('Timeout na API'),
       );
 
       const result = await rematricularAluno(
@@ -937,7 +1029,7 @@ describe('rematricularAluno', () => {
           dataInicio: new Date('2025-01-01'),
           dataFimContrato: new Date('2025-12-31'),
         },
-        { prisma: mockPrisma, paymentsProvider: mockProvider }
+        { prisma: mockPrisma, paymentsProvider: mockProvider },
       );
 
       expect(result.success).toBe(true);

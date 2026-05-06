@@ -59,7 +59,12 @@ export default function AlunoWizardDialog({
 
   const methods = useForm<WizardData>({
     resolver: zodResolver(alunoSchema),
-    defaultValues: { status: 'ATIVO', responsavel: null } as Partial<WizardData>,
+    defaultValues: {
+      status: 'ATIVO',
+      responsavel: null,
+      responsavelModo: 'existente',
+      responsavelExistenteId: null,
+    } as Partial<WizardData>,
     mode: 'onBlur',
   });
 
@@ -97,6 +102,8 @@ export default function AlunoWizardDialog({
     methods.reset({
       contaId: resolvedContaId ?? undefined,
       status: 'ATIVO',
+      responsavelModo: 'existente',
+      responsavelExistenteId: null,
       responsavel: null,
     } as Partial<WizardData>);
     setFoto('');

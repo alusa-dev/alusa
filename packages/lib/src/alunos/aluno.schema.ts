@@ -194,6 +194,10 @@ export const alunoBaseSchema = z.object({
   copiarEnderecoResponsavel: z.boolean().optional(),
   // Responsável opcional no base (regra condicional no superRefine)
   responsavel: responsavelSchemaPartial.optional(),
+  responsavelExistenteId: z.preprocess(
+    emptyOrNullToUndefined,
+    z.string().min(1, 'Responsável existente inválido').optional(),
+  ),
 });
 
 // ============================================================================
@@ -234,6 +238,10 @@ const alunoRefined = alunoBaseSchema.superRefine((data, ctx) => {
   // MENOR DE IDADE (< 18 anos)
   // ==========================================
   if (idade < 18) {
+    if (data.responsavelExistenteId) {
+      return;
+    }
+
     // CPF do aluno é opcional (pode ser undefined ou vazio)
     // Responsável é obrigatório com dados completos
     if (!data.responsavel) {

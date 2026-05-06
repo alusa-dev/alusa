@@ -28,10 +28,17 @@ function parseErrorPayload(payload: unknown, fallback: string) {
 
 export async function listResponsaveis({
   signal,
+  query,
 }: {
   signal?: AbortSignal;
+  query?: string;
 } = {}): Promise<ResponsavelListItem[]> {
-  const res = await fetch('/api/responsaveis', {
+  const searchParams = new URLSearchParams();
+  if (query?.trim()) {
+    searchParams.set('q', query.trim());
+  }
+
+  const res = await fetch(`/api/responsaveis${searchParams.size ? `?${searchParams.toString()}` : ''}`, {
     cache: 'no-store',
     signal,
   });

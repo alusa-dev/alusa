@@ -190,6 +190,10 @@ export async function POST(request: NextRequest) {
       tamanhoCalcado: raw.tamanhoCalcado || undefined,
       tags: raw.tags || undefined,
       status: raw.status || 'ATIVO',
+      responsavelExistenteId:
+        typeof raw.responsavelExistenteId === 'string' && raw.responsavelExistenteId.trim()
+          ? raw.responsavelExistenteId.trim()
+          : undefined,
       responsavel: responsavel || undefined,
       foto: raw.foto || undefined,
     };

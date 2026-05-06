@@ -1,5 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 
+import { assertSafeDatabaseEnv } from './safe-db';
+
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
   prismaSchemaVersion: string | undefined;
@@ -28,6 +30,10 @@ if (globalForPrisma.prismaSchemaVersion !== SCHEMA_VERSION) {
     globalForPrisma.prisma = undefined;
   }
   globalForPrisma.prismaSchemaVersion = SCHEMA_VERSION;
+}
+
+if (process.env.NODE_ENV !== 'production') {
+  assertSafeDatabaseEnv(process.env.NODE_ENV === 'test' ? 'test' : 'dev');
 }
 
 export const prisma =

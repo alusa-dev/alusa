@@ -321,6 +321,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
 
   const normalizedData = {
     ...data,
+    responsavelExistenteId: nullifyEmpty(data.responsavelExistenteId ?? undefined),
     cpf: digits(data.cpf),
     telefone: digits(data.telefone),
     contatoEmergenciaTelefone: digits(data.contatoEmergenciaTelefone),
@@ -349,38 +350,16 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     nome: normalizedData.nome,
     cpf: normalizedData.cpf ? `${normalizedData.cpf.slice(0, 3)}***` : 'não informado',
     idade,
-    temResponsavel: !!(isMenor && normalizedData.responsavel?.cpf),
+    temResponsavel: !!(
+      isMenor && (normalizedData.responsavelExistenteId || normalizedData.responsavel?.cpf)
+    ),
   });
 
-  const payer = responsavelObrigatorio
-    ? normalizedData.responsavel && {
-      type: 'RESPONSAVEL' as const,
-      name: normalizedData.responsavel.nome ?? '',
-      cpfCnpj: normalizedData.responsavel.cpf ?? '',
-      email: normalizedData.responsavel.email,
-      phone: normalizedData.responsavel.telefone,
-      mobilePhone: normalizedData.responsavel.telefone,
-      address: normalizedData.responsavel.endereco?.logradouro ?? undefined,
-      postalCode: normalizedData.responsavel.endereco?.cep ?? undefined,
-      addressNumber: normalizedData.responsavel.endereco?.numero ?? undefined,
-      complement: normalizedData.responsavel.endereco?.complemento ?? undefined,
-      province: normalizedData.responsavel.endereco?.bairro ?? undefined,
-    }
-    : {
-      type: 'ALUNO' as const,
-      name: normalizedData.nome,
-      cpfCnpj: normalizedData.cpf ?? '',
-      email: normalizedData.email ?? undefined,
-      phone: normalizedData.telefone ?? undefined,
-      mobilePhone: normalizedData.telefone ?? undefined,
-      address: normalizedData.endereco?.logradouro ?? undefined,
-      postalCode: normalizedData.endereco?.cep ?? undefined,
-      addressNumber: normalizedData.endereco?.numero ?? undefined,
-      complement: normalizedData.endereco?.complemento ?? undefined,
-      province: normalizedData.endereco?.bairro ?? undefined,
-    };
-
-  if (responsavelObrigatorio && !payer) {
+  if (
+    responsavelObrigatorio &&
+    !normalizedData.responsavelExistenteId &&
+    !normalizedData.responsavel
+  ) {
     throw new AsaasCustomerEnsureError(
       'PAYER_INVALID',
       'Responsável financeiro obrigatório para sincronização do pagador.',
@@ -417,7 +396,21 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     // 4. Processar responsável se obrigatório
     let responsavelId: string | undefined;
     let createdResponsavelId: string | null = null;
-    if (responsavelObrigatorio && normalizedData.responsavel && normalizedData.responsavel.cpf) {
+    if (responsavelObrigatorio && normalizedData.responsavelExistenteId) {
+      const existingById = await tx.responsavel.findFirst({
+        where: {
+          id: normalizedData.responsavelExistenteId,
+          contaId: normalizedData.contaId,
+        },
+        select: { id: true },
+      });
+
+      if (!existingById) {
+        throw new Error('Responsável selecionado não encontrado nesta conta');
+      }
+
+      responsavelId = existingById.id;
+    } else if (responsavelObrigatorio && normalizedData.responsavel && normalizedData.responsavel.cpf) {
       const existing = await tx.responsavel.findFirst({
         where: { contaId: normalizedData.contaId, cpf: normalizedData.responsavel.cpf },
       });
@@ -570,9 +563,27 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
 
   const { aluno, responsavelId, createdResponsavelId } = creation;
 
+  const responsavelPayer = responsavelObrigatorio && responsavelId
+    ? await prisma.responsavel.findFirst({
+        where: { id: responsavelId, contaId: normalizedData.contaId },
+        select: {
+          id: true,
+          nome: true,
+          cpf: true,
+          email: true,
+          telefone: true,
+          enderecoCep: true,
+          enderecoLogradouro: true,
+          enderecoNumero: true,
+          enderecoComplemento: true,
+          enderecoBairro: true,
+        },
+      })
+    : null;
+
   let payerForEnsure: EnsureAsaasCustomerPayer;
   if (responsavelObrigatorio) {
-    if (!responsavelId) {
+    if (!responsavelPayer) {
       throw new AsaasCustomerEnsureError(
         'PAYER_INVALID',
         'Responsável financeiro obrigatório para sincronização do pagador.',
@@ -580,17 +591,17 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     }
     payerForEnsure = {
       type: 'RESPONSAVEL' as const,
-      id: responsavelId,
-      name: normalizedData.responsavel?.nome ?? '',
-      cpfCnpj: normalizedData.responsavel?.cpf ?? '',
-      email: normalizedData.responsavel?.email,
-      phone: normalizedData.responsavel?.telefone,
-      mobilePhone: normalizedData.responsavel?.telefone,
-      address: normalizedData.responsavel?.endereco?.logradouro ?? undefined,
-      postalCode: normalizedData.responsavel?.endereco?.cep ?? undefined,
-      addressNumber: normalizedData.responsavel?.endereco?.numero ?? undefined,
-      complement: normalizedData.responsavel?.endereco?.complemento ?? undefined,
-      province: normalizedData.responsavel?.endereco?.bairro ?? undefined,
+      id: responsavelPayer.id,
+      name: responsavelPayer.nome,
+      cpfCnpj: responsavelPayer.cpf ?? '',
+      email: responsavelPayer.email ?? undefined,
+      phone: responsavelPayer.telefone ?? undefined,
+      mobilePhone: responsavelPayer.telefone ?? undefined,
+      address: responsavelPayer.enderecoLogradouro ?? undefined,
+      postalCode: responsavelPayer.enderecoCep ?? undefined,
+      addressNumber: responsavelPayer.enderecoNumero ?? undefined,
+      complement: responsavelPayer.enderecoComplemento ?? undefined,
+      province: responsavelPayer.enderecoBairro ?? undefined,
     };
   } else {
     payerForEnsure = {

@@ -183,6 +183,41 @@ describe('POST /api/rematriculas', () => {
     );
   });
 
+  it('rejeita forma de pagamento indefinida antes de chamar o caso de uso', async () => {
+    const response = await POST(
+      buildRequest({
+        contaId: 'conta-1',
+        matriculaId: 'mat-1',
+        dataFimContrato: '2025-12-31',
+        formaPagamento: 'INDEFINIDO',
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error.code).toBe('FORMA_PAGAMENTO_INVALIDA');
+    expect(rematricularAlunoMock).not.toHaveBeenCalled();
+    expect(prismaMock.matricula.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('rejeita forma de pagamento indefinida para taxa antes de chamar o caso de uso', async () => {
+    const response = await POST(
+      buildRequest({
+        contaId: 'conta-1',
+        matriculaId: 'mat-1',
+        dataFimContrato: '2025-12-31',
+        formaPagamento: 'PIX',
+        formaPagamentoTaxa: 'INDEFINIDO',
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(422);
+    expect(data.error.code).toBe('FORMA_PAGAMENTO_TAXA_INVALIDA');
+    expect(rematricularAlunoMock).not.toHaveBeenCalled();
+    expect(prismaMock.matricula.findFirst).not.toHaveBeenCalled();
+  });
+
   it('propaga contexto de política e override para o caso autorizado', async () => {
     prismaMock.matricula.findFirst
       .mockResolvedValueOnce(makeDecisionMatricula())

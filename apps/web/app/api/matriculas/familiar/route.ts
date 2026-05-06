@@ -12,11 +12,14 @@ import {
 } from '@/src/server/matriculas/matricula.service';
 import {
   formatIsoDate,
-  mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
   resolveEnrollmentFeeDueDate,
 } from '@/src/server/matriculas/recurring-billing';
+import {
+  isSupportedAsaasBillingType,
+  resolveWizardPaymentSelection,
+} from '@/src/server/matriculas/payment-selection';
 import {
   executeFamilyBilling,
   markFamilyBillingFailed,
@@ -56,7 +59,10 @@ const createMatriculaFamiliarInputSchema = z.object({
   descontoAntecipado: z.number().nonnegative().optional(),
   descontoTipo: z.enum(['FIXED', 'PERCENTAGE']).optional(),
   prazoDesconto: z.number().int().nonnegative().optional(),
-  notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
+  notificationChannels: z
+    .array(z.enum(['EMAIL', 'SMS', 'WHATSAPP']))
+    .optional()
+    .default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
   // uiRequestId obrigatório: garante idempotência ponta-a-ponta entre wizard e
   // backend mesmo com double-click ou retry de rede.
@@ -84,18 +90,6 @@ function parseDate(value: string) {
   throw new Error('Data inválida.');
 }
 
-function normalizeFormaPagamento(value: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO') {
-  switch (value) {
-    case 'PIX':
-      return FormaPagamento.PIX;
-    case 'CARTAO_CREDITO':
-      return FormaPagamento.CARTAO_CREDITO;
-    case 'BOLETO':
-    default:
-      return FormaPagamento.BOLETO;
-  }
-}
-
 function buildBillingAdjustments(body: CreateMatriculaFamiliarBody) {
   const discountValue = Number(body.descontoAntecipado ?? 0);
   const interestValue = Number(body.jurosMensal ?? 0);
@@ -111,9 +105,7 @@ function buildBillingAdjustments(body: CreateMatriculaFamiliarBody) {
           }
         : undefined,
     interest:
-      Number.isFinite(interestValue) && interestValue > 0
-        ? { value: interestValue }
-        : undefined,
+      Number.isFinite(interestValue) && interestValue > 0 ? { value: interestValue } : undefined,
     fine:
       Number.isFinite(fineValue) && fineValue > 0
         ? { value: fineValue, type: 'PERCENTAGE' as const }
@@ -188,10 +180,14 @@ async function resolveFamilyPricing(params: {
   }
 
   const comboIds = Array.from(
-    new Set(params.alunos.map((aluno) => aluno.comboId).filter((value): value is string => Boolean(value))),
+    new Set(
+      params.alunos
+        .map((aluno) => aluno.comboId)
+        .filter((value): value is string => Boolean(value)),
+    ),
   );
 
-  if (comboIds.length !== params.alunos.length) {
+  if (params.alunos.some((aluno) => !aluno.comboId)) {
     throw new Error('Todos os alunos familiares precisam de um combo selecionado.');
   }
 
@@ -267,7 +263,11 @@ export async function POST(request: Request) {
     return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   }
   if (!allowedRoles.has(String(user.role).toUpperCase())) {
-    return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para matricular famílias.');
+    return jsonError(
+      403,
+      'PERMISSAO_NEGADA',
+      'Usuário não tem permissão para matricular famílias.',
+    );
   }
 
   let body: CreateMatriculaFamiliarBody;
@@ -276,7 +276,12 @@ export async function POST(request: Request) {
     body = createMatriculaFamiliarInputSchema.parse(raw);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return jsonError(400, 'PAYLOAD_INVALIDO', error.issues[0]?.message ?? 'Payload inválido.', error.issues);
+      return jsonError(
+        400,
+        'PAYLOAD_INVALIDO',
+        error.issues[0]?.message ?? 'Payload inválido.',
+        error.issues,
+      );
     }
     return jsonError(400, 'PAYLOAD_INVALIDO', 'Payload inválido.');
   }
@@ -327,10 +332,12 @@ export async function POST(request: Request) {
 
     const dataInicio = parseDate(body.dataInicio);
     const dataFimContrato = parseDate(body.dataFimContrato);
-    const formaPagamento = normalizeFormaPagamento(body.formaPagamento);
-    const formaPagamentoTaxa = body.formaPagamentoTaxa
-      ? normalizeFormaPagamento(body.formaPagamentoTaxa)
-      : formaPagamento;
+    const paymentSelection = resolveWizardPaymentSelection({
+      formaPagamento: body.formaPagamento,
+      formaPagamentoTaxa: body.formaPagamentoTaxa,
+    });
+    const formaPagamento = paymentSelection.formaPagamento ?? FormaPagamento.BOLETO;
+    const formaPagamentoTaxa = paymentSelection.formaPagamentoTaxa ?? formaPagamento;
 
     const alunos = await prisma.aluno.findMany({
       where: {
@@ -341,7 +348,11 @@ export async function POST(request: Request) {
     });
 
     if (alunos.length !== body.alunos.length) {
-      return jsonError(404, 'ALUNO_NAO_ENCONTRADO', 'Um ou mais alunos familiares não foram encontrados.');
+      return jsonError(
+        404,
+        'ALUNO_NAO_ENCONTRADO',
+        'Um ou mais alunos familiares não foram encontrados.',
+      );
     }
 
     const alunoById = new Map(alunos.map((aluno) => [aluno.id, aluno]));
@@ -355,13 +366,13 @@ export async function POST(request: Request) {
 
     // 2) Validar formas de pagamento ANTES de qualquer escrita: feedback rápido
     //    e sem deixar matrículas órfãs.
-    const billingType = mapFormaPagamentoToBillingType(formaPagamento);
-    const enrollmentFeeBillingType = mapFormaPagamentoToBillingType(formaPagamentoTaxa);
+    const billingType = paymentSelection.billingType;
+    const enrollmentFeeBillingType = paymentSelection.billingTypeTaxa;
     const willCreateSubscriptionPlanned = body.criarCobranca && pricing.totalMensalidade > 0;
     const willCreateEnrollmentFeePlanned =
       !body.taxaIsenta && body.gerarCobrancaTaxa && body.taxaMatricula > 0;
 
-    if (willCreateSubscriptionPlanned && (!billingType || billingType === 'UNDEFINED')) {
+    if (willCreateSubscriptionPlanned && !isSupportedAsaasBillingType(billingType)) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_INVALIDA',
@@ -369,10 +380,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      willCreateEnrollmentFeePlanned &&
-      (!enrollmentFeeBillingType || enrollmentFeeBillingType === 'UNDEFINED')
-    ) {
+    if (willCreateEnrollmentFeePlanned && !isSupportedAsaasBillingType(enrollmentFeeBillingType)) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_TAXA_INVALIDA',
@@ -418,10 +426,7 @@ export async function POST(request: Request) {
         },
       });
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         const concurrent = await prisma.matriculaFamiliar.findFirst({
           where: { contaId, uiRequestId: body.uiRequestId },
           include: {
@@ -461,7 +466,7 @@ export async function POST(request: Request) {
     const commonInput: Omit<CriarMatriculaInput, 'alunoId' | 'comboId' | 'turmaId'> = {
       contaId,
       responsavelFinanceiroId: responsavel.id,
-      planoId: body.modoTurmas === 'TURMAS' ? body.planoId ?? null : null,
+      planoId: body.modoTurmas === 'TURMAS' ? (body.planoId ?? null) : null,
       dataInicio,
       dataFimContrato,
       vencimentoDia: body.vencimentoDia,
@@ -492,8 +497,8 @@ export async function POST(request: Request) {
         const created = await criarMatricula({
           ...commonInput,
           alunoId: aluno.id,
-          turmaId: body.modoTurmas === 'TURMAS' ? item.turmaId ?? null : null,
-          comboId: body.modoTurmas === 'COMBO' ? item.comboId ?? null : null,
+          turmaId: body.modoTurmas === 'TURMAS' ? (item.turmaId ?? null) : null,
+          comboId: body.modoTurmas === 'COMBO' ? (item.comboId ?? null) : null,
         });
 
         await prisma.$transaction([
@@ -602,7 +607,7 @@ export async function POST(request: Request) {
         totalAlunos: successCount,
         monthlyValue: shouldCreateSubscription ? subscriptionValue : 0,
         enrollmentFeeValue: shouldCreateEnrollmentFee ? enrollmentFeeTotal : 0,
-        billingType: (billingType ?? enrollmentFeeBillingType) ?? null,
+        billingType: billingType ?? enrollmentFeeBillingType ?? null,
         enrollmentFeeBillingType: enrollmentFeeBillingType ?? billingType ?? null,
         cycle: financialPricing.cycle,
         nextDueDate: formatIsoDate(nextDueDate),

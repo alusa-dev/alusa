@@ -1,6 +1,7 @@
 "use client";
 import { useFormContext, Controller, useWatch } from "react-hook-form";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -38,6 +39,7 @@ export default function IdentificacaoFields() {
   const isMenorIdade = calcularMenorIdade(dataNasc);
   // CPF obrigatório apenas para +18 anos; para -18, CPF é opcional (responsável já tem CPF obrigatório)
   const cpfRequired = !isMenorIdade;
+  const contatoAlunoRequired = !isMenorIdade;
 
   const baseInputClasses =
     "h-10 px-3 bg-white border border-gray-300 placeholder:text-gray-400 text-gray-900 shadow-none";
@@ -101,7 +103,7 @@ export default function IdentificacaoFields() {
       </div>
 
       <div>
-        <FieldLabel htmlFor="aluno-email" required>
+        <FieldLabel htmlFor="aluno-email" required={contatoAlunoRequired}>
           Email
         </FieldLabel>
         <Input
@@ -115,7 +117,7 @@ export default function IdentificacaoFields() {
       </div>
 
       <div>
-        <FieldLabel htmlFor="aluno-telefone" required>
+        <FieldLabel htmlFor="aluno-telefone" required={contatoAlunoRequired}>
           Telefone
         </FieldLabel>
         <IMaskControlled
@@ -187,6 +189,17 @@ export default function IdentificacaoFields() {
         />
         <FieldError name="status" />
       </div>
+
+      {isMenorIdade && (
+        <div className="md:col-span-3">
+          <Badge
+            variant="info"
+            className="w-full justify-start rounded-xl px-3 py-2 text-[11px] font-medium leading-relaxed whitespace-normal"
+          >
+            Para menor de idade, CPF, e-mail e telefone do aluno são opcionais nesta etapa. O contato principal será o do responsável.
+          </Badge>
+        </div>
+      )}
     </div>
   );
 }

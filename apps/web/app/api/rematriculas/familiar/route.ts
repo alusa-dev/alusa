@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { BillingMode, FamilyBillingStatus, FormaPagamento, PeriodicidadePlano } from '@prisma/client';
+import {
+  BillingMode,
+  FamilyBillingStatus,
+  FormaPagamento,
+  PeriodicidadePlano,
+} from '@prisma/client';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
@@ -20,11 +25,14 @@ import {
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
 import {
   formatIsoDate,
-  mapFormaPagamentoToBillingType,
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
   resolveEnrollmentFeeDueDate,
 } from '@/src/server/matriculas/recurring-billing';
+import {
+  isSupportedAsaasBillingType,
+  resolveWizardPaymentSelection,
+} from '@/src/server/matriculas/payment-selection';
 import { processFamilyBillingOutboxEvent } from '@/src/server/family-billing/processor';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
@@ -56,23 +64,26 @@ const createRematriculaFamiliarInputSchema = z
     /** Combo global obrigatório quando `modoTurmas === 'COMBO'`. */
     comboId: z.string().min(1).optional().nullable(),
     itens: z.array(rematriculaItemSchema).min(1),
-  dataInicio: z.string().min(1),
-  dataFimContrato: z.string().min(1),
-  formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']),
-  formaPagamentoTaxa: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']).optional(),
-  vencimentoDia: z.number().int().min(1).max(28),
-  taxaMatricula: z.number().nonnegative().optional().default(0),
-  taxaIsenta: z.boolean().optional().default(false),
-  taxaJustificativa: z.string().trim().max(500).optional(),
-  descontos: z.array(descontoSchema).optional().default([]),
-  multaPercentual: z.number().nonnegative().optional(),
-  jurosMensal: z.number().nonnegative().optional(),
-  descontoAntecipado: z.number().nonnegative().optional(),
-  prazoDesconto: z.number().int().nonnegative().optional(),
-  overrideReason: z.string().trim().max(500).optional(),
-  notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
-  notificationChannelsConfigured: z.boolean().optional().default(false),
-  uiRequestId: z.string().trim().min(1).max(120).optional(),
+    dataInicio: z.string().min(1),
+    dataFimContrato: z.string().min(1),
+    formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']),
+    formaPagamentoTaxa: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']).optional(),
+    vencimentoDia: z.number().int().min(1).max(28),
+    taxaMatricula: z.number().nonnegative().optional().default(0),
+    taxaIsenta: z.boolean().optional().default(false),
+    taxaJustificativa: z.string().trim().max(500).optional(),
+    descontos: z.array(descontoSchema).optional().default([]),
+    multaPercentual: z.number().nonnegative().optional(),
+    jurosMensal: z.number().nonnegative().optional(),
+    descontoAntecipado: z.number().nonnegative().optional(),
+    prazoDesconto: z.number().int().nonnegative().optional(),
+    overrideReason: z.string().trim().max(500).optional(),
+    notificationChannels: z
+      .array(z.enum(['EMAIL', 'SMS', 'WHATSAPP']))
+      .optional()
+      .default([]),
+    notificationChannelsConfigured: z.boolean().optional().default(false),
+    uiRequestId: z.string().trim().min(1).max(120).optional(),
   })
   .superRefine((value, ctx) => {
     if (!value.modoTurmas) return;
@@ -127,18 +138,6 @@ function parseDate(value: string) {
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) throw new Error('Data inválida.');
   return date;
-}
-
-function normalizeFormaPagamento(value: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO') {
-  switch (value) {
-    case 'PIX':
-      return FormaPagamento.PIX;
-    case 'CARTAO_CREDITO':
-      return FormaPagamento.CARTAO_CREDITO;
-    case 'BOLETO':
-    default:
-      return FormaPagamento.BOLETO;
-  }
 }
 
 async function loadRematriculaDecision(params: {
@@ -277,7 +276,9 @@ async function resolveFamilyPricing(params: {
     const periodicidade = combo?.periodicidade ?? plano?.periodicidade;
     const valorBase = Number(combo?.valor ?? plano?.valor ?? 0);
     if (!periodicidade || valorBase <= 0) {
-      throw new Error('Não foi possível calcular a recorrência de uma das rematrículas familiares.');
+      throw new Error(
+        'Não foi possível calcular a recorrência de uma das rematrículas familiares.',
+      );
     }
 
     periodicidades.add(periodicidade);
@@ -305,7 +306,11 @@ export async function POST(request: Request) {
     return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   }
   if (!allowedRoles.has(String(user.role).toUpperCase())) {
-    return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematrícula familiar.');
+    return jsonError(
+      403,
+      'PERMISSAO_NEGADA',
+      'Usuário não tem permissão para rematrícula familiar.',
+    );
   }
 
   try {
@@ -363,10 +368,67 @@ export async function POST(request: Request) {
 
     const dataInicio = parseDate(body.dataInicio);
     const dataFimContrato = parseDate(body.dataFimContrato);
-    const formaPagamento = normalizeFormaPagamento(body.formaPagamento);
-    const formaPagamentoTaxa = body.formaPagamentoTaxa
-      ? normalizeFormaPagamento(body.formaPagamentoTaxa)
-      : formaPagamento;
+    const paymentSelection = resolveWizardPaymentSelection({
+      formaPagamento: body.formaPagamento,
+      formaPagamentoTaxa: body.formaPagamentoTaxa,
+    });
+    const formaPagamento = paymentSelection.formaPagamento ?? FormaPagamento.BOLETO;
+    const formaPagamentoTaxa = paymentSelection.formaPagamentoTaxa ?? formaPagamento;
+
+    // Quando `modoTurmas` é informado, normalizamos cada item para usar o produto
+    // global (plano OU combo) — garantindo que a precificação e o `rematricularAluno`
+    // recebam exatamente o mesmo produto financeiro para todo o lote familiar.
+    const normalizedItens = body.itens.map((item) => {
+      if (!body.modoTurmas) return item;
+      if (body.modoTurmas === 'TURMAS') {
+        return { ...item, planoId: body.planoId ?? null, comboId: null };
+      }
+      return {
+        ...item,
+        planoId: null,
+        comboId: item.comboId ?? body.comboId ?? null,
+        turmaId: item.turmaId ?? null,
+      };
+    });
+
+    const plannedPricing = await resolveFamilyPricing({
+      contaId,
+      itens: normalizedItens,
+      descontos: body.descontos,
+    });
+    const plannedEnrollmentFeeValue =
+      !body.taxaIsenta && body.taxaMatricula > 0
+        ? Number((body.taxaMatricula * body.itens.length).toFixed(2))
+        : 0;
+    const billingType = paymentSelection.billingType;
+    const enrollmentFeeBillingType = paymentSelection.billingTypeTaxa;
+
+    if (plannedPricing.totalMensalidade > 0 && !isSupportedAsaasBillingType(billingType)) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento não suporta cobrança familiar.',
+      );
+    }
+
+    if (plannedEnrollmentFeeValue > 0 && !isSupportedAsaasBillingType(enrollmentFeeBillingType)) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de rematrícula não suporta cobrança familiar.',
+      );
+    }
+
+    if (plannedPricing.totalMensalidade > 0) {
+      const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
+      if (previewNextDueDate > dataFimContrato) {
+        return jsonError(
+          422,
+          'DATA_FIM_INVALIDA',
+          `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}). Ajuste a data de término ou o dia de vencimento.`,
+        );
+      }
+    }
 
     const family = await prisma.rematriculaFamiliar.create({
       data: {
@@ -376,9 +438,7 @@ export async function POST(request: Request) {
         status: FamilyBillingStatus.PENDENTE,
         totalAlunos: 0,
         valorMensalidadeTotal: 0,
-        valorTaxaMatriculaTotal: body.taxaIsenta
-          ? 0
-          : 0,
+        valorTaxaMatriculaTotal: 0,
         formaPagamento,
         ciclo: null,
         diaVencimento: body.vencimentoDia,
@@ -410,22 +470,6 @@ export async function POST(request: Request) {
     });
 
     const matriculaById = new Map(matriculas.map((item) => [item.id, item]));
-
-    // Quando `modoTurmas` é informado, normalizamos cada item para usar o produto
-    // global (plano OU combo) — garantindo que a precificação e o `rematricularAluno`
-    // recebam exatamente o mesmo produto financeiro para todo o lote familiar.
-    const normalizedItens = body.itens.map((item) => {
-      if (!body.modoTurmas) return item;
-      if (body.modoTurmas === 'TURMAS') {
-        return { ...item, planoId: body.planoId ?? null, comboId: null };
-      }
-      return {
-        ...item,
-        planoId: null,
-        comboId: item.comboId ?? body.comboId ?? null,
-        turmaId: item.turmaId ?? null,
-      };
-    });
 
     for (const [index, item] of normalizedItens.entries()) {
       const source = matriculaById.get(item.matriculaId);
@@ -589,9 +633,7 @@ export async function POST(request: Request) {
     }
 
     const successMatriculaIds = new Set(
-      results
-        .filter((result) => result.status === 'success')
-        .map((result) => result.matriculaId),
+      results.filter((result) => result.status === 'success').map((result) => result.matriculaId),
     );
     const successfulItens = normalizedItens.filter((item) =>
       successMatriculaIds.has(item.matriculaId),
@@ -610,33 +652,6 @@ export async function POST(request: Request) {
       ? FamilyBillingStatus.PARCIAL
       : FamilyBillingStatus.PROCESSANDO;
 
-    const billingType = mapFormaPagamentoToBillingType(formaPagamento);
-    if (!billingType || billingType === 'UNDEFINED') {
-      return jsonError(
-        422,
-        'FORMA_PAGAMENTO_INVALIDA',
-        'Forma de pagamento não suporta cobrança familiar.',
-      );
-    }
-
-    if (pricing.totalMensalidade > 0) {
-      const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
-      if (previewNextDueDate > dataFimContrato) {
-        await prisma.rematriculaFamiliar.update({
-          where: { id: family.id },
-          data: {
-            status: FamilyBillingStatus.FALHO,
-            ultimoErro: `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}).`,
-          },
-        });
-        return jsonError(
-          422,
-          'DATA_FIM_INVALIDA',
-          `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}). Ajuste a data de término ou o dia de vencimento.`,
-        );
-      }
-    }
-
     const billingAdjustments = {
       discount:
         body.descontoAntecipado && body.descontoAntecipado > 0
@@ -646,8 +661,7 @@ export async function POST(request: Request) {
               dueDateLimitDays: body.prazoDesconto ?? 0,
             }
           : null,
-      interest:
-        body.jurosMensal && body.jurosMensal > 0 ? { value: body.jurosMensal } : null,
+      interest: body.jurosMensal && body.jurosMensal > 0 ? { value: body.jurosMensal } : null,
       fine:
         body.multaPercentual && body.multaPercentual > 0
           ? { value: body.multaPercentual, type: 'PERCENTAGE' as const }
@@ -682,6 +696,7 @@ export async function POST(request: Request) {
           monthlyValue: pricing.totalMensalidade,
           enrollmentFeeValue,
           billingType,
+          enrollmentFeeBillingType,
           cycle: pricing.cycle,
           nextDueDate: formatIsoDate(resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia)),
           endDate: formatIsoDate(dataFimContrato),
@@ -724,7 +739,12 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (error instanceof z.ZodError) {
-      return jsonError(400, 'PAYLOAD_INVALIDO', error.issues[0]?.message ?? 'Payload inválido.', error.issues);
+      return jsonError(
+        400,
+        'PAYLOAD_INVALIDO',
+        error.issues[0]?.message ?? 'Payload inválido.',
+        error.issues,
+      );
     }
 
     console.error('[POST /api/rematriculas/familiar]', error);
@@ -751,6 +771,8 @@ function mapRematriculaError(error: RematricularAlunoError) {
     TURMA_NAO_ENCONTRADA: 'Turma não encontrada.',
     COMBO_NAO_ENCONTRADO: 'Combo não encontrado.',
     OPERACAO_EM_ANDAMENTO: 'Já existe uma rematrícula em andamento.',
+    FORMA_PAGAMENTO_INVALIDA: 'Forma de pagamento da rematrícula é inválida.',
+    FORMA_PAGAMENTO_TAXA_INVALIDA: 'Forma de pagamento da taxa de rematrícula é inválida.',
     ERRO_PROVEDOR: 'Erro ao processar pagamento.',
   };
   return messages[error.code] ?? ('message' in error ? error.message : 'Erro desconhecido.');

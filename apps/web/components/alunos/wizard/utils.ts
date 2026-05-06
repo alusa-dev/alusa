@@ -84,6 +84,8 @@ export function buildStepFieldMap(isMinor: boolean) {
     foto: [],
     responsavel: isMinor
       ? [
+          "responsavelModo",
+          "responsavelExistenteId",
           "responsavel.nome",
           "responsavel.cpf",
           "responsavel.email",

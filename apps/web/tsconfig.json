@@ -12,6 +12,8 @@
       "@alusa/ui/*": ["../../packages/ui/src/*"],
       "@alusa/asaas": ["../../packages/asaas/src/index.ts"],
       "@alusa/asaas/*": ["../../packages/asaas/src/*"],
+      "@alusa/database": ["../../packages/database/src/index.ts"],
+      "@alusa/database/*": ["../../packages/database/src/*"],
       "@alusa/finance": ["../../packages/finance/src/index.ts"],
       "@alusa/finance/*": ["../../packages/finance/src/*"],
       "@alusa/shared": ["../../packages/shared/src/index.ts"],

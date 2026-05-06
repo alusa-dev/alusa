@@ -123,6 +123,8 @@ export type RematricularAlunoError =
   | { code: 'OPERACAO_NAO_ENCONTRADA' }
   | { code: 'OPERACAO_PERTENCE_OUTRA_CONTA' }
   | { code: 'STATUS_NAO_PERMITE_RETRY' }
+  | { code: 'FORMA_PAGAMENTO_INVALIDA'; message: string }
+  | { code: 'FORMA_PAGAMENTO_TAXA_INVALIDA'; message: string }
   | { code: 'ERRO_PROVEDOR'; message: string };
 
 export type RematricularAlunoResult =
@@ -153,7 +155,15 @@ function periodicidadeToCycle(periodicidade: PeriodicidadePlano): BillingCycle {
   return map[periodicidade] ?? 'MONTHLY';
 }
 
-function formaPagamentoToBillingType(forma?: string): BillingType {
+type SupportedFormaPagamento = 'BOLETO' | 'PIX' | 'CARTAO_CREDITO';
+type SupportedBillingType = Exclude<BillingType, 'UNDEFINED'>;
+
+function normalizeSupportedFormaPagamento(forma?: string | null): SupportedFormaPagamento | null {
+  if (forma === 'BOLETO' || forma === 'PIX' || forma === 'CARTAO_CREDITO') return forma;
+  return null;
+}
+
+function formaPagamentoToBillingType(forma: SupportedFormaPagamento): SupportedBillingType {
   if (forma === 'PIX') return 'PIX';
   if (forma === 'CARTAO_CREDITO') return 'CREDIT_CARD';
   return 'BOLETO';
@@ -678,6 +688,35 @@ export async function rematricularAluno(
   }
 
   const payer = payerResult.payer;
+  const formaPagamento = normalizeSupportedFormaPagamento(
+    input.formaPagamento ?? matriculaOrigem.formaPagamento,
+  );
+  const formaPagamentoTaxa = normalizeSupportedFormaPagamento(
+    input.formaPagamentoTaxa ??
+      input.formaPagamento ??
+      matriculaOrigem.formaPagamentoTaxa ??
+      formaPagamento,
+  );
+
+  if (!formaPagamento) {
+    return {
+      success: false,
+      error: {
+        code: 'FORMA_PAGAMENTO_INVALIDA',
+        message: 'Forma de pagamento da rematrícula é inválida.',
+      },
+    };
+  }
+
+  if (!formaPagamentoTaxa) {
+    return {
+      success: false,
+      error: {
+        code: 'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        message: 'Forma de pagamento da taxa de rematrícula é inválida.',
+      },
+    };
+  }
 
   // -------------------------------------------------------------------------
   // 4. CRIAR OPERAÇÃO (FASE 1 - PREPARE)
@@ -877,8 +916,8 @@ export async function rematricularAluno(
         taxaIsenta,
         taxaStatus,
         taxaJustificativa: input.taxaJustificativa ?? null,
-        formaPagamentoTaxa:
-          input.formaPagamentoTaxa ?? matriculaOrigem.formaPagamentoTaxa ?? 'BOLETO',
+        formaPagamento,
+        formaPagamentoTaxa,
         vencimentoDia,
         jurosMensal: input.jurosMensal ?? matriculaOrigem.jurosMensal,
         multaPercentual: input.multaPercentual ?? matriculaOrigem.multaPercentual,
@@ -932,7 +971,7 @@ export async function rematricularAluno(
         value: valorPlanoLiquido,
         nextDueDate: formatDateYYYYMMDD(nextDueDate),
         cycle: periodicidadeToCycle(periodicidade),
-        billingType: formaPagamentoToBillingType(input.formaPagamento),
+        billingType: formaPagamentoToBillingType(formaPagamento),
         description: `Mensalidade - ${matriculaOrigem.aluno.nome}`,
         externalReference: `rematricula-${operacao.id}`,
         endDate: formatDateYYYYMMDD(input.dataFimContrato),
@@ -989,7 +1028,7 @@ export async function rematricularAluno(
     if (shouldCreateFinancialCycle && !taxaIsenta && taxaValor > 0) {
       const taxaDueDate = formatDateYYYYMMDD(input.dataInicio);
       const taxaExternalReference = `taxa-rematricula-${operacao.id}`;
-      const taxaBillingType = formaPagamentoToBillingType(input.formaPagamentoTaxa);
+      const taxaBillingType = formaPagamentoToBillingType(formaPagamentoTaxa);
 
       // Criar cobrança local TAXA_MATRICULA
       const cobrancaTaxa = await prisma.cobranca.create({
@@ -1001,7 +1040,7 @@ export async function rematricularAluno(
           competenciaFim: input.dataInicio,
           valor: taxaValor,
           vencimento: input.dataInicio,
-          formaPagamento: input.formaPagamentoTaxa ?? 'BOLETO',
+          formaPagamento: formaPagamentoTaxa,
           status: 'PENDENTE',
         },
       });
@@ -1234,6 +1273,8 @@ export type RetryRematriculaError =
   | { code: 'OPERACAO_NAO_ENCONTRADA' }
   | { code: 'OPERACAO_PERTENCE_OUTRA_CONTA' }
   | { code: 'STATUS_NAO_PERMITE_RETRY' }
+  | { code: 'FORMA_PAGAMENTO_INVALIDA'; message: string }
+  | { code: 'FORMA_PAGAMENTO_TAXA_INVALIDA'; message: string }
   | { code: 'ERRO_PROVEDOR'; message: string };
 
 export type RetryRematriculaResult =
@@ -1413,6 +1454,17 @@ export async function retryRematricula(
         novaMatricula.dataInicio,
         novaMatricula.vencimentoDia,
       );
+      const formaPagamento = normalizeSupportedFormaPagamento(novaMatricula.formaPagamento);
+
+      if (!formaPagamento) {
+        return {
+          success: false,
+          error: {
+            code: 'FORMA_PAGAMENTO_INVALIDA',
+            message: 'Forma de pagamento da rematrícula é inválida.',
+          },
+        };
+      }
 
       const subscriptionResult = await paymentsProvider.createSubscription({
         contaId: input.contaId,
@@ -1420,7 +1472,7 @@ export async function retryRematricula(
         value: valorPlanoLiquido,
         nextDueDate: formatDateYYYYMMDD(nextDueDate),
         cycle: periodicidadeToCycle(periodicidade),
-        billingType: formaPagamentoToBillingType(undefined),
+        billingType: formaPagamentoToBillingType(formaPagamento),
         description: `Mensalidade - ${matriculaOrigem.aluno.nome}`,
         externalReference: `rematricula-${operacao.id}`,
         endDate: formatDateYYYYMMDD(novaMatricula.dataFimContrato),

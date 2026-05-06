@@ -396,6 +396,39 @@ describe('Aluno Service', () => {
       expect(alunoComResp?.responsaveis[0].responsavel.cpf).toBe('11144477735');
     });
 
+    it('reutiliza responsável existente selecionado por id', async () => {
+      const responsavelExistente = await prisma.responsavel.create({
+        data: {
+          contaId,
+          nome: 'Responsável Existente',
+          cpf: '11144477735',
+          email: 'resp.existente@example.com',
+          telefone: '11999999999',
+          financeiro: true,
+        },
+      });
+
+      const aluno = await createAluno({
+        contaId,
+        nome: 'Menor Vinculado',
+        dataNasc: new Date('2015-05-15'),
+        responsavelExistenteId: responsavelExistente.id,
+      });
+
+      const alunoComResp = await prisma.aluno.findUnique({
+        where: { id: aluno.id },
+        include: { responsaveis: { include: { responsavel: true } } },
+      });
+
+      const totalResponsaveis = await prisma.responsavel.count({
+        where: { contaId, cpf: '11144477735' },
+      });
+
+      expect(alunoComResp?.responsaveis).toHaveLength(1);
+      expect(alunoComResp?.responsaveis[0].responsavel.id).toBe(responsavelExistente.id);
+      expect(totalResponsaveis).toBe(1);
+    });
+
     it('cria aluno menor COM CPF quando responsável está completo', async () => {
       const aluno = await createAluno({
         contaId,

@@ -856,8 +856,8 @@ export function ContaPage() {
         }}
       />
 
-      <div className="flex justify-start pt-1 pb-2">
-        <AsaasSeal variant="positivo" />
+      <div className="flex justify-center pt-1 pb-2">
+        <AsaasSeal variant="negativo-preto" />
       </div>
     </div>
   );

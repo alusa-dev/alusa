@@ -29,6 +29,10 @@ import {
   serializeFinancialSnapshot,
   serializePolicySnapshot,
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
+import {
+  isSupportedAsaasBillingType,
+  resolveWizardPaymentSelection,
+} from '@/src/server/matriculas/payment-selection';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -184,19 +188,13 @@ function toDate(value: unknown) {
   return undefined;
 }
 
-function normalizarFormaPagamento(raw: unknown): FormaPagamento | undefined {
-  if (typeof raw !== 'string' || !raw.trim()) return undefined;
-  const normalized = raw.trim().toUpperCase();
-  const mapping: Record<string, FormaPagamento> = {
-    CARTAO: FormaPagamento.CARTAO_CREDITO,
-    CARTAO_CREDITO: FormaPagamento.CARTAO_CREDITO,
-    PIX: FormaPagamento.PIX,
-    BOLETO: FormaPagamento.BOLETO,
-    DINHEIRO: FormaPagamento.INDEFINIDO,
-    INDEFINIDO: FormaPagamento.INDEFINIDO,
-  };
-  const mapped = mapping[normalized];
-  return mapped && Object.values(FormaPagamento).includes(mapped) ? mapped : undefined;
+function toRematriculaPaymentMethod(
+  value: FormaPagamento | undefined,
+): 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | undefined {
+  if (value === FormaPagamento.BOLETO) return 'BOLETO';
+  if (value === FormaPagamento.PIX) return 'PIX';
+  if (value === FormaPagamento.CARTAO_CREDITO) return 'CARTAO_CREDITO';
+  return undefined;
 }
 
 export async function GET(req: Request) {
@@ -298,7 +296,26 @@ export async function POST(req: Request) {
       return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematricular.');
     }
 
-    const formaPagamento = normalizarFormaPagamento(body.formaPagamento);
+    const paymentSelection = resolveWizardPaymentSelection({
+      formaPagamento: body.formaPagamento,
+      formaPagamentoTaxa: body.formaPagamentoTaxa,
+    });
+
+    if (paymentSelection.invalidFormaPagamento) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento da rematrícula é inválida.',
+      );
+    }
+
+    if (paymentSelection.invalidFormaPagamentoTaxa) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de rematrícula é inválida.',
+      );
+    }
 
     const matriculaId = body.matriculaId;
     if (!matriculaId) {
@@ -309,6 +326,30 @@ export async function POST(req: Request) {
     const dataFimContratoValue = toDate(body.dataFimContrato);
     if (!dataFimContratoValue) {
       return jsonError(400, 'DATA_FIM_CONTRATO_OBRIGATORIA', 'dataFimContrato é obrigatório.');
+    }
+
+    // Converter formaPagamento para o formato esperado pelo use case. A validação
+    // acontece antes das leituras de política para falhar sem qualquer efeito colateral.
+    if (
+      paymentSelection.formaPagamento &&
+      !isSupportedAsaasBillingType(paymentSelection.billingType)
+    ) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento da rematrícula não suporta cobrança no Asaas.',
+      );
+    }
+
+    if (
+      paymentSelection.formaPagamentoTaxa &&
+      !isSupportedAsaasBillingType(paymentSelection.billingTypeTaxa)
+    ) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de rematrícula não suporta cobrança no Asaas.',
+      );
     }
 
     const rematriculaDecision = await loadRematriculaDecision({
@@ -379,12 +420,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // Converter formaPagamento para o formato esperado pelo use case
-    const formaPagamentoMap: Record<string, 'BOLETO' | 'PIX' | 'CARTAO_CREDITO'> = {
-      BOLETO: 'BOLETO',
-      PIX: 'PIX',
-      CARTAO_CREDITO: 'CARTAO_CREDITO',
-    };
+    const formaPagamento = toRematriculaPaymentMethod(paymentSelection.formaPagamento);
+    const formaPagamentoTaxa = toRematriculaPaymentMethod(paymentSelection.formaPagamentoTaxa);
 
     const result = await rematricularAluno(
       {
@@ -397,7 +434,7 @@ export async function POST(req: Request) {
         turmaId: body.turmaId ?? null,
         comboId: body.comboId ?? null,
         responsavelFinanceiroId: body.responsavelFinanceiroId ?? null,
-        formaPagamento: formaPagamento ? formaPagamentoMap[formaPagamento] : undefined,
+        formaPagamento,
         vencimentoDia: parseInteger(body.vencimentoDia),
         billingMode: normalizeRematriculaBillingMode(body.billingMode),
         valorMensalidadeOverride: parseNumber(body.valorMensalidadeOverride),
@@ -405,9 +442,7 @@ export async function POST(req: Request) {
         taxaIsenta: body.taxaIsenta === true || body.taxaIsenta === 'true',
         taxaJustificativa:
           typeof body.taxaJustificativa === 'string' ? body.taxaJustificativa.trim() : undefined,
-        formaPagamentoTaxa: body.formaPagamentoTaxa
-          ? formaPagamentoMap[body.formaPagamentoTaxa]
-          : undefined,
+        formaPagamentoTaxa,
         descontos: Array.isArray(body.descontos)
           ? body.descontos
               .map((desconto) => ({
@@ -556,6 +591,14 @@ function mapRematriculaErrorToResponse(error: RematricularAlunoError) {
     TURMA_NAO_ENCONTRADA: { status: 404, message: 'Turma não encontrada.' },
     COMBO_NAO_ENCONTRADO: { status: 404, message: 'Combo não encontrado.' },
     OPERACAO_EM_ANDAMENTO: { status: 409, message: 'Já existe uma rematrícula em andamento.' },
+    FORMA_PAGAMENTO_INVALIDA: {
+      status: 422,
+      message: 'Forma de pagamento da rematrícula é inválida.',
+    },
+    FORMA_PAGAMENTO_TAXA_INVALIDA: {
+      status: 422,
+      message: 'Forma de pagamento da taxa de rematrícula é inválida.',
+    },
     ERRO_PROVEDOR: { status: 502, message: 'Erro ao processar pagamento.' },
   };
 

@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import {
-  Prisma,
-  FormaPagamento,
-  PeriodicidadePlano,
-  StatusMatricula,
-} from '@prisma/client';
+import { Prisma, FormaPagamento, PeriodicidadePlano, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
-import { criarMatricula, listarMatriculas, MatriculaConflictError } from '@/src/server/matriculas/matricula.service';
+import {
+  criarMatricula,
+  listarMatriculas,
+  MatriculaConflictError,
+} from '@/src/server/matriculas/matricula.service';
 import { prisma } from '@/src/prisma';
 import {
   createCharge,
@@ -33,6 +32,10 @@ import {
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
+import {
+  isSupportedAsaasBillingType,
+  resolveWizardPaymentSelection,
+} from '@/src/server/matriculas/payment-selection';
 import { syncInitialSubscriptionPaymentFromAsaas } from '@/src/server/matriculas/subscription-payment-materialization';
 
 export const dynamic = 'force-dynamic';
@@ -74,12 +77,18 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
-    const status = url.searchParams
-      .getAll('status')
-      .flatMap((value) => value.split(',').map((item) => item.trim()).filter(Boolean));
-    const excludeStatus = url.searchParams
-      .getAll('excludeStatus')
-      .flatMap((value) => value.split(',').map((item) => item.trim()).filter(Boolean));
+    const status = url.searchParams.getAll('status').flatMap((value) =>
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    );
+    const excludeStatus = url.searchParams.getAll('excludeStatus').flatMap((value) =>
+      value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    );
 
     const page = Number(url.searchParams.get('page') ?? '1');
     const pageSize = Number(url.searchParams.get('pageSize') ?? '20');
@@ -91,7 +100,11 @@ export async function GET(req: Request) {
       planoId: url.searchParams.get('planoId') ?? undefined,
       turmaId: url.searchParams.get('turmaId') ?? undefined,
       comboId:
-        comboParam === 'null' ? null : comboParam === null ? undefined : comboParam.trim() || undefined,
+        comboParam === 'null'
+          ? null
+          : comboParam === null
+            ? undefined
+            : comboParam.trim() || undefined,
       status,
       excludeStatus,
       q: url.searchParams.get('q') ?? undefined,
@@ -129,8 +142,8 @@ export async function GET(req: Request) {
       );
     }
 
-    const validStatus = parsedQuery.data.status.filter(
-      (value): value is StatusMatricula => statusValues.has(value as StatusMatricula),
+    const validStatus = parsedQuery.data.status.filter((value): value is StatusMatricula =>
+      statusValues.has(value as StatusMatricula),
     );
     const validExcludeStatus = parsedQuery.data.excludeStatus.filter(
       (value): value is StatusMatricula => statusValues.has(value as StatusMatricula),
@@ -196,6 +209,27 @@ export async function POST(req: Request) {
       );
     }
 
+    const paymentSelection = resolveWizardPaymentSelection({
+      formaPagamento: parsedBody.data.formaPagamento,
+      formaPagamentoTaxa: parsedBody.data.formaPagamentoTaxa,
+    });
+
+    if (paymentSelection.invalidFormaPagamento) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento da mensalidade é inválida.',
+      );
+    }
+
+    if (paymentSelection.invalidFormaPagamentoTaxa) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de matrícula é inválida.',
+      );
+    }
+
     let payload;
     try {
       payload = mapCreateMatriculaDTOToServiceInput({
@@ -209,6 +243,26 @@ export async function POST(req: Request) {
         return jsonError(400, 'DATA_FIM_CONTRATO_OBRIGATORIA', message);
       }
       return jsonError(400, 'PAYLOAD_INVALIDO', message);
+    }
+
+    const willCreateSubscription = payload.criarCobranca === true;
+    const willCreateEnrollmentFee =
+      payload.gerarCobrancaTaxa === true && !payload.taxaIsenta && payload.taxaMatricula > 0;
+
+    if (willCreateSubscription && !isSupportedAsaasBillingType(paymentSelection.billingType)) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_INVALIDA',
+        'Forma de pagamento da mensalidade não suporta cobrança no Asaas.',
+      );
+    }
+
+    if (willCreateEnrollmentFee && !isSupportedAsaasBillingType(paymentSelection.billingTypeTaxa)) {
+      return jsonError(
+        422,
+        'FORMA_PAGAMENTO_TAXA_INVALIDA',
+        'Forma de pagamento da taxa de matrícula não suporta cobrança no Asaas.',
+      );
     }
 
     const result = await criarMatricula(payload);
@@ -254,45 +308,45 @@ export async function POST(req: Request) {
             });
           }
         } else {
-          console.warn('[API Matrícula] Não foi possível garantir o customer para sincronizar notificações', {
-            matriculaId: result.matricula.id,
-            error: ensuredCustomer.error,
-          });
+          console.warn(
+            '[API Matrícula] Não foi possível garantir o customer para sincronizar notificações',
+            {
+              matriculaId: result.matricula.id,
+              error: ensuredCustomer.error,
+            },
+          );
         }
       } catch (error) {
-        console.error('[API Matrícula] Falha não crítica ao sincronizar notificações escolhidas no wizard', {
-          matriculaId: result.matricula.id,
-          message: error instanceof Error ? error.message : String(error),
-        });
+        console.error(
+          '[API Matrícula] Falha não crítica ao sincronizar notificações escolhidas no wizard',
+          {
+            matriculaId: result.matricula.id,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
     }
 
-    let taxaSync:
-      | {
-          success: boolean;
-          error?: string;
-          asaasPaymentId?: string;
-          invoiceUrl?: string | null;
-          bankSlipUrl?: string | null;
-        }
-      | null = null;
-    let subscriptionSync:
-      | {
-          success: boolean;
-          error?: string;
-          asaasSubscriptionId?: string | null;
-          asaasPaymentId?: string | null;
-          invoiceUrl?: string | null;
-          bankSlipUrl?: string | null;
-          expectedWebhooks?: string[];
-          message?: string;
-        }
-      | null = null;
+    let taxaSync: {
+      success: boolean;
+      error?: string;
+      asaasPaymentId?: string;
+      invoiceUrl?: string | null;
+      bankSlipUrl?: string | null;
+    } | null = null;
+    let subscriptionSync: {
+      success: boolean;
+      error?: string;
+      asaasSubscriptionId?: string | null;
+      asaasPaymentId?: string | null;
+      invoiceUrl?: string | null;
+      bankSlipUrl?: string | null;
+      expectedWebhooks?: string[];
+      message?: string;
+    } | null = null;
 
     const requiresTaxConfirmation =
-      payload.gerarCobrancaTaxa &&
-      !payload.taxaIsenta &&
-      Number(result.preco.taxa ?? 0) > 0;
+      payload.gerarCobrancaTaxa && !payload.taxaIsenta && Number(result.preco.taxa ?? 0) > 0;
 
     if (requiresTaxConfirmation && !result.cobrancas.taxa) {
       taxaSync = { success: false, error: 'COBRANCA_TAXA_NAO_ENCONTRADA' };
@@ -408,8 +462,12 @@ export async function POST(req: Request) {
           subscriptionSync = { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' };
         } else {
           const planoOuCombo = recurringContext.combo ?? recurringContext.plano;
-          const periodicidade = (planoOuCombo?.periodicidade ?? PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
-          const nextDueDateObj = resolveChargeableFirstDueDate(recurringContext.dataInicio, recurringContext.vencimentoDia);
+          const periodicidade = (planoOuCombo?.periodicidade ??
+            PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
+          const nextDueDateObj = resolveChargeableFirstDueDate(
+            recurringContext.dataInicio,
+            recurringContext.vencimentoDia,
+          );
           const nextDueDate = formatIsoDate(nextDueDateObj);
           const endDate =
             recurringContext.dataFimContrato >= nextDueDateObj
@@ -418,7 +476,9 @@ export async function POST(req: Request) {
           const discountValue = recurringContext.descontoAntecipado
             ? Number(recurringContext.descontoAntecipado)
             : 0;
-          const interestValue = recurringContext.jurosMensal ? Number(recurringContext.jurosMensal) : 0;
+          const interestValue = recurringContext.jurosMensal
+            ? Number(recurringContext.jurosMensal)
+            : 0;
           const fineValue = recurringContext.multaPercentual
             ? Number(recurringContext.multaPercentual)
             : 0;
@@ -486,9 +546,10 @@ export async function POST(req: Request) {
                   : initialPaymentSync.found
                     ? 'A assinatura foi criada no Asaas, mas o primeiro ciclo oficial não pôde ser materializado localmente neste momento.'
                     : 'A assinatura foi criada no Asaas. O primeiro ciclo será confirmado pelo webhook oficial assim que estiver disponível.',
-                error: initialPaymentSync.processed || !initialPaymentSync.found
-                  ? undefined
-                  : initialPaymentSync.error ?? 'ERRO_SINCRONIZAR_PRIMEIRO_CICLO',
+                error:
+                  initialPaymentSync.processed || !initialPaymentSync.found
+                    ? undefined
+                    : (initialPaymentSync.error ?? 'ERRO_SINCRONIZAR_PRIMEIRO_CICLO'),
               };
             }
           } else {
