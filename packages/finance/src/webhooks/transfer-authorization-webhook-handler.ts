@@ -3,19 +3,30 @@ import { createHash } from 'node:crypto';
 import { prisma } from '@alusa/database';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import {
+  buildTransferRequestIntentFromRecord,
+  verifyTransferAuthorizationPayload,
+} from '../use-cases/transfers/transfer-request-integrity';
 
 export type TransferAuthorizationWebhookPayload = {
   type?: string;
   transfer?: {
     id: string;
     status?: string;
+    value?: number | null;
+    scheduleDate?: string | null;
+    operationType?: string | null;
     externalReference?: string | null;
     description?: string | null;
     bankAccount?: {
       ownerName?: string | null;
       cpfCnpj?: string | null;
+      agency?: string | null;
+      account?: string | null;
+      accountDigit?: string | null;
       pixAddressKey?: string | null;
       bank?: {
+        code?: string | null;
         name?: string | null;
       } | null;
     } | null;
@@ -158,6 +169,10 @@ export async function handleTransferAuthorizationWebhook(params: {
     },
     select: {
       id: true,
+      value: true,
+      destination: true,
+      description: true,
+      scheduleDate: true,
       externalReference: true,
       asaasTransferId: true,
     },
@@ -166,24 +181,45 @@ export async function handleTransferAuthorizationWebhook(params: {
   if (!transferRequest) {
     decision = { status: 'REFUSED', refuseReason: 'Transferencia nao encontrada' };
   } else {
-    if (!transferRequest.asaasTransferId) {
-      await prisma.transferRequest.update({
-        where: { id: transferRequest.id },
-        data: { asaasTransferId: transfer.id },
+    const expectedIntent = buildTransferRequestIntentFromRecord(transferRequest);
+
+    if (!expectedIntent) {
+      decision = { status: 'REFUSED', refuseReason: 'Snapshot local invalido' };
+    } else {
+      const verification = verifyTransferAuthorizationPayload({
+        expectedExternalReference: transferRequest.externalReference,
+        expectedIntent,
+        transfer,
       });
+
+      if (!verification.matches) {
+        decision = { status: 'REFUSED', refuseReason: verification.refuseReason };
+      } else {
+        if (!transferRequest.asaasTransferId) {
+          await prisma.transferRequest.update({
+            where: { id: transferRequest.id },
+            data: { asaasTransferId: transfer.id },
+          });
+        }
+
+        decision = { status: 'APPROVED' };
+      }
     }
 
     await auditLogService.record({
       contaId: params.contaId,
-      action: 'finance.transfer.authorization_approved',
+      action:
+        decision.status === 'APPROVED'
+          ? 'finance.transfer.authorization_approved'
+          : 'finance.transfer.authorization_refused',
       entity: { type: 'TransferRequest', id: transferRequest.id },
       metadata: {
         asaasTransferId: transfer.id,
         externalReference: transferRequest.externalReference,
+        decision: decision.status,
+        refuseReason: decision.status === 'REFUSED' ? decision.refuseReason : null,
       },
     });
-
-    decision = { status: 'APPROVED' };
   }
 
   await persistDecision({

@@ -139,10 +139,14 @@ function mapTransferErrorMessage(message: string) {
       return 'A chave Pix informada não foi encontrada. Se estiver em sandbox, use uma chave fictícia do BACEN ou uma chave válida de outra conta sandbox.';
     case 'TRANSFERENCIA_DUPLICADA':
       return 'Já existe uma transferência idêntica em processamento recente. Aguarde alguns minutos antes de tentar novamente.';
+    case 'IDEMPOTENCY_PAYLOAD_CONFLICT':
+      return 'Já existe uma tentativa anterior com a mesma chave de proteção, mas com dados diferentes. Feche o fluxo atual e tente novamente.';
     case 'AUTORIZACAO_CRITICA_NECESSARIA':
       return 'A conta exige autorização crítica para este saque. Configure a whitelist de IP e o webhook de autorização externa antes de automatizar a transferência.';
     case 'IDEMPOTENCY_KEY_OBRIGATORIO':
       return 'A solicitação não pode ser protegida contra duplicidade. Tente novamente.';
+    case 'REAUTENTICACAO_INDISPONIVEL':
+      return 'Sua sessão não possui os dados necessários para revalidar o saque. Entre novamente antes de tentar.';
     case 'SENHA_INVALIDA':
       return 'A senha informada não confere com a sessão atual.';
     default:

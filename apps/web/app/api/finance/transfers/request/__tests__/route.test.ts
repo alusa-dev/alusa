@@ -21,6 +21,10 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/lib/auth-service', () => ({
+  verifyCredentialsDetailed: vi.fn(),
+}));
+
 vi.mock('@alusa/finance', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@alusa/finance')>();
 
@@ -114,12 +118,90 @@ describe('POST /api/finance/transfers/request', () => {
     expect(data.error).toBe('IDEMPOTENCY_KEY_OBRIGATORIO');
   });
 
-  it('deve chamar requestWithdraw e retornar data', async () => {
+  it('deve retornar 401 quando a sessão não possui email para reautenticar', async () => {
     const { getServerSession } = await import('next-auth');
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'u1', contaId: 't1', role: 'FINANCEIRO', email: null },
+    } as never);
+
+    const request = new NextRequest('http://localhost:3000/api/finance/transfers/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        amount: '10.00',
+        currentPassword: '123456',
+        destination: { type: 'PIX', pixAddressKey: 'x', pixAddressKeyType: 'EVP' },
+      }),
+      headers: { 'Idempotency-Key': 'k1', 'content-type': 'application/json' },
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(data.error).toBe('REAUTENTICACAO_INDISPONIVEL');
+  });
+
+  it('deve retornar 409 quando a chave de idempotência colide com payload diferente', async () => {
+    const { getServerSession } = await import('next-auth');
+    const { verifyCredentialsDetailed } = await import('@/lib/auth-service');
     const { requestWithdraw } = await import('@alusa/finance');
 
     vi.mocked(getServerSession).mockResolvedValue({
-      user: { id: 'u1', contaId: 't1', role: 'FINANCEIRO' },
+      user: { id: 'u1', contaId: 't1', role: 'FINANCEIRO', email: 'financeiro@alusa.test' },
+    } as never);
+
+    vi.mocked(requestWithdraw).mockResolvedValueOnce({
+      success: false,
+      error: 'IDEMPOTENCY_PAYLOAD_CONFLICT',
+    } as never);
+    vi.mocked(verifyCredentialsDetailed).mockResolvedValueOnce({
+      ok: true,
+      user: {
+        id: 'u1',
+        email: 'financeiro@alusa.test',
+        nome: 'Financeiro',
+        role: 'FINANCEIRO',
+        contaId: 't1',
+        emailVerifiedAt: null,
+      },
+    } as never);
+
+    const request = new NextRequest('http://localhost:3000/api/finance/transfers/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        amount: '10.00',
+        currentPassword: '123456',
+        destination: { type: 'PIX', pixAddressKey: 'x', pixAddressKeyType: 'EVP' },
+      }),
+      headers: { 'Idempotency-Key': 'k1', 'content-type': 'application/json' },
+    });
+
+    const response = await POST(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toBe('IDEMPOTENCY_PAYLOAD_CONFLICT');
+  });
+
+  it('deve chamar requestWithdraw e retornar data', async () => {
+    const { getServerSession } = await import('next-auth');
+    const { verifyCredentialsDetailed } = await import('@/lib/auth-service');
+    const { requestWithdraw } = await import('@alusa/finance');
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'u1', contaId: 't1', role: 'FINANCEIRO', email: 'financeiro@alusa.test' },
+    } as never);
+    vi.mocked(verifyCredentialsDetailed).mockResolvedValueOnce({
+      ok: true,
+      user: {
+        id: 'u1',
+        email: 'financeiro@alusa.test',
+        nome: 'Financeiro',
+        role: 'FINANCEIRO',
+        contaId: 't1',
+        emailVerifiedAt: null,
+      },
     } as never);
 
     vi.mocked(requestWithdraw).mockResolvedValueOnce({
@@ -136,11 +218,12 @@ describe('POST /api/finance/transfers/request', () => {
       method: 'POST',
       body: JSON.stringify({
         amount: '10.00',
+        currentPassword: '123456',
         destination: { type: 'PIX', pixAddressKey: 'x', pixAddressKeyType: 'EVP' },
         description: 'Teste',
         scheduleDate: '2026-01-10',
       }),
-      headers: { 'Idempotency-Key': 'k1' },
+      headers: { 'Idempotency-Key': 'k1', 'content-type': 'application/json' },
     });
 
     const response = await POST(request);

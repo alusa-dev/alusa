@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (!user.email) return json(401, { error: 'NAO_AUTENTICADO' });
+    if (!user.email) return json(401, { error: 'REAUTENTICACAO_INDISPONIVEL' });
 
     const credentialCheck = await verifyCredentialsDetailed(user.email, parsed.data.currentPassword, user.contaId);
     if (!credentialCheck.ok) {
@@ -81,6 +81,8 @@ export async function POST(req: NextRequest) {
                 ? 400
                 : result.error === 'TRANSFERENCIA_DUPLICADA'
                   ? 409
+                  : result.error === 'IDEMPOTENCY_PAYLOAD_CONFLICT'
+                    ? 409
                   : result.error === 'AUTORIZACAO_CRITICA_NECESSARIA'
                     ? 409
                     : result.error === 'CREDENCIAIS_ASAAS_INVALIDAS'

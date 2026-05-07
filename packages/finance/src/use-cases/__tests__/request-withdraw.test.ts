@@ -142,6 +142,10 @@ describe('requestWithdraw', () => {
 
     vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce({
       id: 'tr1',
+      value: 10,
+      destination: { type: 'PIX', pixAddressKey: 'x', pixAddressKeyType: 'EVP' },
+      description: null,
+      scheduleDate: null,
       externalReference: 'transfer:tr1',
       asaasTransferId: 'asaas_tr_1',
       status: 'PENDING',
@@ -221,7 +225,7 @@ describe('requestWithdraw', () => {
     expect(createPixTransfer).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKey: 'sandbox_x',
-        idempotencyKey: 'k1',
+        idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
         data: expect.objectContaining({ externalReference: 'transfer:tr1', value: 10 }),
       }),
     );
@@ -280,5 +284,40 @@ describe('requestWithdraw', () => {
 
     expect(res.success).toBe(false);
     if (!res.success) expect(res.error).toBe('PIX_KEY_NAO_ENCONTRADA');
+  });
+
+  it('bloqueia mesma idempotencyKey com payload divergente', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+    const { financeProfileService } = await import('../../foundation/finance-profile.service');
+    const { getBalance } = await import('../get-balance');
+
+    vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
+    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
+    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+
+    vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce({
+      id: 'tr1',
+      value: 10,
+      destination: { type: 'PIX', pixAddressKey: 'pix-antiga@teste.com', pixAddressKeyType: 'EMAIL' },
+      description: null,
+      scheduleDate: null,
+      externalReference: 'transfer:tr1',
+      asaasTransferId: null,
+      status: 'REQUESTED',
+    } as never);
+
+    const res = await requestWithdraw({
+      contaId: 't1',
+      value: 10,
+      destination: { type: 'PIX', pixAddressKey: 'pix-nova@teste.com', pixAddressKeyType: 'EMAIL' },
+      idempotencyKey: 'k1',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toBe('IDEMPOTENCY_PAYLOAD_CONFLICT');
+    expect(prisma.transferRequest.update).not.toHaveBeenCalled();
   });
 });

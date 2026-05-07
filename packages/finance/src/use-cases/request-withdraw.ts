@@ -5,6 +5,7 @@ import { AsaasHttpError, createBankTransfer, createPixTransfer, getTransfer as a
 import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { buildSafeAsaasIdempotencyKey } from '../core/idempotency.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { financeProfileService } from '../foundation/finance-profile.service';
@@ -12,6 +13,11 @@ import { isPendingDocumentsBlockBypassedForTesting } from '../foundation/kyc-tes
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { getBalance } from './get-balance';
 import { mapAsaasTransferStatus } from './transfers/transfer-status';
+import {
+  areTransferRequestIntentsEquivalent,
+  buildTransferRequestIntentFromInput,
+  buildTransferRequestIntentFromRecord,
+} from './transfers/transfer-request-integrity';
 
 export type WithdrawDestination =
   | {
@@ -63,6 +69,7 @@ export type RequestWithdrawError =
   | 'CREDENCIAIS_ASAAS_INVALIDAS'
   | 'PIX_KEY_NAO_ENCONTRADA'
   | 'TRANSFERENCIA_DUPLICADA'
+  | 'IDEMPOTENCY_PAYLOAD_CONFLICT'
   | 'AUTORIZACAO_CRITICA_NECESSARIA'
   | 'ERRO_AO_CRIAR_TRANSFER'
   | 'ERRO_INTERNO';
@@ -154,10 +161,41 @@ export async function requestWithdraw(
 
     if (input.value <= 0 || input.value > balanceResult.data.balance) return err('SALDO_INSUFICIENTE');
 
+    const incomingIntent = buildTransferRequestIntentFromInput({
+      value: input.value,
+      description: input.description,
+      scheduleDate: input.scheduleDate,
+      destination: input.destination,
+    });
+
     const existing = await prisma.transferRequest.findUnique({
       where: { contaId_idempotencyKey: { contaId: input.contaId, idempotencyKey: input.idempotencyKey } },
-      select: { id: true, externalReference: true, asaasTransferId: true, status: true },
+      select: {
+        id: true,
+        value: true,
+        destination: true,
+        description: true,
+        scheduleDate: true,
+        externalReference: true,
+        asaasTransferId: true,
+        status: true,
+      },
     });
+
+    const existingIntent = existing ? buildTransferRequestIntentFromRecord(existing) : null;
+    if (existing && existingIntent && !areTransferRequestIntentsEquivalent(existingIntent, incomingIntent)) {
+      await auditLogService.record({
+        contaId: input.contaId,
+        actor: input.actor,
+        action: 'finance.transfer.idempotency_payload_conflict',
+        entity: { type: 'TransferRequest', id: existing.id },
+        metadata: {
+          idempotencyKey: input.idempotencyKey,
+          existingExternalReference: existing.externalReference,
+        },
+      });
+      return err('IDEMPOTENCY_PAYLOAD_CONFLICT');
+    }
 
     if (existing?.asaasTransferId) {
       return ok({
@@ -171,16 +209,11 @@ export async function requestWithdraw(
     const scheduleDate = toDateOrNull(input.scheduleDate);
 
     const created = existing
-      ? await prisma.transferRequest.update({
-          where: { id: existing.id },
-          data: {
-            value: input.value,
-            destination: input.destination as unknown as object,
-            description: input.description,
-            scheduleDate: scheduleDate ?? undefined,
-          },
-          select: { id: true, externalReference: true, asaasTransferId: true },
-        })
+      ? {
+          id: existing.id,
+          externalReference: existing.externalReference,
+          asaasTransferId: existing.asaasTransferId,
+        }
       : await prisma.transferRequest.create({
           data: {
             contaId: input.contaId,
@@ -223,11 +256,13 @@ export async function requestWithdraw(
       },
     });
 
+    const asaasIdempotencyKey = buildSafeAsaasIdempotencyKey(input.idempotencyKey);
+
     const asaasTransfer =
       input.destination.type === 'PIX'
         ? await createPixTransfer({
             apiKey: credentials.apiKey,
-            idempotencyKey: input.idempotencyKey,
+            idempotencyKey: asaasIdempotencyKey,
             data: {
               value: input.value,
               pixAddressKey: input.destination.pixAddressKey,
@@ -239,7 +274,7 @@ export async function requestWithdraw(
           })
         : await createBankTransfer({
             apiKey: credentials.apiKey,
-            idempotencyKey: input.idempotencyKey,
+            idempotencyKey: asaasIdempotencyKey,
             data: {
               value: input.value,
               bankAccount: {
