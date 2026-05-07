@@ -1,6 +1,7 @@
 import {
   AsaasHttpError,
   createCustomer,
+  getCustomer,
   listCustomers,
   updateCustomer,
   restoreCustomer,
@@ -28,6 +29,7 @@ export type EnsureAsaasCustomerPayer = {
   addressNumber?: string | null;
   complement?: string | null;
   province?: string | null;
+  asaasCustomerId?: string | null;
 };
 
 export type EnsureAsaasCustomerError =
@@ -64,6 +66,7 @@ export class AsaasCustomerEnsureError extends Error {
 }
 
 type EnsureStep =
+  | 'GET_LOCAL_CUSTOMER'
   | 'LIST_EXTERNAL_REFERENCE'
   | 'LIST_CPF'
   | 'UPDATE_EXISTING'
@@ -223,6 +226,10 @@ async function applyGlobalNotificationPreferencesSafe(contaId: string, customerI
   }
 }
 
+function deferGlobalNotificationPreferences(contaId: string, customerId: string) {
+  void applyGlobalNotificationPreferencesSafe(contaId, customerId);
+}
+
 export async function loadAndValidateSubaccountKey(contaId: string): Promise<LoadKeyResult> {
   const profile = await prisma.financeProfile.findUnique({
     where: { contaId },
@@ -341,9 +348,14 @@ async function persistCustomerId(
 }
 
 export async function ensureAsaasCustomerForPayer(
-  input: { contaId: string; payer: EnsureAsaasCustomerPayer; persist?: boolean },
+  input: {
+    contaId: string;
+    payer: EnsureAsaasCustomerPayer;
+    persist?: boolean;
+    notificationSyncMode?: 'blocking' | 'deferred' | 'skip';
+  },
 ): Promise<EnsureAsaasCustomerResult> {
-  let step: EnsureStep = 'LIST_EXTERNAL_REFERENCE';
+  let step: EnsureStep = 'GET_LOCAL_CUSTOMER';
   const keyResult = await loadAndValidateSubaccountKey(input.contaId);
   if (!keyResult.ok) {
     return {
@@ -382,6 +394,7 @@ export async function ensureAsaasCustomerForPayer(
   }
 
   const externalReference = buildExternalReference(input.contaId, input.payer);
+  const notificationSyncMode = input.notificationSyncMode ?? 'blocking';
 
   // Montar payload completo conforme doc Asaas (não usar placeholders)
   const phones = buildCustomerPhones(input.payer);
@@ -398,6 +411,43 @@ export async function ensureAsaasCustomerForPayer(
   }) as CreateCustomerInput;
 
   try {
+    const localCustomerId = normalizeString(input.payer.asaasCustomerId);
+
+    if (localCustomerId) {
+      step = 'GET_LOCAL_CUSTOMER';
+      try {
+        const localCustomer = await getCustomer({
+          apiKey,
+          customerId: localCustomerId,
+        });
+
+        if (localCustomer.id && !localCustomer.deleted) {
+          if (input.persist !== false) {
+            await persistCustomerId(input.payer, localCustomer.id, externalReference);
+          }
+
+          if (notificationSyncMode === 'blocking') {
+            await applyGlobalNotificationPreferencesSafe(input.contaId, localCustomer.id);
+          } else if (notificationSyncMode === 'deferred') {
+            deferGlobalNotificationPreferences(input.contaId, localCustomer.id);
+          }
+
+          return {
+            ok: true,
+            customerId: localCustomer.id,
+            externalReference,
+            reused: true,
+          };
+        }
+      } catch (error) {
+        if (error instanceof AsaasHttpError && (error.status === 404 || error.status === 410)) {
+          // Referência local inválida/deletada no provedor: segue para resolução por externalReference/CPF.
+        } else {
+          throw error;
+        }
+      }
+    }
+
     // 1) Buscar por externalReference primeiro (mais específico)
     let existingCustomer: AsaasCustomer | null = null;
 
@@ -499,7 +549,11 @@ export async function ensureAsaasCustomerForPayer(
         await persistCustomerId(input.payer, existingCustomer.id, externalReference);
       }
 
-      await applyGlobalNotificationPreferencesSafe(input.contaId, existingCustomer.id);
+      if (notificationSyncMode === 'blocking') {
+        await applyGlobalNotificationPreferencesSafe(input.contaId, existingCustomer.id);
+      } else if (notificationSyncMode === 'deferred') {
+        deferGlobalNotificationPreferences(input.contaId, existingCustomer.id);
+      }
 
       return {
         ok: true,
@@ -528,7 +582,11 @@ export async function ensureAsaasCustomerForPayer(
       await persistCustomerId(input.payer, created.id, externalReference);
     }
 
-    await applyGlobalNotificationPreferencesSafe(input.contaId, created.id);
+    if (notificationSyncMode === 'blocking') {
+      await applyGlobalNotificationPreferencesSafe(input.contaId, created.id);
+    } else if (notificationSyncMode === 'deferred') {
+      deferGlobalNotificationPreferences(input.contaId, created.id);
+    }
 
     return {
       ok: true,

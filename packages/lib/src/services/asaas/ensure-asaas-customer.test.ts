@@ -6,12 +6,14 @@ import { encryptSecret } from '../../security/encryption';
 
 const {
   listCustomersMock,
+  getCustomerMock,
   createCustomerMock,
   updateCustomerMock,
   restoreCustomerMock,
   applyNotificationPreferencesMock,
 } = vi.hoisted(() => ({
   listCustomersMock: vi.fn(),
+  getCustomerMock: vi.fn(),
   createCustomerMock: vi.fn(),
   updateCustomerMock: vi.fn(),
   restoreCustomerMock: vi.fn(),
@@ -23,6 +25,7 @@ vi.mock('@alusa/asaas', async (importOriginal) => {
   return {
     ...actual,
     listCustomers: listCustomersMock,
+    getCustomer: getCustomerMock,
     createCustomer: createCustomerMock,
     updateCustomer: updateCustomerMock,
     restoreCustomer: restoreCustomerMock,
@@ -120,6 +123,15 @@ describe('ensureAsaasCustomerForPayer', () => {
       limit: 10,
       offset: 0,
       data: [],
+    });
+    getCustomerMock.mockResolvedValue({
+      id: 'cust_local',
+      object: 'customer',
+      dateCreated: '2026-01-01',
+      name: 'Teste',
+      cpfCnpj: '12345678901',
+      deleted: false,
+      notificationDisabled: false,
     });
     createCustomerMock.mockResolvedValue({
       id: 'cust_new',
@@ -230,6 +242,51 @@ describe('ensureAsaasCustomerForPayer', () => {
         }),
       }),
     );
+  });
+
+  it('reaproveita customer local por id com uma chamada direta ao Asaas', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Local',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '39053344705',
+        email: 'aluno-local@example.com',
+        telefone: '11999999999',
+        asaasCustomerId: 'cust_local',
+      },
+    });
+
+    const result = await ensureAsaasCustomerForPayer({
+      contaId,
+      payer: {
+        type: 'ALUNO',
+        id: aluno.id,
+        name: aluno.nome,
+        cpfCnpj: aluno.cpf!,
+        email: aluno.email,
+        phone: aluno.telefone,
+        asaasCustomerId: aluno.asaasCustomerId,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.customerId).toBe('cust_local');
+      expect(result.reused).toBe(true);
+    }
+
+    expect(getCustomerMock).toHaveBeenCalledWith({
+      apiKey: 'sandbox_test_key',
+      customerId: 'cust_local',
+    });
+    expect(listCustomersMock).not.toHaveBeenCalled();
+    expect(createCustomerMock).not.toHaveBeenCalled();
+    expect(updateCustomerMock).not.toHaveBeenCalled();
+    expect(applyNotificationPreferencesMock).toHaveBeenCalledWith(contaId, 'cust_local');
+
+    const updated = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(updated?.asaasCustomerExternalReference).toBe(`alusa_${contaId}_aluno_${aluno.id}`);
   });
 
   it('cria customer quando não existe e persiste o ID', async () => {

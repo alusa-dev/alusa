@@ -577,6 +577,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
           enderecoNumero: true,
           enderecoComplemento: true,
           enderecoBairro: true,
+          asaasCustomerId: true,
         },
       })
     : null;
@@ -602,6 +603,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       addressNumber: responsavelPayer.enderecoNumero ?? undefined,
       complement: responsavelPayer.enderecoComplemento ?? undefined,
       province: responsavelPayer.enderecoBairro ?? undefined,
+      asaasCustomerId: responsavelPayer.asaasCustomerId ?? undefined,
     };
   } else {
     payerForEnsure = {
@@ -621,9 +623,11 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
   }
 
   try {
+    const ensureStartedAt = Date.now();
     const ensureResult = await ensureAsaasCustomerForPayer({
       contaId: normalizedData.contaId,
       payer: payerForEnsure,
+      notificationSyncMode: 'deferred',
     });
 
     if (!ensureResult.ok) {
@@ -637,6 +641,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     console.log('✅ Customer ensured', {
       customerId: ensureResult.customerId,
       reused: ensureResult.reused,
+      durationMs: Date.now() - ensureStartedAt,
     });
   } catch (error) {
     await prisma.$transaction(async (tx) => {
