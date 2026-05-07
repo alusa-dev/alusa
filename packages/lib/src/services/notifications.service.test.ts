@@ -11,7 +11,7 @@ const txMock = {
   },
   notification: {
     findUnique: vi.fn(),
-    create: vi.fn(),
+    createMany: vi.fn(),
     deleteMany: vi.fn(),
   },
   notificationRecipient: {
@@ -63,8 +63,8 @@ describe('notifications.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     txMock.usuario.findMany.mockResolvedValue([]);
-    txMock.notification.findUnique.mockResolvedValue(null);
-    txMock.notification.create.mockResolvedValue({ id: 'notif-new' });
+    txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValue({ id: 'notif-new' });
+    txMock.notification.createMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.createMany.mockResolvedValue({ count: 0 });
     txMock.notification.deleteMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.deleteMany.mockResolvedValue({ count: 1 });
@@ -104,7 +104,7 @@ describe('notifications.service', () => {
         }),
       }),
     );
-    expect(txMock.notification.create).toHaveBeenCalledWith(
+    expect(txMock.notification.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           contaId: 'conta-1',
@@ -112,6 +112,7 @@ describe('notifications.service', () => {
           category: NotificationCategory.ENROLLMENT,
           dedupeKey: 'enrollment:created:mat-1',
         }),
+        skipDuplicates: true,
       }),
     );
     expect(txMock.notificationRecipient.createMany).toHaveBeenCalledWith({
@@ -129,9 +130,8 @@ describe('notifications.service', () => {
     });
   });
 
-  it('reaproveita notificacao existente quando a dedupeKey entra em conflito', async () => {
-    const uniqueError = Object.assign(new Error('duplicate key'), { code: 'P2002' });
-    txMock.notification.create.mockRejectedValueOnce(uniqueError);
+  it('reaproveita notificacao existente quando a dedupeKey ja existe', async () => {
+    txMock.notification.findUnique.mockReset();
     txMock.notification.findUnique.mockResolvedValueOnce({ id: 'notif-existing' });
 
     const result = await createNotification({
@@ -147,7 +147,7 @@ describe('notifications.service', () => {
       sourceId: 'pay-1',
     });
 
-    expect(txMock.notification.create).toHaveBeenCalledTimes(1);
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
     expect(txMock.notification.findUnique).toHaveBeenCalledWith({
       where: {
         contaId_dedupeKey: {
@@ -172,6 +172,39 @@ describe('notifications.service', () => {
     });
   });
 
+  it('reaproveita notificacao quando outra transacao cria a dedupeKey antes do createMany', async () => {
+    txMock.notification.findUnique.mockReset();
+    txMock.notification.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'notif-raced' });
+    txMock.notification.createMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await createNotification({
+      contaId: 'conta-1',
+      type: NotificationType.BILLING_OVERDUE,
+      category: NotificationCategory.BILLING,
+      severity: NotificationSeverity.WARNING,
+      title: 'Cobrança em atraso',
+      message: 'Existe uma cobrança em atraso.',
+      dedupeKey: 'billing:PAYMENT_OVERDUE:pay-race',
+      recipientUserIds: ['user-1'],
+      sourceType: 'ASAAS_WEBHOOK',
+      sourceId: 'pay-race',
+    });
+
+    expect(txMock.notification.createMany).toHaveBeenCalledTimes(1);
+    expect(txMock.notificationRecipient.createMany).toHaveBeenCalledWith({
+      data: [{ notificationId: 'notif-raced', contaId: 'conta-1', userId: 'user-1' }],
+      skipDuplicates: true,
+    });
+    expect(txMock.auditLog.create).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      notificationId: 'notif-raced',
+      created: false,
+      recipientCount: 1,
+    });
+  });
+
   it('retorna sem efeitos colaterais quando nao ha destinatarios ativos', async () => {
     const result = await createNotification({
       contaId: 'conta-1',
@@ -183,7 +216,7 @@ describe('notifications.service', () => {
       dedupeKey: 'system:attention:1',
     });
 
-    expect(txMock.notification.create).not.toHaveBeenCalled();
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
     expect(txMock.notificationRecipient.createMany).not.toHaveBeenCalled();
     expect(txMock.auditLog.create).not.toHaveBeenCalled();
     expect(result).toEqual({
@@ -194,6 +227,8 @@ describe('notifications.service', () => {
   });
 
   it('normaliza alias de evento financeiro antes de criar a notificação', async () => {
+    txMock.notification.findUnique.mockReset();
+    txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'notif-billing' });
     txMock.usuario.findMany.mockResolvedValue([{ id: 'user-1' }]);
     prismaMock.charge.findUnique.mockResolvedValue({
       id: 'charge-1',
@@ -213,7 +248,7 @@ describe('notifications.service', () => {
       sourceType: 'ASAAS_SYNC',
     });
 
-    expect(txMock.notification.create).toHaveBeenCalledWith(
+    expect(txMock.notification.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           contaId: 'conta-1',
@@ -226,6 +261,7 @@ describe('notifications.service', () => {
             webhookEventId: 'evt-1',
           }),
         }),
+        skipDuplicates: true,
       }),
     );
   });
@@ -301,6 +337,6 @@ describe('notifications.service', () => {
   it('expõe normalização previsível para o conjunto suportado de eventos financeiros', () => {
     expect(normalizeBillingNotificationEvent('PAYMENT_RECEIVED')).toBe('PAYMENT_RECEIVED');
     expect(normalizeBillingNotificationEvent('PAYMENT_DUNNING_RECEIVED')).toBe('DUNNING_RECEIVED');
-    expect(normalizeBillingNotificationEvent('PAYMENT_REFUNDED')).toBeNull();
+    expect(normalizeBillingNotificationEvent('PAYMENT_REFUNDED')).toBe('PAYMENT_REFUNDED');
   });
 });

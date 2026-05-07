@@ -69,15 +69,6 @@ export interface CreateNotificationResult {
   recipientCount: number;
 }
 
-function isPrismaUniqueConstraintError(error: unknown): boolean {
-  return Boolean(
-    error &&
-    typeof error === 'object' &&
-    'code' in error &&
-    (error as { code?: string }).code === 'P2002'
-  );
-}
-
 function uniq(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -210,8 +201,25 @@ export async function createNotification(input: CreateNotificationInput): Promis
     let notification: { id: string } | null = null;
     let created = false;
 
-    try {
-      notification = await tx.notification.create({
+    notification = await tx.notification.findUnique({
+      where: {
+        contaId_dedupeKey: {
+          contaId: input.contaId,
+          dedupeKey: input.dedupeKey,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (notification) {
+      console.warn('[Notifications] dedupeKey já existente; reaproveitando notificação.', {
+        contaId: input.contaId,
+        dedupeKey: input.dedupeKey,
+        type: input.type,
+      });
+
+    } else {
+      const createResult = await tx.notification.createMany({
         data: {
           contaId: input.contaId,
           type: input.type,
@@ -230,20 +238,10 @@ export async function createNotification(input: CreateNotificationInput): Promis
           metadata: input.metadata,
           triggeredAt: input.triggeredAt ?? new Date(),
         },
-        select: { id: true },
-      });
-      created = true;
-    } catch (error) {
-      if (!isPrismaUniqueConstraintError(error)) {
-        throw error;
-      }
-
-      console.warn('[Notifications] dedupeKey já existente; reaproveitando notificação.', {
-        contaId: input.contaId,
-        dedupeKey: input.dedupeKey,
-        type: input.type,
+        skipDuplicates: true,
       });
 
+      created = createResult.count > 0;
       notification = await tx.notification.findUnique({
         where: {
           contaId_dedupeKey: {
@@ -253,6 +251,14 @@ export async function createNotification(input: CreateNotificationInput): Promis
         },
         select: { id: true },
       });
+
+      if (!created) {
+        console.warn('[Notifications] dedupeKey já existente; reaproveitando notificação.', {
+          contaId: input.contaId,
+          dedupeKey: input.dedupeKey,
+          type: input.type,
+        });
+      }
     }
 
     if (!notification) {
