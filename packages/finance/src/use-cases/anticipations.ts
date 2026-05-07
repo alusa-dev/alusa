@@ -176,6 +176,30 @@ async function readAutomaticAnticipationEligibility(apiKey: string): Promise<Pic
   }
 }
 
+export interface AutomaticAnticipationMenuVisibility {
+  showAutomaticAnticipationItem: boolean;
+  accountPersonType: string | null;
+}
+
+export async function getAutomaticAnticipationMenuVisibility(params: {
+  contaId: string;
+}): Promise<AutomaticAnticipationMenuVisibility> {
+  const credentials = await loadAsaasCredentials(params.contaId);
+  if (!credentials) {
+    return {
+      showAutomaticAnticipationItem: true,
+      accountPersonType: null,
+    };
+  }
+
+  const eligibility = await readAutomaticAnticipationEligibility(credentials.apiKey);
+
+  return {
+    showAutomaticAnticipationItem: eligibility.accountPersonType !== 'FISICA',
+    accountPersonType: eligibility.accountPersonType,
+  };
+}
+
 function isAutomaticAnticipationRestrictedToLegalEntities(error: unknown): boolean {
   if (!(error instanceof AsaasHttpError)) return false;
 

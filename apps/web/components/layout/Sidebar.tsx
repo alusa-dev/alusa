@@ -612,7 +612,7 @@ function Sidebar() {
 
     async function loadAutomaticAnticipationVisibility() {
       try {
-        const response = await fetch('/api/financeiro/antecipacoes/configuracao', {
+        const response = await fetch('/api/financeiro/antecipacoes/visibilidade', {
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -623,8 +623,7 @@ function Sidebar() {
         }
 
         const payload = await response.json();
-        const accountPersonType = payload?.data?.accountPersonType;
-        setShowAutomaticAnticipationItem(accountPersonType !== 'FISICA');
+        setShowAutomaticAnticipationItem(payload?.data?.showAutomaticAnticipationItem !== false);
       } catch (error) {
         if (controller.signal.aborted) return;
         setShowAutomaticAnticipationItem(true);

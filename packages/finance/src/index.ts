@@ -511,6 +511,7 @@ export type {
 
 export {
   cancelReceivableAnticipation,
+  getAutomaticAnticipationMenuVisibility,
   getReceivableAnticipationConfiguration,
   getReceivableAnticipationLimits,
   listReceivableAnticipationCandidates,
@@ -520,6 +521,7 @@ export {
   updateReceivableAnticipationConfiguration,
 } from './use-cases/anticipations';
 export type {
+  AutomaticAnticipationMenuVisibility,
   AnticipationCandidate,
   AnticipationError,
   AnticipationListItem,
