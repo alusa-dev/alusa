@@ -9,6 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -132,8 +133,18 @@ function mapTransferErrorMessage(message: string) {
       return 'Saldo insuficiente para concluir a transferência.';
     case 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS':
       return 'A conta financeira ainda não está configurada para movimentação.';
+    case 'CREDENCIAIS_ASAAS_INVALIDAS':
+      return 'A subconta financeira está com credenciais inválidas ou expiradas. Reconecte a conta antes de tentar novamente.';
+    case 'PIX_KEY_NAO_ENCONTRADA':
+      return 'A chave Pix informada não foi encontrada. Se estiver em sandbox, use uma chave fictícia do BACEN ou uma chave válida de outra conta sandbox.';
+    case 'TRANSFERENCIA_DUPLICADA':
+      return 'Já existe uma transferência idêntica em processamento recente. Aguarde alguns minutos antes de tentar novamente.';
+    case 'AUTORIZACAO_CRITICA_NECESSARIA':
+      return 'A conta exige autorização crítica para este saque. Configure a whitelist de IP e o webhook de autorização externa antes de automatizar a transferência.';
     case 'IDEMPOTENCY_KEY_OBRIGATORIO':
       return 'A solicitação não pode ser protegida contra duplicidade. Tente novamente.';
+    case 'SENHA_INVALIDA':
+      return 'A senha informada não confere com a sessão atual.';
     default:
       return message;
   }
@@ -786,6 +797,9 @@ export function TransferWizardDialog({
   const [submitting, setSubmitting] = useState(false);
   const [savePixKey, setSavePixKey] = useState(false);
   const [deletingRecipientId, setDeletingRecipientId] = useState<string | null>(null);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [currentPasswordError, setCurrentPasswordError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -793,6 +807,9 @@ export function TransferWizardDialog({
       setRecipientId('manual');
       setRecipientSearch('');
       setSavePixKey(false);
+      setPasswordDialogOpen(false);
+      setCurrentPassword('');
+      setCurrentPasswordError(null);
       setForm({ ...TRANSFER_INITIAL_STATE, type: getWizardDefaultType(canPix, canTed) });
       return;
     }
@@ -886,6 +903,22 @@ export function TransferWizardDialog({
     return submitting ? 'Processando...' : 'Solicitar transferência';
   }, [step, submitting]);
 
+  function resetPasswordDialog() {
+    setPasswordDialogOpen(false);
+    setCurrentPassword('');
+    setCurrentPasswordError(null);
+  }
+
+  function handlePasswordDialogOpenChange(nextOpen: boolean) {
+    if (!nextOpen) {
+      if (submitting) return;
+      resetPasswordDialog();
+      return;
+    }
+
+    setPasswordDialogOpen(true);
+  }
+
   function handleRecipientSelection(value: string) {
     if (recipientId === value) {
       setRecipientId('manual');
@@ -968,7 +1001,7 @@ export function TransferWizardDialog({
     }
   }
 
-  async function handleSubmit() {
+  function handleOpenPasswordDialog() {
     if (form.type === 'PIX' && !effectivePixKeyType) {
       pushToast({
         title: 'Revise a chave Pix',
@@ -987,6 +1020,12 @@ export function TransferWizardDialog({
       return;
     }
 
+    setCurrentPassword('');
+    setCurrentPasswordError(null);
+    setPasswordDialogOpen(true);
+  }
+
+  async function handleSubmit(password: string) {
     setSubmitting(true);
     try {
       const payload =
@@ -1004,12 +1043,16 @@ export function TransferWizardDialog({
           form.type === 'PIX'
             ? {
                 ...payload,
+                currentPassword: password,
                 destination: {
                   ...payload.destination,
                   saveRecipient: savePixKey,
                 },
               }
-            : payload,
+            : {
+                ...payload,
+                currentPassword: password,
+              },
         ),
       });
 
@@ -1019,12 +1062,19 @@ export function TransferWizardDialog({
         variant: 'success',
       });
 
+      resetPasswordDialog();
       onOpenChange(false);
       await onSuccess();
     } catch (error) {
+      const message = sanitizeErrorMessage(error);
+      if (message === 'SENHA_INVALIDA') {
+        setCurrentPasswordError('Senha incorreta. Confira e tente novamente.');
+        return;
+      }
+
       pushToast({
         title: 'Não foi possível solicitar a transferência',
-        description: mapTransferErrorMessage(sanitizeErrorMessage(error)),
+        description: mapTransferErrorMessage(message),
         variant: 'error',
       });
     } finally {
@@ -1032,11 +1082,21 @@ export function TransferWizardDialog({
     }
   }
 
+  async function handlePasswordConfirm() {
+    if (!currentPassword.trim()) {
+      setCurrentPasswordError('Informe sua senha para confirmar a transferência.');
+      return;
+    }
+
+    setCurrentPasswordError(null);
+    await handleSubmit(currentPassword);
+  }
+
   async function handleNext() {
     if (!canAdvance) return;
 
     if (step === 5) {
-      await handleSubmit();
+      handleOpenPasswordDialog();
       return;
     }
 
@@ -1053,7 +1113,8 @@ export function TransferWizardDialog({
   }
 
   return (
-    <WizardDialogFrame
+    <>
+      <WizardDialogFrame
       open={open}
       onOpenChange={onOpenChange}
       title="Nova transferência"
@@ -1067,7 +1128,7 @@ export function TransferWizardDialog({
       onNext={() => void handleNext()}
       loading={submitting}
       nextTestId="wizard-next"
-    >
+      >
       {step === 1 ? (
         <WizardSection title="Escolha como deseja transferir" hint="Cada opcao abre apenas os campos necessarios para esse envio.">
           <div className="grid gap-3 md:grid-cols-2">
@@ -1448,6 +1509,51 @@ export function TransferWizardDialog({
           </div>
         </div>
       ) : null}
-    </WizardDialogFrame>
+      </WizardDialogFrame>
+
+      <Dialog open={passwordDialogOpen} onOpenChange={handlePasswordDialogOpenChange}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Confirmar com senha</DialogTitle>
+            <DialogDescription>
+              Digite sua senha atual para confirmar e concluir esta transferência com segurança.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handlePasswordConfirm();
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="transfer-current-password">Senha atual</Label>
+              <Input
+                id="transfer-current-password"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(event) => {
+                  setCurrentPassword(event.target.value);
+                  if (currentPasswordError) setCurrentPasswordError(null);
+                }}
+                disabled={submitting}
+              />
+              {currentPasswordError ? <p className="text-xs text-destructive">{currentPasswordError}</p> : null}
+            </div>
+
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button type="button" variant="outline" onClick={() => handlePasswordDialogOpenChange(false)} disabled={submitting}>
+                Voltar
+              </Button>
+              <Button type="submit" disabled={submitting} data-testid="confirm-transfer-password">
+                {submitting ? 'Validando...' : 'Confirmar e solicitar'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

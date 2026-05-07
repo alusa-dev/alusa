@@ -1,5 +1,9 @@
 {
 	"servers": {
+		"github": {
+			"type": "http",
+			"url": "https://api.githubcopilot.com/mcp/"
+		},
 		"alusadb": {
 			"command": "npx",
 			"args": [
@@ -31,6 +35,14 @@
 			},
 			"gallery": "https://api.mcp.github.com",
 			"version": "1.0.31"
+		},
+		"neon": {
+			"type": "http",
+			"url": "https://mcp.neon.tech/mcp"
+		},
+		"cloudflare": {
+			"type": "http",
+			"url": "https://mcp.cloudflare.com/mcp"
 		}
 	},
 	"inputs": [

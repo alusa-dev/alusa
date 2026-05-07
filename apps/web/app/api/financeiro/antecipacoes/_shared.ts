@@ -32,7 +32,9 @@ export function anticipationErrorResponse(error: AnticipationError) {
   return json(502, { error: 'ERRO_ASAAS' });
 }
 
-export async function requireFinanceUser(): Promise<
+export async function requireFinanceUser(
+  opts: { checkAccountGate?: boolean } = {},
+): Promise<
   | { ok: true; user: FinanceUser }
   | { ok: false; response: NextResponse }
 > {
@@ -47,9 +49,11 @@ export async function requireFinanceUser(): Promise<
     return { ok: false as const, response: json(403, { error: 'SEM_PERMISSAO' }) };
   }
 
-  const gate = await guardFinancialAccountOr412(user.contaId);
-  if (!gate.ok) {
-    return { ok: false as const, response: gate.response };
+  if (opts.checkAccountGate ?? true) {
+    const gate = await guardFinancialAccountOr412(user.contaId);
+    if (!gate.ok) {
+      return { ok: false as const, response: gate.response };
+    }
   }
 
   return {

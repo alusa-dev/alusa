@@ -7,6 +7,7 @@ import {
   updateReceivableAnticipationConfiguration,
 } from '@alusa/finance';
 import { anticipationErrorResponse, json, requireFinanceUser } from '../_shared';
+import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateCacheControl } from '@/lib/private-cache';
 
@@ -25,7 +26,7 @@ const configurationCacheControl = privateCacheControl({
 export async function GET() {
   const timer = createPerfTimer('api/financeiro/antecipacoes/configuracao');
   try {
-    const auth = await requireFinanceUser();
+    const auth = await requireFinanceUser({ checkAccountGate: false });
     if (!auth.ok) return auth.response;
 
     const cached = configurationCache.get(auth.user.contaId);
@@ -37,10 +38,18 @@ export async function GET() {
       });
     }
 
+    const gate = await withPerfTimer(
+      'api/financeiro/antecipacoes/configuracao',
+      'guardFinancialAccountOr412',
+      () => guardFinancialAccountOr412(auth.user.contaId),
+      { contaId: auth.user.contaId },
+    );
+    if (!gate.ok) return gate.response;
+
     const result = await withPerfTimer(
       'finance.getReceivableAnticipationConfiguration',
       'call Asaas',
-      () => getReceivableAnticipationConfiguration({ contaId: auth.user.contaId })
+      () => getReceivableAnticipationConfiguration({ contaId: auth.user.contaId }),
     );
 
     if (!result.success) return anticipationErrorResponse(result.error);

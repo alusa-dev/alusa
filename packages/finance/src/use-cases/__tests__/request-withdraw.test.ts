@@ -19,6 +19,19 @@ vi.mock('@alusa/database', () => {
 });
 
 vi.mock('@alusa/asaas', () => ({
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status: number;
+    response: unknown;
+    responseBody: unknown;
+
+    constructor(message: string, status: number, response?: unknown, responseBody?: unknown) {
+      super(message);
+      this.name = 'AsaasHttpError';
+      this.status = status;
+      this.response = response;
+      this.responseBody = responseBody;
+    }
+  },
   createPixTransfer: vi.fn(),
   createBankTransfer: vi.fn(),
   getTransfer: vi.fn(),
@@ -226,5 +239,46 @@ describe('requestWithdraw', () => {
         authorized: true,
       }),
     });
+  });
+
+  it('retorna PIX_KEY_NAO_ENCONTRADA quando o Asaas rejeita a chave Pix de destino', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    const { AsaasHttpError, createPixTransfer } = await import('@alusa/asaas');
+    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+    const { financeProfileService } = await import('../../foundation/finance-profile.service');
+    const { getBalance } = await import('../get-balance');
+
+    vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
+    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
+    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.transferRequest.create).mockResolvedValueOnce({
+      id: 'tr1',
+      externalReference: 'transfer:pending:k1',
+      asaasTransferId: null,
+    } as never);
+    vi.mocked(prisma.transferRequest.update).mockResolvedValueOnce({
+      id: 'tr1',
+      externalReference: 'transfer:tr1',
+      asaasTransferId: null,
+    } as never);
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x', contaId: 't1' } as never);
+    vi.mocked(createPixTransfer).mockRejectedValueOnce(
+      new AsaasHttpError('A chave informada não foi encontrada.', 400, {
+        errors: [{ description: 'A chave informada não foi encontrada.' }],
+      }),
+    );
+
+    const res = await requestWithdraw({
+      contaId: 't1',
+      value: 10,
+      destination: { type: 'PIX', pixAddressKey: 'chave-invalida', pixAddressKeyType: 'EMAIL' },
+      idempotencyKey: 'k1',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toBe('PIX_KEY_NAO_ENCONTRADA');
   });
 });

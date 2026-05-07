@@ -21,7 +21,7 @@ vi.mock('@alusa/finance', () => ({
   },
 }));
 
-const { PUT } = await import('../route');
+const { GET, PUT } = await import('../route');
 
 async function mockSession(user: Record<string, string> | null) {
   const mod = await import('@/lib/safe-server-session');
@@ -34,6 +34,33 @@ function buildRequest(body: Record<string, unknown>) {
     body: JSON.stringify(body),
   });
 }
+
+describe('GET /api/financeiro/antecipacoes/configuracao', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('retorna cache hit antes do gate em chamadas repetidas', async () => {
+    await mockSession({ id: 'u1', contaId: 'c-cache', role: 'FINANCEIRO' });
+    const finance = await import('@alusa/finance');
+    const gate = await import('@/lib/finance/financial-account-gate');
+
+    vi.mocked(finance.getReceivableAnticipationConfiguration).mockResolvedValueOnce({
+      success: true,
+      data: { creditCardAutomaticEnabled: true },
+    } as never);
+
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-alusa-cache')).toBe('MISS');
+
+    const cachedResponse = await GET();
+    expect(cachedResponse.status).toBe(200);
+    expect(cachedResponse.headers.get('x-alusa-cache')).toBe('HIT');
+    expect(gate.guardFinancialAccountOr412).toHaveBeenCalledTimes(1);
+    expect(finance.getReceivableAnticipationConfiguration).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('PUT /api/financeiro/antecipacoes/configuracao', () => {
   beforeEach(() => {

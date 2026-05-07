@@ -474,4 +474,109 @@ describe('ContaPage', () => {
     });
     expect(screen.getByTestId('wizard-next')).toBeDisabled();
   });
+
+  it('solicita a senha em modal antes de enviar a transferência', async () => {
+    const overviewPayload = {
+      data: {
+        balance: { available: 500, syncedAt: '2026-03-23T20:49:00.000Z' },
+        financialAccount: {
+          status: 'READY',
+          canTransfer: true,
+          canPixCopyPaste: true,
+          reasonCode: null,
+        },
+        features: {
+          manualWithdrawEnabled: true,
+          pixTransferEnabled: true,
+          bankTransferEnabled: true,
+        },
+        fees: null,
+        statementPreview: {
+          summary: { receitas: 0, despesas: 0, estornos: 0, liquido: 0 },
+          items: [],
+        },
+        recentTransfers: { items: [], total: 0 },
+      },
+    };
+
+    const recipientsPayload = { data: { items: [] } };
+    const transfersPayload = {
+      data: {
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 10,
+        totalPages: 0,
+      },
+    };
+
+    global.fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+
+      if (url.startsWith('/api/financeiro/conta?mode=summary')) {
+        return { ok: true, json: async () => overviewPayload } as Response;
+      }
+
+      if (url === '/api/finance/transfers/recipients') {
+        return { ok: true, json: async () => recipientsPayload } as Response;
+      }
+
+      if (url.startsWith('/api/finance/transfers?')) {
+        return { ok: true, json: async () => transfersPayload } as Response;
+      }
+
+      if (url === '/api/finance/transfers/request') {
+        return {
+          ok: true,
+          json: async () => ({ data: { id: 'tr_1', status: 'PENDING' } }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+    }) as typeof fetch;
+
+    render(<ContaPage />);
+
+    await screen.findByText('Saldo disponível');
+    fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
+
+    fireEvent.click(await screen.findByTestId('wizard-next'));
+    fireEvent.change(screen.getByLabelText('Chave Pix'), {
+      target: { value: 'financeiro@alusa.test' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-next')).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.change(await screen.findByLabelText('Valor'), { target: { value: '1000' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('wizard-next')).not.toBeDisabled();
+    });
+
+    fireEvent.click(screen.getByTestId('wizard-next'));
+    fireEvent.click(await screen.findByTestId('wizard-next'));
+    fireEvent.click(await screen.findByTestId('wizard-next'));
+
+    expect(await screen.findByText('Confirmar com senha')).toBeInTheDocument();
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      '/api/finance/transfers/request',
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    fireEvent.change(screen.getByLabelText('Senha atual'), { target: { value: 'senha-segura' } });
+    fireEvent.click(screen.getByTestId('confirm-transfer-password'));
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        '/api/finance/transfers/request',
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.stringContaining('"currentPassword":"senha-segura"'),
+        }),
+      );
+    });
+  });
 });

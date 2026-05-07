@@ -28,6 +28,25 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data;
 }
 
+const notificationListRequests = new Map<string, Promise<NotificationListResponse>>();
+
+function fetchNotificationList(url: string) {
+  const existing = notificationListRequests.get(url);
+  if (existing) return existing;
+
+  const request = fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  })
+    .then((response) => parseResponse<NotificationListResponse>(response))
+    .finally(() => {
+      notificationListRequests.delete(url);
+    });
+
+  notificationListRequests.set(url, request);
+  return request;
+}
+
 export function useNotificationsFeed(params?: {
   view?: NotificationView;
   limit?: number;
@@ -118,11 +137,7 @@ export function useNotificationsFeed(params?: {
         limit: String(limit),
         page: String(page),
       });
-      const response = await fetch(`/api/notifications?${searchParams.toString()}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      const data = await parseResponse<NotificationListResponse>(response);
+      const data = await fetchNotificationList(`/api/notifications?${searchParams.toString()}`);
       lastLoadedAtRef.current = Date.now();
       setItems(data.items);
       setUnreadCount(data.unreadCount);

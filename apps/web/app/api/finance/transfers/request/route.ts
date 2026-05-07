@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { z } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
+import { verifyCredentialsDetailed } from '@/lib/auth-service';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import {
   requestWithdraw,
@@ -10,9 +12,12 @@ import {
   mapRequestWithdrawOutputToDTO,
 } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; email?: string | null };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
+const requestSchema = requestWithdrawDTOSchema.extend({
+  currentPassword: z.string().min(1, 'Senha atual obrigatória'),
+});
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -36,7 +41,7 @@ export async function POST(req: NextRequest) {
     if (!idempotencyKey) return json(400, { error: 'IDEMPOTENCY_KEY_OBRIGATORIO' });
 
     const raw = await req.json().catch(() => null);
-    const parsed = requestWithdrawDTOSchema.safeParse(raw);
+    const parsed = requestSchema.safeParse(raw);
     if (!parsed.success) {
       return json(400, {
         error: {
@@ -47,7 +52,16 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const input = mapRequestWithdrawDTOToInput(parsed.data, {
+    if (!user.email) return json(401, { error: 'NAO_AUTENTICADO' });
+
+    const credentialCheck = await verifyCredentialsDetailed(user.email, parsed.data.currentPassword, user.contaId);
+    if (!credentialCheck.ok) {
+      return json(401, { error: 'SENHA_INVALIDA' });
+    }
+
+    const { currentPassword: _currentPassword, ...transferData } = parsed.data;
+
+    const input = mapRequestWithdrawDTOToInput(transferData, {
       contaId: user.contaId,
       idempotencyKey,
       actorId: user.id,
@@ -63,6 +77,14 @@ export async function POST(req: NextRequest) {
             ? 409
             : result.error === 'SALDO_INSUFICIENTE'
               ? 400
+              : result.error === 'PIX_KEY_NAO_ENCONTRADA'
+                ? 400
+                : result.error === 'TRANSFERENCIA_DUPLICADA'
+                  ? 409
+                  : result.error === 'AUTORIZACAO_CRITICA_NECESSARIA'
+                    ? 409
+                    : result.error === 'CREDENCIAIS_ASAAS_INVALIDAS'
+                      ? 503
               : result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
                 ? 503
                 : 500;
@@ -70,7 +92,7 @@ export async function POST(req: NextRequest) {
       return json(status, { error: result.error });
     }
 
-    const dto = mapRequestWithdrawOutputToDTO(result.data, parsed.data.amount);
+    const dto = mapRequestWithdrawOutputToDTO(result.data, transferData.amount);
     return json(200, { data: dto });
   } catch (error) {
     console.error('[Finance Transfers Request][POST]', error);

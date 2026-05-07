@@ -301,6 +301,12 @@ export type {
   GetAccountOverviewError,
   AccountOverviewTransferItem,
 } from './use-cases/get-account-overview';
+export { getAccountBalanceSummary } from './use-cases/get-account-balance-summary';
+export type {
+  GetAccountBalanceSummaryInput,
+  GetAccountBalanceSummaryOutput,
+  GetAccountBalanceSummaryError,
+} from './use-cases/get-account-balance-summary';
 
 // Ledger (extrato baseado em financialTransactions)
 export { listLedgerEntries } from './use-cases/list-ledger-entries';

@@ -1,10 +1,11 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { createBankTransfer, createPixTransfer, getTransfer as asaasGetTransfer } from '@alusa/asaas';
+import { AsaasHttpError, createBankTransfer, createPixTransfer, getTransfer as asaasGetTransfer } from '@alusa/asaas';
 import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { financeProfileService } from '../foundation/finance-profile.service';
 import { isPendingDocumentsBlockBypassedForTesting } from '../foundation/kyc-test-bypass';
@@ -59,8 +60,40 @@ export type RequestWithdrawError =
   | 'KYC_NAO_APROVADO'
   | 'SALDO_INSUFICIENTE'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
+  | 'CREDENCIAIS_ASAAS_INVALIDAS'
+  | 'PIX_KEY_NAO_ENCONTRADA'
+  | 'TRANSFERENCIA_DUPLICADA'
+  | 'AUTORIZACAO_CRITICA_NECESSARIA'
   | 'ERRO_AO_CRIAR_TRANSFER'
   | 'ERRO_INTERNO';
+
+function mapWithdrawCreationError(error: unknown, destination: WithdrawDestination): RequestWithdrawError {
+  if (error instanceof AsaasHttpError) {
+    const failure = classifyAsaasOperationalError(error, 'subaccount');
+    const detailsText = failure.details
+      .map((detail) => `${detail.code ?? ''} ${detail.description ?? ''}`.trim().toLowerCase())
+      .join(' ');
+    const messageText = `${failure.message} ${detailsText}`.trim().toLowerCase();
+
+    if (failure.category === 'invalid_subaccount_credentials') {
+      return 'CREDENCIAIS_ASAAS_INVALIDAS';
+    }
+
+    if (error.status === 409) {
+      return 'TRANSFERENCIA_DUPLICADA';
+    }
+
+    if (messageText.includes('autorização crítica habilitada') || messageText.includes('codigo de confirmação')) {
+      return 'AUTORIZACAO_CRITICA_NECESSARIA';
+    }
+
+    if (destination.type === 'PIX' && messageText.includes('a chave informada não foi encontrada')) {
+      return 'PIX_KEY_NAO_ENCONTRADA';
+    }
+  }
+
+  return 'ERRO_AO_CRIAR_TRANSFER';
+}
 
 function toDateOrNull(dateISO?: string): Date | null {
   if (!dateISO) return null;
@@ -295,6 +328,6 @@ export async function requestWithdraw(
     });
   } catch (error) {
     console.error('[finance][requestWithdraw]', error);
-    return err('ERRO_AO_CRIAR_TRANSFER');
+    return err(mapWithdrawCreationError(error, input.destination));
   }
 }

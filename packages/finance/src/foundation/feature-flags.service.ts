@@ -94,6 +94,27 @@ export const featureFlagsService = {
     return false;
   },
 
+  async getTransferFeatureFlags(contaId: string): Promise<{
+    manualWithdrawEnabled: boolean;
+    pixTransferEnabled: boolean;
+    bankTransferEnabled: boolean;
+  }> {
+    const flags = await prisma.tenantFeatureFlags.findUnique({
+      where: { contaId },
+      select: {
+        enableManualWithdraw: true,
+        enablePixTransfer: true,
+        enableBankTransfer: true,
+      },
+    });
+
+    return {
+      manualWithdrawEnabled: Boolean(flags?.enableManualWithdraw),
+      pixTransferEnabled: Boolean(flags?.enablePixTransfer),
+      bankTransferEnabled: Boolean(flags?.enableBankTransfer),
+    };
+  },
+
   async getOrCreate(contaId: string): Promise<TenantFeatureFlags> {
     const existing = await prisma.tenantFeatureFlags.findUnique({ where: { contaId } });
     if (existing) return existing;

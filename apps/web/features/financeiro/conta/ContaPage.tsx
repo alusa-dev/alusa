@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import type { GetAccountOverviewOutput } from '@alusa/finance';
+import type { GetAccountBalanceSummaryOutput } from '@alusa/finance';
 
 import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
@@ -65,6 +65,9 @@ type TransferFiltersState = {
   from: string;
   to: string;
 };
+
+const ACCOUNT_SUMMARY_URL = '/api/financeiro/conta?mode=summary';
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
 
 function sanitizeErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -237,6 +240,21 @@ async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promis
   }
 
   return json.data as T;
+}
+
+async function readJsonDeduped<T>(input: string): Promise<T> {
+  const existing = inFlightGetRequests.get(input);
+  if (existing) return existing as Promise<T>;
+
+  const request = readJson<T>(input).finally(() => {
+    inFlightGetRequests.delete(input);
+  });
+  inFlightGetRequests.set(input, request);
+  return request;
+}
+
+function getAccountSummaryUrl(opts: { bypassCache?: boolean } = {}) {
+  return opts.bypassCache ? `${ACCOUNT_SUMMARY_URL}&bypassCache=1` : ACCOUNT_SUMMARY_URL;
 }
 
 function ContaSkeleton() {
@@ -572,7 +590,7 @@ function TransferTableSection({
 
 export function ContaPage() {
   const router = useRouter();
-  const [overview, setOverview] = useState<GetAccountOverviewOutput | null>(null);
+  const [overview, setOverview] = useState<GetAccountBalanceSummaryOutput | null>(null);
   const [recipients, setRecipients] = useState<TransferRecipient[]>([]);
   const [transfers, setTransfers] = useState<TransfersResponse | null>(null);
   const [page, setPage] = useState(1);
@@ -609,23 +627,27 @@ export function ContaPage() {
 
   const loadTransfers = useCallback(async (nextPage: number) => {
     const query = buildTransfersQuery(nextPage, effectiveFilters);
-    const data = await readJson<TransfersResponse>(`/api/finance/transfers?${query}`);
+    const data = await readJsonDeduped<TransfersResponse>(`/api/finance/transfers?${query}`);
     setTransfers(data);
     setPage(data.page);
   }, [effectiveFilters]);
 
-  const loadOverviewAndRecipients = useCallback(async () => {
+  const loadOverviewAndRecipients = useCallback(async (opts: { bypassCache?: boolean } = {}) => {
     const [overviewData, recipientsData] = await Promise.all([
-      readJson<GetAccountOverviewOutput>('/api/financeiro/conta'),
-      readJson<{ items: TransferRecipient[] }>('/api/finance/transfers/recipients').catch(() => ({ items: [] })),
+      opts.bypassCache
+        ? readJson<GetAccountBalanceSummaryOutput>(getAccountSummaryUrl({ bypassCache: true }))
+        : readJsonDeduped<GetAccountBalanceSummaryOutput>(getAccountSummaryUrl()),
+      readJsonDeduped<{ items: TransferRecipient[] }>('/api/finance/transfers/recipients').catch(() => ({ items: [] })),
     ]);
 
     setOverview(overviewData);
     setRecipients(recipientsData.items);
   }, []);
 
-  const refreshOverview = useCallback(async () => {
-    const data = await readJson<GetAccountOverviewOutput>('/api/financeiro/conta');
+  const refreshOverview = useCallback(async (opts: { bypassCache?: boolean } = {}) => {
+    const data = opts.bypassCache
+      ? await readJson<GetAccountBalanceSummaryOutput>(getAccountSummaryUrl({ bypassCache: true }))
+      : await readJsonDeduped<GetAccountBalanceSummaryOutput>(getAccountSummaryUrl());
     setOverview(data);
   }, []);
 
@@ -661,7 +683,7 @@ export function ContaPage() {
   );
 
   const refreshCurrentView = useCallback(async () => {
-    await Promise.all([loadOverviewAndRecipients(), loadTransfers(page)]);
+    await Promise.all([loadOverviewAndRecipients({ bypassCache: true }), loadTransfers(page)]);
   }, [loadOverviewAndRecipients, loadTransfers, page]);
 
   const handleFiltersChange = useCallback((patch: Partial<TransferFiltersState>) => {
