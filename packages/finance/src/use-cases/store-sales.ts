@@ -102,6 +102,30 @@ const SALE_DETAIL_INCLUDE = {
       },
     },
   },
+  standaloneInstallmentPlan: {
+    select: {
+      id: true,
+      status: true,
+      asaasInstallmentId: true,
+      installmentCount: true,
+      billingType: true,
+      value: true,
+      firstDueDate: true,
+      charges: {
+        orderBy: { dueDate: 'asc' },
+        select: {
+          id: true,
+          status: true,
+          dueDate: true,
+          billingType: true,
+          asaasPaymentId: true,
+          invoiceUrl: true,
+          description: true,
+          value: true,
+        },
+      },
+    },
+  },
   conta: {
     select: {
       nome: true,
@@ -695,7 +719,8 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
     marginAtSale?: Prisma.Decimal | null;
   };
 
-  const installmentPlan = record.charge?.standaloneInstallmentPlan ?? null;
+  const installmentPlan =
+    record.standaloneInstallmentPlan ?? record.charge?.standaloneInstallmentPlan ?? null;
   const effectiveStatus = computeEffectiveSaleStatus(
     record.status,
     record.charge?.status ?? null,
@@ -1864,18 +1889,22 @@ async function ensureChargeForSale(input: {
       orderBy: { dueDate: 'asc' },
     });
 
-    if (!firstCharge) {
-      throw new StoreSaleError(
-        'COBRANCA_NAO_ENCONTRADA',
-        'O parcelamento foi criado, mas as parcelas ainda não foram sincronizadas.',
-        502,
-      );
-    }
-
     await prisma.sale.update({
       where: { id: input.sale.id },
-      data: { chargeId: firstCharge.id },
+      data: {
+        chargeId: firstCharge?.id ?? null,
+        standaloneInstallmentPlanId: chargeResult.data.chargeId,
+      },
     });
+
+    if (!firstCharge) {
+      console.info('[store-sales][installment-payments-pending]', {
+        contaId: input.contaId,
+        saleId: input.sale.id,
+        standaloneInstallmentPlanId: chargeResult.data.chargeId,
+      });
+    }
+
     return;
   }
 
@@ -2167,7 +2196,8 @@ export async function cancelStoreSale(input: CancelStoreSaleInput): Promise<Stor
   }
 
   if (sale.finalizationType !== SaleFinalizationType.RECEBIMENTO_PRESENCIAL) {
-    const installmentPlan = sale.charge?.standaloneInstallmentPlan ?? null;
+    const installmentPlan =
+      sale.standaloneInstallmentPlan ?? sale.charge?.standaloneInstallmentPlan ?? null;
 
     if (installmentPlan) {
       for (const charge of installmentPlan.charges) {

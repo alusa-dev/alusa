@@ -65,6 +65,7 @@ type StoredSale = {
   amountReceived: Prisma.Decimal | null;
   changeGiven: Prisma.Decimal | null;
   chargeId: string | null;
+  standaloneInstallmentPlanId: string | null;
   matriculaId: string | null;
   operadorId: string;
   canceledAt: Date | null;
@@ -103,6 +104,28 @@ type MockState = {
     string,
     { id: string; contaId: string; status: string; asaasPaymentId: string | null }
   >;
+  installmentPlans: Map<
+    string,
+    {
+      id: string;
+      status: string;
+      asaasInstallmentId: string | null;
+      installmentCount: number;
+      billingType: string;
+      value: Prisma.Decimal;
+      firstDueDate: Date;
+      charges: Array<{
+        id: string;
+        status: string;
+        dueDate: Date | null;
+        billingType: string | null;
+        asaasPaymentId: string | null;
+        invoiceUrl: string | null;
+        description: string | null;
+        value: Prisma.Decimal | null;
+      }>;
+    }
+  >;
   prisma: {
     aluno: { findFirst: ReturnType<typeof vi.fn> };
     responsavel: {
@@ -139,12 +162,28 @@ function createMockState(): MockState {
     saleItems: new Map(),
     responsaveis: new Map(),
     charges: new Map(),
+    installmentPlans: new Map(),
     prisma: {} as MockState['prisma'],
   };
 
   const buildSaleRecord = (sale: StoredSale) => ({
     ...sale,
-    charge: sale.chargeId ? (state.charges.get(sale.chargeId) ?? null) : null,
+    charge: sale.chargeId
+      ? {
+          ...(state.charges.get(sale.chargeId) ?? null),
+          dueDate: null,
+          billingType: null,
+          invoiceUrl: null,
+          description: null,
+          value: null,
+          standaloneInstallmentPlan: sale.standaloneInstallmentPlanId
+            ? (state.installmentPlans.get(sale.standaloneInstallmentPlanId) ?? null)
+            : null,
+        }
+      : null,
+    standaloneInstallmentPlan: sale.standaloneInstallmentPlanId
+      ? (state.installmentPlans.get(sale.standaloneInstallmentPlanId) ?? null)
+      : null,
     conta: {
       nome: 'Alusa Escola',
       cpfCnpj: '12345678000190',
@@ -311,11 +350,13 @@ function createMockState(): MockState {
             | 'cancelReason'
             | 'canceledById'
             | 'chargeId'
-          > & { chargeId?: string | null };
+            | 'standaloneInstallmentPlanId'
+          > & { chargeId?: string | null; standaloneInstallmentPlanId?: string | null };
         }) => {
           const sale: StoredSale = {
             id: `sale-${state.sales.size + 1}`,
             chargeId: args.data.chargeId ?? null,
+            standaloneInstallmentPlanId: args.data.standaloneInstallmentPlanId ?? null,
             canceledAt: null,
             cancelReason: null,
             canceledById: null,
@@ -360,11 +401,24 @@ function createMockState(): MockState {
       ),
     },
     charge: {
-      findFirst: vi.fn(async (args: { where: { id: string; contaId: string } }) => {
-        const charge = state.charges.get(args.where.id);
-        if (!charge || charge.contaId !== args.where.contaId) return null;
-        return charge;
-      }),
+      findFirst: vi.fn(
+        async (args: {
+          where: { id?: string; contaId: string; standaloneInstallmentPlanId?: string };
+        }) => {
+          if (args.where.id) {
+            const charge = state.charges.get(args.where.id);
+            if (!charge || charge.contaId !== args.where.contaId) return null;
+            return charge;
+          }
+
+          if (args.where.standaloneInstallmentPlanId) {
+            const plan = state.installmentPlans.get(args.where.standaloneInstallmentPlanId);
+            return plan?.charges[0] ?? null;
+          }
+
+          return null;
+        },
+      ),
     },
     $transaction: vi.fn(async (callback: (_tx: MockState['prisma']) => Promise<unknown>) =>
       callback(state.prisma),
@@ -435,6 +489,7 @@ describe('store-sales', () => {
     state.saleItems.clear();
     state.responsaveis.clear();
     state.charges.clear();
+    state.installmentPlans.clear();
     vi.clearAllMocks();
   });
 
@@ -569,6 +624,77 @@ describe('store-sales', () => {
     expect(result.matricula).toBeNull();
   });
 
+  it('mantém venda parcelada vinculada ao parcelamento mesmo sem parcelas sincronizadas imediatamente', async () => {
+    state.products.set('prod-1', {
+      id: 'prod-1',
+      contaId: 'conta-1',
+      name: 'Sapatilha',
+      price: new Prisma.Decimal('150.00'),
+      stock: 3,
+      hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-1', {
+      productId: 'prod-1',
+      variantId: null,
+      onHand: 3,
+      reserved: 0,
+      averageCost: new Prisma.Decimal('25.00'),
+    });
+
+    const { createStandaloneCharge } = await import('../create-standalone-charge');
+    vi.mocked(createStandaloneCharge).mockImplementationOnce(async (input) => {
+      state.installmentPlans.set('plan-1', {
+        id: 'plan-1',
+        status: 'ACTIVE',
+        asaasInstallmentId: 'inst-1',
+        installmentCount: 2,
+        billingType: input.billingType,
+        value: new Prisma.Decimal('150.00'),
+        firstDueDate: new Date('2099-01-01T00:00:00.000Z'),
+        charges: [],
+      });
+
+      return {
+        success: true,
+        data: {
+          chargeId: 'plan-1',
+          externalReference: 'alusa:installment:plan-1',
+          status: 'ACTIVE',
+        },
+      };
+    });
+
+    const result = await createStoreSale({
+      contaId: 'conta-1',
+      operatorId: 'user-1',
+      uiRequestId: 'sale-request-installment',
+      customer: {
+        type: 'AVULSO',
+        name: 'Cliente Avulso',
+        document: '11144477735',
+        email: 'cliente.avulso@example.com',
+        phone: '(92) 99999-0000',
+        saveCustomer: false,
+      },
+      items: [{ productId: 'prod-1', quantity: 1 }],
+      finalization: {
+        type: 'COBRANCA',
+        dueDate: '2099-01-01',
+        billingType: 'CREDIT_CARD',
+        installmentCount: 2,
+      },
+    });
+
+    expect(result.charge).toBeNull();
+    expect(result.installmentPlan).toMatchObject({
+      id: 'plan-1',
+      asaasInstallmentId: 'inst-1',
+      installmentCount: 2,
+      charges: [],
+    });
+    expect(state.sales.get(result.id)?.standaloneInstallmentPlanId).toBe('plan-1');
+  });
+
   it('bloqueia finalização em mensalidade na Loja', async () => {
     state.products.set('prod-1', {
       id: 'prod-1',
@@ -641,6 +767,7 @@ describe('store-sales', () => {
       amountReceived: null,
       changeGiven: null,
       chargeId: 'charge-1',
+      standaloneInstallmentPlanId: null,
       matriculaId: null,
       operadorId: 'user-1',
       canceledAt: null,

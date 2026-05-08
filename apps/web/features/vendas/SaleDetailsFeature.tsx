@@ -532,33 +532,39 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
                       <div className="col-span-3 text-right">Ações</div>
                     </div>
                     <div className="divide-y divide-gray-100">
-                      {sale.installmentPlan.charges.map((charge, index) => (
-                        <div
-                          key={charge.id}
-                          className="grid grid-cols-12 items-center gap-3 px-4 py-3"
-                        >
-                          <div className="col-span-3 text-sm font-medium text-gray-900">
-                            {index + 1}/{sale.installmentPlan?.installmentCount}
+                      {sale.installmentPlan.charges.length > 0 ? (
+                        sale.installmentPlan.charges.map((charge, index) => (
+                          <div
+                            key={charge.id}
+                            className="grid grid-cols-12 items-center gap-3 px-4 py-3"
+                          >
+                            <div className="col-span-3 text-sm font-medium text-gray-900">
+                              {index + 1}/{sale.installmentPlan?.installmentCount}
+                            </div>
+                            <div className="col-span-3 text-sm text-gray-700">
+                              {formatCurrencyBRL(charge.value ?? 0)}
+                            </div>
+                            <div className="col-span-3 text-sm text-gray-700">
+                              {formatDateBR(charge.dueDate)}
+                              <span className="mt-0.5 block text-xs text-gray-500">
+                                {getChargeStatusLabel(charge.status)}
+                              </span>
+                            </div>
+                            <div className="col-span-3 flex justify-end gap-2">
+                              <Button asChild size="sm" variant="outline" className="h-8">
+                                <Link href={`/cobrancas/${charge.id}`}>
+                                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                                  Detalhes
+                                </Link>
+                              </Button>
+                            </div>
                           </div>
-                          <div className="col-span-3 text-sm text-gray-700">
-                            {formatCurrencyBRL(charge.value ?? 0)}
-                          </div>
-                          <div className="col-span-3 text-sm text-gray-700">
-                            {formatDateBR(charge.dueDate)}
-                            <span className="mt-0.5 block text-xs text-gray-500">
-                              {getChargeStatusLabel(charge.status)}
-                            </span>
-                          </div>
-                          <div className="col-span-3 flex justify-end gap-2">
-                            <Button asChild size="sm" variant="outline" className="h-8">
-                              <Link href={`/cobrancas/${charge.id}`}>
-                                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                                Detalhes
-                              </Link>
-                            </Button>
-                          </div>
+                        ))
+                      ) : (
+                        <div className="px-4 py-5 text-sm text-gray-500">
+                          Parcelas aguardando sincronização do serviço financeiro.
                         </div>
-                      ))}
+                      )}
                     </div>
                   </div>
                 </div>

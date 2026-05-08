@@ -2473,6 +2473,7 @@ model StandaloneInstallmentPlan {
   conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   charges  Charge[]
+  sales    Sale[]
 
   @@unique([contaId, idempotencyKey])
   @@index([contaId])
@@ -3057,8 +3058,9 @@ model Sale {
   changeGiven    Decimal?           @db.Decimal(12, 2)
 
   // Vínculo financeiro
-  chargeId    String? @unique
-  matriculaId String?
+  chargeId                    String? @unique
+  standaloneInstallmentPlanId String?
+  matriculaId                 String?
 
   // Operador
   operadorId String
@@ -3074,8 +3076,9 @@ model Sale {
   conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
   aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
   responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
-  charge      Charge?      @relation(fields: [chargeId], references: [id], onDelete: SetNull)
-  matricula   Matricula?   @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
+  charge                    Charge?                    @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
+  matricula                 Matricula?                 @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
   operador    Usuario      @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: Restrict)
   items       SaleItem[]
 
@@ -3085,6 +3088,7 @@ model Sale {
   @@index([contaId, status])
   @@index([contaId, createdAt])
   @@index([chargeId])
+  @@index([standaloneInstallmentPlanId])
   @@index([saleNumber, contaId])
 }
 

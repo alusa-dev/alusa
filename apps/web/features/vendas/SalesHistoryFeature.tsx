@@ -77,6 +77,14 @@ function formatPaymentSummary(sale: StoreSaleDTO): string {
     return `${SALE_FINALIZATION_LABELS[sale.finalizationType]} · ${SALE_PAYMENT_METHOD_LABELS[sale.paymentMethod]}`;
   }
 
+  if (sale.finalizationType === 'COBRANCA' && sale.installmentPlan) {
+    const billingType =
+      BILLING_TYPE_LABELS[sale.installmentPlan.billingType as keyof typeof BILLING_TYPE_LABELS];
+    return `${SALE_FINALIZATION_LABELS[sale.finalizationType]} · ${
+      billingType ?? sale.installmentPlan.billingType
+    } · ${sale.installmentPlan.installmentCount}x`;
+  }
+
   if (sale.finalizationType === 'COBRANCA' && sale.charge?.billingType) {
     const billingType =
       BILLING_TYPE_LABELS[sale.charge.billingType as keyof typeof BILLING_TYPE_LABELS];

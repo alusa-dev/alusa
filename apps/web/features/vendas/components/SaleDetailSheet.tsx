@@ -236,32 +236,38 @@ export function SaleDetailSheet({
                             sale.installmentPlan.status}
                         </span>
                       </div>
-                      {sale.installmentPlan.charges.slice(0, 4).map((charge, index) => (
-                        <div
-                          key={charge.id}
-                          className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span>
-                              Parcela {index + 1}/{sale.installmentPlan?.installmentCount}
-                            </span>
-                            <span className="font-medium text-slate-900">
-                              {formatCurrencyBRL(charge.value ?? 0)}
-                            </span>
+                      {sale.installmentPlan.charges.length > 0 ? (
+                        sale.installmentPlan.charges.slice(0, 4).map((charge, index) => (
+                          <div
+                            key={charge.id}
+                            className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <span>
+                                Parcela {index + 1}/{sale.installmentPlan?.installmentCount}
+                              </span>
+                              <span className="font-medium text-slate-900">
+                                {formatCurrencyBRL(charge.value ?? 0)}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
+                              <span>{formatDateBR(charge.dueDate)}</span>
+                              <span>{CHARGE_STATUS_LABELS[charge.status] ?? charge.status}</span>
+                            </div>
+                            {charge.invoiceUrl ? (
+                              <Button asChild variant="outline" className="mt-2 h-8 w-full text-xs">
+                                <a href={charge.invoiceUrl} target="_blank" rel="noreferrer">
+                                  <ExternalLink className="mr-2 h-3.5 w-3.5" /> Abrir parcela
+                                </a>
+                              </Button>
+                            ) : null}
                           </div>
-                          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
-                            <span>{formatDateBR(charge.dueDate)}</span>
-                            <span>{CHARGE_STATUS_LABELS[charge.status] ?? charge.status}</span>
-                          </div>
-                          {charge.invoiceUrl ? (
-                            <Button asChild variant="outline" className="mt-2 h-8 w-full text-xs">
-                              <a href={charge.invoiceUrl} target="_blank" rel="noreferrer">
-                                <ExternalLink className="mr-2 h-3.5 w-3.5" /> Abrir parcela
-                              </a>
-                            </Button>
-                          ) : null}
-                        </div>
-                      ))}
+                        ))
+                      ) : (
+                        <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs text-slate-500">
+                          Parcelas aguardando sincronização do serviço financeiro.
+                        </p>
+                      )}
                       {sale.installmentPlan.charges.length > 4 ? (
                         <p className="text-xs text-slate-500">
                           +{sale.installmentPlan.charges.length - 4} parcela(s) no detalhe da
