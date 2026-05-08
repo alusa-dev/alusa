@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import { createStoreSale, listStoreSales, StoreSaleError } from '@alusa/finance';
@@ -104,6 +105,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
+  const requestId =
+    request.headers.get('x-vercel-id') ??
+    request.headers.get('x-request-id') ??
+    randomUUID();
+
   try {
     const { contaId, operatorId } = await getRequestContext();
     const body = await request.json();
@@ -126,6 +133,16 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ data: sale }, { status: 201 });
   } catch (error) {
+    console.error('[api/vendas][POST][error]', {
+      requestId,
+      durationMs: Date.now() - startedAt,
+      errorCode: error instanceof StoreSaleError ? error.code : null,
+      errorStatus: error instanceof StoreSaleError ? error.status : 500,
+      errorName: error instanceof Error ? error.name : null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : null,
+    });
+
     if (error instanceof StoreSaleError) {
       return jsonError(error.status, error.code, error.message);
     }

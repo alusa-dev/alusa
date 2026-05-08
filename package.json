@@ -30,6 +30,7 @@
     "test:e2e": "pnpm -r --filter ./apps/web run test:e2e",
     "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --name init --schema=prisma/schema.prisma",
+    "db:migrate:local": "dotenv -e .env.local -- prisma migrate deploy --schema=prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=prisma/schema.prisma --name matriculas",
     "db:migrate:matriculas": "prisma migrate dev --schema=prisma/schema.prisma --name matriculas",
     "db:seed": "prisma db seed --schema=prisma/schema.prisma",

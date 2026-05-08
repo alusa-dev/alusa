@@ -1757,34 +1757,6 @@ async function createLocalSaleRecord(input: {
   );
 }
 
-async function rollbackSaleCreation(contaId: string, saleId: string): Promise<void> {
-  const sale = await prisma.sale.findFirst({
-    where: {
-      id: saleId,
-      contaId,
-    },
-    select: {
-      id: true,
-      chargeId: true,
-      operadorId: true,
-    },
-  });
-
-  if (!sale || sale.chargeId) return;
-
-  await cancelSaleInventory({
-    contaId,
-    actorUserId: sale.operadorId,
-    saleId: sale.id,
-  }).catch(() => undefined);
-
-  await prisma.sale.delete({
-    where: {
-      id: sale.id,
-    },
-  });
-}
-
 async function ensureChargeForSale(input: {
   contaId: string;
   operatorId: string;
@@ -2047,6 +2019,7 @@ export async function listEligibleStoreSaleMatriculas(
 }
 
 export async function createStoreSale(input: CreateStoreSaleInput): Promise<StoreSaleDTO> {
+  const startedAt = Date.now();
   const prepared = await prepareSaleContext(input);
   const existing = await findSaleByUiRequestId(input.contaId, input.uiRequestId);
 
@@ -2119,11 +2092,29 @@ export async function createStoreSale(input: CreateStoreSaleInput): Promise<Stor
       },
     });
 
+    console.info('[store-sales][created]', {
+      contaId: input.contaId,
+      saleId: sale.id,
+      saleNumber: persisted.saleNumber,
+      finalizationType: persisted.finalizationType,
+      hasCharge: Boolean(persisted.chargeId),
+      hasInstallmentPlan: Boolean(persisted.standaloneInstallmentPlanId),
+      durationMs: Date.now() - startedAt,
+    });
+
     return mapSaleRecord(persisted);
   } catch (error) {
-    if (prepared.chargeConfig) {
-      await rollbackSaleCreation(input.contaId, sale.id).catch(() => undefined);
-    }
+    console.error('[store-sales][create-failed-after-local-sale]', {
+      contaId: input.contaId,
+      saleId: sale.id,
+      uiRequestId: input.uiRequestId,
+      finalizationType: prepared.finalizationType,
+      hasChargeConfig: Boolean(prepared.chargeConfig),
+      durationMs: Date.now() - startedAt,
+      errorName: error instanceof Error ? error.name : null,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+
     throw error;
   }
 }
