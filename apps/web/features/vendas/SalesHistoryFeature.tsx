@@ -26,13 +26,11 @@ import {
 import { toast } from '@/components/ui/toast';
 
 import { SaleStatusBadge } from './components/SaleStatusBadge';
-import { formatMarginPercent } from './pricing-utils';
 import {
   BILLING_TYPE_LABELS,
   formatCurrencyBRL,
   formatDateBR,
   formatSaleNumber,
-  INVENTORY_STATUS_LABELS,
   listSales,
   SALE_FINALIZATION_LABELS,
   SALE_PAYMENT_METHOD_LABELS,
@@ -212,21 +210,14 @@ export function SalesHistoryFeature() {
           }
 
           return (
-            <div className="text-right">
-              <div
-                className={
-                  sale.grossProfit >= 0
-                    ? 'font-semibold text-emerald-700'
-                    : 'font-semibold text-red-700'
-                }
-              >
-                {formatCurrencyBRL(sale.grossProfit)}
-              </div>
-              {sale.grossMargin != null ? (
-                <div className="text-[11px] text-slate-400">
-                  {formatMarginPercent(sale.grossMargin)}
-                </div>
-              ) : null}
+            <div
+              className={
+                sale.grossProfit >= 0
+                  ? 'text-right font-semibold text-emerald-700'
+                  : 'text-right font-semibold text-red-700'
+              }
+            >
+              {formatCurrencyBRL(sale.grossProfit)}
             </div>
           );
         },
@@ -236,14 +227,7 @@ export function SalesHistoryFeature() {
         header: 'Status',
         width: 'w-[11%]',
         align: 'left',
-        render: (sale) => (
-          <div className="space-y-1">
-            <SaleStatusBadge status={sale.status} />
-            <div className="text-[11px] text-slate-500">
-              {INVENTORY_STATUS_LABELS[sale.inventoryStatus]}
-            </div>
-          </div>
-        ),
+        render: (sale) => <SaleStatusBadge status={sale.status} />,
       },
     ],
     [],
