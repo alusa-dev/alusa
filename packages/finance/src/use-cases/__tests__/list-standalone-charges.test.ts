@@ -1,4 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../financial-read-convergence', () => ({
+  convergeStandaloneChargesWithAsaas: vi.fn().mockResolvedValue(false),
+}));
+
+import { convergeStandaloneChargesWithAsaas } from '../financial-read-convergence';
 import { listStandaloneCharges } from '../list-standalone-charges';
 
 // ---------------------------------------------------------------------------
@@ -175,5 +181,23 @@ describe('listStandaloneCharges', () => {
     expect(result.items[0].payerName).toBe('Cliente');
     expect(result.items[0].description).toBe('Cobrança Avulsa');
     expect(result.items[0].value).toBe(0);
+  });
+
+  it('reconsulta a cobrança após convergência oficial do Asaas', async () => {
+    const db = createMockDb();
+    db.charge.findMany
+      .mockResolvedValueOnce([makeCharge({ status: 'OPEN' })])
+      .mockResolvedValueOnce([makeCharge({ status: 'PAID' })]);
+    db.charge.count.mockResolvedValue(1);
+    vi.mocked(convergeStandaloneChargesWithAsaas).mockResolvedValueOnce(true);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
+
+    expect(convergeStandaloneChargesWithAsaas).toHaveBeenCalledWith({
+      contaId: 'ct_1',
+      charges: [{ asaasPaymentId: 'pay_asaas_1', status: 'OPEN' }],
+    });
+    expect(db.charge.findMany).toHaveBeenCalledTimes(2);
+    expect(result.items[0].status).toBe('PAID');
   });
 });

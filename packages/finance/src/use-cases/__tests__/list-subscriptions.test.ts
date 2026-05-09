@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../financial-read-convergence', () => ({
+  convergeSubscriptionsWithAsaas: vi.fn().mockResolvedValue(false),
+}));
+
 vi.mock('@alusa/database', () => {
   const prisma = {
     subscription: {
@@ -27,6 +31,7 @@ vi.mock('@alusa/database', () => {
 });
 
 import { prisma } from '@alusa/database';
+import { convergeSubscriptionsWithAsaas } from '../financial-read-convergence';
 import { listSubscriptions, listSubscriptionsForFinance } from '../list-subscriptions';
 
 describe('listSubscriptions', () => {
@@ -80,6 +85,52 @@ describe('listSubscriptions', () => {
     expect(prisma.subscription.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { contaId: 'c1', status: 'ACTIVE' }, take: 10, skip: 0 }),
     );
+  });
+
+  it('reconsulta a lista quando a convergência oficial altera o estado local', async () => {
+    vi.mocked(prisma.subscription.count).mockResolvedValueOnce(1 as never);
+    vi.mocked(prisma.subscription.findMany)
+      .mockResolvedValueOnce([
+        {
+          id: 's1',
+          contratoId: 'ct1',
+          matriculaId: 'm1',
+          externalReference: 'subscription:s1',
+          asaasSubscriptionId: 'asaas_sub_1',
+          status: 'REQUESTED',
+          statusUpdatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          id: 's1',
+          contratoId: 'ct1',
+          matriculaId: 'm1',
+          externalReference: 'subscription:s1',
+          asaasSubscriptionId: 'asaas_sub_1',
+          status: 'ACTIVE',
+          statusUpdatedAt: new Date('2026-01-03T00:00:00.000Z'),
+          createdAt: new Date('2026-01-02T00:00:00.000Z'),
+        },
+      ] as never);
+    vi.mocked(convergeSubscriptionsWithAsaas).mockResolvedValueOnce(true);
+
+    const res = await listSubscriptions({ contaId: 'c1', limit: 10, offset: 0 });
+
+    expect(convergeSubscriptionsWithAsaas).toHaveBeenCalledWith({
+      contaId: 'c1',
+      subscriptions: [
+        {
+          id: 's1',
+          source: 'ACADEMIC',
+          asaasSubscriptionId: 'asaas_sub_1',
+          externalReference: 'subscription:s1',
+        },
+      ],
+    });
+    expect(prisma.subscription.findMany).toHaveBeenCalledTimes(2);
+    expect(res.items[0].status).toBe('ACTIVE');
   });
 });
 
@@ -184,6 +235,102 @@ describe('listSubscriptionsForFinance', () => {
       valor: 75,
       nextDueDate: '2099-05-05T00:00:00.000Z',
     });
+  });
+
+  it('recarrega as fontes quando a convergência da assinatura materializa estado local', async () => {
+    vi.mocked(prisma.standaloneSubscription.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.auditLog.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.responsavel.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.aluno.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.subscription.findMany)
+      .mockResolvedValueOnce([
+        {
+          id: 'sub_academica_1',
+          asaasSubscriptionId: 'asaas_sub_1',
+          externalReference: 'alusa:subscription:matricula_1:plano_1',
+          status: 'REQUESTED',
+          createdAt: new Date('2026-03-01T12:00:00.000Z'),
+          matricula: {
+            id: 'matricula_1',
+            vencimentoDia: 5,
+            formaPagamento: 'CARTAO_CREDITO',
+            formaPagamentoTaxa: 'BOLETO',
+            aluno: {
+              id: 'aluno_1',
+              nome: 'Bryan de Alencar Bezerra',
+              dataNasc: new Date('2000-01-01T00:00:00.000Z'),
+            },
+            responsavelFinanceiro: null,
+            plano: {
+              nome: 'Plano Mensal',
+              valor: 150,
+              periodicidade: 'MENSAL',
+              descricao: 'Plano Mensal',
+            },
+            combo: null,
+          },
+        },
+      ] as never)
+      .mockResolvedValueOnce([
+        {
+          id: 'sub_academica_1',
+          asaasSubscriptionId: 'asaas_sub_1',
+          externalReference: 'alusa:subscription:matricula_1:plano_1',
+          status: 'ACTIVE',
+          createdAt: new Date('2026-03-01T12:00:00.000Z'),
+          matricula: {
+            id: 'matricula_1',
+            vencimentoDia: 5,
+            formaPagamento: 'CARTAO_CREDITO',
+            formaPagamentoTaxa: 'BOLETO',
+            aluno: {
+              id: 'aluno_1',
+              nome: 'Bryan de Alencar Bezerra',
+              dataNasc: new Date('2000-01-01T00:00:00.000Z'),
+            },
+            responsavelFinanceiro: null,
+            plano: {
+              nome: 'Plano Mensal',
+              valor: 150,
+              periodicidade: 'MENSAL',
+              descricao: 'Plano Mensal',
+            },
+            combo: null,
+          },
+        },
+      ] as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(convergeSubscriptionsWithAsaas).mockResolvedValueOnce(true);
+
+    const result = await listSubscriptionsForFinance({
+      contaId: 'conta_1',
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(convergeSubscriptionsWithAsaas).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'conta_1',
+        subscriptions: [
+          {
+            id: 'sub_academica_1',
+            source: 'ACADEMIC',
+            asaasSubscriptionId: 'asaas_sub_1',
+            externalReference: 'alusa:subscription:matricula_1:plano_1',
+          },
+        ],
+      }),
+    );
+    expect(prisma.subscription.findMany).toHaveBeenCalledTimes(2);
+    expect(result.items[0].status).toBe('ACTIVE');
   });
 
 });

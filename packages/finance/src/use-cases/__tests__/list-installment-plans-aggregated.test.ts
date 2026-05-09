@@ -1,4 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../financial-read-convergence', () => ({
+  convergeInstallmentPlansWithAsaas: vi.fn().mockResolvedValue(false),
+}));
+
+import { convergeInstallmentPlansWithAsaas } from '../financial-read-convergence';
 import { listInstallmentPlansAggregated } from '../list-installment-plans-aggregated';
 
 // ---------------------------------------------------------------------------
@@ -223,9 +229,9 @@ describe('listInstallmentPlansAggregated', () => {
     db.responsavel.findMany.mockResolvedValue([{ id: 'resp_1', nome: 'Carlos' }]);
 
     const chargesData = [
-      { standaloneInstallmentPlanId: 'sip_1', status: 'PAID', dueDate: new Date('2025-02-15') },
-      { standaloneInstallmentPlanId: 'sip_1', status: 'OPEN', dueDate: new Date('2026-03-15') },
-      { standaloneInstallmentPlanId: 'sip_1', status: 'CREATED', dueDate: new Date('2026-04-15') },
+      { standaloneInstallmentPlanId: 'sip_1', status: 'PAID', dueDate: new Date('2099-02-15') },
+      { standaloneInstallmentPlanId: 'sip_1', status: 'OPEN', dueDate: new Date('2099-03-15') },
+      { standaloneInstallmentPlanId: 'sip_1', status: 'CREATED', dueDate: new Date('2099-04-15') },
     ];
     db.charge.findMany.mockResolvedValue(chargesData);
 
@@ -274,5 +280,24 @@ describe('listInstallmentPlansAggregated', () => {
 
     expect(result.items[0].statusConsolidado).toBe('CANCELADO');
     expect(result.items[0].status).toBe('CANCELED');
+  });
+
+  it('aciona a convergência centralizada para academic e standalone antes de montar a lista', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([makeAcademicPlan()]);
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      makeStandalonePlan({ id: 'sip_2', asaasInstallmentId: 'asaas_inst_2' }),
+    ]);
+    db.responsavel.findMany.mockResolvedValue([{ id: 'resp_1', nome: 'Carlos Lima' }]);
+
+    await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(convergeInstallmentPlansWithAsaas).toHaveBeenCalledWith({
+      contaId: 'ct_1',
+      plans: [
+        { id: 'ip_1', asaasInstallmentId: 'asaas_inst_1' },
+        { id: 'sip_2', asaasInstallmentId: 'asaas_inst_2' },
+      ],
+    });
   });
 });

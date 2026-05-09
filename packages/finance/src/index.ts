@@ -246,6 +246,8 @@ export type {
   ListOperationalChargesInput,
   ListOperationalChargesOutput,
 } from './use-cases/list-operational-charges';
+export { reconcileAcademicChargesWithAsaas } from './use-cases/reconcile-academic-charges';
+export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-academic-charges';
 
 // Cobranças avulsas (FASE 2)
 export { listStandaloneCharges } from './use-cases/list-standalone-charges';

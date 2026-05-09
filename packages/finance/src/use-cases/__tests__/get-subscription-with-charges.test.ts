@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../financial-read-convergence', () => ({
+  convergeSubscriptionsWithAsaas: vi.fn().mockResolvedValue(false),
+}));
+
 vi.mock('@alusa/database', () => {
   const prisma = {
     subscription: {
@@ -24,6 +28,7 @@ vi.mock('@alusa/database', () => {
 });
 
 import { prisma } from '@alusa/database';
+import { convergeSubscriptionsWithAsaas } from '../financial-read-convergence';
 import { getSubscriptionWithCharges } from '../get-subscription-with-charges';
 
 describe('getSubscriptionWithCharges', () => {
@@ -190,6 +195,44 @@ describe('getSubscriptionWithCharges', () => {
         }),
       }),
     );
+  });
+
+  it('aciona a convergência oficial ao abrir uma assinatura manual', async () => {
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.auditLog.findFirst).mockResolvedValueOnce({
+      entityId: 'sub_manual_sync',
+      createdAt: new Date('2026-02-08T00:00:00.000Z'),
+      metadata: {
+        externalReference: 'alusa:standalone-subscription:sub_manual_sync',
+        asaasSubscriptionId: 'sub_asaas_sync',
+        status: 'ACTIVE',
+        value: 89,
+        cycle: 'MONTHLY',
+        billingType: 'PIX',
+        description: 'Assinatura manual fallback',
+        nextDueDate: '2026-03-10',
+        payerName: 'Cliente Fallback',
+        payerId: 'payer_2',
+      },
+    } as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([] as never);
+
+    await getSubscriptionWithCharges({
+      contaId: 'conta_1',
+      subscriptionId: 'sub_manual_sync',
+    });
+
+    expect(convergeSubscriptionsWithAsaas).toHaveBeenCalledWith({
+      contaId: 'conta_1',
+      subscriptions: [
+        {
+          id: 'sub_manual_sync',
+          source: 'LEGACY_MANUAL',
+          asaasSubscriptionId: 'sub_asaas_sync',
+          externalReference: 'alusa:standalone-subscription:sub_manual_sync',
+        },
+      ],
+    });
   });
 
   it('usa o valor oficial refletido nas cobranças da assinatura acadêmica', async () => {

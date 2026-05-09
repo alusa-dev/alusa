@@ -2,6 +2,7 @@ import { prisma } from '@alusa/database';
 import type { UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import { normalizeChargeStatus } from '../dtos/unified-billing';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
+import { convergeStandaloneChargesWithAsaas } from './financial-read-convergence';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -61,10 +62,6 @@ export async function listStandaloneCharges(
   db?: typeof prisma,
 ): Promise<ListStandaloneChargesOutput> {
   const readModelEnabled = process.env.FIN_READMODEL_ENABLED === 'true';
-  if (readModelEnabled) {
-    return chargeReadModelService.listStandaloneChargesFromReadModel(input);
-  }
-
   const _db = db ?? prisma;
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
@@ -98,7 +95,7 @@ export async function listStandaloneCharges(
     ];
   }
 
-  const [charges, total] = await Promise.all([
+  const [initialCharges, total] = await Promise.all([
     _db.charge.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -120,6 +117,40 @@ export async function listStandaloneCharges(
     }),
     _db.charge.count({ where }),
   ]);
+
+  const converged = await convergeStandaloneChargesWithAsaas({
+    contaId,
+    charges: initialCharges.map((charge) => ({
+      asaasPaymentId: charge.asaasPaymentId,
+      status: charge.status,
+    })),
+  });
+
+  if (readModelEnabled) {
+    return chargeReadModelService.listStandaloneChargesFromReadModel(input);
+  }
+
+  const charges = converged
+    ? await _db.charge.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: {
+          id: true,
+          status: true,
+          asaasPaymentId: true,
+          payerName: true,
+          description: true,
+          value: true,
+          dueDate: true,
+          billingType: true,
+          invoiceUrl: true,
+          standaloneInstallmentPlanId: true,
+          createdAt: true,
+        },
+      })
+    : initialCharges;
 
   const items: StandaloneChargeItem[] = charges.map((c) => ({
     id: c.id,

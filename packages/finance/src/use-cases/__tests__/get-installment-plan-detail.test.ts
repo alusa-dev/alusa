@@ -1,4 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../financial-read-convergence', () => ({
+  convergeInstallmentPlansWithAsaas: vi.fn().mockResolvedValue(false),
+}));
+
+import { convergeInstallmentPlansWithAsaas } from '../financial-read-convergence';
 import { getInstallmentPlanDetail } from '../get-installment-plan-detail';
 
 // ---------------------------------------------------------------------------
@@ -290,5 +296,19 @@ describe('getInstallmentPlanDetail', () => {
 
     // valorTotal = soma das cobranças reais (não installmentCount * value)
     expect(result!.valorTotal).toBe(400);
+  });
+
+  it('aciona convergência do parcelamento acadêmico antes de montar o detalhe', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findFirst.mockResolvedValue(
+      makeAcademicPlan({ asaasInstallmentId: 'asaas_inst_1' }),
+    );
+
+    await getInstallmentPlanDetail({ planId: 'ip_1', contaId: 'ct_1' }, db);
+
+    expect(convergeInstallmentPlansWithAsaas).toHaveBeenCalledWith({
+      contaId: 'ct_1',
+      plans: [{ id: 'ip_1', asaasInstallmentId: 'asaas_inst_1' }],
+    });
   });
 });

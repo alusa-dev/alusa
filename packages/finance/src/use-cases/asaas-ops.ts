@@ -16,7 +16,9 @@ import {
   deleteSubscription as asaasDeleteSubscription,
   createSubscription as asaasCreateSubscription,
   listSubscriptionPayments as asaasListSubscriptionPayments,
+  listInstallmentPayments as asaasListInstallmentPayments,
   updateSubscriptionCreditCard as asaasUpdateSubscriptionCreditCard,
+  type ListInstallmentPaymentsParams as AsaasListInstallmentPaymentsParams,
   type ListSubscriptionPaymentsParams as AsaasListSubscriptionPaymentsParams,
   type UpdateSubscriptionCreditCardInput as AsaasUpdateSubscriptionCreditCardInput,
   type BillingType,
@@ -186,6 +188,10 @@ function subscriptionPaymentsCachePrefix(contaId: string, subscriptionId: string
   return `subscriptionPayments:${contaId}:${subscriptionId}`;
 }
 
+function installmentPaymentsCachePrefix(contaId: string, installmentId: string): string {
+  return `installmentPayments:${contaId}:${installmentId}`;
+}
+
 async function getCredentialsOrThrow(contaId: string): Promise<{ apiKey: string }> {
   const creds = await loadAsaasCredentials(contaId);
   if (!creds) {
@@ -351,6 +357,27 @@ export async function listSubscriptionPayments(
       limit: opts.limit,
       offset: opts.offset,
       status: opts.status,
+    }),
+  );
+}
+
+export async function listInstallmentPayments(
+  installmentId: string,
+  opts: {
+    contaId: string;
+    limit?: AsaasListInstallmentPaymentsParams['limit'];
+    offset?: AsaasListInstallmentPaymentsParams['offset'];
+  },
+): Promise<Awaited<ReturnType<typeof asaasListInstallmentPayments>>> {
+  const { apiKey } = await getCredentialsOrThrow(opts.contaId);
+  const cacheKey = `${installmentPaymentsCachePrefix(opts.contaId, installmentId)}:${opts.limit ?? 'default'}:${opts.offset ?? 0}`;
+
+  return withReadCache(cacheKey, SUBSCRIPTION_PAYMENTS_CACHE_TTL_MS, () =>
+    asaasListInstallmentPayments({
+      apiKey,
+      installmentId,
+      limit: opts.limit,
+      offset: opts.offset,
     }),
   );
 }

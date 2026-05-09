@@ -2,6 +2,7 @@ import { prisma } from '@alusa/database';
 import type { InstallmentStatus } from '@prisma/client';
 import type { UnifiedInstallmentGroupItem } from '../dtos/unified-billing';
 import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
+import { convergeInstallmentPlansWithAsaas } from './financial-read-convergence';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -156,6 +157,20 @@ export async function listInstallmentPlansAggregated(
       },
     }),
   ]);
+
+  await convergeInstallmentPlansWithAsaas({
+    contaId,
+    plans: [
+      ...installmentPlans.map((plan) => ({
+        id: plan.id,
+        asaasInstallmentId: plan.asaasInstallmentId ?? null,
+      })),
+      ...standalonePlans.map((plan) => ({
+        id: plan.id,
+        asaasInstallmentId: plan.asaasInstallmentId ?? null,
+      })),
+    ],
+  });
 
   // =================================================================
   // 2. Buscar parcelas vinculadas via externalReference (academic)

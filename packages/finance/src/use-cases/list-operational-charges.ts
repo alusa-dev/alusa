@@ -9,6 +9,7 @@ import { parseExternalReference } from '../core';
 import { mapAsaasPaymentStatusToCharge } from '../mappers';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
+import { reconcileAcademicChargesWithAsaas } from './reconcile-academic-charges';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -273,7 +274,7 @@ export async function listOperationalCharges(
   // =================================================================
   // 3. Executar queries em paralelo
   // =================================================================
-  const [academicResult, standaloneResult, linkedCharges] = await Promise.all([
+  const [academicResultRaw, standaloneResult, linkedCharges] = await Promise.all([
     _db.cobranca.findMany({
       where: academicWhere,
       orderBy: { vencimento: 'asc' },
@@ -320,6 +321,32 @@ export async function listOperationalCharges(
       select: { cobrancaId: true, externalReference: true, status: true },
     }),
   ]);
+
+  const academicReconciliation =
+    isAsaasEnabled() && academicResultRaw.length
+      ? await reconcileAcademicChargesWithAsaas({
+          contaId,
+          cobrancaIds: academicResultRaw.map((c) => c.id),
+          limit: academicResultRaw.length,
+        })
+      : null;
+
+  const academicResult = academicResultRaw.map((c) => {
+    const reconciled = academicReconciliation?.items.get(c.id);
+    return reconciled
+      ? {
+          ...c,
+          status: reconciled.status,
+          asaasPaymentId: reconciled.asaasPaymentId,
+          asaasStatus: reconciled.asaasStatus,
+          vencimento: reconciled.vencimento,
+          dataPagamento: reconciled.dataPagamento,
+          pagoEm: reconciled.pagoEm,
+          liquidacaoStatus: reconciled.liquidacaoStatus,
+          liquidadoEm: reconciled.liquidadoEm,
+        }
+      : c;
+  });
 
   // Mapa cobrancaId → installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();

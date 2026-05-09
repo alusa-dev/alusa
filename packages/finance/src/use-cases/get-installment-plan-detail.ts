@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { InstallmentStatus } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
+import { convergeInstallmentPlansWithAsaas } from './financial-read-convergence';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -151,6 +152,10 @@ export async function getInstallmentPlanDetail(
   });
 
   if (academicPlan) {
+    await convergeInstallmentPlansWithAsaas({
+      contaId,
+      plans: [{ id: academicPlan.id, asaasInstallmentId: academicPlan.asaasInstallmentId ?? null }],
+    });
     return buildAcademicDetail(academicPlan, contaId, _db);
   }
 
@@ -163,6 +168,10 @@ export async function getInstallmentPlanDetail(
   });
 
   if (standalonePlan) {
+    await convergeInstallmentPlansWithAsaas({
+      contaId,
+      plans: [{ id: standalonePlan.id, asaasInstallmentId: standalonePlan.asaasInstallmentId ?? null }],
+    });
     return buildStandaloneDetail(standalonePlan, contaId, _db);
   }
 
@@ -180,6 +189,10 @@ export async function getInstallmentPlanDetail(
     },
   });
   if (byAsaasId) {
+    await convergeInstallmentPlansWithAsaas({
+      contaId,
+      plans: [{ id: byAsaasId.id, asaasInstallmentId: byAsaasId.asaasInstallmentId ?? null }],
+    });
     return buildAcademicDetail(byAsaasId, contaId, _db);
   }
 
@@ -190,6 +203,10 @@ export async function getInstallmentPlanDetail(
     },
   });
   if (standaloneByAsaasId) {
+    await convergeInstallmentPlansWithAsaas({
+      contaId,
+      plans: [{ id: standaloneByAsaasId.id, asaasInstallmentId: standaloneByAsaasId.asaasInstallmentId ?? null }],
+    });
     return buildStandaloneDetail(standaloneByAsaasId, contaId, _db);
   }
 

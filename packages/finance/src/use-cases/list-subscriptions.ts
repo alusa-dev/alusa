@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { SubscriptionStatus, Prisma } from '@prisma/client';
 import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
+import { convergeSubscriptionsWithAsaas } from './financial-read-convergence';
 
 type StandaloneSubscriptionFindManyArgs = {
   where: { contaId: string };
@@ -75,7 +76,7 @@ export async function listSubscriptions(input: ListSubscriptionsInput): Promise<
   const where: { contaId: string; status?: SubscriptionStatus } = { contaId: input.contaId };
   if (input.status) where.status = input.status;
 
-  const [total, items] = await Promise.all([
+  const [total, initialItems] = await Promise.all([
     prisma.subscription.count({ where }),
     prisma.subscription.findMany({
       where,
@@ -95,6 +96,35 @@ export async function listSubscriptions(input: ListSubscriptionsInput): Promise<
     }),
   ]);
 
+  const converged = await convergeSubscriptionsWithAsaas({
+    contaId: input.contaId,
+    subscriptions: initialItems.map((item) => ({
+      id: item.id,
+      source: 'ACADEMIC' as const,
+      asaasSubscriptionId: item.asaasSubscriptionId,
+      externalReference: item.externalReference,
+    })),
+  });
+
+  const items = converged
+    ? await prisma.subscription.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: input.limit,
+        skip: input.offset,
+        select: {
+          id: true,
+          contratoId: true,
+          matriculaId: true,
+          externalReference: true,
+          asaasSubscriptionId: true,
+          status: true,
+          statusUpdatedAt: true,
+          createdAt: true,
+        },
+      })
+    : initialItems;
+
   return {
     total,
     items: items.map((item) => ({
@@ -108,6 +138,91 @@ export async function listSubscriptions(input: ListSubscriptionsInput): Promise<
       createdAt: item.createdAt.toISOString(),
     })),
   };
+}
+
+async function loadFinanceSubscriptionSources(params: {
+  contaId: string;
+  status?: SubscriptionStatus | SubscriptionStatus[];
+  search?: string;
+}) {
+  const where: Prisma.SubscriptionWhereInput = { contaId: params.contaId };
+
+  if (params.status) {
+    where.status = Array.isArray(params.status) ? { in: params.status } : params.status;
+  }
+
+  if (params.search) {
+    where.matricula = {
+      OR: [
+        { aluno: { nome: { contains: params.search, mode: 'insensitive' } } },
+        { responsavelFinanceiro: { nome: { contains: params.search, mode: 'insensitive' } } },
+        { plano: { nome: { contains: params.search, mode: 'insensitive' } } },
+        { plano: { descricao: { contains: params.search, mode: 'insensitive' } } },
+        { combo: { nome: { contains: params.search, mode: 'insensitive' } } },
+      ],
+    };
+  }
+
+  const standaloneSubscriptionDelegate = getStandaloneSubscriptionDelegate();
+
+  return Promise.all([
+    prisma.subscription.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        matricula: {
+          select: {
+            id: true,
+            vencimentoDia: true,
+            formaPagamento: true,
+            formaPagamentoTaxa: true,
+            aluno: { select: { id: true, nome: true, dataNasc: true } },
+            responsavelFinanceiro: { select: { id: true, nome: true } },
+            plano: { select: { nome: true, valor: true, periodicidade: true, descricao: true } },
+            combo: { select: { nome: true, valor: true } },
+          },
+        },
+      },
+    }),
+    standaloneSubscriptionDelegate
+      ? standaloneSubscriptionDelegate.findMany({
+          where: { contaId: params.contaId },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            asaasSubscriptionId: true,
+            externalReference: true,
+            status: true,
+            cycle: true,
+            billingType: true,
+            value: true,
+            nextDueDate: true,
+            description: true,
+            customerId: true,
+            createdAt: true,
+            customer: {
+              select: {
+                payerType: true,
+                payerId: true,
+              },
+            },
+          },
+        })
+      : Promise.resolve([]),
+    prisma.auditLog.findMany({
+      where: {
+        contaId: params.contaId,
+        action: 'finance.standalone_subscription.created',
+        entityType: 'StandaloneSubscription',
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        entityId: true,
+        metadata: true,
+        createdAt: true,
+      },
+    }),
+  ]);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -212,85 +327,51 @@ export async function listSubscriptionsForFinance(
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, status, search } = input;
 
-  const where: Prisma.SubscriptionWhereInput = { contaId };
+  let [subscriptions, standaloneSubscriptions, manualLogs] = await loadFinanceSubscriptionSources({
+    contaId,
+    status,
+    search,
+  });
 
-  if (status) {
-    where.status = Array.isArray(status) ? { in: status } : status;
-  }
-
-  // Filtro de busca no banco (antes da paginação)
-  if (search) {
-    where.matricula = {
-      OR: [
-        { aluno: { nome: { contains: search, mode: 'insensitive' } } },
-        { responsavelFinanceiro: { nome: { contains: search, mode: 'insensitive' } } },
-        { plano: { nome: { contains: search, mode: 'insensitive' } } },
-        { plano: { descricao: { contains: search, mode: 'insensitive' } } },
-        { combo: { nome: { contains: search, mode: 'insensitive' } } },
-      ],
-    };
-  }
-
-  const standaloneSubscriptionDelegate = getStandaloneSubscriptionDelegate();
-
-  const [subscriptions, standaloneSubscriptions, manualLogs] = await Promise.all([
-    prisma.subscription.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        matricula: {
-          select: {
-            id: true,
-            vencimentoDia: true,
-            formaPagamento: true,
-            formaPagamentoTaxa: true,
-            aluno: { select: { id: true, nome: true, dataNasc: true } },
-            responsavelFinanceiro: { select: { id: true, nome: true } },
-            plano: { select: { nome: true, valor: true, periodicidade: true, descricao: true } },
-            combo: { select: { nome: true, valor: true } },
-          },
-        },
-      },
-    }),
-    standaloneSubscriptionDelegate
-      ? standaloneSubscriptionDelegate.findMany({
-          where: { contaId },
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            asaasSubscriptionId: true,
-            externalReference: true,
-            status: true,
-            cycle: true,
-            billingType: true,
-            value: true,
-            nextDueDate: true,
-            description: true,
-            customerId: true,
-            createdAt: true,
-            customer: {
-              select: {
-                payerType: true,
-                payerId: true,
-              },
-            },
-          },
+  const converged = await convergeSubscriptionsWithAsaas({
+    contaId,
+    subscriptions: [
+      ...subscriptions.map((subscription) => ({
+        id: subscription.id,
+        source: 'ACADEMIC' as const,
+        asaasSubscriptionId: subscription.asaasSubscriptionId,
+        externalReference: subscription.externalReference,
+      })),
+      ...standaloneSubscriptions.map((subscription) => ({
+        id: subscription.id,
+        source: 'STANDALONE' as const,
+        asaasSubscriptionId: subscription.asaasSubscriptionId,
+        externalReference: subscription.externalReference,
+      })),
+      ...manualLogs
+        .map((log) => {
+          const metadata = asRecord(log.metadata);
+          if (!metadata || !log.entityId) return null;
+          return {
+            id: log.entityId,
+            source: 'LEGACY_MANUAL' as const,
+            asaasSubscriptionId:
+              typeof metadata.asaasSubscriptionId === 'string' ? metadata.asaasSubscriptionId : null,
+            externalReference:
+              typeof metadata.externalReference === 'string' ? metadata.externalReference : null,
+          };
         })
-      : Promise.resolve([]),
-    prisma.auditLog.findMany({
-      where: {
-        contaId,
-        action: 'finance.standalone_subscription.created',
-        entityType: 'StandaloneSubscription',
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        entityId: true,
-        metadata: true,
-        createdAt: true,
-      },
-    }),
-  ]);
+        .filter((item): item is NonNullable<typeof item> => item != null),
+    ],
+  });
+
+  if (converged) {
+    [subscriptions, standaloneSubscriptions, manualLogs] = await loadFinanceSubscriptionSources({
+      contaId,
+      status,
+      search,
+    });
+  }
 
   const standaloneResponsavelIds = standaloneSubscriptions
     .filter((sub) => sub.customer?.payerType === 'RESPONSAVEL' && sub.customer.payerId)
@@ -480,8 +561,11 @@ export async function listSubscriptionsForFinance(
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Batch: buscar próximo vencimento de todas de uma vez (evita N+1)
-  const subRefs = mergedItemsRaw.map((s) => s.externalReference);
+  mergedItemsRaw.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const total = mergedItemsRaw.length;
+  const pagedRawItems = mergedItemsRaw.slice((page - 1) * pageSize, page * pageSize);
+
+  const subRefs = pagedRawItems.map((s) => s.externalReference);
   const nextCharges = subRefs.length > 0
     ? await prisma.charge.findMany({
         where: {
@@ -498,7 +582,6 @@ export async function listSubscriptionsForFinance(
       })
     : [];
 
-  // Mapear externalReference → cobrança oficial mais próxima (primeiro match apenas)
   const nextChargeMap = new Map<string, { dueDate: Date; value: number | null }>();
   for (const charge of nextCharges) {
     if (!charge.externalReference) continue;
@@ -511,7 +594,7 @@ export async function listSubscriptionsForFinance(
     }
   }
 
-  const items: SubscriptionFinanceDTO[] = mergedItemsRaw.map((item) => {
+  const items: SubscriptionFinanceDTO[] = pagedRawItems.map((item) => {
     const nextCharge = nextChargeMap.get(item.externalReference);
     let nextDueDate: string | null = nextCharge?.dueDate.toISOString() ?? item.nextDueDate;
     if (!nextDueDate && item.status === 'ACTIVE') {
@@ -529,12 +612,8 @@ export async function listSubscriptionsForFinance(
     };
   });
 
-  items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const total = items.length;
-  const pagedItems = items.slice((page - 1) * pageSize, page * pageSize);
-
   return {
-    items: pagedItems,
+    items,
     total,
     page,
     pageSize,

@@ -19,6 +19,7 @@ import {
   canEditStructural,
 } from '@alusa/domain';
 import { buildSeatOccupancyWhereClause } from '@alusa/lib';
+import { reconcileAcademicChargesWithAsaas } from '@alusa/finance';
 
 export class MatriculaConflictError extends Error {
   readonly code:
@@ -216,7 +217,7 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
     }
   }
 
-  const [total, data] = await Promise.all([
+  const [total, dataRaw] = await Promise.all([
     prisma.matricula.count({ where }),
     prisma.matricula.findMany({
       where,
@@ -256,6 +257,46 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
       },
     }),
   ]);
+
+  const cobrancaIds = dataRaw.flatMap((matricula) =>
+    matricula.cobrancas
+      .filter((cobranca) => cobranca.asaasPaymentId)
+      .map((cobranca) => cobranca.id),
+  );
+  const reconciliation = cobrancaIds.length
+    ? await reconcileAcademicChargesWithAsaas({
+        contaId: input.contaId,
+        cobrancaIds,
+        limit: cobrancaIds.length,
+      })
+    : null;
+  const data = dataRaw.map((matricula) => ({
+    ...matricula,
+    taxaStatus:
+      matricula.taxaStatus === StatusTaxaMatricula.PAGO ||
+      matricula.cobrancas.some((cobranca) => {
+        const reconciled = reconciliation?.items.get(cobranca.id);
+        return cobranca.tipo === TipoCobranca.TAXA_MATRICULA && reconciled?.status === StatusCobranca.PAGO;
+      })
+        ? StatusTaxaMatricula.PAGO
+        : matricula.taxaStatus,
+    cobrancas: matricula.cobrancas.map((cobranca) => {
+      const reconciled = reconciliation?.items.get(cobranca.id);
+      return reconciled
+        ? {
+            ...cobranca,
+            status: reconciled.status,
+            asaasPaymentId: reconciled.asaasPaymentId,
+            asaasStatus: reconciled.asaasStatus,
+            vencimento: reconciled.vencimento,
+            dataPagamento: reconciled.dataPagamento,
+            pagoEm: reconciled.pagoEm,
+            liquidacaoStatus: reconciled.liquidacaoStatus,
+            liquidadoEm: reconciled.liquidadoEm,
+          }
+        : cobranca;
+    }),
+  }));
 
   const normalized = data.map((item) => ({
     ...item,

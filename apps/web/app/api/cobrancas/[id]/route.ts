@@ -10,6 +10,7 @@ import {
   handlePaymentWebhook,
   isAsaasEnabled,
   mapAsaasPaymentStatusToCobranca,
+  reconcileAcademicChargesWithAsaas,
   readPaymentFullPreflight,
   syncPaymentStateFromAsaas,
   updatePayment,
@@ -530,8 +531,32 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       recordAsaasReadDecision('cobranca_detail', 'local');
     }
 
+    const reconciliation =
+      academicAsaasPaymentId && asaasActive && contaIdForAsaas
+        ? await reconcileAcademicChargesWithAsaas({
+            contaId: contaIdForAsaas,
+            cobrancaIds: [cobranca.id],
+            force: true,
+            limit: 1,
+          })
+        : null;
+    const reconciledCobranca = reconciliation?.items.get(cobranca.id);
+    const effectiveCobranca = reconciledCobranca
+      ? {
+          ...cobranca,
+          status: reconciledCobranca.status,
+          asaasPaymentId: reconciledCobranca.asaasPaymentId,
+          asaasStatus: reconciledCobranca.asaasStatus,
+          vencimento: reconciledCobranca.vencimento,
+          dataPagamento: reconciledCobranca.dataPagamento,
+          pagoEm: reconciledCobranca.pagoEm,
+          liquidacaoStatus: reconciledCobranca.liquidacaoStatus,
+          liquidadoEm: reconciledCobranca.liquidadoEm,
+        }
+      : cobranca;
+
     const asaasData =
-      remoteAsaasData ?? buildAcademicAsaasData(cobranca as unknown as Record<string, unknown>);
+      remoteAsaasData ?? buildAcademicAsaasData(effectiveCobranca as unknown as Record<string, unknown>);
 
     const effectiveFormaPagamento =
       cobranca.formaPagamento && cobranca.formaPagamento !== 'INDEFINIDO'
@@ -562,12 +587,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     }
 
     const effectiveStatus = resolveAcademicDisplayedStatus({
-      localCobrancaStatus: cobranca.status,
-      remotePaymentStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
-      dueDate: cobranca.vencimento,
+      localCobrancaStatus: effectiveCobranca.status,
+      remotePaymentStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? asaasData?.status ?? null,
+      dueDate: effectiveCobranca.vencimento,
     });
 
-    const { charge: _academicCharge, ...cobrancaDetail } = cobranca;
+    const { charge: _academicCharge, ...cobrancaDetail } = effectiveCobranca;
 
     return NextResponse.json(
       cobrancaDetailResultDTOSchema.parse(
@@ -577,19 +602,19 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
             ...cobrancaDetail,
             formaPagamento: effectiveFormaPagamento,
             status: effectiveStatus,
-            valor: Number(cobranca.valor),
+            valor: Number(effectiveCobranca.valor),
             atrasado: effectiveStatus === 'ATRASADO' || (effectiveStatus === 'PENDENTE' && atrasado),
             asaasData,
             installmentPlanId,
             subscriptionId,
-            valorBruto: Number(cobranca.valor),
+            valorBruto: Number(effectiveCobranca.valor),
             valorLiquido: toNullableNumber(
-              (cobranca as unknown as { asaasNetValue?: unknown }).asaasNetValue,
+              (effectiveCobranca as unknown as { asaasNetValue?: unknown }).asaasNetValue,
             ),
             taxaAsaas: toNullableNumber(
-              (cobranca as unknown as { asaasFeeValue?: unknown }).asaasFeeValue,
+              (effectiveCobranca as unknown as { asaasFeeValue?: unknown }).asaasFeeValue,
             ),
-            liquidacaoStatus: (cobranca as unknown as { liquidacaoStatus?: string | null }).liquidacaoStatus ?? null,
+            liquidacaoStatus: (effectiveCobranca as unknown as { liquidacaoStatus?: string | null }).liquidacaoStatus ?? null,
           },
         }),
       ),
