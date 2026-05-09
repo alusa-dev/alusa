@@ -1821,3 +1821,81 @@ export async function cancelSaleInventory(
     inventoryStatus: sale.inventoryStatus,
   };
 }
+
+/**
+ * Cumpre a reserva de estoque de uma venda quando o pagamento é confirmado via webhook.
+ * Idempotente: se a venda já foi cumprida ou não é RESERVE, retorna sem erro.
+ */
+export async function fulfillReservedSaleOnPayment(input: {
+  contaId: string;
+  chargeId: string;
+}): Promise<{ fulfilled: boolean }> {
+  const sale = await prisma.sale.findFirst({
+    where: { chargeId: input.chargeId, contaId: input.contaId },
+    select: {
+      id: true,
+      status: true,
+      inventoryMode: true,
+      inventoryStatus: true,
+      items: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          productId: true,
+          variantId: true,
+          quantity: true,
+          returnedQuantity: true,
+        },
+      },
+    },
+  });
+
+  if (!sale) return { fulfilled: false };
+  if (sale.inventoryMode !== SaleInventoryMode.RESERVE) return { fulfilled: false };
+  if (sale.inventoryStatus !== SaleInventoryStatus.RESERVED) return { fulfilled: false };
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of sale.items) {
+      if (!item.productId) continue;
+
+      const outstanding = Math.max(item.quantity - item.returnedQuantity, 0);
+      if (outstanding <= 0) continue;
+
+      await applyInventoryChange(tx, {
+        contaId: input.contaId,
+        productId: item.productId,
+        variantId: item.variantId,
+        movementType: InventoryMovementType.SALE_OUT,
+        onHandDelta: -outstanding,
+        reservedDelta: -outstanding,
+        averageCostMode: 'keep',
+        originType: 'SALE',
+        originId: sale.id,
+        originLineId: item.id,
+        originActionKey: 'fulfill_on_payment',
+        reason: 'Cumprimento automático via confirmação de pagamento',
+      });
+    }
+
+    await tx.sale.update({
+      where: { id: sale.id },
+      data: {
+        inventoryStatus: SaleInventoryStatus.FULFILLED,
+        status: SaleStatus.CONCLUIDA,
+      },
+    });
+  });
+
+  await auditLogService.record({
+    contaId: input.contaId,
+    action: 'loja.sale.fulfilled_on_payment',
+    entity: { type: 'Sale', id: sale.id },
+    metadata: {
+      chargeId: input.chargeId,
+      previousInventoryStatus: sale.inventoryStatus,
+      trigger: 'webhook_payment_confirmed',
+    },
+  });
+
+  return { fulfilled: true };
+}

@@ -14,6 +14,7 @@ import { findStandaloneSubscription } from '../foundation/standalone-subscriptio
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
+import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
 import type {
   ChargeStatus,
   LiquidacaoStatus,
@@ -515,6 +516,20 @@ async function handleStandaloneChargeWebhook(
   });
 
   await refreshReadModel({ chargeId: charge.id });
+
+  // Cumprir reserva de estoque automaticamente quando pagamento é confirmado
+  if (nextStatusCharge === 'PAID') {
+    try {
+      await fulfillReservedSaleOnPayment({ contaId, chargeId: charge.id });
+    } catch (fulfillError) {
+      // Não falhar o webhook por erro de fulfillment — logar e seguir
+      console.error('[handleStandaloneChargeWebhook] Erro ao cumprir reserva de estoque:', {
+        chargeId: charge.id,
+        contaId,
+        error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
+      });
+    }
+  }
 
   await auditLogService.record({
     contaId,
