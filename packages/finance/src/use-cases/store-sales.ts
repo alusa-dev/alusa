@@ -27,6 +27,8 @@ import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
+const STORE_SALE_TRANSACTION_TIMEOUT_MS = 20_000;
+const STORE_SALE_TRANSACTION_MAX_WAIT_MS = 5_000;
 
 const SALE_ITEM_BASE_SELECT = {
   id: true,
@@ -1598,16 +1600,16 @@ async function createLocalSaleRecord(input: {
     attempts += 1;
 
     try {
-      return await prisma.$transaction(async (tx) => {
+      const saleId = await prisma.$transaction(async (tx) => {
         const existing = await tx.sale.findFirst({
           where: {
             contaId: input.contaId,
             uiRequestId: input.uiRequestId,
           },
-          include: SALE_DETAIL_INCLUDE,
+          select: { id: true },
         });
 
-        if (existing) return existing;
+        if (existing) return existing.id;
 
         const lastSale = await tx.sale.findFirst({
           where: { contaId: input.contaId },
@@ -1681,7 +1683,7 @@ async function createLocalSaleRecord(input: {
             matriculaId: input.prepared.chargeConfig?.matriculaId ?? null,
             operadorId: input.operatorId,
           },
-          include: SALE_DETAIL_INCLUDE,
+          select: { id: true },
         });
 
         const createdItems: CreatedSaleInventoryLine[] = [];
@@ -1728,11 +1730,22 @@ async function createLocalSaleRecord(input: {
           inventoryMode: input.prepared.inventoryMode,
         });
 
-        return tx.sale.findFirstOrThrow({
-          where: { id: createdSale.id, contaId: input.contaId },
-          include: SALE_DETAIL_INCLUDE,
-        });
+        return createdSale.id;
+      }, {
+        maxWait: STORE_SALE_TRANSACTION_MAX_WAIT_MS,
+        timeout: STORE_SALE_TRANSACTION_TIMEOUT_MS,
       });
+
+      const sale = await findSaleById(input.contaId, saleId);
+      if (!sale) {
+        throw new StoreSaleError(
+          'VENDA_NAO_ENCONTRADA',
+          'Venda não encontrada após criação local.',
+          404,
+        );
+      }
+
+      return sale;
     } catch (error) {
       if (error instanceof StoreInventoryError) {
         throw new StoreSaleError(error.code, error.message, error.status);
