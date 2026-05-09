@@ -711,6 +711,53 @@ function compactAddress(parts: Array<string | null | undefined>): string | null 
   return value || null;
 }
 
+async function convergeStoreSalesFinancialState(params: {
+  contaId: string;
+  sales: SaleRecord[];
+}): Promise<boolean> {
+  const pendingPaymentIds = new Set<string>();
+
+  for (const sale of params.sales) {
+    const installmentPlan =
+      sale.standaloneInstallmentPlan ?? sale.charge?.standaloneInstallmentPlan ?? null;
+
+    if (installmentPlan) {
+      for (const charge of installmentPlan.charges) {
+        if (charge.asaasPaymentId && charge.status !== 'PAID' && charge.status !== 'CANCELED') {
+          pendingPaymentIds.add(charge.asaasPaymentId);
+        }
+      }
+      continue;
+    }
+
+    if (
+      sale.charge?.asaasPaymentId &&
+      sale.charge.status !== 'PAID' &&
+      sale.charge.status !== 'CANCELED'
+    ) {
+      pendingPaymentIds.add(sale.charge.asaasPaymentId);
+    }
+  }
+
+  if (pendingPaymentIds.size === 0) {
+    return false;
+  }
+
+  let converged = false;
+  for (const asaasPaymentId of pendingPaymentIds) {
+    const syncResult = await syncPaymentStateFromAsaas({
+      contaId: params.contaId,
+      asaasPaymentId,
+    });
+
+    if (syncResult.success) {
+      converged = true;
+    }
+  }
+
+  return converged;
+}
+
 function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
   type SaleItemSnapshotShape = {
     unitCostAtSale?: Prisma.Decimal | null;
@@ -2157,7 +2204,7 @@ export async function listStoreSales(input: ListStoreSalesInput): Promise<ListSt
     ),
   };
 
-  const [total, records] = await Promise.all([
+  const [total, initialRecords] = await Promise.all([
     prisma.sale.count({ where }),
     prisma.sale.findMany({
       where,
@@ -2167,6 +2214,21 @@ export async function listStoreSales(input: ListStoreSalesInput): Promise<ListSt
       take: pageSize,
     }),
   ]);
+
+  const converged = await convergeStoreSalesFinancialState({
+    contaId: input.contaId,
+    sales: initialRecords,
+  });
+
+  const records = converged
+    ? await prisma.sale.findMany({
+        where,
+        include: SALE_DETAIL_INCLUDE,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      })
+    : initialRecords;
 
   return {
     data: records.map(mapSaleRecord),
@@ -2180,8 +2242,20 @@ export async function listStoreSales(input: ListStoreSalesInput): Promise<ListSt
 }
 
 export async function getStoreSaleById(input: GetStoreSaleInput): Promise<StoreSaleDTO | null> {
-  const sale = await findSaleById(input.contaId, input.saleId);
-  return sale ? mapSaleRecord(sale) : null;
+  let sale = await findSaleById(input.contaId, input.saleId);
+  if (!sale) return null;
+
+  const converged = await convergeStoreSalesFinancialState({
+    contaId: input.contaId,
+    sales: [sale],
+  });
+
+  if (converged) {
+    sale = await findSaleById(input.contaId, input.saleId);
+    if (!sale) return null;
+  }
+
+  return mapSaleRecord(sale);
 }
 
 export async function cancelStoreSale(input: CancelStoreSaleInput): Promise<StoreSaleDTO> {

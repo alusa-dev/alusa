@@ -9,7 +9,13 @@ import {
   SaleStatus,
 } from '@prisma/client';
 
-import { cancelStoreSale, createStoreSale, StoreSaleError } from '../store-sales';
+import {
+  cancelStoreSale,
+  createStoreSale,
+  getStoreSaleById,
+  listStoreSales,
+  StoreSaleError,
+} from '../store-sales';
 
 type StoredSaleItem = {
   id: string;
@@ -816,5 +822,161 @@ describe('store-sales', () => {
       actorUserId: 'user-2',
       saleId: 'sale-1',
     });
+  });
+
+  it('converge cobrança pendente ao listar vendas e reflete baixa local centralizada', async () => {
+    state.charges.set('charge-1', {
+      id: 'charge-1',
+      contaId: 'conta-1',
+      status: 'OPEN',
+      asaasPaymentId: 'pay-1',
+    });
+
+    state.sales.set('sale-1', {
+      id: 'sale-1',
+      contaId: 'conta-1',
+      uiRequestId: 'sale-request-1',
+      saleNumber: 1,
+      status: SaleStatus.PENDENTE,
+      customerType: 'AVULSO',
+      alunoId: null,
+      responsavelId: null,
+      walkInName: 'Cliente Loja',
+      walkInPhone: null,
+      walkInNotes: null,
+      subtotal: new Prisma.Decimal('150.00'),
+      discount: new Prisma.Decimal('0'),
+      total: new Prisma.Decimal('150.00'),
+      totalCost: null,
+      grossProfit: null,
+      grossMargin: null,
+      finalizationType: SaleFinalizationType.COBRANCA,
+      inventoryMode: SaleInventoryMode.RESERVE,
+      inventoryStatus: SaleInventoryStatus.RESERVED,
+      paymentMethod: null,
+      amountReceived: null,
+      changeGiven: null,
+      chargeId: 'charge-1',
+      standaloneInstallmentPlanId: null,
+      matriculaId: null,
+      operadorId: 'user-1',
+      canceledAt: null,
+      cancelReason: null,
+      canceledById: null,
+      createdAt: new Date('2026-04-21T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-21T10:00:00.000Z'),
+    });
+
+    const { syncPaymentStateFromAsaas } = await import('../sync-payment-state-from-asaas');
+    vi.mocked(syncPaymentStateFromAsaas).mockImplementationOnce(async () => {
+      const charge = state.charges.get('charge-1');
+      if (charge) {
+        charge.status = 'PAID';
+        state.charges.set(charge.id, charge);
+      }
+
+      const sale = state.sales.get('sale-1');
+      if (sale) {
+        sale.status = SaleStatus.CONCLUIDA;
+        sale.inventoryStatus = SaleInventoryStatus.FULFILLED;
+        state.sales.set(sale.id, sale);
+      }
+
+      return {
+        success: true,
+        asaasPaymentId: 'pay-1',
+        paymentStatus: 'RECEIVED',
+        appliedEvent: 'PAYMENT_RECEIVED',
+        invoiceUrl: null,
+        bankSlipUrl: null,
+        transactionReceiptUrl: null,
+      };
+    });
+
+    const result = await listStoreSales({ contaId: 'conta-1' });
+
+    expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay-1',
+    });
+    expect(result.data[0]?.status).toBe('CONCLUIDA');
+    expect(result.data[0]?.inventoryStatus).toBe('FULFILLED');
+    expect(result.data[0]?.charge?.status).toBe('PAID');
+  });
+
+  it('converge cobrança pendente ao obter detalhe da venda', async () => {
+    state.charges.set('charge-2', {
+      id: 'charge-2',
+      contaId: 'conta-1',
+      status: 'OPEN',
+      asaasPaymentId: 'pay-2',
+    });
+
+    state.sales.set('sale-2', {
+      id: 'sale-2',
+      contaId: 'conta-1',
+      uiRequestId: 'sale-request-2',
+      saleNumber: 2,
+      status: SaleStatus.PENDENTE,
+      customerType: 'AVULSO',
+      alunoId: null,
+      responsavelId: null,
+      walkInName: 'Cliente Loja',
+      walkInPhone: null,
+      walkInNotes: null,
+      subtotal: new Prisma.Decimal('150.00'),
+      discount: new Prisma.Decimal('0'),
+      total: new Prisma.Decimal('150.00'),
+      totalCost: null,
+      grossProfit: null,
+      grossMargin: null,
+      finalizationType: SaleFinalizationType.COBRANCA,
+      inventoryMode: SaleInventoryMode.RESERVE,
+      inventoryStatus: SaleInventoryStatus.RESERVED,
+      paymentMethod: null,
+      amountReceived: null,
+      changeGiven: null,
+      chargeId: 'charge-2',
+      standaloneInstallmentPlanId: null,
+      matriculaId: null,
+      operadorId: 'user-1',
+      canceledAt: null,
+      cancelReason: null,
+      canceledById: null,
+      createdAt: new Date('2026-04-21T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-21T10:00:00.000Z'),
+    });
+
+    const { syncPaymentStateFromAsaas } = await import('../sync-payment-state-from-asaas');
+    vi.mocked(syncPaymentStateFromAsaas).mockImplementationOnce(async () => {
+      const charge = state.charges.get('charge-2');
+      if (charge) {
+        charge.status = 'PAID';
+        state.charges.set(charge.id, charge);
+      }
+
+      const sale = state.sales.get('sale-2');
+      if (sale) {
+        sale.status = SaleStatus.CONCLUIDA;
+        sale.inventoryStatus = SaleInventoryStatus.FULFILLED;
+        state.sales.set(sale.id, sale);
+      }
+
+      return {
+        success: true,
+        asaasPaymentId: 'pay-2',
+        paymentStatus: 'CONFIRMED',
+        appliedEvent: 'PAYMENT_CONFIRMED',
+        invoiceUrl: null,
+        bankSlipUrl: null,
+        transactionReceiptUrl: null,
+      };
+    });
+
+    const result = await getStoreSaleById({ contaId: 'conta-1', saleId: 'sale-2' });
+
+    expect(result?.status).toBe('CONCLUIDA');
+    expect(result?.inventoryStatus).toBe('FULFILLED');
+    expect(result?.charge?.status).toBe('PAID');
   });
 });
