@@ -51,6 +51,12 @@ import { VariantSelectorModal } from './components/VariantSelectorModal';
 
 type CustomerMode = 'REGISTRADO' | 'AVULSO';
 type WizardStep = 0 | 1 | 2;
+type WalkInDocumentStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available' }
+  | { state: 'exists'; name: string | null }
+  | { state: 'error' };
 
 const STEP_LABELS = ['Cliente', 'Produtos', 'Pagamento'] as const;
 
@@ -115,6 +121,9 @@ export function CreateSaleFeature() {
   const [walkInEmail, setWalkInEmail] = useState('');
   const [walkInPhone, setWalkInPhone] = useState('');
   const [walkInNotes, setWalkInNotes] = useState('');
+  const [walkInDocumentStatus, setWalkInDocumentStatus] = useState<WalkInDocumentStatus>({
+    state: 'idle',
+  });
   const [saveWalkInCustomer, setSaveWalkInCustomer] = useState<'NAO' | 'SIM'>('NAO');
   const [inventoryMode, setInventoryMode] = useState<InventoryModeValue>('IMMEDIATE');
   const [finalizationType, setFinalizationType] =
@@ -142,6 +151,14 @@ export function CreateSaleFeature() {
   const amountReceived = parseNumber(amountReceivedInput) ?? 0;
 
   const selectedPayer = payerSearch.selectedPayer;
+  const walkInDocumentDigits = onlyDigits(walkInDocument);
+  const walkInDocumentError = useMemo(() => {
+    if (!walkInDocumentDigits) return null;
+    if (!isValidCpfCnpjBR(walkInDocumentDigits)) return 'CPF/CNPJ inválido';
+    if (walkInDocumentStatus.state === 'exists') return 'Cliente já cadastrado';
+    if (walkInDocumentStatus.state === 'error') return 'Não foi possível validar';
+    return null;
+  }, [walkInDocumentDigits, walkInDocumentStatus]);
   const cartSubtotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [cart],
@@ -176,6 +193,51 @@ export function CreateSaleFeature() {
     if (!error) return;
     toast.error({ title: 'Erro ao carregar produtos', description: error });
   }, [error]);
+
+  useEffect(() => {
+    if (customerMode !== 'AVULSO') {
+      setWalkInDocumentStatus({ state: 'idle' });
+      return;
+    }
+
+    if (!walkInDocumentDigits || !isValidCpfCnpjBR(walkInDocumentDigits)) {
+      setWalkInDocumentStatus({ state: 'idle' });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setWalkInDocumentStatus({ state: 'checking' });
+      try {
+        const response = await fetch(
+          `/api/vendas/clientes-avulsos/documento?document=${encodeURIComponent(
+            walkInDocumentDigits,
+          )}`,
+          { cache: 'no-store', signal: controller.signal },
+        );
+
+        if (!response.ok) throw new Error('Falha ao validar CPF/CNPJ');
+        const data = (await response.json()) as {
+          exists?: boolean;
+          match?: { name?: string | null } | null;
+        };
+
+        setWalkInDocumentStatus(
+          data.exists
+            ? { state: 'exists', name: data.match?.name ?? null }
+            : { state: 'available' },
+        );
+      } catch (validationError) {
+        if ((validationError as Error).name === 'AbortError') return;
+        setWalkInDocumentStatus({ state: 'error' });
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [customerMode, walkInDocumentDigits]);
 
   const productColumns: DataTableColumn<(typeof products)[number]>[] = [
     {
@@ -274,6 +336,7 @@ export function CreateSaleFeature() {
     setWalkInEmail('');
     setWalkInPhone('');
     setWalkInNotes('');
+    setWalkInDocumentStatus({ state: 'idle' });
     setSaveWalkInCustomer('NAO');
     setInventoryMode('IMMEDIATE');
     setFinalizationType('RECEBIMENTO_PRESENCIAL');
@@ -318,15 +381,30 @@ export function CreateSaleFeature() {
 
       const requiresFinancialCustomer =
         finalizationType === 'COBRANCA' || saveWalkInCustomer === 'SIM';
-      const documentDigits = onlyDigits(walkInDocument);
+      const documentDigits = walkInDocumentDigits;
       const phoneDigits = onlyDigits(walkInPhone);
       const email = walkInEmail.trim().toLowerCase();
 
       if (requiresFinancialCustomer) {
-        if (!isValidCpfCnpjBR(documentDigits)) {
+        if (
+          !isValidCpfCnpjBR(documentDigits) ||
+          walkInDocumentStatus.state === 'exists' ||
+          walkInDocumentStatus.state === 'checking'
+        ) {
+          const title =
+            walkInDocumentStatus.state === 'exists'
+              ? 'Cliente já cadastrado'
+              : walkInDocumentStatus.state === 'checking'
+                ? 'Validando CPF/CNPJ'
+                : 'CPF/CNPJ obrigatório';
           toast.warning({
-            title: 'CPF/CNPJ obrigatório',
-            description: 'Informe um CPF ou CNPJ válido para continuar.',
+            title,
+            description:
+              walkInDocumentStatus.state === 'exists'
+                ? 'Use a opção Buscar Cliente para continuar.'
+                : walkInDocumentStatus.state === 'checking'
+                  ? 'Aguarde a validação para continuar.'
+                  : 'Informe um CPF ou CNPJ válido para continuar.',
           });
           return;
         }
@@ -445,7 +523,30 @@ export function CreateSaleFeature() {
 
   const canAdvanceStep1 = cart.length > 0;
 
-  const goNext = () => setWizardStep((s) => Math.min(2, s + 1) as WizardStep);
+  const goNext = () => {
+    if (wizardStep === 0 && customerMode === 'AVULSO') {
+      if (walkInDocumentStatus.state === 'checking') {
+        toast.warning({
+          title: 'Validando CPF/CNPJ',
+          description: 'Aguarde a validação para continuar.',
+        });
+        return;
+      }
+
+      if (walkInDocumentError) {
+        toast.warning({
+          title: walkInDocumentError,
+          description:
+            walkInDocumentError === 'Cliente já cadastrado'
+              ? 'Use a opção Buscar Cliente para continuar.'
+              : 'Revise os dados do cliente avulso para continuar.',
+        });
+        return;
+      }
+    }
+
+    setWizardStep((s) => Math.min(2, s + 1) as WizardStep);
+  };
   const goBack = () => setWizardStep((s) => Math.max(0, s - 1) as WizardStep);
   const isIntroStep = wizardStep === 0;
 
@@ -662,7 +763,14 @@ export function CreateSaleFeature() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className={labelClass}>CPF/CNPJ</label>
+                        <div className="flex items-center gap-2">
+                          <label className={labelClass}>CPF/CNPJ</label>
+                          {walkInDocumentError ? (
+                            <span className="text-xs font-medium text-red-600">
+                              {walkInDocumentError}
+                            </span>
+                          ) : null}
+                        </div>
                         <Input
                           value={walkInDocument}
                           onChange={(event) =>

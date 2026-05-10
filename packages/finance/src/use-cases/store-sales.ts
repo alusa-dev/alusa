@@ -583,6 +583,27 @@ function assertWalkInFinancialData(customer: Extract<PreparedCustomer, { type: '
   return { document, email, phone };
 }
 
+async function assertWalkInCustomerIsNew(
+  contaId: string,
+  customer: Extract<PreparedCustomer, { type: 'AVULSO' }>,
+): Promise<void> {
+  const { document } = assertWalkInFinancialData(customer);
+  const [existingAluno, existingResponsavel] = await Promise.all([
+    prisma.aluno.findFirst({
+      where: { contaId, cpf: document },
+      select: { id: true },
+    }),
+    prisma.responsavel.findFirst({
+      where: { contaId, cpf: document },
+      select: { id: true },
+    }),
+  ]);
+
+  if (existingAluno || existingResponsavel) {
+    throw new StoreSaleError('CLIENTE_AVULSO_JA_CADASTRADO', 'Cliente já cadastrado.', 409);
+  }
+}
+
 function normalizeDateInput(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new StoreSaleError('DATA_INVALIDA', 'Data inválida para a cobrança.', 422);
@@ -1321,6 +1342,7 @@ async function prepareSaleContext(input: CreateStoreSaleInput): Promise<Prepared
     (customer.saveAsCustomer || input.finalization.type === 'COBRANCA')
   ) {
     assertWalkInFinancialData(customer);
+    await assertWalkInCustomerIsNew(input.contaId, customer);
   }
 
   const items = Array.from(aggregatedMap.values());
@@ -1883,6 +1905,12 @@ async function ensureChargeForSale(input: {
           'PAGADOR_FINANCEIRO_INVALIDO',
           'O pagador financeiro não está apto para cobrança.',
           422,
+        );
+      case 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR':
+        throw new StoreSaleError(
+          'CLIENTE_FINANCEIRO_JA_CADASTRADO',
+          'Cliente já cadastrado. Use a opção Buscar Cliente para continuar.',
+          409,
         );
       case 'FEATURE_DISABLED':
         throw new StoreSaleError(

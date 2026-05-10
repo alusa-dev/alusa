@@ -162,6 +162,7 @@ export type CreateStandaloneChargeError =
   | 'PAGADOR_SEM_CPF'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'CUSTOMER_SEM_ASAAS_ID'
+  | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
   | 'MATRICULA_NAO_ENCONTRADA'
   | 'FORMA_PAGAMENTO_INVALIDA'
   | 'VALOR_INVALIDO'
@@ -439,6 +440,8 @@ export async function createStandaloneCharge(
       if (customerResult.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
       if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
         return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+      if (customerResult.error === 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR')
+        return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
       return err('PAGADOR_NAO_ENCONTRADO');
     }
 

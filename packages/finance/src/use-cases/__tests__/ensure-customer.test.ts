@@ -8,14 +8,18 @@ vi.mock('@alusa/database', () => {
     prisma: {
       customer: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         upsert: vi.fn(),
         update: vi.fn(),
+        delete: vi.fn(),
       },
       aluno: {
+        findUnique: vi.fn(),
         findFirst: vi.fn(),
         update: vi.fn(),
       },
       responsavel: {
+        findUnique: vi.fn(),
         findFirst: vi.fn(),
         update: vi.fn(),
       },
@@ -170,5 +174,58 @@ describe('ensureCustomer', () => {
       },
       data: { asaasCustomerId: 'cust_1' },
     });
+  });
+
+  it('deve retornar erro controlado quando asaasCustomerId pertence a outro pagador ativo', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    const { getCustomer } = await import('@alusa/asaas');
+
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({
+      apiKey: 'sandbox_x',
+      contaId: 't1',
+    } as never);
+
+    vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
+      id: 'custRow_r1',
+      asaasCustomerId: null,
+      externalReference: 'financeProfile:fp1',
+    } as never);
+
+    vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
+      id: 'r1',
+      nome: 'Resp',
+      cpf: '123',
+      email: 'x@x.com',
+      telefone: '11999999999',
+      asaasCustomerId: 'cust_conflict',
+    } as never);
+
+    vi.mocked(getCustomer).mockResolvedValueOnce({
+      id: 'cust_conflict',
+      deleted: false,
+    } as never);
+
+    vi.mocked(prisma.customer.update).mockRejectedValueOnce({
+      code: 'P2002',
+      meta: { target: ['asaasCustomerId'] },
+    } as never);
+
+    vi.mocked(prisma.customer.findFirst).mockResolvedValueOnce({
+      id: 'custRow_a1',
+      payerType: 'ALUNO',
+      payerId: 'a1',
+    } as never);
+
+    vi.mocked(prisma.aluno.findUnique).mockResolvedValueOnce({ id: 'a1' } as never);
+
+    const result = await ensureCustomer({
+      contaId: 't1',
+      payer: { type: 'RESPONSAVEL', id: 'r1' },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+    }
   });
 });

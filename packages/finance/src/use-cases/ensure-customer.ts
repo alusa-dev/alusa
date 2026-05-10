@@ -28,6 +28,7 @@ export type EnsureCustomerError =
   | 'PAGADOR_SEM_CPF'
   | 'ASAAS_CUSTOMER_INVALIDO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
+  | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
   | 'ERRO_AO_CRIAR_CUSTOMER';
 
 function buildFinanceProfileExternalReference(financeProfileId: string): string {
@@ -97,7 +98,7 @@ async function updateCustomerAsaasId(params: {
   payerType: CustomerPayerType;
   payerId: string;
   asaasCustomerId: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const { contaId, payerType, payerId, asaasCustomerId } = params;
 
   try {
@@ -107,6 +108,7 @@ async function updateCustomerAsaasId(params: {
       },
       data: { asaasCustomerId },
     });
+    return true;
   } catch (error) {
     // Trata violação de constraint única em asaasCustomerId
     if ((error as Prisma.PrismaClientKnownRequestError)?.code === 'P2002') {
@@ -146,7 +148,7 @@ async function updateCustomerAsaasId(params: {
             },
             data: { asaasCustomerId },
           });
-          return;
+          return true;
         }
       }
 
@@ -157,7 +159,7 @@ async function updateCustomerAsaasId(params: {
         payerId,
         existingCustomer,
       });
-      throw error;
+      return false;
     }
     throw error;
   }
@@ -254,12 +256,13 @@ export async function ensureCustomer(
         });
       }
 
-      await updateCustomerAsaasId({
+      const linked = await updateCustomerAsaasId({
         contaId: input.contaId,
         payerType,
         payerId: payerData.id,
         asaasCustomerId: mockId,
       });
+      if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
     }
 
     return ok({ customerId: mockId, localCustomerId: internalCustomer.id, externalReference });
@@ -312,12 +315,13 @@ export async function ensureCustomer(
       });
 
       if (active) {
-        await updateCustomerAsaasId({
+        const linked = await updateCustomerAsaasId({
           contaId: input.contaId,
           payerType,
           payerId: payerData.id,
           asaasCustomerId: payerData.asaasCustomerId,
         });
+        if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
 
         await syncExistingAsaasCustomerContact({
           contaId: input.contaId,
@@ -372,6 +376,14 @@ export async function ensureCustomer(
 
   if (!created.data.id) return err('ASAAS_CUSTOMER_INVALIDO');
 
+  const linked = await updateCustomerAsaasId({
+    contaId: input.contaId,
+    payerType,
+    payerId: payerData.id,
+    asaasCustomerId: created.data.id,
+  });
+  if (!linked) return err('ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR');
+
   // Persistir asaasCustomerId na entidade original
   if (payerType === 'ALUNO') {
     await prisma.aluno.update({
@@ -384,13 +396,6 @@ export async function ensureCustomer(
       data: { asaasCustomerId: created.data.id },
     });
   }
-
-  await updateCustomerAsaasId({
-    contaId: input.contaId,
-    payerType,
-    payerId: payerData.id,
-    asaasCustomerId: created.data.id,
-  });
 
   // FASE 6: Sincronizar preferências de notificação do tenant para o novo customer
   await syncCustomerNotificationChannelsFromTenant(input.contaId, created.data.id);
