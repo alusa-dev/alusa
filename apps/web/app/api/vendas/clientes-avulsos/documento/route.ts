@@ -10,6 +10,7 @@ const querySchema = z.object({
     .string()
     .transform((value) => value.replace(/\D/g, ''))
     .refine((value) => value.length === 11 || value.length === 14, 'CPF/CNPJ inválido.'),
+  uiRequestId: z.string().trim().min(1).optional().nullable(),
 });
 
 function json(status: number, body: unknown) {
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = querySchema.safeParse({
     document: request.nextUrl.searchParams.get('document') ?? '',
+    uiRequestId: request.nextUrl.searchParams.get('uiRequestId'),
   });
 
   if (!parsed.success) {
@@ -37,13 +39,29 @@ export async function GET(request: NextRequest) {
   }
 
   const document = parsed.data.document;
+  const currentSale = parsed.data.uiRequestId
+    ? await prisma.sale.findFirst({
+        where: {
+          contaId,
+          uiRequestId: parsed.data.uiRequestId,
+          customerType: 'AVULSO',
+        },
+        select: { responsavelId: true },
+      })
+    : null;
+  const allowedResponsavelId = currentSale?.responsavelId ?? null;
+
   const [aluno, responsavel] = await Promise.all([
     prisma.aluno.findFirst({
       where: { contaId, cpf: document },
       select: { id: true, nome: true },
     }),
     prisma.responsavel.findFirst({
-      where: { contaId, cpf: document },
+      where: {
+        contaId,
+        cpf: document,
+        ...(allowedResponsavelId ? { id: { not: allowedResponsavelId } } : {}),
+      },
       select: { id: true, nome: true },
     }),
   ]);

@@ -210,9 +210,10 @@ export function CreateSaleFeature() {
       setWalkInDocumentStatus({ state: 'checking' });
       try {
         const response = await fetch(
-          `/api/vendas/clientes-avulsos/documento?document=${encodeURIComponent(
-            walkInDocumentDigits,
-          )}`,
+          `/api/vendas/clientes-avulsos/documento?${new URLSearchParams({
+            document: walkInDocumentDigits,
+            uiRequestId: requestId,
+          }).toString()}`,
           { cache: 'no-store', signal: controller.signal },
         );
 
@@ -237,7 +238,7 @@ export function CreateSaleFeature() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [customerMode, walkInDocumentDigits]);
+  }, [customerMode, walkInDocumentDigits, requestId]);
 
   const productColumns: DataTableColumn<(typeof products)[number]>[] = [
     {

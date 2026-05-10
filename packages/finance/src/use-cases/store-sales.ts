@@ -586,20 +586,49 @@ function assertWalkInFinancialData(customer: Extract<PreparedCustomer, { type: '
 async function assertWalkInCustomerIsNew(
   contaId: string,
   customer: Extract<PreparedCustomer, { type: 'AVULSO' }>,
+  uiRequestId?: string,
 ): Promise<void> {
-  const { document } = assertWalkInFinancialData(customer);
-  const [existingAluno, existingResponsavel] = await Promise.all([
+  const { document, email } = assertWalkInFinancialData(customer);
+  const currentSale = uiRequestId
+    ? await prisma.sale.findFirst({
+        where: { contaId, uiRequestId, customerType: 'AVULSO' },
+        select: { responsavelId: true },
+      })
+    : null;
+  const allowedResponsavelId = currentSale?.responsavelId ?? null;
+
+  const responsavelExclusion = allowedResponsavelId ? { id: { not: allowedResponsavelId } } : {};
+
+  const [
+    existingAlunoByDocument,
+    existingAlunoByEmail,
+    existingResponsavelByDocument,
+    existingResponsavelByEmail,
+  ] = await Promise.all([
     prisma.aluno.findFirst({
       where: { contaId, cpf: document },
       select: { id: true },
     }),
+    prisma.aluno.findFirst({
+      where: { contaId, email },
+      select: { id: true },
+    }),
     prisma.responsavel.findFirst({
-      where: { contaId, cpf: document },
+      where: { contaId, cpf: document, ...responsavelExclusion },
+      select: { id: true },
+    }),
+    prisma.responsavel.findFirst({
+      where: { contaId, email, ...responsavelExclusion },
       select: { id: true },
     }),
   ]);
 
-  if (existingAluno || existingResponsavel) {
+  if (
+    existingAlunoByDocument ||
+    existingAlunoByEmail ||
+    existingResponsavelByDocument ||
+    existingResponsavelByEmail
+  ) {
     throw new StoreSaleError('CLIENTE_AVULSO_JA_CADASTRADO', 'Cliente já cadastrado.', 409);
   }
 }
@@ -1342,7 +1371,7 @@ async function prepareSaleContext(input: CreateStoreSaleInput): Promise<Prepared
     (customer.saveAsCustomer || input.finalization.type === 'COBRANCA')
   ) {
     assertWalkInFinancialData(customer);
-    await assertWalkInCustomerIsNew(input.contaId, customer);
+    await assertWalkInCustomerIsNew(input.contaId, customer, input.uiRequestId);
   }
 
   const items = Array.from(aggregatedMap.values());

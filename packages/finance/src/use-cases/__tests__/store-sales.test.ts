@@ -701,6 +701,130 @@ describe('store-sales', () => {
     expect(state.sales.get(result.id)?.standaloneInstallmentPlanId).toBe('plan-1');
   });
 
+  it('permite reparar cobrança avulsa da mesma venda sem bloquear pelo cliente local criado na tentativa anterior', async () => {
+    state.products.set('prod-1', {
+      id: 'prod-1',
+      contaId: 'conta-1',
+      name: 'Sapatilha',
+      price: new Prisma.Decimal('150.00'),
+      stock: 3,
+      hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-1', {
+      productId: 'prod-1',
+      variantId: null,
+      onHand: 3,
+      reserved: 0,
+      averageCost: new Prisma.Decimal('25.00'),
+    });
+
+    const { createStandaloneCharge } = await import('../create-standalone-charge');
+    vi.mocked(createStandaloneCharge)
+      .mockResolvedValueOnce({ success: false, error: 'ERRO_AO_CRIAR_PAGAMENTO' } as never)
+      .mockImplementationOnce(async (input) => {
+        state.charges.set('charge-repaired-1', {
+          id: 'charge-repaired-1',
+          contaId: input.contaId,
+          status: 'OPEN',
+          asaasPaymentId: 'pay-repaired-1',
+        });
+
+        return {
+          success: true,
+          data: {
+            chargeId: 'charge-repaired-1',
+            asaasPaymentId: 'pay-repaired-1',
+            externalReference: 'alusa:standalone:charge-repaired-1',
+            status: 'OPEN',
+          },
+        };
+      });
+
+    const input = {
+      contaId: 'conta-1',
+      operatorId: 'user-1',
+      uiRequestId: 'sale-request-retry-walkin',
+      customer: {
+        type: 'AVULSO' as const,
+        name: 'Cliente Retry',
+        document: '41972131079',
+        email: 'retry@example.com',
+        phone: '(97) 98123-8125',
+        saveCustomer: false,
+      },
+      items: [{ productId: 'prod-1', quantity: 1 }],
+      finalization: {
+        type: 'COBRANCA' as const,
+        dueDate: '2099-01-01',
+        billingType: 'CREDIT_CARD' as const,
+      },
+    };
+
+    await expect(createStoreSale(input)).rejects.toMatchObject<Partial<StoreSaleError>>({
+      code: 'ERRO_CRIAR_COBRANCA',
+    });
+
+    expect(Array.from(state.responsaveis.values())).toHaveLength(1);
+
+    const result = await createStoreSale(input);
+
+    expect(result.charge?.id).toBe('charge-repaired-1');
+    expect(result.customer.responsavelId).toBe(Array.from(state.responsaveis.values())[0]?.id);
+    expect(createStandaloneCharge).toHaveBeenCalledTimes(2);
+    expect(Array.from(state.responsaveis.values())).toHaveLength(1);
+  });
+
+  it('bloqueia cliente avulso quando CPF/CNPJ ou e-mail já pertencem a outro cliente', async () => {
+    state.products.set('prod-1', {
+      id: 'prod-1',
+      contaId: 'conta-1',
+      name: 'Sapatilha',
+      price: new Prisma.Decimal('150.00'),
+      stock: 3,
+      hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-1', {
+      productId: 'prod-1',
+      variantId: null,
+      onHand: 3,
+      reserved: 0,
+      averageCost: new Prisma.Decimal('25.00'),
+    });
+    state.responsaveis.set('resp-existing', {
+      id: 'resp-existing',
+      contaId: 'conta-1',
+      nome: 'Cliente Existente',
+      cpf: '12345678909',
+      email: 'existente@example.com',
+      telefone: '92999990000',
+      financeiro: true,
+    });
+
+    await expect(
+      createStoreSale({
+        contaId: 'conta-1',
+        operatorId: 'user-1',
+        uiRequestId: 'sale-request-conflict-email',
+        customer: {
+          type: 'AVULSO',
+          name: 'Novo Cliente',
+          document: '41972131079',
+          email: 'existente@example.com',
+          phone: '(97) 98123-8125',
+          saveCustomer: false,
+        },
+        items: [{ productId: 'prod-1', quantity: 1 }],
+        finalization: {
+          type: 'COBRANCA',
+          dueDate: '2099-01-01',
+          billingType: 'PIX',
+        },
+      }),
+    ).rejects.toMatchObject<Partial<StoreSaleError>>({
+      code: 'CLIENTE_AVULSO_JA_CADASTRADO',
+    });
+  });
+
   it('bloqueia finalização em mensalidade na Loja', async () => {
     state.products.set('prod-1', {
       id: 'prod-1',
