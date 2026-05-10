@@ -37,15 +37,9 @@ vi.mock('@alusa/asaas', () => ({
 vi.mock('../create-customer', () => ({
   createAsaasCustomer: vi.fn(async () => ({
     success: true,
-    data: { id: 'cust_1', externalReference: 'customer:x' },
+    data: { id: 'cust_1', externalReference: 'customer:t1:RESPONSAVEL:r1' },
   })),
   syncAsaasCustomerContact: vi.fn(async () => ({ success: true })),
-}));
-
-vi.mock('../../foundation/finance-profile.service', () => ({
-  financeProfileService: {
-    getOrCreateByTenant: vi.fn(async () => ({ id: 'fp1' })),
-  },
 }));
 
 describe('ensureCustomer', () => {
@@ -66,7 +60,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
       id: 'custRow_1',
       asaasCustomerId: null,
-      externalReference: 'financeProfile:fp1',
+      externalReference: 'customer:t1:ALUNO:a1',
     } as never);
 
     const result = await ensureCustomer({ contaId: 't1', payer: { type: 'ALUNO', id: 'a1' } });
@@ -88,7 +82,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
       id: 'custRow_r1',
       asaasCustomerId: 'cust_exist',
-      externalReference: 'financeProfile:fp1',
+      externalReference: 'customer:t1:RESPONSAVEL:r1',
     } as never);
 
     vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
@@ -110,7 +104,7 @@ describe('ensureCustomer', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.customerId).toBe('cust_exist');
-      expect(result.data.externalReference).toBe('financeProfile:fp1');
+      expect(result.data.externalReference).toBe('customer:t1:RESPONSAVEL:r1');
     }
   });
 
@@ -127,7 +121,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
       id: 'custRow_r1',
       asaasCustomerId: 'cust_deleted',
-      externalReference: 'financeProfile:fp1',
+      externalReference: 'customer:t1:RESPONSAVEL:r1',
     } as never);
     vi.mocked(prisma.customer.update).mockResolvedValue({} as never);
 
@@ -156,7 +150,7 @@ describe('ensureCustomer', () => {
       cpfCnpj: '123',
       email: 'x@x.com',
       phone: '11999999999',
-      externalReference: 'financeProfile:fp1',
+      externalReference: 'customer:t1:RESPONSAVEL:r1',
     });
 
     expect(prisma.responsavel.update).toHaveBeenCalledWith({
@@ -188,7 +182,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.customer.upsert).mockResolvedValueOnce({
       id: 'custRow_r1',
       asaasCustomerId: null,
-      externalReference: 'financeProfile:fp1',
+      externalReference: 'customer:t1:RESPONSAVEL:r1',
     } as never);
 
     vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({

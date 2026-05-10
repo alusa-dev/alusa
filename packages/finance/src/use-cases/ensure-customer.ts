@@ -5,7 +5,6 @@ import type { CustomerPayerType, Prisma } from '@prisma/client';
 import { AsaasHttpError, getCustomer } from '@alusa/asaas';
 
 import { createAsaasCustomer, syncAsaasCustomerContact } from './create-customer';
-import { financeProfileService } from '../foundation/finance-profile.service';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
 
 export type EnsureCustomerPayerRef =
@@ -31,8 +30,12 @@ export type EnsureCustomerError =
   | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
   | 'ERRO_AO_CRIAR_CUSTOMER';
 
-function buildFinanceProfileExternalReference(financeProfileId: string): string {
-  return `financeProfile:${financeProfileId}`;
+function buildCustomerExternalReference(params: {
+  contaId: string;
+  payerType: CustomerPayerType;
+  payerId: string;
+}): string {
+  return `customer:${params.contaId}:${params.payerType}:${params.payerId}`;
 }
 
 async function resolveActiveAsaasCustomer(params: {
@@ -170,10 +173,11 @@ export async function ensureCustomer(
 ): Promise<Result<EnsureCustomerOutput, EnsureCustomerError>> {
   const payerType: CustomerPayerType = input.payer.type;
 
-  // ADR-006: Customer.externalReference deve vincular ao FinanceProfile
-  // (perfil financeiro do tenant) e não a IDs técnicos do registro interno.
-  const financeProfile = await financeProfileService.getOrCreateByTenant(input.contaId);
-  const externalReference = buildFinanceProfileExternalReference(financeProfile.id);
+  const externalReference = buildCustomerExternalReference({
+    contaId: input.contaId,
+    payerType,
+    payerId: input.payer.id,
+  });
 
   const internalCustomer = await prisma.customer.upsert({
     where: {

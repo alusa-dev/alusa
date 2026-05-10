@@ -1,4 +1,5 @@
 import { createCustomer, listCustomers, restoreCustomer, updateCustomer } from '@alusa/asaas';
+import type { AsaasCustomer } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { ok, err } from '@alusa/shared';
@@ -29,6 +30,24 @@ function buildCustomerPhonePayload(phone?: string): { phone?: string; mobilePhon
     phone: normalized,
     mobilePhone: normalized,
   };
+}
+
+function normalizeDocument(value?: string | null): string {
+  return value?.replace(/\D/g, '') ?? '';
+}
+
+function findReusableCustomerByDocument(
+  customers: AsaasCustomer[],
+  cpfCnpj: string,
+): AsaasCustomer | undefined {
+  const normalizedCpfCnpj = normalizeDocument(cpfCnpj);
+  if (!normalizedCpfCnpj) return undefined;
+
+  const matchingCustomers = customers.filter(
+    (customer) => normalizeDocument(customer.cpfCnpj) === normalizedCpfCnpj,
+  );
+
+  return matchingCustomers.find((customer) => !customer.deleted) ?? matchingCustomers[0];
 }
 
 export async function syncAsaasCustomerContact(
@@ -68,14 +87,35 @@ export async function createAsaasCustomer(
       return err('Credenciais Asaas não configuradas');
     }
 
+    const byCpfCnpj = await listCustomers({
+      apiKey: creds.apiKey,
+      cpfCnpj: input.cpfCnpj,
+      limit: 10,
+    });
+
+    const existingByCpf = findReusableCustomerByDocument(byCpfCnpj.data, input.cpfCnpj);
+    if (existingByCpf?.id) {
+      const customerId = existingByCpf.id;
+      if (existingByCpf.deleted) {
+        await restoreCustomer({ apiKey: creds.apiKey, customerId });
+      }
+      await syncAsaasCustomerContact({
+        ...input,
+        customerId,
+      });
+      return ok({
+        id: customerId,
+        externalReference: existingByCpf.externalReference ?? input.externalReference,
+      });
+    }
+
     const byExternal = await listCustomers({
       apiKey: creds.apiKey,
       externalReference: input.externalReference,
       limit: 10,
     });
 
-    const existingByExternal =
-      byExternal.data.find((customer) => !customer.deleted) ?? byExternal.data[0];
+    const existingByExternal = findReusableCustomerByDocument(byExternal.data, input.cpfCnpj);
     if (existingByExternal?.id) {
       const customerId = existingByExternal.id;
       if (existingByExternal.deleted) {
@@ -91,27 +131,6 @@ export async function createAsaasCustomer(
       });
     }
 
-    const byCpfCnpj = await listCustomers({
-      apiKey: creds.apiKey,
-      cpfCnpj: input.cpfCnpj,
-      limit: 10,
-    });
-
-    const existingByCpf = byCpfCnpj.data.find((customer) => !customer.deleted) ?? byCpfCnpj.data[0];
-    if (existingByCpf?.id) {
-      const customerId = existingByCpf.id;
-      if (existingByCpf.deleted) {
-        await restoreCustomer({ apiKey: creds.apiKey, customerId });
-      }
-      await syncAsaasCustomerContact({
-        ...input,
-        customerId,
-      });
-      return ok({
-        id: customerId,
-        externalReference: existingByCpf.externalReference ?? input.externalReference,
-      });
-    }
     const customer = await createCustomer({
       apiKey: creds.apiKey,
       idempotencyKey: input.externalReference,

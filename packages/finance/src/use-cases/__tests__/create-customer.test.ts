@@ -64,7 +64,14 @@ describe('createAsaasCustomer', () => {
     const { listCustomers, updateCustomer } = await import('@alusa/asaas');
 
     vi.mocked(listCustomers).mockResolvedValueOnce({
-      data: [{ id: 'cus_1', externalReference: 'customer:r1', deleted: false }],
+      data: [
+        {
+          id: 'cus_1',
+          externalReference: 'customer:r1',
+          cpfCnpj: '02719786276',
+          deleted: false,
+        },
+      ],
     } as never);
 
     const result = await createAsaasCustomer({
@@ -86,6 +93,53 @@ describe('createAsaasCustomer', () => {
         phone: '92979817409',
         mobilePhone: '92979817409',
         externalReference: 'customer:r1',
+        notificationDisabled: false,
+      },
+    });
+  });
+
+  it('nao reutiliza customer encontrado por externalReference quando CPF/CNPJ e diferente', async () => {
+    const { createCustomer, listCustomers, updateCustomer } = await import('@alusa/asaas');
+
+    vi.mocked(listCustomers)
+      .mockResolvedValueOnce({ data: [] } as never)
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'cus_antigo',
+            externalReference: 'financeProfile:fp1',
+            cpfCnpj: '12345678909',
+            deleted: false,
+          },
+        ],
+      } as never);
+
+    vi.mocked(createCustomer).mockResolvedValue({
+      id: 'cus_novo',
+      externalReference: 'customer:conta-1:RESPONSAVEL:r1',
+    } as never);
+
+    const result = await createAsaasCustomer({
+      contaId: 'conta-1',
+      name: 'Luiza de Alencar Bezerra',
+      cpfCnpj: '705.484.450-52',
+      email: 'luiza@example.com',
+      phone: '(97) 98128-3106',
+      externalReference: 'customer:conta-1:RESPONSAVEL:r1',
+    });
+
+    expect(result.success).toBe(true);
+    expect(updateCustomer).not.toHaveBeenCalled();
+    expect(createCustomer).toHaveBeenCalledWith({
+      apiKey: 'sandbox_key',
+      idempotencyKey: 'customer:conta-1:RESPONSAVEL:r1',
+      data: {
+        name: 'Luiza de Alencar Bezerra',
+        cpfCnpj: '705.484.450-52',
+        email: 'luiza@example.com',
+        phone: '97981283106',
+        mobilePhone: '97981283106',
+        externalReference: 'customer:conta-1:RESPONSAVEL:r1',
         notificationDisabled: false,
       },
     });
