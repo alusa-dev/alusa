@@ -814,8 +814,8 @@ model Aluno {
   codigoInterno                  String?
   tags                           String[]  @default([])
   status                         Status    @default(ATIVO)
-  asaasId                        String?   @unique
-  asaasCustomerId                String?   @unique
+  asaasId                        String?
+  asaasCustomerId                String?
   asaasCustomerExternalReference String?
   dataInativacao                 DateTime?
   motivoInativacao               String?
@@ -833,6 +833,8 @@ model Aluno {
   @@unique([contaId, cpf])
   @@unique([contaId, email])
   @@unique([contaId, codigoInterno])
+  @@unique([contaId, asaasId])
+  @@unique([contaId, asaasCustomerId])
   @@unique([contaId, asaasCustomerExternalReference])
   @@index([contaId])
   @@index([contaId, status], name: "idx_aluno_conta_status")
@@ -881,6 +883,7 @@ model Responsavel {
   // Multi-tenant: unicidade por conta
   @@unique([contaId, cpf])
   @@unique([contaId, email])
+  @@unique([contaId, asaasId])
   @@unique([contaId, asaasCustomerExternalReference])
   @@index([contaId])
 }
@@ -2337,7 +2340,7 @@ model Customer {
   payerId   String
 
   externalReference String
-  asaasCustomerId   String? @unique
+  asaasCustomerId   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2348,6 +2351,7 @@ model Customer {
   standaloneSubscriptions    StandaloneSubscription[]
 
   @@unique([contaId, payerType, payerId])
+  @@unique([contaId, asaasCustomerId])
   @@index([contaId])
   @@index([asaasCustomerId])
 }

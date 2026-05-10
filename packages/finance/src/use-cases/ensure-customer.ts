@@ -89,9 +89,9 @@ function isMockPaymentsMode() {
 }
 
 /**
- * Atualiza o Customer local com o asaasCustomerId, tratando conflitos de constraint única.
- * Se o asaasCustomerId já existir em outro Customer órfão (payerId inexistente),
- * limpa o Customer órfão antes de atualizar.
+ * Atualiza o Customer local com o asaasCustomerId, tratando conflitos de constraint única
+ * apenas dentro do mesmo tenant. Se o asaasCustomerId já existir em outro Customer órfão
+ * do mesmo tenant (payerId inexistente), limpa o Customer órfão antes de atualizar.
  */
 async function updateCustomerAsaasId(params: {
   contaId: string;
@@ -112,9 +112,9 @@ async function updateCustomerAsaasId(params: {
   } catch (error) {
     // Trata violação de constraint única em asaasCustomerId
     if ((error as Prisma.PrismaClientKnownRequestError)?.code === 'P2002') {
-      // Verifica se existe um Customer órfão com esse asaasCustomerId
+      // Verifica se existe um Customer órfão com esse asaasCustomerId no mesmo tenant.
       const existingCustomer = await prisma.customer.findFirst({
-        where: { asaasCustomerId },
+        where: { contaId, asaasCustomerId },
         select: { id: true, payerType: true, payerId: true },
       });
 

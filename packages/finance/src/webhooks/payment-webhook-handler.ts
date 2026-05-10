@@ -104,7 +104,7 @@ async function resolveLocalCustomerPayerName(
   }
 
   const responsavel = await prisma.responsavel.findFirst({
-    where: { id: customer.payerId },
+    where: { id: customer.payerId, contaId },
     select: { nome: true },
   });
   return responsavel?.nome ?? null;
