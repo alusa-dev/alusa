@@ -301,7 +301,7 @@ function ResponsaveisTable({
     {
       id: 'responsavel',
       header: 'Responsável',
-      width: 'w-[44%]',
+      width: 'w-[32%]',
       align: 'left',
       noWrap: false,
       skeleton: (
@@ -324,7 +324,7 @@ function ResponsaveisTable({
     {
       id: 'vinculos',
       header: 'Alunos',
-      width: 'w-[7%]',
+      width: 'w-[10%]',
       align: 'center',
       render: (responsavel) => {
         const count = responsavel.alunosCount ?? 0;
@@ -342,10 +342,14 @@ function ResponsaveisTable({
     {
       id: 'cpf',
       header: 'CPF',
-      width: 'w-[9%]',
+      width: 'w-[14%]',
       align: 'center',
+      cellClassName: 'overflow-hidden',
       render: (responsavel) => (
-        <span className="tabular-nums leading-[20px]">
+        <span
+          className="block w-full truncate tabular-nums leading-5 text-gray-900"
+          title={responsavel.cpf ? maskCpf(responsavel.cpf) : undefined}
+        >
           {responsavel.cpf ? maskCpf(responsavel.cpf) : '-'}
         </span>
       ),
@@ -354,7 +358,7 @@ function ResponsaveisTable({
     {
       id: 'email',
       header: 'E-mail',
-      width: 'w-[16%]',
+      width: 'w-[22%]',
       align: 'left',
       headerClassName: 'pl-6 pr-2',
       cellClassName: 'overflow-hidden pl-6 pr-2',
@@ -371,12 +375,15 @@ function ResponsaveisTable({
     {
       id: 'telefone',
       header: 'Telefone',
-      width: 'w-[16%]',
+      width: 'w-[14%]',
       align: 'left',
       headerClassName: 'pl-2 pr-6',
       cellClassName: 'overflow-hidden pl-2 pr-6',
       render: (responsavel) => (
-        <span className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900">
+        <span
+          className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900"
+          title={maskPhone(responsavel.telefone) || undefined}
+        >
           {maskPhone(responsavel.telefone) || '—'}
         </span>
       ),
@@ -402,7 +409,7 @@ function ResponsaveisTable({
 
   return (
     <DataTable
-      tableClassName="table-fixed"
+      tableClassName="min-w-[1040px] table-fixed"
       columns={columns}
       data={responsaveis}
       rowKey={(responsavel) => responsavel.id}
