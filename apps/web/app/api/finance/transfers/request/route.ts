@@ -11,7 +11,6 @@ import {
   requestWithdrawDTOSchema,
   mapRequestWithdrawDTOToInput,
   mapRequestWithdrawOutputToDTO,
-  type RequestWithdrawError,
 } from '@alusa/finance';
 
 type SessionUser = {
@@ -27,7 +26,7 @@ const requestSchema = requestWithdrawDTOSchema.extend({
   currentPassword: z.string().min(1, 'Senha atual obrigatória'),
 });
 
-const requestWithdrawErrorStatusMap: Partial<Record<RequestWithdrawError, number>> = {
+const requestWithdrawErrorStatusMap: Record<string, number> = {
   FEATURE_DISABLED: 403,
   KYC_NAO_APROVADO: 409,
   SALDO_INSUFICIENTE: 400,
