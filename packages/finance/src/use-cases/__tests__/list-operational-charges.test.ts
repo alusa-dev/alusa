@@ -10,7 +10,7 @@ vi.mock('../asaas-ops', () => ({
   isAsaasEnabled: isAsaasEnabledMock,
 }));
 
-import { listOperationalCharges } from '../list-operational-charges';
+import { getOperationalChargesSummary, listOperationalCharges } from '../list-operational-charges';
 
 // ---------------------------------------------------------------------------
 // Mock do Prisma via DI (o use-case aceita `db` como 2o argumento)
@@ -586,6 +586,26 @@ describe('listOperationalCharges', () => {
     expect(result.total).toBe(3);
     expect(result.totalPages).toBe(2);
     expect(result.page).toBe(1);
+  });
+
+  it('resume o mesmo conjunto da fila operacional para uso em KPI', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([
+      makeCobranca({ id: 'cob_1', valor: 80, status: 'PENDENTE', vencimento: new Date('2025-06-10') }),
+    ]);
+    db.charge.findMany
+      .mockResolvedValueOnce([
+        makeCharge({ id: 'ch_1', value: 150, status: 'OPEN', dueDate: new Date('2025-06-12') }),
+        makeCharge({ id: 'ch_2', value: 30, status: 'OVERDUE', dueDate: new Date('2025-05-31') }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    const result = await getOperationalChargesSummary(BASE_INPUT, db);
+
+    expect(result).toEqual({
+      total: 3,
+      valorBruto: 260,
+    });
   });
 
   // ===== Search =====

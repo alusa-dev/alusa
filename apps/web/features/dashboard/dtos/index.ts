@@ -73,8 +73,8 @@ export const dashboardPendingPaymentsKpiDTOSchema = z.object({
     inicio: z.string(),
     fim: z.string(),
   }),
-  origemDados: z.enum(['charge_read_model', 'cobranca']),
-  escopo: z.enum(['unified', 'academic_only']),
+  origemDados: z.enum(['charge_read_model', 'cobranca', 'operational_queue']),
+  escopo: z.enum(['unified', 'academic_only', 'operational_queue']),
   calculadoEm: z.string(),
   projectedAt: z.string().nullable(),
 });

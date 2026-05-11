@@ -98,7 +98,7 @@ export function AguardandoPagamentoCard({ data, loading }: DashboardFinanceKpiCa
     <KpiCard
       titulo="Aguardando pagamento"
       valor={valor}
-      descricao="Cobranças em aberto no mês atual"
+      descricao="Mesmo total de Todas as Cobranças em aberto"
       formato="moeda"
       loading={loading}
     />

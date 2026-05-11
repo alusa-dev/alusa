@@ -241,10 +241,11 @@ export type {
 export type { ChargeListItemDTO, UnifiedChargeStatus } from './dtos/charge-list-item.dto';
 
 // Fila operacional (FASE 1)
-export { listOperationalCharges } from './use-cases/list-operational-charges';
+export { getOperationalChargesSummary, listOperationalCharges } from './use-cases/list-operational-charges';
 export type {
   ListOperationalChargesInput,
   ListOperationalChargesOutput,
+  OperationalChargesSummaryOutput,
 } from './use-cases/list-operational-charges';
 export { getDashboardFinanceKpisLocal } from './use-cases/get-dashboard-finance-kpis-local';
 export type {

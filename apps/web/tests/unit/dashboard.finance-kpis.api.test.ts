@@ -28,16 +28,16 @@ describe('GET /api/dashboard/finance-kpis', () => {
   it('retorna o KPI local do dashboard com contrato enxuto', async () => {
     mockGetDashboardFinanceKpisLocal.mockResolvedValue({
       aguardandoPagamentoProximos30Dias: {
-        valorBruto: 275,
-        quantidadeDeCobrancas: 2,
+        valorBruto: 485,
+        quantidadeDeCobrancas: 5,
         janela: {
           inicio: '2026-05-01T03:00:00.000Z',
           fim: '2026-06-01T02:59:59.999Z',
         },
-        origemDados: 'charge_read_model',
-        escopo: 'unified',
+        origemDados: 'operational_queue',
+        escopo: 'operational_queue',
         calculadoEm: '2026-05-10T12:00:00.000Z',
-        projectedAt: '2026-05-10T11:59:00.000Z',
+        projectedAt: null,
       },
     });
 
@@ -50,16 +50,16 @@ describe('GET /api/dashboard/finance-kpis', () => {
       success: true,
       data: {
         aguardandoPagamentoProximos30Dias: {
-          valorBruto: 275,
-          quantidadeDeCobrancas: 2,
+          valorBruto: 485,
+          quantidadeDeCobrancas: 5,
           janela: {
             inicio: '2026-05-01T03:00:00.000Z',
             fim: '2026-06-01T02:59:59.999Z',
           },
-          origemDados: 'charge_read_model',
-          escopo: 'unified',
+          origemDados: 'operational_queue',
+          escopo: 'operational_queue',
           calculadoEm: '2026-05-10T12:00:00.000Z',
-          projectedAt: '2026-05-10T11:59:00.000Z',
+          projectedAt: null,
         },
       },
     });

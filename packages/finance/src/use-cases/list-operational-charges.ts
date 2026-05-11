@@ -32,6 +32,15 @@ export type ListOperationalChargesOutput = {
   totalPages: number;
 };
 
+export type OperationalChargesSummaryOutput = {
+  total: number;
+  valorBruto: number;
+};
+
+function roundCurrency(value: number): number {
+  return Number(value.toFixed(2));
+}
+
 // ---------------------------------------------------------------------------
 // Helpers internos (copiados / refinados de list-charges-aggregated)
 // ---------------------------------------------------------------------------
@@ -198,13 +207,11 @@ function shouldReconcileStandaloneCharge(params: {
  *   (nunca despejar parcelas futuras)
  * - Ao quitar/pagar/cancelar: sai da lista
  */
-export async function listOperationalCharges(
+async function buildOperationalChargesCollection(
   input: ListOperationalChargesInput,
   db?: typeof prisma,
-): Promise<ListOperationalChargesOutput> {
+): Promise<UnifiedChargeItem[]> {
   const _db = db ?? prisma;
-  const page = Math.max(1, input.page ?? 1);
-  const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, search } = input;
   const now = input.now ?? new Date();
   const endOfMonth = getEndOfCurrentMonth(now);
@@ -603,6 +610,29 @@ export async function listOperationalCharges(
 
   // Ordenar: overdue primeiro (urgência), depois por vencimento ASC
   allItems.sort(compareOperationalItems);
+
+  return allItems;
+}
+
+export async function getOperationalChargesSummary(
+  input: ListOperationalChargesInput,
+  db?: typeof prisma,
+): Promise<OperationalChargesSummaryOutput> {
+  const items = await buildOperationalChargesCollection(input, db);
+
+  return {
+    total: items.length,
+    valorBruto: roundCurrency(items.reduce((sum, item) => sum + Number(item.value ?? 0), 0)),
+  };
+}
+
+export async function listOperationalCharges(
+  input: ListOperationalChargesInput,
+  db?: typeof prisma,
+): Promise<ListOperationalChargesOutput> {
+  const page = Math.max(1, input.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
+  const allItems = await buildOperationalChargesCollection(input, db);
 
   const total = allItems.length;
   const skip = (page - 1) * pageSize;

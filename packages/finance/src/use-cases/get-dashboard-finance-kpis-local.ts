@@ -1,7 +1,8 @@
-import { prisma } from '@alusa/database';
+import { getEndOfCurrentMonth } from '../dtos/unified-billing';
+import { getOperationalChargesSummary } from './list-operational-charges';
 
-type DashboardFinanceKpiSource = 'charge_read_model' | 'cobranca';
-type DashboardFinanceKpiScope = 'unified' | 'academic_only';
+type DashboardFinanceKpiSource = 'charge_read_model' | 'cobranca' | 'operational_queue';
+type DashboardFinanceKpiScope = 'unified' | 'academic_only' | 'operational_queue';
 
 export type DashboardPendingPaymentsKpi = {
   valorBruto: number;
@@ -25,17 +26,9 @@ export type GetDashboardFinanceKpisLocalInput = {
   now?: Date;
 };
 
-function isReadModelEnabled(): boolean {
-  return process.env.FIN_READMODEL_ENABLED === 'true';
-}
-
-function roundCurrency(value: number): number {
-  return Number(value.toFixed(2));
-}
-
 function buildWindow(now: Date) {
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  const endOfMonth = getEndOfCurrentMonth(now);
   return { startOfMonth, endOfMonth };
 }
 
@@ -45,77 +38,18 @@ export async function getDashboardFinanceKpisLocal(
   const now = input.now ?? new Date();
   const { startOfMonth, endOfMonth } = buildWindow(now);
   const calculadoEm = now.toISOString();
-
-  if (isReadModelEnabled()) {
-    const readModelAggregate = await prisma.chargeReadModel.aggregate({
-      where: {
-        contaId: input.contaId,
-        status: { in: ['PENDING', 'OVERDUE'] },
-        dueDate: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
-        OR: [
-          {
-            origin: 'ACADEMIC',
-            sourceKind: 'COBRANCA',
-          },
-          {
-            origin: 'STANDALONE',
-            sourceKind: 'CHARGE',
-          },
-        ],
-      },
-      _sum: { value: true },
-      _count: { _all: true },
-      _max: { projectedAt: true },
-    });
-
-    return {
-      aguardandoPagamentoProximos30Dias: {
-        valorBruto: roundCurrency(Number(readModelAggregate._sum.value ?? 0)),
-        quantidadeDeCobrancas: readModelAggregate._count._all,
-        janela: {
-          inicio: startOfMonth.toISOString(),
-          fim: endOfMonth.toISOString(),
-        },
-        origemDados: 'charge_read_model',
-        escopo: 'unified',
-        calculadoEm,
-        projectedAt: readModelAggregate._max.projectedAt?.toISOString() ?? null,
-      },
-    };
-  }
-
-  const cobrancas = await prisma.cobranca.findMany({
-    where: {
-      matricula: { aluno: { contaId: input.contaId } },
-      status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
-      vencimento: {
-        gte: startOfMonth,
-        lte: endOfMonth,
-      },
-    },
-    select: {
-      valor: true,
-      valorFinal: true,
-    },
-  });
-
-  const valorBruto = cobrancas.reduce((sum, cobranca) => {
-    return sum + Number(cobranca.valorFinal ?? cobranca.valor ?? 0);
-  }, 0);
+  const summary = await getOperationalChargesSummary({ contaId: input.contaId, now });
 
   return {
     aguardandoPagamentoProximos30Dias: {
-      valorBruto: roundCurrency(valorBruto),
-      quantidadeDeCobrancas: cobrancas.length,
+      valorBruto: summary.valorBruto,
+      quantidadeDeCobrancas: summary.total,
       janela: {
         inicio: startOfMonth.toISOString(),
         fim: endOfMonth.toISOString(),
       },
-      origemDados: 'cobranca',
-      escopo: 'academic_only',
+      origemDados: 'operational_queue',
+      escopo: 'operational_queue',
       calculadoEm,
       projectedAt: null,
     },
