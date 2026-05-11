@@ -12,7 +12,7 @@
  * - Mapeamento de status
  */
 
-import { getAsaasBaseUrlFromEnvOrThrow } from './asaasBaseUrl';
+import { getAsaasBaseUrlForApiKeyOrThrow } from './asaasBaseUrl';
 import { globalGetLimiter } from './concurrency-limiter';
 import { extractRateLimitHeaders, globalRateLimitTracker } from './rate-limit-tracker';
 import { globalCircuitBreaker, CircuitOpenError } from './circuit-breaker';
@@ -48,8 +48,8 @@ export class AsaasHttp {
 
   constructor(config: AsaasHttpConfig) {
     this.apiKey = config.apiKey;
-    // Base URL deve ser fornecida via env para evitar divergências entre ambientes.
-    this.baseUrl = getAsaasBaseUrlFromEnvOrThrow();
+    // A API key define o ambiente efetivo para evitar validar chaves de produção em sandbox e vice-versa.
+    this.baseUrl = getAsaasBaseUrlForApiKeyOrThrow(config.apiKey);
   }
 
   async get<T>(path: string, options?: AsaasHttpOptions): Promise<T> {

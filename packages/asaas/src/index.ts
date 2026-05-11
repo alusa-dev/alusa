@@ -12,8 +12,10 @@ export type { AsaasHttpConfig, AsaasHttpOptions } from './client/AsaasHttp';
 export { createAsaasClient } from './client/AsaasClient';
 export {
   AsaasBaseUrlError,
+  getAsaasBaseUrlForApiKeyOrThrow,
   getAsaasBaseUrlFromEnvOrThrow,
   normalizeAndValidateAsaasBaseUrl,
+  parseAsaasEnvironmentFromApiKey,
   parseAsaasEnvironmentFromEnv,
 } from './client/asaasBaseUrl';
 export type { AsaasEnvironment } from './client/asaasBaseUrl';

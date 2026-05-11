@@ -7,6 +7,7 @@ import { useSession } from 'next-auth/react';
 import { useUserStore } from '@/lib/stores/user-store';
 import { Sidebar } from '@/components/layout/Sidebar';
 import CardHeader from '@/components/layout/CardHeader';
+import { ExternalAsaasOnboardingPersistentModal } from '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal';
 import useCurrentUser from '@/hooks/use-current-user';
 import ModalidadeDialog from '@/components/modalidades/ModalidadeDialog';
 import SalaDialog from '@/components/salas/SalaDialog';
@@ -102,6 +103,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             >
               {children}
             </div>
+            <ExternalAsaasOnboardingPersistentModal />
             <GlobalQuickCreatePortals />
           </div>
         </div>

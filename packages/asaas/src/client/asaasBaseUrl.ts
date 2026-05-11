@@ -1,5 +1,10 @@
 export type AsaasEnvironment = 'production' | 'sandbox' | 'unknown';
 
+const OFFICIAL_ASAAS_BASE_URLS: Record<Exclude<AsaasEnvironment, 'unknown'>, string> = {
+  production: 'https://api.asaas.com/v3/',
+  sandbox: 'https://api-sandbox.asaas.com/v3/',
+};
+
 export class AsaasBaseUrlError extends Error {
   constructor(
     message: string,
@@ -27,6 +32,16 @@ export function parseAsaasEnvironmentFromEnv(): AsaasEnvironment {
   const normalized = raw.toLowerCase();
   if (normalized === 'production' || normalized === 'prod') return 'production';
   if (normalized === 'sandbox' || normalized === 'development' || normalized === 'dev') return 'sandbox';
+  return 'unknown';
+}
+
+export function parseAsaasEnvironmentFromApiKey(apiKey: string | undefined | null): AsaasEnvironment {
+  const raw = toTrimmed(apiKey);
+  if (!raw) return 'unknown';
+
+  const normalized = raw.toLowerCase();
+  if (normalized.startsWith('$aact_prod_')) return 'production';
+  if (normalized.startsWith('$aact_hmlg_')) return 'sandbox';
   return 'unknown';
 }
 
@@ -91,4 +106,13 @@ export function getAsaasBaseUrlFromEnvOrThrow(): string {
   const env = parseAsaasEnvironmentFromEnv();
   const raw = process.env.ASAAS_BASE_URL;
   return normalizeAndValidateAsaasBaseUrl(raw ?? '', env);
+}
+
+export function getAsaasBaseUrlForApiKeyOrThrow(apiKey: string): string {
+  const apiKeyEnv = parseAsaasEnvironmentFromApiKey(apiKey);
+  if (apiKeyEnv !== 'unknown') {
+    return OFFICIAL_ASAAS_BASE_URLS[apiKeyEnv];
+  }
+
+  return getAsaasBaseUrlFromEnvOrThrow();
 }
