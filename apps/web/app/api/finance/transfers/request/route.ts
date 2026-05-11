@@ -11,6 +11,7 @@ import {
   requestWithdrawDTOSchema,
   mapRequestWithdrawDTOToInput,
   mapRequestWithdrawOutputToDTO,
+  type RequestWithdrawError,
 } from '@alusa/finance';
 
 type SessionUser = {
@@ -25,6 +26,19 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = requestWithdrawDTOSchema.extend({
   currentPassword: z.string().min(1, 'Senha atual obrigatória'),
 });
+
+const requestWithdrawErrorStatusMap: Partial<Record<RequestWithdrawError, number>> = {
+  FEATURE_DISABLED: 403,
+  KYC_NAO_APROVADO: 409,
+  SALDO_INSUFICIENTE: 400,
+  PIX_KEY_NAO_ENCONTRADA: 400,
+  TRANSFERENCIA_PIX_INDISPONIVEL: 400,
+  TRANSFERENCIA_DUPLICADA: 409,
+  IDEMPOTENCY_PAYLOAD_CONFLICT: 409,
+  AUTORIZACAO_CRITICA_NECESSARIA: 409,
+  CREDENCIAIS_ASAAS_INVALIDAS: 503,
+  CREDENCIAIS_ASAAS_NAO_CONFIGURADAS: 503,
+};
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -80,28 +94,7 @@ export async function POST(req: NextRequest) {
     const result = await requestWithdraw(input);
 
     if (!result.success) {
-      const status =
-        result.error === 'FEATURE_DISABLED'
-          ? 403
-          : result.error === 'KYC_NAO_APROVADO'
-            ? 409
-            : result.error === 'SALDO_INSUFICIENTE'
-              ? 400
-              : result.error === 'PIX_KEY_NAO_ENCONTRADA'
-                ? 400
-                : result.error === 'TRANSFERENCIA_PIX_INDISPONIVEL'
-                  ? 400
-                : result.error === 'TRANSFERENCIA_DUPLICADA'
-                  ? 409
-                  : result.error === 'IDEMPOTENCY_PAYLOAD_CONFLICT'
-                    ? 409
-                  : result.error === 'AUTORIZACAO_CRITICA_NECESSARIA'
-                    ? 409
-                    : result.error === 'CREDENCIAIS_ASAAS_INVALIDAS'
-                      ? 503
-              : result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
-                ? 503
-                : 500;
+      const status = requestWithdrawErrorStatusMap[result.error] ?? 500;
 
       return json(status, { error: result.error });
     }
