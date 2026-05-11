@@ -11,6 +11,7 @@
     "./*": "./dist/*.js"
   },
   "scripts": {
+    "prebuild": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build",
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -w -p tsconfig.build.json",
     "pretypecheck": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build",
