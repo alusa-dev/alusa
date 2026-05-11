@@ -13,6 +13,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   matricula: {
     count: vi.fn(),
+    findMany: vi.fn(),
   },
   cobranca: {
     count: vi.fn(),
@@ -20,6 +21,7 @@ const prismaMock = vi.hoisted(() => ({
   },
   pagamento: {
     aggregate: vi.fn(),
+    findMany: vi.fn(),
   },
   calendarEvent: {
     findMany: vi.fn(),
@@ -60,18 +62,9 @@ describe('GET /api/dashboard/metrics', () => {
     prismaMock.turma.count.mockResolvedValue(4);
     prismaMock.aluno.findMany.mockResolvedValue([]);
     prismaMock.matricula.count.mockResolvedValue(0);
+    prismaMock.matricula.findMany.mockResolvedValue([]);
     prismaMock.cobranca.count.mockResolvedValue(0);
     prismaMock.cobranca.findMany
-      .mockResolvedValueOnce([
-        {
-          valor: 150,
-          valorFinal: null,
-        },
-        {
-          valor: 125,
-          valorFinal: null,
-        },
-      ])
       .mockResolvedValueOnce([
         {
           valor: 150,
@@ -80,6 +73,7 @@ describe('GET /api/dashboard/metrics', () => {
       ])
       .mockResolvedValueOnce([]);
     prismaMock.pagamento.aggregate.mockResolvedValue({ _sum: { valorPago: 0 } });
+    prismaMock.pagamento.findMany.mockResolvedValue([]);
     prismaMock.calendarEvent.findMany.mockResolvedValue([
       {
         turmaId: 'turma-1',
@@ -108,13 +102,12 @@ describe('GET /api/dashboard/metrics', () => {
     ]);
   });
 
-  it('retorna turmas ativas, aguardando pagamento e taxa de matrícula recebida no ano nas métricas do dashboard', async () => {
+  it('retorna turmas ativas e taxa de matrícula recebida no ano nas métricas do dashboard', async () => {
     const response = await GET(new NextRequest('http://localhost/api/dashboard/metrics'));
     const json = await response.json();
 
     expect(response.status).toBe(200);
     expect(json.data.turmasAtivas).toBe(4);
-    expect(json.data.aguardandoPagamentoProximos30Dias).toBe(275);
     expect(json.data.taxaMatriculaRecebidaAno).toBe(150);
     expect(mockAutoCloseAgendaEventsInRange).toHaveBeenCalledWith(
       expect.objectContaining({

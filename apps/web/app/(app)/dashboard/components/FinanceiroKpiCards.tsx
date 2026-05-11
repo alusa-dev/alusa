@@ -1,7 +1,7 @@
 "use client";
 
 import { Skeleton } from '@/components/ui/skeleton';
-import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
+import type { DashboardFinanceKpisDataDTO, DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
 interface KpiCardProps {
   titulo: string;
@@ -62,6 +62,11 @@ type FinanceiroKpiCardProps = {
   loading: boolean;
 };
 
+type DashboardFinanceKpiCardProps = {
+  data: DashboardFinanceKpisDataDTO | null;
+  loading: boolean;
+};
+
 export function ConfirmadasCard({ data, loading }: FinanceiroKpiCardProps) {
   const valor = data?.turmasAtivas ?? 0;
   return (
@@ -87,8 +92,8 @@ export function VencidasCard({ data, loading }: FinanceiroKpiCardProps) {
   );
 }
 
-export function AguardandoPagamentoCard({ data, loading }: FinanceiroKpiCardProps) {
-  const valor = data?.aguardandoPagamentoProximos30Dias ?? 0;
+export function AguardandoPagamentoCard({ data, loading }: DashboardFinanceKpiCardProps) {
+  const valor = data?.aguardandoPagamentoProximos30Dias.valorBruto ?? 0;
   return (
     <KpiCard
       titulo="Aguardando pagamento"

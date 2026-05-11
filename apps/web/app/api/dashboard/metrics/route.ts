@@ -173,7 +173,6 @@ export async function GET(_request: NextRequest) {
       cobrancasPendentes,
       cobrancasVencidas,
       receitaMesAggregate,
-      aguardandoPagamentoData,
       taxasMatriculaRecebidasAno,
       receitaTotalAggregate,
       proximosVencimentos,
@@ -234,14 +233,6 @@ export async function GET(_request: NextRequest) {
           cobranca: cobrancaFilter,
         },
         _sum: { valorPago: true },
-      }),
-      prisma.cobranca.findMany({
-        where: {
-          ...cobrancaFilter,
-          status: 'PENDENTE',
-          vencimento: { gte: startOfToday, lte: next30Days },
-        },
-        select: { valor: true, valorFinal: true },
       }),
       prisma.cobranca.findMany({
         where: {
@@ -350,9 +341,6 @@ export async function GET(_request: NextRequest) {
     ).length;
 
     const receitaMes = toNumber(receitaMesAggregate._sum.valorPago);
-    const aguardandoPagamentoProximos30Dias = aguardandoPagamentoData.reduce((sum, cobranca) => {
-      return sum + toNumber(cobranca.valorFinal ?? cobranca.valor);
-    }, 0);
     const taxaMatriculaRecebidaAno = taxasMatriculaRecebidasAno.reduce((sum, cobranca) => {
       return sum + toNumber(cobranca.valorFinal ?? cobranca.valor);
     }, 0);
@@ -405,7 +393,6 @@ export async function GET(_request: NextRequest) {
       cobrancasPendentes,
       cobrancasVencidas,
       receitaMes,
-      aguardandoPagamentoProximos30Dias,
       taxaMatriculaRecebidaAno,
       receitaTotal,
       proximosVencimentos,

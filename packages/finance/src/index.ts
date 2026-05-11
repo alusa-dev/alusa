@@ -246,6 +246,12 @@ export type {
   ListOperationalChargesInput,
   ListOperationalChargesOutput,
 } from './use-cases/list-operational-charges';
+export { getDashboardFinanceKpisLocal } from './use-cases/get-dashboard-finance-kpis-local';
+export type {
+  DashboardFinanceKpisLocalSnapshot,
+  DashboardPendingPaymentsKpi,
+  GetDashboardFinanceKpisLocalInput,
+} from './use-cases/get-dashboard-finance-kpis-local';
 export { reconcileAcademicChargesWithAsaas } from './use-cases/reconcile-academic-charges';
 export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-academic-charges';
 

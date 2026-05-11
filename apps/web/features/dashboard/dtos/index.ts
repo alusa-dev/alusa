@@ -45,7 +45,6 @@ export const dashboardMetricsDataDTOSchema = z.object({
   cobrancasPendentes: z.number().int().nonnegative(),
   cobrancasVencidas: z.number().int().nonnegative(),
   receitaMes: z.number(),
-  aguardandoPagamentoProximos30Dias: z.number(),
   taxaMatriculaRecebidaAno: z.number(),
   receitaTotal: z.number(),
   proximosVencimentos: z.number().int().nonnegative(),
@@ -66,6 +65,34 @@ export const dashboardMetricsResultDTOSchema = z.object({
 });
 
 export type DashboardMetricsResultDTO = z.infer<typeof dashboardMetricsResultDTOSchema>;
+
+export const dashboardPendingPaymentsKpiDTOSchema = z.object({
+  valorBruto: z.number(),
+  quantidadeDeCobrancas: z.number().int().nonnegative(),
+  janela: z.object({
+    inicio: z.string(),
+    fim: z.string(),
+  }),
+  origemDados: z.enum(['charge_read_model', 'cobranca']),
+  escopo: z.enum(['unified', 'academic_only']),
+  calculadoEm: z.string(),
+  projectedAt: z.string().nullable(),
+});
+
+export type DashboardPendingPaymentsKpiDTO = z.infer<typeof dashboardPendingPaymentsKpiDTOSchema>;
+
+export const dashboardFinanceKpisDataDTOSchema = z.object({
+  aguardandoPagamentoProximos30Dias: dashboardPendingPaymentsKpiDTOSchema,
+});
+
+export type DashboardFinanceKpisDataDTO = z.infer<typeof dashboardFinanceKpisDataDTOSchema>;
+
+export const dashboardFinanceKpisResultDTOSchema = z.object({
+  success: z.literal(true),
+  data: dashboardFinanceKpisDataDTOSchema,
+});
+
+export type DashboardFinanceKpisResultDTO = z.infer<typeof dashboardFinanceKpisResultDTOSchema>;
 
 export const dashboardSerieResultDataDTOSchema = z.object({
   receitaMes: z.number().optional(),

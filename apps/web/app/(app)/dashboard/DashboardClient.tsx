@@ -12,8 +12,8 @@ import {
 } from './components/FinanceiroKpiCards';
 import { RecebidasKpiCard } from './components/RecebidasKpiCard';
 import { TaxaMatriculaCard, type PeriodoTaxaMatricula } from './components/TaxaMatriculaCard';
-import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
-import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
+import type { DashboardFinanceKpisDataDTO, DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
+import { mapDashboardFinanceKpisResultToDTO, mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
@@ -21,7 +21,9 @@ export default function DashboardClient() {
   const router = useRouter();
   const { user } = useCurrentUser();
   const [metrics, setMetrics] = useState<DashboardMetricsDataDTO | null>(null);
+  const [financeKpis, setFinanceKpis] = useState<DashboardFinanceKpisDataDTO | null>(null);
   const [loading, setLoading] = useState(true);
+  const [financeLoading, setFinanceLoading] = useState(true);
   const [kycCardDismissed, setKycCardDismissed] = useState(false);
   const [periodoTaxaMatricula, setPeriodoTaxaMatricula] = useState<PeriodoTaxaMatricula>('1a');
   const { verification, loading: verificationLoading, isApproved } = useKycEnforcement();
@@ -56,14 +58,47 @@ export default function DashboardClient() {
     }
   }, [user?.contaId]);
 
+  const fetchFinanceKpis = useCallback(async (silent = false) => {
+    if (!user?.contaId) {
+      setFinanceKpis(null);
+      return;
+    }
+
+    if (!silent) setFinanceLoading(true);
+    try {
+      const response = await fetch('/api/dashboard/finance-kpis', {
+        headers: { Accept: 'application/json' },
+      });
+      const raw = (await response.json()) as Record<string, unknown>;
+      const data = mapDashboardFinanceKpisResultToDTO(raw);
+
+      if (data.success) {
+        setFinanceKpis(data.data);
+      } else {
+        console.error('[DashboardClient] Erro na resposta financeira:', data);
+      }
+    } catch (error) {
+      console.error('[DashboardClient] Erro ao buscar KPI financeiro:', error);
+    } finally {
+      if (!silent) setFinanceLoading(false);
+    }
+  }, [user?.contaId]);
+
+  const refreshDashboard = useCallback(async (silent = false) => {
+    await Promise.all([
+      fetchMetrics(silent),
+      fetchFinanceKpis(silent),
+    ]);
+  }, [fetchFinanceKpis, fetchMetrics]);
+
   useEffect(() => {
-    void fetchMetrics();
-  }, [fetchMetrics]);
+    void refreshDashboard();
+  }, [refreshDashboard]);
 
   useLiveRefresh(
-    () => fetchMetrics(true),
+    () => refreshDashboard(true),
     {
-      enabled: Boolean(user?.contaId) && !loading,
+      enabled: Boolean(user?.contaId) && !loading && !financeLoading,
       intervalMs: 60_000,
       minIntervalMs: 10_000,
     },
@@ -145,7 +180,7 @@ export default function DashboardClient() {
         </div>
 
         <div className={showKycCard ? 'xl:col-span-2' : undefined}>
-          <AguardandoPagamentoCard data={metrics} loading={isMetricsLoading} />
+          <AguardandoPagamentoCard data={financeKpis} loading={financeLoading && !financeKpis} />
         </div>
 
         <div className={showKycCard ? 'xl:col-span-2' : undefined}>
