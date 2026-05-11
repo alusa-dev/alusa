@@ -13,6 +13,10 @@ export function getExplicitWebhookAuthToken(): string | null {
   return toTrimmed(process.env.ASAAS_WEBHOOK_AUTH_TOKEN);
 }
 
+export function resolveWebhookAuthToken(financeProfileId: string): string {
+  return getExplicitWebhookAuthToken() ?? deriveWebhookAuthToken(financeProfileId);
+}
+
 export function hasWebhookAuthTokenConfig(): boolean {
   return Boolean(getExplicitWebhookAuthToken() ?? toTrimmed(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET));
 }

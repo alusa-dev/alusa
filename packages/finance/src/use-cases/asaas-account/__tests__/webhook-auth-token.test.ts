@@ -5,6 +5,7 @@ import {
   getExplicitWebhookAuthToken,
   hasWebhookAuthTokenConfig,
   hashWebhookAuthToken,
+  resolveWebhookAuthToken,
 } from '../webhook-auth-token';
 
 describe('webhook-auth-token', () => {
@@ -41,5 +42,12 @@ describe('webhook-auth-token', () => {
     expect(deriveWebhookAuthToken('fp_2')).not.toBe('whsec_explicit_token');
     // tokens por tenant devem ser distintos entre si
     expect(deriveWebhookAuthToken('fp_1')).not.toBe(deriveWebhookAuthToken('fp_2'));
+  });
+
+  it('usa ASAAS_WEBHOOK_AUTH_TOKEN explícito no token esperado do webhook', () => {
+    process.env.ASAAS_WEBHOOK_AUTH_TOKEN = 'whsec_explicit_token';
+
+    expect(resolveWebhookAuthToken('fp_1')).toBe('whsec_explicit_token');
+    expect(resolveWebhookAuthToken('fp_2')).toBe('whsec_explicit_token');
   });
 });
