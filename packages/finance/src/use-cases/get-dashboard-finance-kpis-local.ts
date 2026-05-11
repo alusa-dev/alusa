@@ -34,28 +34,26 @@ function roundCurrency(value: number): number {
 }
 
 function buildWindow(now: Date) {
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfNext30Days = new Date(startOfToday);
-  endOfNext30Days.setDate(endOfNext30Days.getDate() + 30);
-  endOfNext30Days.setHours(23, 59, 59, 999);
-  return { startOfToday, endOfNext30Days };
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { startOfMonth, endOfMonth };
 }
 
 export async function getDashboardFinanceKpisLocal(
   input: GetDashboardFinanceKpisLocalInput,
 ): Promise<DashboardFinanceKpisLocalSnapshot> {
   const now = input.now ?? new Date();
-  const { startOfToday, endOfNext30Days } = buildWindow(now);
+  const { startOfMonth, endOfMonth } = buildWindow(now);
   const calculadoEm = now.toISOString();
 
   if (isReadModelEnabled()) {
     const readModelAggregate = await prisma.chargeReadModel.aggregate({
       where: {
         contaId: input.contaId,
-        status: 'PENDING',
+        status: { in: ['PENDING', 'OVERDUE'] },
         dueDate: {
-          gte: startOfToday,
-          lte: endOfNext30Days,
+          gte: startOfMonth,
+          lte: endOfMonth,
         },
         OR: [
           {
@@ -78,8 +76,8 @@ export async function getDashboardFinanceKpisLocal(
         valorBruto: roundCurrency(Number(readModelAggregate._sum.value ?? 0)),
         quantidadeDeCobrancas: readModelAggregate._count._all,
         janela: {
-          inicio: startOfToday.toISOString(),
-          fim: endOfNext30Days.toISOString(),
+          inicio: startOfMonth.toISOString(),
+          fim: endOfMonth.toISOString(),
         },
         origemDados: 'charge_read_model',
         escopo: 'unified',
@@ -92,10 +90,10 @@ export async function getDashboardFinanceKpisLocal(
   const cobrancas = await prisma.cobranca.findMany({
     where: {
       matricula: { aluno: { contaId: input.contaId } },
-      status: { in: ['PENDENTE', 'A_VENCER'] },
+      status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
       vencimento: {
-        gte: startOfToday,
-        lte: endOfNext30Days,
+        gte: startOfMonth,
+        lte: endOfMonth,
       },
     },
     select: {
@@ -113,8 +111,8 @@ export async function getDashboardFinanceKpisLocal(
       valorBruto: roundCurrency(valorBruto),
       quantidadeDeCobrancas: cobrancas.length,
       janela: {
-        inicio: startOfToday.toISOString(),
-        fim: endOfNext30Days.toISOString(),
+        inicio: startOfMonth.toISOString(),
+        fim: endOfMonth.toISOString(),
       },
       origemDados: 'cobranca',
       escopo: 'academic_only',

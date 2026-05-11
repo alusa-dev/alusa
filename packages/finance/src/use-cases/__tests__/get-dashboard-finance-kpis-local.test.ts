@@ -34,15 +34,21 @@ describe('getDashboardFinanceKpisLocal', () => {
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
 
+    const expectedWindow = {
+      gte: new Date(2026, 4, 1),
+      lte: new Date(2026, 4 + 1, 0, 23, 59, 59, 999),
+    };
+
     expect(prismaMock.chargeReadModel.aggregate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           contaId: 'conta-1',
-          status: 'PENDING',
+          status: { in: ['PENDING', 'OVERDUE'] },
           OR: [
             { origin: 'ACADEMIC', sourceKind: 'COBRANCA' },
             { origin: 'STANDALONE', sourceKind: 'CHARGE' },
           ],
+          dueDate: expectedWindow,
         }),
       }),
     );
@@ -67,10 +73,16 @@ describe('getDashboardFinanceKpisLocal', () => {
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
 
+    const expectedWindow = {
+      gte: new Date(2026, 4, 1),
+      lte: new Date(2026, 4 + 1, 0, 23, 59, 59, 999),
+    };
+
     expect(prismaMock.cobranca.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          status: { in: ['PENDENTE', 'A_VENCER'] },
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
+          vencimento: expectedWindow,
         }),
       }),
     );

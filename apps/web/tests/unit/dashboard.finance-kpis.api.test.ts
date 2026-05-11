@@ -31,8 +31,8 @@ describe('GET /api/dashboard/finance-kpis', () => {
         valorBruto: 275,
         quantidadeDeCobrancas: 2,
         janela: {
-          inicio: '2026-05-10T03:00:00.000Z',
-          fim: '2026-06-09T02:59:59.999Z',
+          inicio: '2026-05-01T03:00:00.000Z',
+          fim: '2026-06-01T02:59:59.999Z',
         },
         origemDados: 'charge_read_model',
         escopo: 'unified',
@@ -53,8 +53,8 @@ describe('GET /api/dashboard/finance-kpis', () => {
           valorBruto: 275,
           quantidadeDeCobrancas: 2,
           janela: {
-            inicio: '2026-05-10T03:00:00.000Z',
-            fim: '2026-06-09T02:59:59.999Z',
+            inicio: '2026-05-01T03:00:00.000Z',
+            fim: '2026-06-01T02:59:59.999Z',
           },
           origemDados: 'charge_read_model',
           escopo: 'unified',
