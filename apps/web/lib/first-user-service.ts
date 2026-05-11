@@ -1,4 +1,4 @@
-import { Role, type Usuario } from '@prisma/client';
+import { ExternalAsaasOnboardingStatus, FinanceIntegrationMode, Role, type Usuario } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { listSubaccounts } from '@alusa/asaas';
 import { isAtLeastAgeYears, isValidCpfCnpjDigits, isValidDateOnly, normalizeCpfCnpjDigits, parseDateOnlyToUtcDate } from '@alusa/lib';
@@ -11,6 +11,7 @@ export interface FirstUserInput {
   cpfCnpj?: string;
   nome: string;
   email: string;
+  financeIntegrationMode?: FinanceIntegrationMode;
   birthDate?: string;
   senha: string;
 }
@@ -100,6 +101,7 @@ export async function checkFirstUserRegistrationAvailability(
 }
 
 export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
+  const financeIntegrationMode = data.financeIntegrationMode ?? 'WHITELABEL_BAAS';
   const cpfCnpjDigits = data.cpfCnpj ? normalizeCpfCnpjDigits(data.cpfCnpj) : undefined;
   if (cpfCnpjDigits && !isValidCpfCnpjDigits(cpfCnpjDigits)) {
     throw new Error('CPF/CNPJ inválido.');
@@ -134,6 +136,11 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
           id: randomUUID(),
           nome: data.escolaNome,
           cpfCnpj: cpfCnpjDigits ?? null,
+          financeIntegrationMode,
+          externalAsaasOnboardingStatus:
+            financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT'
+              ? ExternalAsaasOnboardingStatus.PENDING_CONFIGURATION
+              : ExternalAsaasOnboardingStatus.NOT_STARTED,
         },
         select: { id: true },
       });
@@ -158,6 +165,20 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
         },
       });
       await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+
+      if (financeIntegrationMode === FinanceIntegrationMode.EXTERNAL_ASAAS_ACCOUNT) {
+        await tx.tenantFeatureFlags.upsert({
+          where: { contaId: conta.id },
+          create: {
+            contaId: conta.id,
+            enableExternalAsaasOnboarding: true,
+          },
+          update: {
+            enableExternalAsaasOnboarding: true,
+          },
+        });
+      }
+
       return user;
     });
     return result;

@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import RegisterForm from './RegisterForm';
 import { redirect } from 'next/navigation';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
+import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 interface RegisterPageProps {
   searchParams: { token?: string; next?: string };
@@ -9,6 +10,7 @@ interface RegisterPageProps {
 
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
   const token = searchParams.token;
+  const enableExternalAsaasOnboarding = isExternalAsaasOnboardingRolloutEnabled();
 
   // Se há token, validar convite
   if (token) {
@@ -57,6 +59,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     return (
       <AuthPageContainer>
         <RegisterForm
+          enableExternalAsaasOnboarding={enableExternalAsaasOnboarding}
           inviteData={{
             email: invite.email || undefined,
             role: invite.role,
@@ -71,7 +74,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
   // Sem token: fluxo direto sempre cria ADMIN (first-register)
   return (
     <AuthPageContainer>
-      <RegisterForm />
+      <RegisterForm enableExternalAsaasOnboarding={enableExternalAsaasOnboarding} />
     </AuthPageContainer>
   );
 }

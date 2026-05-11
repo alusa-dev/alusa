@@ -1,0 +1,128 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const getOrCreateByTenantMock = vi.fn();
+const ensureAsaasSubaccountMock = vi.fn();
+const auditLogRecordMock = vi.fn();
+
+const contaFindUniqueMock = vi.fn();
+const financeProfileFindUniqueMock = vi.fn();
+const financeProfileUpdateMock = vi.fn();
+const contaUpdateMock = vi.fn();
+const transactionMock = vi.fn();
+
+vi.mock('@alusa/database', () => ({
+  prisma: {
+    conta: {
+      findUnique: contaFindUniqueMock,
+      update: contaUpdateMock,
+    },
+    financeProfile: {
+      findUnique: financeProfileFindUniqueMock,
+      update: financeProfileUpdateMock,
+    },
+    $transaction: transactionMock,
+  },
+}));
+
+vi.mock('../../../foundation/finance-profile.service', () => ({
+  financeProfileService: {
+    getOrCreateByTenant: getOrCreateByTenantMock,
+  },
+}));
+
+vi.mock('../../../foundation/audit-log.service', () => ({
+  auditLogService: {
+    record: auditLogRecordMock,
+  },
+}));
+
+vi.mock('../../asaas-account/ensure-asaas-subaccount', () => ({
+  ensureAsaasSubaccount: ensureAsaasSubaccountMock,
+}));
+
+describe('completeWizard em modo externo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    getOrCreateByTenantMock.mockResolvedValue({ id: 'profile_1' });
+    contaFindUniqueMock
+      .mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' })
+      .mockResolvedValue({
+        nome: 'Elaine Costa',
+        cpfCnpj: '0279786276',
+        enderecoLogradouro: 'Rua Nova II',
+        enderecoNumero: '196',
+        enderecoBairro: 'São João',
+        enderecoCep: '69553315',
+        enderecoCidade: 'Tefé',
+        enderecoUf: 'AM',
+      });
+    financeProfileFindUniqueMock
+      .mockResolvedValueOnce({
+        wizardStep: 5,
+        wizardCompletedAt: null,
+        draftPersonType: 'PF',
+        draftCpfCnpj: '0279786276',
+        draftBirthDate: new Date('1995-12-30T00:00:00.000Z'),
+        asaasOwnerName: 'Elaine Costa',
+        asaasCompanyName: 'Elaine Costa',
+        companyType: null,
+        mobilePhone: '11999999999',
+        landlinePhone: null,
+        incomeValue: { toNumber: () => 5000 },
+        address: 'Rua Nova II',
+        addressNumber: '196',
+        province: 'São João',
+        postalCode: '69553315',
+        ownerEmail: 'balletelainecosta@gmail.com',
+      })
+      .mockResolvedValueOnce({
+        wizardStep: 6,
+        wizardCompletedAt: new Date('2026-05-11T00:00:00.000Z'),
+        draftPersonType: 'PF',
+        draftCpfCnpj: '0279786276',
+        draftBirthDate: new Date('1995-12-30T00:00:00.000Z'),
+        asaasOwnerName: 'Elaine Costa',
+        asaasCompanyName: 'Elaine Costa',
+        companyType: null,
+        mobilePhone: '11999999999',
+        landlinePhone: null,
+        incomeValue: { toNumber: () => 5000 },
+        address: 'Rua Nova II',
+        addressNumber: '196',
+        province: 'São João',
+        postalCode: '69553315',
+        ownerEmail: 'balletelainecosta@gmail.com',
+      });
+
+    financeProfileUpdateMock.mockReturnValue({ kind: 'financeProfile.update' });
+    contaUpdateMock.mockReturnValue({ kind: 'conta.update' });
+    transactionMock.mockResolvedValue(undefined);
+  });
+
+  it('conclui o wizard localmente sem provisionar subconta', async () => {
+    const { completeWizard } = await import('../wizard-service');
+
+    const result = await completeWizard({
+      contaId: 'conta_ext_1',
+      actor: { type: 'USER', id: 'user_1' },
+    });
+
+    expect(ensureAsaasSubaccountMock).not.toHaveBeenCalled();
+    expect(transactionMock).toHaveBeenCalledTimes(1);
+    expect(contaUpdateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'conta_ext_1' },
+        data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+      }),
+    );
+    expect(result.success).toBe(true);
+    expect(result.canCreateSubaccount).toBe(false);
+    expect(result.wizard.step).toBe(6);
+    expect(auditLogRecordMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'finance.wizard.complete_external_mode',
+      }),
+    );
+  });
+});

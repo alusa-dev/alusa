@@ -18,6 +18,9 @@ declare module 'next-auth' {
       contaId: string | null;
       emailVerified: boolean;
       accountActive?: boolean;
+      financeStatus?: string;
+      financeIntegrationMode?: string;
+      externalAsaasOnboardingStatus?: string;
       foto?: string | null;
       image?: string | null;
     } & DefaultSession['user'];
@@ -31,6 +34,9 @@ declare module 'next-auth/jwt' {
     contaId?: string | null;
     emailVerified?: boolean;
     accountActive?: boolean;
+    financeStatus?: string;
+    financeIntegrationMode?: string;
+    externalAsaasOnboardingStatus?: string;
   }
 }
 

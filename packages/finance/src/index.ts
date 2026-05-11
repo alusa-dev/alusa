@@ -255,6 +255,14 @@ export type {
 } from './use-cases/get-dashboard-finance-kpis-local';
 export { reconcileAcademicChargesWithAsaas } from './use-cases/reconcile-academic-charges';
 export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-academic-charges';
+export {
+  connectExternalAsaasAccount,
+  getExternalAsaasOnboardingState,
+} from './use-cases/external-asaas';
+export type {
+  ConnectExternalAsaasAccountResult,
+} from './use-cases/external-asaas/connect-external-asaas-account';
+export type { ExternalAsaasOnboardingState } from './use-cases/external-asaas/get-external-asaas-onboarding-state';
 
 // Cobranças avulsas (FASE 2)
 export { listStandaloneCharges } from './use-cases/list-standalone-charges';

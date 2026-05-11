@@ -504,6 +504,8 @@ model Conta {
   cpfCnpj                      String?
   status                       Status                        @default(ATIVO)
   financeStatus                FinanceStatus                 @default(FINANCE_NOT_STARTED)
+  financeIntegrationMode       FinanceIntegrationMode        @default(WHITELABEL_BAAS)
+  externalAsaasOnboardingStatus ExternalAsaasOnboardingStatus @default(NOT_STARTED)
   deletedAt                    DateTime?
   deletedByUserId              String?
   deletedByUser                Usuario?                      @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
@@ -590,6 +592,8 @@ model Conta {
   @@index([ownerUserId])
   @@index([deletedAt])
   @@index([deletedByUserId])
+  @@index([financeIntegrationMode])
+  @@index([externalAsaasOnboardingStatus])
 }
 
 model ContaFinancialPolicy {
@@ -2108,6 +2112,20 @@ enum InvoiceStatus {
   ERROR
 }
 
+enum FinanceIntegrationMode {
+  WHITELABEL_BAAS
+  EXTERNAL_ASAAS_ACCOUNT
+}
+
+enum ExternalAsaasOnboardingStatus {
+  NOT_STARTED
+  PENDING_CONFIGURATION
+  CONNECTING
+  WEBHOOK_PENDING
+  READY
+  FAILED
+}
+
 enum AuditActorType {
   SYSTEM
   USER
@@ -2727,6 +2745,7 @@ model TenantFeatureFlags {
   id      String @id @default(cuid())
   contaId String @unique
 
+  enableExternalAsaasOnboarding Boolean @default(false)
   enableSubscriptions      Boolean @default(false)
   enableInstallments       Boolean @default(false)
   enableManualWithdraw     Boolean @default(false)

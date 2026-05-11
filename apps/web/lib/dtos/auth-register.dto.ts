@@ -8,6 +8,8 @@ const passwordRegex = new RegExp(
   '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[!@#$%^&*]).{' + String(passwordMinLength) + ',}$',
 );
 
+export const financeIntegrationModeSchema = z.enum(['WHITELABEL_BAAS', 'EXTERNAL_ASAAS_ACCOUNT']);
+
 export const authRegisterInputSchema = z.object({
   escolaNome: z.string().min(2),
   cpfCnpj: z
@@ -17,6 +19,7 @@ export const authRegisterInputSchema = z.object({
     .optional(),
   nome: z.string().min(2),
   email: z.string().email(),
+  financeIntegrationMode: financeIntegrationModeSchema.optional().default('WHITELABEL_BAAS'),
   birthDate: z
     .string()
     .min(1)

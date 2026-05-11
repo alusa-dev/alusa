@@ -1,11 +1,11 @@
 // Página de registro: componente client isolado para permitir wrapper SSR em page.tsx
 "use client";
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { Eye, EyeOff, Mail } from '@/components/icons/icons';
+import { Eye, EyeOff, Mail, ChevronDown } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { debugLog, isAuthDebug } from '@/lib/debug-logger';
@@ -23,6 +23,7 @@ const baseSchema = z.object({
   firstName: z.string().min(2, 'Informe o nome'),
   lastName: z.string().min(2, 'Informe o sobrenome'),
   email: z.string().email('E-mail inválido'),
+  financeIntegrationMode: z.enum(['WHITELABEL_BAAS', 'EXTERNAL_ASAAS_ACCOUNT']).default('WHITELABEL_BAAS'),
   senha: z.string().regex(strongPassword, 'Senha fraca'),
   confirmarSenha: z.string(),
   termos: z.literal(true, { errorMap: () => ({ message: 'Você deve aceitar os termos' }) }),
@@ -40,6 +41,7 @@ type FormValues = {
   firstName: string;
   lastName: string;
   email: string;
+  financeIntegrationMode: 'WHITELABEL_BAAS' | 'EXTERNAL_ASAAS_ACCOUNT';
   senha: string;
   confirmarSenha: string;
   termos: true;
@@ -61,27 +63,29 @@ type RegisterMode = 'first' | 'invite';
 
 interface RegisterFormProps {
   inviteData?: InviteData;
+  enableExternalAsaasOnboarding?: boolean;
 }
 
-export default function RegisterForm({ inviteData }: RegisterFormProps) {
+export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding = false }: RegisterFormProps) {
   const mode: RegisterMode = inviteData ? 'invite' : 'first';
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const targetAfterVerification =
-    mode === 'first' || inviteData?.role?.toUpperCase() === 'ADMIN'
-      ? '/finance/wizard'
-      : '/dashboard';
-  const postRegisterRedirect = `/auth/confirm-email?callbackUrl=${encodeURIComponent(targetAfterVerification)}`;
-
   const schema = useMemo(() => schemaFor(), []);
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
     defaultValues: {
-      email: inviteData?.email || ''
+      email: inviteData?.email || '',
+      financeIntegrationMode: 'WHITELABEL_BAAS',
     }
   });
+
+  const targetAfterVerification =
+    mode === 'first' || inviteData?.role?.toUpperCase() === 'ADMIN'
+      ? '/finance/wizard'
+      : '/dashboard';
+  const postRegisterRedirect = `/auth/confirm-email?callbackUrl=${encodeURIComponent(targetAfterVerification)}`;
 
   /* helpers removed */
 
@@ -99,7 +103,8 @@ export default function RegisterForm({ inviteData }: RegisterFormProps) {
         lastName: data.lastName,
         email: data.email,
         senha: data.senha,
-        escolaNome
+        escolaNome,
+        financeIntegrationMode: mode === 'first' ? data.financeIntegrationMode : 'WHITELABEL_BAAS',
       };
 
       // Ajuste por modo
@@ -304,6 +309,23 @@ export default function RegisterForm({ inviteData }: RegisterFormProps) {
               <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted" aria-hidden><Mail className="h-4 w-4" /></span>
             </div>
           </div>
+          {mode === 'first' && enableExternalAsaasOnboarding ? (
+            <div className="w-full">
+              <div className="relative h-12">
+                <select
+                  data-testid="register-finance-integration-mode"
+                  className="w-full h-12 rounded-[12px] border border-gray-300 bg-white px-5 text-[14px] font-medium text-gray-900 outline-none focus:border-gray-300 focus:ring-0 appearance-none pr-11"
+                  {...register('financeIntegrationMode')}
+                >
+                  <option value="WHITELABEL_BAAS">Quero abrir conta com a Alusa (padrão)</option>
+                  <option value="EXTERNAL_ASAAS_ACCOUNT">Já tenho uma conta no Asaas</option>
+                </select>
+                <div className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted pointer-events-none">
+                  <ChevronDown className="h-4 w-4" />
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="w-full">
             <div className="relative h-12">
               <input type={showPassword ? 'text' : 'password'} placeholder="Senha" data-testid="register-senha" autoComplete="new-password" className="w-full h-12 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[14px] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0" {...register('senha')} />

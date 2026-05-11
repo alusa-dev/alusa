@@ -40,6 +40,8 @@ describe('VerifyEmailPage', () => {
       data: {
         user: {
           role: 'ADMIN',
+          financeIntegrationMode: 'WHITELABEL_BAAS',
+          externalAsaasOnboardingStatus: 'NOT_STARTED',
         },
       },
       update: updateMock,
@@ -121,6 +123,27 @@ describe('VerifyEmailPage', () => {
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
+    expect(screen.getByRole('link', { name: 'Continuar' })).toHaveAttribute('href', '/finance/wizard');
+  });
+
+  it('aponta o link de continuação para o wizard quando o admin escolheu conta existente', async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        user: {
+          role: 'ADMIN',
+          financeStatus: 'FINANCE_NOT_STARTED',
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+        },
+      },
+      update: updateMock,
+    });
+
+    const { default: VerifyEmailPage } = await import('@/app/(auth)/verify-email/page');
+
+    render(<VerifyEmailPage />);
+
+    expect(await screen.findByText('E-mail confirmado com sucesso.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Continuar' })).toHaveAttribute('href', '/finance/wizard');
   });
 });

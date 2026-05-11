@@ -57,6 +57,8 @@ describe('ConfirmEmailPage', () => {
           emailVerified: false,
           role: 'ADMIN',
           financeStatus: null,
+          financeIntegrationMode: 'WHITELABEL_BAAS',
+          externalAsaasOnboardingStatus: 'NOT_STARTED',
         },
       },
       status: 'authenticated',
@@ -104,6 +106,8 @@ describe('ConfirmEmailPage', () => {
           emailVerified: true,
           role: 'ADMIN',
           financeStatus: null,
+          financeIntegrationMode: 'WHITELABEL_BAAS',
+          externalAsaasOnboardingStatus: 'NOT_STARTED',
         },
       },
       status: 'authenticated',
@@ -117,5 +121,29 @@ describe('ConfirmEmailPage', () => {
       expect(replaceMock).toHaveBeenCalledWith('/finance/wizard');
     });
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('leva admin do modo externo para o wizard após confirmar o e-mail', async () => {
+    sessionState = {
+      data: {
+        user: {
+          email: 'blend.teste@gmail.com',
+          emailVerified: true,
+          role: 'ADMIN',
+          financeStatus: 'FINANCE_NOT_STARTED',
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+        },
+      },
+      status: 'authenticated',
+    };
+
+    const { default: ConfirmEmailPage } = await import('@/app/(auth)/confirm-email/page');
+
+    render(<ConfirmEmailPage />);
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith('/finance/wizard');
+    });
   });
 });

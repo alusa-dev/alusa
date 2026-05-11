@@ -20,6 +20,8 @@ export default function ConfirmEmailPage() {
     searchParams.get('callbackUrl'),
     session?.user?.role,
     (session?.user as { financeStatus?: string | null } | undefined)?.financeStatus,
+    (session?.user as { financeIntegrationMode?: string | null } | undefined)?.financeIntegrationMode,
+    (session?.user as { externalAsaasOnboardingStatus?: string | null } | undefined)?.externalAsaasOnboardingStatus,
   );
 
   // Força um refresh da sessão ao montar para capturar emailVerifiedAt que pode ter sido

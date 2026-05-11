@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import { verifyCredentialsDetailed } from '@/lib/auth-service';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import {
   requestWithdraw,
@@ -12,7 +13,13 @@ import {
   mapRequestWithdrawOutputToDTO,
 } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string; email?: string | null };
+type SessionUser = {
+  id?: string;
+  role?: string;
+  contaId?: string;
+  email?: string | null;
+  financeIntegrationMode?: string | null;
+};
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = requestWithdrawDTOSchema.extend({
@@ -33,6 +40,9 @@ export async function POST(req: NextRequest) {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    if (capabilityBlock) return capabilityBlock;
 
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) return gate.response;
@@ -79,6 +89,8 @@ export async function POST(req: NextRequest) {
               ? 400
               : result.error === 'PIX_KEY_NAO_ENCONTRADA'
                 ? 400
+                : result.error === 'TRANSFERENCIA_PIX_INDISPONIVEL'
+                  ? 400
                 : result.error === 'TRANSFERENCIA_DUPLICADA'
                   ? 409
                   : result.error === 'IDEMPOTENCY_PAYLOAD_CONFLICT'

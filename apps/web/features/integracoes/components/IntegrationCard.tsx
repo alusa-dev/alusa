@@ -1,5 +1,6 @@
 "use client";
 
+import React from 'react';
 import { cn } from "@/lib/cn";
 import { ArrowUpRightIcon } from "@heroicons/react/24/outline";
 

@@ -10,6 +10,7 @@ import {
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { firstRegisterInputDTOSchema, firstRegisterResultDTOSchema } from '@/features/users/dtos';
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
+import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 
 const schema = firstRegisterInputDTOSchema;
@@ -28,6 +29,16 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     console.error('Registration validation failed:', JSON.stringify(parsed.error.flatten(), null, 2));
     return NextResponse.json({ error: 'Dados inválidos', details: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const financeIntegrationMode = parsed.data.financeIntegrationMode ?? 'WHITELABEL_BAAS';
+  const externalRolloutEnabled = isExternalAsaasOnboardingRolloutEnabled();
+
+  if (financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT' && !externalRolloutEnabled) {
+    return NextResponse.json(
+      { error: 'Este fluxo ainda não está disponível para novos cadastros.', code: 'EXTERNAL_ASAAS_ONBOARDING_DISABLED' },
+      { status: 403 },
+    );
   }
 
   const availability = await checkFirstUserRegistrationAvailability(parsed.data.email);

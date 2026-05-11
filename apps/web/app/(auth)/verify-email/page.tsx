@@ -47,6 +47,8 @@ export default function VerifyEmailPage() {
     searchParams.get('callbackUrl'),
     session?.user?.role,
     (session?.user as { financeStatus?: string | null } | undefined)?.financeStatus,
+    (session?.user as { financeIntegrationMode?: string | null } | undefined)?.financeIntegrationMode,
+    (session?.user as { externalAsaasOnboardingStatus?: string | null } | undefined)?.externalAsaasOnboardingStatus,
   );
   const isReactivationFlow = callbackUrl.includes('reactivated=1');
 

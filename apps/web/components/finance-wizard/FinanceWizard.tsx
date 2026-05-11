@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { toast } from '@/components/ui/toast';
 import { Building2, User, Check, Loader2 } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -67,6 +68,7 @@ const variants = {
 
 export function FinanceWizard() {
   const router = useRouter();
+  const { update: updateSession } = useSession();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -147,8 +149,12 @@ export function FinanceWizard() {
       setWizardState(result.wizard);
       setCurrentStep(6);
 
-      if (result.canCreateSubaccount) {
-        router.push('/dashboard');
+      if (result.success) {
+        await updateSession().catch((error) => {
+          console.warn('[FinanceWizard] Falha ao atualizar sessão após conclusão', error);
+        });
+        router.refresh();
+        router.replace('/dashboard');
       } else {
         toast.error(result.error?.message || 'Não foi possível concluir o cadastro financeiro.');
       }
@@ -161,7 +167,7 @@ export function FinanceWizard() {
     } finally {
       setSaving(false);
     }
-  }, [router]);
+  }, [router, updateSession]);
 
   if (loading) {
     return (

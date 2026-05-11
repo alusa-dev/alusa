@@ -384,9 +384,52 @@ export async function completeWizard(params: {
   actor?: { type: AuditActorType; id?: string };
 }): Promise<CompleteWizardResult> {
   const profile = await financeProfileService.getOrCreateByTenant(params.contaId);
+  const conta = await prisma.conta.findUnique({
+    where: { id: params.contaId },
+    select: { financeIntegrationMode: true },
+  });
 
   // 1. Carregar estado atual do wizard
   const wizard = await loadWizardState(params.contaId);
+
+  if (conta?.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT') {
+    const now = new Date();
+
+    await prisma.$transaction([
+      prisma.financeProfile.update({
+        where: { id: profile.id },
+        data: {
+          wizardStep: 6,
+          wizardCompletedAt: now,
+        },
+      }),
+      prisma.conta.update({
+        where: { id: params.contaId },
+        data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+      }),
+    ]);
+
+    await auditLogService.record({
+      contaId: params.contaId,
+      action: 'finance.wizard.complete_external_mode',
+      entity: { type: 'FinanceProfile', id: profile.id },
+      metadata: {
+        completedAt: now.toISOString(),
+        financeIntegrationMode: conta.financeIntegrationMode,
+        skippedSubaccountProvisioning: true,
+      },
+      actor: params.actor,
+    });
+
+    const finalWizard = await loadWizardState(params.contaId);
+
+    return {
+      success: true,
+      wizard: finalWizard,
+      canCreateSubaccount: false,
+      missingFields: [],
+    };
+  }
 
   // 2. Validar elegibilidade pelos DADOS (não por wizardStep)
   const eligibility = isEligibleForAsaasProvisioning(wizard);

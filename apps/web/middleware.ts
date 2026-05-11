@@ -5,6 +5,7 @@ import {
   GLOBAL_ADMIN_SESSION_COOKIE,
   verifyGlobalAdminSessionToken,
 } from '@/features/global-admin/auth/session';
+import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
@@ -117,10 +118,19 @@ export default async function middleware(req: NextRequest) {
   }
 
   // Rotas do onboarding financeiro: não redirecionar para evitar loop
-  const isOnboardingPath =
-    pathname === '/finance/wizard' || pathname.startsWith('/finance/wizard/');
+  const financeIntegrationMode = (token as { financeIntegrationMode?: string } | null)?.financeIntegrationMode;
+  const isExternalFinanceMode = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
+  const externalOnboardingPath = '/finance/external-onboarding';
+  const isWizardPath = pathname === '/finance/wizard' || pathname.startsWith('/finance/wizard/');
+  const isExternalOnboardingPath =
+    pathname === externalOnboardingPath || pathname.startsWith(`${externalOnboardingPath}/`);
+  const isOnboardingPath = isWizardPath || isExternalOnboardingPath;
 
   if (isOnboardingPath) {
+    if (!isExternalFinanceMode && isExternalOnboardingPath) {
+      return NextResponse.redirect(new URL('/finance/wizard', req.nextUrl.origin));
+    }
+
     return NextResponse.next();
   }
 
@@ -129,6 +139,14 @@ export default async function middleware(req: NextRequest) {
   const isAdmin = typeof userRole === 'string' && userRole.toUpperCase() === 'ADMIN';
   
   if (!isAdmin) {
+    return NextResponse.next();
+  }
+
+  if (isExternalFinanceMode) {
+    if (isWhitelabelTreasuryPath(pathname)) {
+      return NextResponse.redirect(new URL('/dashboard', req.nextUrl.origin));
+    }
+
     return NextResponse.next();
   }
 
@@ -172,6 +190,7 @@ export const config = {
     '/planos/:path*',
     '/professores/:path*', 
     '/matriculas/:path*',
+    '/antecipacoes/:path*',
     '/dashboard/:path*',
     '/portal/:path*',
     '/vendas/:path*',

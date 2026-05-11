@@ -37,4 +37,26 @@ describe('safe-redirect utils', () => {
       '/dashboard',
     );
   });
+
+  it('redireciona admin do modo externo para o wizard enquanto o onboarding principal não estiver concluído', () => {
+    expect(
+      resolvePostVerificationRedirect(
+        '/dashboard',
+        'ADMIN',
+        'FINANCE_NOT_STARTED',
+        'EXTERNAL_ASAAS_ACCOUNT',
+        'PENDING_CONFIGURATION',
+      ),
+    ).toBe('/finance/wizard');
+
+    expect(
+      resolvePostVerificationRedirect(
+        '/finance/wizard',
+        'ADMIN',
+        'FINANCE_NOT_STARTED',
+        'EXTERNAL_ASAAS_ACCOUNT',
+        'PENDING_CONFIGURATION',
+      ),
+    ).toBe('/finance/wizard');
+  });
 });

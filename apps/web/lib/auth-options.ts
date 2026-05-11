@@ -12,9 +12,36 @@ declare module 'next-auth/jwt' {
     role?: string;
     contaId?: string;
     financeStatus?: string;
+    financeIntegrationMode?: string;
+    externalAsaasOnboardingStatus?: string;
     emailVerified?: boolean;
     accountActive?: boolean;
   }
+}
+
+async function loadContaAuthState(contaId: string | null) {
+  if (!contaId) {
+    return {
+      financeStatus: 'FINANCE_NOT_STARTED',
+      financeIntegrationMode: 'WHITELABEL_BAAS',
+      externalAsaasOnboardingStatus: 'NOT_STARTED',
+    };
+  }
+
+  const conta = await prisma.conta.findUnique({
+    where: { id: contaId },
+    select: {
+      financeStatus: true,
+      financeIntegrationMode: true,
+      externalAsaasOnboardingStatus: true,
+    },
+  });
+
+  return {
+    financeStatus: conta?.financeStatus ?? 'FINANCE_NOT_STARTED',
+    financeIntegrationMode: conta?.financeIntegrationMode ?? 'WHITELABEL_BAAS',
+    externalAsaasOnboardingStatus: conta?.externalAsaasOnboardingStatus ?? 'NOT_STARTED',
+  };
 }
 
 const creds = z.object({
@@ -108,11 +135,19 @@ export const authOptions: NextAuthOptions = {
             (token as any).emailVerified = access.emailVerified;
             (token as any).contaId = access.contaId;
             (token as any).role = access.role;
+
+            const contaState = await loadContaAuthState(access.contaId);
+            (token as any).financeStatus = contaState.financeStatus;
+            (token as any).financeIntegrationMode = contaState.financeIntegrationMode;
+            (token as any).externalAsaasOnboardingStatus = contaState.externalAsaasOnboardingStatus;
           }
 
           if (!access.ok) {
             delete (token as any).id;
             (token as any).contaId = null;
+            (token as any).financeStatus = 'FINANCE_NOT_STARTED';
+            (token as any).financeIntegrationMode = 'WHITELABEL_BAAS';
+            (token as any).externalAsaasOnboardingStatus = 'NOT_STARTED';
           }
         } catch {
           (token as any).accountActive = (token as any).accountActive !== false;
@@ -134,7 +169,13 @@ export const authOptions: NextAuthOptions = {
         tokenContaId == null || tokenContaId === '' ? null : tokenContaId;
       (session.user as any).emailVerified = Boolean((token as any).emailVerified);
       (session.user as any).accountActive = (token as any).accountActive !== false;
-      // Buscar foto atual do usuário e financeStatus para refletir na UI
+      (session.user as any).financeStatus = (token as any).financeStatus ?? 'FINANCE_NOT_STARTED';
+      (session.user as any).financeIntegrationMode =
+        (token as any).financeIntegrationMode ?? 'WHITELABEL_BAAS';
+      (session.user as any).externalAsaasOnboardingStatus =
+        (token as any).externalAsaasOnboardingStatus ?? 'NOT_STARTED';
+
+      // Buscar foto atual do usuário para refletir na UI
       try {
         const userId = (token as any).id as string | undefined;
         if (userId) {
@@ -142,30 +183,16 @@ export const authOptions: NextAuthOptions = {
             where: { id: userId },
             select: { foto: true },
           });
-          const activeContaId =
-            typeof (token as any).contaId === 'string' && (token as any).contaId
-              ? ((token as any).contaId as string)
-              : null;
-          const conta = activeContaId
-            ? await prisma.conta.findUnique({
-                where: { id: activeContaId },
-                select: { financeStatus: true },
-              })
-            : null;
           (session.user as any).foto = u?.foto ?? null;
           // Compatibilidade com componentes que usam image padrão do NextAuth
           (session.user as any).image = u?.foto ?? null;
-          // Expor financeStatus da conta para o frontend
-          (session.user as any).financeStatus = conta?.financeStatus ?? 'FINANCE_NOT_STARTED';
         } else {
           (session.user as any).foto = null;
           (session.user as any).image = null;
-          (session.user as any).financeStatus = 'FINANCE_NOT_STARTED';
         }
       } catch {
         // Evita quebrar sessão por falha no DB
         (session.user as any).foto = (session.user as any).foto ?? null;
-        (session.user as any).financeStatus = 'FINANCE_NOT_STARTED';
       }
       return session;
     },

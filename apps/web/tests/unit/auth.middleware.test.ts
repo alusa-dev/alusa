@@ -72,4 +72,25 @@ describe('auth middleware', () => {
 
     expect(response.headers.get('location')).toBeNull();
   });
+
+  it('permite dashboard para conta externa pendente e deixa a coleta da API key para o modal persistente', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1',
+      contaId: 'conta_1',
+      role: 'ADMIN',
+      emailVerified: true,
+      financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+      externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const response = await middleware(new NextRequest('http://localhost:3000/dashboard'));
+
+    expect(response.headers.get('location')).toBeNull();
+  });
 });

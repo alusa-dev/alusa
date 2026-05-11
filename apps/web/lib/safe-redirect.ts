@@ -35,7 +35,19 @@ export function nextParamToRedirect(param: string | null): string {
   return safeRedirect(param, '/dashboard');
 }
 
-function adminNeedsFinanceOnboarding(financeStatus?: string | null): boolean {
+function resolveAdminOnboardingPath(financeIntegrationMode?: string | null): string {
+  void financeIntegrationMode;
+  return '/finance/wizard';
+}
+
+function adminNeedsFinanceOnboarding(
+  financeStatus?: string | null,
+  financeIntegrationMode?: string | null,
+  externalAsaasOnboardingStatus?: string | null,
+): boolean {
+  void financeIntegrationMode;
+  void externalAsaasOnboardingStatus;
+
   if (!financeStatus) return true;
 
   return (
@@ -48,13 +60,21 @@ export function resolvePostVerificationRedirect(
   param: string | null | undefined,
   role?: string | null,
   financeStatus?: string | null,
+  financeIntegrationMode?: string | null,
+  externalAsaasOnboardingStatus?: string | null,
 ): string {
   const redirectTo = safeRedirect(param, '');
   const isAdmin = typeof role === 'string' && role.toUpperCase() === 'ADMIN';
+  const onboardingPath = resolveAdminOnboardingPath(financeIntegrationMode);
 
-  if (isAdmin && adminNeedsFinanceOnboarding(financeStatus)) {
-    if (!redirectTo || redirectTo === '/dashboard') {
-      return '/finance/wizard';
+  if (isAdmin && adminNeedsFinanceOnboarding(financeStatus, financeIntegrationMode, externalAsaasOnboardingStatus)) {
+    if (
+      !redirectTo ||
+      redirectTo === '/dashboard' ||
+      redirectTo === '/finance/wizard' ||
+      redirectTo === '/finance/external-onboarding'
+    ) {
+      return onboardingPath;
     }
   }
 
@@ -62,7 +82,5 @@ export function resolvePostVerificationRedirect(
     return redirectTo;
   }
 
-  return isAdmin
-    ? '/finance/wizard'
-    : '/dashboard';
+  return isAdmin ? onboardingPath : '/dashboard';
 }

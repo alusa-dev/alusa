@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { deleteTransferRecipient, listTransferRecipients } from '@alusa/finance';
 
-type SessUser = { id?: string; contaId?: string; role?: string };
+type SessUser = { id?: string; contaId?: string; role?: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -20,6 +21,9 @@ export async function GET() {
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
+
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    if (capabilityBlock) return capabilityBlock;
 
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) return gate.response;
@@ -40,6 +44,9 @@ export async function DELETE(request: Request) {
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
+
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'transfers');
+    if (capabilityBlock) return capabilityBlock;
 
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) return gate.response;

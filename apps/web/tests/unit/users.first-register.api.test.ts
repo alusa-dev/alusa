@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const createFirstUserMock = vi.fn();
 const checkFirstUserRegistrationAvailabilityMock = vi.fn();
 const sendEmailVerificationForUserMock = vi.fn();
+const originalExternalOnboardingFlag = process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING;
 
 vi.mock('@/lib/first-user-service', async () => {
   const actual = await vi.importActual<typeof import('@/lib/first-user-service')>('@/lib/first-user-service');
@@ -26,6 +27,15 @@ describe('POST /api/users/first-register', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     checkFirstUserRegistrationAvailabilityMock.mockResolvedValue({ available: true });
+    process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = 'false';
+  });
+
+  afterEach(() => {
+    if (typeof originalExternalOnboardingFlag === 'undefined') {
+      delete process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING;
+    } else {
+      process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = originalExternalOnboardingFlag;
+    }
   });
 
   it('bloqueia cadastro quando existe conta desativada e orienta login para reativação', async () => {
@@ -93,5 +103,72 @@ describe('POST /api/users/first-register', () => {
     expect(body.code).toBe('ASAAS_EMAIL_IN_USE');
     expect(createFirstUserMock).not.toHaveBeenCalled();
     expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia o onboarding externo quando a feature flag está desabilitada', async () => {
+    const { POST } = await import('@/app/api/users/first-register/route');
+    const req = new Request('http://localhost/api/users/first-register', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'vitest',
+      },
+      body: JSON.stringify({
+        nome: 'Escola Piloto',
+        firstName: 'Escola',
+        lastName: 'Piloto',
+        email: 'piloto@example.com',
+        senha: 'SenhaFort3!',
+        escolaNome: 'Escola Piloto',
+        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+      }),
+    });
+
+    const response = await POST(req);
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.code).toBe('EXTERNAL_ASAAS_ONBOARDING_DISABLED');
+    expect(createFirstUserMock).not.toHaveBeenCalled();
+    expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
+  });
+
+  it('envia callback do wizard quando a feature flag está habilitada', async () => {
+    process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = 'true';
+    createFirstUserMock.mockResolvedValueOnce({
+      id: 'user_asaas_external',
+      email: 'piloto@example.com',
+      role: 'ADMIN',
+    });
+
+    const { POST } = await import('@/app/api/users/first-register/route');
+    const req = new Request('http://localhost/api/users/first-register', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'user-agent': 'vitest',
+      },
+      body: JSON.stringify({
+        nome: 'Escola Piloto',
+        firstName: 'Escola',
+        lastName: 'Piloto',
+        email: 'piloto@example.com',
+        senha: 'SenhaFort3!',
+        escolaNome: 'Escola Piloto',
+        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+      }),
+    });
+
+    const response = await POST(req);
+
+    expect(response.status).toBe(201);
+    expect(createFirstUserMock).toHaveBeenCalledWith(
+      expect.objectContaining({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' }),
+    );
+    expect(sendEmailVerificationForUserMock).toHaveBeenCalledWith(
+      'user_asaas_external',
+      expect.any(Object),
+      expect.objectContaining({ callbackUrl: '/finance/wizard' }),
+    );
   });
 });
