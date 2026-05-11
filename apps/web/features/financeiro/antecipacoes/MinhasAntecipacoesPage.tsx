@@ -3,12 +3,12 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
 import { ChevronRight, DollarSign, Filter, Search } from '@/components/icons/icons';
-import { cn } from '@/lib/utils';
 import type { AnticipationItem, AnticipationStatus, ListAnticipationsResponse } from './types';
 import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
 import {
@@ -16,7 +16,6 @@ import {
   formatCurrency,
   formatDate,
   sourceLabel,
-  statusTone,
 } from './utils';
 
 const ALL_STATUS = '__ALL_STATUS__';
@@ -49,11 +48,28 @@ function SummaryCard({
   );
 }
 
+function getAnticipationBadgeVariant(status: AnticipationStatus): BadgeVariant {
+  switch (status) {
+    case 'CREDITED':
+      return 'success';
+    case 'PENDING':
+    case 'SCHEDULED':
+      return 'warning';
+    case 'DENIED':
+    case 'OVERDUE':
+      return 'destructive';
+    case 'CANCELLED':
+    case 'DEBITED':
+    default:
+      return 'neutral';
+  }
+}
+
 function StatusBadge({ status }: { status: AnticipationStatus }) {
   return (
-    <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-xs font-medium', statusTone(status))}>
+    <Badge variant={getAnticipationBadgeVariant(status)}>
       {formatAnticipationStatus(status)}
-    </span>
+    </Badge>
   );
 }
 
