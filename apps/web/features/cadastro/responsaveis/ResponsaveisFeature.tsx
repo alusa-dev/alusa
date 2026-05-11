@@ -301,7 +301,7 @@ function ResponsaveisTable({
     {
       id: 'responsavel',
       header: 'Responsável',
-      width: 'w-[37%]',
+      width: 'w-[44%]',
       align: 'left',
       noWrap: false,
       skeleton: (
@@ -320,21 +320,6 @@ function ResponsaveisTable({
           <div className="min-w-0 truncate font-normal text-gray-900 text-[13px]">{responsavel.nome}</div>
         </div>
       ),
-    },
-    {
-      id: 'perfil',
-      header: 'Perfil',
-      width: 'w-[7%]',
-      align: 'center',
-      render: (responsavel) =>
-        responsavel.financeiro ? (
-          <Badge variant="info" className="text-[10px] font-normal capitalize tracking-normal">
-            Financeiro
-          </Badge>
-        ) : (
-          <span className="text-xs text-slate-400">—</span>
-        ),
-      skeleton: <div className="h-6 w-16 bg-gray-200 rounded mx-auto" />,
     },
     {
       id: 'vinculos',
