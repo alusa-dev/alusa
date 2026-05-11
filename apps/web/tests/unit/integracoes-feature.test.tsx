@@ -47,6 +47,26 @@ describe('IntegracoesFeature', () => {
     fireEvent.click(card);
 
     expect(pushMock).toHaveBeenCalledWith('/admin/configuracoes/integracoes/asaas');
+    expect(screen.queryByText('Abra para configurar a API key.')).not.toBeInTheDocument();
+  });
+
+  it('mostra conectado quando a api key já foi vinculada mas o webhook ainda está pendente', async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        user: {
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'WEBHOOK_PENDING',
+        },
+      },
+    });
+
+    const { IntegracoesFeature } = await import('@/features/integracoes/IntegracoesFeature');
+
+    render(<IntegracoesFeature />);
+
+    expect(screen.getByText('Conectado')).toBeInTheDocument();
+    expect(screen.queryByText('Conexão pendente')).not.toBeInTheDocument();
+    expect(screen.queryByText('Abra para configurar a API key.')).not.toBeInTheDocument();
   });
 
   it('mantém o card desabilitado quando a integração é gerenciada pela Alusa', async () => {

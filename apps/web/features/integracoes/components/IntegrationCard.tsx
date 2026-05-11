@@ -49,11 +49,10 @@ export function IntegrationCard({ title, description, icon, onClick, status }: I
           <p className="text-sm text-gray-600">{description}</p>
         </div>
       </div>
-      <div className="flex flex-col items-end gap-1 text-right">
+      <div className="flex items-center text-right">
         <span className={cn("rounded-full px-3 py-1 text-xs font-semibold", statusColors[variant])}>
           {status.label}
         </span>
-        {status.helper ? <span className="text-xs text-gray-500">{status.helper}</span> : null}
       </div>
     </button>
   );

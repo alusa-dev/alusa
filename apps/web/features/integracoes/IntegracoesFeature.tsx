@@ -19,13 +19,12 @@ function resolveAsaasIntegrationCard(user: {
       description: 'Integração financeira whitelabel administrada pela Alusa.',
       status: {
         label: 'Gerenciado pela Alusa',
-        helper: 'Sem gestão manual de API key neste modo.',
       },
       href: null,
     };
   }
 
-  if (onboardingStatus === 'READY') {
+  if (onboardingStatus === 'READY' || onboardingStatus === 'WEBHOOK_PENDING') {
     return {
       description: 'Gerencie a API key da conta existente e acompanhe o vínculo operacional com o Asaas.',
       status: {
@@ -42,7 +41,6 @@ function resolveAsaasIntegrationCard(user: {
       status: {
         label: 'Ajuste necessário',
         variant: 'error' as const,
-        helper: 'Abra para substituir a API key.',
       },
       href: '/admin/configuracoes/integracoes/asaas',
     };
@@ -53,7 +51,6 @@ function resolveAsaasIntegrationCard(user: {
     status: {
       label: 'Conexão pendente',
       variant: 'warning' as const,
-      helper: 'Abra para configurar a API key.',
     },
     href: '/admin/configuracoes/integracoes/asaas',
   };
