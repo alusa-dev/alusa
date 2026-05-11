@@ -81,8 +81,8 @@ describe('createCharge', () => {
       matricula: {
         id: 'm1',
         responsavelFinanceiroId: 'r1',
-        aluno: { id: 'a1', cpf: '123', dataNasc: new Date('2000-01-01T00:00:00.000Z') },
-        responsavelFinanceiro: { id: 'r1', cpf: '123' },
+        aluno: { id: 'a1', cpf: '83750216010', dataNasc: new Date('2000-01-01T00:00:00.000Z') },
+        responsavelFinanceiro: { id: 'r1', cpf: '83750216010' },
       },
     } as never);
 
@@ -120,8 +120,8 @@ describe('createCharge', () => {
       matricula: {
         id: 'm1',
         responsavelFinanceiroId: 'r1',
-        aluno: { id: 'a1', cpf: '123', dataNasc: new Date('2000-01-01T00:00:00.000Z') },
-        responsavelFinanceiro: { id: 'r1', cpf: '123' },
+        aluno: { id: 'a1', cpf: '83750216010', dataNasc: new Date('2000-01-01T00:00:00.000Z') },
+        responsavelFinanceiro: { id: 'r1', cpf: '83750216010' },
       },
     } as never);
 

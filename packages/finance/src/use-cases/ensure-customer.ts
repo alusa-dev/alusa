@@ -1,4 +1,5 @@
 import { loadAsaasCredentials, prisma } from '@alusa/database';
+import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import type { CustomerPayerType, Prisma } from '@prisma/client';
@@ -25,6 +26,7 @@ export type EnsureCustomerOutput = {
 export type EnsureCustomerError =
   | 'PAGADOR_NAO_ENCONTRADO'
   | 'PAGADOR_SEM_CPF'
+  | 'PAGADOR_CPF_INVALIDO'
   | 'ASAAS_CUSTOMER_INVALIDO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
@@ -242,6 +244,7 @@ export async function ensureCustomer(
   if (!payerData) return err('PAGADOR_NAO_ENCONTRADO');
 
   if (!payerData.cpf) return err('PAGADOR_SEM_CPF');
+  if (!isValidCpfCnpjDigits(payerData.cpf)) return err('PAGADOR_CPF_INVALIDO');
 
   if (isMockPaymentsMode()) {
     const existingMockId = internalCustomer.asaasCustomerId ?? payerData.asaasCustomerId;

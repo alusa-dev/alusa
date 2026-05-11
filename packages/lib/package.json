@@ -8,6 +8,7 @@
   "exports": {
     ".": "./dist/packages/lib/src/index.js",
     "./client": "./dist/packages/lib/src/client.js",
+    "./cpf-cnpj": "./dist/packages/lib/src/utils/cpf-cnpj.js",
     "./prisma": "./dist/packages/lib/src/prisma.js",
     "./server": "./dist/packages/lib/src/server.js"
   },

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { prisma } from '@alusa/database';
+import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 
 import { safeGetServerSession } from '@/lib/safe-server-session';
 
@@ -9,7 +10,7 @@ const querySchema = z.object({
   document: z
     .string()
     .transform((value) => value.replace(/\D/g, ''))
-    .refine((value) => value.length === 11 || value.length === 14, 'CPF/CNPJ inválido.'),
+    .refine((value) => isValidCpfCnpjDigits(value), 'CPF/CNPJ inválido.'),
   uiRequestId: z.string().trim().min(1).optional().nullable(),
 });
 

@@ -1,5 +1,6 @@
 import type { BillingType } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
+import { isValidCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import {
   Prisma,
   type FormaPagamento,
@@ -556,7 +557,7 @@ function assertWalkInFinancialData(customer: Extract<PreparedCustomer, { type: '
   const email = normalizeEmail(customer.walkInEmail);
   const phone = normalizeDigits(customer.walkInPhone);
 
-  if (!document || ![11, 14].includes(document.length)) {
+  if (!document || !isValidCpfCnpjDigits(document)) {
     throw new StoreSaleError(
       'CLIENTE_AVULSO_DOCUMENTO_OBRIGATORIO',
       'Informe CPF/CNPJ válido para gerar cobrança ou salvar o cliente.',
@@ -1930,6 +1931,7 @@ async function ensureChargeForSale(input: {
         );
       case 'CUSTOMER_SEM_ASAAS_ID':
       case 'PAGADOR_SEM_CPF':
+      case 'PAGADOR_CPF_INVALIDO':
         throw new StoreSaleError(
           'PAGADOR_FINANCEIRO_INVALIDO',
           'O pagador financeiro não está apto para cobrança.',

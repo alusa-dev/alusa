@@ -47,7 +47,7 @@ describe('createAsaasCustomer', () => {
     expect(result.success).toBe(true);
     expect(createCustomer).toHaveBeenCalledWith({
       apiKey: 'sandbox_key',
-      idempotencyKey: 'customer:r1',
+      idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
       data: {
         name: 'Elaine Costa',
         cpfCnpj: '02719786276',
@@ -132,10 +132,10 @@ describe('createAsaasCustomer', () => {
     expect(updateCustomer).not.toHaveBeenCalled();
     expect(createCustomer).toHaveBeenCalledWith({
       apiKey: 'sandbox_key',
-      idempotencyKey: 'customer:conta-1:RESPONSAVEL:r1',
+      idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
       data: {
         name: 'Luiza de Alencar Bezerra',
-        cpfCnpj: '705.484.450-52',
+        cpfCnpj: '70548445052',
         email: 'luiza@example.com',
         phone: '97981283106',
         mobilePhone: '97981283106',

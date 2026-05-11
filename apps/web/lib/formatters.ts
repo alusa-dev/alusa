@@ -48,12 +48,50 @@ export function isValidCepBR(digits: string): boolean {
   return v.length === 8;
 }
 
+function hasRepeatedDigits(value: string): boolean {
+  return /^([0-9])\1+$/.test(value);
+}
+
+function isValidCpfDigits(value: string): boolean {
+  const cpf = onlyDigits(value);
+  if (cpf.length !== 11 || hasRepeatedDigits(cpf)) return false;
+
+  const calcDigit = (base: string, factor: number): number => {
+    let total = 0;
+    for (let index = 0; index < base.length; index += 1) {
+      total += Number(base[index]) * (factor - index);
+    }
+    const mod = (total * 10) % 11;
+    return mod === 10 ? 0 : mod;
+  };
+
+  return calcDigit(cpf.slice(0, 9), 10) === Number(cpf[9]) &&
+    calcDigit(cpf.slice(0, 10), 11) === Number(cpf[10]);
+}
+
+function isValidCnpjDigits(value: string): boolean {
+  const cnpj = onlyDigits(value);
+  if (cnpj.length !== 14 || hasRepeatedDigits(cnpj)) return false;
+
+  const calcDigit = (base: string, weights: number[]): number => {
+    const sum = weights.reduce((total, weight, index) => total + Number(base[index]) * weight, 0);
+    const mod = sum % 11;
+    return mod < 2 ? 0 : 11 - mod;
+  };
+
+  const firstDigit = calcDigit(cnpj.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  const secondDigit = calcDigit(cnpj.slice(0, 13), [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+
+  return firstDigit === Number(cnpj[12]) && secondDigit === Number(cnpj[13]);
+}
+
 export function isValidCpfCnpjBR(digits: string): boolean {
   const v = onlyDigits(digits);
-  return v.length === 11 || v.length === 14;
+  if (v.length === 11) return isValidCpfDigits(v);
+  if (v.length === 14) return isValidCnpjDigits(v);
+  return false;
 }
 
 export function disabledInputClasses(disabled: boolean): string | undefined {
   return disabled ? 'bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed' : undefined;
 }
-

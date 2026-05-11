@@ -1,8 +1,16 @@
-import { createCustomer, listCustomers, restoreCustomer, updateCustomer } from '@alusa/asaas';
+import {
+  AsaasHttpError,
+  createCustomer,
+  listCustomers,
+  restoreCustomer,
+  updateCustomer,
+} from '@alusa/asaas';
 import type { AsaasCustomer } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { ok, err } from '@alusa/shared';
+
+import { buildSafeAsaasIdempotencyKey } from '../core';
 
 export type CreateCustomerInput = {
   contaId: string;
@@ -63,8 +71,8 @@ export async function syncAsaasCustomerContact(
       apiKey: creds.apiKey,
       customerId: input.customerId,
       data: {
-        name: input.name,
-        email: input.email,
+        name: input.name.trim(),
+        email: input.email?.trim().toLowerCase(),
         ...buildCustomerPhonePayload(input.phone),
         externalReference: input.externalReference,
         notificationDisabled: false,
@@ -89,7 +97,7 @@ export async function createAsaasCustomer(
 
     const byCpfCnpj = await listCustomers({
       apiKey: creds.apiKey,
-      cpfCnpj: input.cpfCnpj,
+      cpfCnpj: normalizeDocument(input.cpfCnpj),
       limit: 10,
     });
 
@@ -131,21 +139,34 @@ export async function createAsaasCustomer(
       });
     }
 
+    const customerPayload = {
+      name: input.name.trim(),
+      cpfCnpj: normalizeDocument(input.cpfCnpj),
+      email: input.email?.trim().toLowerCase(),
+      ...buildCustomerPhonePayload(input.phone),
+      externalReference: input.externalReference,
+      notificationDisabled: false,
+    };
+
     const customer = await createCustomer({
       apiKey: creds.apiKey,
-      idempotencyKey: input.externalReference,
-      data: {
-        name: input.name,
-        cpfCnpj: input.cpfCnpj,
-        email: input.email,
-        ...buildCustomerPhonePayload(input.phone),
-        externalReference: input.externalReference,
-        notificationDisabled: false,
-      },
+      idempotencyKey: buildSafeAsaasIdempotencyKey(`customer-${input.externalReference}`),
+      data: customerPayload,
     });
 
     return ok({ id: customer.id, externalReference: customer.externalReference! });
   } catch (error) {
+    if (error instanceof AsaasHttpError) {
+      console.warn('[createAsaasCustomer] Asaas rejeitou criação/consulta de customer', {
+        contaId: input.contaId,
+        status: error.status,
+        message: error.message,
+        cpfCnpjLength: normalizeDocument(input.cpfCnpj).length,
+        externalReference: input.externalReference,
+        response: error.responseBody ?? error.response,
+      });
+    }
+
     const message = error instanceof Error ? error.message : 'Erro ao criar customer';
     return err(message);
   }

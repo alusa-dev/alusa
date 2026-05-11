@@ -88,7 +88,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
       id: 'r1',
       nome: 'Resp',
-      cpf: '123',
+      cpf: '83750216010',
       email: 'x@x.com',
       telefone: '11999999999',
       asaasCustomerId: 'cust_exist',
@@ -128,7 +128,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
       id: 'r1',
       nome: 'Resp',
-      cpf: '123',
+      cpf: '83750216010',
       email: 'x@x.com',
       telefone: '11999999999',
       asaasCustomerId: 'cust_deleted',
@@ -147,7 +147,7 @@ describe('ensureCustomer', () => {
     expect(createAsaasCustomer).toHaveBeenCalledWith({
       contaId: 't1',
       name: 'Resp',
-      cpfCnpj: '123',
+      cpfCnpj: '83750216010',
       email: 'x@x.com',
       phone: '11999999999',
       externalReference: 'customer:t1:RESPONSAVEL:r1',
@@ -188,7 +188,7 @@ describe('ensureCustomer', () => {
     vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
       id: 'r1',
       nome: 'Resp',
-      cpf: '123',
+      cpf: '83750216010',
       email: 'x@x.com',
       telefone: '11999999999',
       asaasCustomerId: 'cust_conflict',

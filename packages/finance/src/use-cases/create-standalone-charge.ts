@@ -160,6 +160,7 @@ export type CreateStandaloneChargeError =
   | 'KYC_NAO_APROVADO'
   | 'PAGADOR_NAO_ENCONTRADO'
   | 'PAGADOR_SEM_CPF'
+  | 'PAGADOR_CPF_INVALIDO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'CUSTOMER_SEM_ASAAS_ID'
   | 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR'
@@ -438,6 +439,7 @@ export async function createStandaloneCharge(
     if (!customerResult.success) {
       if (customerResult.error === 'PAGADOR_NAO_ENCONTRADO') return err('PAGADOR_NAO_ENCONTRADO');
       if (customerResult.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
+      if (customerResult.error === 'PAGADOR_CPF_INVALIDO') return err('PAGADOR_CPF_INVALIDO');
       if (customerResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS')
         return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       if (customerResult.error === 'ASAAS_CUSTOMER_EM_USO_POR_OUTRO_PAGADOR')

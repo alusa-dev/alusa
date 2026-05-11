@@ -31,6 +31,7 @@ export type CreateChargeError =
   | 'COBRANCA_JA_POSSUI_PAGAMENTO'
   | 'PAGADOR_NAO_ENCONTRADO'
   | 'PAGADOR_SEM_CPF'
+  | 'PAGADOR_CPF_INVALIDO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'ERRO_AO_CRIAR_CUSTOMER'
   | 'ERRO_AO_CRIAR_PAGAMENTO'
@@ -146,6 +147,7 @@ export async function createCharge(
     if (!customer.success) {
       if (customer.error === 'PAGADOR_NAO_ENCONTRADO') return err('PAGADOR_NAO_ENCONTRADO');
       if (customer.error === 'PAGADOR_SEM_CPF') return err('PAGADOR_SEM_CPF');
+      if (customer.error === 'PAGADOR_CPF_INVALIDO') return err('PAGADOR_CPF_INVALIDO');
       if (customer.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_AO_CRIAR_CUSTOMER');
     }
