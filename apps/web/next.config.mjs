@@ -38,8 +38,12 @@ const nextConfig = {
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};
-    config.resolve.alias['@alusa/lib'] = resolvePath(__dirname, '../../packages/lib/dist');
+    config.resolve.alias['@alusa/lib/cpf-cnpj'] = resolvePath(
+      __dirname,
+      '../../packages/lib/dist/packages/lib/src/utils/cpf-cnpj.js'
+    );
     config.resolve.alias['@alusa/lib/client'] = resolvePath(__dirname, '../../packages/lib/dist/client.js');
+    config.resolve.alias['@alusa/lib'] = resolvePath(__dirname, '../../packages/lib/dist');
     return config;
   },
 };
