@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
@@ -49,30 +49,46 @@ export default function ChargesTable() {
   const [debounced, setDebounced] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [tipoFilters, setTipoFilters] = useState<string[]>([]);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const fetchData = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-      if (debounced) params.set('q', debounced);
-      statusFilters.forEach((status) => params.append('status', status));
-      tipoFilters.forEach((tipo) => params.append('tipo', tipo));
-      router.replace(`/financeiro/cobrancas?${params.toString()}`);
-      const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
-        cache: 'no-store',
-      });
-      if (!res.ok) throw new Error(`Erro ${res.status}`);
-      const json: ApiResponse = await res.json();
-      setRows(json.data);
-      setTotal(json.total);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      if (!silent) setLoading(false);
+    const requestKey = JSON.stringify({ page, pageSize, debounced, statusFilters, tipoFilters });
+    const inFlight = inFlightRef.current;
+    if (inFlight?.key === requestKey) {
+      return inFlight.promise;
     }
+
+    const trackedPromise = (async () => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+        if (debounced) params.set('q', debounced);
+        statusFilters.forEach((status) => params.append('status', status));
+        tipoFilters.forEach((tipo) => params.append('tipo', tipo));
+        router.replace(`/financeiro/cobrancas?${params.toString()}`);
+        const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`Erro ${res.status}`);
+        const json: ApiResponse = await res.json();
+        setRows(json.data);
+        setTotal(json.total);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    })();
+
+    inFlightRef.current = { key: requestKey, promise: trackedPromise };
+    trackedPromise.finally(() => {
+      if (inFlightRef.current?.promise === trackedPromise) {
+        inFlightRef.current = null;
+      }
+      if (!silent) setLoading(false);
+    });
+    return trackedPromise;
   }, [page, pageSize, debounced, statusFilters, tipoFilters, router]);
 
   // Inicializa filtros da URL

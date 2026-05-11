@@ -20,6 +20,7 @@ export function useLiveRefresh(
   const { enabled = true, intervalMs = 30_000, minIntervalMs = 5_000 } = options;
   const refreshRef = useRef(refresh);
   const lastRunRef = useRef(0);
+  const inFlightRef = useRef<Promise<void> | null>(null);
 
   refreshRef.current = refresh;
 
@@ -28,10 +29,23 @@ export function useLiveRefresh(
     if (typeof window === 'undefined') return;
 
     const run = (reason: LiveRefreshReason, force = false) => {
+      if (document.visibilityState === 'hidden') return;
+      if (inFlightRef.current) return;
+
       const now = Date.now();
       if (!force && now - lastRunRef.current < minIntervalMs) return;
       lastRunRef.current = now;
-      void refreshRef.current(reason);
+
+      const trackedPromise = Promise.resolve()
+        .then(() => refreshRef.current(reason))
+        .finally(() => {
+          if (inFlightRef.current === trackedPromise) {
+            inFlightRef.current = null;
+          }
+        });
+
+      inFlightRef.current = trackedPromise;
+      void trackedPromise.catch(() => undefined);
     };
 
     const handleFocus = () => run('focus');

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { CreditCard, Calendar, User, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,32 +15,47 @@ export function PortalDashboardFeature() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAlunoId, setSelectedAlunoId] = useState<string | null>(null);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const user = session?.user as { role?: string } | undefined;
   const isResponsavel = user?.role === 'RESPONSAVEL';
 
   const loadData = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      let url = '/api/portal/dashboard';
-
-      // Se um aluno específico foi selecionado, adicionar como query param
-      if (selectedAlunoId) {
-        url += `?alunoId=${selectedAlunoId}`;
-      }
-
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error('Erro ao carregar dados');
-      }
-      const result = await response.json();
-      setData(result);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      if (!silent) setLoading(false);
+    const requestKey = selectedAlunoId ?? '__default__';
+    const inFlight = inFlightRef.current;
+    if (inFlight?.key === requestKey) {
+      return inFlight.promise;
     }
+
+    const trackedPromise = (async () => {
+      try {
+        if (!silent) setLoading(true);
+        let url = '/api/portal/dashboard';
+
+        if (selectedAlunoId) {
+          url += `?alunoId=${selectedAlunoId}`;
+        }
+
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error('Erro ao carregar dados');
+        }
+        const result = await response.json();
+        setData(result);
+        setError(null);
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    })();
+
+    inFlightRef.current = { key: requestKey, promise: trackedPromise };
+    trackedPromise.finally(() => {
+      if (inFlightRef.current?.promise === trackedPromise) {
+        inFlightRef.current = null;
+      }
+      if (!silent) setLoading(false);
+    });
+    return trackedPromise;
   }, [selectedAlunoId]);
 
   useEffect(() => {

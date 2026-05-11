@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
@@ -44,6 +44,7 @@ export default function PaymentsTable() {
   const [debounced, setDebounced] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [formaFilters, setFormaFilters] = useState<string[]>([]);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 400);
@@ -51,25 +52,40 @@ export default function PaymentsTable() {
   }, [search]);
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-      if (debounced) params.set('q', debounced);
-      statusFilters.forEach((s) => params.append('status', s));
-      formaFilters.forEach((f) => params.append('formaPagamento', f));
-      const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
-        cache: 'no-store',
-      });
-      if (!res.ok) throw new Error(`Erro ${res.status}`);
-      const json: ApiResponse = await res.json();
-      setRows(json.data);
-      setTotal(json.total);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      if (!silent) setLoading(false);
+    const requestKey = JSON.stringify({ page, pageSize, debounced, statusFilters, formaFilters });
+    const inFlight = inFlightRef.current;
+    if (inFlight?.key === requestKey) {
+      return inFlight.promise;
     }
+
+    const trackedPromise = (async () => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+        if (debounced) params.set('q', debounced);
+        statusFilters.forEach((s) => params.append('status', s));
+        formaFilters.forEach((f) => params.append('formaPagamento', f));
+        const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`Erro ${res.status}`);
+        const json: ApiResponse = await res.json();
+        setRows(json.data);
+        setTotal(json.total);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    })();
+
+    inFlightRef.current = { key: requestKey, promise: trackedPromise };
+    trackedPromise.finally(() => {
+      if (inFlightRef.current?.promise === trackedPromise) {
+        inFlightRef.current = null;
+      }
+      if (!silent) setLoading(false);
+    });
+    return trackedPromise;
   }, [page, pageSize, debounced, statusFilters, formaFilters]);
 
   useEffect(() => {

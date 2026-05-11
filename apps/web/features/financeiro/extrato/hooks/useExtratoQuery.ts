@@ -13,43 +13,63 @@ export function useExtratoQuery(filters: ExtratoFiltersState) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const load = useCallback(
     async (silent = false) => {
+      const requestKey = JSON.stringify(filters);
+      const inFlight = inFlightRef.current;
+      if (inFlight?.key === requestKey) {
+        return inFlight.promise;
+      }
+
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
-      if (!silent) setLoading(true);
+      const trackedPromise = (async () => {
+        if (!silent) setLoading(true);
 
-      try {
-        const result = await fetchExtrato({
-          startDate: filters.startDate || undefined,
-          endDate: filters.endDate || undefined,
-          type: filters.type.length > 0 ? filters.type : undefined,
-          status: filters.status.length > 0 ? filters.status : undefined,
-          search: filters.search || undefined,
-          page: filters.page,
-          pageSize: filters.pageSize,
-          sort: filters.sort,
-          direction: filters.direction,
-        }, {
-          signal: controller.signal,
-        });
+        try {
+          const result = await fetchExtrato({
+            startDate: filters.startDate || undefined,
+            endDate: filters.endDate || undefined,
+            type: filters.type.length > 0 ? filters.type : undefined,
+            status: filters.status.length > 0 ? filters.status : undefined,
+            search: filters.search || undefined,
+            page: filters.page,
+            pageSize: filters.pageSize,
+            sort: filters.sort,
+            direction: filters.direction,
+          }, {
+            signal: controller.signal,
+          });
 
-        if (!controller.signal.aborted) {
-          setData(result);
-          setError(null);
+          if (!controller.signal.aborted) {
+            setData(result);
+            setError(null);
+          }
+        } catch (err) {
+          if (!controller.signal.aborted && !silent) {
+            setError((err as Error).message);
+          }
+        } finally {
+          if (abortRef.current === controller) {
+            abortRef.current = null;
+          }
         }
-      } catch (err) {
-        if (!controller.signal.aborted && !silent) {
-          setError((err as Error).message);
+      })();
+
+      inFlightRef.current = { key: requestKey, promise: trackedPromise };
+      trackedPromise.finally(() => {
+        if (inFlightRef.current?.promise === trackedPromise) {
+          inFlightRef.current = null;
         }
-      } finally {
         if (!controller.signal.aborted && !silent) {
           setLoading(false);
         }
-      }
+      });
+      return trackedPromise;
     },
     [filters],
   );

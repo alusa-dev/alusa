@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -163,27 +163,43 @@ export function MinhasAntecipacoesPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-      if (status !== ALL_STATUS) params.set('status', status);
-      const response = await fetch(`/api/financeiro/antecipacoes?${params.toString()}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error('Falha ao carregar antecipações');
-      setData(await response.json());
-      setLastSyncedAt(new Date());
-    } catch (error) {
-      if (!silent) {
-        pushToast({
-          title: 'Não foi possível carregar antecipações',
-          description: error instanceof Error ? error.message : 'Tente novamente.',
-          variant: 'error',
-        });
-      }
-    } finally {
-      if (!silent) setLoading(false);
+    const requestKey = `${page}:${status}`;
+    const inFlight = inFlightRef.current;
+    if (inFlight?.key === requestKey) {
+      return inFlight.promise;
     }
+
+    const trackedPromise = (async () => {
+      if (!silent) setLoading(true);
+      try {
+        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+        if (status !== ALL_STATUS) params.set('status', status);
+        const response = await fetch(`/api/financeiro/antecipacoes?${params.toString()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Falha ao carregar antecipações');
+        setData(await response.json());
+        setLastSyncedAt(new Date());
+      } catch (error) {
+        if (!silent) {
+          pushToast({
+            title: 'Não foi possível carregar antecipações',
+            description: error instanceof Error ? error.message : 'Tente novamente.',
+            variant: 'error',
+          });
+        }
+      }
+    })();
+
+    inFlightRef.current = { key: requestKey, promise: trackedPromise };
+    trackedPromise.finally(() => {
+      if (inFlightRef.current?.promise === trackedPromise) {
+        inFlightRef.current = null;
+      }
+      if (!silent) setLoading(false);
+    });
+    return trackedPromise;
   }, [page, status]);
 
   useEffect(() => {

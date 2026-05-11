@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/hooks/use-current-user';
@@ -20,6 +20,7 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 export default function DashboardClient() {
   const router = useRouter();
   const { user } = useCurrentUser();
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const [metrics, setMetrics] = useState<DashboardMetricsDataDTO | null>(null);
   const [financeKpis, setFinanceKpis] = useState<DashboardFinanceKpisDataDTO | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,10 +86,22 @@ export default function DashboardClient() {
   }, [user?.contaId]);
 
   const refreshDashboard = useCallback(async (silent = false) => {
-    await Promise.all([
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+
+    const trackedPromise = Promise.all([
       fetchMetrics(silent),
       fetchFinanceKpis(silent),
-    ]);
+    ]).then(() => undefined)
+      .finally(() => {
+        if (refreshInFlightRef.current === trackedPromise) {
+          refreshInFlightRef.current = null;
+        }
+      });
+
+    refreshInFlightRef.current = trackedPromise;
+    return trackedPromise;
   }, [fetchFinanceKpis, fetchMetrics]);
 
   useEffect(() => {
