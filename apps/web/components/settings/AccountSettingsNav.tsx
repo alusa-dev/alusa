@@ -7,6 +7,7 @@ void React;
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabilities';
 
 type Item = { href: string; label: string; requiresFinance?: boolean };
 
@@ -26,9 +27,15 @@ const PAYMENT_ALLOWED_ROLES = new Set(['RESPONSAVEL', 'ALUNO']);
 export default function AccountSettingsNav() {
   const pathname = usePathname();
   const { data } = useSession();
-  const user = data?.user as { role?: string; financeStatus?: string; contaId?: string } | undefined;
+  const user = data?.user as {
+    role?: string;
+    financeStatus?: string;
+    financeIntegrationMode?: string;
+    contaId?: string;
+  } | undefined;
   const role = user?.role;
   const financeStatus = user?.financeStatus;
+  const financialCapabilities = resolveFinancialCapabilities(user?.financeIntegrationMode);
   const showPaymentSection = role ? PAYMENT_ALLOWED_ROLES.has(role) : false;
 
   const normalizedRole = role?.toUpperCase() ?? '';
@@ -56,7 +63,7 @@ export default function AccountSettingsNav() {
 
   // Adiciona itens KYC para ADMIN com fluxo financeiro iniciado
   const itemsWithKyc: Item[] = useMemo(() => {
-    if (!isAdmin || !hasFinanceFlow) return itemsWithDelete;
+    if (!isAdmin || !hasFinanceFlow || !financialCapabilities.canUseKyc) return itemsWithDelete;
     // Insere os itens KYC após "Segurança" e antes de "Excluir conta"
     const insertAfterHref = '/conta/seguranca';
     const insertIndex = itemsWithDelete.findIndex((it) => it.href === insertAfterHref);
@@ -73,7 +80,7 @@ export default function AccountSettingsNav() {
       result.splice(insertIndex + 1, 0, ...KYC_ITEMS);
     }
     return result;
-  }, [isAdmin, hasFinanceFlow, itemsWithDelete]);
+  }, [financialCapabilities.canUseKyc, hasFinanceFlow, isAdmin, itemsWithDelete]);
 
   const items = showPaymentSection
     ? itemsWithKyc
