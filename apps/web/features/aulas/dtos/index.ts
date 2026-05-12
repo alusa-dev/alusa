@@ -14,6 +14,7 @@ const csvArray = <T extends z.ZodTypeAny>(schema: T) =>
 
 export const calendarEventTypeSchema = z.enum([
   'AULA',
+  'AULA_EXPERIMENTAL',
   'REPOSICAO',
   'EVENTO_INTERNO',
   'EVENTO_EXTERNO',
@@ -32,6 +33,7 @@ export const attendanceStatusSchema = z.enum([
   'ATRASO',
   'REPOSICAO',
 ]);
+export const experimentalClassStatusSchema = z.enum(['AGENDADA', 'REAGENDADA', 'REALIZADA', 'CANCELADA']);
 export const makeupClassStatusSchema = z.enum(['AGENDADA', 'REALIZADA', 'CANCELADA']);
 export const makeupClassScopeSchema = z.enum(['INDIVIDUAL', 'COLETIVA']);
 export const aulasOperationLogLevelSchema = z.enum(['INFO', 'WARNING', 'ERROR']);
@@ -43,6 +45,18 @@ export const agendaViewModeSchema = z
 export const aulasLookupItemSchema = z.object({
   id: z.string(),
   label: z.string(),
+});
+
+export const aulasTurmaLookupItemSchema = aulasLookupItemSchema.extend({
+  defaultSchedule: z
+    .object({
+      daysOfWeek: z.array(z.string()),
+      startTime: z.string(),
+      endTime: z.string(),
+      salaId: z.string().nullable(),
+      professorIds: z.array(z.string()),
+    })
+    .optional(),
 });
 
 export const calendarEventProfessorSchema = z.object({
@@ -84,6 +98,15 @@ export const calendarEventListItemSchema = z.object({
 });
 
 export const calendarEventDetailsSchema = calendarEventListItemSchema.extend({
+  experimental: z
+    .object({
+      id: z.string(),
+      status: experimentalClassStatusSchema,
+      observacao: z.string().nullable(),
+      aluno: aulasLookupItemSchema,
+    })
+    .nullable()
+    .optional(),
   makeupsAsOrigin: z.array(
     z.object({
       id: z.string(),
@@ -112,6 +135,17 @@ export const listCalendarEventsQuerySchema = z.object({
   status: csvArray(calendarEventStatusSchema).optional(),
   viewMode: agendaViewModeSchema.optional(),
   timelineGroupBy: timelineGroupBySchema.optional(),
+  includeResources: z
+    .preprocess((value) => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string') {
+        if (value === 'true') return true;
+        if (value === 'false') return false;
+      }
+
+      return undefined;
+    }, z.boolean())
+    .optional(),
 });
 
 export const createCalendarEventInputSchema = z
@@ -158,11 +192,13 @@ export const listCalendarEventsResultSchema = z.object({
       start: z.string(),
       end: z.string(),
     }),
-    resources: z.object({
-      turmas: z.array(aulasLookupItemSchema),
-      professores: z.array(aulasLookupItemSchema),
-      salas: z.array(aulasLookupItemSchema),
-    }),
+    resources: z
+      .object({
+        turmas: z.array(aulasTurmaLookupItemSchema),
+        professores: z.array(aulasLookupItemSchema),
+        salas: z.array(aulasLookupItemSchema),
+      })
+      .optional(),
     events: z.array(calendarEventListItemSchema),
   }),
 });
@@ -351,6 +387,61 @@ export const createMakeupClassInputSchema = z.object({
     .optional(),
 });
 
+export const experimentalClassDetailsSchema = z.object({
+  id: z.string(),
+  calendarEventId: z.string(),
+  status: experimentalClassStatusSchema,
+  observacao: z.string().nullable(),
+  aluno: aulasLookupItemSchema,
+  turma: aulasLookupItemSchema.nullable(),
+  sala: aulasLookupItemSchema.nullable(),
+  professores: z.array(aulasLookupItemSchema),
+  startAt: z.string(),
+  endAt: z.string(),
+  title: z.string(),
+});
+
+export const createExperimentalClassInputSchema = z
+  .object({
+    alunoId: z.string(),
+    turmaId: z.string(),
+    startAt: z.string().datetime(),
+    endAt: z.string().datetime(),
+    salaId: z.string().optional().nullable(),
+    professorIds: z.array(z.string()).optional().default([]),
+    observacao: z.string().trim().optional().nullable(),
+    uiRequestId: z.string().min(1),
+  })
+  .refine((input) => new Date(input.endAt).getTime() > new Date(input.startAt).getTime(), {
+    message: 'endAt must be after startAt',
+    path: ['endAt'],
+  });
+
+export const updateExperimentalClassInputSchema = z
+  .object({
+    alunoId: z.string().optional(),
+    turmaId: z.string().optional(),
+    startAt: z.string().datetime().optional(),
+    endAt: z.string().datetime().optional(),
+    salaId: z.string().optional().nullable(),
+    professorIds: z.array(z.string()).optional(),
+    observacao: z.string().trim().optional().nullable(),
+    status: experimentalClassStatusSchema.optional(),
+  })
+  .refine(
+    (input) =>
+      !input.startAt || !input.endAt || new Date(input.endAt).getTime() > new Date(input.startAt).getTime(),
+    {
+      message: 'endAt must be after startAt',
+      path: ['endAt'],
+    },
+  );
+
+export const experimentalClassDetailsResultSchema = z.object({
+  success: z.literal(true),
+  data: experimentalClassDetailsSchema,
+});
+
 export const updateMakeupClassInputSchema = z.object({
   status: makeupClassStatusSchema.optional(),
   observacao: z.string().trim().optional().nullable(),
@@ -464,12 +555,14 @@ export const aulasDashboardResultSchema = z.object({
 export type CalendarEventTypeDTO = z.infer<typeof calendarEventTypeSchema>;
 export type CalendarEventStatusDTO = z.infer<typeof calendarEventStatusSchema>;
 export type AttendanceStatusDTO = z.infer<typeof attendanceStatusSchema>;
+export type ExperimentalClassStatusDTO = z.infer<typeof experimentalClassStatusSchema>;
 export type MakeupClassStatusDTO = z.infer<typeof makeupClassStatusSchema>;
 export type MakeupClassScopeDTO = z.infer<typeof makeupClassScopeSchema>;
 export type AulasOperationLogLevelDTO = z.infer<typeof aulasOperationLogLevelSchema>;
 export type AgendaViewModeDTO = z.infer<typeof agendaViewModeSchema>;
 export type TimelineGroupByDTO = z.infer<typeof timelineGroupBySchema>;
 export type AulasLookupItemDTO = z.infer<typeof aulasLookupItemSchema>;
+export type AulasTurmaLookupItemDTO = z.infer<typeof aulasTurmaLookupItemSchema>;
 export type CalendarEventProfessorDTO = z.infer<typeof calendarEventProfessorSchema>;
 export type CalendarEventConflictDTO = z.infer<typeof calendarEventConflictSchema>;
 export type CalendarEventAttendanceSummaryDTO = z.infer<typeof calendarEventAttendanceSummarySchema>;
@@ -495,6 +588,10 @@ export type AttendanceHistoryTurmaItemDTO = z.infer<typeof attendanceHistoryTurm
 export type AttendanceHistoryOccurrenceItemDTO = z.infer<typeof attendanceHistoryOccurrenceItemSchema>;
 export type ListAttendanceResultDTO = z.infer<typeof listAttendanceResultSchema>;
 export type AttendanceHistoryTurmaResultDTO = z.infer<typeof attendanceHistoryTurmaResultSchema>;
+export type ExperimentalClassDetailsDTO = z.infer<typeof experimentalClassDetailsSchema>;
+export type CreateExperimentalClassInputDTO = z.infer<typeof createExperimentalClassInputSchema>;
+export type UpdateExperimentalClassInputDTO = z.infer<typeof updateExperimentalClassInputSchema>;
+export type ExperimentalClassDetailsResultDTO = z.infer<typeof experimentalClassDetailsResultSchema>;
 export type CreateMakeupClassInputDTO = z.infer<typeof createMakeupClassInputSchema>;
 export type UpdateMakeupClassInputDTO = z.infer<typeof updateMakeupClassInputSchema>;
 export type ListMakeupClassesQueryDTO = z.infer<typeof listMakeupClassesQuerySchema>;

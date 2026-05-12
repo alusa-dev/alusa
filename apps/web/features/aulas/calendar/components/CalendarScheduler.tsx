@@ -4,7 +4,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import timeGridPlugin from '@fullcalendar/timegrid';
-import type { EventContentArg, EventInput } from '@fullcalendar/core';
+import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/core';
 
 import type { AgendaViewModeDTO, CalendarEventListItemDTO } from '@/features/aulas/dtos';
 import {
@@ -22,6 +22,7 @@ type CalendarSchedulerProps = {
 
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
   AULA: 'border-purple-200 bg-purple-50 text-brand-accent',
+  AULA_EXPERIMENTAL: 'border-sky-200 bg-sky-50 text-sky-800',
   REPOSICAO: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   EVENTO_INTERNO: 'border-amber-200 bg-amber-50 text-amber-800',
   EVENTO_EXTERNO: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800',
@@ -51,7 +52,35 @@ function toEventInput(event: CalendarEventListItemDTO): EventInput {
   };
 }
 
-function renderEventContent(isCompactMonth: boolean) {
+function formatWeekEventTimeLabel(timeText: string) {
+  const normalized = timeText.trim();
+  if (!normalized) return '';
+
+  return normalized.split(' - ')[0] ?? normalized;
+}
+
+function buildEventTooltip(arg: EventMountArg) {
+  const teacher = arg.event.extendedProps.professor as string | null;
+  const room = arg.event.extendedProps.sala as string | null;
+  const conflicts = Number(arg.event.extendedProps.conflicts ?? 0);
+  const lines = [arg.event.title, arg.timeText].filter(Boolean);
+
+  if (teacher) {
+    lines.push(`Professor: ${teacher}`);
+  }
+
+  if (room) {
+    lines.push(`Sala: ${room}`);
+  }
+
+  if (conflicts > 0) {
+    lines.push(`${conflicts} conflito(s)`);
+  }
+
+  return lines.join('\n');
+}
+
+function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
   return function EventContent(arg: EventContentArg) {
     const type = arg.event.extendedProps.type as CalendarEventListItemDTO['type'];
     const teacher = arg.event.extendedProps.professor as string | null;
@@ -83,6 +112,11 @@ function renderEventContent(isCompactMonth: boolean) {
       >
         {isCompactMonth ? (
           <div className="truncate font-medium">{arg.event.title}</div>
+        ) : isWeekView ? (
+          <div className="flex items-center gap-1.5 overflow-hidden text-[10px] font-medium leading-4">
+            <span className="shrink-0 font-semibold opacity-80">{formatWeekEventTimeLabel(arg.timeText)}</span>
+            <span className="truncate">{arg.event.title}</span>
+          </div>
         ) : (
           <>
             <div className="truncate font-medium">{`${arg.timeText} ${arg.event.title}`.trim()}</div>
@@ -105,6 +139,7 @@ export function CalendarScheduler({
   onEventSelect,
 }: CalendarSchedulerProps) {
   const initialView = viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth';
+  const isWeekView = viewMode === 'week';
   const isCompactMonth = viewMode === 'month-compact';
   const isDetailedMonth = viewMode === 'month-detailed';
 
@@ -112,6 +147,7 @@ export function CalendarScheduler({
     <div
       className={cn(
         'calendar-scheduler-wrapper bg-white',
+        isWeekView && 'calendar-scheduler-wrapper--week',
         isCompactMonth && 'calendar-scheduler-wrapper--month-compact',
         isDetailedMonth && 'calendar-scheduler-wrapper--month-detailed',
       )}
@@ -124,15 +160,23 @@ export function CalendarScheduler({
         locale="pt-br"
         headerToolbar={false}
         dayMaxEventRows={viewMode === 'month-detailed' ? 4 : viewMode === 'month-compact' ? 6 : 3}
+        eventMaxStack={isWeekView ? 2 : undefined}
         allDaySlot={false}
         slotMinTime="06:00:00"
         slotMaxTime="22:00:00"
+        slotEventOverlap={!isWeekView}
+        eventMinHeight={isWeekView ? 22 : undefined}
+        eventShortHeight={isWeekView ? 22 : undefined}
         height="auto"
         weekends
         eventDisplay="block"
         fixedWeekCount={false}
+        moreLinkClick="popover"
         events={events.map(toEventInput)}
-        eventContent={renderEventContent(isCompactMonth)}
+        eventContent={renderEventContent(isCompactMonth, isWeekView)}
+        eventDidMount={(arg) => {
+          arg.el.title = buildEventTooltip(arg);
+        }}
         dayCellClassNames={() =>
           isCompactMonth
             ? ['calendar-scheduler-day-compact']

@@ -7,6 +7,7 @@ import {
   mapListMakeupClassesResult,
   mapMakeupClassDetailsResult,
 } from '@/features/aulas/mappers';
+import { invalidateAgendaEventsCache } from '@/features/aulas/agenda/services/agenda-service';
 import { buildQueryString, requestJson } from '@/features/aulas/calendar/services/aulas-api';
 
 export async function listMakeupClasses(query: Partial<ListMakeupClassesQueryDTO>) {
@@ -26,6 +27,9 @@ export async function createMakeupClass(input: CreateMakeupClassInputDTO) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+
+  invalidateAgendaEventsCache();
+
   return mapMakeupClassDetailsResult(result);
 }
 
@@ -35,5 +39,8 @@ export async function updateMakeupClass(id: string, input: UpdateMakeupClassInpu
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+
+  invalidateAgendaEventsCache();
+
   return mapMakeupClassDetailsResult(result);
 }

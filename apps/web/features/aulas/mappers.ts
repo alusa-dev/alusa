@@ -5,6 +5,7 @@ import {
   attendanceWorkspaceResultSchema,
   aulasDashboardResultSchema,
   calendarEventDetailsResultSchema,
+  experimentalClassDetailsResultSchema,
   listAgendaOperationLogsResultSchema,
   listAttendanceResultSchema,
   listCalendarEventsResultSchema,
@@ -47,6 +48,10 @@ export function mapListMakeupClassesResult(record: Record<string, unknown>) {
 
 export function mapMakeupClassDetailsResult(record: Record<string, unknown>) {
   return makeupClassDetailsResultSchema.parse(record);
+}
+
+export function mapExperimentalClassDetailsResult(record: Record<string, unknown>) {
+  return experimentalClassDetailsResultSchema.parse(record);
 }
 
 export function mapAulasDashboardResult(record: Record<string, unknown>) {

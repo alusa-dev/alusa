@@ -36,6 +36,7 @@ export function AgendaDashboardCard() {
         const result = await listAgendaEvents({
           start: start.toISOString(),
           end: end.toISOString(),
+          includeResources: false,
         });
 
         if (cancelled) return;

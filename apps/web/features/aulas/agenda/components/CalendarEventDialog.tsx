@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { format } from 'date-fns';
+import { addHours, format } from 'date-fns';
 
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
+import { pushToast } from '@/components/ui/toast';
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ import type {
   CalendarEventTypeDTO,
 } from '@/features/aulas/dtos';
 import { createAgendaEvent, updateAgendaEvent } from '@/features/aulas/agenda/services/agenda-service';
+import { AulasApiRequestError } from '@/features/aulas/calendar/services/aulas-api';
 import { CALENDAR_EVENT_STATUS_OPTIONS, CALENDAR_EVENT_TYPE_OPTIONS } from '@/features/aulas/types';
 import { cn } from '@/lib/utils';
 
@@ -53,6 +55,7 @@ type EventFormState = {
 
 const EMPTY_VALUE = '__NONE__';
 const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px]';
+const CREATE_EVENT_TYPE_OPTIONS = CALENDAR_EVENT_TYPE_OPTIONS.filter((option) => option.value !== 'AULA_EXPERIMENTAL');
 
 function toLocalInputValue(value?: string | null) {
   if (!value) return '';
@@ -93,6 +96,57 @@ function getDefaultStartAt() {
   return buildLocalDateTime(new Date(), '00:00');
 }
 
+function shiftEndAtOneHour(startAt: string) {
+  const parsed = new Date(startAt);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+
+  const next = addHours(parsed, 1);
+  return buildLocalDateTime(next, format(next, 'HH:mm'));
+}
+
+function buildAgendaEventToast(error: unknown) {
+  if (error instanceof AulasApiRequestError) {
+    if (error.code === 'CONFLITO_SALA_PROFESSOR' || error.status === 409) {
+      return {
+        title: 'Conflito de agenda',
+        description:
+          error.message ||
+          'Já existe outro compromisso usando a mesma sala ou professor nesse horário. Ajuste o horário e tente novamente.',
+        variant: 'error' as const,
+      };
+    }
+
+    if (error.status === 422) {
+      return {
+        title: 'Não foi possível salvar o evento',
+        description:
+          error.message === 'endAt must be after startAt'
+            ? 'O horário de término precisa ser depois do horário de início.'
+            : error.message || 'Revise os dados do evento e tente novamente.',
+        variant: 'error' as const,
+      };
+    }
+
+    return {
+      title: 'Falha ao salvar o evento',
+      description: error.message || 'Tivemos um problema para salvar o evento agora.',
+      variant: 'error' as const,
+    };
+  }
+
+  return {
+    title: 'Falha ao salvar o evento',
+    description:
+      error instanceof Error && error.message
+        ? error.message
+        : 'Tivemos um problema para salvar o evento agora. Tente novamente em instantes.',
+    variant: 'error' as const,
+  };
+}
+
 function FieldLabel({ children }: { children: string }) {
   return <label className="text-xs font-medium uppercase tracking-wide text-slate-500">{children}</label>;
 }
@@ -125,35 +179,35 @@ export function CalendarEventDialog({
   onOpenChange,
   onSaved,
 }: CalendarEventDialogProps) {
+  const initialStartAt = getDefaultStartAt();
   const [values, setValues] = useState<EventFormState>({
     title: '',
     description: '',
     type: 'AULA',
     status: 'AGENDADO',
-    startAt: getDefaultStartAt(),
-    endAt: '',
+    startAt: initialStartAt,
+    endAt: shiftEndAtOneHour(initialStartAt),
     turmaId: '',
     salaId: '',
     professorId: '',
   });
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
+      const nextStartAt = getDefaultStartAt();
       setValues({
         title: '',
         description: '',
         type: 'AULA',
         status: 'AGENDADO',
-        startAt: getDefaultStartAt(),
-        endAt: '',
+        startAt: nextStartAt,
+        endAt: shiftEndAtOneHour(nextStartAt),
         turmaId: '',
         salaId: '',
         professorId: '',
       });
       setSubmitting(false);
-      setError(null);
       return;
     }
 
@@ -175,7 +229,6 @@ export function CalendarEventDialog({
   async function handleSubmit() {
     try {
       setSubmitting(true);
-      setError(null);
 
       if (!values.startAt || Number.isNaN(new Date(values.startAt).getTime())) {
         throw new Error('Informe uma data e hora de início válidas.');
@@ -183,6 +236,10 @@ export function CalendarEventDialog({
 
       if (!values.endAt || Number.isNaN(new Date(values.endAt).getTime())) {
         throw new Error('Informe uma data e hora de fim válidas.');
+      }
+
+      if (new Date(values.endAt).getTime() <= new Date(values.startAt).getTime()) {
+        throw new Error('O horário de término precisa ser depois do horário de início.');
       }
 
       const payload = {
@@ -203,13 +260,35 @@ export function CalendarEventDialog({
         await createAgendaEvent(payload);
       }
 
+      pushToast({
+        title: mode === 'edit' ? 'Evento atualizado' : 'Evento criado',
+        description:
+          mode === 'edit'
+            ? 'As alterações foram salvas e a agenda foi atualizada.'
+            : 'O evento foi salvo com sucesso na agenda.',
+        variant: 'success',
+      });
+
       onSaved();
       onOpenChange(false);
     } catch (err) {
-      setError((err as Error).message);
+      pushToast(buildAgendaEventToast(err));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handleStartAtChange(nextStartAt: string) {
+    setValues((current) => {
+      const shouldShiftEndAt =
+        !current.endAt || new Date(current.endAt).getTime() <= new Date(nextStartAt).getTime();
+
+      return {
+        ...current,
+        startAt: nextStartAt,
+        endAt: shouldShiftEndAt ? shiftEndAtOneHour(nextStartAt) : current.endAt,
+      };
+    });
   }
 
   return (
@@ -261,7 +340,7 @@ export function CalendarEventDialog({
                         <SelectValue placeholder="Tipo" />
                       </SelectTrigger>
                       <SelectContent>
-                        {CALENDAR_EVENT_TYPE_OPTIONS.map((option) => (
+                          {(mode === 'create' ? CREATE_EVENT_TYPE_OPTIONS : CALENDAR_EVENT_TYPE_OPTIONS).map((option) => (
                           <SelectItem key={option.value} value={option.value}>
                             {option.label}
                           </SelectItem>
@@ -344,7 +423,7 @@ export function CalendarEventDialog({
                     <DateTimeField
                       id="agenda-event-start"
                       value={values.startAt}
-                      onChange={(value) => setValues((current) => ({ ...current, startAt: value }))}
+                      onChange={handleStartAtChange}
                       testId="agenda-event-start"
                     />
                   </div>
@@ -422,11 +501,6 @@ export function CalendarEventDialog({
                 </div>
               </SectionBlock>
 
-              {error ? (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                  {error}
-                </div>
-              ) : null}
             </div>
           </div>
 

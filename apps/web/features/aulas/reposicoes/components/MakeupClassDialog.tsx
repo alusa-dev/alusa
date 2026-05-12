@@ -130,6 +130,7 @@ export function MakeupClassDialog({
           start: start.toISOString(),
           end: end.toISOString(),
           type: ['AULA', 'REPOSICAO'],
+          includeResources: false,
         });
 
         if (!cancelled) {

@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
       status: searchParams.get('status') ?? undefined,
       viewMode: searchParams.get('viewMode') ?? undefined,
       timelineGroupBy: searchParams.get('timelineGroupBy') ?? undefined,
+      includeResources: searchParams.get('includeResources') ?? undefined,
     });
 
     return json(200, await listAgendaEvents(user.contaId, query));

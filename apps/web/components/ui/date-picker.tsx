@@ -2,8 +2,10 @@
 
 import * as React from "react"
 import { format, parse, isValid as isValidFn } from "date-fns"
+import type { Matcher } from "react-day-picker"
 import { ptBR } from "date-fns/locale"
 import { CalendarIcon } from "lucide-react"
+import { XMarkIcon } from "@heroicons/react/24/outline"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -14,11 +16,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 
-export interface DatePickerProps {
+interface DatePickerBaseProps {
   /** Data selecionada */
-  value?: Date | string
-  /** Callback quando a data muda */
-  onChange?: (date: Date | undefined) => void
   /** Placeholder quando não há data selecionada */
   placeholder?: string
   /** Classes CSS adicionais para o trigger */
@@ -45,7 +44,27 @@ export interface DatePickerProps {
   invalid?: boolean
   /** Id de elemento descritivo para acessibilidade */
   describedBy?: string
+  /** Regras extras de datas desabilitadas */
+  disabledDays?: Matcher | Matcher[]
+  /** Se o campo não permite digitação manual */
+  readOnlyInput?: boolean
+  /** Callback ao remover uma data em modo múltiplo */
+  onRemoveDate?: (date: Date) => void
 }
+
+interface SingleDatePickerProps extends DatePickerBaseProps {
+  mode?: "single"
+  value?: Date | string
+  onChange?: (date: Date | undefined) => void
+}
+
+interface MultipleDatePickerProps extends DatePickerBaseProps {
+  mode: "multiple"
+  value?: Array<Date | string>
+  onChange?: (dates: Date[] | undefined) => void
+}
+
+export type DatePickerProps = SingleDatePickerProps | MultipleDatePickerProps
 
 function coerceToDate(value: Date | string | undefined, dateFormat: string): Date | undefined {
   if (!value) return undefined
@@ -69,6 +88,22 @@ function coerceToDate(value: Date | string | undefined, dateFormat: string): Dat
 
   const asDate = new Date(trimmed)
   return isValidFn(asDate) ? asDate : undefined
+}
+
+function coerceToDateList(value: Array<Date | string> | undefined, dateFormat: string): Date[] {
+  if (!value?.length) return []
+
+  const unique = new Map<number, Date>()
+
+  for (const item of value) {
+    const coerced = coerceToDate(item, dateFormat)
+    if (!coerced) continue
+
+    const normalized = startOfDay(coerced)
+    unique.set(normalized.getTime(), normalized)
+  }
+
+  return Array.from(unique.values()).sort((left, right) => left.getTime() - right.getTime())
 }
 
 function formatDisplayDate(date: Date | string | undefined, dateFormat: string): string {
@@ -118,6 +153,7 @@ function isWithinRange(date: Date, minDate?: Date, maxDate?: Date) {
 }
 
 function DatePicker({
+  mode = "single",
   value,
   onChange,
   placeholder = "Selecione uma data",
@@ -133,25 +169,50 @@ function DatePicker({
   maxDate,
   invalid = false,
   describedBy,
+  disabledDays,
+  readOnlyInput = false,
+  onRemoveDate,
 }: DatePickerProps) {
+  const singleValue = (mode === "multiple" ? undefined : value) as SingleDatePickerProps["value"]
+  const multipleValue = (mode === "multiple" ? value : undefined) as MultipleDatePickerProps["value"]
+  const singleOnChange = (mode === "multiple" ? undefined : onChange) as SingleDatePickerProps["onChange"]
+  const multipleOnChange = (mode === "multiple" ? onChange : undefined) as MultipleDatePickerProps["onChange"]
   const [open, setOpen] = React.useState(false)
-  const [month, setMonth] = React.useState<Date | undefined>(coerceToDate(value, dateFormat) ?? new Date())
-  const [inputValue, setInputValue] = React.useState(formatDisplayDate(value, dateFormat))
-  const selectedDate = coerceToDate(value, dateFormat)
+  const [hoveredScrollEdge, setHoveredScrollEdge] = React.useState<"left" | "right" | null>(null)
+  const [canScrollLeft, setCanScrollLeft] = React.useState(false)
+  const [canScrollRight, setCanScrollRight] = React.useState(false)
+  const multiScrollRef = React.useRef<HTMLDivElement | null>(null)
+  const selectedDates = React.useMemo(
+    () => (mode === "multiple" ? coerceToDateList(multipleValue, dateFormat) : []),
+    [dateFormat, mode, multipleValue]
+  )
+  const selectedDate = mode === "multiple" ? undefined : coerceToDate(singleValue, dateFormat)
+  const [month, setMonth] = React.useState<Date | undefined>(
+    (mode === "multiple" ? selectedDates[0] : selectedDate) ?? new Date()
+  )
+  const [inputValue, setInputValue] = React.useState(
+    mode === "multiple" ? "" : formatDisplayDate(singleValue, dateFormat)
+  )
   const isOutOfRange = selectedDate ? !isWithinRange(selectedDate, minDate, maxDate) : false
   const isInvalid = invalid || isOutOfRange
   const calendarDisabled = React.useMemo(() => {
+    const extraDisabled = disabledDays
+      ? Array.isArray(disabledDays)
+        ? disabledDays
+        : [disabledDays]
+      : []
+
     if (minDate && maxDate) {
-      return [{ before: startOfDay(minDate) }, { after: startOfDay(maxDate) }]
+      return [{ before: startOfDay(minDate) }, { after: startOfDay(maxDate) }, ...extraDisabled]
     }
     if (minDate) {
-      return { before: startOfDay(minDate) }
+      return [{ before: startOfDay(minDate) }, ...extraDisabled]
     }
     if (maxDate) {
-      return { after: startOfDay(maxDate) }
+      return [{ after: startOfDay(maxDate) }, ...extraDisabled]
     }
-    return undefined
-  }, [minDate, maxDate])
+    return extraDisabled.length ? extraDisabled : undefined
+  }, [disabledDays, minDate, maxDate])
 
   // Calcula range de anos padrão (10 anos para trás e para frente)
   const currentYear = new Date().getFullYear()
@@ -160,18 +221,89 @@ function DatePicker({
 
   // Sincroniza o input quando o value externo muda
   React.useEffect(() => {
-    setInputValue(formatDisplayDate(value, dateFormat))
-    const coerced = coerceToDate(value, dateFormat)
+    if (mode === "multiple") {
+      if (selectedDates[0]) setMonth(selectedDates[0])
+      return
+    }
+
+    setInputValue(formatDisplayDate(singleValue, dateFormat))
+    const coerced = coerceToDate(singleValue, dateFormat)
     if (coerced) setMonth(coerced)
-  }, [value, dateFormat])
+  }, [singleValue, dateFormat, mode, selectedDates])
+
+  const updateMultiScrollState = React.useCallback(() => {
+    const node = multiScrollRef.current
+    if (!node) {
+      setCanScrollLeft(false)
+      setCanScrollRight(false)
+      return
+    }
+
+    const maxScrollLeft = Math.max(0, node.scrollWidth - node.clientWidth)
+    setCanScrollLeft(node.scrollLeft > 0)
+    setCanScrollRight(node.scrollLeft < maxScrollLeft - 1)
+  }, [])
+
+  React.useEffect(() => {
+    if (mode !== "multiple") {
+      return
+    }
+
+    updateMultiScrollState()
+
+    const node = multiScrollRef.current
+    if (!node) {
+      return
+    }
+
+    const handleResize = () => updateMultiScrollState()
+    window.addEventListener("resize", handleResize)
+    return () => window.removeEventListener("resize", handleResize)
+  }, [mode, selectedDates, updateMultiScrollState])
+
+  React.useEffect(() => {
+    if (mode !== "multiple" || !hoveredScrollEdge) {
+      return
+    }
+
+    const node = multiScrollRef.current
+    if (!node) {
+      return
+    }
+
+    const step = hoveredScrollEdge === "right" ? 10 : -10
+    const intervalId = window.setInterval(() => {
+      node.scrollLeft += step
+      updateMultiScrollState()
+    }, 16)
+
+    return () => window.clearInterval(intervalId)
+  }, [hoveredScrollEdge, mode, updateMultiScrollState])
 
   const handleSelect = (date: Date | undefined) => {
     if (date && !isWithinRange(date, minDate, maxDate)) {
       return
     }
-    onChange?.(date)
+    singleOnChange?.(date)
     setInputValue(formatDisplayDate(date, dateFormat))
     setOpen(false)
+  }
+
+  const handleMultipleSelect = (dates: Date[] | undefined) => {
+    if (mode !== "multiple") {
+      return
+    }
+
+    const nextDates = (dates ?? [])
+      .map((date) => startOfDay(date))
+      .filter((date) => isWithinRange(date, minDate, maxDate))
+      .sort((left, right) => left.getTime() - right.getTime())
+
+    multipleOnChange?.(nextDates.length ? nextDates : undefined)
+
+    if (nextDates[0]) {
+      setMonth(nextDates[nextDates.length - 1])
+    }
   }
 
   // Aplica máscara enquanto o usuário digita (dd/MM/yyyy)
@@ -192,7 +324,7 @@ function DatePicker({
       try {
         const parsed = parse(masked, dateFormat, new Date(), { locale: ptBR })
         if (isValidFn(parsed) && isWithinRange(parsed, minDate, maxDate)) {
-          onChange?.(parsed)
+          singleOnChange?.(parsed)
           setMonth(parsed)
         }
       } catch (err) {
@@ -208,6 +340,124 @@ function DatePicker({
     }
   }
 
+  const handleMultiTriggerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault()
+      if (!disabled) {
+        setOpen(true)
+      }
+    }
+  }
+
+  const handleMultiScrollLeave = () => {
+    setHoveredScrollEdge(null)
+  }
+
+  if (variant === "input" && mode === "multiple") {
+    return (
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <div
+            id={id}
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            aria-describedby={describedBy}
+            aria-invalid={isInvalid || undefined}
+            aria-disabled={disabled || undefined}
+            onKeyDown={handleMultiTriggerKeyDown}
+            className={cn(
+              className,
+              "relative flex h-10 w-full cursor-pointer items-center overflow-hidden rounded-lg border border-slate-200 bg-white px-3 pr-11 text-left text-sm text-slate-900 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30",
+              disabled && "cursor-not-allowed bg-slate-50 text-slate-400",
+              isInvalid && "border-red-300 text-red-700 focus-visible:ring-red-500/20"
+            )}
+            onMouseLeave={handleMultiScrollLeave}
+          >
+            <div
+              ref={multiScrollRef}
+              onScroll={updateMultiScrollState}
+              className="flex min-w-0 flex-1 items-center overflow-x-auto overflow-y-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <div className="flex min-w-max items-center gap-1.5 whitespace-nowrap py-1.5">
+                {selectedDates.length ? (
+                  selectedDates.map((date) => {
+                    const label = format(date, dateFormat, { locale: ptBR })
+
+                    return (
+                      <span
+                        key={date.toISOString()}
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[#EEE7FF] px-2.5 py-1 text-xs font-medium text-[#6F42C1]"
+                        title={label}
+                      >
+                        {label}
+                        {!disabled && onRemoveDate ? (
+                          <button
+                            type="button"
+                            aria-label={`Remover ${label}`}
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              onRemoveDate(date)
+                            }}
+                            className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-[#7E57C2] transition hover:bg-[#E2D5FF] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30"
+                          >
+                            <XMarkIcon className="h-3 w-3" />
+                          </button>
+                        ) : null}
+                      </span>
+                    )
+                  })
+                ) : (
+                  <span className="text-slate-400">{placeholder}</span>
+                )}
+              </div>
+            </div>
+
+            {canScrollLeft ? (
+              <div
+                aria-hidden="true"
+                onMouseEnter={() => setHoveredScrollEdge("left")}
+                className="absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-white via-white/90 to-transparent"
+              />
+            ) : null}
+
+            {canScrollRight ? (
+              <div
+                aria-hidden="true"
+                onMouseEnter={() => setHoveredScrollEdge("right")}
+                className="absolute inset-y-0 right-11 z-10 w-8 bg-gradient-to-l from-white via-white/90 to-transparent"
+              />
+            ) : null}
+
+            {showIcon ? (
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <CalendarIcon className="h-4 w-4" />
+              </span>
+            ) : null}
+          </div>
+        </PopoverTrigger>
+        <PopoverContent
+          className="w-auto overflow-hidden p-0"
+          align="end"
+          alignOffset={-8}
+          sideOffset={10}
+        >
+          <Calendar
+            mode="multiple"
+            selected={selectedDates}
+            disabled={calendarDisabled}
+            captionLayout="dropdown"
+            month={month}
+            onMonthChange={setMonth}
+            onSelect={handleMultipleSelect}
+            startMonth={startMonth}
+            endMonth={endMonth}
+          />
+        </PopoverContent>
+      </Popover>
+    )
+  }
+
   // Variante com Input
   if (variant === "input") {
     return (
@@ -220,7 +470,7 @@ function DatePicker({
           aria-describedby={describedBy}
           aria-invalid={isInvalid || undefined}
           className={cn(
-            "pr-10",
+            "pr-11",
             isInvalid && "border-red-300 text-red-700 focus-visible:ring-red-500/20",
             className
           )}
@@ -228,6 +478,7 @@ function DatePicker({
           inputMode="numeric"
           maxLength={10}
           onKeyDown={handleKeyDown}
+          readOnly={readOnlyInput}
         />
         {showIcon && (
           <Popover open={open} onOpenChange={setOpen}>
@@ -236,9 +487,9 @@ function DatePicker({
                 variant="ghost"
                 size="icon"
                 disabled={disabled}
-                className="absolute top-1/2 right-2 -translate-y-1/2 p-0 h-auto w-auto bg-transparent hover:bg-transparent shadow-none"
+                className="absolute right-1.5 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-slate-500 shadow-none hover:bg-slate-100 hover:text-slate-700"
               >
-                <CalendarIcon className="h-4 w-4 text-gray-600" />
+                <CalendarIcon className="h-4 w-4" />
                 <span className="sr-only">Selecionar data</span>
               </Button>
             </PopoverTrigger>

@@ -32,7 +32,11 @@ function normalizeAgendaViewMode(viewMode?: AgendaViewModeDTO) {
   return viewMode ?? 'week';
 }
 
-export function useAgenda(initial?: Partial<AgendaFiltersState>) {
+type UseAgendaOptions = {
+  enabled?: boolean;
+};
+
+export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAgendaOptions) {
   const [filters, setFilters] = useState<AgendaFiltersState>({
     start: initial?.start ?? defaultStart.toISOString(),
     end: initial?.end ?? defaultEnd.toISOString(),
@@ -43,12 +47,18 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>) {
     type: initial?.type,
   });
   const [data, setData] = useState<Awaited<ReturnType<typeof listAgendaEvents>> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(options?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
 
+  const enabled = options?.enabled ?? true;
   const requestKey = JSON.stringify(filters);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     const run = async () => {
@@ -64,6 +74,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>) {
           salaId: filters.salaId,
           type: filters.type,
           viewMode: filters.viewMode,
+          includeResources: false,
         };
 
         const result = await listAgendaEvents(query);
@@ -80,7 +91,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>) {
     return () => {
       cancelled = true;
     };
-  }, [requestKey, filters]);
+  }, [enabled, requestKey]);
 
   return {
     filters,

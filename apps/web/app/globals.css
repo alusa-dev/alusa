@@ -1091,6 +1091,44 @@ svg:hover,
 	padding: 1px;
 }
 
+.calendar-scheduler-wrapper--week .fc-timegrid-event-harness {
+	margin-inline: 2px;
+}
+
+.calendar-scheduler-wrapper--week .fc-timegrid-event {
+	min-height: 22px;
+}
+
+.calendar-scheduler-wrapper--week .fc-timegrid-event .fc-event-main {
+	overflow: hidden;
+}
+
+.calendar-scheduler-wrapper--week .fc-timegrid-more-link,
+.calendar-scheduler-wrapper--week .fc-more-link {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 20px;
+	margin: 2px 4px 0;
+	padding: 0 8px;
+	border-radius: 9999px;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	color: #64748b;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	text-decoration: none;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.calendar-scheduler-wrapper--week .fc-timegrid-more-link:hover,
+.calendar-scheduler-wrapper--week .fc-more-link:hover {
+	background: #f1f5f9;
+	color: #475569;
+}
+
 .calendar-scheduler-wrapper .fc-theme-standard .fc-scrollgrid {
 	border: none !important;
 	border-radius: 0;

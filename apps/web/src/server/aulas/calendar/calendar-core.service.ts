@@ -5,6 +5,7 @@ import { addDays, eachDayOfInterval, endOfDay, startOfWeek, startOfDay, subDays 
 import type {
   AulasDashboardItemDTO,
   AulasLookupItemDTO,
+  AulasTurmaLookupItemDTO,
   CalendarEventAttendanceSummaryDTO,
   CalendarEventConflictDTO,
   CalendarEventDetailsDTO,
@@ -16,6 +17,7 @@ import { prisma } from '@/src/prisma';
 
 const MATERIALIZATION_PAST_DAYS = 14;
 const MATERIALIZATION_FUTURE_DAYS = 90;
+const materializationInFlight = new Map<string, Promise<void>>();
 const DAY_CODES = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'] as const;
 const DAY_ALIASES: Record<(typeof DAY_CODES)[number], string[]> = {
   DOM: ['DOM', 'DOMINGO'],
@@ -27,11 +29,23 @@ const DAY_ALIASES: Record<(typeof DAY_CODES)[number], string[]> = {
   SAB: ['SAB', 'SÁB', 'SABADO', 'SÁBADO'],
 };
 
+type CalendarEventListWithRelations = Prisma.CalendarEventGetPayload<{
+  include: {
+    turma: { select: { id: true; nome: true } };
+    sala: { select: { id: true; nome: true } };
+    professores: { include: { professor: { select: { id: true; nome: true } } } };
+    attendanceRecords: { select: { status: true } };
+    makeupClassesOrigem: { select: { id: true; status: true; scope: true; eventoDestinoId: true } };
+    makeupClassesDestino: { select: { id: true; status: true; scope: true; eventoOrigemId: true } };
+  };
+}>;
+
 type CalendarEventWithRelations = Prisma.CalendarEventGetPayload<{
   include: {
     turma: { select: { id: true; nome: true } };
     sala: { select: { id: true; nome: true } };
     professores: { include: { professor: { select: { id: true; nome: true } } } };
+    aulaExperimental: { select: { id: true; status: true; observacao: true; aluno: { select: { id: true; nome: true } } } };
     attendanceRecords: { select: { status: true } };
     makeupClassesOrigem: { select: { id: true; status: true; scope: true; eventoDestinoId: true } };
     makeupClassesDestino: { select: { id: true; status: true; scope: true; eventoOrigemId: true } };
@@ -54,7 +68,7 @@ type TurmaScheduleRecord = Prisma.TurmaGetPayload<{
 }>;
 
 export type AgendaResourceCollections = {
-  turmas: AulasLookupItemDTO[];
+  turmas: AulasTurmaLookupItemDTO[];
   professores: AulasLookupItemDTO[];
   salas: AulasLookupItemDTO[];
   alunos?: AulasLookupItemDTO[];
@@ -82,6 +96,28 @@ export type MaterializeCalendarSummary = {
 
 function buildLookupItem(id: string, label: string): AulasLookupItemDTO {
   return { id, label };
+}
+
+function buildTurmaLookupItem(input: {
+  id: string;
+  nome: string;
+  diasSemana: string[];
+  horaInicio: string;
+  horaFim: string;
+  salaId: string | null;
+  professorIds: string[];
+}): AulasTurmaLookupItemDTO {
+  return {
+    id: input.id,
+    label: input.nome,
+    defaultSchedule: {
+      daysOfWeek: input.diasSemana,
+      startTime: input.horaInicio,
+      endTime: input.horaFim,
+      salaId: input.salaId,
+      professorIds: input.professorIds,
+    },
+  };
 }
 
 function getDayCode(date: Date) {
@@ -171,7 +207,19 @@ export async function loadAulasResources(
   const [turmas, professores, salas] = await Promise.all([
     prismaClient.turma.findMany({
       where: { contaId, status: 'ATIVO' },
-      select: { id: true, nome: true },
+      select: {
+        id: true,
+        nome: true,
+        diasSemana: true,
+        horaInicio: true,
+        horaFim: true,
+        salaId: true,
+        professores: {
+          select: {
+            professorId: true,
+          },
+        },
+      },
       orderBy: { nome: 'asc' },
     }),
     prismaClient.professor.findMany({
@@ -187,7 +235,17 @@ export async function loadAulasResources(
   ]);
 
   return {
-    turmas: turmas.map((item) => buildLookupItem(item.id, item.nome)),
+    turmas: turmas.map((item) =>
+      buildTurmaLookupItem({
+        id: item.id,
+        nome: item.nome,
+        diasSemana: item.diasSemana,
+        horaInicio: item.horaInicio,
+        horaFim: item.horaFim,
+        salaId: item.salaId,
+        professorIds: item.professores.map((professor) => professor.professorId),
+      }),
+    ),
     professores: professores.map((item) => buildLookupItem(item.id, item.nome)),
     salas: salas.map((item) => buildLookupItem(item.id, item.nome)),
   };
@@ -579,14 +637,32 @@ export async function assertNoCalendarConflicts(params: {
   endAt: Date;
   salaId?: string | null;
   professorIds?: string[];
+  turmaId?: string | null;
+  allowOwnTurmaRecurringOverlap?: boolean;
   ignoreEventId?: string;
   prismaClient?: PrismaClient;
 }) {
   const prismaClient = params.prismaClient ?? prisma;
   const conflicts: string[] = [];
 
+  const isIgnorableOwnTurmaRecurringConflict = (event: {
+    turmaId: string | null;
+    source: string | null;
+    tipo: string;
+  }) => {
+    if (!params.allowOwnTurmaRecurringOverlap || !params.turmaId) {
+      return false;
+    }
+
+    return (
+      event.turmaId === params.turmaId &&
+      event.source === 'TURMA_RECORRENTE' &&
+      event.tipo === 'AULA'
+    );
+  };
+
   if (params.salaId) {
-    const roomConflict = await prismaClient.calendarEvent.findFirst({
+    const roomConflicts = await prismaClient.calendarEvent.findMany({
       where: {
         contaId: params.contaId,
         id: params.ignoreEventId ? { not: params.ignoreEventId } : undefined,
@@ -595,8 +671,10 @@ export async function assertNoCalendarConflicts(params: {
         startAt: { lt: params.endAt },
         endAt: { gt: params.startAt },
       },
-      select: { id: true, titulo: true },
+      select: { id: true, titulo: true, turmaId: true, source: true, tipo: true },
     });
+
+    const roomConflict = roomConflicts.find((event) => !isIgnorableOwnTurmaRecurringConflict(event));
 
     if (roomConflict) {
       conflicts.push(`A sala já está ocupada por "${roomConflict.titulo}".`);
@@ -604,7 +682,7 @@ export async function assertNoCalendarConflicts(params: {
   }
 
   if (params.professorIds?.length) {
-    const professorConflict = await prismaClient.calendarEvent.findFirst({
+    const professorConflicts = await prismaClient.calendarEvent.findMany({
       where: {
         contaId: params.contaId,
         id: params.ignoreEventId ? { not: params.ignoreEventId } : undefined,
@@ -617,8 +695,12 @@ export async function assertNoCalendarConflicts(params: {
           },
         },
       },
-      select: { id: true, titulo: true },
+      select: { id: true, titulo: true, turmaId: true, source: true, tipo: true },
     });
+
+    const professorConflict = professorConflicts.find(
+      (event) => !isIgnorableOwnTurmaRecurringConflict(event),
+    );
 
     if (professorConflict) {
       conflicts.push(`Há conflito de professor com "${professorConflict.titulo}".`);
@@ -654,13 +736,32 @@ export async function listCalendarEventsRaw(
   filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
+  const materializationKey = [
+    filters.contaId,
+    filters.start.toISOString(),
+    filters.end.toISOString(),
+  ].join(':');
 
-  await materializeCalendarWindow({
-    contaId: filters.contaId,
-    start: filters.start,
-    end: filters.end,
-    prismaClient,
-  });
+  const inFlightMaterialization = materializationInFlight.get(materializationKey);
+
+  if (inFlightMaterialization) {
+    await inFlightMaterialization;
+  } else {
+    const materializationRequest = materializeCalendarWindow({
+      contaId: filters.contaId,
+      start: filters.start,
+      end: filters.end,
+      prismaClient,
+    }).then(() => undefined);
+
+    materializationInFlight.set(materializationKey, materializationRequest);
+
+    try {
+      await materializationRequest;
+    } finally {
+      materializationInFlight.delete(materializationKey);
+    }
+  }
 
   const events = await prismaClient.calendarEvent.findMany({
     where: {
@@ -716,7 +817,7 @@ export async function listCalendarEventsRaw(
   return events;
 }
 
-export function buildConflictMap(events: CalendarEventWithRelations[]) {
+export function buildConflictMap(events: CalendarEventListWithRelations[]) {
   const map = new Map<string, CalendarEventConflictDTO[]>();
 
   for (const event of events) {
@@ -769,7 +870,7 @@ export function buildConflictMap(events: CalendarEventWithRelations[]) {
 }
 
 export async function mapCalendarEventListItem(
-  event: CalendarEventWithRelations,
+  event: CalendarEventListWithRelations,
   prismaClient: PrismaClient = prisma,
   conflicts: CalendarEventConflictDTO[] = [],
 ): Promise<CalendarEventListItemDTO> {
@@ -811,6 +912,14 @@ export async function mapCalendarEventDetails(
 
   return {
     ...base,
+    experimental: event.aulaExperimental
+      ? {
+          id: event.aulaExperimental.id,
+          status: event.aulaExperimental.status,
+          observacao: event.aulaExperimental.observacao ?? null,
+          aluno: buildLookupItem(event.aulaExperimental.aluno.id, event.aulaExperimental.aluno.nome),
+        }
+      : null,
     makeupsAsOrigin: event.makeupClassesOrigem.map((item) => ({
       id: item.id,
       status: item.status,
@@ -849,6 +958,19 @@ export async function getCalendarEventOrThrow(
           },
         },
       },
+      aulaExperimental: {
+        select: {
+          id: true,
+          status: true,
+          observacao: true,
+          aluno: {
+            select: {
+              id: true,
+              nome: true,
+            },
+          },
+        },
+      },
       attendanceRecords: { select: { status: true } },
       makeupClassesOrigem: {
         select: {
@@ -877,25 +999,37 @@ export async function getCalendarEventOrThrow(
 }
 
 export async function buildAgendaListPayload(
-  filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient },
+  filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient; includeResources?: boolean },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
-  const [resources, events] = await Promise.all([
-    loadAulasResources(filters.contaId, prismaClient),
-    listCalendarEventsRaw({ ...filters, prismaClient }),
-  ]);
+  const events = await listCalendarEventsRaw({
+    contaId: filters.contaId,
+    start: filters.start,
+    end: filters.end,
+    turmaId: filters.turmaId,
+    professorId: filters.professorId,
+    salaId: filters.salaId,
+    type: filters.type,
+    status: filters.status,
+    prismaClient,
+  });
 
   const conflictMap = buildConflictMap(events);
   const mappedEvents = await Promise.all(
     events.map((event) => mapCalendarEventListItem(event, prismaClient, conflictMap.get(event.id) ?? [])),
   );
 
+  const resources =
+    filters.includeResources === false
+      ? undefined
+      : await loadAulasResources(filters.contaId, prismaClient);
+
   return {
     range: {
       start: filters.start.toISOString(),
       end: filters.end.toISOString(),
     },
-    resources,
+    ...(resources ? { resources } : {}),
     events: mappedEvents,
   };
 }

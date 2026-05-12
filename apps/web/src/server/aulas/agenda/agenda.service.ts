@@ -1,4 +1,5 @@
 import { endOfDay, startOfDay } from 'date-fns';
+import { unstable_cache } from 'next/cache';
 
 import type {
   CalendarEventDetailsResultDTO,
@@ -15,6 +16,7 @@ import {
   assertNoCalendarConflicts,
   getCalendarEventOrThrow,
   listCalendarEventsRaw,
+  loadAlunoResources,
   loadAulasResources,
   mapCalendarEventDetails,
   materializeCalendarWindow,
@@ -26,6 +28,15 @@ import {
 } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
 import { createAulasOperationLog, listAulasOperationLogs } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
+
+function haveSameIds(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const rightSet = new Set(right);
+  return left.every((item) => rightSet.has(item));
+}
 
 async function resolveTurmaDefaults(contaId: string, turmaId?: string | null) {
   if (!turmaId) {
@@ -91,6 +102,83 @@ async function syncLinkedMakeupStatusesForEvent(
   });
 }
 
+async function syncExperimentalStatusForEventUpdate(params: {
+  eventId: string;
+  nextStatus: 'AGENDADO' | 'CANCELADO' | 'REALIZADO';
+  currentStatus: 'AGENDADO' | 'CANCELADO' | 'REALIZADO';
+  currentStartAt: Date;
+  currentEndAt: Date;
+  nextStartAt: Date;
+  nextEndAt: Date;
+  currentTurmaId: string | null;
+  nextTurmaId: string | null;
+  currentSalaId: string | null;
+  nextSalaId: string | null;
+  currentProfessorIds: string[];
+  nextProfessorIds: string[];
+  experimentalId?: string;
+}) {
+  if (!params.experimentalId) {
+    return null;
+  }
+
+  if (params.nextStatus === 'CANCELADO') {
+    await prisma.aulaExperimental.update({
+      where: { id: params.experimentalId },
+      data: { status: 'CANCELADA' },
+    });
+
+    return {
+      action: 'EXPERIMENTAL_CANCELLED',
+      message: 'Aula experimental cancelada.',
+      details: { eventId: params.eventId },
+    };
+  }
+
+  if (params.nextStatus === 'REALIZADO') {
+    await prisma.aulaExperimental.update({
+      where: { id: params.experimentalId },
+      data: { status: 'REALIZADA' },
+    });
+
+    return {
+      action: 'EXPERIMENTAL_COMPLETED',
+      message: 'Aula experimental marcada como realizada.',
+      details: { eventId: params.eventId },
+    };
+  }
+
+  if (params.currentStatus !== 'AGENDADO') {
+    return null;
+  }
+
+  const scheduleChanged =
+    params.currentStartAt.getTime() !== params.nextStartAt.getTime() ||
+    params.currentEndAt.getTime() !== params.nextEndAt.getTime() ||
+    params.currentTurmaId !== params.nextTurmaId ||
+    params.currentSalaId !== params.nextSalaId ||
+    !haveSameIds(params.currentProfessorIds, params.nextProfessorIds);
+
+  if (!scheduleChanged) {
+    return null;
+  }
+
+  await prisma.aulaExperimental.update({
+    where: { id: params.experimentalId },
+    data: { status: 'REAGENDADA' },
+  });
+
+  return {
+    action: 'EXPERIMENTAL_RESCHEDULED',
+    message: 'Aula experimental reagendada.',
+    details: {
+      eventId: params.eventId,
+      startAt: params.nextStartAt.toISOString(),
+      endAt: params.nextEndAt.toISOString(),
+    },
+  };
+}
+
 export async function listAgendaEvents(contaId: string, query: ListCalendarEventsQueryDTO) {
   const range = normalizeAgendaRange(query.start, query.end);
   await autoCloseAgendaEventsInRange({
@@ -111,9 +199,32 @@ export async function listAgendaEvents(contaId: string, query: ListCalendarEvent
       salaId: query.salaId,
       type: query.type,
       status: query.status,
+      includeResources: query.includeResources,
       prismaClient: prisma,
     }),
   };
+}
+
+function getCachedAgendaResources(contaId: string, includeAlunos: boolean) {
+  return unstable_cache(
+    async () => {
+      const resources = await loadAulasResources(contaId, prisma);
+
+      if (!includeAlunos) {
+        return resources;
+      }
+
+      return {
+        ...resources,
+        alunos: await loadAlunoResources(contaId, prisma),
+      };
+    },
+    ['agenda-resources', contaId, includeAlunos ? 'with-alunos' : 'default'],
+    {
+      revalidate: 300,
+      tags: [`agenda-resources:${contaId}`],
+    },
+  )();
 }
 
 export async function getAgendaEventDetails(contaId: string, eventId: string) {
@@ -198,6 +309,8 @@ export async function updateAgendaEvent(
   const endAt = input.endAt ? new Date(input.endAt) : current.endAt;
   const salaId = input.salaId !== undefined ? input.salaId : (current.salaId ?? turmaDefaults?.salaId ?? null);
   const nextStatus = input.status ?? current.status;
+  const nextTurmaId = input.turmaId !== undefined ? input.turmaId ?? null : current.turmaId;
+  const currentProfessorIds = current.professores.map((item) => item.professor.id);
 
   await assertNoCalendarConflicts({
     contaId,
@@ -218,7 +331,7 @@ export async function updateAgendaEvent(
       descricao: input.description !== undefined ? input.description ?? null : current.descricao,
       startAt,
       endAt,
-      turmaId: input.turmaId !== undefined ? input.turmaId ?? null : current.turmaId,
+      turmaId: nextTurmaId,
       salaId,
       manuallyAdjusted: true,
       cancelledAt: nextStatus === 'CANCELADO' ? current.cancelledAt ?? new Date() : null,
@@ -234,6 +347,22 @@ export async function updateAgendaEvent(
   });
 
   await syncLinkedMakeupStatusesForEvent(contaId, eventId, nextStatus);
+  const experimentalSync = await syncExperimentalStatusForEventUpdate({
+    eventId,
+    nextStatus,
+    currentStatus: current.status,
+    currentStartAt: current.startAt,
+    currentEndAt: current.endAt,
+    nextStartAt: startAt,
+    nextEndAt: endAt,
+    currentTurmaId: current.turmaId,
+    nextTurmaId,
+    currentSalaId: current.salaId,
+    nextSalaId: salaId,
+    currentProfessorIds,
+    nextProfessorIds: professorIds,
+    experimentalId: current.aulaExperimental?.id,
+  });
   await createAulasOperationLog({
     contaId,
     action: 'EVENT_UPDATED',
@@ -250,18 +379,30 @@ export async function updateAgendaEvent(
       type: input.type ?? current.tipo,
       startAt: startAt.toISOString(),
       endAt: endAt.toISOString(),
-      turmaId: input.turmaId !== undefined ? input.turmaId ?? null : current.turmaId,
+      turmaId: nextTurmaId,
       salaId,
       professorIds,
     },
     prismaClient: prisma,
   });
 
+  if (experimentalSync) {
+    await createAulasOperationLog({
+      contaId,
+      action: experimentalSync.action,
+      entityType: 'AULA_EXPERIMENTAL',
+      entityId: current.aulaExperimental?.id ?? null,
+      message: experimentalSync.message,
+      details: experimentalSync.details,
+      prismaClient: prisma,
+    });
+  }
+
   return buildEventDetailsResult(eventId, contaId);
 }
 
-export async function listAgendaResources(contaId: string) {
-  return loadAulasResources(contaId, prisma);
+export async function listAgendaResources(contaId: string, options?: { includeAlunos?: boolean }) {
+  return getCachedAgendaResources(contaId, options?.includeAlunos === true);
 }
 
 export async function rebuildAgendaWindow(

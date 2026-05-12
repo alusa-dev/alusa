@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { startTransition, useDeferredValue, useEffect, useState } from 'react';
 import {
   addMonths,
   addWeeks,
@@ -20,6 +20,12 @@ import { AGENDA_VIEW_OPTIONS } from '@/features/aulas/types';
 import TableLayout from '@/components/layout/TableLayout';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { AgendaViewModeDTO, CalendarEventDetailsDTO, TimelineGroupByDTO } from '@/features/aulas/dtos';
 import { useAgenda } from '@/features/aulas/agenda/hooks/use-agenda';
@@ -27,10 +33,19 @@ import { AgendaFilters } from '@/features/aulas/agenda/components/AgendaFilters'
 import { CalendarEventDialog } from '@/features/aulas/agenda/components/CalendarEventDialog';
 import { CalendarEventSheet } from '@/features/aulas/agenda/components/CalendarEventSheet';
 import { AttendanceSheet } from '@/features/aulas/frequencia/components/AttendanceSheet';
+import { ExperimentalClassDialog } from '@/features/aulas/experimentais/components/ExperimentalClassDialog';
+import { listAgendaResources, type AgendaResourcesResult } from '@/features/aulas/agenda/services/agenda-resources-service';
+import { MakeupClassDialog } from '@/features/aulas/reposicoes/components/MakeupClassDialog';
 import { CalendarScheduler } from '@/features/aulas/calendar/components/CalendarScheduler';
 import { TimelineScheduler } from '@/features/aulas/calendar/components/TimelineScheduler';
-import { Plus } from '@/components/icons/icons';
+import { ChevronDown, Plus } from '@/components/icons/icons';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
+
+const EMPTY_RESOURCES: AgendaResourcesResult = {
+  turmas: [],
+  professores: [],
+  salas: [],
+};
 
 function buildRange(anchor: Date, viewMode: AgendaViewModeDTO) {
   if (viewMode === 'week') {
@@ -77,35 +92,82 @@ type AgendaPageProps = {
 };
 
 export function AgendaPage({ initialFilters }: AgendaPageProps) {
+  const [activeTab, setActiveTab] = useState<'calendar' | 'timeline'>('calendar');
   const calendarAgenda = useAgenda(initialFilters);
   const timelineInitialRange = buildTimelineRange(resolveTimelineAnchor(initialFilters?.start, initialFilters?.end));
   const timelineAgenda = useAgenda({
     ...initialFilters,
     ...timelineInitialRange,
     viewMode: 'week',
-  });
-  const [activeTab, setActiveTab] = useState<'calendar' | 'timeline'>('calendar');
+  }, { enabled: activeTab === 'timeline' });
   const [timelineGroupBy, setTimelineGroupBy] = useState<TimelineGroupByDTO>('professor');
   const [createOpen, setCreateOpen] = useState(false);
+  const [experimentalCreateOpen, setExperimentalCreateOpen] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEventDetailsDTO | null>(null);
+  const [editExperimentalEvent, setEditExperimentalEvent] = useState<CalendarEventDetailsDTO | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [attendanceEventId, setAttendanceEventId] = useState<string | null>(null);
+  const [makeupOpen, setMakeupOpen] = useState(false);
+  const [resources, setResources] = useState<AgendaResourcesResult>(EMPTY_RESOURCES);
+  const [makeupResources, setMakeupResources] = useState<{
+    turmas: AgendaResourcesResult['turmas'];
+    alunos: Array<{ id: string; label: string }>;
+  } | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [resourcesError, setResourcesError] = useState<string | null>(null);
+  const [loadingMakeupResources, setLoadingMakeupResources] = useState(false);
 
   const activeAgenda = activeTab === 'calendar' ? calendarAgenda : timelineAgenda;
-  const resources =
-    activeAgenda.data?.data.resources ??
-    calendarAgenda.data?.data.resources ??
-    timelineAgenda.data?.data.resources ??
-    { turmas: [], professores: [], salas: [] };
   const activeFilters = activeAgenda.filters;
-  const calendarEvents = calendarAgenda.data?.data.events ?? [];
-  const timelineEvents = timelineAgenda.data?.data.events ?? [];
+  const calendarEvents = useDeferredValue(calendarAgenda.data?.data.events ?? []);
+  const timelineEvents = useDeferredValue(timelineAgenda.data?.data.events ?? []);
   const activeLoading = activeAgenda.loading;
   const activeError = activeAgenda.error;
 
+  useEffect(() => {
+    const today = new Date();
+
+    calendarAgenda.setFilters((current) => ({
+      ...current,
+      ...buildRange(today, current.viewMode),
+    }));
+
+    timelineAgenda.setFilters((current) => ({
+      ...current,
+      ...buildTimelineRange(today),
+    }));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        setResourcesError(null);
+        const nextResources = await listAgendaResources();
+
+        if (!cancelled) {
+          setResources(nextResources);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setResourcesError((err as Error).message);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function applySharedFilters(patch: Partial<AgendaFiltersState>) {
-    calendarAgenda.setFilters((current) => ({ ...current, ...patch }));
-    timelineAgenda.setFilters((current) => ({ ...current, ...patch }));
+    startTransition(() => {
+      calendarAgenda.setFilters((current) => ({ ...current, ...patch }));
+      timelineAgenda.setFilters((current) => ({ ...current, ...patch }));
+    });
   }
 
   function handleNavigatePeriod(direction: 'prev' | 'next' | 'today') {
@@ -113,10 +175,12 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
       const currentStart = new Date(timelineAgenda.filters.start);
 
       if (direction === 'today') {
-        timelineAgenda.setFilters((current) => ({
-          ...current,
-          ...buildTimelineRange(new Date()),
-        }));
+        startTransition(() => {
+          timelineAgenda.setFilters((current) => ({
+            ...current,
+            ...buildTimelineRange(new Date()),
+          }));
+        });
         return;
       }
 
@@ -124,10 +188,12 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         direction === 'prev'
           ? new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() - 1)
           : new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() + 1);
-      timelineAgenda.setFilters((current) => ({
-        ...current,
-        ...buildTimelineRange(nextAnchor),
-      }));
+      startTransition(() => {
+        timelineAgenda.setFilters((current) => ({
+          ...current,
+          ...buildTimelineRange(nextAnchor),
+        }));
+      });
       return;
     }
 
@@ -135,30 +201,81 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
 
     if (direction === 'today') {
       const range = buildRange(new Date(), calendarAgenda.filters.viewMode);
-      calendarAgenda.setFilters((current) => ({ ...current, ...range }));
+      startTransition(() => {
+        calendarAgenda.setFilters((current) => ({ ...current, ...range }));
+      });
       return;
     }
 
     if (calendarAgenda.filters.viewMode === 'week') {
       const nextAnchor = direction === 'prev' ? subWeeks(currentStart, 1) : addWeeks(currentStart, 1);
-      calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+      startTransition(() => {
+        calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+      });
       return;
     }
 
     const nextAnchor = direction === 'prev' ? subMonths(currentStart, 1) : addMonths(currentStart, 1);
-    calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+    startTransition(() => {
+      calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+    });
   }
 
   function handleViewModeChange(viewMode: AgendaViewModeDTO) {
     const nextAnchor = calendarAgenda.filters.start
       ? new Date(calendarAgenda.filters.start)
       : startOfDay(new Date());
-    calendarAgenda.setFilters((current) => ({ ...current, viewMode, ...buildRange(nextAnchor, viewMode) }));
+    startTransition(() => {
+      calendarAgenda.setFilters((current) => ({ ...current, viewMode, ...buildRange(nextAnchor, viewMode) }));
+    });
   }
 
   function handleEventSaved() {
-    calendarAgenda.setFilters((current) => ({ ...current }));
-    timelineAgenda.setFilters((current) => ({ ...current }));
+    startTransition(() => {
+      calendarAgenda.setFilters((current) => ({ ...current }));
+      timelineAgenda.setFilters((current) => ({ ...current }));
+    });
+  }
+
+  function handleTabChange(nextTab: 'calendar' | 'timeline') {
+    const today = new Date();
+
+    startTransition(() => {
+      if (nextTab === 'calendar') {
+        calendarAgenda.setFilters((current) => ({
+          ...current,
+          ...buildRange(today, current.viewMode),
+        }));
+      } else {
+        timelineAgenda.setFilters((current) => ({
+          ...current,
+          ...buildTimelineRange(today),
+        }));
+      }
+
+      setActiveTab(nextTab);
+    });
+  }
+
+  async function handleOpenMakeupDialog() {
+    try {
+      setActionError(null);
+
+      if (!makeupResources) {
+        setLoadingMakeupResources(true);
+        const nextResources = await listAgendaResources({ includeAlunos: true });
+        setMakeupResources({
+          turmas: nextResources.turmas,
+          alunos: nextResources.alunos ?? [],
+        });
+      }
+
+      setMakeupOpen(true);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setLoadingMakeupResources(false);
+    }
   }
 
   return (
@@ -174,19 +291,62 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
           </div>
         ) : null}
 
+        {actionError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {actionError}
+          </div>
+        ) : null}
+
+        {resourcesError ? (
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {resourcesError}
+          </div>
+        ) : null}
+
         <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
-          <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'calendar' | 'timeline')}>
+          <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as 'calendar' | 'timeline')}>
             <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Button
-                  className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
-                  onClick={() => setCreateOpen(true)}
-                  data-testid="agenda-new-event"
-                  disabled={activeLoading || (!calendarAgenda.data && !timelineAgenda.data)}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Novo evento
-                </Button>
+                <div className="inline-flex overflow-hidden rounded-xl shadow-sm">
+                  <Button
+                    className="rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+                    onClick={() => setCreateOpen(true)}
+                    data-testid="agenda-new-event"
+                    disabled={activeLoading || (!calendarAgenda.data && !timelineAgenda.data)}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Novo evento
+                  </Button>
+
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label="Abrir ações de criação da agenda"
+                        className="rounded-none rounded-r-xl border-l border-white/20 bg-brand-accent px-3 text-white hover:bg-brand-accent/90"
+                        data-testid="agenda-create-menu-trigger"
+                        disabled={
+                          activeLoading ||
+                          (!calendarAgenda.data && !timelineAgenda.data) ||
+                          loadingMakeupResources
+                        }
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-56">
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setExperimentalCreateOpen(true);
+                        }}
+                      >
+                        Aula experimental
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => void handleOpenMakeupDialog()}>
+                        {loadingMakeupResources ? 'Carregando reposição...' : 'Reposição'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
 
                 <TabsList className="h-9">
                   <TabsTrigger value="calendar" className="text-xs px-4">Calendário</TabsTrigger>
@@ -282,6 +442,28 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         }}
       />
 
+      <ExperimentalClassDialog
+        open={experimentalCreateOpen}
+        mode="create"
+        resources={resources}
+        onOpenChange={setExperimentalCreateOpen}
+        onSaved={handleEventSaved}
+      />
+
+      <ExperimentalClassDialog
+        open={Boolean(editExperimentalEvent)}
+        mode="edit"
+        resources={resources}
+        initialEvent={editExperimentalEvent}
+        onOpenChange={(open) => {
+          if (!open) setEditExperimentalEvent(null);
+        }}
+        onSaved={() => {
+          setEditExperimentalEvent(null);
+          handleEventSaved();
+        }}
+      />
+
       <CalendarEventSheet
         open={Boolean(selectedEventId)}
         eventId={selectedEventId}
@@ -290,7 +472,11 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         }}
         onRefresh={handleEventSaved}
         onRequestEdit={(event) => {
-          setEditEvent(event);
+          if (event.type === 'AULA_EXPERIMENTAL') {
+            setEditExperimentalEvent(event);
+          } else {
+            setEditEvent(event);
+          }
           setSelectedEventId(null);
         }}
         onGoToAttendance={(eventId) => {
@@ -305,6 +491,13 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         onOpenChange={(open) => {
           if (!open) setAttendanceEventId(null);
         }}
+        onSaved={handleEventSaved}
+      />
+
+      <MakeupClassDialog
+        open={makeupOpen}
+        resources={makeupResources ?? { turmas: [], alunos: [] }}
+        onOpenChange={setMakeupOpen}
         onSaved={handleEventSaved}
       />
     </TableLayout>

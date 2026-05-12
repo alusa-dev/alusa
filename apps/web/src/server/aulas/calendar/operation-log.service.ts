@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 import type {
   AgendaOperationLogDTO,
@@ -15,7 +15,7 @@ type CreateAulasOperationLogParams = {
   entityType?: string | null;
   entityId?: string | null;
   details?: unknown;
-  prismaClient?: PrismaClient;
+  prismaClient?: PrismaClient | Prisma.TransactionClient;
 };
 
 function mapLogItem(item: {
@@ -78,7 +78,7 @@ export async function createAulasOperationLog({
 export async function listAulasOperationLogs(
   contaId: string,
   limit = 20,
-  prismaClient: PrismaClient = prisma,
+  prismaClient: PrismaClient | Prisma.TransactionClient = prisma,
 ): Promise<ListAgendaOperationLogsResultDTO> {
   const items = await prismaClient.aulasOperationLog.findMany({
     where: { contaId },

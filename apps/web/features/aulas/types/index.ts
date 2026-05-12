@@ -21,6 +21,7 @@ export const TIMELINE_GROUP_OPTIONS: Array<{ value: TimelineGroupByDTO; label: s
 
 export const CALENDAR_EVENT_TYPE_OPTIONS: Array<{ value: CalendarEventTypeDTO; label: string }> = [
   { value: 'AULA', label: 'Aula' },
+  { value: 'AULA_EXPERIMENTAL', label: 'Aula experimental' },
   { value: 'REPOSICAO', label: 'Reposição' },
   { value: 'EVENTO_INTERNO', label: 'Evento interno' },
   { value: 'EVENTO_EXTERNO', label: 'Evento externo' },

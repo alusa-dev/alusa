@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
+  SheetTitle,
 } from '@/components/ui/sheet';
 import type { CalendarEventDetailsDTO } from '@/features/aulas/dtos';
 import {
@@ -36,6 +38,13 @@ type CalendarEventSheetProps = {
 function getStatusVariant(status: CalendarEventDetailsDTO['status']) {
   if (status === 'REALIZADO') return 'success';
   if (status === 'CANCELADO') return 'neutral';
+  return 'info';
+}
+
+function getExperimentalStatusVariant(status: NonNullable<CalendarEventDetailsDTO['experimental']>['status']) {
+  if (status === 'REALIZADA') return 'success';
+  if (status === 'CANCELADA') return 'neutral';
+  if (status === 'REAGENDADA') return 'warning';
   return 'info';
 }
 
@@ -126,6 +135,10 @@ export function CalendarEventSheet({
         side="right"
         className="overflow-hidden border-0 bg-transparent p-0 shadow-none sm:inset-y-4 sm:right-4 sm:h-[calc(100vh-32px)] sm:max-w-[430px]"
       >
+        <SheetTitle className="sr-only">Detalhes do evento da agenda</SheetTitle>
+        <SheetDescription className="sr-only">
+          Visualize dados do evento, acompanhe conflitos e execute ações operacionais da agenda.
+        </SheetDescription>
         <div className="flex h-full flex-col overflow-hidden bg-white sm:rounded-2xl sm:border sm:border-slate-200 sm:shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
           <div className="flex-1 overflow-y-auto bg-white px-6 pb-6 pt-12">
             <div className="space-y-5">
@@ -206,6 +219,24 @@ export function CalendarEventSheet({
                   />
                 </div>
               </section>
+
+              {event.experimental ? (
+                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">Aula experimental</div>
+                      <p className="mt-1 text-sm text-slate-600">Aluno: {event.experimental.aluno.label}</p>
+                    </div>
+                    <Badge variant={getExperimentalStatusVariant(event.experimental.status)}>
+                      {event.experimental.status}
+                    </Badge>
+                  </div>
+
+                  {event.experimental.observacao ? (
+                    <p className="mt-3 text-sm leading-6 text-slate-600">{event.experimental.observacao}</p>
+                  ) : null}
+                </section>
+              ) : null}
 
               {event.description ? (
                 <section className="rounded-xl border border-slate-200 bg-white">

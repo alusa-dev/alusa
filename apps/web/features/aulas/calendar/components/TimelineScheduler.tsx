@@ -41,6 +41,7 @@ type TimelineScale = {
 
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
   AULA: 'border-purple-200 bg-purple-50 text-brand-accent hover:bg-purple-100/60',
+  AULA_EXPERIMENTAL: 'border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100/60',
   REPOSICAO: 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/60',
   EVENTO_INTERNO: 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100/60',
   EVENTO_EXTERNO: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800 hover:bg-fuchsia-100/60',

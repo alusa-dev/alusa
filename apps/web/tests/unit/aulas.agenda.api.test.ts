@@ -89,6 +89,56 @@ describe('/api/aulas/agenda', () => {
     expect(json.data.resources.turmas[0]).toEqual({ id: 'turma-1', label: 'Ballet Kids' });
   });
 
+  it('aceita resposta compacta sem resources quando solicitado', async () => {
+    vi.mocked(getAulasSessionUser).mockResolvedValueOnce({
+      id: 'user-1',
+      contaId: 'conta-1',
+      role: 'ADMIN',
+    });
+    vi.mocked(canAccessAulas).mockReturnValueOnce(true);
+    vi.mocked(resolveAulasAccessScope).mockResolvedValueOnce({
+      contaId: 'conta-1',
+      userId: 'user-1',
+      role: 'ADMIN',
+      isProfessor: false,
+      professorId: null,
+      professorLabel: null,
+    });
+    vi.mocked(listAgendaEvents).mockResolvedValueOnce({
+      success: true,
+      data: {
+        range: {
+          start: '2026-03-15T00:00:00.000Z',
+          end: '2026-03-21T23:59:59.999Z',
+        },
+        events: [],
+      },
+    } as never);
+
+    const response = await GET(
+      new NextRequest(
+        'http://localhost/api/aulas/agenda?start=2026-03-15T00:00:00.000Z&end=2026-03-21T23:59:59.999Z&includeResources=false',
+      ),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(listAgendaEvents).toHaveBeenCalledWith('conta-1', {
+      start: '2026-03-15T00:00:00.000Z',
+      end: '2026-03-21T23:59:59.999Z',
+      turmaId: undefined,
+      professorId: undefined,
+      salaId: undefined,
+      type: undefined,
+      status: undefined,
+      viewMode: undefined,
+      timelineGroupBy: undefined,
+      includeResources: false,
+    });
+    expect(json.data.resources).toBeUndefined();
+    expect(json.data.events).toEqual([]);
+  });
+
   it('cria um evento manual', async () => {
     vi.mocked(getAulasSessionUser).mockResolvedValueOnce({
       id: 'user-1',

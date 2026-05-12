@@ -83,6 +83,7 @@ enum StatusMatricula {
 
 enum CalendarEventType {
   AULA
+  AULA_EXPERIMENTAL
   REPOSICAO
   EVENTO_INTERNO
   EVENTO_EXTERNO
@@ -116,6 +117,13 @@ enum MakeupClassStatus {
 enum MakeupClassScope {
   INDIVIDUAL
   COLETIVA
+}
+
+enum AulaExperimentalStatus {
+  AGENDADA
+  REAGENDADA
+  REALIZADA
+  CANCELADA
 }
 
 enum AulasOperationLogLevel {
@@ -563,6 +571,7 @@ model Conta {
   rematriculasFamiliares       RematriculaFamiliar[]
   familyBillingOutboxEvents    FamilyBillingOutbox[]
   calendarEvents               CalendarEvent[]
+  aulasExperimentais           AulaExperimental[]
   attendanceRecords            AttendanceRecord[]
   makeupClasses                MakeupClass[]
   aulasOperationLogs           AulasOperationLog[]
@@ -830,6 +839,7 @@ model Aluno {
   inscricoesEvento  PortalEventoInscricao[]
   responsaveis      AlunoResponsavel[]
   matriculas        Matricula[]
+  aulasExperimentais AulaExperimental[]
   attendanceRecords AttendanceRecord[]
   makeupClasses     MakeupClass[]
   sales             Sale[]
@@ -1012,6 +1022,7 @@ model CalendarEvent {
   turma                Turma?                   @relation(fields: [turmaId], references: [id], onDelete: SetNull)
   sala                 Sala?                    @relation(fields: [salaId], references: [id], onDelete: SetNull)
   professores          CalendarEventProfessor[]
+  aulaExperimental     AulaExperimental?
   attendanceRecords    AttendanceRecord[]
   makeupClassesOrigem  MakeupClass[]            @relation("MakeupClassEventoOrigem")
   makeupClassesDestino MakeupClass[]            @relation("MakeupClassEventoDestino")
@@ -1098,6 +1109,27 @@ model MakeupClass {
   @@index([eventoDestinoId], name: "idx_makeup_class_evento_destino")
   @@index([turmaOrigemId], name: "idx_makeup_class_turma_origem")
   @@index([turmaDestinoId], name: "idx_makeup_class_turma_destino")
+}
+
+model AulaExperimental {
+  id              String                 @id @default(cuid())
+  contaId         String
+  calendarEventId String                 @unique
+  alunoId         String
+  status          AulaExperimentalStatus @default(AGENDADA)
+  observacao      String?
+  uiRequestId     String?
+  createdByUserId String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  conta         Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  calendarEvent CalendarEvent @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
+  aluno         Aluno         @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, uiRequestId], name: "uq_aula_experimental_conta_request")
+  @@index([contaId, status, createdAt], name: "idx_aula_experimental_conta_status_created")
+  @@index([alunoId], name: "idx_aula_experimental_aluno")
 }
 
 model AulasOperationLog {
