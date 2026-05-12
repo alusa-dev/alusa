@@ -149,11 +149,23 @@ function normalizeDayCode(value: string) {
   return normalized;
 }
 
+// BRT = UTC-3; horaInicio/horaFim são horários locais do Brasil
+const BRAZIL_UTC_OFFSET_HOURS = 3;
+
 function combineDateAndTime(date: Date, hhmm: string) {
   const [hours, minutes] = hhmm.split(':').map(Number);
-  const next = new Date(date);
-  next.setHours(hours, minutes, 0, 0);
-  return next;
+  // Usa UTC para garantir comportamento correto independente do timezone do servidor
+  return new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      hours + BRAZIL_UTC_OFFSET_HOURS,
+      minutes,
+      0,
+      0,
+    ),
+  );
 }
 
 function buildSourceRuleKey(turma: { id: string; horaInicio: string; horaFim: string }) {
