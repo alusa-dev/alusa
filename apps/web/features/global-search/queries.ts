@@ -40,6 +40,23 @@ function mapStatus(value: string | null | undefined) {
   return value?.replace(/_/g, ' ').toLowerCase() ?? null;
 }
 
+function mapChargeTypeLabel(value: string | null | undefined) {
+  switch (value) {
+    case 'TAXA_MATRICULA':
+      return 'Taxa de matrícula';
+    case 'MENSALIDADE':
+      return 'Mensalidade';
+    case 'AVULSA':
+      return 'Cobrança avulsa';
+    case 'MATERIAL':
+      return 'Material';
+    case 'MULTA':
+      return 'Multa';
+    default:
+      return 'Cobrança';
+  }
+}
+
 async function searchEntityGroups(query: string, contaId: string) {
   const normalized = query.trim();
   const digits = normalized.replace(/\D/g, '');
@@ -115,6 +132,7 @@ async function searchEntityGroups(query: string, contaId: string) {
       },
       select: {
         id: true,
+        tipo: true,
         status: true,
         valor: true,
         asaasPaymentId: true,
@@ -182,12 +200,9 @@ async function searchEntityGroups(query: string, contaId: string) {
       cobrancas.map((item) => ({
         type: 'cobranca',
         id: item.id,
-        title: item.asaasPaymentId ?? item.id,
-        description: compactDescription(
-          item.matricula.aluno.nome,
-          mapStatus(item.status),
-          formatCurrency(Number(item.valor)),
-        ),
+        title: item.matricula.aluno.nome,
+        description: compactDescription(item.asaasPaymentId, item.id, mapStatus(item.status), formatCurrency(Number(item.valor))),
+        badgeLabel: mapChargeTypeLabel(item.tipo),
         href: `/cobrancas/${item.id}`,
       })),
     ),

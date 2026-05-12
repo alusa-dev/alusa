@@ -61,8 +61,16 @@ export function useGlobalSearchRecents() {
     [items, persist],
   );
 
+  const clearRecentItems = useCallback(() => {
+    setItems([]);
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  }, []);
+
   return {
     items,
     addRecentItem,
+    clearRecentItems,
   };
 }

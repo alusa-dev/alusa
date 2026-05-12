@@ -17,6 +17,7 @@ export const globalSearchItemDTOSchema = z.object({
   id: z.string(),
   title: z.string(),
   description: z.string().nullable(),
+  badgeLabel: z.string().nullable().optional(),
   href: z.string(),
 });
 

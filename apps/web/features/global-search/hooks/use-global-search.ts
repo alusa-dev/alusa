@@ -14,7 +14,7 @@ type UseGlobalSearchParams = {
 
 export function useGlobalSearch(params: UseGlobalSearchParams) {
   const role = params.role ?? null;
-  const { items: recentItems, addRecentItem } = useGlobalSearchRecents();
+  const { items: recentItems, addRecentItem, clearRecentItems } = useGlobalSearchRecents();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -95,5 +95,6 @@ export function useGlobalSearch(params: UseGlobalSearchParams) {
     groups,
     items,
     selectItem,
+    clearRecentItems,
   };
 }

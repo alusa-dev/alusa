@@ -54,7 +54,7 @@ describe('GET /api/search', () => {
     expect(prismaMock.aluno.findMany).not.toHaveBeenCalled();
   });
 
-  it('retorna grupos de navegação e entidades para perfis internos', async () => {
+  it('retorna apenas grupos de entidades para perfis internos', async () => {
     mockGetServerSession.mockResolvedValueOnce({
       user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
     });
@@ -72,22 +72,14 @@ describe('GET /api/search', () => {
 
     expect(response.status).toBe(200);
     expect(json.query).toBe('alunos');
-    expect(json.groups).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: 'navigation',
-          items: expect.arrayContaining([
-            expect.objectContaining({ title: 'Alunos', href: '/alunos', type: 'navigation' }),
-          ]),
-        }),
-        expect.objectContaining({
-          key: 'alunos',
-          items: [
-            expect.objectContaining({ title: 'Maria Silva', href: '/alunos/aluno-1', type: 'aluno' }),
-          ],
-        }),
-      ]),
-    );
+    expect(json.groups).toEqual([
+      expect.objectContaining({
+        key: 'alunos',
+        items: [
+          expect.objectContaining({ title: 'Maria Silva', href: '/alunos/aluno-1', type: 'aluno' }),
+        ],
+      }),
+    ]);
     expect(prismaMock.aluno.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ contaId: 'conta-1' }),
@@ -95,7 +87,7 @@ describe('GET /api/search', () => {
     );
   });
 
-  it('limita perfis de portal à navegação e ações rápidas', async () => {
+  it('não retorna atalhos fixos para perfis de portal', async () => {
     mockGetServerSession.mockResolvedValueOnce({
       user: { id: 'u1', contaId: 'conta-1', role: 'ALUNO' },
     });
@@ -104,16 +96,47 @@ describe('GET /api/search', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json.groups).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: 'navigation' }),
-      ]),
-    );
+    expect(json.groups).toEqual([]);
     expect(prismaMock.aluno.findMany).not.toHaveBeenCalled();
-    expect(json.groups.find((group: { key: string }) => group.key === 'navigation')?.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ title: 'Portal', href: '/portal' }),
-      ]),
-    );
+  });
+
+  it('retorna cobranca com aluno no titulo e tipo especifico no badge', async () => {
+    mockGetServerSession.mockResolvedValueOnce({
+      user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
+    });
+
+    prismaMock.aluno.findMany.mockResolvedValueOnce([]);
+    prismaMock.responsavel.findMany.mockResolvedValueOnce([]);
+    prismaMock.matricula.findMany.mockResolvedValueOnce([]);
+    prismaMock.cobranca.findMany.mockResolvedValueOnce([
+      {
+        id: 'cob-1',
+        tipo: 'TAXA_MATRICULA',
+        status: 'PENDENTE',
+        valor: '150.00',
+        asaasPaymentId: 'pay_123',
+        matricula: { aluno: { nome: 'Guilherme Araújo Souza' } },
+      },
+    ]);
+    prismaMock.contrato.findMany.mockResolvedValueOnce([]);
+
+    const response = await GET(new NextRequest('http://localhost/api/search?q=taxa'));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.groups).toEqual([
+      expect.objectContaining({
+        key: 'cobrancas',
+        items: [
+          expect.objectContaining({
+            type: 'cobranca',
+            title: 'Guilherme Araújo Souza',
+            description: 'pay_123',
+            badgeLabel: 'Taxa de matrícula',
+            href: '/cobrancas/cob-1',
+          }),
+        ],
+      }),
+    ]);
   });
 });

@@ -305,6 +305,29 @@ html {
 	scrollbar-color: #d1d5db transparent;
 }
 
+.search-suggest-scroll-area {
+	scrollbar-width: thin;
+	scrollbar-color: #d1d5db transparent;
+}
+
+.search-suggest-scroll-area::-webkit-scrollbar {
+	width: 3px;
+	height: 3px;
+}
+
+.search-suggest-scroll-area::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.search-suggest-scroll-area::-webkit-scrollbar-thumb {
+	background-color: #d1d5db;
+	border-radius: 999px;
+}
+
+.search-suggest-scroll-area::-webkit-scrollbar-thumb:hover {
+	background-color: #d1d5db;
+}
+
 .settings-scroll-area::-webkit-scrollbar {
 	width: 3px;
 	height: 3px;
