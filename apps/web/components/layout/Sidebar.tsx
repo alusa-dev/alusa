@@ -56,6 +56,7 @@ import { useTheme } from '@/components/theme/ThemeProvider';
 import { useSession } from 'next-auth/react';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
+import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabilities';
 
 /** Tokens visuais (mantém sua coluna/tamanho) */
 const TOKENS = {
@@ -545,6 +546,11 @@ function useFloatingMarker() {
 
 function Sidebar() {
   const { data: session } = useSession();
+  const financeIntegrationMode =
+    typeof session?.user === 'object' && session?.user && 'financeIntegrationMode' in session.user
+      ? ((session.user as { financeIntegrationMode?: string }).financeIntegrationMode ?? null)
+      : null;
+  const financialCapabilities = resolveFinancialCapabilities(financeIntegrationMode);
   const role =
     typeof session?.user === 'object' && session?.user && 'role' in session.user
       ? ((session.user as { role?: string }).role as RoleKey | undefined)
@@ -565,7 +571,9 @@ function Sidebar() {
   const financeLocked = false;
   const anyGroupOpen = !collapsed && openKey !== null;
   const shouldLoadAutomaticAnticipationVisibility =
-    !isPortalUser && (roleUpper === 'ADMIN' || roleUpper === 'FINANCEIRO');
+    !isPortalUser &&
+    financialCapabilities.canUseAnticipations &&
+    (roleUpper === 'ADMIN' || roleUpper === 'FINANCEIRO');
   const [showAutomaticAnticipationItem, setShowAutomaticAnticipationItem] = useState(true);
   // Gutter lateral quando recolhido (para centralizar e evitar cortar bordas)
   const collapsedGutter = Math.max(0, (TOKENS.widthCollapsed - TOKENS.itemH) / 2); // 6px
@@ -669,6 +677,17 @@ function Sidebar() {
   // Filtra grupos conforme permissões
   const allowedGroups = sourceGroups
     .filter((g) => {
+      if (
+        g.key === 'meu-dinheiro' &&
+        (!financialCapabilities.canUseAccountBalance || !financialCapabilities.canUseStatement)
+      ) {
+        return false;
+      }
+
+      if (g.key === 'antecipacoes' && !financialCapabilities.canUseAnticipations) {
+        return false;
+      }
+
       if (perm.allowGroups.some((p) => p.key === g.key && (!p.items || p.items.length === 0)))
         return true;
       // se houver filtro por items, mantenha o grupo e filtra itens adiante

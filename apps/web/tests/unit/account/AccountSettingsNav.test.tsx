@@ -59,4 +59,43 @@ describe('AccountSettingsNav', () => {
     expect(screen.queryByRole('link', { name: 'Desativar conta' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Notificações' })).not.toBeInTheDocument();
   });
+
+  it('oculta "Verificação da conta" quando a conta usa Asaas externo', async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        user: {
+          role: 'ADMIN',
+          financeStatus: 'FINANCE_APPROVED',
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+        },
+      },
+    });
+    usePathnameMock.mockReturnValue('/conta/perfil');
+
+    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+
+    render(<AccountSettingsNav />);
+
+    expect(screen.queryByRole('link', { name: 'Verificação da conta' })).not.toBeInTheDocument();
+  });
+
+  it('mostra "Verificação da conta" para ADMIN em whitelabel com fluxo financeiro iniciado', async () => {
+    useSessionMock.mockReturnValue({
+      data: {
+        user: {
+          role: 'ADMIN',
+          financeStatus: 'FINANCE_APPROVED',
+          financeIntegrationMode: 'WHITELABEL_BAAS',
+        },
+      },
+    });
+    usePathnameMock.mockReturnValue('/conta/verificacao');
+
+    const { default: AccountSettingsNav } = await import('@/components/settings/AccountSettingsNav');
+
+    render(<AccountSettingsNav />);
+
+    expect(screen.getByRole('link', { name: 'Verificação da conta' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Verificação da conta' })).toHaveAttribute('aria-current', 'page');
+  });
 });
