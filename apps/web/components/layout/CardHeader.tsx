@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useMemo, useId, useCallback, useState, type JSX } from 'react';
+import React, { useMemo, useCallback, useState, type JSX } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
-import { Bell, Search } from '@/components/icons/icons';
+import { Bell } from '@/components/icons/icons';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import UserMenu from './UserMenu';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 import { useNotificationsFeed } from '@/features/notificacoes/hooks/use-notifications-feed';
+import { HeaderSearch } from '@/features/global-search/components/HeaderSearch';
 
 export default function CardHeader(): JSX.Element {
   const router = useRouter();
@@ -18,7 +19,6 @@ export default function CardHeader(): JSX.Element {
   const user: User | null = (storeUser ?? (data?.user as User) ?? null) as User | null;
   const name = (user?.name || 'Usuário').trim();
   const email = user?.email || 'email@exemplo.com';
-  const searchId = useId();
   
   // Buscar notificações do portal
   const { notifications, totalNotifications, loading: portalNotificationsLoading } = usePortalNotifications();
@@ -140,23 +140,7 @@ export default function CardHeader(): JSX.Element {
 
   return (
     <div className="relative flex items-center justify-between" aria-label="Header do conteúdo">
-      {/* Busca */}
-      <div className="relative w-full max-w-[460px]">
-        <label htmlFor={searchId} className="sr-only">
-          Pesquisar
-        </label>
-        <div className="absolute left-3 top-1/2 -translate-y-1/2 opacity-70" aria-hidden="true">
-          <Search className="h-4 w-4" />
-        </div>
-        <input
-          id={searchId}
-          name="app-search"
-          type="search"
-          placeholder="Pesquise aqui"
-          aria-label="Pesquisar"
-          className="h-11 w-full rounded-full bg-white pl-9 pr-4 text-[14px] outline-none ring-1 ring-black/5 placeholder:text-gray-400 focus:ring-2 focus:ring-[#A94DFF]"
-        />
-      </div>
+      <HeaderSearch role={userRole ?? null} />
 
       {/* Ações à direita */}
       <div className="flex items-center gap-4 pl-6">

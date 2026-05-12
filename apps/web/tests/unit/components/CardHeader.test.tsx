@@ -17,6 +17,29 @@ vi.mock('next-auth/react', () => ({
   useSession: () => ({ data: { user: { name: 'Maria Silva', email: 'maria@example.com' } } }),
 }));
 
+vi.mock('@/hooks/use-portal-notifications', () => ({
+  usePortalNotifications: () => ({
+    notifications: {
+      cobrancasAtrasadas: 0,
+      cobrancasPendentes: 0,
+      proximosEventos: 0,
+    },
+    totalNotifications: 0,
+    loading: false,
+  }),
+}));
+
+vi.mock('@/features/notificacoes/hooks/use-notifications-feed', () => ({
+  useNotificationsFeed: () => ({
+    items: [],
+    unreadCount: 0,
+    loading: false,
+    reload: vi.fn(),
+    updateNotification: vi.fn(),
+    markAllAsRead: vi.fn(),
+  }),
+}));
+
 // Mock UserMenu to simplify assertions
 vi.mock('@/components/layout/UserMenu', () => ({
   __esModule: true,
@@ -27,6 +50,10 @@ vi.mock('@/components/layout/UserMenu', () => ({
   ),
 }));
 
+vi.mock('@/features/global-search/components/HeaderSearch', () => ({
+  HeaderSearch: () => <div data-testid="header-search">search</div>,
+}));
+
 describe('CardHeader', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -34,9 +61,8 @@ describe('CardHeader', () => {
 
   it('renderiza campo de busca com placeholder', () => {
     render(<CardHeader />);
-    const input = screen.getByPlaceholderText('Pesquise aqui');
+    const input = screen.getByTestId('header-search');
     expect(input).toBeInTheDocument();
-    expect(input).toHaveAttribute('type', 'search');
   });
 
   it('renderiza botão de notificações acessível', () => {
