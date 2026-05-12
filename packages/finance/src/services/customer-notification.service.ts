@@ -9,6 +9,7 @@
  */
 
 import { loadAsaasCredentials, prisma } from '@alusa/database';
+import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
 import type { AsaasNotificationEvent } from '@prisma/client';
 
 // =============================================================================
@@ -103,10 +104,7 @@ type AsaasError = {
 const WHATSAPP_UNSUPPORTED_EVENTS = new Set(['SEND_LINHA_DIGITAVEL']);
 
 function buildAsaasUrl(apiKey: string): string {
-  const envUrl = (process.env.ASAAS_BASE_URL ?? '').trim();
-  if (envUrl) return envUrl;
-  const isSandbox = apiKey.includes('hmlg');
-  return isSandbox ? 'https://api-sandbox.asaas.com/v3' : 'https://api.asaas.com/v3';
+  return getAsaasBaseUrlForApiKeyOrThrow(apiKey).replace(/\/$/, '');
 }
 
 function isSandboxBaseUrl(baseUrl: string): boolean {

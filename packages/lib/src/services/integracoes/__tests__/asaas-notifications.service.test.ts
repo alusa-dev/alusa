@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const prismaMock = {
+  financeProfile: {
+    findUnique: vi.fn(),
+  },
   conta: {
     findUnique: vi.fn(),
   },
@@ -21,6 +24,7 @@ vi.mock('../../../security/encryption', () => ({
 }));
 
 const {
+  applyAsaasNotificationPreferencesToCustomer,
   ensureAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
 } = await import('../asaas-notifications.service');
@@ -50,6 +54,18 @@ describe('asaas-notifications.service', () => {
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) =>
       callback(prismaMock),
     );
+    prismaMock.financeProfile.findUnique.mockResolvedValue({
+      asaasCredential: null,
+      asaasAccount: {
+        apiKeyEncrypted: '$aact_hmlg_test',
+        apiKeyStatus: 'CONNECTED',
+      },
+    });
+    prismaMock.conta.findUnique.mockResolvedValue({
+      asaasApiKeyEncrypted: null,
+      asaasWebhookSecretEncrypted: null,
+    });
+    prismaMock.asaasNotificationPreference.findMany.mockResolvedValue([buildPreference()]);
     prismaMock.asaasNotificationPreference.deleteMany.mockResolvedValue({ count: 0 });
   });
 
@@ -118,5 +134,47 @@ describe('asaas-notifications.service', () => {
         }),
       ],
     });
+  });
+
+  it('usa produção quando a api key salva for prod mesmo com env sandbox', async () => {
+    process.env.ASAAS_BASE_URL = 'https://api-sandbox.asaas.com/v3';
+    prismaMock.financeProfile.findUnique.mockResolvedValueOnce({
+      asaasCredential: null,
+      asaasAccount: {
+        apiKeyEncrypted: '$aact_prod_test',
+        apiKeyStatus: 'CONNECTED',
+      },
+    });
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [
+        {
+          id: 'not-1',
+          event: 'PAYMENT_CREATED',
+          scheduleOffset: 0,
+          enabled: true,
+          emailEnabledForProvider: false,
+          smsEnabledForProvider: false,
+          emailEnabledForCustomer: true,
+          smsEnabledForCustomer: true,
+          whatsappEnabledForCustomer: false,
+          phoneCallEnabledForCustomer: false,
+        },
+      ] }),
+    } as Response);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ notifications: [] }),
+    } as Response);
+
+    await applyAsaasNotificationPreferencesToCustomer('conta-1', 'cus-prod');
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.asaas.com/v3/customers/cus-prod/notifications');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.asaas.com/v3/notifications/batch');
+
+    fetchMock.mockRestore();
+    delete process.env.ASAAS_BASE_URL;
   });
 });

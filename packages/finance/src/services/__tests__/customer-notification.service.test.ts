@@ -112,6 +112,9 @@ describe('syncCustomerNotificationChannels', () => {
   it('deve fazer fallback quando WhatsApp retorna invalid_action', async () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch');
     process.env.ASAAS_BASE_URL = 'https://api.asaas.com/v3';
+    mockLoadAsaasCredentials.mockResolvedValueOnce({
+      apiKey: '$aact_prod_000test123',
+    });
 
     // GET /customers/{id}/notifications
     fetchSpy.mockResolvedValueOnce({
@@ -171,6 +174,9 @@ describe('syncCustomerNotificationChannels', () => {
   it('deve registrar capability quando WhatsApp retorna invalid_action', async () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch');
     process.env.ASAAS_BASE_URL = 'https://api.asaas.com/v3';
+    mockLoadAsaasCredentials.mockResolvedValueOnce({
+      apiKey: '$aact_prod_000test123',
+    });
 
     // Primeira chamada - falha
     fetchSpy.mockResolvedValueOnce({
@@ -212,6 +218,9 @@ describe('syncCustomerNotificationChannels', () => {
   it('deve aplicar canais por evento sem ligar WhatsApp na linha digitável', async () => {
     fetchSpy = vi.spyOn(globalThis, 'fetch');
     process.env.ASAAS_BASE_URL = 'https://api.asaas.com/v3';
+    mockLoadAsaasCredentials.mockResolvedValueOnce({
+      apiKey: '$aact_prod_000test123',
+    });
 
     const notifications = [
       MOCK_NOTIFICATIONS[0],
@@ -386,5 +395,36 @@ describe('syncCustomerNotificationChannels', () => {
     expect(result.success).toBe(true);
     expect(result.applied.whatsapp).toBe(false);
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('deve usar produção quando a api key salva for prod mesmo com env sandbox', async () => {
+    fetchSpy = vi.spyOn(globalThis, 'fetch');
+    process.env.ASAAS_BASE_URL = 'https://api-sandbox.asaas.com/v3';
+
+    mockLoadAsaasCredentials.mockResolvedValueOnce({
+      apiKey: '$aact_prod_000test123',
+    });
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: MOCK_NOTIFICATIONS }),
+    } as Response);
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ notifications: MOCK_NOTIFICATIONS }),
+    } as Response);
+
+    const result = await syncCustomerNotificationChannels(
+      MOCK_CONTA_ID,
+      MOCK_CUSTOMER_ID,
+      { email: true, sms: true, whatsapp: false }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe(
+      `https://api.asaas.com/v3/customers/${MOCK_CUSTOMER_ID}/notifications`
+    );
+    expect(fetchSpy.mock.calls[1]?.[0]).toBe('https://api.asaas.com/v3/notifications/batch');
   });
 });

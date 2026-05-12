@@ -2,6 +2,7 @@ import type {
   AsaasNotificationEvent,
   AsaasNotificationPreference,
 } from '@prisma/client';
+import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
 import { decryptSecret } from '../../security/encryption';
 import { PrismaClient } from '@prisma/client';
 import { prisma as sharedPrisma } from '../../prisma';
@@ -40,12 +41,7 @@ async function loadDecryptedAsaasCredentials(contaId: string) {
 }
 
 function getAsaasBaseUrl(apiKey: string): string {
-  const raw = process.env.ASAAS_BASE_URL;
-  const trimmed = raw?.trim();
-  if (trimmed) return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
-  return apiKey.includes('hmlg') || apiKey.includes('sandbox')
-    ? 'https://api-sandbox.asaas.com/v3'
-    : 'https://api.asaas.com/v3';
+  return getAsaasBaseUrlForApiKeyOrThrow(apiKey).replace(/\/$/, '');
 }
 
 export type NotificationChannels = {
