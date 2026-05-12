@@ -142,6 +142,10 @@ export async function GET(_request: NextRequest) {
     next30Days.setHours(23, 59, 59, 999);
     const next7Days = new Date(now);
     next7Days.setDate(next7Days.getDate() + 7);
+    const startOfExperimentalWindow = new Date(startOfToday);
+    startOfExperimentalWindow.setDate(startOfExperimentalWindow.getDate() - 1);
+    const endOfExperimentalWindow = new Date(endOfToday);
+    endOfExperimentalWindow.setDate(endOfExperimentalWindow.getDate() + 90);
 
     await withPerfTimer('api/dashboard/metrics', 'autoCloseAgendaEvents', () => 
       autoCloseAgendaEventsInRange({
@@ -168,6 +172,7 @@ export async function GET(_request: NextRequest) {
       turmasAtivas,
       lessonEvents,
       aniversariantesDoMesData,
+      aulasExperimentaisData,
       totalMatriculas,
       matriculasAtivas,
       cobrancasPendentes,
@@ -214,6 +219,48 @@ export async function GET(_request: NextRequest) {
           nome: true,
           foto: true,
           dataNasc: true,
+        },
+      }),
+      prisma.aulaExperimental.findMany({
+        where: {
+          contaId,
+          status: {
+            in: ['AGENDADA', 'REAGENDADA', 'REALIZADA'],
+          },
+          calendarEvent: {
+            startAt: {
+              gte: startOfExperimentalWindow,
+              lte: endOfExperimentalWindow,
+            },
+          },
+        },
+        orderBy: {
+          calendarEvent: {
+            startAt: 'asc',
+          },
+        },
+        select: {
+          id: true,
+          alunoId: true,
+          status: true,
+          aluno: {
+            select: {
+              nome: true,
+              foto: true,
+            },
+          },
+          calendarEvent: {
+            select: {
+              titulo: true,
+              startAt: true,
+              endAt: true,
+              turma: {
+                select: {
+                  nome: true,
+                },
+              },
+            },
+          },
         },
       }),
       prisma.matricula.count({ where: matriculaFilter }),
@@ -340,6 +387,17 @@ export async function GET(_request: NextRequest) {
       (a) => a.mes === now.getMonth() + 1,
     ).length;
 
+    const aulasExperimentais = aulasExperimentaisData.map((aula) => ({
+      id: aula.id,
+      alunoId: aula.alunoId,
+      alunoNome: aula.aluno.nome,
+      alunoFoto: publicImageUrl(aula.aluno.foto),
+      status: aula.status,
+      turmaNome: aula.calendarEvent.turma?.nome ?? aula.calendarEvent.titulo,
+      startAt: aula.calendarEvent.startAt.toISOString(),
+      endAt: aula.calendarEvent.endAt.toISOString(),
+    }));
+
     const receitaMes = toNumber(receitaMesAggregate._sum.valorPago);
     const taxaMatriculaRecebidaAno = taxasMatriculaRecebidasAno.reduce((sum, cobranca) => {
       return sum + toNumber(cobranca.valorFinal ?? cobranca.valor);
@@ -403,6 +461,7 @@ export async function GET(_request: NextRequest) {
       ultimasCobrancas,
       alunosRecentes,
       aniversariantesDoMes,
+      aulasExperimentais,
     };
 
     const body = dashboardMetricsResultDTOSchema.parse(

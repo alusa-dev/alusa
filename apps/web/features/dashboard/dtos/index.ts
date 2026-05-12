@@ -33,6 +33,26 @@ export const dashboardAniversarianteDTOSchema = z.object({
 
 export type DashboardAniversarianteDTO = z.infer<typeof dashboardAniversarianteDTOSchema>;
 
+export const dashboardAulaExperimentalStatusDTOSchema = z.enum([
+  'AGENDADA',
+  'REAGENDADA',
+  'REALIZADA',
+  'CANCELADA',
+]);
+
+export const dashboardAulaExperimentalDTOSchema = z.object({
+  id: z.string(),
+  alunoId: z.string(),
+  alunoNome: z.string(),
+  alunoFoto: z.string().nullable().optional(),
+  status: dashboardAulaExperimentalStatusDTOSchema,
+  turmaNome: z.string(),
+  startAt: z.string(),
+  endAt: z.string(),
+});
+
+export type DashboardAulaExperimentalDTO = z.infer<typeof dashboardAulaExperimentalDTOSchema>;
+
 export const dashboardMetricsDataDTOSchema = z.object({
   totalAlunos: z.number().int().nonnegative(),
   alunosAtivos: z.number().int().nonnegative(),
@@ -55,6 +75,7 @@ export const dashboardMetricsDataDTOSchema = z.object({
   ultimasCobrancas: z.array(dashboardUltimaCobrancaDTOSchema),
   alunosRecentes: z.array(dashboardAlunoRecenteDTOSchema),
   aniversariantesDoMes: z.array(dashboardAniversarianteDTOSchema),
+  aulasExperimentais: z.array(dashboardAulaExperimentalDTOSchema),
 });
 
 export type DashboardMetricsDataDTO = z.infer<typeof dashboardMetricsDataDTOSchema>;

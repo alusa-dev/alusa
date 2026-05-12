@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useCurrentUser } from '@/hooks/use-current-user';
 import { TotalAlunosCard } from './components/TotalAlunosCard';
 import { AniversariantesMesCard } from './components/AniversariantesMesCard';
+import { AulaExperimentalCard } from './components/AulaExperimentalCard';
 import { KycDashboardCard } from '@/features/kyc/components/KycDashboardCard';
 import {
   AguardandoPagamentoCard,
@@ -208,8 +209,12 @@ export default function DashboardClient() {
 
       {/* Grid de Atalhos e Acesso Rápido */}
       <div
-        className="grid grid-cols-1 gap-6 lg:grid-cols-4"
+        className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4"
       >
+        <div className="h-[260px]">
+          <AulaExperimentalCard aulasExperimentais={metrics?.aulasExperimentais ?? []} />
+        </div>
+
         <div className="h-[260px]">
           <AniversariantesMesCard aniversariantes={metrics?.aniversariantesDoMes ?? []} />
         </div>
@@ -247,7 +252,7 @@ export default function DashboardClient() {
         </div>
 
         {/* Acesso Rápido */}
-        <div className="h-[260px] lg:col-span-2">
+        <div className="h-[260px]">
           <div className="rounded-2xl bg-white border border-gray-200 overflow-hidden shadow-sm flex h-full flex-col">
             <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
               <h2 className="text-sm font-semibold text-gray-900">Acesso Rápido</h2>
