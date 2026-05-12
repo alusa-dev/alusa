@@ -121,7 +121,7 @@ function buildTurmaLookupItem(input: {
 }
 
 function getDayCode(date: Date) {
-  return DAY_CODES[date.getDay()];
+  return DAY_CODES[date.getUTCDay()];
 }
 
 function normalizeDayCode(value: string) {
