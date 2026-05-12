@@ -230,6 +230,28 @@ describe('getInstallmentPlanDetail', () => {
     expect(result!.parcelasPagas).toBe(2);
   });
 
+  it('deriva statusConsolidado QUITADO quando o restante foi cancelado e as demais parcelas foram pagas', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findFirst.mockResolvedValue(
+      makeAcademicPlan({ status: 'ACTIVE', installmentCount: 2 }),
+    );
+    db.charge.findMany.mockResolvedValue([
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
+        cobranca: { id: 'c1', valor: 250, vencimento: new Date('2025-01-15'), status: 'CANCELADO', dataPagamento: null, asaasPaymentId: null },
+      },
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:2',
+        cobranca: { id: 'c2', valor: 250, vencimento: new Date('2025-02-15'), status: 'PAGO', dataPagamento: new Date(), asaasPaymentId: null },
+      },
+    ]);
+
+    const result = await getInstallmentPlanDetail({ planId: 'ip_1', contaId: 'ct_1' }, db);
+
+    expect(result!.status).toBe('QUITADO');
+    expect(result!.parcelasPagas).toBe(1);
+  });
+
   it('deriva statusConsolidado CANCELADO', async () => {
     const db = createMockDb();
     db.installmentPlan.findFirst.mockResolvedValue(

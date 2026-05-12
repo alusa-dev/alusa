@@ -173,6 +173,28 @@ describe('listInstallmentPlansAggregated', () => {
     expect(result.items[0].statusConsolidado).toBe('QUITADO');
   });
 
+  it('deriva statusConsolidado QUITADO quando há mistura de parcelas pagas e canceladas sem saldo pendente', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ status: 'ACTIVE', installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
+        cobranca: { id: 'cob_1', status: 'CANCELADO', vencimento: new Date('2025-01-15') },
+      },
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:2',
+        cobranca: { id: 'cob_2', status: 'PAGO', vencimento: new Date('2025-02-15') },
+      },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('QUITADO');
+    expect(result.items[0].installmentsPaid).toBe(1);
+  });
+
   it('conta parcelas pagas corretamente', async () => {
     const db = createMockDb();
     db.installmentPlan.findMany.mockResolvedValue([

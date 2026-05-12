@@ -88,6 +88,12 @@ function deriveStatus(
   const allPaid = parcelas.every((p) => PAID_STATUSES.has(p.status));
   if (allPaid && parcelas.length > 0) return 'QUITADO';
 
+  const allSettled = parcelas.every(
+    (p) => PAID_STATUSES.has(p.status) || p.status === 'CANCELADO',
+  );
+  const hasPaid = parcelas.some((p) => PAID_STATUSES.has(p.status));
+  if (allSettled && hasPaid) return 'QUITADO';
+
   const now = new Date();
   const hasOverdue = parcelas.some(
     (p) =>
@@ -171,7 +177,6 @@ export async function listInstallmentPlansAggregated(
       })),
     ],
   });
-
   // =================================================================
   // 2. Buscar parcelas vinculadas via externalReference (academic)
   // =================================================================
