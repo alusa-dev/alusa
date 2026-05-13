@@ -44,9 +44,12 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
   const pathname = usePathname();
   const prefersReducedMotion = useReducedMotion();
   const searchId = useId();
+  const listboxIdRef = useRef<string | null>(null);
+  const [listboxId, setListboxId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const floatingInputRef = useRef<HTMLInputElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [mounted, setMounted] = useState(false);
   const [floatingFrame, setFloatingFrame] = useState({ top: 0, left: 0, width: 460 });
   const { query, setQuery, open, setOpen, loading, error, groups, items, selectItem, clearRecentItems } = useGlobalSearch({
@@ -61,6 +64,15 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
     setOpen(false);
     setQuery('');
   }, [pathname, setOpen, setQuery]);
+
+  const assignListRef = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    const next = node?.id ?? null;
+    if (next && next !== listboxIdRef.current) {
+      listboxIdRef.current = next;
+      setListboxId(next);
+    }
+  }, []);
 
   const syncFloatingFrame = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect();
@@ -195,6 +207,11 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                       ref={floatingInputRef}
                       id={`${searchId}-floating`}
                       type="text"
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded
+                      aria-haspopup="listbox"
+                      aria-controls={listboxId ?? undefined}
                       value={query}
                       onChange={(event) => handleInputValueChange(event.target.value)}
                       onKeyDown={handleInputKeyDown}
@@ -222,49 +239,77 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
         : null}
 
       <Popover open={shouldShowPopover} onOpenChange={setOpen}>
-      <CommandPrimitive
-        loop
-        shouldFilter={false}
-        className="w-full outline-none focus:outline-none focus-visible:outline-none"
-      >
-        <PopoverAnchor asChild>
-          <div ref={containerRef} className="relative w-full max-w-[460px]">
-            <label htmlFor={searchId} className="sr-only">
-              Pesquisar
-            </label>
-            <div className="absolute left-3 top-1/2 z-10 -translate-y-1/2 opacity-70" aria-hidden="true">
-              <Search className="h-4 w-4" />
-            </div>
-            <CommandPrimitive.Input
-              ref={inputRef}
-              id={searchId}
-              value={query}
-              onValueChange={handleInputValueChange}
-              onFocus={() => setOpen(true)}
-              onKeyDown={handleInputKeyDown}
-              placeholder="Pesquise aqui"
-              aria-label="Pesquisar"
-              tabIndex={shouldShowPopover ? -1 : 0}
-              className={cn(
-                'h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none',
-                shouldShowPopover && 'pointer-events-none opacity-0',
-              )}
-            />
-          </div>
-        </PopoverAnchor>
-
-        <PopoverContent
-          align="start"
-          sideOffset={8}
-          className="z-[70] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[26px] border border-[#ece7f5] bg-white p-0 shadow-xl shadow-[#1f163014] ring-1 ring-black/5 outline-none duration-200 will-change-[transform,opacity] focus:outline-none focus-visible:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] data-[side=bottom]:slide-in-from-top-3 data-[side=top]:slide-in-from-bottom-3 data-[state=closed]:slide-out-to-top-1"
-          style={{ borderRadius: 26, transformOrigin: 'var(--radix-popover-content-transform-origin)' }}
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onInteractOutside={(event) => {
-            if (event.target === inputRef.current) return;
-            setOpen(false);
-          }}
+        <CommandPrimitive
+          loop
+          shouldFilter={false}
+          className="w-full outline-none focus:outline-none focus-visible:outline-none"
         >
-          <CommandPrimitive.List className="search-suggest-scroll-area max-h-[420px] overflow-y-auto py-2.5 outline-none focus:outline-none focus-visible:outline-none">
+          <PopoverAnchor asChild>
+            <div ref={containerRef} className="relative w-full max-w-[460px]">
+              <label htmlFor={searchId} className="sr-only">
+                Pesquisar
+              </label>
+              <div className="absolute left-3 top-1/2 z-10 -translate-y-1/2 opacity-70" aria-hidden="true">
+                <Search className="h-4 w-4" />
+              </div>
+              {/* cmdk exige Command.Input para estado de busca/teclado; fora da árvore de acessibilidade — o input visível define o combobox */}
+              <div
+                aria-hidden
+                className={cn(
+                  'absolute left-0 top-0 z-0 h-px w-px overflow-hidden opacity-0',
+                  shouldShowPopover && 'pointer-events-none',
+                )}
+              >
+                <CommandPrimitive.Input
+                  value={query}
+                  onValueChange={handleInputValueChange}
+                  onFocus={() => setOpen(true)}
+                  onKeyDown={handleInputKeyDown}
+                  tabIndex={-1}
+                  readOnly
+                />
+              </div>
+              <input
+                ref={inputRef}
+                id={searchId}
+                type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-expanded={shouldShowPopover}
+                aria-haspopup="listbox"
+                aria-controls={shouldShowPopover && listboxId ? listboxId : undefined}
+                value={query}
+                onChange={(event) => handleInputValueChange(event.target.value)}
+                onFocus={() => setOpen(true)}
+                onKeyDown={handleInputKeyDown}
+                placeholder="Pesquise aqui"
+                aria-label="Pesquisar"
+                tabIndex={shouldShowPopover ? -1 : 0}
+                className={cn(
+                  'relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none',
+                  shouldShowPopover && 'pointer-events-none opacity-0',
+                )}
+              />
+            </div>
+          </PopoverAnchor>
+
+          <PopoverContent
+            forceMount
+            align="start"
+            sideOffset={8}
+            className="z-[70] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[26px] border border-[#ece7f5] bg-white p-0 shadow-xl shadow-[#1f163014] ring-1 ring-black/5 outline-none duration-200 will-change-[transform,opacity] focus:outline-none focus-visible:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] data-[side=bottom]:slide-in-from-top-3 data-[side=top]:slide-in-from-bottom-3 data-[state=closed]:slide-out-to-top-1 data-[state=closed]:pointer-events-none data-[state=closed]:invisible"
+            style={{ borderRadius: 26, transformOrigin: 'var(--radix-popover-content-transform-origin)' }}
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onInteractOutside={(event) => {
+              if (event.target === inputRef.current) return;
+              if (event.target === floatingInputRef.current) return;
+              setOpen(false);
+            }}
+          >
+            <CommandPrimitive.List
+              ref={assignListRef}
+              className="search-suggest-scroll-area max-h-[420px] overflow-y-auto py-2.5 outline-none focus:outline-none focus-visible:outline-none"
+            >
             {loading && (
               <div className="px-4 py-4 text-sm text-gray-500">Carregando...</div>
             )}
@@ -339,9 +384,9 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
             {!loading && error && (
               <div className="px-4 py-4 text-sm text-gray-500">{error}</div>
             )}
-          </CommandPrimitive.List>
-        </PopoverContent>
-      </CommandPrimitive>
+            </CommandPrimitive.List>
+          </PopoverContent>
+        </CommandPrimitive>
       </Popover>
     </>
   );

@@ -50,6 +50,7 @@ async function verifyAccountAccess(req: NextRequest): Promise<{ blocked: false }
   }
 }
 
+/** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
 export default async function middleware(req: NextRequest) {
   if (isTest) {
     // Em testes E2E, não forçar login
@@ -181,6 +182,7 @@ export const config = {
   matcher: [
     '/developer',
     '/developer/:path*',
+    '/dashboard',
     '/admin/:path*',
     '/alunos/:path*',
     '/colaboradores/:path*',

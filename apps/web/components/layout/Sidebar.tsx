@@ -294,7 +294,7 @@ const GROUPS: Group[] = [
         iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
       },
       {
-        label: 'Reposições',
+        label: 'Reposições de aula',
         href: '/aulas/reposicoes',
         icon: <CalendarDaysIcon className="h-5 w-5" />,
         iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
@@ -332,7 +332,7 @@ const GROUPS: Group[] = [
         iconSolid: <CircleStackSolid className="h-5 w-5" />,
       },
       {
-        label: 'Reposições',
+        label: 'Reposições de estoque',
         href: '/vendas/reposicoes',
         icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
         iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
@@ -512,11 +512,13 @@ function useFloatingMarker() {
     const n = nav.getBoundingClientRect();
     const e = el.getBoundingClientRect();
     const top = e.top - n.top + nav.scrollTop; // relativo ao nav
-    const height = el.offsetHeight;
-    marker.style.top = `${top}px`;
-    marker.style.height = `${height}px`;
-    if (!visible) setVisible(true);
-  }, [visible]);
+    const height = Math.max(el.offsetHeight, 1);
+    marker.style.top = '0';
+    marker.style.height = '1px';
+    marker.style.transformOrigin = 'left top';
+    marker.style.transform = `translateY(${top}px) scaleY(${height})`;
+    setVisible(true);
+  }, []);
 
   // Atualiza ao redimensionar/scroll
   useEffect(() => {
@@ -787,11 +789,12 @@ function Sidebar() {
             style={{
               backgroundColor: 'var(--sidebar-active-bg)',
               top: 0,
-              height: 0,
+              height: '1px',
+              transformOrigin: 'left top',
               opacity: visible ? 1 : 0,
               left: '0px',
               transition:
-                'top 300ms cubic-bezier(0.22,1,0.36,1), height 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms cubic-bezier(0.22,1,0.36,1)',
+                'transform 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms cubic-bezier(0.22,1,0.36,1)',
               transitionDelay: visible ? '60ms' : '0ms',
             }}
           />

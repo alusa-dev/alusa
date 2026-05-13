@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "browserslist": [
+    "chrome >= 106",
+    "edge >= 106",
+    "firefox >= 104",
+    "safari >= 16",
+    "ios_saf >= 16"
+  ],
   "scripts": {
     "dev": "dotenv -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && pnpm -C ../.. --filter @alusa/ui build && pnpm -C ../.. --filter @alusa/database build && pnpm -C ../.. --filter @alusa/lib build && pnpm -C ../.. --filter @alusa/finance build && dotenv -e ../../.env.local -e .env.local -- next dev",
     "dev:raw": "dotenv -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && dotenv -e ../../.env.local -e .env.local -- next dev",

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 import { useSession } from 'next-auth/react';
@@ -86,9 +87,9 @@ export default function UserMenu({ name, email, initials, foto }: Props) {
         onClick={() => setOpen((o) => !o)}
         className="group flex items-center gap-3 rounded-full pl-1 pr-3 py-1 ring-1 ring-black/5 transition-colors hover:bg-black/5"
       >
-        <span className="relative inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/5 bg-white">
+        <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/5 bg-white">
           {avatarUrl ? (
-            <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+            <Image src={avatarUrl} alt="" fill sizes="40px" className="object-cover" />
           ) : (
             <span className="text-[12px] font-semibold text-[#2A004A]">
               {storeUser?.name ? `${storeUser.name[0]}` : initials}
