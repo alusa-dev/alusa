@@ -365,6 +365,7 @@ const COBRANCA_SELECT: CobrancaSelect = {
  * Usa try/catch com P2002 como safety net para race conditions.
  */
 async function upsertCobrancaByAsaasPaymentId(params: {
+  contaId: string;
   asaasPaymentId: string;
   matriculaId: string;
   tipo: 'MENSALIDADE' | 'PARCELADA';
@@ -403,6 +404,7 @@ async function upsertCobrancaByAsaasPaymentId(params: {
   try {
     const cobranca = await prisma.cobranca.create({
       data: {
+        contaId: params.contaId,
         matriculaId: params.matriculaId,
         tipo: params.tipo,
         valor: params.valor,
@@ -961,6 +963,7 @@ export async function handlePaymentWebhook(
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
           const { cobranca: upserted } = await upsertCobrancaByAsaasPaymentId({
+            contaId,
             asaasPaymentId: payload.payment.id,
             matriculaId: matriculaFromSub.id,
             tipo: 'MENSALIDADE',
@@ -1002,6 +1005,7 @@ export async function handlePaymentWebhook(
         const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
         const { cobranca: upsertedSub } = await upsertCobrancaByAsaasPaymentId({
+          contaId,
           asaasPaymentId: payload.payment.id,
           matriculaId: matricula.id,
           tipo: 'MENSALIDADE',
@@ -1077,6 +1081,7 @@ export async function handlePaymentWebhook(
         const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
         const { cobranca: upsertedInstallment } = await upsertCobrancaByAsaasPaymentId({
+          contaId,
           asaasPaymentId: payload.payment.id,
           matriculaId: matricula.id,
           tipo: 'PARCELADA',
@@ -1771,6 +1776,7 @@ export async function handlePaymentWebhook(
       } else {
         const created = await prisma.pagamento.create({
           data: {
+            contaId,
             cobrancaId: cobranca.id,
             dataPagamento: paymentDate,
             formaPagamento: cobranca.formaPagamento as unknown as string,

@@ -899,6 +899,7 @@ export async function rematricularAluno(
 
     const novaMatricula = await prisma.matricula.create({
       data: {
+        contaId: input.contaId,
         alunoId: matriculaOrigem.alunoId,
         responsavelFinanceiroId: responsavelId,
         turmaId: turmaDestino?.id ?? null,
@@ -1033,6 +1034,7 @@ export async function rematricularAluno(
       // Criar cobrança local TAXA_MATRICULA
       const cobrancaTaxa = await prisma.cobranca.create({
         data: {
+          contaId: input.contaId,
           matriculaId: novaMatricula.id,
           tipo: 'TAXA_MATRICULA',
           descricao: 'Taxa de rematrícula',

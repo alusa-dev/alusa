@@ -531,15 +531,27 @@ importers:
         specifier: ^18.2.0
         version: 18.2.0(react@18.2.0)
     devDependencies:
+      '@testing-library/jest-dom':
+        specifier: 6.4.2
+        version: 6.4.2(vitest@1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6)))
+      '@testing-library/react':
+        specifier: 16.0.0
+        version: 16.0.0(@testing-library/dom@10.4.0)(@types/react-dom@18.2.22)(@types/react@18.2.74)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       '@types/react':
         specifier: 18.2.74
         version: 18.2.74
       '@types/react-dom':
         specifier: 18.2.22
         version: 18.2.22
+      jsdom:
+        specifier: 27.3.0
+        version: 27.3.0(canvas@2.11.2)(postcss@8.5.6)
       typescript:
         specifier: 5.6.3
         version: 5.6.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6))
 
 packages:
 
@@ -7084,9 +7096,16 @@ snapshots:
     dependencies:
       '@csstools/css-tokenizer': 3.0.4
 
+  '@csstools/css-syntax-patches-for-csstree@1.0.14':
+    optional: true
+
   '@csstools/css-syntax-patches-for-csstree@1.0.14(postcss@8.4.41)':
     dependencies:
       postcss: 8.4.41
+
+  '@csstools/css-syntax-patches-for-csstree@1.0.14(postcss@8.5.6)':
+    dependencies:
+      postcss: 8.5.6
 
   '@csstools/css-tokenizer@3.0.4': {}
 
@@ -8659,6 +8678,19 @@ snapshots:
     optionalDependencies:
       vitest: 1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.4.41))
 
+  '@testing-library/jest-dom@6.4.2(vitest@1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6)))':
+    dependencies:
+      '@adobe/css-tools': 4.4.4
+      '@babel/runtime': 7.28.4
+      aria-query: 5.3.2
+      chalk: 3.0.0
+      css.escape: 1.5.1
+      dom-accessibility-api: 0.6.3
+      lodash: 4.17.21
+      redent: 3.0.0
+    optionalDependencies:
+      vitest: 1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6))
+
   '@testing-library/jest-dom@6.5.0':
     dependencies:
       '@adobe/css-tools': 4.4.4
@@ -9505,10 +9537,27 @@ snapshots:
 
   cssesc@3.0.0: {}
 
+  cssstyle@5.3.4:
+    dependencies:
+      '@asamuzakjp/css-color': 4.1.0
+      '@csstools/css-syntax-patches-for-csstree': 1.0.14
+      css-tree: 3.1.0
+    transitivePeerDependencies:
+      - postcss
+    optional: true
+
   cssstyle@5.3.4(postcss@8.4.41):
     dependencies:
       '@asamuzakjp/css-color': 4.1.0
       '@csstools/css-syntax-patches-for-csstree': 1.0.14(postcss@8.4.41)
+      css-tree: 3.1.0
+    transitivePeerDependencies:
+      - postcss
+
+  cssstyle@5.3.4(postcss@8.5.6):
+    dependencies:
+      '@asamuzakjp/css-color': 4.1.0
+      '@csstools/css-syntax-patches-for-csstree': 1.0.14(postcss@8.5.6)
       css-tree: 3.1.0
     transitivePeerDependencies:
       - postcss
@@ -10719,11 +10768,72 @@ snapshots:
 
   jsdoc-type-pratt-parser@4.8.0: {}
 
+  jsdom@27.3.0(canvas@2.11.2):
+    dependencies:
+      '@acemir/cssom': 0.9.28
+      '@asamuzakjp/dom-selector': 6.7.6
+      cssstyle: 5.3.4
+      data-urls: 6.0.0
+      decimal.js: 10.6.0
+      html-encoding-sniffer: 4.0.0
+      http-proxy-agent: 7.0.2
+      https-proxy-agent: 7.0.6
+      is-potential-custom-element-name: 1.0.1
+      parse5: 8.0.0
+      saxes: 6.0.0
+      symbol-tree: 3.2.4
+      tough-cookie: 6.0.0
+      w3c-xmlserializer: 5.0.0
+      webidl-conversions: 8.0.0
+      whatwg-encoding: 3.1.1
+      whatwg-mimetype: 4.0.0
+      whatwg-url: 15.1.0
+      ws: 8.18.3
+      xml-name-validator: 5.0.0
+    optionalDependencies:
+      canvas: 2.11.2
+    transitivePeerDependencies:
+      - bufferutil
+      - postcss
+      - supports-color
+      - utf-8-validate
+    optional: true
+
   jsdom@27.3.0(canvas@2.11.2)(postcss@8.4.41):
     dependencies:
       '@acemir/cssom': 0.9.28
       '@asamuzakjp/dom-selector': 6.7.6
       cssstyle: 5.3.4(postcss@8.4.41)
+      data-urls: 6.0.0
+      decimal.js: 10.6.0
+      html-encoding-sniffer: 4.0.0
+      http-proxy-agent: 7.0.2
+      https-proxy-agent: 7.0.6
+      is-potential-custom-element-name: 1.0.1
+      parse5: 8.0.0
+      saxes: 6.0.0
+      symbol-tree: 3.2.4
+      tough-cookie: 6.0.0
+      w3c-xmlserializer: 5.0.0
+      webidl-conversions: 8.0.0
+      whatwg-encoding: 3.1.1
+      whatwg-mimetype: 4.0.0
+      whatwg-url: 15.1.0
+      ws: 8.18.3
+      xml-name-validator: 5.0.0
+    optionalDependencies:
+      canvas: 2.11.2
+    transitivePeerDependencies:
+      - bufferutil
+      - postcss
+      - supports-color
+      - utf-8-validate
+
+  jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6):
+    dependencies:
+      '@acemir/cssom': 0.9.28
+      '@asamuzakjp/dom-selector': 6.7.6
+      cssstyle: 5.3.4(postcss@8.5.6)
       data-urls: 6.0.0
       decimal.js: 10.6.0
       html-encoding-sniffer: 4.0.0
@@ -12643,6 +12753,41 @@ snapshots:
       - supports-color
       - terser
 
+  vitest@1.6.0(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2)(postcss@8.5.6)):
+    dependencies:
+      '@vitest/expect': 1.6.0
+      '@vitest/runner': 1.6.0
+      '@vitest/snapshot': 1.6.0
+      '@vitest/spy': 1.6.0
+      '@vitest/utils': 1.6.0
+      acorn-walk: 8.3.4
+      chai: 4.5.0
+      debug: 4.4.3
+      execa: 8.0.1
+      local-pkg: 0.5.1
+      magic-string: 0.30.21
+      pathe: 1.1.2
+      picocolors: 1.1.1
+      std-env: 3.10.0
+      strip-literal: 2.1.1
+      tinybench: 2.9.0
+      tinypool: 0.8.4
+      vite: 5.4.21(@types/node@22.19.1)
+      vite-node: 1.6.0(@types/node@22.19.1)
+      why-is-node-running: 2.3.0
+    optionalDependencies:
+      '@types/node': 22.19.1
+      jsdom: 27.3.0(canvas@2.11.2)(postcss@8.5.6)
+    transitivePeerDependencies:
+      - less
+      - lightningcss
+      - sass
+      - sass-embedded
+      - stylus
+      - sugarss
+      - supports-color
+      - terser
+
   vitest@2.1.9(@types/node@22.19.1)(jsdom@27.3.0(canvas@2.11.2))(msw@2.12.4(@types/node@22.19.1)(typescript@5.6.3)):
     dependencies:
       '@vitest/expect': 2.1.9
@@ -12667,7 +12812,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.19.1
-      jsdom: 27.3.0(canvas@2.11.2)(postcss@8.4.41)
+      jsdom: 27.3.0(canvas@2.11.2)
     transitivePeerDependencies:
       - less
       - lightningcss
@@ -12703,7 +12848,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.19.1
-      jsdom: 27.3.0(canvas@2.11.2)(postcss@8.4.41)
+      jsdom: 27.3.0(canvas@2.11.2)
     transitivePeerDependencies:
       - less
       - lightningcss
@@ -12739,7 +12884,7 @@ snapshots:
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.19.1
-      jsdom: 27.3.0(canvas@2.11.2)(postcss@8.4.41)
+      jsdom: 27.3.0(canvas@2.11.2)
     transitivePeerDependencies:
       - jiti
       - less

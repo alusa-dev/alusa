@@ -507,6 +507,9 @@ export async function materializeCalendarWindow(params: {
             professores: professorIds.length
               ? {
                   create: professorIds.map((professorId) => ({
+                    conta: {
+                      connect: { id: params.contaId },
+                    },
                     professor: {
                       connect: { id: professorId },
                     },
@@ -581,6 +584,9 @@ export async function materializeCalendarWindow(params: {
         professores: {
           deleteMany: {},
           create: professorIds.map((professorId) => ({
+            conta: {
+              connect: { id: params.contaId },
+            },
             professor: {
               connect: { id: professorId },
             },

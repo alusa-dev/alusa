@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as Invite from './invite-service';
 
 describe('invite-service', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('createInvite cria com expiração ~72h', async () => {
@@ -15,12 +19,13 @@ describe('invite-service', () => {
     // @ts-expect-error monkey patch
     Invite['prisma'] = { invite: { findFirst, create } };
 
-    const out = await Invite.createInvite('a@a.com', 'RECEPCAO', 'admin-1');
-    expect(out.email).toBe('a@a.com');
+    const email = `invite-${process.hrtime.bigint()}@a.com`;
+    const out = await Invite.createInvite(email, 'RECEPCAO', 'admin-1');
+    expect(out.email).toBe(email);
 
-  const diff = (out.expiresAt.getTime() - now) / (60 * 60 * 1000);
-  // tolerância levemente maior para ambientes lentos/CI
-  expect(diff).toBeGreaterThan(71.8);
-  expect(diff).toBeLessThan(72.2);
+    const diff = (out.expiresAt.getTime() - now) / (60 * 60 * 1000);
+    // tolerância levemente maior para ambientes lentos/CI
+    expect(diff).toBeGreaterThan(71.8);
+    expect(diff).toBeLessThan(72.2);
   });
 });

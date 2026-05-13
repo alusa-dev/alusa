@@ -76,9 +76,19 @@ describe('Aluno Service', () => {
         status: 'APPROVED',
       },
     });
-    
+
     // Limpar dados de teste (ordem importa por causa das FKs)
+    await prisma.subscription.deleteMany({ where: { contaId } });
+    await prisma.installmentPlan.deleteMany({ where: { contaId } });
+    await prisma.pagamento.deleteMany({ where: { contaId } });
+    await prisma.cobranca.deleteMany({ where: { contaId } });
+    await prisma.contrato.deleteMany({ where: { matricula: { contaId } } });
+    await prisma.matriculaOperacao.deleteMany({ where: { contaId } });
+    await prisma.matriculaLog.deleteMany({ where: { matricula: { contaId } } });
+    await prisma.matriculaTurma.deleteMany({ where: { contaId } });
+    await prisma.descontoMatricula.deleteMany({ where: { matricula: { contaId } } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
+    await prisma.matricula.deleteMany({ where: { contaId } });
     await prisma.aluno.deleteMany({ where: { contaId } });
     await prisma.responsavel.deleteMany({ where: { cpf: { in: ['11144477735', '98765432100'] } } });
   });
@@ -125,7 +135,17 @@ describe('Aluno Service', () => {
       notificationDisabled: false,
     });
 
+    await prisma.subscription.deleteMany({ where: { contaId } });
+    await prisma.installmentPlan.deleteMany({ where: { contaId } });
+    await prisma.pagamento.deleteMany({ where: { contaId } });
+    await prisma.cobranca.deleteMany({ where: { contaId } });
+    await prisma.contrato.deleteMany({ where: { matricula: { contaId } } });
+    await prisma.matriculaOperacao.deleteMany({ where: { contaId } });
+    await prisma.matriculaLog.deleteMany({ where: { matricula: { contaId } } });
+    await prisma.matriculaTurma.deleteMany({ where: { contaId } });
+    await prisma.descontoMatricula.deleteMany({ where: { matricula: { contaId } } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
+    await prisma.matricula.deleteMany({ where: { contaId } });
     await prisma.aluno.deleteMany({ where: { contaId } });
     await prisma.responsavel.deleteMany({ where: { cpf: { in: ['11144477735'] } } });
   });
@@ -230,6 +250,7 @@ describe('Aluno Service', () => {
 
     const matricula = await prisma.matricula.create({
       data: {
+        contaId,
         alunoId: aluno.id,
         dataInicio: new Date('2026-01-01'),
         dataFimContrato: new Date('2026-12-31'),
@@ -279,6 +300,7 @@ describe('Aluno Service', () => {
 
     await prisma.matricula.create({
       data: {
+        contaId,
         alunoId: aluno.id,
         dataInicio: new Date('2026-01-01'),
         dataFimContrato: new Date('2026-12-31'),

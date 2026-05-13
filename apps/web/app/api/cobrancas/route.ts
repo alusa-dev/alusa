@@ -252,6 +252,7 @@ export async function POST(req: NextRequest) {
     // Criar cobrança
     const cobranca = await prisma.cobranca.create({
       data: {
+        contaId,
         matriculaId: body.matriculaId,
         tipo: (body.tipo || 'MENSALIDADE') as any,
         descricao: body.descricao,

@@ -152,6 +152,9 @@ export async function createExperimentalClass(
         professores: professorIds.length
           ? {
               create: professorIds.map((professorId) => ({
+                conta: {
+                  connect: { id: contaId },
+                },
                 professor: {
                   connect: { id: professorId },
                 },
@@ -281,6 +284,9 @@ export async function updateExperimentalClass(
         professores: {
           deleteMany: {},
           create: professorIds.map((professorId) => ({
+            conta: {
+              connect: { id: contaId },
+            },
             professor: {
               connect: { id: professorId },
             },

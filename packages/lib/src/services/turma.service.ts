@@ -248,7 +248,11 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
   console.log('[turma.service] turma criada', turma.id);
   if (professorIds.length) {
     await prisma.turmaProfessor.createMany({
-      data: professorIds.map((profId) => ({ turmaId: turma.id, professorId: profId })),
+      data: professorIds.map((profId) => ({
+        contaId: input.contaId,
+        turmaId: turma.id,
+        professorId: profId,
+      })),
       skipDuplicates: true,
     });
   }
@@ -302,7 +306,11 @@ export async function updateTurma(input: TurmaUpdateInput): Promise<Turma> {
     await prisma.turmaProfessor.deleteMany({ where: { turmaId: turma.id } });
     if (professorIds.length) {
       await prisma.turmaProfessor.createMany({
-        data: professorIds.map((p) => ({ turmaId: turma.id, professorId: p })),
+        data: professorIds.map((p) => ({
+          contaId: input.contaId,
+          turmaId: turma.id,
+          professorId: p,
+        })),
       });
     }
   }

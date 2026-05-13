@@ -326,6 +326,7 @@ export async function createInstallmentPlan(
 
         const cobranca = await prisma.cobranca.create({
           data: {
+            contaId: input.contaId,
             matriculaId: input.matriculaId,
             tipo: 'PARCELADA',
             valor: payment.value,

@@ -243,6 +243,9 @@ export async function createMakeupClass(
         professores: professorIds.length
           ? {
               create: professorIds.map((professorId) => ({
+                conta: {
+                  connect: { id: contaId },
+                },
                 professor: {
                   connect: { id: professorId },
                 },

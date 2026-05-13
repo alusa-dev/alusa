@@ -85,7 +85,10 @@ export async function createCombo(input: ComboCreateInput): Promise<ComboDTO> {
         parsed.turmaIds && parsed.turmaIds.length
           ? {
             createMany: {
-              data: parsed.turmaIds.map((tid: string) => ({ turmaId: tid })),
+              data: parsed.turmaIds.map((tid: string) => ({
+                contaId: parsed.contaId,
+                turmaId: tid,
+              })),
             },
           }
           : undefined,
@@ -123,7 +126,10 @@ export async function updateCombo(input: ComboUpdateInput): Promise<ComboDTO> {
     ? {
       deleteMany: {},
       createMany: {
-        data: parsed.turmaIds.map((tid: string) => ({ turmaId: tid })),
+        data: parsed.turmaIds.map((tid: string) => ({
+          contaId: parsed.contaId,
+          turmaId: tid,
+        })),
       },
     }
     : undefined;

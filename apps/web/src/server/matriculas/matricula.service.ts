@@ -622,6 +622,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
 
     const matricula = await tx.matricula.create({
       data: {
+        contaId: input.contaId,
         alunoId: input.alunoId,
         responsavelFinanceiroId: input.responsavelFinanceiroId ?? undefined,
         turmaId: input.turmaId ?? undefined,
@@ -657,11 +658,12 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     // Criar registros MatriculaTurma (N:N) para rastreabilidade
     if (input.turmaId) {
       await tx.matriculaTurma.create({
-        data: { matriculaId: matricula.id, turmaId: input.turmaId },
+        data: { contaId: input.contaId, matriculaId: matricula.id, turmaId: input.turmaId },
       });
     } else if (combo?.turmas?.length) {
       await tx.matriculaTurma.createMany({
         data: combo.turmas.map((ct) => ({
+          contaId: input.contaId,
           matriculaId: matricula.id,
           turmaId: ct.turmaId,
         })),
@@ -674,6 +676,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     if (!input.taxaIsenta && input.gerarCobrancaTaxa && input.taxaMatricula > 0) {
       cobrancas.taxa = await tx.cobranca.create({
         data: {
+          contaId: input.contaId,
           matriculaId: matricula.id,
           tipo: TipoCobranca.TAXA_MATRICULA,
           descricao: 'Taxa de matrícula',

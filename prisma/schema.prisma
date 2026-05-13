@@ -10,7 +10,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// Models de autentica��o
+// Models de autenticação
 
 enum Status {
   ATIVO
@@ -32,7 +32,7 @@ enum FormaPagamento {
   INDEFINIDO // Sincronizado com UNDEFINED do Asaas - "Pergunte ao cliente"
 }
 
-// Lancamentos financeiros (Receita/Despesa)
+// Lançamentos financeiros (Receita/Despesa)
 enum TipoLancamento {
   RECEITA
   DESPESA
@@ -507,95 +507,106 @@ model Colaborador {
 }
 
 model Conta {
-  id                           String                        @id @default(cuid())
-  nome                         String
-  cpfCnpj                      String?
-  status                       Status                        @default(ATIVO)
-  financeStatus                FinanceStatus                 @default(FINANCE_NOT_STARTED)
-  financeIntegrationMode       FinanceIntegrationMode        @default(WHITELABEL_BAAS)
+  // Tenant principal. Contas restauradas manualmente para recompor integridade
+  // referencial devem manter o mesmo id e receber dados reais posteriormente.
+  id                            String                        @id @default(cuid())
+  nome                          String
+  cpfCnpj                       String?
+  status                        Status                        @default(ATIVO)
+  financeStatus                 FinanceStatus                 @default(FINANCE_NOT_STARTED)
+  financeIntegrationMode        FinanceIntegrationMode        @default(WHITELABEL_BAAS)
   externalAsaasOnboardingStatus ExternalAsaasOnboardingStatus @default(NOT_STARTED)
-  deletedAt                    DateTime?
-  deletedByUserId              String?
-  deletedByUser                Usuario?                      @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
-  deleteReason                 String?
-  createdAt                    DateTime                      @default(now())
-  updatedAt                    DateTime                      @updatedAt
+  deletedAt                     DateTime?
+  deletedByUserId               String?
+  deletedByUser                 Usuario?                      @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
+  deleteReason                  String?
+  createdAt                     DateTime                      @default(now())
+  updatedAt                     DateTime                      @updatedAt
   // Dono (owner) da conta — imutável na lógica de negócio
-  ownerUserId                  String?
-  ownerUser                    Usuario?                      @relation("ContaOwner", fields: [ownerUserId], references: [id])
-  usuarios                     Usuario[]                     @relation("ContaUsuarios")
-  usuariosConta                UsuarioConta[]
-  invites                      Invite[]
-  alunos                       Aluno[]
-  turmas                       Turma[]
-  planos                       Plano[]
-  combos                       Combo[]
-  descontos                    Desconto[]
-  webhooks                     WebhookAsaas[]
-  webhooksArchive              WebhookAsaasArchive[]
-  logsFinanceiros              LogFinanceiro[]
-  logsIntegracao               LogIntegracao[]
-  asaasIntegrationJobs         AsaasIntegrationJob[]
-  asaasNotificationPreferences AsaasNotificationPreference[]
+  ownerUserId                   String?
+  ownerUser                     Usuario?                      @relation("ContaOwner", fields: [ownerUserId], references: [id])
+  usuarios                      Usuario[]                     @relation("ContaUsuarios")
+  usuariosConta                 UsuarioConta[]
+  invites                       Invite[]
+  alunos                        Aluno[]
+  turmas                        Turma[]
+  planos                        Plano[]
+  combos                        Combo[]
+  descontos                     Desconto[]
+  webhooks                      WebhookAsaas[]
+  webhooksArchive               WebhookAsaasArchive[]
+  logsFinanceiros               LogFinanceiro[]
+  logsIntegracao                LogIntegracao[]
+  asaasIntegrationJobs          AsaasIntegrationJob[]
+  asaasNotificationPreferences  AsaasNotificationPreference[]
   // Núcleo financeiro whitelabel (Fases 0+)
-  financeProfile               FinanceProfile?
-  tenantFeatureFlags           TenantFeatureFlags?
-  auditLogs                    AuditLog[]
-  notifications                Notification[]
-  notificationRecipients       NotificationRecipient[]
-  customers                    Customer[]
-  charges                      Charge[]
-  chargeReadModels             ChargeReadModel[]
-  invoices                     Invoice[]
-  subscriptions                Subscription[]
-  installmentPlans             InstallmentPlan[]
-  standaloneInstallmentPlans   StandaloneInstallmentPlan[]
-  standaloneSubscriptions      StandaloneSubscription[]
-  transferRequests             TransferRequest[]
-  pixTransferSessions          PixTransferSession[]
-  professores                  Professor[]
-  colaboradores                Colaborador[]
-  responsaveis                 Responsavel[]
-  modalidades                  Modalidade[]
-  salas                        Sala[]
-  lancamentos                  Lancamento[]
-  centrosCusto                 CentroCusto[]
-  categoriasLancamento         CategoriaLancamento[]
-  portalEventos                PortalEvento[]
-  contratoTemplates            ContratoTemplate[]
-  contratoModelos              ContratoModelo[]
-  rematriculaOperacoes         RematriculaOperacao[]
-  payerChangeOperacoes         PayerChangeOperacao[]
-  matriculaOperacoes           MatriculaOperacao[]
-  matriculasFamiliares         MatriculaFamiliar[]
-  rematriculasFamiliares       RematriculaFamiliar[]
-  familyBillingOutboxEvents    FamilyBillingOutbox[]
-  calendarEvents               CalendarEvent[]
-  aulasExperimentais           AulaExperimental[]
-  attendanceRecords            AttendanceRecord[]
-  makeupClasses                MakeupClass[]
-  aulasOperationLogs           AulasOperationLog[]
+  financeProfile                FinanceProfile?
+  tenantFeatureFlags            TenantFeatureFlags?
+  auditLogs                     AuditLog[]
+  notifications                 Notification[]
+  notificationRecipients        NotificationRecipient[]
+  customers                     Customer[]
+  charges                       Charge[]
+  chargeReadModels              ChargeReadModel[]
+  invoices                      Invoice[]
+  subscriptions                 Subscription[]
+  installmentPlans              InstallmentPlan[]
+  standaloneInstallmentPlans    StandaloneInstallmentPlan[]
+  standaloneSubscriptions       StandaloneSubscription[]
+  transferRequests              TransferRequest[]
+  pixTransferSessions           PixTransferSession[]
+  professores                   Professor[]
+  colaboradores                 Colaborador[]
+  responsaveis                  Responsavel[]
+  alunoResponsaveis             AlunoResponsavel[]
+  modalidades                   Modalidade[]
+  salas                         Sala[]
+  matriculas                    Matricula[]
+  cobrancas                     Cobranca[]
+  pagamentos                    Pagamento[]
+  turmaProfessores              TurmaProfessor[]
+  matriculaTurmas               MatriculaTurma[]
+  comboTurmas                   ComboTurma[]
+  calendarEventProfessores      CalendarEventProfessor[]
+  lancamentos                   Lancamento[]
+  centrosCusto                  CentroCusto[]
+  categoriasLancamento          CategoriaLancamento[]
+  portalEventos                 PortalEvento[]
+  portalEventoInscricoes        PortalEventoInscricao[]
+  contratoTemplates             ContratoTemplate[]
+  contratoModelos               ContratoModelo[]
+  rematriculaOperacoes          RematriculaOperacao[]
+  payerChangeOperacoes          PayerChangeOperacao[]
+  matriculaOperacoes            MatriculaOperacao[]
+  matriculasFamiliares          MatriculaFamiliar[]
+  rematriculasFamiliares        RematriculaFamiliar[]
+  familyBillingOutboxEvents     FamilyBillingOutbox[]
+  calendarEvents                CalendarEvent[]
+  aulasExperimentais            AulaExperimental[]
+  attendanceRecords             AttendanceRecord[]
+  makeupClasses                 MakeupClass[]
+  aulasOperationLogs            AulasOperationLog[]
   // Loja / Vendas
-  products                     Product[]
-  productCategories            ProductCategory[]
-  sales                        Sale[]
-  inventoryBalances            InventoryBalance[]
-  inventoryMovements           InventoryMovement[]
-  restockOrders                RestockOrder[]
-  // Campos de endereco da conta (escola)
-  enderecoCep                  String?                       @db.Char(8)
-  enderecoLogradouro           String?
-  enderecoNumero               String?
-  enderecoBairro               String?
-  enderecoCidade               String?
-  enderecoUf                   String?                       @db.Char(2)
+  products                      Product[]
+  productCategories             ProductCategory[]
+  sales                         Sale[]
+  inventoryBalances             InventoryBalance[]
+  inventoryMovements            InventoryMovement[]
+  restockOrders                 RestockOrder[]
+  // Campos de endereço da conta (escola)
+  enderecoCep                   String?                       @db.Char(8)
+  enderecoLogradouro            String?
+  enderecoNumero                String?
+  enderecoBairro                String?
+  enderecoCidade                String?
+  enderecoUf                    String?                       @db.Char(2)
   // Credenciais de integração (criptografadas em repouso). Armazenamos separadamente para permitir rotação.
-  asaasApiKeyEncrypted         String?
-  asaasWebhookSecretEncrypted  String?
-  asaasCredsUpdatedAt          DateTime?
+  asaasApiKeyEncrypted          String?
+  asaasWebhookSecretEncrypted   String?
+  asaasCredsUpdatedAt           DateTime?
   // Política de ativação de matrícula
-  matriculaActivationPolicy    MatriculaActivationPolicy     @default(IMMEDIATE)
-  financialPolicy              ContaFinancialPolicy?
+  matriculaActivationPolicy     MatriculaActivationPolicy     @default(IMMEDIATE)
+  financialPolicy               ContaFinancialPolicy?
 
   @@index([cpfCnpj])
   @@index([ownerUserId])
@@ -709,10 +720,14 @@ model Professor {
   @@unique([contaId, cpf])
   @@unique([contaId, email])
   @@index([contaId], name: "idx_professor_conta")
+  @@index([contaId, nome], name: "idx_professor_conta_nome")
+  @@index([contaId, status], name: "idx_professor_conta_status")
 }
 
 model Usuario {
   id                   String    @id @default(cuid())
+  // Conta padrão/legada do usuário. Para autorização multi-tenant, use UsuarioConta
+  // e o activeContaId da sessão como fonte de verdade.
   contaId              String
   conta                Conta     @relation("ContaUsuarios", fields: [contaId], references: [id], onDelete: Cascade)
   // Backrelation: contas onde este usuário é o owner
@@ -738,54 +753,56 @@ model Usuario {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  colaborador           Colaborador?
+  colaborador               Colaborador?
   // Backrelation para vínculo opcional com Responsavel (1-1)
-  responsavel           Responsavel?
+  responsavel               Responsavel?
   // Backrelation para vínculo opcional com Aluno (1-1)
-  aluno                 Aluno?
-  checkoutLinksCriados  CheckoutLink[]
-  matriculaLogs         MatriculaLog[]
-  logsFinanceiros       LogFinanceiro[]
-  lancamentosCriados    Lancamento[]
-  rematriculasOperacoes RematriculaOperacao[]
-  payerChangeOperacoes  PayerChangeOperacao[]
-  matriculaOperacoes    MatriculaOperacao[]
-  notifications         NotificationRecipient[]
-  attendanceRecorded    AttendanceRecord[]      @relation("AttendanceRecordedBy")
-  makeupClassesCreated  MakeupClass[]           @relation("MakeupClassCreatedBy")
-  authActionTokens      AuthActionToken[]
-  salesOperated         Sale[]                  @relation("SalesOperated")
-  inventoryMovementsCreated InventoryMovement[] @relation("InventoryMovementActor")
-  restockOrdersCreated  RestockOrder[]          @relation("RestockOrderCreatedBy")
-  acessosConta          UsuarioConta[]          @relation("UsuarioContaUsuario")
-  acessosConvidados     UsuarioConta[]          @relation("UsuarioContaInvitedBy")
+  aluno                     Aluno?
+  checkoutLinksCriados      CheckoutLink[]
+  matriculaLogs             MatriculaLog[]
+  logsFinanceiros           LogFinanceiro[]
+  lancamentosCriados        Lancamento[]
+  rematriculasOperacoes     RematriculaOperacao[]
+  payerChangeOperacoes      PayerChangeOperacao[]
+  matriculaOperacoes        MatriculaOperacao[]
+  notifications             NotificationRecipient[]
+  attendanceRecorded        AttendanceRecord[]      @relation("AttendanceRecordedBy")
+  makeupClassesCreated      MakeupClass[]           @relation("MakeupClassCreatedBy")
+  authActionTokens          AuthActionToken[]
+  salesOperated             Sale[]                  @relation("SalesOperated")
+  inventoryMovementsCreated InventoryMovement[]     @relation("InventoryMovementActor")
+  restockOrdersCreated      RestockOrder[]          @relation("RestockOrderCreatedBy")
+  acessosConta              UsuarioConta[]          @relation("UsuarioContaUsuario")
+  acessosConvidados         UsuarioConta[]          @relation("UsuarioContaInvitedBy")
 
   @@index([contaId])
 }
 
 model UsuarioConta {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   usuarioId      String
   contaId        String
   role           Role
-  status         Status   @default(ATIVO)
+  status         Status    @default(ATIVO)
   invitedById    String?
-  inviteId       String?  @unique
+  inviteId       String?   @unique
   lastAccessedAt DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  usuario   Usuario @relation("UsuarioContaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
-  conta     Conta   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  // Vínculo real de acesso multi-tenant. A autorização deve validar esta tabela
+  // contra o activeContaId da sessão; Usuario.contaId não deve ser usado como autorização final.
+  usuario   Usuario  @relation("UsuarioContaUsuario", fields: [usuarioId], references: [id], onDelete: Cascade)
+  conta     Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   invitedBy Usuario? @relation("UsuarioContaInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
-  invite    Invite? @relation("UsuarioContaInvite", fields: [inviteId], references: [id], onDelete: SetNull)
+  invite    Invite?  @relation("UsuarioContaInvite", fields: [inviteId], references: [id], onDelete: SetNull)
 
   @@unique([usuarioId, contaId])
   @@index([contaId, role, status], name: "idx_usuario_conta_conta_role_status")
   @@index([usuarioId, status], name: "idx_usuario_conta_usuario_status")
 }
 
-// --- Modelos de dom�nio Escola ---
+// --- Modelos de domínio Escola ---
 
 model Aluno {
   id                             String    @id @default(cuid())
@@ -800,7 +817,7 @@ model Aluno {
   // Vinculação opcional com um usuário do sistema (para acesso/portal do aluno)
   usuarioId                      String?   @unique
   usuario                        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
-  // Campos de endere�o estruturados
+  // Campos de endereço estruturados
   enderecoCep                    String?   @db.Char(8)
   enderecoLogradouro             String?
   enderecoNumero                 String?
@@ -835,14 +852,14 @@ model Aluno {
   createdAt                      DateTime  @default(now())
   updatedAt                      DateTime  @updatedAt
 
-  conta             Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  inscricoesEvento  PortalEventoInscricao[]
-  responsaveis      AlunoResponsavel[]
-  matriculas        Matricula[]
+  conta              Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  inscricoesEvento   PortalEventoInscricao[]
+  responsaveis       AlunoResponsavel[]
+  matriculas         Matricula[]
   aulasExperimentais AulaExperimental[]
-  attendanceRecords AttendanceRecord[]
-  makeupClasses     MakeupClass[]
-  sales             Sale[]
+  attendanceRecords  AttendanceRecord[]
+  makeupClasses      MakeupClass[]
+  sales              Sale[]
 
   @@unique([contaId, cpf])
   @@unique([contaId, email])
@@ -853,6 +870,8 @@ model Aluno {
   @@index([contaId])
   @@index([contaId, status], name: "idx_aluno_conta_status")
   @@index([contaId, createdAt], name: "idx_aluno_conta_created_at")
+  @@index([contaId, nome], name: "idx_aluno_conta_nome")
+  @@index([contaId, updatedAt], name: "idx_aluno_conta_updated_at")
 }
 
 model Responsavel {
@@ -887,12 +906,12 @@ model Responsavel {
   usuarioId                      String?   @unique
   usuario                        Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
 
-  conta                 Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  alunos                AlunoResponsavel[]
-  matriculasFinanceiras Matricula[]        @relation("MatriculaResponsavelFinanceiro")
-  matriculasFamiliares  MatriculaFamiliar[]
+  conta                  Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  alunos                 AlunoResponsavel[]
+  matriculasFinanceiras  Matricula[]           @relation("MatriculaResponsavelFinanceiro")
+  matriculasFamiliares   MatriculaFamiliar[]
   rematriculasFamiliares RematriculaFamiliar[]
-  sales                 Sale[]
+  sales                  Sale[]
 
   // Multi-tenant: unicidade por conta
   @@unique([contaId, cpf])
@@ -900,17 +919,23 @@ model Responsavel {
   @@unique([contaId, asaasId])
   @@unique([contaId, asaasCustomerExternalReference])
   @@index([contaId])
+  @@index([contaId, nome], name: "idx_responsavel_conta_nome")
 }
 
 model AlunoResponsavel {
   id            String @id @default(cuid())
+  contaId       String
   alunoId       String
   responsavelId String
   tipoVinculo   String
 
+  conta       Conta       @relation(fields: [contaId], references: [id], onDelete: Restrict)
   aluno       Aluno       @relation(fields: [alunoId], references: [id], onDelete: Cascade)
   responsavel Responsavel @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
 
+  @@unique([contaId, alunoId, responsavelId], name: "uq_aluno_responsavel_conta_aluno_responsavel", map: "uq_aluno_responsavel_conta_aluno_responsavel")
+  @@index([contaId, alunoId], name: "idx_aluno_responsavel_conta_aluno")
+  @@index([contaId, responsavelId], name: "idx_aluno_responsavel_conta_responsavel")
   @@index([alunoId])
   @@index([responsavelId])
 }
@@ -945,6 +970,9 @@ model Turma {
 
   @@unique([contaId, nome], name: "uq_turma_conta_nome")
   @@index([contaId], name: "idx_turma_conta")
+  @@index([contaId, status], name: "idx_turma_conta_status")
+  @@index([contaId, createdAt], name: "idx_turma_conta_created")
+  @@index([contaId, updatedAt], name: "idx_turma_conta_updated")
   @@index([modalidadeId])
   @@index([salaId])
 }
@@ -985,14 +1013,19 @@ model Sala {
 
 model TurmaProfessor {
   id          String   @id @default(cuid())
+  contaId     String
   turmaId     String
   professorId String
   createdAt   DateTime @default(now())
 
+  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
   turma     Turma     @relation(fields: [turmaId], references: [id], onDelete: Cascade)
   professor Professor @relation(fields: [professorId], references: [id])
 
+  @@unique([contaId, turmaId, professorId], name: "uq_turma_professor_conta_turma_professor", map: "uq_turma_professor_conta_turma_professor")
   @@unique([turmaId, professorId], name: "uq_turmaprofessor_unique")
+  @@index([contaId, turmaId], name: "idx_turma_professor_conta_turma")
+  @@index([contaId, professorId], name: "idx_turma_professor_conta_professor")
   @@index([turmaId], name: "idx_turmaprofessor_turma")
   @@index([professorId], name: "idx_turmaprofessor_professor")
 }
@@ -1033,20 +1066,28 @@ model CalendarEvent {
   @@index([contaId, endAt], name: "idx_calendar_event_conta_end")
   @@index([contaId, startAt, endAt], name: "idx_calendar_event_conta_range")
   @@index([contaId, tipo, status], name: "idx_calendar_event_conta_tipo_status")
+  @@index([contaId, tipo, startAt], name: "idx_calendar_event_conta_tipo_start")
+  @@index([contaId, status, startAt], name: "idx_calendar_event_conta_status_start")
+  @@index([contaId, turmaId, startAt], name: "idx_calendar_event_conta_turma_start")
   @@index([turmaId, startAt], name: "idx_calendar_event_turma_start")
   @@index([salaId, startAt], name: "idx_calendar_event_sala_start")
 }
 
 model CalendarEventProfessor {
   id              String   @id @default(cuid())
+  contaId         String
   calendarEventId String
   professorId     String
   createdAt       DateTime @default(now())
 
+  conta         Conta         @relation(fields: [contaId], references: [id], onDelete: Restrict)
   calendarEvent CalendarEvent @relation(fields: [calendarEventId], references: [id], onDelete: Cascade)
   professor     Professor     @relation(fields: [professorId], references: [id], onDelete: Cascade)
 
+  @@unique([contaId, calendarEventId, professorId], name: "uq_calendar_event_professor_conta_event_professor", map: "uq_calendar_event_professor_conta_event_professor")
   @@unique([calendarEventId, professorId], name: "uq_calendar_event_professor")
+  @@index([contaId, calendarEventId], name: "idx_calendar_event_professor_conta_event")
+  @@index([contaId, professorId], name: "idx_calendar_event_professor_conta_professor")
   @@index([calendarEventId], name: "idx_calendar_event_professor_event")
   @@index([professorId], name: "idx_calendar_event_professor_professor")
 }
@@ -1072,6 +1113,10 @@ model AttendanceRecord {
 
   @@unique([calendarEventId, alunoId], name: "uq_attendance_event_aluno")
   @@index([contaId, recordedAt], name: "idx_attendance_conta_recorded")
+  @@index([contaId, alunoId, recordedAt], name: "idx_attendance_conta_aluno_recorded")
+  @@index([contaId, calendarEventId], name: "idx_attendance_conta_event")
+  @@index([contaId, status, recordedAt], name: "idx_attendance_conta_status_recorded")
+  @@index([contaId, recordedByUserId, createdAt], name: "idx_attendance_conta_recorded_by_created")
   @@index([calendarEventId], name: "idx_attendance_event")
   @@index([alunoId], name: "idx_attendance_aluno")
   @@index([matriculaId], name: "idx_attendance_matricula")
@@ -1103,6 +1148,10 @@ model MakeupClass {
   createdBy     Usuario?      @relation("MakeupClassCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([contaId, createdAt], name: "idx_makeup_class_conta_created")
+  @@index([contaId, alunoId], name: "idx_makeup_class_conta_aluno")
+  @@index([contaId, status], name: "idx_makeup_class_conta_status")
+  @@index([contaId, turmaOrigemId], name: "idx_makeup_class_conta_turma_origem")
+  @@index([contaId, turmaDestinoId], name: "idx_makeup_class_conta_turma_destino")
   @@index([alunoId], name: "idx_makeup_class_aluno")
   @@index([matriculaId], name: "idx_makeup_class_matricula")
   @@index([eventoOrigemId], name: "idx_makeup_class_evento_origem")
@@ -1170,6 +1219,7 @@ model Plano {
 
 model Matricula {
   id                      String                @id @default(cuid())
+  contaId                 String
   alunoId                 String
   responsavelFinanceiroId String?
   turmaId                 String?
@@ -1217,34 +1267,45 @@ model Matricula {
   createdAt               DateTime              @default(now())
   updatedAt               DateTime              @updatedAt
 
-  aluno                      Aluno                 @relation(fields: [alunoId], references: [id], onDelete: Cascade)
-  responsavelFinanceiro      Responsavel?          @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
-  matriculaFamiliar         MatriculaFamiliar?    @relation(fields: [matriculaFamiliarId], references: [id], onDelete: SetNull)
-  turma                      Turma?                @relation(fields: [turmaId], references: [id])
-  plano                      Plano?                @relation(fields: [planoId], references: [id])
-  combo                      Combo?                @relation(fields: [comboId], references: [id])
-  descontos                  DescontoMatricula[]
-  cobrancas                  Cobranca[]
-  checkoutLinks              CheckoutLink[]
-  logs                       MatriculaLog[]
-  matriculaTurmas            MatriculaTurma[]
-  contratos                  Contrato[]            @relation("MatriculaContratos")
-  contratoAtual              Contrato?             @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
-  subscriptions              Subscription[]
-  installmentPlans           InstallmentPlan[]
-  operacoes                  MatriculaOperacao[]
-  rematriculadaDe            Matricula?            @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
-  rematriculasDerivadas      Matricula[]           @relation("RematriculaHistorico")
-  rematriculaOperacoesOrigem RematriculaOperacao[] @relation("RematriculaOrigem")
-  rematriculaOperacoesNova   RematriculaOperacao[] @relation("RematriculaNova")
-  payerChangeOperacoes       PayerChangeOperacao[]
-  attendanceRecords          AttendanceRecord[]
-  makeupClasses              MakeupClass[]
-  sales                      Sale[]
-  matriculaFamiliarItems     MatriculaFamiliarItem[]
+  conta                          Conta                     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  aluno                          Aluno                     @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+  responsavelFinanceiro          Responsavel?              @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
+  matriculaFamiliar              MatriculaFamiliar?        @relation(fields: [matriculaFamiliarId], references: [id], onDelete: SetNull)
+  turma                          Turma?                    @relation(fields: [turmaId], references: [id])
+  plano                          Plano?                    @relation(fields: [planoId], references: [id])
+  combo                          Combo?                    @relation(fields: [comboId], references: [id])
+  descontos                      DescontoMatricula[]
+  cobrancas                      Cobranca[]
+  checkoutLinks                  CheckoutLink[]
+  logs                           MatriculaLog[]
+  matriculaTurmas                MatriculaTurma[]
+  contratos                      Contrato[]                @relation("MatriculaContratos")
+  contratoAtual                  Contrato?                 @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
+  subscriptions                  Subscription[]
+  installmentPlans               InstallmentPlan[]
+  operacoes                      MatriculaOperacao[]
+  rematriculadaDe                Matricula?                @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
+  rematriculasDerivadas          Matricula[]               @relation("RematriculaHistorico")
+  rematriculaOperacoesOrigem     RematriculaOperacao[]     @relation("RematriculaOrigem")
+  rematriculaOperacoesNova       RematriculaOperacao[]     @relation("RematriculaNova")
+  payerChangeOperacoes           PayerChangeOperacao[]
+  attendanceRecords              AttendanceRecord[]
+  makeupClasses                  MakeupClass[]
+  sales                          Sale[]
+  matriculaFamiliarItems         MatriculaFamiliarItem[]
   rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemOrigem")
   rematriculaFamiliarItemsNova   RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemNova")
 
+  @@index([contaId], name: "idx_matricula_conta")
+  @@index([contaId, status], name: "idx_matricula_conta_status")
+  @@index([contaId, statusFinanceiro], name: "idx_matricula_conta_status_financeiro")
+  @@index([contaId, alunoId], name: "idx_matricula_conta_aluno")
+  @@index([contaId, turmaId], name: "idx_matricula_conta_turma")
+  @@index([contaId, planoId], name: "idx_matricula_conta_plano")
+  @@index([contaId, comboId], name: "idx_matricula_conta_combo")
+  @@index([contaId, responsavelFinanceiroId], name: "idx_matricula_conta_resp_financeiro")
+  @@index([contaId, createdAt], name: "idx_matricula_conta_created")
+  @@index([contaId, updatedAt], name: "idx_matricula_conta_updated")
   @@index([alunoId], name: "idx_matricula_aluno")
   @@index([responsavelFinanceiroId], name: "idx_matricula_responsavel")
   @@index([turmaId], name: "idx_matricula_turma")
@@ -1260,37 +1321,39 @@ model Matricula {
 }
 
 model MatriculaFamiliar {
-  id                         String              @id @default(cuid())
-  contaId                    String
-  responsavelId              String
-  billingMode                BillingMode         @default(SHARED_PLAN)
-  status                     FamilyBillingStatus @default(PENDENTE)
-  totalAlunos                Int                 @default(0)
-  valorMensalidadeTotal      Decimal             @default(0) @db.Decimal(12, 2)
-  valorTaxaMatriculaTotal    Decimal             @default(0) @db.Decimal(12, 2)
-  formaPagamento             String?
-  ciclo                      String?
-  diaVencimento              Int?
-  dataInicio                 DateTime?
-  dataFimContrato            DateTime?
-  standaloneSubscriptionId   String?
+  id                           String              @id @default(cuid())
+  contaId                      String
+  responsavelId                String
+  billingMode                  BillingMode         @default(SHARED_PLAN)
+  status                       FamilyBillingStatus @default(PENDENTE)
+  totalAlunos                  Int                 @default(0)
+  valorMensalidadeTotal        Decimal             @default(0) @db.Decimal(12, 2)
+  valorTaxaMatriculaTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  formaPagamento               String?
+  ciclo                        String?
+  diaVencimento                Int?
+  dataInicio                   DateTime?
+  dataFimContrato              DateTime?
+  standaloneSubscriptionId     String?
   standaloneEnrollmentChargeId String?
-  ultimoErro                 String?
-  actorId                    String?
-  uiRequestId                String?
-  createdAt                  DateTime            @default(now())
-  updatedAt                  DateTime            @updatedAt
+  ultimoErro                   String?
+  actorId                      String?
+  uiRequestId                  String?
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
 
-  conta         Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  responsavel   Responsavel            @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
-  matriculas    Matricula[]
-  items         MatriculaFamiliarItem[]
-  outboxEvents  FamilyBillingOutbox[]
+  conta        Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsavel  Responsavel             @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  matriculas   Matricula[]
+  items        MatriculaFamiliarItem[]
+  outboxEvents FamilyBillingOutbox[]
 
+  @@unique([contaId, uiRequestId], name: "uq_matricula_familiar_conta_request")
   @@index([contaId], name: "idx_matricula_familiar_conta")
+  @@index([contaId, status, createdAt], name: "idx_matricula_familiar_conta_status_created")
+  @@index([contaId, responsavelId], name: "idx_matricula_familiar_conta_responsavel")
   @@index([responsavelId], name: "idx_matricula_familiar_responsavel")
   @@index([status], name: "idx_matricula_familiar_status")
-  @@unique([contaId, uiRequestId], name: "uq_matricula_familiar_conta_request")
 }
 
 model MatriculaFamiliarItem {
@@ -1329,15 +1392,17 @@ model RematriculaFamiliar {
   createdAt                    DateTime            @default(now())
   updatedAt                    DateTime            @updatedAt
 
-  conta        Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  responsavel  Responsavel             @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  conta        Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsavel  Responsavel               @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
   items        RematriculaFamiliarItem[]
   outboxEvents FamilyBillingOutbox[]
 
+  @@unique([contaId, uiRequestId], name: "uq_rematricula_familiar_conta_request")
   @@index([contaId], name: "idx_rematricula_familiar_conta")
+  @@index([contaId, status, createdAt], name: "idx_rematricula_familiar_conta_status_created")
+  @@index([contaId, responsavelId], name: "idx_rematricula_familiar_conta_responsavel")
   @@index([responsavelId], name: "idx_rematricula_familiar_responsavel")
   @@index([status], name: "idx_rematricula_familiar_status")
-  @@unique([contaId, uiRequestId], name: "uq_rematricula_familiar_conta_request")
 }
 
 model RematriculaFamiliarItem {
@@ -1361,43 +1426,50 @@ model RematriculaFamiliarItem {
 }
 
 model FamilyBillingOutbox {
-  id                    String                   @id @default(cuid())
+  id                    String                    @id @default(cuid())
   contaId               String
   aggregateType         String
   aggregateId           String
   eventType             String
   payload               Json
   status                FamilyBillingOutboxStatus @default(PENDING)
-  attempts              Int                      @default(0)
-  availableAt           DateTime                 @default(now())
+  attempts              Int                       @default(0)
+  availableAt           DateTime                  @default(now())
   lockedAt              DateTime?
   processedAt           DateTime?
   lastAttemptAt         DateTime?
   lastError             String?
   matriculaFamiliarId   String?
   rematriculaFamiliarId String?
-  createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @updatedAt
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
 
-  conta               Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  matriculaFamiliar   MatriculaFamiliar?  @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
+  conta               Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  matriculaFamiliar   MatriculaFamiliar?   @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
   rematriculaFamiliar RematriculaFamiliar? @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
 
   @@index([contaId, status, availableAt], name: "idx_family_billing_outbox_queue")
+  @@index([status, availableAt], name: "idx_family_billing_outbox_status_available")
+  @@index([contaId, aggregateId], name: "idx_family_billing_outbox_conta_aggregate")
   @@index([matriculaFamiliarId], name: "idx_family_billing_outbox_matricula")
   @@index([rematriculaFamiliarId], name: "idx_family_billing_outbox_rematricula")
 }
 
 model MatriculaTurma {
   id          String   @id @default(cuid())
+  contaId     String
   matriculaId String
   turmaId     String
   createdAt   DateTime @default(now())
 
+  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
   matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
   turma     Turma     @relation(fields: [turmaId], references: [id])
 
+  @@unique([contaId, matriculaId, turmaId], name: "uq_matricula_turma_conta_matricula_turma", map: "uq_matricula_turma_conta_matricula_turma")
   @@unique([matriculaId, turmaId], name: "uq_matriculaturma_unique")
+  @@index([contaId, matriculaId], name: "idx_matricula_turma_conta_matricula")
+  @@index([contaId, turmaId], name: "idx_matricula_turma_conta_turma")
   @@index([matriculaId], name: "idx_matriculaturma_matricula")
   @@index([turmaId], name: "idx_matriculaturma_turma")
 }
@@ -1457,18 +1529,24 @@ model Combo {
 
 model ComboTurma {
   id        String   @id @default(cuid())
+  contaId   String
   comboId   String
   turmaId   String
   createdAt DateTime @default(now())
 
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
   combo Combo @relation(fields: [comboId], references: [id], onDelete: Cascade)
   turma Turma @relation(fields: [turmaId], references: [id])
 
+  @@unique([contaId, comboId, turmaId], name: "uq_combo_turma_conta_combo_turma", map: "uq_combo_turma_conta_combo_turma")
+  @@index([contaId, comboId], name: "idx_combo_turma_conta_combo")
+  @@index([contaId, turmaId], name: "idx_combo_turma_conta_turma")
   @@index([turmaId], name: "idx_comboturma_turma")
 }
 
 model Cobranca {
   id                String         @id @default(cuid())
+  contaId           String
   matriculaId       String
   tipo              TipoCobranca   @default(MENSALIDADE)
   descricao         String?
@@ -1534,13 +1612,24 @@ model Cobranca {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
   pagamentos           Pagamento[]
   logsFinanceiros      LogFinanceiro[]
   arquivos             ArquivoCobranca[]
   charge               Charge?
   asaasIntegrationJobs AsaasIntegrationJob[]
 
+  @@index([contaId], name: "idx_cobranca_conta")
+  @@index([contaId, status], name: "idx_cobranca_conta_status")
+  @@index([contaId, status, vencimento], name: "idx_cobranca_conta_status_vencimento")
+  @@index([contaId, vencimento], name: "idx_cobranca_conta_vencimento")
+  @@index([contaId, createdAt], name: "idx_cobranca_conta_created")
+  @@index([contaId, updatedAt], name: "idx_cobranca_conta_updated")
+  @@index([contaId, tipo], name: "idx_cobranca_conta_tipo")
+  @@index([contaId, formaPagamento], name: "idx_cobranca_conta_forma")
+  @@index([contaId, liquidacaoStatus], name: "idx_cobranca_conta_liquidacao")
+  @@index([contaId, asaasPaymentId], name: "idx_cobranca_conta_asaas_payment")
   @@index([matriculaId], name: "idx_cobranca_matricula")
   @@index([status], name: "idx_cobranca_status")
   @@index([status, vencimento], name: "idx_cobranca_status_vencimento")
@@ -1616,12 +1705,16 @@ model MatriculaOperacao {
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
 
-  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
-  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  actor     Usuario?  @relation(fields: [actorId], references: [id])
+  matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
+  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  actor     Usuario?  @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([matriculaId], name: "idx_operacao_matricula")
   @@index([contaId], name: "idx_operacao_conta")
+  @@index([contaId, status], name: "idx_operacao_conta_status")
+  @@index([contaId, createdAt], name: "idx_operacao_conta_created")
+  @@index([contaId, matriculaId], name: "idx_operacao_conta_matricula")
+  @@index([contaId, correlationId], name: "idx_operacao_conta_correlation")
   @@index([tipo], name: "idx_operacao_tipo")
   @@index([status], name: "idx_operacao_status")
   @@index([correlationId], name: "idx_operacao_correlation")
@@ -1629,6 +1722,7 @@ model MatriculaOperacao {
 
 model Pagamento {
   id             String    @id @default(cuid())
+  contaId        String
   cobrancaId     String
   dataPagamento  DateTime?
   formaPagamento String
@@ -1639,8 +1733,14 @@ model Pagamento {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Cascade)
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Restrict)
 
+  @@index([contaId], name: "idx_pagamento_conta")
+  @@index([contaId, status, dataPagamento], name: "idx_pagamento_conta_status_data")
+  @@index([contaId, cobrancaId], name: "idx_pagamento_conta_cobranca")
+  @@index([contaId, asaasPaymentId], name: "idx_pagamento_conta_asaas_payment")
+  @@index([contaId, createdAt], name: "idx_pagamento_conta_created")
   @@index([cobrancaId], name: "idx_pagamento_cobranca")
   @@index([status, dataPagamento], name: "idx_pagamento_status_data_pagamento")
 }
@@ -1668,17 +1768,21 @@ model WebhookAsaas {
   ultimoErro        String?
   attemptsLog       Json?
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
 
   @@unique([contaId, eventId], name: "uq_webhookasaas_conta_event")
   @@unique([contaId, payloadHash], name: "uq_webhookasaas_conta_hash")
   @@index([contaId], name: "idx_webhookasaas_conta")
   @@index([status], name: "idx_webhookasaas_status")
   @@index([contaId, status, recebidoEm], name: "idx_webhookasaas_conta_status_recebido")
+  @@index([status, nextRetryAt, recebidoEm], name: "idx_webhookasaas_queue")
+  @@index([contaId, status, nextRetryAt, recebidoEm], name: "idx_webhookasaas_tenant_queue")
   @@index([contaId, evento, recebidoEm], name: "idx_webhookasaas_conta_evento_recebido")
+  @@index([contaId, recebidoEm], name: "idx_webhookasaas_conta_recebido")
   @@index([asaasPaymentId], name: "idx_webhookasaas_payment")
   @@index([asaasSubscriptionId], name: "idx_webhookasaas_subscription")
   @@index([asaasTransferId], name: "idx_webhookasaas_transfer")
+  @@index([processadoEm], name: "idx_webhookasaas_processado")
   @@index([recebidoEm], name: "idx_webhookasaas_recebido_em")
 }
 
@@ -1705,13 +1809,17 @@ model WebhookAsaasArchive {
   attemptsLog       Json?
   archivedAt        DateTime  @default(now())
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
 
   @@index([contaId], name: "idx_webhookasaas_archive_conta")
   @@index([contaId, recebidoEm], name: "idx_webhookasaas_archive_conta_recebido")
+  @@index([contaId, evento, recebidoEm], name: "idx_webhookasaas_archive_conta_evento_recebido")
   @@index([status], name: "idx_webhookasaas_archive_status")
   @@index([eventId], name: "idx_webhookasaas_archive_event_id")
   @@index([payloadHash], name: "idx_webhookasaas_archive_payload_hash")
+  @@index([asaasPaymentId], name: "idx_webhookasaas_archive_payment")
+  @@index([asaasSubscriptionId], name: "idx_webhookasaas_archive_subscription")
+  @@index([asaasTransferId], name: "idx_webhookasaas_archive_transfer")
   @@index([archivedAt], name: "idx_webhookasaas_archive_archived_at")
 }
 
@@ -1728,6 +1836,7 @@ model WebhookAsaasRejection {
   recebidoEm  DateTime @default(now())
 
   @@index([contaId], name: "idx_webhookasaas_rejection_conta")
+  @@index([contaId, recebidoEm], name: "idx_webhookasaas_rejection_conta_recebido")
   @@index([recebidoEm], name: "idx_webhookasaas_rejection_recebido")
 }
 
@@ -1740,11 +1849,15 @@ model LogFinanceiro {
   detalhes   Json?
   createdAt  DateTime @default(now())
 
-  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  usuario  Usuario   @relation(fields: [usuarioId], references: [id])
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  usuario  Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
   cobranca Cobranca? @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
 
   @@index([contaId], name: "idx_logfinanceiro_conta")
+  @@index([contaId, createdAt], name: "idx_logfinanceiro_conta_created")
+  @@index([contaId, usuarioId, createdAt], name: "idx_logfinanceiro_conta_usuario_created")
+  @@index([contaId, acao, createdAt], name: "idx_logfinanceiro_conta_acao_created")
+  @@index([contaId, cobrancaId], name: "idx_logfinanceiro_conta_cobranca")
   @@index([usuarioId], name: "idx_logfinanceiro_usuario")
   @@index([cobrancaId], name: "idx_logfinanceiro_cobranca")
   @@index([acao], name: "idx_logfinanceiro_acao")
@@ -1767,9 +1880,12 @@ model LogIntegracao {
   duration       Int? // Duração da request em ms
   createdAt      DateTime @default(now())
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
 
   @@index([contaId, tipoOperacao], name: "idx_logintegracao_conta_tipo")
+  @@index([contaId, status, createdAt], name: "idx_logintegracao_conta_status_created")
+  @@index([contaId, entidade, entidadeId], name: "idx_logintegracao_conta_entidade")
+  @@index([contaId, asaasId], name: "idx_logintegracao_conta_asaasid")
   @@index([entidade, entidadeId], name: "idx_logintegracao_entidade")
   @@index([status], name: "idx_logintegracao_status")
   @@index([createdAt], name: "idx_logintegracao_createdat")
@@ -1798,7 +1914,7 @@ model AsaasIntegrationJob {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta           Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta           Conta            @relation(fields: [contaId], references: [id], onDelete: Restrict)
   charge          Charge?          @relation(fields: [chargeId], references: [id], onDelete: SetNull)
   cobranca        Cobranca?        @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
   subscription    Subscription?    @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
@@ -1807,9 +1923,11 @@ model AsaasIntegrationJob {
   @@unique([contaId, type, idempotencyKey], name: "uq_asaas_integration_job")
   @@index([status, nextAttemptAt], name: "idx_asaas_job_status_next")
   @@index([contaId], name: "idx_asaas_job_conta")
+  @@index([contaId, status, createdAt], name: "idx_asaas_job_conta_status_created")
+  @@index([contaId, type, status], name: "idx_asaas_job_conta_type_status")
 }
 
-// --- Lancamentos financeiros ---
+// --- Lançamentos financeiros ---
 model Lancamento {
   id             String                    @id @default(cuid())
   contaId        String
@@ -1836,16 +1954,18 @@ model Lancamento {
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
 
-  conta        Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta        Conta                @relation(fields: [contaId], references: [id], onDelete: Restrict)
   centroCusto  CentroCusto?         @relation(fields: [centroCustoId], references: [id])
   categoria    CategoriaLancamento? @relation("CategoriaLancamentoCategoria", fields: [categoriaId], references: [id])
   subcategoria CategoriaLancamento? @relation("CategoriaLancamentoSubcategoria", fields: [subcategoriaId], references: [id])
   parent       Lancamento?          @relation("LancamentoEstorno", fields: [parentId], references: [id])
   estornos     Lancamento[]         @relation("LancamentoEstorno")
-  createdBy    Usuario?             @relation(fields: [createdById], references: [id])
+  createdBy    Usuario?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([contaId, tipo, status], name: "idx_lancamento_conta_tipo_status")
   @@index([contaId, dataEfetiva], name: "idx_lancamento_conta_data")
+  @@index([contaId, status, dataPrevista], name: "idx_lancamento_conta_status_prevista")
+  @@index([contaId, createdAt], name: "idx_lancamento_conta_created")
   @@index([externalRef], name: "idx_lancamento_external_ref")
 }
 
@@ -1913,20 +2033,20 @@ model Invite {
 }
 
 model AuthActionToken {
-  id                 String              @id @default(cuid())
-  userId             String
-  user               Usuario             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type               AuthActionTokenType
-  tokenHash          String              @unique
-  email              String
-  expiresAt          DateTime
-  usedAt             DateTime?
-  invalidatedAt      DateTime?
-  requestedByIp      String?
+  id                   String              @id @default(cuid())
+  userId               String
+  user                 Usuario             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type                 AuthActionTokenType
+  tokenHash            String              @unique
+  email                String
+  expiresAt            DateTime
+  usedAt               DateTime?
+  invalidatedAt        DateTime?
+  requestedByIp        String?
   requestedByUserAgent String?
-  resendEmailId      String?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  resendEmailId        String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
   @@index([userId, type], name: "idx_auth_action_token_user_type")
   @@index([email, type], name: "idx_auth_action_token_email_type")
@@ -1955,6 +2075,7 @@ model PortalEvento {
 
 model PortalEventoInscricao {
   id         String   @id @default(cuid())
+  contaId    String
   eventoId   String
   alunoId    String
   status     String   @default("PENDENTE") // PENDENTE, CONFIRMADO, CANCELADO
@@ -1964,9 +2085,13 @@ model PortalEventoInscricao {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  conta  Conta        @relation(fields: [contaId], references: [id], onDelete: Restrict)
   evento PortalEvento @relation(fields: [eventoId], references: [id], onDelete: Cascade)
   aluno  Aluno        @relation(fields: [alunoId], references: [id])
 
+  @@unique([contaId, eventoId, alunoId], name: "uq_portal_evento_inscricao_conta_evento_aluno", map: "uq_portal_evento_inscricao_conta_evento_aluno")
+  @@index([contaId, eventoId], name: "idx_portal_evento_inscricao_conta_evento")
+  @@index([contaId, alunoId], name: "idx_portal_evento_inscricao_conta_aluno")
   @@index([eventoId])
   @@index([alunoId])
 }
@@ -2047,7 +2172,7 @@ model Contrato {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  matricula              Matricula         @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Cascade)
+  matricula              Matricula         @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Restrict)
   modelo                 ContratoModelo?   @relation(fields: [modeloId], references: [id])
   contratoOrigem         Contrato?         @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
   aditivos               Contrato[]        @relation("ContratoAditivo")
@@ -2421,13 +2546,13 @@ model Charge {
 
   // Campos para listagem de standalone charges (sem vínculo com Cobranca)
   // Preenchidos na criação para evitar consultas externas
-  payerName   String? // Nome do pagador (aluno ou responsável)
-  description String? // Descrição da cobrança
-  value       Decimal?  @db.Decimal(12, 2) // Valor da cobrança
-  dueDate     DateTime? // Data de vencimento
-  billingType String? // PIX, BOLETO, CREDIT_CARD, etc.
-  customerId  String? // ID do Customer local (para referência)
-  invoiceUrl  String? // Link de pagamento (invoiceUrl do Asaas)
+  payerName     String? // Nome do pagador (aluno ou responsável)
+  description   String? // Descrição da cobrança
+  value         Decimal?  @db.Decimal(12, 2) // Valor da cobrança
+  dueDate       DateTime? // Data de vencimento
+  billingType   String? // PIX, BOLETO, CREDIT_CARD, etc.
+  customerId    String? // ID do Customer local (para referência)
+  invoiceUrl    String? // Link de pagamento (invoiceUrl do Asaas)
   familyGroupId String?
 
   standaloneInstallmentPlanId String?
@@ -2438,7 +2563,7 @@ model Charge {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta                     Conta                      @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta                     Conta                      @relation(fields: [contaId], references: [id], onDelete: Restrict)
   cobranca                  Cobranca?                  @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
   customer                  Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
@@ -2452,6 +2577,8 @@ model Charge {
   @@index([contaId, status, dueDate], name: "idx_charge_conta_status_due")
   @@index([contaId, standaloneInstallmentPlanId, dueDate], name: "idx_charge_conta_plan_due")
   @@index([contaId, createdAt], name: "idx_charge_conta_created")
+  @@index([contaId, status, createdAt], name: "idx_charge_conta_status_created")
+  @@index([contaId, asaasPaymentId], name: "idx_charge_conta_asaas_payment")
   @@index([asaasPaymentId])
   @@index([customerId])
   @@index([standaloneInstallmentPlanId])
@@ -2491,13 +2618,23 @@ model ChargeReadModel {
   updatedAt   DateTime
   projectedAt DateTime @default(now())
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
 
   @@unique([contaId, sourceKind, sourceId], name: "uq_charge_read_model_source")
   @@index([contaId], name: "idx_charge_read_model_conta")
   @@index([contaId, status, dueDate], name: "idx_charge_read_model_conta_status_due")
   @@index([contaId, chargeType, createdAt], name: "idx_charge_read_model_conta_type_created")
+  @@index([contaId, status, createdAt], name: "idx_charge_read_model_conta_status_created")
+  @@index([contaId, origin, status, createdAt], name: "idx_charge_read_model_conta_origin_status_created")
+  @@index([contaId, chargeType, status, createdAt], name: "idx_charge_read_model_conta_type_status_created")
+  @@index([contaId, origin, chargeType, isGroup, status, createdAt], name: "idx_charge_read_model_main_listing")
+  @@index([contaId, payerName], name: "idx_charge_read_model_conta_payer")
+  @@index([contaId, asaasPaymentId], name: "idx_charge_read_model_conta_asaas_payment")
   @@index([contaId, groupId], name: "idx_charge_read_model_conta_group")
+  @@index([contaId, matriculaId], name: "idx_charge_read_model_conta_matricula")
+  @@index([contaId, alunoId], name: "idx_charge_read_model_conta_aluno")
+  @@index([contaId, linkStatus], name: "idx_charge_read_model_conta_link_status")
+  @@index([contaId, projectedAt], name: "idx_charge_read_model_conta_projected")
   @@index([asaasPaymentId], name: "idx_charge_read_model_asaas_payment")
 }
 
@@ -2524,7 +2661,7 @@ model StandaloneInstallmentPlan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   charges  Charge[]
   sales    Sale[]
@@ -2552,18 +2689,18 @@ model StandaloneSubscription {
 
   asaasSubscriptionId String? @unique
 
-  cycle       String
-  billingType String
-  value       Decimal   @db.Decimal(12, 2)
-  nextDueDate DateTime
-  endDate     DateTime?
-  description String?
+  cycle         String
+  billingType   String
+  value         Decimal   @db.Decimal(12, 2)
+  nextDueDate   DateTime
+  endDate       DateTime?
+  description   String?
   familyGroupId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   charges  Charge[]
 
@@ -2623,8 +2760,8 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta  Conta  @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Cascade)
+  conta  Conta  @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
 
   @@index([contaId])
   @@index([status])
@@ -2648,9 +2785,9 @@ model Subscription {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  contrato             Contrato?             @relation(fields: [contratoId], references: [id], onDelete: Cascade)
-  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato             Contrato?             @relation(fields: [contratoId], references: [id], onDelete: Restrict)
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
   asaasIntegrationJobs AsaasIntegrationJob[]
 
   @@unique([contaId, contratoId])
@@ -2683,9 +2820,9 @@ model InstallmentPlan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  contrato             Contrato              @relation(fields: [contratoId], references: [id], onDelete: Cascade)
-  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato             Contrato              @relation(fields: [contratoId], references: [id], onDelete: Restrict)
+  matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
   asaasIntegrationJobs AsaasIntegrationJob[]
 
   @@unique([contaId, contratoId])
@@ -2722,14 +2859,14 @@ model TransferRequest {
   failReason            String?
   transactionReceiptUrl String?
   effectiveDate         String?
-  endToEndIdentifier    String?   // E2E único no Bacen (PIX)
-  feeValue              Decimal?  @db.Decimal(12, 2) // Taxa cobrada pelo Asaas (transferFee)
-  netValue              Decimal?  @db.Decimal(12, 2) // Valor líquido (value - transferFee)
+  endToEndIdentifier    String? // E2E único no Bacen (PIX)
+  feeValue              Decimal? @db.Decimal(12, 2) // Taxa cobrada pelo Asaas (transferFee)
+  netValue              Decimal? @db.Decimal(12, 2) // Valor líquido (value - transferFee)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta              Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
   pixTransferSession PixTransferSession?
 
   @@unique([contaId, idempotencyKey])
@@ -2742,7 +2879,7 @@ model PixTransferSession {
   id      String @id @default(cuid())
   contaId String
 
-  amount           Decimal  @db.Decimal(12, 2)
+  amount           Decimal   @db.Decimal(12, 2)
   pixKeyOriginal   String
   pixKeyNormalized String
   pixKeyType       String
@@ -2762,10 +2899,10 @@ model PixTransferSession {
   confirmationToken String
   confirmedAt       DateTime?
   expiresAt         DateTime
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta                  Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
   confirmTransferRequest TransferRequest? @relation(fields: [confirmTransferRequestId], references: [id], onDelete: SetNull)
 
   @@index([contaId])
@@ -2778,17 +2915,17 @@ model TenantFeatureFlags {
   contaId String @unique
 
   enableExternalAsaasOnboarding Boolean @default(false)
-  enableSubscriptions      Boolean @default(false)
-  enableInstallments       Boolean @default(false)
-  enableManualWithdraw     Boolean @default(false)
-  enablePixTransfer        Boolean @default(false)
-  enableBankTransfer       Boolean @default(false)
-  enableSplitPayments      Boolean @default(false)
-  enableEscrow             Boolean @default(false)
-  enableInvoices           Boolean @default(false)
-  enablePaymentLinks       Boolean @default(false)
-  enableChargebackHandling Boolean @default(false)
-  enableDunning            Boolean @default(false)
+  enableSubscriptions           Boolean @default(false)
+  enableInstallments            Boolean @default(false)
+  enableManualWithdraw          Boolean @default(false)
+  enablePixTransfer             Boolean @default(false)
+  enableBankTransfer            Boolean @default(false)
+  enableSplitPayments           Boolean @default(false)
+  enableEscrow                  Boolean @default(false)
+  enableInvoices                Boolean @default(false)
+  enablePaymentLinks            Boolean @default(false)
+  enableChargebackHandling      Boolean @default(false)
+  enableDunning                 Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2816,6 +2953,10 @@ model AuditLog {
   conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
 
   @@index([contaId])
+  @@index([contaId, createdAt], name: "idx_audit_log_conta_created")
+  @@index([contaId, actorType, actorId, createdAt], name: "idx_audit_log_actor")
+  @@index([contaId, action, createdAt], name: "idx_audit_log_action")
+  @@index([contaId, entityType, entityId], name: "idx_audit_log_entity")
   @@index([action])
   @@index([entityType, entityId])
   @@index([correlationId])
@@ -2848,6 +2989,11 @@ model Notification {
 
   @@unique([contaId, dedupeKey])
   @@index([contaId, triggeredAt])
+  @@index([contaId, type, createdAt], name: "idx_notification_conta_type_created")
+  @@index([contaId, category, createdAt], name: "idx_notification_conta_category_created")
+  @@index([contaId, severity, createdAt], name: "idx_notification_conta_severity_created")
+  @@index([contaId, sourceType, sourceId], name: "idx_notification_conta_source")
+  @@index([contaId, entityType, entityId], name: "idx_notification_conta_entity")
   @@index([type])
   @@index([entityType, entityId])
 }
@@ -2868,6 +3014,8 @@ model NotificationRecipient {
 
   @@unique([notificationId, userId])
   @@index([contaId, userId, archivedAt, readAt])
+  @@index([contaId, userId, archivedAt, createdAt], name: "idx_notification_recipient_feed")
+  @@index([contaId, userId, readAt], name: "idx_notification_recipient_read")
   @@index([userId, createdAt])
 }
 
@@ -2923,6 +3071,10 @@ model RematriculaOperacao {
   createdBy       Usuario    @relation(fields: [createdById], references: [id])
 
   @@index([contaId])
+  @@index([contaId, status], name: "idx_rematricula_operacao_conta_status")
+  @@index([contaId, createdAt], name: "idx_rematricula_operacao_conta_created")
+  @@index([contaId, matriculaOrigemId], name: "idx_rematricula_operacao_conta_matricula_origem")
+  @@index([contaId, correlationId], name: "idx_rematricula_operacao_conta_correlation")
   @@index([matriculaOrigemId])
   @@index([status])
   @@index([idempotencyKey])
@@ -2970,6 +3122,10 @@ model PayerChangeOperacao {
   createdBy Usuario   @relation(fields: [createdById], references: [id])
 
   @@index([contaId])
+  @@index([contaId, status], name: "idx_payer_change_operacao_conta_status")
+  @@index([contaId, createdAt], name: "idx_payer_change_operacao_conta_created")
+  @@index([contaId, matriculaId], name: "idx_payer_change_operacao_conta_matricula")
+  @@index([contaId, correlationId], name: "idx_payer_change_operacao_conta_correlation")
   @@index([matriculaId])
   @@index([status])
 }
@@ -3051,11 +3207,11 @@ model Product {
   name              String
   description       String?
   sku               String?
-  price             Decimal  @db.Decimal(12, 2)
-  stock             Int      @default(0)
-  lowStockThreshold Int      @default(5)
+  price             Decimal @db.Decimal(12, 2)
+  stock             Int     @default(0)
+  lowStockThreshold Int     @default(5)
   categoryId        String?
-  hasVariants       Boolean  @default(false)
+  hasVariants       Boolean @default(false)
 
   isActive   Boolean   @default(true)
   archivedAt DateTime?
@@ -3063,24 +3219,28 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta     Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  category  ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  saleItems SaleItem[]
-  images    ProductImage[]
-  options   ProductOption[]
-  variants  ProductVariant[]
-  inventoryBalances InventoryBalance[]
+  conta              Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  category           ProductCategory?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  saleItems          SaleItem[]
+  images             ProductImage[]
+  options            ProductOption[]
+  variants           ProductVariant[]
+  inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
-  restockOrderItems RestockOrderItem[]
+  restockOrderItems  RestockOrderItem[]
 
+  @@unique([contaId, sku])
   @@index([contaId])
   @@index([contaId, archivedAt])
-  @@unique([contaId, sku])
+  @@index([contaId, isActive], name: "idx_product_conta_active")
+  @@index([contaId, categoryId], name: "idx_product_conta_category")
+  @@index([contaId, name], name: "idx_product_conta_name")
+  @@index([contaId, createdAt], name: "idx_product_conta_created")
 }
 
 model Sale {
-  id      String @id @default(cuid())
-  contaId String
+  id          String  @id @default(cuid())
+  contaId     String
   uiRequestId String?
 
   saleNumber Int
@@ -3095,17 +3255,17 @@ model Sale {
   walkInNotes   String?
 
   // Valores
-  subtotal Decimal @db.Decimal(12, 2)
-  discount Decimal @default(0) @db.Decimal(12, 2)
-  total    Decimal @db.Decimal(12, 2)
+  subtotal    Decimal  @db.Decimal(12, 2)
+  discount    Decimal  @default(0) @db.Decimal(12, 2)
+  total       Decimal  @db.Decimal(12, 2)
   totalCost   Decimal? @db.Decimal(12, 2)
   grossProfit Decimal? @db.Decimal(12, 2)
   grossMargin Decimal? @db.Decimal(9, 4)
 
   // Finalização
   finalizationType SaleFinalizationType
-  inventoryMode    SaleInventoryMode   @default(IMMEDIATE)
-  inventoryStatus  SaleInventoryStatus @default(FULFILLED)
+  inventoryMode    SaleInventoryMode    @default(IMMEDIATE)
+  inventoryStatus  SaleInventoryStatus  @default(FULFILLED)
 
   // Recebimento presencial
   paymentMethod  SalePaymentMethod?
@@ -3128,20 +3288,23 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
-  responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  conta                     Conta                      @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  aluno                     Aluno?                     @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  responsavel               Responsavel?               @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
   charge                    Charge?                    @relation(fields: [chargeId], references: [id], onDelete: SetNull)
   standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
   matricula                 Matricula?                 @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
-  operador    Usuario      @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: Restrict)
-  items       SaleItem[]
+  operador                  Usuario                    @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: Restrict)
+  items                     SaleItem[]
 
   @@unique([contaId, uiRequestId])
   @@unique([contaId, saleNumber])
   @@index([contaId])
   @@index([contaId, status])
   @@index([contaId, createdAt])
+  @@index([contaId, alunoId], name: "idx_sale_conta_aluno")
+  @@index([contaId, responsavelId], name: "idx_sale_conta_responsavel")
+  @@index([contaId, operadorId], name: "idx_sale_conta_operador")
   @@index([chargeId])
   @@index([standaloneInstallmentPlanId])
   @@index([saleNumber, contaId])
@@ -3151,24 +3314,24 @@ model SaleItem {
   id     String @id @default(cuid())
   saleId String
 
-  productId   String?
-  variantId   String?
-  productName String
-  quantity    Int
-  returnedQuantity Int @default(0)
-  unitPrice   Decimal @db.Decimal(12, 2)
-  subtotal    Decimal @db.Decimal(12, 2)
-  unitCostAtSale     Decimal? @db.Decimal(12, 4)
-  totalCostAtSale    Decimal? @db.Decimal(12, 2)
+  productId           String?
+  variantId           String?
+  productName         String
+  quantity            Int
+  returnedQuantity    Int      @default(0)
+  unitPrice           Decimal  @db.Decimal(12, 2)
+  subtotal            Decimal  @db.Decimal(12, 2)
+  unitCostAtSale      Decimal? @db.Decimal(12, 4)
+  totalCostAtSale     Decimal? @db.Decimal(12, 2)
   discountShareAtSale Decimal? @db.Decimal(12, 2)
-  netSubtotalAtSale  Decimal? @db.Decimal(12, 2)
-  grossProfitAtSale  Decimal? @db.Decimal(12, 2)
-  marginAtSale       Decimal? @db.Decimal(9, 4)
+  netSubtotalAtSale   Decimal? @db.Decimal(12, 2)
+  grossProfitAtSale   Decimal? @db.Decimal(12, 2)
+  marginAtSale        Decimal? @db.Decimal(9, 4)
 
   createdAt DateTime @default(now())
 
-  sale    Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  sale    Sale            @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
   variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
   @@index([saleId])
@@ -3194,10 +3357,12 @@ model InventoryBalance {
   variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@unique([contaId, inventoryItemKey])
+  @@unique([variantId])
   @@index([contaId])
+  @@index([contaId, productId], name: "idx_inventory_balance_conta_product")
+  @@index([contaId, variantId], name: "idx_inventory_balance_conta_variant")
   @@index([productId])
   @@index([variantId])
-  @@unique([variantId])
 }
 
 model InventoryMovement {
@@ -3233,6 +3398,10 @@ model InventoryMovement {
 
   @@unique([contaId, originType, originId, originLineId, originActionKey, movementType])
   @@index([contaId])
+  @@index([contaId, productId, createdAt], name: "idx_inventory_movement_conta_product_created")
+  @@index([contaId, variantId, createdAt], name: "idx_inventory_movement_conta_variant_created")
+  @@index([contaId, movementType, createdAt], name: "idx_inventory_movement_conta_type_created")
+  @@index([contaId, actorUserId, createdAt], name: "idx_inventory_movement_conta_actor_created")
   @@index([productId])
   @@index([variantId])
   @@index([createdAt])
@@ -3252,12 +3421,14 @@ model RestockOrder {
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
-  conta     Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  createdBy Usuario           @relation("RestockOrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  conta     Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  createdBy Usuario            @relation("RestockOrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   items     RestockOrderItem[]
 
   @@index([contaId])
   @@index([contaId, status])
+  @@index([contaId, expectedAt], name: "idx_restock_order_conta_expected")
+  @@index([contaId, createdById], name: "idx_restock_order_conta_created_by")
   @@index([expectedAt])
 }
 
@@ -3272,8 +3443,8 @@ model RestockOrderItem {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  restockOrder RestockOrder   @relation(fields: [restockOrderId], references: [id], onDelete: Cascade)
-  product      Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  restockOrder RestockOrder    @relation(fields: [restockOrderId], references: [id], onDelete: Cascade)
+  product      Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([restockOrderId])
@@ -3304,8 +3475,8 @@ model ProductOption {
   product Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
   values  ProductOptionValue[]
 
-  @@index([productId])
   @@unique([productId, name])
+  @@index([productId])
 }
 
 model ProductOptionValue {
@@ -3317,8 +3488,8 @@ model ProductOptionValue {
   option   ProductOption          @relation(fields: [optionId], references: [id], onDelete: Cascade)
   variants ProductVariantOption[]
 
-  @@index([optionId])
   @@unique([optionId, value])
+  @@index([optionId])
 }
 
 model ProductVariant {
@@ -3336,15 +3507,15 @@ model ProductVariant {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  product   Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
-  options   ProductVariantOption[]
-  saleItems SaleItem[]
-  inventoryBalances InventoryBalance[]
+  product            Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options            ProductVariantOption[]
+  saleItems          SaleItem[]
+  inventoryBalances  InventoryBalance[]
   inventoryMovements InventoryMovement[]
-  restockOrderItems RestockOrderItem[]
+  restockOrderItems  RestockOrderItem[]
 
-  @@index([productId])
   @@unique([productId, sku])
+  @@index([productId])
 }
 
 model ProductVariantOption {

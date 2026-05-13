@@ -138,6 +138,7 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
       // Criar registro de pagamento
       await tx.pagamento.create({
         data: {
+          contaId,
           cobrancaId: chargeId,
           valorPago: cobranca.valor,
           dataPagamento: new Date(paymentDateStr),

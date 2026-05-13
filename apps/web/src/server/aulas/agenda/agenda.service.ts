@@ -263,6 +263,9 @@ export async function createAgendaEvent(contaId: string, input: CreateCalendarEv
       professores: professorIds.length
         ? {
             create: professorIds.map((professorId) => ({
+              conta: {
+                connect: { id: contaId },
+              },
               professor: {
                 connect: { id: professorId },
               },
@@ -338,6 +341,9 @@ export async function updateAgendaEvent(
       professores: {
         deleteMany: {},
         create: professorIds.map((professorId) => ({
+          conta: {
+            connect: { id: contaId },
+          },
           professor: {
             connect: { id: professorId },
           },

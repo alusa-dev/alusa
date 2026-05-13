@@ -31,7 +31,7 @@ describe('encerrar-contratos-expirados job', () => {
     it('deve retornar 0 processados quando não há matrículas expiradas', async () => {
       vi.mocked(prisma.matricula.findMany).mockResolvedValue([]);
 
-      const result = await encerrarContratosExpirados();
+      const result = await encerrarContratosExpirados('conta-1');
 
       expect(result.processados).toBe(0);
       expect(result.atualizados).toBe(0);
@@ -59,7 +59,7 @@ describe('encerrar-contratos-expirados job', () => {
         },
       ] as never);
 
-      const result = await encerrarContratosExpirados();
+      const result = await encerrarContratosExpirados('conta-1');
 
       expect(result.processados).toBe(2);
       expect(result.atualizados).toBe(2);
@@ -96,7 +96,7 @@ describe('encerrar-contratos-expirados job', () => {
 
       vi.mocked(prisma.$transaction).mockRejectedValue(new Error('Erro de banco'));
 
-      const result = await encerrarContratosExpirados();
+      const result = await encerrarContratosExpirados('conta-1');
 
       expect(result.processados).toBe(1);
       expect(result.atualizados).toBe(0);

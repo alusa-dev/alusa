@@ -67,6 +67,7 @@ export async function vincularResponsavelAoAluno(
 
     const vinculo = await tx.alunoResponsavel.create({
       data: {
+        contaId: input.contaId,
         alunoId: input.alunoId,
         responsavelId: input.responsavelId,
         tipoVinculo: input.tipoVinculo,

@@ -547,7 +547,12 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     // 9. Vincular responsável se necessário
     if (responsavelId) {
       await tx.alunoResponsavel.create({
-        data: { alunoId: aluno.id, responsavelId, tipoVinculo: 'PRINCIPAL' },
+        data: {
+          contaId: normalizedData.contaId,
+          alunoId: aluno.id,
+          responsavelId,
+          tipoVinculo: 'PRINCIPAL',
+        },
       });
       console.log('🔗 Responsável vinculado ao aluno');
     }
@@ -979,7 +984,7 @@ export async function updateAluno(data: UpdateAlunoWithResponsavel) {
             },
           });
           await tx.alunoResponsavel.create({
-            data: { alunoId: id, responsavelId: resp.id, tipoVinculo: 'PRINCIPAL' },
+            data: { contaId, alunoId: id, responsavelId: resp.id, tipoVinculo: 'PRINCIPAL' },
           });
         }
       }
