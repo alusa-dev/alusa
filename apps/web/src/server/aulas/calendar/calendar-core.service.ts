@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type { AttendanceStatus, PrismaClient } from '@prisma/client';
-import { addDays, eachDayOfInterval, endOfDay, startOfWeek, startOfDay, subDays } from 'date-fns';
+import { addDays } from 'date-fns';
 
 import type {
   AulasDashboardItemDTO,
@@ -12,6 +12,16 @@ import type {
   CalendarEventListItemDTO,
 } from '@/features/aulas/dtos';
 import { AulasError } from '@/src/server/aulas/aulas-error';
+import {
+  combineWallClockOnZonedCalendarDay,
+  DEFAULT_ACCOUNT_TIMEZONE,
+  eachZonedCalendarDayInRange,
+  endOfZonedDay,
+  normalizeAccountTimeZone,
+  resolveAccountTimeZone,
+  startOfZonedDay,
+  startOfZonedWeek,
+} from '@/src/server/aulas/calendar/account-timezone';
 import { createAulasOperationLog } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
 
@@ -82,6 +92,8 @@ export type AgendaListFilters = {
   salaId?: string;
   type?: string[];
   status?: string[];
+  /** Quando definido, evita nova leitura de Conta.timezone durante a materialização */
+  accountTimeZone?: string;
 };
 
 export type MaterializeCalendarSummary = {
@@ -120,10 +132,6 @@ function buildTurmaLookupItem(input: {
   };
 }
 
-function getDayCode(date: Date) {
-  return DAY_CODES[date.getUTCDay()];
-}
-
 function normalizeDayCode(value: string) {
   const normalized = value
     .normalize('NFD')
@@ -147,25 +155,6 @@ function normalizeDayCode(value: string) {
   }
 
   return normalized;
-}
-
-// BRT = UTC-3; horaInicio/horaFim são horários locais do Brasil
-const BRAZIL_UTC_OFFSET_HOURS = 3;
-
-function combineDateAndTime(date: Date, hhmm: string) {
-  const [hours, minutes] = hhmm.split(':').map(Number);
-  // Usa UTC para garantir comportamento correto independente do timezone do servidor
-  return new Date(
-    Date.UTC(
-      date.getUTCFullYear(),
-      date.getUTCMonth(),
-      date.getUTCDate(),
-      hours + BRAZIL_UTC_OFFSET_HOURS,
-      minutes,
-      0,
-      0,
-    ),
-  );
 }
 
 function buildSourceRuleKey(turma: { id: string; horaInicio: string; horaFim: string }) {
@@ -201,14 +190,19 @@ export function buildAttendanceSummary(
   };
 }
 
-export function normalizeAgendaRange(start?: string | Date, end?: string | Date) {
+export function normalizeAgendaRange(
+  start?: string | Date,
+  end?: string | Date,
+  timeZone: string = DEFAULT_ACCOUNT_TIMEZONE,
+) {
+  const tz = normalizeAccountTimeZone(timeZone);
   const now = new Date();
-  const safeStart = start ? new Date(start) : startOfWeek(now, { weekStartsOn: 1 });
-  const safeEnd = end ? new Date(end) : endOfDay(addDays(safeStart, 6));
+  const safeStart = start ? new Date(start) : startOfZonedWeek(now, tz, 1);
+  const safeEnd = end ? new Date(end) : endOfZonedDay(addDays(safeStart, 6), tz);
 
   return {
-    start: startOfDay(safeStart),
-    end: endOfDay(safeEnd),
+    start: startOfZonedDay(safeStart, tz),
+    end: endOfZonedDay(safeEnd, tz),
   };
 }
 
@@ -344,13 +338,15 @@ export async function materializeCalendarWindow(params: {
   contaId: string;
   start: Date;
   end: Date;
+  timeZone: string;
   logOperation?: boolean;
   logReason?: string;
   prismaClient?: PrismaClient;
 }) {
   const prismaClient = params.prismaClient ?? prisma;
-  const materializeStart = subDays(startOfDay(params.start), MATERIALIZATION_PAST_DAYS);
-  const materializeEnd = endOfDay(addDays(params.end, MATERIALIZATION_FUTURE_DAYS));
+  const tz = normalizeAccountTimeZone(params.timeZone);
+  const materializeStart = startOfZonedDay(addDays(params.start, -MATERIALIZATION_PAST_DAYS), tz);
+  const materializeEnd = endOfZonedDay(addDays(params.end, MATERIALIZATION_FUTURE_DAYS), tz);
   const summary: MaterializeCalendarSummary = {
     start: materializeStart.toISOString(),
     end: materializeEnd.toISOString(),
@@ -411,13 +407,19 @@ export async function materializeCalendarWindow(params: {
   for (const turma of turmas) {
     const sourceRuleKey = buildSourceRuleKey(turma);
     const turmaDayCodes = new Set(turma.diasSemana.map(normalizeDayCode));
-    const dates = eachDayOfInterval({ start: materializeStart, end: materializeEnd });
+    const days = eachZonedCalendarDayInRange(materializeStart, materializeEnd, tz);
 
-    for (const date of dates) {
-      if (!turmaDayCodes.has(getDayCode(date))) continue;
+    for (const day of days) {
+      if (!turmaDayCodes.has(DAY_CODES[day.jsDay])) continue;
 
-      const startAt = combineDateAndTime(date, turma.horaInicio);
-      const endAt = combineDateAndTime(date, turma.horaFim);
+      const startAt = combineWallClockOnZonedCalendarDay(
+        day.year,
+        day.monthIndex,
+        day.day,
+        turma.horaInicio,
+        tz,
+      );
+      const endAt = combineWallClockOnZonedCalendarDay(day.year, day.monthIndex, day.day, turma.horaFim, tz);
       const key = `${sourceRuleKey}:${startAt.toISOString()}`;
 
       occurrenceMap.set(key, {
@@ -754,11 +756,14 @@ export async function listCalendarEventsRaw(
   filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
-  const materializationKey = [
-    filters.contaId,
-    filters.start.toISOString(),
-    filters.end.toISOString(),
-  ].join(':');
+  const timeZone =
+    filters.accountTimeZone !== undefined
+      ? normalizeAccountTimeZone(filters.accountTimeZone)
+      : await resolveAccountTimeZone(filters.contaId, prismaClient);
+
+  const materializationKey = [filters.contaId, filters.start.toISOString(), filters.end.toISOString(), timeZone].join(
+    ':',
+  );
 
   const inFlightMaterialization = materializationInFlight.get(materializationKey);
 
@@ -769,6 +774,7 @@ export async function listCalendarEventsRaw(
       contaId: filters.contaId,
       start: filters.start,
       end: filters.end,
+      timeZone,
       prismaClient,
     }).then(() => undefined);
 
@@ -1017,9 +1023,15 @@ export async function getCalendarEventOrThrow(
 }
 
 export async function buildAgendaListPayload(
-  filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient; includeResources?: boolean },
+  filters: AgendaListFilters & {
+    contaId: string;
+    timeZone: string;
+    prismaClient?: PrismaClient;
+    includeResources?: boolean;
+  },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
+  const timeZone = normalizeAccountTimeZone(filters.timeZone);
   const events = await listCalendarEventsRaw({
     contaId: filters.contaId,
     start: filters.start,
@@ -1029,6 +1041,7 @@ export async function buildAgendaListPayload(
     salaId: filters.salaId,
     type: filters.type,
     status: filters.status,
+    accountTimeZone: timeZone,
     prismaClient,
   });
 
@@ -1047,6 +1060,7 @@ export async function buildAgendaListPayload(
       start: filters.start.toISOString(),
       end: filters.end.toISOString(),
     },
+    timeZone,
     ...(resources ? { resources } : {}),
     events: mappedEvents,
   };
@@ -1056,13 +1070,15 @@ export async function buildAgendaDashboardPayload(
   contaId: string,
   prismaClient: PrismaClient = prisma,
 ): Promise<{ items: AulasDashboardItemDTO[] }> {
-  const start = startOfDay(new Date());
-  const end = endOfDay(new Date());
+  const timeZone = await resolveAccountTimeZone(contaId, prismaClient);
+  const start = startOfZonedDay(new Date(), timeZone);
+  const end = endOfZonedDay(new Date(), timeZone);
 
   const events = await listCalendarEventsRaw({
     contaId,
     start,
     end,
+    accountTimeZone: timeZone,
     prismaClient,
   });
 

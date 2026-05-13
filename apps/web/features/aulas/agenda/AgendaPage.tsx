@@ -394,6 +394,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                   events={calendarEvents}
                   viewMode={calendarAgenda.filters.viewMode}
                   anchorDate={calendarAgenda.filters.start}
+                  timeZone={calendarAgenda.data?.data.timeZone ?? 'America/Sao_Paulo'}
                   onEventSelect={setSelectedEventId}
                 />
               )}

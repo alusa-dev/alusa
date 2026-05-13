@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { PROFILE_LOCALE_OPTIONS, PROFILE_THEME_OPTIONS } from '@/lib/profile-preferences';
+import { BRAZIL_IANA_TIMEZONE_OPTIONS } from '@/lib/brazil-iana-timezones';
 import { updateSchool, updateSchoolAddress, type SchoolAddress } from '@/features/account/services/profile-service';
 import { EditActions } from '@/components/ui/edit-actions';
 import { disabledInputClasses, formatCepBR, formatCpfCnpjBR, formatPhoneBR, isValidCepBR, isValidCpfCnpjBR, isValidPhoneBR, onlyDigits } from '@/lib/formatters';
@@ -190,6 +191,7 @@ export default function ContaPerfilPage() {
   const [isSavingSchool, setIsSavingSchool] = useState(false);
   const [schoolName, setSchoolName] = useState('');
   const [schoolCpfCnpj, setSchoolCpfCnpj] = useState('');
+  const [schoolTimezone, setSchoolTimezone] = useState('America/Sao_Paulo');
 
   // Endereço da escola
   const [isEditingAddress, setIsEditingAddress] = useState(false);
@@ -211,6 +213,7 @@ export default function ContaPerfilPage() {
         setFormTheme(data.theme ?? 'system');
         setSchoolName(data.school?.name ?? '');
         setSchoolCpfCnpj(data.school?.cpfCnpj ?? '');
+        setSchoolTimezone(data.school?.timezone ?? 'America/Sao_Paulo');
         if (data.school?.address) {
           setSchoolAddress({
             street: data.school.address.street || '',
@@ -729,7 +732,11 @@ export default function ContaPerfilPage() {
   async function handleSaveSchool() {
     setIsSavingSchool(true);
     try {
-      const updated = await updateSchool({ name: schoolName, cpfCnpj: schoolCpfCnpj });
+      const updated = await updateSchool({
+        name: schoolName,
+        cpfCnpj: schoolCpfCnpj,
+        timezone: schoolTimezone,
+      });
       setProfile((prev) => (prev ? { ...prev, school: { ...prev.school, ...updated } as UserProfileWithSchool['school'] } : prev));
       pushToast({ title: 'Sucesso', description: 'Dados da escola atualizados.' });
       setIsEditingSchool(false);
@@ -766,7 +773,8 @@ export default function ContaPerfilPage() {
 
   const schoolDirty =
     schoolName.trim() !== (profile.school?.name ?? '') ||
-    onlyDigits(schoolCpfCnpj) !== onlyDigits(profile.school?.cpfCnpj ?? '');
+    onlyDigits(schoolCpfCnpj) !== onlyDigits(profile.school?.cpfCnpj ?? '') ||
+    schoolTimezone !== (profile.school?.timezone ?? 'America/Sao_Paulo');
 
   const addr: SchoolAddress = profile.school?.address ?? {
     street: '',
@@ -998,6 +1006,7 @@ export default function ContaPerfilPage() {
                   onCancel={() => {
                     setSchoolName(profile.school?.name || '');
                     setSchoolCpfCnpj(profile.school?.cpfCnpj || '');
+                    setSchoolTimezone(profile.school?.timezone ?? 'America/Sao_Paulo');
                     setIsEditingSchool(false);
                   }}
                   onSave={handleSaveSchool}
@@ -1015,6 +1024,23 @@ export default function ContaPerfilPage() {
             <Input value={schoolName} onChange={(e) => setSchoolName(e.target.value)} disabled={!isEditingSchool} className={disabledInputClasses(!isEditingSchool)} />
             <Label className="text-xs text-muted-foreground mt-2">CNPJ/CPF</Label>
             <Input value={formatCpfCnpjBR(schoolCpfCnpj)} onChange={(e) => setSchoolCpfCnpj(onlyDigits(e.target.value))} disabled={!isEditingSchool} className={disabledInputClasses(!isEditingSchool)} />
+            <Label className="text-xs text-muted-foreground mt-2">Fuso horário da escola</Label>
+            <Select value={schoolTimezone} onValueChange={setSchoolTimezone} disabled={!isEditingSchool}>
+              <SelectTrigger className={disabledInputClasses(!isEditingSchool)}>
+                <SelectValue placeholder="Selecione o fuso" />
+              </SelectTrigger>
+              <SelectContent>
+                {BRAZIL_IANA_TIMEZONE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Usado para gerar horários da agenda e das turmas. Após alterar, reconstrua a agenda em Aulas se os horários
+              recorrentes estiverem defasados.
+            </p>
             <Label className="text-xs text-muted-foreground mt-2">Status</Label>
             <Input
               value={profile.school?.status || 'Não informado'}

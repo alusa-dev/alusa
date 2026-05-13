@@ -593,6 +593,8 @@ model Conta {
   inventoryBalances             InventoryBalance[]
   inventoryMovements            InventoryMovement[]
   restockOrders                 RestockOrder[]
+  /// Fuso horário IANA para materialização da agenda (ex.: America/Sao_Paulo, America/Manaus)
+  timezone                      String                        @default("America/Sao_Paulo") @db.VarChar(64)
   // Campos de endereço da conta (escola)
   enderecoCep                   String?                       @db.Char(8)
   enderecoLogradouro            String?

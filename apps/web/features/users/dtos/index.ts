@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { authRegisterInputSchema } from '@/lib/dtos/auth-register.dto';
+import { isValidIanaTimeZone } from '@/lib/brazil-iana-timezones';
 import { PROFILE_LOCALE_VALUES, PROFILE_THEME_VALUES } from '@/lib/profile-preferences';
 
 const dateLikeDTOSchema = z.union([z.string(), z.date()]);
@@ -32,6 +33,8 @@ export const userSchoolSummaryDTOSchema = z.object({
   cpfCnpj: z.string().nullable().optional(),
   status: z.string(),
   ownerUserId: z.string().nullable().optional(),
+  /** IANA timezone da conta (agenda / materialização de turmas) */
+  timezone: z.string(),
   address: userSchoolAddressDTOSchema.optional(),
 });
 
@@ -143,6 +146,14 @@ export const updateSchoolInputDTOSchema = z
   .object({
     name: z.string().trim().min(2, 'Nome muito curto').max(120, 'Nome muito longo').optional(),
     cpfCnpj: z.string().trim().regex(/^[0-9.\-/]{11,18}$/i, 'CNPJ/CPF inválido').optional(),
+    timezone: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .refine((value) => value === undefined || isValidIanaTimeZone(value), {
+        message: 'Fuso horário IANA inválido',
+      }),
   })
   .strict();
 

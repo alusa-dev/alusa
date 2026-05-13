@@ -22,7 +22,8 @@
     "db:seed:test": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- prisma db seed --schema=../../prisma/schema.prisma",
     "storybook": "storybook dev -p 6006",
     "build:storybook": "storybook build",
-    "mcp": "npx shadcn@latest mcp"
+    "mcp": "npx shadcn@latest mcp",
+    "rebuild:agendas": "dotenv -e ../../.env.local -e .env.local -- tsx scripts/rebuild-all-contas-agenda.ts"
   },
   "dependencies": {
     "@alusa/asaas": "workspace:*",
@@ -34,6 +35,7 @@
     "@alusa/shared": "workspace:*",
     "@alusa/ui": "workspace:*",
     "@aws-sdk/client-s3": "^3.1040.0",
+    "@date-fns/tz": "^1.4.1",
     "@fullcalendar/core": "^6.1.20",
     "@fullcalendar/daygrid": "^6.1.20",
     "@fullcalendar/interaction": "^6.1.20",

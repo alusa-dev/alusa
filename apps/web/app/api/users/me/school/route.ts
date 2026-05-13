@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { updateSchoolInputDTOSchema, userSchoolSummaryDTOSchema } from '@/features/users/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
+import { normalizeAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
 
 export async function PATCH(req: Request) {
   try {
@@ -25,6 +26,7 @@ export async function PATCH(req: Request) {
     const data: Record<string, unknown> = {};
     if (typeof input.name !== 'undefined') data.nome = input.name;
     if (typeof input.cpfCnpj !== 'undefined') data.cpfCnpj = input.cpfCnpj.replace(/\D/g, '');
+    if (typeof input.timezone !== 'undefined') data.timezone = normalizeAccountTimeZone(input.timezone);
 
     if (Object.keys(data).length === 0) {
       return jsonNoStore(
@@ -42,6 +44,7 @@ export async function PATCH(req: Request) {
         cpfCnpj: true,
         status: true,
         ownerUserId: true,
+        timezone: true,
       },
     });
 
@@ -52,6 +55,7 @@ export async function PATCH(req: Request) {
         cpfCnpj: updated.cpfCnpj,
         status: updated.status,
         ownerUserId: updated.ownerUserId,
+        timezone: updated.timezone ?? 'America/Sao_Paulo',
       }),
     );
   } catch (error) {

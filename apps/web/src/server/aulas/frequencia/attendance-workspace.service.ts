@@ -13,6 +13,7 @@ import { isAttendanceEventOnSelectedDay } from '@/features/aulas/utils/attendanc
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
 import { AulasError } from '@/src/server/aulas/aulas-error';
 import { listCalendarEventsRaw, mapCalendarEventListItem } from '@/src/server/aulas/calendar/calendar-core.service';
+import { endOfZonedDay, resolveAccountTimeZone, startOfZonedDay } from '@/src/server/aulas/calendar/account-timezone';
 import type { AulasAccessScope } from '@/src/server/aulas/session';
 import { prisma } from '@/src/prisma';
 
@@ -20,8 +21,9 @@ function buildLookupItem(id: string, label: string): AulasLookupItemDTO {
   return { id, label };
 }
 
-function resolveSelectedDate(date?: string) {
-  return startOfDay(date ? new Date(date) : new Date());
+function resolveSelectedDate(date: string | undefined, timeZone: string) {
+  const base = date ? new Date(date) : new Date();
+  return startOfZonedDay(base, timeZone);
 }
 
 function getAttendanceLaunchState(event: Pick<CalendarEventListItemDTO, 'status' | 'startAt' | 'endAt'>): AttendanceWorkspaceLaunchStateDTO {
@@ -84,9 +86,10 @@ async function loadAttendanceWorkspaceData(
   scope: AulasAccessScope,
   query: ListAttendanceWorkspaceQueryDTO,
 ) {
-  const selectedDate = resolveSelectedDate(query.date);
-  const rangeStart = startOfDay(selectedDate);
-  const rangeEnd = endOfDay(selectedDate);
+  const timeZone = await resolveAccountTimeZone(scope.contaId, prisma);
+  const selectedDate = resolveSelectedDate(query.date, timeZone);
+  const rangeStart = selectedDate;
+  const rangeEnd = endOfZonedDay(selectedDate, timeZone);
 
   const professorScope = {
     active: scope.isProfessor,
@@ -165,6 +168,7 @@ async function loadAttendanceWorkspaceData(
         end: rangeEnd,
         professorId: professorScope.professorId ?? undefined,
         type: ['AULA', 'REPOSICAO'],
+        accountTimeZone: timeZone,
         prismaClient: prisma,
       })
     : [];

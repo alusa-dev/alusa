@@ -45,6 +45,7 @@ describe('DTO Refactor Wave 2', () => {
         cpfCnpj: '00000000000191',
         status: 'ATIVO',
         ownerUserId: 'user-1',
+        timezone: 'America/Manaus',
         address: userSchoolAddressDTOSchema.parse({
           street: 'Rua A',
           number: '10',

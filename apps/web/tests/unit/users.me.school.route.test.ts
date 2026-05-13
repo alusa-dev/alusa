@@ -56,6 +56,7 @@ describe('PATCH /api/users/me/school', () => {
       cpfCnpj: '12345678000199',
       status: 'ATIVO',
       ownerUserId: 'owner-1',
+      timezone: 'America/Sao_Paulo',
     });
 
     const response = await PATCH(
@@ -76,6 +77,7 @@ describe('PATCH /api/users/me/school', () => {
       id: 'conta-1',
       name: 'Escola Segura',
       cpfCnpj: '12345678000199',
+      timezone: 'America/Sao_Paulo',
     });
   });
 });

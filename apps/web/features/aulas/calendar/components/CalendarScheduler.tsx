@@ -17,6 +17,8 @@ type CalendarSchedulerProps = {
   events: CalendarEventListItemDTO[];
   viewMode: AgendaViewModeDTO;
   anchorDate: string;
+  /** IANA zone da conta — mantém grades alinhadas ao servidor após correção de fuso */
+  timeZone: string;
   onEventSelect: (_eventId: string) => void;
 };
 
@@ -136,6 +138,7 @@ export function CalendarScheduler({
   events,
   viewMode,
   anchorDate,
+  timeZone,
   onEventSelect,
 }: CalendarSchedulerProps) {
   const initialView = viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth';
@@ -153,11 +156,12 @@ export function CalendarScheduler({
       )}
     >
       <FullCalendar
-        key={`${viewMode}:${anchorDate}`}
+        key={`${viewMode}:${anchorDate}:${timeZone}`}
         plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView={initialView}
         initialDate={anchorDate}
         locale="pt-br"
+        timeZone={timeZone}
         headerToolbar={false}
         dayMaxEventRows={viewMode === 'month-detailed' ? 4 : viewMode === 'month-compact' ? 6 : 3}
         eventMaxStack={isWeekView ? 2 : undefined}

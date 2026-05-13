@@ -187,7 +187,7 @@ export async function updateNotificationPreferences(preferences: NotificationPre
 // ---- School (Conta) services ----
 const schoolUpdateSchema = updateSchoolInputDTOSchema;
 
-export async function updateSchool(payload: { name?: string; cpfCnpj?: string }) {
+export async function updateSchool(payload: { name?: string; cpfCnpj?: string; timezone?: string }) {
   const parsed = schoolUpdateSchema.safeParse(payload);
   if (!parsed.success) {
     throw new ProfileUpdateError('Dados invalidos', {

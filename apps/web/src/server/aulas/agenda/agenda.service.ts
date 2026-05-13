@@ -1,4 +1,3 @@
-import { endOfDay, startOfDay } from 'date-fns';
 import { unstable_cache } from 'next/cache';
 
 import type {
@@ -26,6 +25,11 @@ import {
   autoCloseAgendaEventIfDue,
   autoCloseAgendaEventsInRange,
 } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+import {
+  endOfZonedDay,
+  resolveAccountTimeZone,
+  startOfZonedDay,
+} from '@/src/server/aulas/calendar/account-timezone';
 import { createAulasOperationLog, listAulasOperationLogs } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
 
@@ -69,10 +73,12 @@ async function buildEventDetailsResult(
   });
 
   const event = await getCalendarEventOrThrow(eventId, contaId, prisma);
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
   const nearbyEvents = await listCalendarEventsRaw({
     contaId,
-    start: startOfDay(event.startAt),
-    end: endOfDay(event.endAt),
+    start: startOfZonedDay(event.startAt, timeZone),
+    end: endOfZonedDay(event.endAt, timeZone),
+    accountTimeZone: timeZone,
     prismaClient: prisma,
   });
   const conflictMap = buildConflictMap(nearbyEvents);
@@ -180,7 +186,8 @@ async function syncExperimentalStatusForEventUpdate(params: {
 }
 
 export async function listAgendaEvents(contaId: string, query: ListCalendarEventsQueryDTO) {
-  const range = normalizeAgendaRange(query.start, query.end);
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
+  const range = normalizeAgendaRange(query.start, query.end, timeZone);
   await autoCloseAgendaEventsInRange({
     contaId,
     start: range.start,
@@ -192,6 +199,7 @@ export async function listAgendaEvents(contaId: string, query: ListCalendarEvent
     success: true as const,
     data: await buildAgendaListPayload({
       contaId,
+      timeZone,
       start: range.start,
       end: range.end,
       turmaId: query.turmaId,
@@ -415,11 +423,13 @@ export async function rebuildAgendaWindow(
   contaId: string,
   input: RebuildAgendaWindowInputDTO,
 ): Promise<RebuildAgendaWindowResultDTO> {
-  const range = normalizeAgendaRange(input.start, input.end);
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
+  const range = normalizeAgendaRange(input.start, input.end, timeZone);
   const summary = await materializeCalendarWindow({
     contaId,
     start: range.start,
     end: range.end,
+    timeZone,
     logOperation: true,
     logReason: input.reason,
     prismaClient: prisma,

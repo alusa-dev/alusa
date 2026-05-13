@@ -4,9 +4,21 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { combineWallClockOnZonedCalendarDay } from '@/src/server/aulas/calendar/account-timezone';
 import { buildConflictMap } from '@/src/server/aulas/calendar/calendar-core.service';
 
 describe('calendar-core.service', () => {
+  it('converte horário de parede em America/Sao_Paulo para o instante UTC esperado', () => {
+    const instant = combineWallClockOnZonedCalendarDay(2025, 4, 12, '10:30', 'America/Sao_Paulo');
+    expect(instant.toISOString()).toBe('2025-05-12T13:30:00.000Z');
+  });
+
+  it('America/Manaus e America/Sao_Paulo diferem 1h para o mesmo HH:mm cadastral', () => {
+    const sp = combineWallClockOnZonedCalendarDay(2025, 4, 12, '10:30', 'America/Sao_Paulo');
+    const ma = combineWallClockOnZonedCalendarDay(2025, 4, 12, '10:30', 'America/Manaus');
+    expect(ma.getTime() - sp.getTime()).toBe(60 * 60 * 1000);
+  });
+
   it('detecta conflitos simultâneos de sala e professor', () => {
     const events = [
       {

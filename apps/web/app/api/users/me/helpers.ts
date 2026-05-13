@@ -36,6 +36,7 @@ export const profileWithContaSelect = {
       cpfCnpj: true,
       status: true,
       ownerUserId: true,
+      timezone: true,
     },
   },
 } as const;
@@ -84,6 +85,7 @@ export function mapUserWithConta(user: ProfileWithContaEntity) {
           cpfCnpj: user.conta.cpfCnpj,
           status: user.conta.status,
           ownerUserId: canSeeOwnerUserId ? user.conta.ownerUserId : null,
+          timezone: user.conta.timezone ?? 'America/Sao_Paulo',
           address: (user as any)?.conta
             ? {
                 street: (user as any).conta.enderecoLogradouro ?? '',

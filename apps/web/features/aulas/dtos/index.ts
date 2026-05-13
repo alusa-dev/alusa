@@ -192,6 +192,7 @@ export const listCalendarEventsResultSchema = z.object({
       start: z.string(),
       end: z.string(),
     }),
+    timeZone: z.string().default('America/Sao_Paulo'),
     resources: z
       .object({
         turmas: z.array(aulasTurmaLookupItemSchema),
