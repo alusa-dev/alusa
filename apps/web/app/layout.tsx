@@ -23,13 +23,18 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   colorScheme: "light dark",
   viewportFit: "cover",
+  /** Alinha o chrome mobile (Safari/Chrome) ao token --app-bg em cada esquema. */
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F7F5F8" },
+    { media: "(prefers-color-scheme: dark)", color: "#2A004A" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = cookies();
   const themeCookie = (cookieStore.get('alusa.theme')?.value as 'light' | 'dark' | undefined) ?? undefined;
   return (
-    <html lang="pt-BR" className="h-full" data-theme={themeCookie}>
+    <html lang="pt-BR" className="min-h-dvh app-surface-bg" data-theme={themeCookie}>
       <head>
         {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar) */}
         <Script id="theme-init" strategy="beforeInteractive">
@@ -40,7 +45,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {`(function(){try{document.documentElement.classList.add('theme-ready');document.body.classList.add('theme-ready');}catch(e){}})();`}
         </Script>
       </head>
-      <body className="min-h-screen text-gray-900 antialiased app-surface-bg">
+      <body className="min-h-dvh text-gray-900 antialiased app-surface-bg">
         <AppProviders>
           {children}
         </AppProviders>
