@@ -557,6 +557,27 @@ select:focus {
 	width: 100%;
 }
 
+@layer utilities {
+
+	/* AuthShell: altura viewport estável no mobile (Safari barra dinâmica) */
+	.auth-mobile-viewport {
+		min-height: 100vh;
+		min-height: 100svh;
+		min-height: 100dvh;
+	}
+
+	.auth-mobile-scroll {
+		padding-bottom: max(1rem, env(safe-area-inset-bottom));
+	}
+}
+
+@supports (-webkit-touch-callout: none) {
+
+	.auth-mobile-viewport {
+		min-height: 100svh;
+	}
+}
+
 /* Cards auth reutilizáveis */
 .auth-card {
 	@apply bg-white rounded-[40px] shadow-card w-[420px] max-w-[92vw] p-10 sm:p-12;

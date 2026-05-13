@@ -449,7 +449,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           >
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
-          <p className="mt-8 text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[11px]">
+          <p className="mt-6 pb-4 text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
             <span className="text-[#686868]">{mode === 'invite' ? 'Não recebeu este convite? ' : 'Já tenho uma conta! '}</span>
             <a href="/auth/login" className="text-brand-accent hover:underline">
               {mode === 'invite' ? 'Contatar administrador' : 'Fazer login'}

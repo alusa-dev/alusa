@@ -33,18 +33,22 @@ const defaultHeroContent = (
     </div>
 );
 
-export default function AuthShell({ children, heroImageSrc = '/images/image-login.jpg', heroContent = defaultHeroContent }: AuthShellProps) {
+export default function AuthShell({
+    children,
+    heroImageSrc = '/images/image-login.jpg',
+    heroContent = defaultHeroContent,
+}: AuthShellProps) {
     return (
-        <div className="flex min-h-screen w-full">
-            {/* Esquerda: desktop — imagem, logo h-8 */}
-            <div className="hidden lg:block lg:w-1/2 sticky top-0 h-screen overflow-hidden flex-shrink-0">
+        <main className="auth-mobile-viewport flex w-full overflow-hidden bg-white lg:min-h-screen">
+            {/* Esquerda: desktop */}
+            <aside className="hidden lg:sticky lg:top-0 lg:block lg:h-screen lg:w-1/2 lg:flex-shrink-0 lg:overflow-hidden">
                 <img
                     src={heroImageSrc}
                     alt=""
                     aria-hidden="true"
                     className="absolute inset-0 h-full w-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60 pointer-events-none" />
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60" />
                 <div className="absolute inset-0 z-10 flex flex-col justify-start px-12 py-12 xl:px-14 xl:py-14">
                     <div className="flex flex-col gap-16">
                         <div>
@@ -61,39 +65,23 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
                     variant="negativo-branco"
                     className="absolute bottom-12 left-12 z-20 xl:bottom-14 xl:left-14"
                 />
-            </div>
-
-            {/* Direita: mobile — paddings estilo Stripe (16/24/8); desktop — bloco centralizado */}
-            <div className="flex min-h-screen w-full flex-col bg-white lg:w-1/2">
-                <div
-                    className={
-                        'flex min-h-0 flex-1 flex-col overflow-y-auto ' +
-                        'px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-0 ' +
-                        'lg:overflow-visible lg:px-0 lg:pb-0 lg:pt-0'
-                    }
-                >
-                    <div
-                        className={
-                            'flex min-h-0 flex-1 flex-col justify-start ' +
-                            'lg:min-h-screen lg:justify-center lg:px-8 lg:py-16'
-                        }
-                    >
-                        {/* Mobile: header — pt 24px ou safe-area; maior respiro abaixo da logo; traço full-bleed */}
+            </aside>
+            {/* Direita: mobile + desktop */}
+            <section className="auth-mobile-viewport flex min-h-0 flex-1 flex-col bg-white lg:flex-none lg:w-1/2 lg:min-h-screen">
+                <div className="auth-mobile-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 lg:overflow-visible lg:px-0 lg:pb-0">
+                    <div className="flex min-h-0 flex-1 flex-col justify-start lg:min-h-screen lg:justify-center lg:px-8 lg:py-16">
                         <header className="shrink-0 lg:hidden">
-                            <div className="flex w-full items-center justify-start pt-[max(1.5rem,env(safe-area-inset-top))] pb-6">
+                            <div className="flex w-full items-center justify-start pb-6 pt-[max(1.5rem,env(safe-area-inset-top))]">
                                 <AlusaWordmarkBrandDark />
                             </div>
-                            <div
-                                className="-mx-4 border-b border-gray-200"
-                                aria-hidden="true"
-                            />
+                            <div className="-mx-4 border-b border-gray-200" aria-hidden="true" />
                         </header>
-                        <div className="flex w-full flex-1 flex-col justify-center items-center pt-6 lg:flex-none lg:items-center lg:pt-0">
+                        <div className="flex w-full flex-1 flex-col items-center justify-start pt-6 lg:flex-none lg:items-center lg:justify-center lg:pt-0">
                             {children}
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
+            </section>
+        </main>
     );
 }
