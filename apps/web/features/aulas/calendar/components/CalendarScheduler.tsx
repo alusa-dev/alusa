@@ -7,7 +7,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import luxonPlugin from '@fullcalendar/luxon3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/core';
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import type { AgendaViewModeDTO, CalendarEventListItemDTO } from '@/features/aulas/dtos';
 import {
@@ -64,6 +64,55 @@ function formatWeekEventTimeLabel(timeText: string) {
   return normalized.split(' - ')[0] ?? normalized;
 }
 
+/** Acima do eventShortHeight/minHeight (22px): espaço para título + meta sem compressão excessiva */
+const WEEK_EVENT_META_VISIBLE_MIN_HEIGHT_PX = 40;
+
+function WeekTimeGridEventContent({ arg }: { arg: EventContentArg }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const teacher = arg.event.extendedProps.professor as string | null;
+  const room = arg.event.extendedProps.sala as string | null;
+  const meta = teacher ?? room ?? null;
+  const [showMetaLine, setShowMetaLine] = useState(false);
+
+  useLayoutEffect(() => {
+    if (!meta) {
+      setShowMetaLine(false);
+      return;
+    }
+
+    const el = rootRef.current;
+    if (!el) return;
+
+    const sync = () => {
+      const h = el.getBoundingClientRect().height;
+      setShowMetaLine(h >= WEEK_EVENT_META_VISIBLE_MIN_HEIGHT_PX);
+    };
+
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height ?? 0;
+      setShowMetaLine(h >= WEEK_EVENT_META_VISIBLE_MIN_HEIGHT_PX);
+    });
+
+    ro.observe(el);
+    sync();
+
+    return () => ro.disconnect();
+  }, [meta]);
+
+  return (
+    <div
+      ref={rootRef}
+      className="flex h-full min-h-0 flex-col gap-0.5 overflow-hidden text-[10px] font-medium leading-snug"
+    >
+      <div className="flex min-h-0 shrink-0 items-center gap-1.5 overflow-hidden">
+        <span className="shrink-0 font-semibold opacity-80">{formatWeekEventTimeLabel(arg.timeText)}</span>
+        <span className="min-w-0 truncate">{arg.event.title}</span>
+      </div>
+      {showMetaLine && meta ? <div className="min-h-0 shrink-0 truncate text-[10px] opacity-80">{meta}</div> : null}
+    </div>
+  );
+}
+
 function buildEventTooltip(arg: EventMountArg) {
   const teacher = arg.event.extendedProps.professor as string | null;
   const room = arg.event.extendedProps.sala as string | null;
@@ -118,10 +167,7 @@ function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
         {isCompactMonth ? (
           <div className="truncate font-medium">{arg.event.title}</div>
         ) : isWeekView ? (
-          <div className="flex items-center gap-1.5 overflow-hidden text-[10px] font-medium leading-4">
-            <span className="shrink-0 font-semibold opacity-80">{formatWeekEventTimeLabel(arg.timeText)}</span>
-            <span className="truncate">{arg.event.title}</span>
-          </div>
+          <WeekTimeGridEventContent arg={arg} />
         ) : (
           <>
             <div className="truncate font-medium">{`${arg.timeText} ${arg.event.title}`.trim()}</div>
@@ -145,6 +191,7 @@ export function CalendarScheduler({
   onEventSelect,
 }: CalendarSchedulerProps) {
   const calendarRef = useRef<FullCalendar>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const initialView = viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth';
   const isWeekView = viewMode === 'week';
   const isCompactMonth = viewMode === 'month-compact';
@@ -168,8 +215,22 @@ export function CalendarScheduler({
     bumpTimeGridLayout();
   }, [anchorDate, bumpTimeGridLayout, events, timeZone, viewMode]);
 
+  useLayoutEffect(() => {
+    if (!isWeekView) return;
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      bumpTimeGridLayout();
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [bumpTimeGridLayout, isWeekView]);
+
   return (
     <div
+      ref={wrapperRef}
       className={cn(
         'calendar-scheduler-wrapper bg-white',
         isWeekView && 'calendar-scheduler-wrapper--week',

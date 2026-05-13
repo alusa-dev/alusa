@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import type {
   AgendaViewModeDTO,
@@ -50,6 +50,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
   const [data, setData] = useState<Awaited<ReturnType<typeof listAgendaEvents>> | null>(null);
   const [loading, setLoading] = useState(options?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const enabled = options?.enabled ?? true;
   const requestKey = JSON.stringify(filters);
@@ -92,7 +93,11 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
     return () => {
       cancelled = true;
     };
-  }, [enabled, requestKey]);
+  }, [enabled, requestKey, refreshNonce]);
+
+  const refresh = useCallback(() => {
+    setRefreshNonce((n) => n + 1);
+  }, []);
 
   return {
     filters,
@@ -100,5 +105,6 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
     data,
     loading,
     error,
+    refresh,
   };
 }

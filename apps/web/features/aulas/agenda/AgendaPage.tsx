@@ -226,8 +226,8 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
 
   function handleEventSaved() {
     startTransition(() => {
-      calendarAgenda.setFilters((current) => ({ ...current }));
-      timelineAgenda.setFilters((current) => ({ ...current }));
+      calendarAgenda.refresh();
+      timelineAgenda.refresh();
     });
   }
 
