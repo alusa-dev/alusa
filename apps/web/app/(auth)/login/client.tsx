@@ -347,10 +347,9 @@ export default function LoginClient() {
         <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
           Bem-vindo de volta!
         </h1>
-        <p className="mt-3 max-w-[26rem] text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
-          Informe seu e-mail e senha para acessar
-          <br />
-          sua conta na alusa.
+        <p className="mt-3 max-w-[26rem] text-[0.8125rem] font-medium leading-snug text-[#5c5c5c] min-[400px]:text-[0.9375rem] min-[400px]:leading-relaxed">
+          <span className="block">Informe seu e-mail e senha</span>
+          <span className="block">para acessar sua conta na alusa.</span>
         </p>
         <form
           method="post"

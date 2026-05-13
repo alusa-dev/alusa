@@ -48,12 +48,12 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
                 <div
                     className={
                         'flex min-h-0 flex-1 flex-col overflow-y-auto ' +
-                        'px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] min-[400px]:px-6 min-[400px]:pb-6 ' +
+                        'px-5 pt-[max(0px,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] min-[400px]:px-6 min-[400px]:pb-6 ' +
                         'lg:px-8 lg:py-16 lg:pb-16'
                     }
                 >
                     <div className="flex flex-1 flex-col items-center justify-center">
-                        <div className="mb-5 flex w-full justify-center min-[400px]:mb-6 lg:mb-0 lg:hidden">
+                        <div className="-mt-1 mb-5 flex w-full justify-center min-[400px]:mb-6 lg:mb-0 lg:mt-0 lg:hidden">
                             <img
                                 src="/brand/logo.svg"
                                 alt="Alusa"
