@@ -1,5 +1,5 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm prisma:generate && pnpm -r run build"
+  "buildCommand": "cd ../.. && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/web"
 }

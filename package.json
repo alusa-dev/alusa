@@ -16,8 +16,8 @@
     "lint": "pnpm -r exec eslint .",
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
-    "build": "pnpm -r run build",
-    "build:web": "pnpm -F @alusa/web build",
+    "build": "turbo run build",
+    "build:web": "turbo run build --filter=@alusa/web",
     "build:clean": "pnpm --filter @alusa/web build:clean",
     "dev": "pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm --filter @alusa/web dev:raw",
     "dev:web": "pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm -F @alusa/web dev:raw",
@@ -62,6 +62,7 @@
     "prisma": "5.18.0",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",
+    "turbo": "^2.5.0",
     "typescript-eslint": "^8.28.0",
     "zod": "^3.23.8"
   },
