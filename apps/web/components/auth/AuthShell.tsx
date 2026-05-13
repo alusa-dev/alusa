@@ -1,6 +1,7 @@
 "use client";
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { AsaasSeal } from '@/components/shared/AsaasSeal';
 
 interface AuthShellProps {
     children: React.ReactNode;
@@ -56,6 +57,10 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
                         {heroContent}
                     </div>
                 </div>
+                <AsaasSeal
+                    variant="negativo-branco"
+                    className="absolute bottom-12 left-12 z-20 xl:bottom-14 xl:left-14"
+                />
             </div>
 
             {/* Direita: mobile — paddings estilo Stripe (16/24/8); desktop — bloco centralizado */}
