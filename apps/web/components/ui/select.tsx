@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
-import { CheckCircle, ChevronDown, ChevronUp } from "@/components/icons/icons";
+import { ChevronDown, ChevronUp } from "@/components/icons/icons";
 import { cn } from "@/lib/utils";
 
 const Select = SelectPrimitive.Root;
@@ -21,8 +21,9 @@ const SelectTrigger = React.forwardRef<
       "flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900",
       "placeholder:text-gray-500",
       "transition-colors duration-200",
-      "hover:border-violet-400",
-      "focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-1",
+      "hover:border-gray-400",
+      "focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-0 focus:border-gray-400",
+      "data-[state=open]:border-gray-400 data-[state=open]:bg-gray-50 data-[state=open]:text-gray-900",
       "disabled:cursor-not-allowed disabled:opacity-50",
       "[&>span]:line-clamp-1 [&>span]:text-left",
       className
@@ -96,9 +97,9 @@ const SelectContent = React.forwardRef<
       <SelectScrollUpButton />
       <SelectPrimitive.Viewport
         className={cn(
-          "p-1",
+          "box-border p-2",
           position === "popper" &&
-            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]"
+            "w-full min-w-[var(--radix-select-trigger-width)] max-h-[min(var(--radix-select-content-available-height),24rem)] [scrollbar-gutter:stable]"
         )}
       >
         {children}
@@ -128,20 +129,15 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-pointer select-none items-center rounded-md py-2 pl-8 pr-2 text-sm text-gray-900 outline-none",
-      "transition-colors duration-150",
-      "data-[highlighted]:bg-violet-500 data-[highlighted]:text-white",
-      "data-[state=checked]:font-medium",
+      "relative flex w-full max-w-full cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm text-gray-900 outline-none",
+      "box-border transition-colors duration-150",
+      "data-[highlighted]:bg-gray-100 data-[highlighted]:text-gray-900",
+      "data-[state=checked]:bg-gray-100 data-[state=checked]:font-medium",
       "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}
   >
-    <span className="absolute left-2 flex h-4 w-4 items-center justify-center">
-      <SelectPrimitive.ItemIndicator>
-        <CheckCircle className="h-4 w-4" />
-      </SelectPrimitive.ItemIndicator>
-    </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
   </SelectPrimitive.Item>
 ));

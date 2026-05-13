@@ -85,15 +85,21 @@ export default function ForgotPasswordPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-center px-0 text-center lg:max-w-[320px] lg:items-start lg:text-left">
-          <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem] lg:text-[30px] lg:leading-tight lg:tracking-tight lg:text-left">
-            Recuperar senha
-          </h1>
-          <p className="mt-3 text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem] lg:mt-2 lg:text-left lg:text-[12px] lg:leading-normal lg:text-brand-muted">
-            Informe o e-mail cadastrado. Enviaremos um link para redefinir sua senha.
-          </p>
-          <form onSubmit={(e) => { void onSubmit(e); }} className="mt-7 flex w-full flex-col items-stretch gap-4 min-[400px]:mt-8 min-[400px]:gap-5 lg:mt-6 lg:items-start lg:gap-5" noValidate>
-            <div className="relative h-12 w-full min-[400px]:h-14 lg:h-12">
+        <div className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
+          <header className="mb-6 w-full space-y-2 text-left lg:mb-8">
+            <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
+              Recuperar Senha
+            </h1>
+            <p className="text-left text-justify text-sm font-medium leading-relaxed text-brand-muted lg:text-[12px]">
+              Informe o e-mail associado à sua conta para receber um link de redefinição de senha.
+            </p>
+          </header>
+          <form
+            onSubmit={(e) => { void onSubmit(e); }}
+            className="flex w-full flex-col items-stretch gap-4 lg:items-start"
+            noValidate
+          >
+            <div className="relative h-12 w-full lg:h-12">
               <label htmlFor="email" className="sr-only">E-mail</label>
               <input
                 id="email"
@@ -103,21 +109,25 @@ export default function ForgotPasswordPage() {
                 required
                 value={email}
                 onChange={(e) => { setEmail(e.target.value); }}
-                className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-sm"
+                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
                 aria-invalid={email.length > 0 && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? 'true' : undefined}
               />
-              <Mail className="absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#828282] min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] min-[400px]:right-[1.125rem] lg:right-4 lg:h-4 lg:w-4" aria-hidden />
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted lg:right-4" aria-hidden>
+                <Mail className="h-4 w-4 lg:h-4 lg:w-4" />
+              </span>
             </div>
             <button
               type="submit"
               disabled={loading || email.trim().length === 0}
-              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 disabled:opacity-50 min-[400px]:text-base lg:h-12"
+              className="flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-base font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 lg:h-12 lg:text-[14px]"
             >
               {loading ? 'Enviando...' : 'Enviar link'}
             </button>
-            <p className="mt-1 w-full text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-left lg:text-[11px]">
+            <p className="mt-8 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[11px]">
               <span className="text-[#686868]">Tenho uma conta? </span>
-              <a href="/auth/login" className="text-[#5c2f91] hover:underline">Fazer login</a>
+              <a href="/auth/login" className="text-brand-accent hover:underline">
+                Fazer login
+              </a>
             </p>
           </form>
         </div>

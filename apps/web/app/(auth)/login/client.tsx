@@ -14,6 +14,7 @@ import { CustomToast } from '@/components/ui/toast';
 import { debugLog, isAuthDebug } from '@/lib/debug-logger';
 import { nextParamToRedirect } from '@/lib/safe-redirect';
 import AuthShell from '@/components/auth/AuthShell';
+import { Checkbox } from '@/components/ui/checkbox';
 
 type LoginValidationReason =
   | 'INVALID_INPUT'
@@ -343,11 +344,11 @@ export default function LoginClient() {
 
   return (
     <AuthShell>
-      <div className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-stretch text-left lg:max-w-[320px]">
-        <h1 className="w-full text-left text-[1.375rem] font-semibold leading-snug tracking-tight text-gray-900 min-[400px]:text-[1.5rem] lg:hidden">
+      <div className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
+        <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:hidden">
           Acesse sua conta
         </h1>
-        <h1 className="mt-6 hidden text-left text-[30px] font-semibold leading-tight tracking-tight lg:mt-0 lg:block">
+        <h1 className="mt-6 hidden text-left text-[1.625rem] font-semibold leading-tight tracking-tight text-brand-primary lg:mt-0 lg:block">
           Bem-vindo de volta!
         </h1>
         <p className="mt-2 hidden text-left text-[12px] font-medium leading-normal text-brand-muted lg:block">
@@ -360,53 +361,52 @@ export default function LoginClient() {
           action="/auth/login"
           onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
           data-testid="login-form"
-          className="mt-7 flex w-full flex-col items-stretch gap-3.5 min-[400px]:mt-8 min-[400px]:gap-4 lg:mt-6 lg:gap-4"
+          className="mt-6 flex w-full flex-col items-stretch gap-4 lg:mt-6"
           noValidate
         >
-          <div className="relative h-12 w-full min-[400px]:h-14 lg:h-12">
+          <div className="relative h-12 w-full lg:h-12">
             <input
               type="email"
               data-testid="email"
               placeholder="Digite seu E-mail"
               autoComplete="email"
               aria-invalid={!!errors.email || undefined}
-              className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]"
+              className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
               {...register('email')}
             />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted min-[400px]:right-[1.125rem] lg:right-4" aria-hidden>
-              <User className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted lg:right-4" aria-hidden>
+              <User className="h-4 w-4 lg:h-4 lg:w-4" />
             </span>
           </div>
-          <div className="relative h-12 w-full min-[400px]:h-14 lg:h-12">
+          <div className="relative h-12 w-full lg:h-12">
             <input
               type={showPassword ? 'text' : 'password'}
               data-testid="password"
               placeholder="Digite sua senha"
               autoComplete="current-password"
               aria-invalid={!!errors.password || undefined}
-              className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]"
+              className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
               {...register('password')}
             />
             <button
               type="button"
               onClick={() => { setShowPassword(s => !s); }}
               aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-brand-muted outline-none min-[400px]:right-3.5 lg:right-3 lg:p-1"
+              className="absolute right-2 top-1/2 flex min-h-12 min-w-12 -translate-y-1/2 items-center justify-center text-brand-muted outline-none lg:right-3 lg:min-h-0 lg:min-w-0 lg:p-1"
             >
-              {showPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" />}
+              {showPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
             </button>
           </div>
-          <div className="flex w-full items-center justify-between gap-2 text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[12px]">
-            <label className="flex cursor-pointer select-none items-center gap-2 py-1 lg:py-0">
-              <input
-                type="checkbox"
+          <div className="flex w-full items-center justify-between gap-2 text-sm font-medium lg:text-[12px]">
+            <label htmlFor="login-remember" className="flex cursor-pointer select-none items-center gap-2 py-1 lg:py-0">
+              <Checkbox
+                id="login-remember"
                 checked={remember}
-                onChange={(e) => { setRemember(e.target.checked); }}
-                className="h-4 w-4 shrink-0 rounded-[5px] border border-brand-accent accent-[#3e1f63] outline-none min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4"
+                onCheckedChange={setRemember}
               />
               <span className="text-[#686868]">Lembrar-me</span>
             </label>
-            <Link href="/auth/forgot-password" className="shrink-0 text-brand-accent outline-none hover:underline min-[400px]:text-sm lg:text-[12px]">
+            <Link href="/auth/forgot-password" className="shrink-0 py-2 text-brand-accent outline-none hover:underline lg:py-0 lg:text-[12px]">
               Esqueceu sua senha?
             </Link>
           </div>
@@ -415,7 +415,7 @@ export default function LoginClient() {
               type="submit"
               data-testid="login-button"
               disabled={isSubmitting}
-              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 min-[400px]:text-base lg:h-12 lg:text-[14px]"
+              className="flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-base font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 lg:h-12 lg:text-[14px]"
             >
               Fazer login
             </button>

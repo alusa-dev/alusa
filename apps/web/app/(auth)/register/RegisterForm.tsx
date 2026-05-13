@@ -1,22 +1,27 @@
 // Página de registro: componente client isolado para permitir wrapper SSR em page.tsx
 "use client";
 import React, { useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { signIn } from 'next-auth/react';
-import { Eye, EyeOff, Mail, ChevronDown } from '@/components/icons/icons';
+import { Eye, EyeOff, Mail } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { debugLog, isAuthDebug } from '@/lib/debug-logger';
 import AuthShell from '@/components/auth/AuthShell';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 export const REQUIRES_SCHOOL_DATA = false;
 
 const strongPassword = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
-const passwordRequirementsText = 'Use no minimo 8 caracteres, com letra maiuscula, letra minuscula, numero e caractere especial.';
-
-
 
 // Schema condicional por modo
 const baseSchema = z.object({
@@ -26,7 +31,7 @@ const baseSchema = z.object({
   financeIntegrationMode: z.enum(['WHITELABEL_BAAS', 'EXTERNAL_ASAAS_ACCOUNT']).default('WHITELABEL_BAAS'),
   senha: z.string().regex(strongPassword, 'Senha fraca'),
   confirmarSenha: z.string(),
-  termos: z.literal(true, { errorMap: () => ({ message: 'Você deve aceitar os termos' }) }),
+  termos: z.boolean().refine((val) => val === true, { message: 'Você deve aceitar os termos' }),
 });
 
 function schemaFor() {
@@ -44,7 +49,7 @@ type FormValues = {
   financeIntegrationMode: 'WHITELABEL_BAAS' | 'EXTERNAL_ASAAS_ACCOUNT';
   senha: string;
   confirmarSenha: string;
-  termos: true;
+  termos: boolean;
 };
 
 interface InviteData {
@@ -72,12 +77,13 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const schema = useMemo(() => schemaFor(), []);
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormValues>({
+  const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
     defaultValues: {
       email: inviteData?.email || '',
       financeIntegrationMode: 'WHITELABEL_BAAS',
+      termos: false,
     }
   });
 
@@ -263,94 +269,187 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         </div>
       )}
     >
-      <div data-layer="form register" className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-center text-center lg:max-w-[320px] lg:items-start lg:text-left">
-        <header className="mb-7 space-y-2 text-center min-[400px]:mb-8 lg:mb-8 lg:text-left">
-          <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight min-[400px]:text-[2rem] lg:text-[30px] lg:font-semibold lg:leading-tight lg:tracking-tight">
-            {mode === 'invite' ? 'Aceitar Convite' : 'Abra sua conta'}
+      <div data-layer="form register" className="flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:max-w-[320px] lg:w-full lg:self-auto">
+        <header className="mb-6 w-full space-y-2 text-left lg:mb-8">
+          <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
+            {mode === 'invite' ? 'Aceitar convite' : 'Crie sua conta Alusa'}
           </h1>
-          <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] min-[400px]:text-[0.9375rem] lg:text-[12px] lg:leading-normal lg:text-brand-muted">
-            {mode === 'invite' && inviteData
-              ? `Você foi convidado como ${inviteData.role} para acessar o sistema.`
-              : 'Informe seu e-mail e defina uma senha para começar a abertura da sua conta na alusa.'
-            }
-          </p>
-          {/* No modo convite, o e-mail é editável no campo abaixo (pré-preenchido pelo convite) */}
-          {/* Erro global visível apenas se necessário */}
-          {globalError && <p data-testid="register-error" className="text-[0.8125rem] text-red-600 text-center min-[400px]:text-sm lg:text-left lg:text-[12px]" role="alert">{globalError}</p>}
+          {mode === 'invite' && inviteData ? (
+            <p className="text-left text-sm font-medium leading-relaxed text-brand-muted lg:text-[12px]">
+              Você foi convidado como {inviteData.role} para acessar o sistema.
+            </p>
+          ) : null}
+          {globalError && (
+            <p data-testid="register-error" className="text-left text-sm text-red-600 lg:text-[12px]" role="alert">
+              {globalError}
+            </p>
+          )}
         </header>
 
-
-        <form onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }} className="flex w-full flex-col items-stretch gap-3.5 min-[400px]:gap-4 lg:items-start lg:gap-4" data-testid="register-form" noValidate>
-          <div className="flex gap-4 w-full">
-            <div className="flex-1">
-              <div className="relative h-12 min-[400px]:h-14 lg:h-12">
-                <input type="text" placeholder="Nome" data-testid="register-nome-first" className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white px-5 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]" {...register('firstName')} />
+        <form
+          onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
+          className="flex w-full flex-col items-stretch gap-4 lg:items-start"
+          data-testid="register-form"
+          noValidate
+        >
+          <div className="flex w-full gap-3 lg:gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="relative h-12 w-full lg:h-12">
+                <input
+                  type="text"
+                  placeholder="Nome"
+                  data-testid="register-nome-first"
+                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:px-5 lg:text-[14px]"
+                  {...register('firstName')}
+                />
               </div>
             </div>
-            <div className="flex-1">
-              <div className="relative h-12 min-[400px]:h-14 lg:h-12">
-                <input type="text" placeholder="Sobrenome" data-testid="register-nome-last" className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white px-5 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]" {...register('lastName')} />
+            <div className="min-w-0 flex-1">
+              <div className="relative h-12 w-full lg:h-12">
+                <input
+                  type="text"
+                  placeholder="Sobrenome"
+                  data-testid="register-nome-last"
+                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:px-5 lg:text-[14px]"
+                  {...register('lastName')}
+                />
               </div>
             </div>
           </div>
 
           <div className="w-full">
-            <div className="relative h-12 min-[400px]:h-14 lg:h-12">
+            <div className="relative h-12 w-full lg:h-12">
               <input
                 type="email"
                 placeholder="Email"
                 data-testid="register-email"
                 autoComplete="email"
-                className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base disabled:bg-gray-100 lg:h-12 lg:text-[14px]"
+                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 disabled:bg-gray-100 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
                 {...register('email')}
                 readOnly={mode === 'invite' && !!inviteData?.email}
                 disabled={mode === 'invite' && !!inviteData?.email}
               />
-              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted min-[400px]:right-[1.125rem] lg:right-4" aria-hidden><Mail className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" /></span>
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted lg:right-4" aria-hidden>
+                <Mail className="h-4 w-4 lg:h-4 lg:w-4" />
+              </span>
             </div>
           </div>
           {mode === 'first' && enableExternalAsaasOnboarding ? (
             <div className="w-full">
-              <div className="relative h-12 min-[400px]:h-14 lg:h-12">
-                <select
-                  data-testid="register-finance-integration-mode"
-                  className="h-12 w-full min-[400px]:h-14 appearance-none rounded-[12px] border border-gray-300 bg-white px-5 pr-11 text-[0.9375rem] font-medium text-gray-900 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]"
-                  {...register('financeIntegrationMode')}
-                >
-                  <option value="WHITELABEL_BAAS">Quero abrir conta com a Alusa (padrão)</option>
-                  <option value="EXTERNAL_ASAAS_ACCOUNT">Já tenho uma conta no Asaas</option>
-                </select>
-                <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted min-[400px]:right-[1.125rem] lg:right-4">
-                  <ChevronDown className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" />
-                </div>
-              </div>
+              <Controller
+                control={control}
+                name="financeIntegrationMode"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger
+                      data-testid="register-finance-integration-mode"
+                      className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-3 text-base font-medium text-gray-900 shadow-none transition-none hover:border-gray-300 focus:border-gray-300 focus:outline-none focus:ring-0 focus:ring-offset-0 lg:h-12 lg:pl-5 lg:text-[14px]"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent
+                      position="popper"
+                      side="bottom"
+                      sideOffset={6}
+                      align="start"
+                      collisionPadding={8}
+                      className="z-[300] max-h-[min(50vh,20rem)] w-[var(--radix-select-trigger-width)] rounded-[12px] border border-gray-200 bg-white p-0 shadow-lg"
+                    >
+                      <SelectItem
+                        value="WHITELABEL_BAAS"
+                        className="cursor-pointer rounded-lg py-3 text-base font-medium lg:text-[14px]"
+                      >
+                        Quero abrir conta com a Alusa (padrão)
+                      </SelectItem>
+                      <SelectItem
+                        value="EXTERNAL_ASAAS_ACCOUNT"
+                        className="cursor-pointer rounded-lg py-3 text-base font-medium lg:text-[14px]"
+                      >
+                        Já tenho uma conta no Asaas
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
           ) : null}
           <div className="w-full">
-            <div className="relative h-12 min-[400px]:h-14 lg:h-12">
-              <input type={showPassword ? 'text' : 'password'} placeholder="Senha" data-testid="register-senha" autoComplete="new-password" className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]" {...register('senha')} />
-              <button type="button" onClick={() => { setShowPassword(s => !s); }} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'} className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-2 text-brand-muted outline-none min-[400px]:right-3.5 lg:right-3 lg:p-1">{showPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" />}</button>
+            <div className="relative h-12 w-full lg:h-12">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Senha"
+                data-testid="register-senha"
+                autoComplete="new-password"
+                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
+                {...register('senha')}
+              />
+              <button
+                type="button"
+                onClick={() => { setShowPassword(s => !s); }}
+                aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                className="absolute right-2 top-1/2 flex min-h-12 min-w-12 -translate-y-1/2 items-center justify-center text-brand-muted outline-none lg:right-3 lg:min-h-0 lg:min-w-0 lg:p-1"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
+              </button>
             </div>
           </div>
           <div className="w-full">
-            <div className="relative h-12 min-[400px]:h-14 lg:h-12">
-              <input type={showConfirmPassword ? 'text' : 'password'} placeholder="Confirmar senha" data-testid="register-senha-confirmar" autoComplete="new-password" className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base lg:h-12 lg:text-[14px]" {...register('confirmarSenha')} />
-              <button type="button" onClick={() => { setShowConfirmPassword(s => !s); }} aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'} className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-2 text-brand-muted outline-none min-[400px]:right-3.5 lg:right-3 lg:p-1">{showConfirmPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:h-4 lg:w-4" />}</button>
+            <div className="relative h-12 w-full lg:h-12">
+              <input
+                type={showConfirmPassword ? 'text' : 'password'}
+                placeholder="Confirmar senha"
+                data-testid="register-senha-confirmar"
+                autoComplete="new-password"
+                className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-4 pr-11 text-base font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 lg:h-12 lg:pl-5 lg:pr-11 lg:text-[14px]"
+                {...register('confirmarSenha')}
+              />
+              <button
+                type="button"
+                onClick={() => { setShowConfirmPassword(s => !s); }}
+                aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                className="absolute right-2 top-1/2 flex min-h-12 min-w-12 -translate-y-1/2 items-center justify-center text-brand-muted outline-none lg:right-3 lg:min-h-0 lg:min-w-0 lg:p-1"
+              >
+                {showConfirmPassword ? <EyeOff className="h-4 w-4 lg:h-4 lg:w-4" /> : <Eye className="h-4 w-4 lg:h-4 lg:w-4" />}
+              </button>
             </div>
-            <p className="mt-2 px-1 text-center text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] min-[400px]:text-[0.9375rem] lg:text-left lg:text-[11px] lg:text-brand-muted">
-              {passwordRequirementsText}
-            </p>
           </div>
-          <div className="flex w-full justify-center pt-1 lg:justify-start">
-            <label className="flex max-w-[300px] cursor-pointer select-none items-start gap-2 text-center text-[0.8125rem] font-medium leading-relaxed min-[400px]:text-sm lg:max-w-none lg:items-center lg:gap-2 lg:text-left lg:text-[12px]">
-              <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 rounded-[5px] border border-brand-accent accent-brand-accent outline-none min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem] lg:mt-0 lg:h-4 lg:w-4" {...register('termos')} />
-              <span className="text-[#686868]">Aceito os <a className="text-brand-accent hover:underline" href="/termos" target="_blank" rel="noopener noreferrer">Termos de Uso</a></span>
+          <div className="flex w-full justify-start pt-1">
+            <label htmlFor="register-termos" className="flex cursor-pointer select-none items-start gap-2 text-left text-sm font-medium text-[#686868] lg:items-center lg:text-[12px]">
+              <Controller
+                control={control}
+                name="termos"
+                render={({ field }) => (
+                  <Checkbox
+                    id="register-termos"
+                    data-testid="register-termos-checkbox"
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                    className="mt-0.5 lg:mt-0"
+                  />
+                )}
+              />
+              <span>
+                Li e aceito os{' '}
+                <a className="text-brand-accent hover:underline" href="/termos" target="_blank" rel="noopener noreferrer">
+                  Termos de Uso
+                </a>{' '}
+                e a{' '}
+                <a className="text-brand-accent hover:underline" href="/privacidade" target="_blank" rel="noopener noreferrer">
+                  Política de Privacidade
+                </a>
+                .
+              </span>
             </label>
           </div>
-          <button type="submit" data-testid="register-submit" disabled={isSubmitting} className="mt-1 flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 min-[400px]:text-base lg:h-12 lg:text-[14px]">
+          <button
+            type="submit"
+            data-testid="register-submit"
+            disabled={isSubmitting}
+            className="mt-1 flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-base font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 lg:h-12 lg:text-[14px]"
+          >
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
-          <p className="mt-2 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-left lg:text-[11px]">
+          <p className="mt-8 text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[11px]">
             <span className="text-[#686868]">{mode === 'invite' ? 'Não recebeu este convite? ' : 'Já tenho uma conta! '}</span>
             <a href="/auth/login" className="text-brand-accent hover:underline">
               {mode === 'invite' ? 'Contatar administrador' : 'Fazer login'}

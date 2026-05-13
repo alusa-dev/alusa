@@ -59,9 +59,8 @@ describe('RegisterForm', () => {
     fireEvent.change(screen.getByTestId('register-nome-first'), { target: { value: 'Elaine' } });
     fireEvent.change(screen.getByTestId('register-nome-last'), { target: { value: 'Costa' } });
     fireEvent.change(screen.getByTestId('register-email'), { target: { value: 'elaine.costa@example.com' } });
-    fireEvent.change(screen.getByTestId('register-finance-integration-mode'), {
-      target: { value: 'EXTERNAL_ASAAS_ACCOUNT' },
-    });
+    fireEvent.click(screen.getByTestId('register-finance-integration-mode'));
+    fireEvent.click(screen.getByRole('option', { name: /Já tenho uma conta no Asaas/i }));
     fireEvent.change(screen.getByTestId('register-senha'), { target: { value: 'StrongPass123!' } });
     fireEvent.change(screen.getByTestId('register-senha-confirmar'), { target: { value: 'StrongPass123!' } });
     fireEvent.click(screen.getByRole('checkbox'));

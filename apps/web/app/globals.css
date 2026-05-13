@@ -716,14 +716,14 @@ select option {
 
 select option:checked,
 select option:hover {
-	background-color: #A94DFF !important;
-	color: white !important;
+	background-color: #e5e7eb !important;
+	color: #111827 !important;
 }
 
 /* Para navegadores webkit */
 select option:checked {
-	background: #A94DFF linear-gradient(0deg, #A94DFF 0%, #A94DFF 100%) !important;
-	color: white !important;
+	background: #e5e7eb linear-gradient(0deg, #e5e7eb 0%, #e5e7eb 100%) !important;
+	color: #111827 !important;
 }
 
 /* Estilos específicos para selects do Radix UI */
@@ -738,10 +738,10 @@ select option:checked {
 }
 
 [data-radix-select-trigger]:hover {
-	background-color: #faf5ff !important;
-	/* purple-50 */
-	border-color: #c4b5fd !important;
-	/* purple-300 */
+	background-color: #f9fafb !important;
+	/* gray-50 */
+	border-color: #d1d5db !important;
+	/* gray-300 */
 	transition: all 0.2s ease;
 	outline: none !important;
 	box-shadow: none !important;
@@ -768,31 +768,34 @@ select option:checked {
 [data-radix-select-item] {
 	background-color: white !important;
 	color: #111827 !important;
-	transition: all 0.2s ease;
+	transition: background-color 0.15s ease, color 0.15s ease;
 	outline: none !important;
-	border-radius: 4px !important;
-	margin: 2px 4px !important;
+	box-sizing: border-box !important;
+	width: 100% !important;
+	max-width: 100% !important;
+	margin: 0 !important;
 }
 
 [data-radix-select-item]:hover,
 [data-radix-select-item][data-highlighted] {
-	background-color: #faf5ff !important;
-	/* purple-50 */
-	color: #7c3aed !important;
-	/* purple-600 */
+	background-color: #f3f4f6 !important;
+	/* gray-100 */
+	color: #111827 !important;
+	/* gray-900 */
 	outline: none !important;
 }
 
 [data-radix-select-item][data-state="checked"] {
-	background-color: #A94DFF !important;
-	color: white !important;
+	background-color: #e5e7eb !important;
+	/* gray-200 */
+	color: #111827 !important;
 	outline: none !important;
 }
 
 [data-radix-select-item][data-state="checked"]:hover,
 [data-radix-select-item][data-state="checked"][data-highlighted] {
-	background-color: #A94DFF !important;
-	color: white !important;
+	background-color: #e5e7eb !important;
+	color: #111827 !important;
 	outline: none !important;
 }
 
@@ -907,10 +910,9 @@ svg:hover,
 [role="option"]:hover,
 [data-radix-dropdown-menu-item]:hover,
 [data-radix-dropdown-menu-item][data-highlighted] {
-	background-color: #faf5ff !important;
-	/* purple-50 */
-	color: #7c3aed !important;
-	/* purple-600 */
+	background-color: #f3f4f6 !important;
+	/* gray-100 */
+	color: #111827 !important;
 	outline: none !important;
 	transition: all 0.2s ease;
 }
@@ -920,10 +922,8 @@ svg:hover,
 [role="option"]:focus,
 [data-radix-dropdown-menu-item]:focus,
 [data-radix-select-item]:focus {
-	background-color: #faf5ff !important;
-	/* purple-50 */
-	color: #7c3aed !important;
-	/* purple-600 */
+	background-color: #f3f4f6 !important;
+	color: #111827 !important;
 	outline: none !important;
 }
 
@@ -931,8 +931,8 @@ svg:hover,
 [role="menuitem"][data-state="checked"],
 [role="option"][aria-selected="true"],
 [data-radix-dropdown-menu-item][data-state="checked"] {
-	background-color: #A94DFF !important;
-	color: white !important;
+	background-color: #e5e7eb !important;
+	color: #111827 !important;
 	outline: none !important;
 }
 
@@ -971,10 +971,9 @@ svg:hover,
 [data-radix-dropdown-menu-item][data-highlighted],
 [data-radix-select-item]:hover,
 [data-radix-select-item][data-highlighted] {
-	background-color: #faf5ff !important;
-	/* purple-50 */
-	color: #7c3aed !important;
-	/* purple-600 */
+	background-color: #f3f4f6 !important;
+	/* gray-100 */
+	color: #111827 !important;
 }
 
 /* Estilos para cmdk (autocomplete) - cores mais suaves */
