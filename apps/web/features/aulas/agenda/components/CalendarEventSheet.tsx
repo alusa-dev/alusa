@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { format } from 'date-fns';
+import { formatInstantInAccountZone, DEFAULT_ACCOUNT_TIMEZONE } from '@/lib/agenda-timezone';
 import { ptBR } from 'date-fns/locale';
 
 import { BookOpen, Clock, DocumentText, MapPin, User, Warning } from '@/components/icons/icons';
@@ -61,6 +61,7 @@ export function CalendarEventSheet({
   onGoToAttendance,
 }: CalendarEventSheetProps) {
   const [event, setEvent] = useState<CalendarEventDetailsDTO | null>(null);
+  const [eventTimeZone, setEventTimeZone] = useState(DEFAULT_ACCOUNT_TIMEZONE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState<CalendarEventDetailsDTO['status'] | null>(null);
@@ -87,6 +88,7 @@ export function CalendarEventSheet({
   useEffect(() => {
     if (!open || !eventId) {
       setEvent(null);
+      setEventTimeZone(DEFAULT_ACCOUNT_TIMEZONE);
       setError(null);
       return;
     }
@@ -98,7 +100,10 @@ export function CalendarEventSheet({
         setLoading(true);
         setError(null);
         const result = await getAgendaEvent(eventId);
-        if (!cancelled) setEvent(result.data);
+        if (!cancelled) {
+          setEvent(result.data);
+          setEventTimeZone(result.timeZone);
+        }
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       } finally {
@@ -122,6 +127,7 @@ export function CalendarEventSheet({
       onRefresh();
       const result = await getAgendaEvent(eventId);
       setEvent(result.data);
+      setEventTimeZone(result.timeZone);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -158,12 +164,12 @@ export function CalendarEventSheet({
                 <div className="space-y-1">
                   <h2 className="text-sm font-medium text-slate-500">Detalhes do evento</h2>
                   <p className="text-[30px] font-semibold tracking-[-0.03em] text-slate-900">
-                    {format(new Date(event.startAt), 'HH:mm')}
+                    {formatInstantInAccountZone(event.startAt, 'HH:mm', eventTimeZone)}
                     {' - '}
-                    {format(new Date(event.endAt), 'HH:mm')}
+                    {formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone)}
                   </p>
                   <p className="text-xs text-slate-400">
-                    {format(new Date(event.startAt), "dd 'de' MMMM", { locale: ptBR })}
+                    {formatInstantInAccountZone(event.startAt, "dd 'de' MMMM", eventTimeZone, { locale: ptBR })}
                     {' · '}
                     {event.title}
                   </p>
@@ -195,7 +201,7 @@ export function CalendarEventSheet({
                 <div className="divide-y divide-slate-100">
                   <DetailRow
                     label="Quando"
-                    value={`${format(new Date(event.startAt), "dd 'de' MMMM, HH:mm", { locale: ptBR })} - ${format(new Date(event.endAt), 'HH:mm', { locale: ptBR })}`}
+                    value={`${formatInstantInAccountZone(event.startAt, "dd 'de' MMMM, HH:mm", eventTimeZone, { locale: ptBR })} - ${formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone, { locale: ptBR })}`}
                     icon={Clock}
                   />
                   <DetailRow

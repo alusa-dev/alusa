@@ -1,6 +1,7 @@
 import { addDays, endOfDay, startOfDay } from 'date-fns';
 
 import type { CalendarEventStatusDTO } from '@/features/aulas/dtos';
+import { startOfZonedDayClient } from '@/lib/agenda-timezone';
 
 export const ATTENDANCE_LAUNCH_WINDOW_DAYS = 7;
 
@@ -80,8 +81,16 @@ export function canLaunchAttendanceForEvent(params: {
 export function isAttendanceEventOnSelectedDay(params: {
   startAt: string | Date;
   referenceDate?: Date;
+  timeZone?: string;
 }) {
   const referenceDate = params.referenceDate ?? new Date();
+
+  if (params.timeZone) {
+    const eventDay = startOfZonedDayClient(new Date(params.startAt), params.timeZone).getTime();
+    const referenceDay = startOfZonedDayClient(referenceDate, params.timeZone).getTime();
+    return eventDay === referenceDay;
+  }
+
   const eventDay = startOfDay(new Date(params.startAt));
   const referenceDay = startOfDay(referenceDate);
 

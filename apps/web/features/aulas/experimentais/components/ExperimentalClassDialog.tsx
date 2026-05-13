@@ -35,6 +35,13 @@ import {
   updateExperimentalClass,
 } from '@/features/aulas/experimentais/services/experimental-service';
 import { AulasApiRequestError } from '@/features/aulas/calendar/services/aulas-api';
+import { TZDateMini } from '@date-fns/tz';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  formatInstantInAccountZone,
+  normalizeAccountTimeZoneClient,
+  utcIsoToZonedNaive,
+} from '@/lib/agenda-timezone';
 import { cn } from '@/lib/utils';
 
 type ExperimentalClassDialogProps = {
@@ -46,6 +53,7 @@ type ExperimentalClassDialogProps = {
   initialEvent?: CalendarEventDetailsDTO | null;
   onOpenChange: (_open: boolean) => void;
   onSaved: () => void;
+  accountTimeZone?: string;
 };
 
 type ExperimentalScheduleItem = {
@@ -97,13 +105,6 @@ const DAY_INDEX_BY_CODE: Record<string, number> = {
   SABADO: 6,
   SÁBADO: 6,
 };
-function toLocalInputValue(value?: string | null) {
-  if (!value) return '';
-  const date = new Date(value);
-  const pad = (input: number) => String(input).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 function parseLocalDateTime(value: string) {
   if (!value) {
     return { date: undefined as Date | undefined, time: '' };
@@ -193,6 +194,23 @@ function isDateOutsideTurmaSchedule(date: Date, allowedDays: number[]) {
   }
 
   return !allowedDays.includes(date.getDay());
+}
+
+function buildIsoForTurmaSlot(
+  dateKey: string,
+  turma: AulasTurmaLookupItemDTO | undefined,
+  edge: 'start' | 'end',
+  accountTz: string,
+) {
+  if (!dateKey || !turma?.defaultSchedule) return '';
+  const [y, m, d] = dateKey.split('-').map(Number);
+  if (!y || !m || !d) return '';
+
+  const hhmm = edge === 'start' ? turma.defaultSchedule.startTime : turma.defaultSchedule.endTime;
+  const [hh, mm] = hhmm.split(':').map(Number);
+  const z = new TZDateMini(y, m - 1, d, hh ?? 0, mm ?? 0, 0, 0, normalizeAccountTimeZoneClient(accountTz));
+
+  return new Date(z.getTime()).toISOString();
 }
 
 function buildDateTimeForTurma(date: Date | undefined, turma: AulasTurmaLookupItemDTO | undefined, edge: 'start' | 'end') {
@@ -368,7 +386,9 @@ export function ExperimentalClassDialog({
   initialEvent,
   onOpenChange,
   onSaved,
+  accountTimeZone = DEFAULT_ACCOUNT_TIMEZONE,
 }: ExperimentalClassDialogProps) {
+  const tz = accountTimeZone;
   const [values, setValues] = useState<ExperimentalFormState>(getInitialValues);
   const [submitting, setSubmitting] = useState(false);
   const [studentQuery, setStudentQuery] = useState('');
@@ -410,12 +430,12 @@ export function ExperimentalClassDialog({
           turmaId: initialEvent.turma?.id ?? '',
           salaId: initialEvent.sala?.id ?? '',
           professorId: initialEvent.professores[0]?.id ?? '',
-          selectedDates: [toDateKey(new Date(initialEvent.startAt))],
+          selectedDates: [formatInstantInAccountZone(initialEvent.startAt, 'yyyy-MM-dd', tz)],
         }),
       ],
     });
     setStudentQuery(initialEvent.experimental.aluno.label);
-  }, [initialEvent, open]);
+  }, [initialEvent, open, tz]);
 
   useEffect(() => {
     if (!open) return;
@@ -592,9 +612,9 @@ export function ExperimentalClassDialog({
       if (mode === 'edit' && initialEvent?.experimental) {
         const [item] = filledItems;
         const turma = resolveTurmaById(item.turmaId);
-        const selectedDate = parseDateKey(item.selectedDates[0] ?? '');
-        const startAt = buildDateTimeForTurma(selectedDate, turma, 'start');
-        const endAt = buildDateTimeForTurma(selectedDate, turma, 'end');
+        const dateKey = item.selectedDates[0] ?? '';
+        const startAt = buildIsoForTurmaSlot(dateKey, turma, 'start', tz);
+        const endAt = buildIsoForTurmaSlot(dateKey, turma, 'end', tz);
 
         if (!startAt || !endAt) {
           throw new Error('Não foi possível aplicar o horário padrão da turma para a data selecionada.');
@@ -607,8 +627,8 @@ export function ExperimentalClassDialog({
           professorIds: item.professorId ? [item.professorId] : [],
           observacao: values.observacao.trim() || null,
           status: values.status,
-          startAt: new Date(startAt).toISOString(),
-          endAt: new Date(endAt).toISOString(),
+          startAt,
+          endAt,
         });
 
         pushToast({
@@ -623,9 +643,8 @@ export function ExperimentalClassDialog({
           const turma = resolveTurmaById(item.turmaId);
 
           for (const dateKey of item.selectedDates) {
-            const selectedDate = parseDateKey(dateKey);
-            const startAt = buildDateTimeForTurma(selectedDate, turma, 'start');
-            const endAt = buildDateTimeForTurma(selectedDate, turma, 'end');
+            const startAt = buildIsoForTurmaSlot(dateKey, turma, 'start', tz);
+            const endAt = buildIsoForTurmaSlot(dateKey, turma, 'end', tz);
 
             if (!startAt || !endAt) {
               throw new Error('Não foi possível aplicar o horário padrão da turma para uma das datas selecionadas.');
@@ -637,8 +656,8 @@ export function ExperimentalClassDialog({
               salaId: item.salaId || null,
               professorIds: item.professorId ? [item.professorId] : [],
               observacao: values.observacao.trim() || null,
-              startAt: new Date(startAt).toISOString(),
-              endAt: new Date(endAt).toISOString(),
+              startAt,
+              endAt,
               uiRequestId: `${batchRequestId}-${item.id}-${dateKey}`,
             });
             createdCount += 1;
@@ -793,8 +812,15 @@ export function ExperimentalClassDialog({
                       .map((value) => parseDateKey(value))
                       .filter((value): value is Date => Boolean(value));
                     const primarySelectedDate = selectedDates[0];
-                    const computedStartAt = buildDateTimeForTurma(primarySelectedDate, selectedTurma, 'start');
-                    const computedEndAt = buildDateTimeForTurma(primarySelectedDate, selectedTurma, 'end');
+                    const dk = item.selectedDates[0];
+                    const computedStartAt =
+                      dk && selectedTurma
+                        ? utcIsoToZonedNaive(buildIsoForTurmaSlot(dk, selectedTurma, 'start', tz), tz)
+                        : '';
+                    const computedEndAt =
+                      dk && selectedTurma
+                        ? utcIsoToZonedNaive(buildIsoForTurmaSlot(dk, selectedTurma, 'end', tz), tz)
+                        : '';
 
                     return (
                       <div

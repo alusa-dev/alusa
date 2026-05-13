@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useEffect, useState } from 'react';
 
@@ -21,6 +20,7 @@ import {
   listAttendanceHistoryTurma,
 } from '@/features/aulas/frequencia/services/attendance-service';
 import { downloadAttendancePdf } from '@/features/aulas/frequencia/utils/attendance-pdf';
+import { formatInstantInAccountZone } from '@/lib/agenda-timezone';
 
 type AttendanceHistoryTurmaDialogProps = {
   open: boolean;
@@ -29,8 +29,8 @@ type AttendanceHistoryTurmaDialogProps = {
   onOpenChange: (_open: boolean) => void;
 };
 
-function formatOccurrenceDate(value: string) {
-  return format(new Date(value), "dd/MM/yyyy 'às' HH:mm", { locale: ptBR });
+function formatOccurrenceDate(value: string, timeZone: string) {
+  return formatInstantInAccountZone(value, "dd/MM/yyyy 'às' HH:mm", timeZone, { locale: ptBR });
 }
 
 function summaryText(recorded: number, presentes: number, faltas: number) {
@@ -154,7 +154,9 @@ export function AttendanceHistoryTurmaDialog({
                         >
                           <div>
                             <div className="text-sm font-semibold text-slate-900">{item.eventTitle}</div>
-                            <div className="mt-1 text-xs text-slate-500">{formatOccurrenceDate(item.date)}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {formatOccurrenceDate(item.date, data.data.timeZone)}
+                            </div>
                             <div className="mt-2 text-xs text-slate-500">
                               {item.professores.map((professor) => professor.nome).join(', ') || 'Sem professor'}
                             </div>

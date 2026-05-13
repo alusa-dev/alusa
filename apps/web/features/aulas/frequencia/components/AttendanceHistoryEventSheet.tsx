@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -16,6 +15,7 @@ import {
 } from '@/components/ui/sheet';
 import { getAttendanceEvent } from '@/features/aulas/frequencia/services/attendance-service';
 import { downloadAttendancePdf } from '@/features/aulas/frequencia/utils/attendance-pdf';
+import { DEFAULT_ACCOUNT_TIMEZONE, formatInstantInAccountZone, normalizeAccountTimeZoneClient } from '@/lib/agenda-timezone';
 
 type AttendanceHistoryEventSheetProps = {
   open: boolean;
@@ -89,11 +89,12 @@ export function AttendanceHistoryEventSheet({
   const students = data?.data.students ?? [];
   const event = data?.data.event;
   const summary = data?.data.summary;
+  const accountTz = normalizeAccountTimeZoneClient(data?.timeZone ?? DEFAULT_ACCOUNT_TIMEZONE);
   const occurrenceLabel = useMemo(() => {
     if (!event) return '';
 
-    return format(new Date(event.startAt), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR });
-  }, [event]);
+    return formatInstantInAccountZone(event.startAt, "dd 'de' MMMM 'às' HH:mm", accountTz, { locale: ptBR });
+  }, [event, accountTz]);
 
   async function handleDownload() {
     if (!data) return;

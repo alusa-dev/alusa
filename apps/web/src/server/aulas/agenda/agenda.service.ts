@@ -86,6 +86,7 @@ async function buildEventDetailsResult(
   return {
     success: true,
     data: await mapCalendarEventDetails(event, prisma, conflictMap.get(event.id) ?? []),
+    timeZone,
   };
 }
 

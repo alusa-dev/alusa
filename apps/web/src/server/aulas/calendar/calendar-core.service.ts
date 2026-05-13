@@ -386,6 +386,7 @@ export async function materializeCalendarWindow(params: {
         details: {
           reason: params.logReason ?? null,
           summary,
+          timeZone: tz,
         },
         prismaClient,
       });
@@ -440,6 +441,7 @@ export async function materializeCalendarWindow(params: {
         details: {
           reason: params.logReason ?? null,
           summary,
+          timeZone: tz,
         },
         prismaClient,
       });
@@ -643,6 +645,7 @@ export async function materializeCalendarWindow(params: {
       details: {
         reason: params.logReason ?? null,
         summary,
+        timeZone: tz,
       },
       prismaClient,
     });

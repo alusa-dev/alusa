@@ -1,6 +1,7 @@
 'use client';
 
-import { addDays, format, startOfDay, subDays } from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -28,6 +29,7 @@ import {
   saveAttendanceEvent,
 } from '@/features/aulas/frequencia/services/attendance-service';
 import { ATTENDANCE_STATUS_OPTIONS } from '@/features/aulas/types';
+import { DEFAULT_ACCOUNT_TIMEZONE, formatInstantInAccountZone, normalizeAccountTimeZoneClient, startOfZonedDayClient } from '@/lib/agenda-timezone';
 import { cn } from '@/lib/utils';
 
 type AttendanceTurmaDialogProps = {
@@ -59,12 +61,12 @@ function serializeDraftRecords(records: DraftRecord[]) {
   );
 }
 
-function formatFullDate(value: string) {
-  return format(new Date(value), "EEEE, dd 'de' MMMM", { locale: ptBR });
+function formatFullDate(value: string, timeZone: string) {
+  return formatInstantInAccountZone(value, "EEEE, dd 'de' MMMM", timeZone, { locale: ptBR });
 }
 
-function formatTimeWindow(startAt: string, endAt: string) {
-  return `${format(new Date(startAt), 'HH:mm')} - ${format(new Date(endAt), 'HH:mm')}`;
+function formatTimeWindow(startAt: string, endAt: string, timeZone: string) {
+  return `${formatInstantInAccountZone(startAt, 'HH:mm', timeZone)} - ${formatInstantInAccountZone(endAt, 'HH:mm', timeZone)}`;
 }
 
 function toStateLabel(state: string) {
@@ -233,6 +235,7 @@ export function AttendanceTurmaDialog({
     () => workspace?.data.occurrences.find((item) => item.eventId === selectedOccurrenceId) ?? null,
     [selectedOccurrenceId, workspace?.data.occurrences],
   );
+  const accountTz = normalizeAccountTimeZoneClient(workspace?.data.timeZone ?? DEFAULT_ACCOUNT_TIMEZONE);
   const showOccurrenceSelector = (workspace?.data.occurrences.length ?? 0) > 1;
   const currentRecordsSignature = useMemo(() => serializeDraftRecords(records), [records]);
   const isAlreadyLaunched = selectedOccurrence?.launchState === 'REALIZADA';
@@ -251,7 +254,11 @@ export function AttendanceTurmaDialog({
   const isUpcomingToday = Boolean(
     selectedOccurrence &&
       new Date(selectedOccurrence.startAt).getTime() > Date.now() &&
-      isAttendanceEventOnSelectedDay({ startAt: selectedOccurrence.startAt }),
+      isAttendanceEventOnSelectedDay({
+        startAt: selectedOccurrence.startAt,
+        referenceDate: new Date(selectedDate),
+        timeZone: accountTz,
+      }),
   );
 
   async function handleSave() {
@@ -337,7 +344,7 @@ export function AttendanceTurmaDialog({
                       Dia da chamada
                     </div>
                     <div className="mt-1.5 text-base font-semibold capitalize text-slate-900">
-                      {formatFullDate(selectedDate)}
+                      {formatFullDate(selectedDate, accountTz)}
                     </div>
                   </div>
 
@@ -347,7 +354,11 @@ export function AttendanceTurmaDialog({
                       variant="ghost"
                       size="icon"
                       className="h-9 w-9 rounded-xl"
-                      onClick={() => setSelectedDate(startOfDay(subDays(new Date(selectedDate), 1)).toISOString())}
+                      onClick={() => {
+                        const z = new TZDateMini(new Date(selectedDate).getTime(), accountTz);
+                        const shifted = addDays(z, -1);
+                        setSelectedDate(startOfZonedDayClient(new Date(shifted.getTime()), accountTz).toISOString());
+                      }}
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
@@ -355,7 +366,9 @@ export function AttendanceTurmaDialog({
                       type="button"
                       variant="ghost"
                       className="h-9 rounded-xl px-4 text-sm font-medium text-slate-700"
-                      onClick={() => setSelectedDate(startOfDay(new Date()).toISOString())}
+                      onClick={() =>
+                        setSelectedDate(startOfZonedDayClient(new Date(), accountTz).toISOString())
+                      }
                     >
                       Hoje
                     </Button>
@@ -364,7 +377,11 @@ export function AttendanceTurmaDialog({
                       variant="ghost"
                       size="icon"
                       className="h-9 w-9 rounded-xl"
-                      onClick={() => setSelectedDate(startOfDay(addDays(new Date(selectedDate), 1)).toISOString())}
+                      onClick={() => {
+                        const z = new TZDateMini(new Date(selectedDate).getTime(), accountTz);
+                        const shifted = addDays(z, 1);
+                        setSelectedDate(startOfZonedDayClient(new Date(shifted.getTime()), accountTz).toISOString());
+                      }}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Button>
@@ -420,7 +437,7 @@ export function AttendanceTurmaDialog({
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-slate-900">
-                            {formatTimeWindow(occurrence.startAt, occurrence.endAt)}
+                            {formatTimeWindow(occurrence.startAt, occurrence.endAt, accountTz)}
                           </span>
                           <Badge variant={getStateBadgeVariant(occurrence.launchState)}>
                             {toStateLabel(occurrence.launchState)}
@@ -444,8 +461,8 @@ export function AttendanceTurmaDialog({
                           </Badge>
                         </div>
                         <p className="mt-2 text-sm text-slate-600">
-                          {formatFullDate(selectedOccurrence.startAt)} •{' '}
-                          {formatTimeWindow(selectedOccurrence.startAt, selectedOccurrence.endAt)}
+                          {formatFullDate(selectedOccurrence.startAt, accountTz)} •{' '}
+                          {formatTimeWindow(selectedOccurrence.startAt, selectedOccurrence.endAt, accountTz)}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                           <span>

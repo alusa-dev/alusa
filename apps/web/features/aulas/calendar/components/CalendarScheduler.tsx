@@ -3,6 +3,7 @@
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
+import luxonPlugin from '@fullcalendar/luxon3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/core';
 
@@ -157,7 +158,7 @@ export function CalendarScheduler({
     >
       <FullCalendar
         key={`${viewMode}:${anchorDate}:${timeZone}`}
-        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, luxonPlugin]}
         initialView={initialView}
         initialDate={anchorDate}
         locale="pt-br"

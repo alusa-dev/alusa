@@ -2,11 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { format } from 'date-fns';
 
 import { Button } from '@/components/ui/button';
 import { listAgendaEvents } from '@/features/aulas/agenda/services/agenda-service';
 import { getCalendarEventTemporalBadge } from '@/features/aulas/utils/calendar-event-state';
+import {
+  buildZonedDayRangeIso,
+  DEFAULT_ACCOUNT_TIMEZONE,
+  formatInstantInAccountZone,
+  normalizeAccountTimeZoneClient,
+} from '@/lib/agenda-timezone';
 
 export function AgendaDashboardCard() {
   const router = useRouter();
@@ -20,6 +25,7 @@ export function AgendaDashboardCard() {
       turma: string | null;
     }>
   >([]);
+  const [timeZone, setTimeZone] = useState(DEFAULT_ACCOUNT_TIMEZONE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,16 +34,23 @@ export function AgendaDashboardCard() {
 
     const run = async () => {
       try {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(start);
-        end.setHours(23, 59, 59, 999);
+        const anchor = new Date();
+        const fetchDay = (timeZone: string) => {
+          const { start, end } = buildZonedDayRangeIso(anchor, timeZone);
+          return listAgendaEvents({
+            start,
+            end,
+            includeResources: false,
+          });
+        };
 
-        const result = await listAgendaEvents({
-          start: start.toISOString(),
-          end: end.toISOString(),
-          includeResources: false,
-        });
+        const provisionalTz = normalizeAccountTimeZoneClient(DEFAULT_ACCOUNT_TIMEZONE);
+        let result = await fetchDay(provisionalTz);
+        const accountTz = normalizeAccountTimeZoneClient(result.data.timeZone);
+
+        if (accountTz !== provisionalTz) {
+          result = await fetchDay(accountTz);
+        }
 
         if (cancelled) return;
 
@@ -51,6 +64,7 @@ export function AgendaDashboardCard() {
             turma: event.turma?.label ?? null,
           })),
         );
+        setTimeZone(accountTz);
         setError(null);
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
@@ -109,7 +123,8 @@ export function AgendaDashboardCard() {
                     </div>
                   </div>
                   <div className="shrink-0 text-xs font-medium text-slate-600">
-                    {format(new Date(item.startAt), 'HH:mm')} - {format(new Date(item.endAt), 'HH:mm')}
+                    {formatInstantInAccountZone(item.startAt, 'HH:mm', timeZone)} -{' '}
+                    {formatInstantInAccountZone(item.endAt, 'HH:mm', timeZone)}
                   </div>
                 </button>
               );

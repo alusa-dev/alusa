@@ -71,6 +71,7 @@ describe('/api/aulas/frequencia', () => {
     vi.mocked(listAttendanceHistory).mockResolvedValueOnce({
       success: true,
       data: {
+        timeZone: 'America/Sao_Paulo',
         resources: {
           turmas: [],
           professores: [],
@@ -122,6 +123,7 @@ describe('/api/aulas/frequencia', () => {
     vi.mocked(listAttendanceHistoryByTurma).mockResolvedValueOnce({
       success: true,
       data: {
+        timeZone: 'America/Sao_Paulo',
         turma: { id: 'turma-1', label: 'Ballet Clássico' },
         summary: {
           totalOcorrencias: 2,
@@ -161,6 +163,7 @@ describe('/api/aulas/frequencia', () => {
     vi.mocked(canAccessAulas).mockReturnValueOnce(true);
     vi.mocked(saveAttendanceForEvent).mockResolvedValueOnce({
       success: true,
+      timeZone: 'America/Sao_Paulo',
       data: {
         event: {
           id: 'event-1',
@@ -242,6 +245,7 @@ describe('/api/aulas/frequencia', () => {
     vi.mocked(canAccessAulas).mockReturnValueOnce(true);
     vi.mocked(getAttendanceEventDetails).mockResolvedValueOnce({
       success: true,
+      timeZone: 'America/Sao_Paulo',
       data: {
         event: {
           id: 'event-1',

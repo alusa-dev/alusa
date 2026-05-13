@@ -1,12 +1,12 @@
 'use client';
 
-import { startOfDay } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
 
 import { listAttendanceWorkspace } from '@/features/aulas/frequencia/services/attendance-service';
+import { DEFAULT_ACCOUNT_TIMEZONE, startOfZonedDayClient } from '@/lib/agenda-timezone';
 
 function getDefaultDate() {
-  return startOfDay(new Date()).toISOString();
+  return startOfZonedDayClient(new Date(), DEFAULT_ACCOUNT_TIMEZONE).toISOString();
 }
 
 export function useAttendanceWorkspace(initialDate?: string) {

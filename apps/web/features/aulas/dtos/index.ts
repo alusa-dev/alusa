@@ -207,6 +207,7 @@ export const listCalendarEventsResultSchema = z.object({
 export const calendarEventDetailsResultSchema = z.object({
   success: z.literal(true),
   data: calendarEventDetailsSchema,
+  timeZone: z.string(),
 });
 
 export const attendanceStudentSchema = z.object({
@@ -237,6 +238,7 @@ export const attendanceEventDetailsResultSchema = z.object({
     students: z.array(attendanceStudentSchema),
     summary: calendarEventAttendanceSummarySchema,
   }),
+  timeZone: z.string(),
 });
 
 export const listAttendanceQuerySchema = z.object({
@@ -285,6 +287,7 @@ export const attendanceWorkspaceResultSchema = z.object({
   success: z.literal(true),
   data: z.object({
     selectedDate: z.string(),
+    timeZone: z.string(),
     professorScope: z.object({
       active: z.boolean(),
       professorId: z.string().nullable(),
@@ -308,6 +311,7 @@ export const attendanceTurmaWorkspaceResultSchema = z.object({
   success: z.literal(true),
   data: z.object({
     selectedDate: z.string(),
+    timeZone: z.string(),
     turma: aulasLookupItemSchema,
     sala: aulasLookupItemSchema.nullable(),
     professores: z.array(aulasLookupItemSchema),
@@ -345,6 +349,7 @@ export const attendanceHistoryOccurrenceItemSchema = z.object({
 export const listAttendanceResultSchema = z.object({
   success: z.literal(true),
   data: z.object({
+    timeZone: z.string(),
     resources: z.object({
       turmas: z.array(aulasLookupItemSchema),
       professores: z.array(aulasLookupItemSchema),
@@ -360,6 +365,7 @@ export const listAttendanceResultSchema = z.object({
 export const attendanceHistoryTurmaResultSchema = z.object({
   success: z.literal(true),
   data: z.object({
+    timeZone: z.string(),
     turma: aulasLookupItemSchema,
     summary: attendanceHistorySummarySchema.extend({
       totalOcorrencias: z.number().int().nonnegative(),

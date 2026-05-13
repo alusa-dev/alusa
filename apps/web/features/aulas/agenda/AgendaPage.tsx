@@ -1,19 +1,8 @@
 'use client';
 
 import { startTransition, useDeferredValue, useEffect, useState } from 'react';
-import {
-  addMonths,
-  addWeeks,
-  endOfDay,
-  endOfMonth,
-  endOfWeek,
-  isWithinInterval,
-  startOfDay,
-  startOfMonth,
-  startOfWeek,
-  subMonths,
-  subWeeks,
-} from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addDays, addMonths, isWithinInterval } from 'date-fns';
 
 import { AGENDA_VIEW_OPTIONS } from '@/features/aulas/types';
 
@@ -40,6 +29,13 @@ import { CalendarScheduler } from '@/features/aulas/calendar/components/Calendar
 import { TimelineScheduler } from '@/features/aulas/calendar/components/TimelineScheduler';
 import { ChevronDown, Plus } from '@/components/icons/icons';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  buildZonedAgendaRangeIso,
+  buildZonedDayRangeIso,
+  endOfZonedDayClient,
+  startOfZonedDayClient,
+} from '@/lib/agenda-timezone';
 
 const EMPTY_RESOURCES: AgendaResourcesResult = {
   turmas: [],
@@ -47,44 +43,20 @@ const EMPTY_RESOURCES: AgendaResourcesResult = {
   salas: [],
 };
 
-function buildRange(anchor: Date, viewMode: AgendaViewModeDTO) {
-  if (viewMode === 'week') {
-    const start = startOfWeek(anchor, { weekStartsOn: 1 });
-    return {
-      start: start.toISOString(),
-      end: endOfWeek(anchor, { weekStartsOn: 1 }).toISOString(),
-    };
-  }
-
-  const start = startOfMonth(anchor);
-  return {
-    start: start.toISOString(),
-    end: endOfMonth(anchor).toISOString(),
-  };
-}
-
-function resolveTimelineAnchor(start?: string, end?: string) {
+function resolveTimelineAnchor(start?: string, end?: string, timeZone = DEFAULT_ACCOUNT_TIMEZONE) {
   if (!start || !end) {
-    return startOfDay(new Date());
+    return startOfZonedDayClient(new Date(), timeZone);
   }
 
-  const rangeStart = startOfDay(new Date(start));
-  const rangeEnd = endOfDay(new Date(end));
+  const rangeStart = startOfZonedDayClient(new Date(start), timeZone);
+  const rangeEnd = endOfZonedDayClient(new Date(end), timeZone);
   const today = new Date();
 
   if (isWithinInterval(today, { start: rangeStart, end: rangeEnd })) {
-    return startOfDay(today);
+    return startOfZonedDayClient(today, timeZone);
   }
 
   return rangeStart;
-}
-
-function buildTimelineRange(anchor: Date) {
-  const start = startOfDay(anchor);
-  return {
-    start: start.toISOString(),
-    end: endOfDay(start).toISOString(),
-  };
 }
 
 type AgendaPageProps = {
@@ -94,7 +66,10 @@ type AgendaPageProps = {
 export function AgendaPage({ initialFilters }: AgendaPageProps) {
   const [activeTab, setActiveTab] = useState<'calendar' | 'timeline'>('calendar');
   const calendarAgenda = useAgenda(initialFilters);
-  const timelineInitialRange = buildTimelineRange(resolveTimelineAnchor(initialFilters?.start, initialFilters?.end));
+  const timelineInitialRange = buildZonedDayRangeIso(
+    resolveTimelineAnchor(initialFilters?.start, initialFilters?.end),
+    DEFAULT_ACCOUNT_TIMEZONE,
+  );
   const timelineAgenda = useAgenda({
     ...initialFilters,
     ...timelineInitialRange,
@@ -124,17 +99,23 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   const activeLoading = activeAgenda.loading;
   const activeError = activeAgenda.error;
 
+  const accountTimeZone =
+    calendarAgenda.data?.data.timeZone ??
+    timelineAgenda.data?.data.timeZone ??
+    DEFAULT_ACCOUNT_TIMEZONE;
+
   useEffect(() => {
     const today = new Date();
+    const tz = DEFAULT_ACCOUNT_TIMEZONE;
 
     calendarAgenda.setFilters((current) => ({
       ...current,
-      ...buildRange(today, current.viewMode),
+      ...buildZonedAgendaRangeIso(today, current.viewMode, tz),
     }));
 
     timelineAgenda.setFilters((current) => ({
       ...current,
-      ...buildTimelineRange(today),
+      ...buildZonedDayRangeIso(today, tz),
     }));
   }, []);
 
@@ -178,20 +159,19 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         startTransition(() => {
           timelineAgenda.setFilters((current) => ({
             ...current,
-            ...buildTimelineRange(new Date()),
+            ...buildZonedDayRangeIso(new Date(), accountTimeZone),
           }));
         });
         return;
       }
 
-      const nextAnchor =
-        direction === 'prev'
-          ? new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() - 1)
-          : new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate() + 1);
+      const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
+      const shifted = addDays(z, direction === 'prev' ? -1 : 1);
+      const nextAnchor = new Date(shifted.getTime());
       startTransition(() => {
         timelineAgenda.setFilters((current) => ({
           ...current,
-          ...buildTimelineRange(nextAnchor),
+          ...buildZonedDayRangeIso(nextAnchor, accountTimeZone),
         }));
       });
       return;
@@ -200,7 +180,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     const currentStart = new Date(calendarAgenda.filters.start);
 
     if (direction === 'today') {
-      const range = buildRange(new Date(), calendarAgenda.filters.viewMode);
+      const range = buildZonedAgendaRangeIso(new Date(), calendarAgenda.filters.viewMode, accountTimeZone);
       startTransition(() => {
         calendarAgenda.setFilters((current) => ({ ...current, ...range }));
       });
@@ -208,25 +188,39 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     }
 
     if (calendarAgenda.filters.viewMode === 'week') {
-      const nextAnchor = direction === 'prev' ? subWeeks(currentStart, 1) : addWeeks(currentStart, 1);
+      const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
+      const shifted = addDays(z, direction === 'prev' ? -7 : 7);
+      const nextAnchor = new Date(shifted.getTime());
       startTransition(() => {
-        calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+        calendarAgenda.setFilters((current) => ({
+          ...current,
+          ...buildZonedAgendaRangeIso(nextAnchor, current.viewMode, accountTimeZone),
+        }));
       });
       return;
     }
 
-    const nextAnchor = direction === 'prev' ? subMonths(currentStart, 1) : addMonths(currentStart, 1);
+    const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
+    const shifted = addMonths(z, direction === 'prev' ? -1 : 1);
+    const nextAnchor = new Date(shifted.getTime());
     startTransition(() => {
-      calendarAgenda.setFilters((current) => ({ ...current, ...buildRange(nextAnchor, current.viewMode) }));
+      calendarAgenda.setFilters((current) => ({
+        ...current,
+        ...buildZonedAgendaRangeIso(nextAnchor, current.viewMode, accountTimeZone),
+      }));
     });
   }
 
   function handleViewModeChange(viewMode: AgendaViewModeDTO) {
     const nextAnchor = calendarAgenda.filters.start
       ? new Date(calendarAgenda.filters.start)
-      : startOfDay(new Date());
+      : startOfZonedDayClient(new Date(), accountTimeZone);
     startTransition(() => {
-      calendarAgenda.setFilters((current) => ({ ...current, viewMode, ...buildRange(nextAnchor, viewMode) }));
+      calendarAgenda.setFilters((current) => ({
+        ...current,
+        viewMode,
+        ...buildZonedAgendaRangeIso(nextAnchor, viewMode, accountTimeZone),
+      }));
     });
   }
 
@@ -244,12 +238,12 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
       if (nextTab === 'calendar') {
         calendarAgenda.setFilters((current) => ({
           ...current,
-          ...buildRange(today, current.viewMode),
+          ...buildZonedAgendaRangeIso(today, current.viewMode, accountTimeZone),
         }));
       } else {
         timelineAgenda.setFilters((current) => ({
           ...current,
-          ...buildTimelineRange(today),
+          ...buildZonedDayRangeIso(today, accountTimeZone),
         }));
       }
 
@@ -375,6 +369,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                   showCurrentLabel={false}
                   filters={activeFilters}
                   resources={resources}
+                  timeZone={accountTimeZone}
                   timelineGroupBy={activeTab === 'timeline' ? timelineGroupBy : undefined}
                   onTimelineGroupByChange={activeTab === 'timeline' ? setTimelineGroupBy : undefined}
                   onFiltersChange={applySharedFilters}
@@ -394,7 +389,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                   events={calendarEvents}
                   viewMode={calendarAgenda.filters.viewMode}
                   anchorDate={calendarAgenda.filters.start}
-                  timeZone={calendarAgenda.data?.data.timeZone ?? 'America/Sao_Paulo'}
+                  timeZone={accountTimeZone}
                   onEventSelect={setSelectedEventId}
                 />
               )}
@@ -411,6 +406,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                     events={timelineEvents}
                     start={timelineAgenda.filters.start}
                     end={timelineAgenda.filters.end}
+                    timeZone={accountTimeZone}
                     groupBy={timelineGroupBy}
                     onEventSelect={setSelectedEventId}
                   />
@@ -425,6 +421,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         open={createOpen}
         mode="create"
         resources={resources}
+        accountTimeZone={accountTimeZone}
         onOpenChange={setCreateOpen}
         onSaved={handleEventSaved}
       />
@@ -433,6 +430,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         open={Boolean(editEvent)}
         mode="edit"
         resources={resources}
+        accountTimeZone={accountTimeZone}
         initialEvent={editEvent}
         onOpenChange={(open) => {
           if (!open) setEditEvent(null);
@@ -447,6 +445,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         open={experimentalCreateOpen}
         mode="create"
         resources={resources}
+        accountTimeZone={accountTimeZone}
         onOpenChange={setExperimentalCreateOpen}
         onSaved={handleEventSaved}
       />
@@ -455,6 +454,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         open={Boolean(editExperimentalEvent)}
         mode="edit"
         resources={resources}
+        accountTimeZone={accountTimeZone}
         initialEvent={editExperimentalEvent}
         onOpenChange={(open) => {
           if (!open) setEditExperimentalEvent(null);
@@ -498,6 +498,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
       <MakeupClassDialog
         open={makeupOpen}
         resources={makeupResources ?? { turmas: [], alunos: [] }}
+        accountTimeZone={accountTimeZone}
         onOpenChange={setMakeupOpen}
         onSaved={handleEventSaved}
       />

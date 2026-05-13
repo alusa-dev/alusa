@@ -23,6 +23,7 @@ import {
   mapCalendarEventDetails,
 } from '@/src/server/aulas/calendar/calendar-core.service';
 import { autoCloseAgendaEventIfDue } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+import { resolveAccountTimeZone } from '@/src/server/aulas/calendar/account-timezone';
 import { createAulasOperationLog } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
 
@@ -67,11 +68,13 @@ async function buildAttendanceDetails(
     prismaClient: prisma,
   });
 
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
   const event = await getCalendarEventOrThrow(eventId, contaId, prisma);
   const nearbyEvents = await listCalendarEventsRaw({
     contaId,
     start: new Date(event.startAt.getTime() - 1000 * 60 * 60 * 24),
     end: new Date(event.endAt.getTime() + 1000 * 60 * 60 * 24),
+    accountTimeZone: timeZone,
     prismaClient: prisma,
   });
   const conflictMap = buildConflictMap(nearbyEvents);
@@ -84,6 +87,7 @@ async function buildAttendanceDetails(
         students: [],
         summary: buildAttendanceSummary(0, []),
       },
+      timeZone,
     };
   }
 
@@ -192,6 +196,7 @@ async function buildAttendanceDetails(
       students,
       summary: buildAttendanceSummary(students.length, statuses),
     },
+    timeZone,
   };
 }
 
@@ -332,6 +337,7 @@ export async function listAttendanceHistory(
   contaId: string,
   query: ListAttendanceQueryDTO,
 ): Promise<ListAttendanceResultDTO> {
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
   const [resources, events] = await Promise.all([
     loadAulasResources(contaId, prisma),
     prisma.calendarEvent.findMany({
@@ -422,6 +428,7 @@ export async function listAttendanceHistory(
   return {
     success: true,
     data: {
+      timeZone,
       resources: {
         turmas: resources.turmas,
         professores: resources.professores,
@@ -441,6 +448,7 @@ export async function listAttendanceHistoryByTurma(
   turmaId: string,
   query: ListAttendanceQueryDTO,
 ): Promise<AttendanceHistoryTurmaResultDTO> {
+  const timeZone = await resolveAccountTimeZone(contaId, prisma);
   const [turma, events] = await Promise.all([
     prisma.turma.findFirst({
       where: {
@@ -486,6 +494,7 @@ export async function listAttendanceHistoryByTurma(
   return {
     success: true,
     data: {
+      timeZone,
       turma: {
         id: turma.id,
         label: turma.nome,

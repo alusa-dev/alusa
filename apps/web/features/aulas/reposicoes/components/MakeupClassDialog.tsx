@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -20,6 +19,12 @@ import type { AulasLookupItemDTO, CalendarEventListItemDTO } from '@/features/au
 import { listAgendaEvents } from '@/features/aulas/agenda/services/agenda-service';
 import { createMakeupClass } from '@/features/aulas/reposicoes/services/makeup-service';
 import { MAKEUP_SCOPE_OPTIONS } from '@/features/aulas/types';
+import { TZDateMini } from '@date-fns/tz';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  formatInstantInAccountZone,
+  normalizeAccountTimeZoneClient,
+} from '@/lib/agenda-timezone';
 
 type MakeupClassDialogProps = {
   open: boolean;
@@ -29,6 +34,7 @@ type MakeupClassDialogProps = {
   };
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  accountTimeZone?: string;
 };
 
 const EMPTY_VALUE = '__NONE__';
@@ -68,13 +74,23 @@ function getInitialValues(): MakeupFormValues {
   };
 }
 
-function combineDateAndTime(date: Date | undefined, time: string): Date | null {
+function combineDateAndTimeZoned(date: Date | undefined, time: string, accountTz: string): string | null {
   if (!date || !/^\d{2}:\d{2}$/.test(time)) return null;
 
+  const zCal = new TZDateMini(date.getTime(), normalizeAccountTimeZoneClient(accountTz));
   const [hours, minutes] = time.split(':').map(Number);
-  const next = new Date(date);
-  next.setHours(hours, minutes, 0, 0);
-  return Number.isNaN(next.getTime()) ? null : next;
+  const z = new TZDateMini(
+    zCal.getFullYear(),
+    zCal.getMonth(),
+    zCal.getDate(),
+    hours,
+    minutes,
+    0,
+    0,
+    normalizeAccountTimeZoneClient(accountTz),
+  );
+  const iso = new Date(z.getTime()).toISOString();
+  return Number.isNaN(new Date(iso).getTime()) ? null : iso;
 }
 
 function FieldLabel({ children }: { children: string }) {
@@ -106,7 +122,9 @@ export function MakeupClassDialog({
   resources,
   onOpenChange,
   onSaved,
+  accountTimeZone = DEFAULT_ACCOUNT_TIMEZONE,
 }: MakeupClassDialogProps) {
+  const tz = accountTimeZone;
   const [sourceEvents, setSourceEvents] = useState<CalendarEventListItemDTO[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -158,8 +176,8 @@ export function MakeupClassDialog({
   }, [open]);
 
   async function handleSubmit() {
-    const startAt = combineDateAndTime(values.startDate, values.startTime);
-    const endAt = combineDateAndTime(values.endDate, values.endTime);
+    const startAt = combineDateAndTimeZoned(values.startDate, values.startTime, tz);
+    const endAt = combineDateAndTimeZoned(values.endDate, values.endTime, tz);
 
     try {
       setSubmitting(true);
@@ -186,8 +204,8 @@ export function MakeupClassDialog({
           values.destinationMode === 'create'
             ? {
                 title: values.title.trim() || undefined,
-                startAt: startAt!.toISOString(),
-                endAt: endAt!.toISOString(),
+                startAt: startAt!,
+                endAt: endAt!,
                 professorIds: [],
               }
             : undefined,
@@ -314,7 +332,7 @@ export function MakeupClassDialog({
                   {sourceEvent ? (
                     <p className="text-xs text-slate-500">
                       Origem selecionada: {sourceEvent.title} em{' '}
-                      {format(new Date(sourceEvent.startAt), "dd/MM/yyyy 'às' HH:mm")}
+                      {formatInstantInAccountZone(sourceEvent.startAt, "dd/MM/yyyy 'às' HH:mm", tz)}
                     </p>
                   ) : null}
                 </div>
@@ -429,7 +447,7 @@ export function MakeupClassDialog({
                     {destinationEvent ? (
                       <p className="text-xs text-slate-500">
                         Destino selecionado: {destinationEvent.title} em{' '}
-                        {format(new Date(destinationEvent.startAt), "dd/MM/yyyy 'às' HH:mm")}
+                        {formatInstantInAccountZone(destinationEvent.startAt, "dd/MM/yyyy 'às' HH:mm", tz)}
                       </p>
                     ) : null}
                   </div>

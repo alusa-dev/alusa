@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { addHours, format } from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addHours } from 'date-fns';
 
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -26,6 +27,13 @@ import type {
 import { createAgendaEvent, updateAgendaEvent } from '@/features/aulas/agenda/services/agenda-service';
 import { AulasApiRequestError } from '@/features/aulas/calendar/services/aulas-api';
 import { CALENDAR_EVENT_STATUS_OPTIONS, CALENDAR_EVENT_TYPE_OPTIONS } from '@/features/aulas/types';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  getDefaultStartNaive,
+  normalizeAccountTimeZoneClient,
+  utcIsoToZonedNaive,
+  zonedNaiveToUtcIso,
+} from '@/lib/agenda-timezone';
 import { cn } from '@/lib/utils';
 
 type CalendarEventDialogProps = {
@@ -36,6 +44,7 @@ type CalendarEventDialogProps = {
     professores: AulasLookupItemDTO[];
     salas: AulasLookupItemDTO[];
   };
+  accountTimeZone?: string;
   initialEvent?: CalendarEventDetailsDTO | null;
   onOpenChange: (_open: boolean) => void;
   onSaved: () => void;
@@ -57,14 +66,13 @@ const EMPTY_VALUE = '__NONE__';
 const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px]';
 const CREATE_EVENT_TYPE_OPTIONS = CALENDAR_EVENT_TYPE_OPTIONS.filter((option) => option.value !== 'AULA_EXPERIMENTAL');
 
-function toLocalInputValue(value?: string | null) {
-  if (!value) return '';
-  const date = new Date(value);
-  const pad = (input: number) => String(input).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function wallCalendarPickerDate(year: number, month: number, day: number, accountTz: string) {
+  return new Date(
+    new TZDateMini(year, month - 1, day, 12, 0, 0, 0, normalizeAccountTimeZoneClient(accountTz)).getTime(),
+  );
 }
 
-function parseLocalDateTime(value: string) {
+function parseNaiveDateTimeField(value: string, accountTz: string) {
   if (!value) {
     return { date: undefined as Date | undefined, time: '' };
   }
@@ -77,34 +85,41 @@ function parseLocalDateTime(value: string) {
   }
 
   return {
-    date: new Date(year, month - 1, day),
+    date: wallCalendarPickerDate(year, month, day, accountTz),
     time: timePart.slice(0, 5),
   };
 }
 
-function buildLocalDateTime(date?: Date, time = '') {
-  if (!date) return '';
-
-  const hours = time.slice(0, 2) || '00';
-  const minutes = time.slice(3, 5) || '00';
+function calendarDateToZonedNaive(date: Date, time: string, accountTz: string) {
+  const z = new TZDateMini(date.getTime(), normalizeAccountTimeZoneClient(accountTz));
   const pad = (input: number) => String(input).padStart(2, '0');
-
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${hours}:${minutes}`;
+  const hhmm = time.slice(0, 5) || '00:00';
+  return `${z.getFullYear()}-${pad(z.getMonth() + 1)}-${pad(z.getDate())}T${hhmm}`;
 }
 
-function getDefaultStartAt() {
-  return buildLocalDateTime(new Date(), '00:00');
-}
-
-function shiftEndAtOneHour(startAt: string) {
-  const parsed = new Date(startAt);
-
-  if (Number.isNaN(parsed.getTime())) {
+function shiftEndAtOneHour(startNaive: string, accountTz: string) {
+  const iso = zonedNaiveToUtcIso(startNaive, accountTz);
+  if (Number.isNaN(new Date(iso).getTime())) {
     return '';
   }
 
-  const next = addHours(parsed, 1);
-  return buildLocalDateTime(next, format(next, 'HH:mm'));
+  const next = addHours(new Date(iso), 1);
+  return utcIsoToZonedNaive(next.toISOString(), accountTz);
+}
+
+function buildEmptyForm(accountTz: string): EventFormState {
+  const start = getDefaultStartNaive(accountTz);
+  return {
+    title: '',
+    description: '',
+    type: 'AULA',
+    status: 'AGENDADO',
+    startAt: start,
+    endAt: shiftEndAtOneHour(start, accountTz),
+    turmaId: '',
+    salaId: '',
+    professorId: '',
+  };
 }
 
 function buildAgendaEventToast(error: unknown) {
@@ -175,38 +190,18 @@ export function CalendarEventDialog({
   open,
   mode,
   resources,
+  accountTimeZone = DEFAULT_ACCOUNT_TIMEZONE,
   initialEvent,
   onOpenChange,
   onSaved,
 }: CalendarEventDialogProps) {
-  const initialStartAt = getDefaultStartAt();
-  const [values, setValues] = useState<EventFormState>({
-    title: '',
-    description: '',
-    type: 'AULA',
-    status: 'AGENDADO',
-    startAt: initialStartAt,
-    endAt: shiftEndAtOneHour(initialStartAt),
-    turmaId: '',
-    salaId: '',
-    professorId: '',
-  });
+  const tz = accountTimeZone;
+  const [values, setValues] = useState<EventFormState>(() => buildEmptyForm(tz));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!open) {
-      const nextStartAt = getDefaultStartAt();
-      setValues({
-        title: '',
-        description: '',
-        type: 'AULA',
-        status: 'AGENDADO',
-        startAt: nextStartAt,
-        endAt: shiftEndAtOneHour(nextStartAt),
-        turmaId: '',
-        salaId: '',
-        professorId: '',
-      });
+      setValues(buildEmptyForm(tz));
       setSubmitting(false);
       return;
     }
@@ -218,27 +213,30 @@ export function CalendarEventDialog({
       description: initialEvent.description ?? '',
       type: initialEvent.type,
       status: initialEvent.status,
-      startAt: toLocalInputValue(initialEvent.startAt),
-      endAt: toLocalInputValue(initialEvent.endAt),
+      startAt: utcIsoToZonedNaive(initialEvent.startAt, tz),
+      endAt: utcIsoToZonedNaive(initialEvent.endAt, tz),
       turmaId: initialEvent.turma?.id ?? '',
       salaId: initialEvent.sala?.id ?? '',
       professorId: initialEvent.professores[0]?.id ?? '',
     });
-  }, [initialEvent, open]);
+  }, [initialEvent, open, tz]);
 
   async function handleSubmit() {
     try {
       setSubmitting(true);
 
-      if (!values.startAt || Number.isNaN(new Date(values.startAt).getTime())) {
+      const startIso = zonedNaiveToUtcIso(values.startAt, tz);
+      const endIso = zonedNaiveToUtcIso(values.endAt, tz);
+
+      if (!values.startAt || Number.isNaN(new Date(startIso).getTime())) {
         throw new Error('Informe uma data e hora de início válidas.');
       }
 
-      if (!values.endAt || Number.isNaN(new Date(values.endAt).getTime())) {
+      if (!values.endAt || Number.isNaN(new Date(endIso).getTime())) {
         throw new Error('Informe uma data e hora de fim válidas.');
       }
 
-      if (new Date(values.endAt).getTime() <= new Date(values.startAt).getTime()) {
+      if (new Date(endIso).getTime() <= new Date(startIso).getTime()) {
         throw new Error('O horário de término precisa ser depois do horário de início.');
       }
 
@@ -247,8 +245,8 @@ export function CalendarEventDialog({
         description: values.description.trim() || null,
         type: values.type,
         status: mode === 'edit' ? values.status : undefined,
-        startAt: new Date(values.startAt).toISOString(),
-        endAt: new Date(values.endAt).toISOString(),
+        startAt: startIso,
+        endAt: endIso,
         turmaId: values.turmaId || null,
         salaId: values.salaId || null,
         professorIds: values.professorId ? [values.professorId] : [],
@@ -280,13 +278,16 @@ export function CalendarEventDialog({
 
   function handleStartAtChange(nextStartAt: string) {
     setValues((current) => {
-      const shouldShiftEndAt =
-        !current.endAt || new Date(current.endAt).getTime() <= new Date(nextStartAt).getTime();
+      const startMs = new Date(zonedNaiveToUtcIso(nextStartAt, tz)).getTime();
+      const endMs = current.endAt
+        ? new Date(zonedNaiveToUtcIso(current.endAt, tz)).getTime()
+        : Number.NaN;
+      const shouldShiftEndAt = !current.endAt || (!Number.isNaN(endMs) && endMs <= startMs);
 
       return {
         ...current,
         startAt: nextStartAt,
-        endAt: shouldShiftEndAt ? shiftEndAtOneHour(nextStartAt) : current.endAt,
+        endAt: shouldShiftEndAt ? shiftEndAtOneHour(nextStartAt, tz) : current.endAt,
       };
     });
   }
@@ -425,6 +426,7 @@ export function CalendarEventDialog({
                       value={values.startAt}
                       onChange={handleStartAtChange}
                       testId="agenda-event-start"
+                      accountTz={tz}
                     />
                   </div>
 
@@ -435,6 +437,7 @@ export function CalendarEventDialog({
                       value={values.endAt}
                       onChange={(value) => setValues((current) => ({ ...current, endAt: value }))}
                       testId="agenda-event-end"
+                      accountTz={tz}
                     />
                   </div>
                 </div>
@@ -534,10 +537,11 @@ type DateTimeFieldProps = {
   placeholder?: string;
   onChange: (_value: string) => void;
   testId?: string;
+  accountTz: string;
 };
 
-function DateTimeField({ id, value, placeholder = 'dd/mm/aaaa', onChange, testId }: DateTimeFieldProps) {
-  const { date, time } = parseLocalDateTime(value);
+function DateTimeField({ id, value, placeholder = 'dd/mm/aaaa', onChange, testId, accountTz }: DateTimeFieldProps) {
+  const { date, time } = parseNaiveDateTimeField(value, accountTz);
 
   return (
     <div className="relative grid grid-cols-[minmax(0,1fr)_120px] gap-2">
@@ -558,7 +562,9 @@ function DateTimeField({ id, value, placeholder = 'dd/mm/aaaa', onChange, testId
         id={id}
         variant="input"
         value={date}
-        onChange={(nextDate) => onChange(buildLocalDateTime(nextDate, time || '00:00'))}
+        onChange={(nextDate) =>
+          nextDate ? onChange(calendarDateToZonedNaive(nextDate, time || '00:00', accountTz)) : onChange('')
+        }
         placeholder={placeholder}
         className={CONTROL_CLASS}
       />
@@ -566,7 +572,9 @@ function DateTimeField({ id, value, placeholder = 'dd/mm/aaaa', onChange, testId
         type="time"
         step="60"
         value={time}
-        onChange={(event) => onChange(buildLocalDateTime(date, event.target.value))}
+        onChange={(event) =>
+          date ? onChange(calendarDateToZonedNaive(date, event.target.value, accountTz)) : undefined
+        }
         className={CONTROL_CLASS}
         placeholder="--:--"
         disabled={!date}

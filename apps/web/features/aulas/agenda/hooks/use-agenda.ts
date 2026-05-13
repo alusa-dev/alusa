@@ -8,6 +8,10 @@ import type {
   ListCalendarEventsQueryDTO,
 } from '@/features/aulas/dtos';
 import { listAgendaEvents } from '@/features/aulas/agenda/services/agenda-service';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  buildZonedAgendaRangeIso,
+} from '@/lib/agenda-timezone';
 
 export type AgendaFiltersState = {
   start: string;
@@ -19,10 +23,7 @@ export type AgendaFiltersState = {
   type?: CalendarEventTypeDTO[];
 };
 
-const now = new Date();
-const defaultStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-const defaultEnd = new Date(defaultStart);
-defaultEnd.setDate(defaultEnd.getDate() + 6);
+const defaultWeekRange = buildZonedAgendaRangeIso(new Date(), 'week', DEFAULT_ACCOUNT_TIMEZONE);
 
 function normalizeAgendaViewMode(viewMode?: AgendaViewModeDTO) {
   if (viewMode === 'month-compact') {
@@ -38,8 +39,8 @@ type UseAgendaOptions = {
 
 export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAgendaOptions) {
   const [filters, setFilters] = useState<AgendaFiltersState>({
-    start: initial?.start ?? defaultStart.toISOString(),
-    end: initial?.end ?? defaultEnd.toISOString(),
+    start: initial?.start ?? defaultWeekRange.start,
+    end: initial?.end ?? defaultWeekRange.end,
     viewMode: normalizeAgendaViewMode(initial?.viewMode),
     turmaId: initial?.turmaId,
     professorId: initial?.professorId,

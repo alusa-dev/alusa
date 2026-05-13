@@ -1,10 +1,17 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { differenceInCalendarDays, eachDayOfInterval, endOfDay, format, startOfDay } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 import type { CalendarEventListItemDTO, TimelineGroupByDTO } from '@/features/aulas/dtos';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  eachZonedCalendarDayInRangeClient,
+  formatInstantInAccountZone,
+  getZonedMinutesFromMidnight,
+  startOfZonedDayClient,
+  zonedCalendarDayDiffMs,
+} from '@/lib/agenda-timezone';
 import {
   getCalendarEventCardTone,
 } from '@/features/aulas/utils/calendar-event-state';
@@ -14,6 +21,8 @@ type TimelineSchedulerProps = {
   events: CalendarEventListItemDTO[];
   start: string;
   end: string;
+  /** IANA — mesma zona da conta usada na materialização e no FullCalendar */
+  timeZone?: string;
   groupBy: TimelineGroupByDTO;
   onEventSelect: (_eventId: string) => void;
 };
@@ -133,12 +142,9 @@ function buildGroups(events: CalendarEventListItemDTO[], groupBy: TimelineGroupB
   return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
 }
 
-function getMinutesOfDay(date: Date) {
-  return date.getHours() * 60 + date.getMinutes();
-}
-
-function getDayWidth(scale: TimelineScale) {
-  return (MINUTES_PER_DAY / 60) * scale.hourWidth;
+function getZonedDayIndexInRange(eventInstant: Date, rangeStart: Date, timeZone: string) {
+  const eventDay = startOfZonedDayClient(eventInstant, timeZone);
+  return Math.round(zonedCalendarDayDiffMs(eventDay, rangeStart, timeZone) / 86_400_000);
 }
 
 function getTimelineOffset(
@@ -147,8 +153,9 @@ function getTimelineOffset(
   dayCount: number,
   dayWidth: number,
   hourWidth: number,
+  timeZone: string,
 ) {
-  const dayIndex = differenceInCalendarDays(startOfDay(date), rangeStart);
+  const dayIndex = getZonedDayIndexInRange(date, rangeStart, timeZone);
 
   if (dayIndex < 0 || dayIndex >= dayCount) {
     return null;
@@ -156,10 +163,14 @@ function getTimelineOffset(
 
   const minutes = Math.max(
     TIMELINE_START_HOUR * 60,
-    Math.min(TIMELINE_END_HOUR * 60, getMinutesOfDay(date)),
+    Math.min(TIMELINE_END_HOUR * 60, getZonedMinutesFromMidnight(date, timeZone)),
   );
 
   return dayIndex * dayWidth + (minutes / 60) * hourWidth;
+}
+
+function getDayWidth(scale: TimelineScale) {
+  return (MINUTES_PER_DAY / 60) * scale.hourWidth;
 }
 
 function getTimelinePlacement(
@@ -168,26 +179,27 @@ function getTimelinePlacement(
   dayCount: number,
   dayWidth: number,
   scale: TimelineScale,
+  timeZone: string,
 ) {
   const eventStart = new Date(event.startAt);
   const eventEnd = new Date(event.endAt);
-  const eventDayStart = startOfDay(eventStart);
-  const eventEndDayStart = startOfDay(eventEnd);
-  const dayIndex = differenceInCalendarDays(eventDayStart, rangeStart);
+  const eventDayStart = startOfZonedDayClient(eventStart, timeZone);
+  const eventEndDayStart = startOfZonedDayClient(eventEnd, timeZone);
+  const dayIndex = getZonedDayIndexInRange(eventStart, rangeStart, timeZone);
 
   if (dayIndex < 0 || dayIndex >= dayCount) return null;
 
-  const clampedStartMinutes = Math.max(TIMELINE_START_HOUR * 60, getMinutesOfDay(eventStart));
+  const clampedStartMinutes = Math.max(TIMELINE_START_HOUR * 60, getZonedMinutesFromMidnight(eventStart, timeZone));
   const rawEndMinutes =
-    differenceInCalendarDays(eventEndDayStart, eventDayStart) > 0
+    zonedCalendarDayDiffMs(eventEndDayStart, eventDayStart, timeZone) > 0
       ? TIMELINE_END_HOUR * 60
-      : Math.max(getMinutesOfDay(eventEnd), clampedStartMinutes + 30);
+      : Math.max(getZonedMinutesFromMidnight(eventEnd, timeZone), clampedStartMinutes + 30);
   const clampedEndMinutes = Math.min(TIMELINE_END_HOUR * 60, rawEndMinutes);
 
   if (clampedEndMinutes <= clampedStartMinutes) return null;
 
   const dayOffset = dayIndex * dayWidth;
-  const left = getTimelineOffset(eventStart, rangeStart, dayCount, dayWidth, scale.hourWidth);
+  const left = getTimelineOffset(eventStart, rangeStart, dayCount, dayWidth, scale.hourWidth, timeZone);
 
   if (left === null) return null;
 
@@ -204,10 +216,11 @@ function buildTimelineLayout(
   dayCount: number,
   dayWidth: number,
   scale: TimelineScale,
+  timeZone: string,
 ) {
   const positionedEvents = events
     .map((event) => {
-      const placement = getTimelinePlacement(event, rangeStart, dayCount, dayWidth, scale);
+      const placement = getTimelinePlacement(event, rangeStart, dayCount, dayWidth, scale, timeZone);
       return placement ? { event, ...placement } : null;
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
@@ -248,6 +261,7 @@ type TimelineGridProps = {
   scale: TimelineScale;
   timelineWidth: number;
   height: number;
+  timeZone: string;
   showDayLabels?: boolean;
 };
 
@@ -257,9 +271,10 @@ function TimelineGrid({
   scale,
   timelineWidth,
   height,
+  timeZone,
   showDayLabels = false,
 }: TimelineGridProps) {
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const todayKey = formatInstantInAccountZone(new Date(), 'yyyy-MM-dd', timeZone);
   const gridLineTop = showDayLabels ? DAY_HEADER_HEIGHT : 0;
   const gridLineHeight = showDayLabels ? Math.max(height - DAY_HEADER_HEIGHT, 0) : height;
   const timeLabelTop = DAY_HEADER_HEIGHT + 8;
@@ -270,8 +285,9 @@ function TimelineGrid({
       <div className="relative" style={{ width: `${timelineWidth}px`, height: `${height}px` }}>
         {days.map((day, dayIndex) => {
           const dayOffset = dayIndex * dayWidth;
-          const isToday = format(day, 'yyyy-MM-dd') === today;
-          const dayLabel = format(day, 'EEE dd/MM', { locale: ptBR })
+          const dayKey = formatInstantInAccountZone(day, 'yyyy-MM-dd', timeZone);
+          const isToday = dayKey === todayKey;
+          const dayLabel = formatInstantInAccountZone(day, 'EEE dd/MM', timeZone, { locale: ptBR })
             .replace('-feira', '')
             .toUpperCase();
 
@@ -366,11 +382,13 @@ export function TimelineScheduler({
   events,
   start,
   end,
+  timeZone = DEFAULT_ACCOUNT_TIMEZONE,
   groupBy,
   onEventSelect,
 }: TimelineSchedulerProps) {
-  const rangeStart = startOfDay(new Date(start));
-  const days = eachDayOfInterval({ start: rangeStart, end: endOfDay(new Date(end)) });
+  const tz = timeZone;
+  const rangeStart = startOfZonedDayClient(new Date(start), tz);
+  const days = eachZonedCalendarDayInRangeClient(new Date(start), new Date(end), tz);
   const scale = getTimelineScale(days.length);
   const dayWidth = getDayWidth(scale);
   const timelineWidth = days.length * dayWidth;
@@ -384,7 +402,7 @@ export function TimelineScheduler({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState<{ x: number; label: string } | null>(null);
 
-  const nowOffset = getTimelineOffset(now, rangeStart, days.length, dayWidth, scale.hourWidth);
+  const nowOffset = getTimelineOffset(now, rangeStart, days.length, dayWidth, scale.hourWidth, tz);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -414,6 +432,7 @@ export function TimelineScheduler({
         days.length,
         dayWidth,
         scale.hourWidth,
+        tz,
       );
 
       if (eventOffset === null) continue;
@@ -449,7 +468,7 @@ export function TimelineScheduler({
     const timeLabel = `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
     const label =
       days.length > 1
-        ? `${format(days[hoveredDayIndex], 'dd/MM')} ${timeLabel}`
+        ? `${formatInstantInAccountZone(days[hoveredDayIndex], 'dd/MM', tz)} ${timeLabel}`
         : timeLabel;
 
     setCursor({ x: rawX, label });
@@ -490,7 +509,7 @@ export function TimelineScheduler({
                 className="pointer-events-none absolute top-1.5 -translate-x-1/2 rounded-full bg-brand-accent px-2 py-0.5 text-[10px] font-semibold tracking-wide text-white shadow-md"
                 style={{ left: `${RESOURCE_COL_W + nowOffset}px`, zIndex: 7 }}
               >
-                {format(now, 'HH:mm')}
+                {formatInstantInAccountZone(now, 'HH:mm', tz)}
               </div>
             </>
           ) : null}
@@ -544,13 +563,14 @@ export function TimelineScheduler({
                 scale={scale}
                 timelineWidth={timelineWidth}
                 height={HEADER_HEIGHT}
+                timeZone={tz}
                 showDayLabels
               />
             </div>
           </div>
 
           {groups.map((group, groupIndex) => {
-            const layout = buildTimelineLayout(group.events, rangeStart, days.length, dayWidth, scale);
+            const layout = buildTimelineLayout(group.events, rangeStart, days.length, dayWidth, scale, tz);
             const rowHeight = buildRowHeight(layout.laneCount);
             const isLast = groupIndex === groups.length - 1;
 
@@ -583,6 +603,7 @@ export function TimelineScheduler({
                     scale={scale}
                     timelineWidth={timelineWidth}
                     height={rowHeight}
+                    timeZone={tz}
                   />
 
                   {layout.items.map((item) => {
@@ -620,9 +641,9 @@ export function TimelineScheduler({
                         }}
                       >
                         <div className="truncate font-medium">
-                          {format(new Date(item.event.startAt), 'HH:mm')}
+                          {formatInstantInAccountZone(item.event.startAt, 'HH:mm', tz)}
                           {' - '}
-                          {format(new Date(item.event.endAt), 'HH:mm')}
+                          {formatInstantInAccountZone(item.event.endAt, 'HH:mm', tz)}
                         </div>
                         <div className="truncate text-[10px] opacity-80">{item.event.title}</div>
                       </button>

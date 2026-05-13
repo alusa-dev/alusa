@@ -1,7 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
-
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -13,6 +11,10 @@ import type {
 import { CALENDAR_EVENT_TYPE_OPTIONS, TIMELINE_GROUP_OPTIONS } from '@/features/aulas/types';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
 import { ChevronLeft, ChevronRight, Filter } from '@/components/icons/icons';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  formatInstantInAccountZone,
+} from '@/lib/agenda-timezone';
 
 type AgendaFiltersProps = {
   filters: AgendaFiltersState;
@@ -21,6 +23,8 @@ type AgendaFiltersProps = {
     professores: AulasLookupItemDTO[];
     salas: AulasLookupItemDTO[];
   };
+  /** IANA — rótulo do período alinhado ao fuso da escola */
+  timeZone?: string;
   onFiltersChange: (_patch: Partial<AgendaFiltersState>) => void;
   onNavigatePeriod: (_direction: 'prev' | 'next' | 'today') => void;
   timelineGroupBy?: TimelineGroupByDTO;
@@ -34,6 +38,7 @@ const ALL = '__ALL__';
 export function AgendaFilters({
   filters,
   resources,
+  timeZone = DEFAULT_ACCOUNT_TIMEZONE,
   onFiltersChange,
   onNavigatePeriod,
   timelineGroupBy,
@@ -41,9 +46,10 @@ export function AgendaFilters({
   embedded = false,
   showCurrentLabel = true,
 }: AgendaFiltersProps) {
-  const currentLabel = `${format(new Date(filters.start), 'dd/MM')} - ${format(
-    new Date(filters.end),
+  const currentLabel = `${formatInstantInAccountZone(filters.start, 'dd/MM', timeZone)} - ${formatInstantInAccountZone(
+    filters.end,
     'dd/MM',
+    timeZone,
   )}`;
   const activeSecondaryFilters =
     (filters.turmaId ? 1 : 0) +

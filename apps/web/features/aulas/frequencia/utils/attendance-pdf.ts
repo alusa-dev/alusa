@@ -1,9 +1,9 @@
-import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import type { AttendanceEventDetailsResultDTO, AttendanceStatusDTO } from '@/features/aulas/dtos';
+import { formatInstantInAccountZone } from '@/lib/agenda-timezone';
 
 const STATUS_LABELS: Record<AttendanceStatusDTO, string> = {
   PRESENTE: 'Presente',
@@ -27,7 +27,7 @@ export function downloadAttendancePdf(result: AttendanceEventDetailsResultDTO) {
   const { event, students, summary } = result.data;
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const title = event.turma?.label ?? event.title;
-  const occurrenceDate = format(new Date(event.startAt), "dd/MM/yyyy 'às' HH:mm", {
+  const occurrenceDate = formatInstantInAccountZone(event.startAt, "dd/MM/yyyy 'às' HH:mm", result.timeZone, {
     locale: ptBR,
   });
   const professors = event.professores.map((professor) => professor.nome).join(', ') || 'Sem professor';
@@ -70,6 +70,6 @@ export function downloadAttendancePdf(result: AttendanceEventDetailsResultDTO) {
   });
 
   doc.save(
-    `${sanitizeFileName(title || event.title)}-${format(new Date(event.startAt), 'yyyy-MM-dd')}.pdf`,
+    `${sanitizeFileName(title || event.title)}-${formatInstantInAccountZone(event.startAt, 'yyyy-MM-dd', result.timeZone)}.pdf`,
   );
 }

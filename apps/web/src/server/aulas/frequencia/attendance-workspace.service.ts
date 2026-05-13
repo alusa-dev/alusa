@@ -26,7 +26,10 @@ function resolveSelectedDate(date: string | undefined, timeZone: string) {
   return startOfZonedDay(base, timeZone);
 }
 
-function getAttendanceLaunchState(event: Pick<CalendarEventListItemDTO, 'status' | 'startAt' | 'endAt'>): AttendanceWorkspaceLaunchStateDTO {
+function getAttendanceLaunchState(
+  event: Pick<CalendarEventListItemDTO, 'status' | 'startAt' | 'endAt'>,
+  accountTimeZone: string,
+): AttendanceWorkspaceLaunchStateDTO {
   const now = new Date();
   const startAt = new Date(event.startAt);
   const endAt = new Date(event.endAt);
@@ -34,7 +37,11 @@ function getAttendanceLaunchState(event: Pick<CalendarEventListItemDTO, 'status'
   if (event.status === 'CANCELADO') return 'CANCELADA';
   if (event.status === 'REALIZADO') return 'REALIZADA';
   if (startAt.getTime() > now.getTime()) {
-    return isAttendanceEventOnSelectedDay({ startAt: event.startAt, referenceDate: now })
+    return isAttendanceEventOnSelectedDay({
+      startAt: event.startAt,
+      referenceDate: now,
+      timeZone: accountTimeZone,
+    })
       ? 'PENDENTE'
       : 'FUTURA';
   }
@@ -60,14 +67,14 @@ function getLaunchStatePriority(state: AttendanceWorkspaceLaunchStateDTO) {
   }
 }
 
-function mapWorkspaceOccurrence(event: CalendarEventListItemDTO): AttendanceWorkspaceOccurrenceDTO {
+function mapWorkspaceOccurrence(event: CalendarEventListItemDTO, accountTimeZone: string): AttendanceWorkspaceOccurrenceDTO {
   return {
     eventId: event.id,
     title: event.title,
     startAt: event.startAt,
     endAt: event.endAt,
     status: event.status,
-    launchState: getAttendanceLaunchState(event),
+    launchState: getAttendanceLaunchState(event, accountTimeZone),
     sala: event.sala,
     professores: event.professores,
     attendanceSummary: event.attendanceSummary ?? {
@@ -109,6 +116,7 @@ async function loadAttendanceWorkspaceData(
       professorScope,
       turmas: [],
       occurrencesByTurmaId: new Map<string, AttendanceWorkspaceOccurrenceDTO[]>(),
+      timeZone,
     };
   }
 
@@ -178,7 +186,7 @@ async function loadAttendanceWorkspaceData(
   for (const event of mappedEvents) {
     if (!event.turma?.id || !turmaIds.includes(event.turma.id)) continue;
 
-    const occurrence = mapWorkspaceOccurrence(event);
+    const occurrence = mapWorkspaceOccurrence(event, timeZone);
     const current = occurrencesByTurmaId.get(event.turma.id) ?? [];
     current.push(occurrence);
     occurrencesByTurmaId.set(event.turma.id, current);
@@ -201,6 +209,7 @@ async function loadAttendanceWorkspaceData(
     professorScope,
     turmas,
     occurrencesByTurmaId,
+    timeZone,
   };
 }
 
@@ -208,7 +217,7 @@ export async function listAttendanceWorkspace(
   scope: AulasAccessScope,
   query: ListAttendanceWorkspaceQueryDTO,
 ): Promise<AttendanceWorkspaceResultDTO> {
-  const { selectedDate, professorScope, turmas, occurrencesByTurmaId } =
+  const { selectedDate, professorScope, turmas, occurrencesByTurmaId, timeZone } =
     await loadAttendanceWorkspaceData(scope, query);
 
   const items = turmas
@@ -241,6 +250,7 @@ export async function listAttendanceWorkspace(
     success: true,
     data: {
       selectedDate: selectedDate.toISOString(),
+      timeZone,
       professorScope,
       summary: {
         totalTurmas: items.length,
@@ -260,7 +270,7 @@ export async function getAttendanceTurmaWorkspace(
   turmaId: string,
   query: ListAttendanceWorkspaceQueryDTO,
 ): Promise<AttendanceTurmaWorkspaceResultDTO> {
-  const { selectedDate, turmas, occurrencesByTurmaId } = await loadAttendanceWorkspaceData(scope, query);
+  const { selectedDate, turmas, occurrencesByTurmaId, timeZone } = await loadAttendanceWorkspaceData(scope, query);
   const turma = turmas.find((item) => item.id === turmaId);
 
   if (!turma) {
@@ -273,6 +283,7 @@ export async function getAttendanceTurmaWorkspace(
     success: true,
     data: {
       selectedDate: selectedDate.toISOString(),
+      timeZone,
       turma: buildLookupItem(turma.id, turma.nome),
       sala: turma.sala ? buildLookupItem(turma.sala.id, turma.sala.nome) : null,
       professores: turma.professores.map((item) =>

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { addDays, endOfDay, format, startOfDay, subDays } from 'date-fns';
+import { TZDateMini } from '@date-fns/tz';
+import { addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Filter, Search, Users } from '@/components/icons/icons';
 
@@ -22,15 +23,25 @@ import { AttendanceHistoryTurmaDialog } from '@/features/aulas/frequencia/compon
 import { AttendanceTurmaDialog } from '@/features/aulas/frequencia/components/AttendanceTurmaDialog';
 import { useAttendance } from '@/features/aulas/frequencia/hooks/use-attendance';
 import { useAttendanceWorkspace } from '@/features/aulas/frequencia/hooks/use-attendance-workspace';
+import {
+  DEFAULT_ACCOUNT_TIMEZONE,
+  endOfZonedDayClient,
+  formatInstantInAccountZone,
+  normalizeAccountTimeZoneClient,
+  startOfZonedDayClient,
+  zonedNaiveToUtcIso,
+} from '@/lib/agenda-timezone';
 
 const ALL = '__ALL__';
-const DEFAULT_START = startOfDay(subDays(new Date(), 30)).toISOString();
-const DEFAULT_END = endOfDay(addDays(new Date(), 30)).toISOString();
+const tzDefault = DEFAULT_ACCOUNT_TIMEZONE;
+const zNowDefault = new TZDateMini(Date.now(), tzDefault);
+const DEFAULT_START = startOfZonedDayClient(new Date(addDays(zNowDefault, -30).getTime()), tzDefault).toISOString();
+const DEFAULT_END = endOfZonedDayClient(new Date(addDays(zNowDefault, 30).getTime()), tzDefault).toISOString();
 const TOOLBAR_TRIGGER_CLASS = 'h-9 rounded-xl border-slate-200 bg-white';
 
-function toDateInputValue(value?: string) {
+function toZonedDateInputValue(value: string | undefined, timeZone: string) {
   if (!value) return '';
-  return value.slice(0, 10);
+  return formatInstantInAccountZone(value, 'yyyy-MM-dd', timeZone);
 }
 
 function getLaunchStateBadgeVariant(state: AttendanceWorkspaceLaunchStateDTO) {
@@ -68,9 +79,11 @@ function getLaunchStateLabel(state: AttendanceWorkspaceLaunchStateDTO) {
 function AttendanceHistoryRow({
   item,
   onSelect,
+  timeZone,
 }: {
   item: AttendanceHistoryTurmaItemDTO;
   onSelect: (_turmaId: string) => void;
+  timeZone: string;
 }) {
   return (
     <button
@@ -81,7 +94,8 @@ function AttendanceHistoryRow({
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-slate-900">{item.turma?.label ?? 'Turma sem vínculo'}</div>
         <div className="mt-1 text-xs text-slate-500">
-          Última frequência: {format(new Date(item.lastLaunchedAt), "dd/MM/yyyy 'às' HH:mm")}
+          Última frequência:{' '}
+          {formatInstantInAccountZone(item.lastLaunchedAt, "dd/MM/yyyy 'às' HH:mm", timeZone, { locale: ptBR })}
         </div>
       </div>
 
@@ -110,9 +124,11 @@ function AttendanceHistoryRow({
 function AttendanceTurmaCard({
   item,
   onSelect,
+  timeZone,
 }: {
   item: AttendanceWorkspaceTurmaItemDTO;
   onSelect: (_turmaId: string) => void;
+  timeZone: string;
 }) {
   const occurrence = item.selectedOccurrence;
 
@@ -145,7 +161,7 @@ function AttendanceTurmaCard({
               <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">Horário</div>
               <div className="mt-1.5 text-sm font-semibold text-slate-900">
                 {occurrence
-                  ? `${format(new Date(occurrence.startAt), 'HH:mm')} - ${format(new Date(occurrence.endAt), 'HH:mm')}`
+                  ? `${formatInstantInAccountZone(occurrence.startAt, 'HH:mm', timeZone)} - ${formatInstantInAccountZone(occurrence.endAt, 'HH:mm', timeZone)}`
                   : 'Sem aula'}
               </div>
             </div>
@@ -176,10 +192,12 @@ function AttendanceHistoryToolbar({
   filters,
   setFilters,
   resources,
+  timeZone,
 }: {
   filters: ReturnType<typeof useAttendance>['filters'];
   setFilters: ReturnType<typeof useAttendance>['setFilters'];
   resources: { turmas: Array<{ id: string; label: string }>; professores: Array<{ id: string; label: string }> };
+  timeZone: string;
 }) {
   const activeFilters = [
     Boolean(filters.turmaId),
@@ -266,12 +284,12 @@ function AttendanceHistoryToolbar({
                     </label>
                     <Input
                       type="date"
-                      value={toDateInputValue(filters.startDate)}
+                      value={toZonedDateInputValue(filters.startDate, timeZone)}
                       onChange={(event) =>
                         setFilters((current) => ({
                           ...current,
                           startDate: event.target.value
-                            ? startOfDay(new Date(`${event.target.value}T00:00:00`)).toISOString()
+                            ? zonedNaiveToUtcIso(`${event.target.value}T00:00`, timeZone)
                             : undefined,
                         }))
                       }
@@ -285,12 +303,15 @@ function AttendanceHistoryToolbar({
                     </label>
                     <Input
                       type="date"
-                      value={toDateInputValue(filters.endDate)}
+                      value={toZonedDateInputValue(filters.endDate, timeZone)}
                       onChange={(event) =>
                         setFilters((current) => ({
                           ...current,
                           endDate: event.target.value
-                            ? endOfDay(new Date(`${event.target.value}T00:00:00`)).toISOString()
+                            ? endOfZonedDayClient(
+                                new Date(zonedNaiveToUtcIso(`${event.target.value}T00:00`, timeZone)),
+                                timeZone,
+                              ).toISOString()
                             : undefined,
                         }))
                       }
@@ -333,6 +354,7 @@ function AttendanceHistoryContent({
   error,
   selectedTurmaId,
   onSelectedTurmaIdChange,
+  timeZone,
 }: {
   filters: ReturnType<typeof useAttendance>['filters'];
   data: ReturnType<typeof useAttendance>['data'];
@@ -340,6 +362,7 @@ function AttendanceHistoryContent({
   error: string | null;
   selectedTurmaId: string | null;
   onSelectedTurmaIdChange: (_value: string | null) => void;
+  timeZone: string;
 }) {
   const items = data?.data.items ?? [];
 
@@ -377,6 +400,7 @@ function AttendanceHistoryContent({
                 key={item.turma?.id ?? item.lastLaunchedAt}
                 item={item}
                 onSelect={onSelectedTurmaIdChange}
+                timeZone={timeZone}
               />
             ))}
           </div>
@@ -421,6 +445,8 @@ export function FrequenciaPage() {
 
   const workspace = data?.data;
   const historyResources = historyData?.data.resources ?? { turmas: [], professores: [] };
+  const workspaceTz = normalizeAccountTimeZoneClient(workspace?.timeZone);
+  const historyTz = normalizeAccountTimeZoneClient(historyData?.data.timeZone);
 
   return (
     <TableLayout
@@ -465,13 +491,15 @@ export function FrequenciaPage() {
 
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <div className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium capitalize text-slate-900 shadow-sm">
-                      {format(new Date(selectedDate), "dd 'de' MMMM", { locale: ptBR })}
+                      {formatInstantInAccountZone(selectedDate, "dd 'de' MMMM", workspaceTz, { locale: ptBR })}
                     </div>
                     <Button
                       type="button"
                       variant="outline"
                       className="h-9 rounded-xl border-slate-200"
-                      onClick={() => setSelectedDate(startOfDay(new Date()).toISOString())}
+                      onClick={() =>
+                        setSelectedDate(startOfZonedDayClient(new Date(), workspaceTz).toISOString())
+                      }
                     >
                       Hoje
                     </Button>
@@ -480,7 +508,13 @@ export function FrequenciaPage() {
                       variant="outline"
                       size="icon"
                       className="h-9 w-9 rounded-xl border-slate-200"
-                      onClick={() => setSelectedDate(startOfDay(subDays(new Date(selectedDate), 1)).toISOString())}
+                      onClick={() => {
+                        const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
+                        const shifted = addDays(z, -1);
+                        setSelectedDate(
+                          startOfZonedDayClient(new Date(shifted.getTime()), workspaceTz).toISOString(),
+                        );
+                      }}
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
@@ -489,7 +523,13 @@ export function FrequenciaPage() {
                       variant="outline"
                       size="icon"
                       className="h-9 w-9 rounded-xl border-slate-200"
-                      onClick={() => setSelectedDate(startOfDay(addDays(new Date(selectedDate), 1)).toISOString())}
+                      onClick={() => {
+                        const z = new TZDateMini(new Date(selectedDate).getTime(), workspaceTz);
+                        const shifted = addDays(z, 1);
+                        setSelectedDate(
+                          startOfZonedDayClient(new Date(shifted.getTime()), workspaceTz).toISOString(),
+                        );
+                      }}
                     >
                       <ChevronRight className="h-4 w-4" />
                     </Button>
@@ -500,6 +540,7 @@ export function FrequenciaPage() {
                   filters={historyFilters}
                   setFilters={setHistoryFilters}
                   resources={historyResources}
+                  timeZone={historyTz}
                 />
               )}
             </div>
@@ -543,6 +584,7 @@ export function FrequenciaPage() {
                     key={item.turma.id}
                     item={item}
                     onSelect={setSelectedTurmaId}
+                    timeZone={workspaceTz}
                   />
                 ))}
               </div>
@@ -571,6 +613,7 @@ export function FrequenciaPage() {
             error={historyError}
             selectedTurmaId={selectedTurmaId}
             onSelectedTurmaIdChange={setSelectedTurmaId}
+            timeZone={historyTz}
           />
         )}
       </div>
