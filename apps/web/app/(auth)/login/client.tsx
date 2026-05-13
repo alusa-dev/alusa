@@ -343,11 +343,11 @@ export default function LoginClient() {
 
   return (
     <AuthShell>
-      <div className="flex w-full max-w-[320px] flex-col items-center text-center">
-        <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
+      <div className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-center text-center">
+        <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
           Bem-vindo de volta!
         </h1>
-        <p className="mt-2 text-[12px] font-medium leading-normal text-brand-muted text-pretty">
+        <p className="mt-3 max-w-[26rem] text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
           Informe seu e-mail e senha para acessar
           <br />
           sua conta na alusa.
@@ -357,67 +357,67 @@ export default function LoginClient() {
           action="/auth/login"
           onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
           data-testid="login-form"
-          className="mt-6 flex w-full flex-col items-stretch gap-4"
+          className="mt-7 flex w-full flex-col items-stretch gap-3.5 min-[400px]:mt-8 min-[400px]:gap-4"
           noValidate
         >
-          <div className="relative w-full h-12">
+          <div className="relative h-12 w-full min-[400px]:h-14">
             <input
               type="email"
               data-testid="email"
               placeholder="Digite seu E-mail"
               autoComplete="email"
               aria-invalid={!!errors.email || undefined}
-              className="w-full h-12 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[14px] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+              className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base"
               {...register('email')}
             />
-            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted" aria-hidden>
-              <User className="h-4 w-4" />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-brand-muted min-[400px]:right-[1.125rem]" aria-hidden>
+              <User className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" />
             </span>
           </div>
-          <div className="relative w-full h-12">
+          <div className="relative h-12 w-full min-[400px]:h-14">
             <input
               type={showPassword ? 'text' : 'password'}
               data-testid="password"
               placeholder="Digite sua senha"
               autoComplete="current-password"
               aria-invalid={!!errors.password || undefined}
-              className="w-full h-12 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[14px] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+              className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base"
               {...register('password')}
             />
             <button
               type="button"
               onClick={() => { setShowPassword(s => !s); }}
               aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted p-1 rounded outline-none"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-brand-muted outline-none min-[400px]:right-3.5"
             >
-              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {showPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" />}
             </button>
           </div>
-          <div className="flex w-full justify-between text-[12px] font-medium">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
+          <div className="flex w-full items-center justify-between gap-2 text-[0.8125rem] font-medium min-[400px]:text-sm">
+            <label className="flex cursor-pointer select-none items-center gap-2 py-1">
               <input
                 type="checkbox"
                 checked={remember}
                 onChange={(e) => { setRemember(e.target.checked); }}
-                className="h-4 w-4 rounded-[5px] border border-brand-accent accent-[#3e1f63] outline-none"
+                className="h-4 w-4 shrink-0 rounded-[5px] border border-brand-accent accent-[#3e1f63] outline-none min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]"
               />
               <span className="text-[#686868]">Lembrar-me</span>
             </label>
-            <Link href="/auth/forgot-password" className="text-[12px] text-brand-accent hover:underline outline-none rounded">
+            <Link href="/auth/forgot-password" className="shrink-0 text-brand-accent outline-none hover:underline min-[400px]:text-sm">
               Esqueceu sua senha?
             </Link>
           </div>
-          <div className="w-full mt-2">
+          <div className="mt-1 w-full">
             <button
               type="submit"
               data-testid="login-button"
               disabled={isSubmitting}
-              className="w-full h-12 rounded-[12px] bg-[#3e1f63] hover:bg-[#4b217a] text-white text-[14px] font-medium flex items-center justify-center transition-colors outline-none disabled:opacity-60"
+              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 min-[400px]:text-base"
             >
               Fazer login
             </button>
           </div>
-          <p className="mt-4 w-full text-center text-[11px] font-medium">
+          <p className="mt-4 w-full text-center text-[0.8125rem] font-medium min-[400px]:text-sm">
             <span className="text-[#686868]">Não tem uma conta? </span>
             <Link href="/auth/register" className="text-brand-accent hover:underline outline-none rounded">
               Cadastre-se

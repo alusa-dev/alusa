@@ -86,26 +86,26 @@ export default function ConfirmEmailPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="flex w-full max-w-[360px] flex-col items-center gap-5 text-center">
-          <div className="space-y-2">
-            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
+        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6">
+          <div className="space-y-2 min-[400px]:space-y-3">
+            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
               Confirme seu e-mail
             </h1>
-            <p className="text-[12px] font-medium text-brand-muted leading-relaxed text-pretty">
+            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
               Enviamos um link de confirmação para{' '}
               <span className="font-semibold text-[#4a3f35]">{session?.user?.email || 'seu e-mail'}</span>.
               Abra a mensagem para validar seu endereço e concluir a criação da conta.
             </p>
           </div>
 
-          <div className="flex w-full flex-col gap-3">
+          <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5">
             <button
               type="button"
               onClick={() => {
                 void handleResend();
               }}
               disabled={sending || status !== 'authenticated'}
-              className="w-full h-12 rounded-[12px] bg-[#3e1f63] text-white font-medium hover:opacity-95 disabled:opacity-50 transition-colors"
+              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 disabled:opacity-50 min-[400px]:text-base"
             >
               {sending ? 'Reenviando...' : 'Reenviar e-mail'}
             </button>
@@ -115,13 +115,13 @@ export default function ConfirmEmailPage() {
               onClick={() => {
                 void signOut({ callbackUrl: '/auth/login' });
               }}
-              className="w-full h-12 rounded-[12px] border border-[#d8cec2] bg-white text-[#4a3f35] font-medium hover:bg-[#f6f0e8] transition-colors"
+              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base"
             >
               Sair da conta
             </button>
           </div>
 
-          <p className="w-full text-center text-[11px] font-medium">
+          <p className="w-full text-center text-[0.8125rem] font-medium min-[400px]:text-sm">
             <span className="text-[#686868]">Entrou com o e-mail errado? </span>
             <Link href="/auth/login" className="text-brand-accent hover:underline">
               Voltar para login

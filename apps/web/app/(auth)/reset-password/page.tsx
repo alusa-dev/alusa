@@ -65,33 +65,33 @@ export default function ResetPasswordPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="flex w-full max-w-[320px] flex-col items-center px-0 text-center">
-          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
+        <div className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-center px-0 text-center">
+          <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
             Redefinir senha
           </h1>
-          <p className="mt-2 text-[12px] font-medium text-brand-muted text-pretty">
+          <p className="mt-3 text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
             Defina uma nova senha para acessar sua conta.
           </p>
 
           {!token ? (
-            <div className="mt-6 w-full rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[13px] text-[#5c544b]">
+            <div className="mt-7 w-full rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[0.8125rem] text-[#5c544b] min-[400px]:mt-8 min-[400px]:text-[0.9375rem]">
               Link inválido. Solicite um novo e-mail de redefinição.
             </div>
           ) : done ? (
-            <div className="mt-6 w-full flex flex-col gap-4">
-              <div className="rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[13px] text-[#5c544b]">
+            <div className="mt-7 w-full flex min-[400px]:mt-8 flex-col gap-4">
+              <div className="rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[0.8125rem] text-[#5c544b] min-[400px]:text-[0.9375rem]">
                 Sua senha foi alterada com sucesso.
               </div>
               <Link
                 href="/auth/login?reset=success"
-                className="w-full h-12 rounded-[12px] bg-[#3e1f63] text-white font-medium hover:opacity-95 transition-colors inline-flex items-center justify-center"
+                className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base"
               >
                 Fazer login
               </Link>
             </div>
           ) : (
-            <form onSubmit={(event) => { void onSubmit(event); }} className="mt-6 flex flex-col gap-4 w-full" noValidate>
-              <div className="relative w-full">
+            <form onSubmit={(event) => { void onSubmit(event); }} className="mt-7 flex w-full flex-col gap-3.5 min-[400px]:mt-8 min-[400px]:gap-4" noValidate>
+              <div className="relative h-12 w-full min-[400px]:h-14">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Nova senha"
@@ -100,7 +100,7 @@ export default function ResetPasswordPage() {
                   onChange={(event) => {
                     setPassword(event.target.value);
                   }}
-                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+                  className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base"
                 />
                 <button
                   type="button"
@@ -108,12 +108,12 @@ export default function ResetPasswordPage() {
                     setShowPassword((current) => !current);
                   }}
                   aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-brand-muted outline-none"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-2 text-brand-muted outline-none min-[400px]:right-3.5"
                 >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" />}
                 </button>
               </div>
-              <div className="relative w-full">
+              <div className="relative h-12 w-full min-[400px]:h-14">
                 <input
                   type={showConfirmPassword ? 'text' : 'password'}
                   placeholder="Confirmar nova senha"
@@ -122,7 +122,7 @@ export default function ResetPasswordPage() {
                   onChange={(event) => {
                     setConfirmPassword(event.target.value);
                   }}
-                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
+                  className="h-12 w-full min-[400px]:h-14 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[0.9375rem] text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0 min-[400px]:text-base"
                 />
                 <button
                   type="button"
@@ -130,18 +130,18 @@ export default function ResetPasswordPage() {
                     setShowConfirmPassword((current) => !current);
                   }}
                   aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-brand-muted outline-none"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-2 text-brand-muted outline-none min-[400px]:right-3.5"
                 >
-                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" /> : <Eye className="h-4 w-4 min-[400px]:h-[1.125rem] min-[400px]:w-[1.125rem]" />}
                 </button>
               </div>
-              <p className="px-1 text-center text-[11px] font-medium leading-relaxed text-brand-muted">
+              <p className="px-1 text-center text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] min-[400px]:text-[0.9375rem]">
                 Use no mínimo 8 caracteres, com letra maiúscula, letra minúscula, número e caractere especial.
               </p>
               <button
                 type="submit"
                 disabled={loading || !password || !confirmPassword}
-                className="w-full h-12 rounded-[12px] bg-[#3e1f63] text-white font-medium hover:opacity-95 disabled:opacity-50 transition-colors"
+                className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 disabled:opacity-50 min-[400px]:text-base"
               >
                 {loading ? 'Salvando...' : 'Salvar nova senha'}
               </button>

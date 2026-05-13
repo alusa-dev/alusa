@@ -1,6 +1,5 @@
 "use client";
 import React from 'react';
-import { AsaasSeal } from '@/components/shared/AsaasSeal';
 
 interface AuthShellProps {
     children: React.ReactNode;
@@ -29,41 +28,41 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
                 />
                 {/* Overlay gradiente */}
                 <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60 pointer-events-none" />
-                <div className="absolute inset-0 z-10 flex flex-col justify-between px-12 py-12 xl:px-14 xl:py-14">
+                <div className="absolute inset-0 z-10 flex flex-col px-12 py-12 xl:px-14 xl:py-14">
                     <div className="flex flex-col gap-16">
                         {/* Logo no topo */}
                         <div>
                             <img
                                 src="/brand/logo.svg"
                                 alt="Alusa"
-                                className="h-12 w-auto brightness-0 invert"
+                                className="h-12 w-auto xl:h-14 brightness-0 invert"
                             />
                         </div>
                         {heroContent}
                     </div>
-
-                    {/* Selo na base */}
-                    <div>
-                        <AsaasSeal variant="negativo-branco" />
-                    </div>
                 </div>
             </div>
 
-            {/* Direita: painel branco com formulário */}
+            {/* Direita: painel branco — mobile: bloco centralizado na viewport quando cabe; desktop: igual */}
             <div className="flex min-h-screen w-full flex-col bg-white lg:w-1/2">
-                <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 py-8 lg:py-16">
-                    <div className="flex w-full flex-col items-center">
-                        {/* Mobile: logo centralizada; paddings laterais iguais vêm do px-8 acima */}
-                        <div className="mb-8 flex w-full justify-center lg:hidden">
-                            <img src="/brand/logo.svg" alt="Alusa" className="h-12 w-auto" />
+                <div
+                    className={
+                        'flex min-h-0 flex-1 flex-col overflow-y-auto ' +
+                        'px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))] min-[400px]:px-6 min-[400px]:pb-6 ' +
+                        'lg:px-8 lg:py-16 lg:pb-16'
+                    }
+                >
+                    <div className="flex flex-1 flex-col items-center justify-center">
+                        <div className="mb-5 flex w-full justify-center min-[400px]:mb-6 lg:mb-0 lg:hidden">
+                            <img
+                                src="/brand/logo.svg"
+                                alt="Alusa"
+                                className="h-10 w-auto min-[400px]:h-11"
+                            />
                         </div>
                         <div className="flex w-full flex-col items-center">{children}</div>
                     </div>
                 </div>
-
-                <footer className="flex shrink-0 justify-center px-8 pb-8 pt-2 lg:hidden" aria-label="Parceria de pagamentos">
-                    <AsaasSeal variant="negativo-preto" />
-                </footer>
             </div>
         </div>
     );

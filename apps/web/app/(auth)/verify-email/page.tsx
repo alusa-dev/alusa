@@ -143,9 +143,9 @@ export default function VerifyEmailPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="flex w-full max-w-[360px] flex-col items-center gap-5 text-center">
-          <div className="space-y-2">
-            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
+        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6">
+          <div className="space-y-2 min-[400px]:space-y-3">
+            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
               {state === 'success'
                 ? isReactivationFlow
                   ? 'Conta reativada'
@@ -154,23 +154,23 @@ export default function VerifyEmailPage() {
                   ? 'Falha na confirmação'
                   : 'Confirmando e-mail'}
             </h1>
-            <p className="text-[12px] font-medium text-brand-muted leading-relaxed text-pretty">
+            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
               {message}
             </p>
           </div>
 
           {state !== 'loading' && (
-            <div className="flex w-full flex-col gap-3">
+            <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5">
               <Link
                 href={state === 'success' ? callbackUrl : '/auth/confirm-email'}
-                className="w-full h-12 rounded-[12px] bg-[#3e1f63] text-white font-medium hover:opacity-95 transition-colors inline-flex items-center justify-center"
+                className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base"
               >
                 {state === 'success' ? (isReactivationFlow ? 'Ir para login' : 'Continuar') : 'Voltar'}
               </Link>
               {state === 'error' && (
                 <Link
                   href="/auth/login"
-                  className="w-full h-12 rounded-[12px] border border-[#d8cec2] bg-white text-[#4a3f35] font-medium hover:bg-[#f6f0e8] transition-colors inline-flex items-center justify-center"
+                  className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base"
                 >
                   Fazer login
                 </Link>

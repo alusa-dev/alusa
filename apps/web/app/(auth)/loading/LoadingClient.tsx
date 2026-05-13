@@ -25,15 +25,15 @@ export default function LoadingClient() {
   return (
     <AuthShell>
       <div
-        className="flex w-full max-w-[320px] flex-col items-center justify-center gap-4 py-12 text-center"
+        className="flex w-full max-w-[min(100%,21.5rem)] min-[400px]:max-w-[min(100%,24rem)] flex-col items-center justify-center gap-4 py-10 text-center min-[400px]:gap-5 min-[400px]:py-12"
         role="status"
         aria-live="polite"
       >
         <span
           aria-hidden="true"
-          className="inline-flex h-10 w-10 animate-spin rounded-full border-[3px] border-[#3e1f63]/20 border-t-[#3e1f63]"
+          className="inline-flex h-10 w-10 min-[400px]:h-11 min-[400px]:w-11 animate-spin rounded-full border-[3px] border-[#3e1f63]/20 border-t-[#3e1f63]"
         />
-        <p className="text-sm font-medium text-brand-muted">Carregando...</p>
+        <p className="text-[0.9375rem] font-medium text-brand-muted min-[400px]:text-base">Carregando...</p>
       </div>
     </AuthShell>
   );
