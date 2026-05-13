@@ -143,9 +143,9 @@ export default function VerifyEmailPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6">
-          <div className="space-y-2 min-[400px]:space-y-3">
-            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem]">
+        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6 lg:max-w-[360px] lg:items-start lg:gap-5 lg:text-left">
+          <div className="space-y-2 min-[400px]:space-y-3 lg:space-y-2">
+            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem] lg:text-[30px] lg:leading-tight lg:tracking-tight lg:text-left">
               {state === 'success'
                 ? isReactivationFlow
                   ? 'Conta reativada'
@@ -154,23 +154,23 @@ export default function VerifyEmailPage() {
                   ? 'Falha na confirmação'
                   : 'Confirmando e-mail'}
             </h1>
-            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem]">
+            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem] lg:text-left lg:text-[12px] lg:text-brand-muted">
               {message}
             </p>
           </div>
 
           {state !== 'loading' && (
-            <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5">
+            <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5 lg:gap-3">
               <Link
                 href={state === 'success' ? callbackUrl : '/auth/confirm-email'}
-                className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base"
+                className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base lg:h-12"
               >
                 {state === 'success' ? (isReactivationFlow ? 'Ir para login' : 'Continuar') : 'Voltar'}
               </Link>
               {state === 'error' && (
                 <Link
                   href="/auth/login"
-                  className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base"
+                  className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base lg:h-12"
                 >
                   Fazer login
                 </Link>
