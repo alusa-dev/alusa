@@ -3,6 +3,7 @@
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import interactionPlugin from '@fullcalendar/interaction';
+/** Luxon deve vir antes dos outros plugins para named IANA timeZone (docs FullCalendar). */
 import luxonPlugin from '@fullcalendar/luxon3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/core';
@@ -149,13 +150,17 @@ export function CalendarScheduler({
   const isCompactMonth = viewMode === 'month-compact';
   const isDetailedMonth = viewMode === 'month-detailed';
 
-  /** timeGrid + height:auto pode medir altura dos slots antes do layout final; realinha faixas e eventos (ex.: :30). */
+  /** timeGrid + height:auto: garantir medida estável dos slats após paint (sub-hora / :30). */
   const bumpTimeGridLayout = useCallback(() => {
     if (!isWeekView) return;
     const api = calendarRef.current?.getApi();
     if (!api) return;
     requestAnimationFrame(() => {
       api.updateSize();
+      // Segundo tick: Tabs/parent flex às vezes só estabiliza dimensões depois do primeiro frame.
+      requestAnimationFrame(() => {
+        api.updateSize();
+      });
     });
   }, [isWeekView]);
 
@@ -175,7 +180,7 @@ export function CalendarScheduler({
       <FullCalendar
         ref={calendarRef}
         key={`${viewMode}:${anchorDate}:${timeZone}`}
-        plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, luxonPlugin]}
+        plugins={[luxonPlugin, dayGridPlugin, timeGridPlugin, interactionPlugin]}
         initialView={initialView}
         initialDate={anchorDate}
         locale="pt-br"
@@ -188,12 +193,14 @@ export function CalendarScheduler({
         slotMaxTime="22:00:00"
         slotDuration={isWeekView ? '00:30:00' : undefined}
         slotLabelInterval={isWeekView ? '01:00:00' : undefined}
+        expandRows={isWeekView}
         slotEventOverlap={!isWeekView}
         eventMinHeight={isWeekView ? 22 : undefined}
         eventShortHeight={isWeekView ? 22 : undefined}
         height="auto"
         datesSet={isWeekView ? bumpTimeGridLayout : undefined}
         eventsSet={isWeekView ? bumpTimeGridLayout : undefined}
+        viewDidMount={isWeekView ? bumpTimeGridLayout : undefined}
         weekends
         eventDisplay="block"
         fixedWeekCount={false}

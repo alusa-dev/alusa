@@ -1114,6 +1114,11 @@ svg:hover,
 	padding: 1px;
 }
 
+/* Semana: sem padding no wrapper do evento — evita deslocamento visual face às linhas horárias. */
+.calendar-scheduler-wrapper--week .fc-event {
+	padding: 0;
+}
+
 .calendar-scheduler-wrapper--week .fc-timegrid-event-harness {
 	margin-inline: 2px;
 }
@@ -1156,6 +1161,11 @@ svg:hover,
 	border: none !important;
 	border-radius: 0;
 	overflow: hidden;
+}
+
+/* Meia-hora: linha auxiliar discreta alinhada aos slots de 30 min (slotDuration). */
+.calendar-scheduler-wrapper--week .fc-timegrid-slot-minor {
+	border-top: 1px dotted #e2e8f0;
 }
 
 /* Semana: overflow:hidden faz o timeGrid medir mal a altura dos slots com height:auto (~eventos :30 "colados" na hora cheia). */
