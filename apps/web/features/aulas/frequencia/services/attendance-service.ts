@@ -11,6 +11,7 @@ import {
   mapAttendanceWorkspaceResult,
   mapListAttendanceResult,
 } from '@/features/aulas/mappers';
+import { invalidateAgendaEventsCache } from '@/features/aulas/agenda/services/agenda-service';
 import { buildQueryString, requestJson } from '@/features/aulas/calendar/services/aulas-api';
 
 export async function listAttendanceHistory(query: Partial<ListAttendanceQueryDTO>) {
@@ -58,5 +59,8 @@ export async function saveAttendanceEvent(eventId: string, input: SaveAttendance
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
+
+  invalidateAgendaEventsCache();
+
   return mapAttendanceEventDetailsResult(result);
 }

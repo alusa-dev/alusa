@@ -88,6 +88,11 @@ function WeekTimeGridEventContent({ arg }: { arg: EventContentArg }) {
       setShowMetaLine(h >= WEEK_EVENT_META_VISIBLE_MIN_HEIGHT_PX);
     };
 
+    if (typeof ResizeObserver === 'undefined') {
+      sync();
+      return;
+    }
+
     const ro = new ResizeObserver((entries) => {
       const h = entries[0]?.contentRect.height ?? 0;
       setShowMetaLine(h >= WEEK_EVENT_META_VISIBLE_MIN_HEIGHT_PX);
@@ -219,6 +224,11 @@ export function CalendarScheduler({
     if (!isWeekView) return;
     const el = wrapperRef.current;
     if (!el) return;
+
+    if (typeof ResizeObserver === 'undefined') {
+      bumpTimeGridLayout();
+      return;
+    }
 
     const ro = new ResizeObserver(() => {
       bumpTimeGridLayout();
