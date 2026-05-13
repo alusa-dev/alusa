@@ -15,6 +15,7 @@ import {
 import { buildQueryString, requestJson } from '@/features/aulas/calendar/services/aulas-api';
 
 const AGENDA_EVENTS_CACHE_TTL_MS = 30_000;
+const AGENDA_EVENTS_CACHE_MAX_ENTRIES = 40;
 
 const agendaEventsCache = new Map<string, { expiresAt: number; value: ListCalendarEventsResultDTO }>();
 const agendaEventsInFlight = new Map<string, Promise<ListCalendarEventsResultDTO>>();
@@ -23,44 +24,94 @@ function getAgendaEventsCacheKey(query: Partial<ListCalendarEventsQueryDTO>) {
   return buildQueryString(query as Record<string, unknown>) || '__default__';
 }
 
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+}
+
+function touchAgendaCacheKey(key: string) {
+  const entry = agendaEventsCache.get(key);
+  if (!entry) return;
+  agendaEventsCache.delete(key);
+  agendaEventsCache.set(key, entry);
+}
+
+function pruneAgendaEventsCache() {
+  while (agendaEventsCache.size > AGENDA_EVENTS_CACHE_MAX_ENTRIES) {
+    const oldest = agendaEventsCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    agendaEventsCache.delete(oldest);
+  }
+}
+
+function setAgendaCache(key: string, value: ListCalendarEventsResultDTO) {
+  if (agendaEventsCache.has(key)) {
+    agendaEventsCache.delete(key);
+  }
+  agendaEventsCache.set(key, {
+    expiresAt: Date.now() + AGENDA_EVENTS_CACHE_TTL_MS,
+    value,
+  });
+  pruneAgendaEventsCache();
+}
+
 export function invalidateAgendaEventsCache() {
   agendaEventsCache.clear();
   agendaEventsInFlight.clear();
 }
 
-export async function listAgendaEvents(query: Partial<ListCalendarEventsQueryDTO>) {
+export type ListAgendaEventsOptions = {
+  signal?: AbortSignal;
+};
+
+export async function listAgendaEvents(
+  query: Partial<ListCalendarEventsQueryDTO>,
+  options?: ListAgendaEventsOptions,
+) {
+  const { signal } = options ?? {};
+
+  throwIfAborted(signal);
+
   const cacheKey = getAgendaEventsCacheKey(query);
   const cached = agendaEventsCache.get(cacheKey);
 
   if (cached && cached.expiresAt > Date.now()) {
+    touchAgendaCacheKey(cacheKey);
+    throwIfAborted(signal);
     return cached.value;
   }
 
-  const inFlight = agendaEventsInFlight.get(cacheKey);
-
-  if (inFlight) {
-    return inFlight;
+  if (cached && cached.expiresAt <= Date.now()) {
+    agendaEventsCache.delete(cacheKey);
   }
 
-  const search = buildQueryString(query as Record<string, unknown>);
-  const request = requestJson<Record<string, unknown>>(`/api/aulas/agenda?${search}`).then((result) => {
-    const parsed = mapListCalendarEventsResult(result);
+  throwIfAborted(signal);
 
-    agendaEventsCache.set(cacheKey, {
-      expiresAt: Date.now() + AGENDA_EVENTS_CACHE_TTL_MS,
-      value: parsed,
+  const execute = async () => {
+    const search = buildQueryString(query as Record<string, unknown>);
+    throwIfAborted(signal);
+    const result = await requestJson<Record<string, unknown>>(`/api/aulas/agenda?${search}`, { signal });
+    const parsed = mapListCalendarEventsResult(result);
+    setAgendaCache(cacheKey, parsed);
+    return parsed;
+  };
+
+  if (!signal) {
+    const inFlight = agendaEventsInFlight.get(cacheKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const request = execute().finally(() => {
+      agendaEventsInFlight.delete(cacheKey);
     });
 
-    return parsed;
-  });
-
-  agendaEventsInFlight.set(cacheKey, request);
-
-  try {
-    return await request;
-  } finally {
-    agendaEventsInFlight.delete(cacheKey);
+    agendaEventsInFlight.set(cacheKey, request);
+    return request;
   }
+
+  return execute();
 }
 
 export async function getAgendaEvent(eventId: string) {

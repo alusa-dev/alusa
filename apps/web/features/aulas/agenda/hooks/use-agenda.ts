@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { TZDateMini } from '@date-fns/tz';
+import { addDays, addMonths } from 'date-fns';
+
 import type {
   AgendaViewModeDTO,
   CalendarEventTypeDTO,
@@ -11,6 +14,7 @@ import { listAgendaEvents } from '@/features/aulas/agenda/services/agenda-servic
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
   buildZonedAgendaRangeIso,
+  normalizeAccountTimeZoneClient,
 } from '@/lib/agenda-timezone';
 
 export type AgendaFiltersState = {
@@ -37,6 +41,38 @@ type UseAgendaOptions = {
   enabled?: boolean;
 };
 
+function prefetchAdjacentAgendaRanges(filters: AgendaFiltersState, timeZone: string): void {
+  const tz = normalizeAccountTimeZoneClient(timeZone);
+
+  const run = (direction: -1 | 1) => {
+    try {
+      const anchor = new Date(filters.start);
+      const z = new TZDateMini(anchor.getTime(), tz);
+      const shifted =
+        filters.viewMode === 'week'
+          ? addDays(z, direction === -1 ? -7 : 7)
+          : addMonths(z, direction === -1 ? -1 : 1);
+      const { start, end } = buildZonedAgendaRangeIso(new Date(shifted.getTime()), filters.viewMode, tz);
+
+      void listAgendaEvents({
+        start,
+        end,
+        turmaId: filters.turmaId,
+        professorId: filters.professorId,
+        salaId: filters.salaId,
+        type: filters.type,
+        viewMode: filters.viewMode,
+        includeResources: false,
+      }).catch(() => {});
+    } catch {
+      /* prefetch best-effort */
+    }
+  };
+
+  run(-1);
+  run(1);
+}
+
 export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAgendaOptions) {
   const [filters, setFilters] = useState<AgendaFiltersState>({
     start: initial?.start ?? defaultWeekRange.start,
@@ -61,6 +97,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
       return;
     }
 
+    const controller = new AbortController();
     let cancelled = false;
 
     const run = async () => {
@@ -79,10 +116,20 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
           includeResources: false,
         };
 
-        const result = await listAgendaEvents(query);
-        if (!cancelled) setData(result);
+        const result = await listAgendaEvents(query, { signal: controller.signal });
+        if (cancelled) return;
+
+        setData(result);
+        prefetchAdjacentAgendaRanges(filters, result.data.timeZone);
       } catch (err) {
-        if (!cancelled) setError((err as Error).message);
+        if (cancelled) return;
+        const isAbort =
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          (typeof err === 'object' &&
+            err !== null &&
+            (err as { name?: string }).name === 'AbortError');
+        if (isAbort) return;
+        setError((err as Error).message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -92,6 +139,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [enabled, requestKey, refreshNonce]);
 

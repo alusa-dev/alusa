@@ -1,8 +1,9 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { startTransition, useDeferredValue, useEffect, useState } from 'react';
 import { TZDateMini } from '@date-fns/tz';
-import { addDays, addMonths, isWithinInterval } from 'date-fns';
+import { addDays, addMonths } from 'date-fns';
 
 import { AGENDA_VIEW_OPTIONS } from '@/features/aulas/types';
 
@@ -15,27 +16,59 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { AgendaViewModeDTO, CalendarEventDetailsDTO, TimelineGroupByDTO } from '@/features/aulas/dtos';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import type { AgendaViewModeDTO, CalendarEventDetailsDTO } from '@/features/aulas/dtos';
 import { useAgenda } from '@/features/aulas/agenda/hooks/use-agenda';
 import { AgendaFilters } from '@/features/aulas/agenda/components/AgendaFilters';
-import { CalendarEventDialog } from '@/features/aulas/agenda/components/CalendarEventDialog';
-import { CalendarEventSheet } from '@/features/aulas/agenda/components/CalendarEventSheet';
-import { AttendanceSheet } from '@/features/aulas/frequencia/components/AttendanceSheet';
-import { ExperimentalClassDialog } from '@/features/aulas/experimentais/components/ExperimentalClassDialog';
 import { listAgendaResources, type AgendaResourcesResult } from '@/features/aulas/agenda/services/agenda-resources-service';
-import { MakeupClassDialog } from '@/features/aulas/reposicoes/components/MakeupClassDialog';
 import { CalendarScheduler } from '@/features/aulas/calendar/components/CalendarScheduler';
-import { TimelineScheduler } from '@/features/aulas/calendar/components/TimelineScheduler';
 import { ChevronDown, Plus } from '@/components/icons/icons';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
   buildZonedAgendaRangeIso,
-  buildZonedDayRangeIso,
-  endOfZonedDayClient,
   startOfZonedDayClient,
 } from '@/lib/agenda-timezone';
+
+const CalendarEventDialog = dynamic(
+  () =>
+    import('@/features/aulas/agenda/components/CalendarEventDialog').then((m) => ({
+      default: m.CalendarEventDialog,
+    })),
+  { ssr: false },
+);
+
+const CalendarEventSheet = dynamic(
+  () =>
+    import('@/features/aulas/agenda/components/CalendarEventSheet').then((m) => ({
+      default: m.CalendarEventSheet,
+    })),
+  { ssr: false },
+);
+
+const AttendanceSheet = dynamic(
+  () =>
+    import('@/features/aulas/frequencia/components/AttendanceSheet').then((m) => ({
+      default: m.AttendanceSheet,
+    })),
+  { ssr: false },
+);
+
+const ExperimentalClassDialog = dynamic(
+  () =>
+    import('@/features/aulas/experimentais/components/ExperimentalClassDialog').then((m) => ({
+      default: m.ExperimentalClassDialog,
+    })),
+  { ssr: false },
+);
+
+const MakeupClassDialog = dynamic(
+  () =>
+    import('@/features/aulas/reposicoes/components/MakeupClassDialog').then((m) => ({
+      default: m.MakeupClassDialog,
+    })),
+  { ssr: false },
+);
 
 const EMPTY_RESOURCES: AgendaResourcesResult = {
   turmas: [],
@@ -43,39 +76,12 @@ const EMPTY_RESOURCES: AgendaResourcesResult = {
   salas: [],
 };
 
-function resolveTimelineAnchor(start?: string, end?: string, timeZone = DEFAULT_ACCOUNT_TIMEZONE) {
-  if (!start || !end) {
-    return startOfZonedDayClient(new Date(), timeZone);
-  }
-
-  const rangeStart = startOfZonedDayClient(new Date(start), timeZone);
-  const rangeEnd = endOfZonedDayClient(new Date(end), timeZone);
-  const today = new Date();
-
-  if (isWithinInterval(today, { start: rangeStart, end: rangeEnd })) {
-    return startOfZonedDayClient(today, timeZone);
-  }
-
-  return rangeStart;
-}
-
 type AgendaPageProps = {
   initialFilters?: Partial<AgendaFiltersState>;
 };
 
 export function AgendaPage({ initialFilters }: AgendaPageProps) {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'timeline'>('calendar');
   const calendarAgenda = useAgenda(initialFilters);
-  const timelineInitialRange = buildZonedDayRangeIso(
-    resolveTimelineAnchor(initialFilters?.start, initialFilters?.end),
-    DEFAULT_ACCOUNT_TIMEZONE,
-  );
-  const timelineAgenda = useAgenda({
-    ...initialFilters,
-    ...timelineInitialRange,
-    viewMode: 'week',
-  }, { enabled: activeTab === 'timeline' });
-  const [timelineGroupBy, setTimelineGroupBy] = useState<TimelineGroupByDTO>('professor');
   const [createOpen, setCreateOpen] = useState(false);
   const [experimentalCreateOpen, setExperimentalCreateOpen] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEventDetailsDTO | null>(null);
@@ -92,17 +98,12 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   const [resourcesError, setResourcesError] = useState<string | null>(null);
   const [loadingMakeupResources, setLoadingMakeupResources] = useState(false);
 
-  const activeAgenda = activeTab === 'calendar' ? calendarAgenda : timelineAgenda;
-  const activeFilters = activeAgenda.filters;
+  const filters = calendarAgenda.filters;
   const calendarEvents = useDeferredValue(calendarAgenda.data?.data.events ?? []);
-  const timelineEvents = useDeferredValue(timelineAgenda.data?.data.events ?? []);
-  const activeLoading = activeAgenda.loading;
-  const activeError = activeAgenda.error;
+  const calendarLoading = calendarAgenda.loading;
+  const calendarError = calendarAgenda.error;
 
-  const accountTimeZone =
-    calendarAgenda.data?.data.timeZone ??
-    timelineAgenda.data?.data.timeZone ??
-    DEFAULT_ACCOUNT_TIMEZONE;
+  const accountTimeZone = calendarAgenda.data?.data.timeZone ?? DEFAULT_ACCOUNT_TIMEZONE;
 
   useEffect(() => {
     const today = new Date();
@@ -111,11 +112,6 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     calendarAgenda.setFilters((current) => ({
       ...current,
       ...buildZonedAgendaRangeIso(today, current.viewMode, tz),
-    }));
-
-    timelineAgenda.setFilters((current) => ({
-      ...current,
-      ...buildZonedDayRangeIso(today, tz),
     }));
   }, []);
 
@@ -144,39 +140,13 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     };
   }, []);
 
-  function applySharedFilters(patch: Partial<AgendaFiltersState>) {
+  function applyFilters(patch: Partial<AgendaFiltersState>) {
     startTransition(() => {
       calendarAgenda.setFilters((current) => ({ ...current, ...patch }));
-      timelineAgenda.setFilters((current) => ({ ...current, ...patch }));
     });
   }
 
   function handleNavigatePeriod(direction: 'prev' | 'next' | 'today') {
-    if (activeTab === 'timeline') {
-      const currentStart = new Date(timelineAgenda.filters.start);
-
-      if (direction === 'today') {
-        startTransition(() => {
-          timelineAgenda.setFilters((current) => ({
-            ...current,
-            ...buildZonedDayRangeIso(new Date(), accountTimeZone),
-          }));
-        });
-        return;
-      }
-
-      const z = new TZDateMini(currentStart.getTime(), accountTimeZone);
-      const shifted = addDays(z, direction === 'prev' ? -1 : 1);
-      const nextAnchor = new Date(shifted.getTime());
-      startTransition(() => {
-        timelineAgenda.setFilters((current) => ({
-          ...current,
-          ...buildZonedDayRangeIso(nextAnchor, accountTimeZone),
-        }));
-      });
-      return;
-    }
-
     const currentStart = new Date(calendarAgenda.filters.start);
 
     if (direction === 'today') {
@@ -227,27 +197,6 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   function handleEventSaved() {
     startTransition(() => {
       calendarAgenda.refresh();
-      timelineAgenda.refresh();
-    });
-  }
-
-  function handleTabChange(nextTab: 'calendar' | 'timeline') {
-    const today = new Date();
-
-    startTransition(() => {
-      if (nextTab === 'calendar') {
-        calendarAgenda.setFilters((current) => ({
-          ...current,
-          ...buildZonedAgendaRangeIso(today, current.viewMode, accountTimeZone),
-        }));
-      } else {
-        timelineAgenda.setFilters((current) => ({
-          ...current,
-          ...buildZonedDayRangeIso(today, accountTimeZone),
-        }));
-      }
-
-      setActiveTab(nextTab);
     });
   }
 
@@ -279,9 +228,9 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
       className="pr-4 xl:pr-6"
     >
       <div className="space-y-5">
-        {activeError ? (
+        {calendarError ? (
           <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {activeError}
+            {calendarError}
           </div>
         ) : null}
 
@@ -298,122 +247,92 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         ) : null}
 
         <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
-          <Tabs value={activeTab} onValueChange={(value) => handleTabChange(value as 'calendar' | 'timeline')}>
-            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="inline-flex overflow-hidden rounded-xl shadow-sm">
-                  <Button
-                    className="rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90"
-                    onClick={() => setCreateOpen(true)}
-                    data-testid="agenda-new-event"
-                    disabled={activeLoading || (!calendarAgenda.data && !timelineAgenda.data)}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    Novo evento
-                  </Button>
+          <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="inline-flex overflow-hidden rounded-xl shadow-sm">
+                <Button
+                  className="rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+                  onClick={() => setCreateOpen(true)}
+                  data-testid="agenda-new-event"
+                  disabled={calendarLoading || !calendarAgenda.data}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Novo evento
+                </Button>
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        aria-label="Abrir ações de criação da agenda"
-                        className="rounded-none rounded-r-xl border-l border-white/20 bg-brand-accent px-3 text-white hover:bg-brand-accent/90"
-                        data-testid="agenda-create-menu-trigger"
-                        disabled={
-                          activeLoading ||
-                          (!calendarAgenda.data && !timelineAgenda.data) ||
-                          loadingMakeupResources
-                        }
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          setExperimentalCreateOpen(true);
-                        }}
-                      >
-                        Aula experimental
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => void handleOpenMakeupDialog()}>
-                        {loadingMakeupResources ? 'Carregando reposição...' : 'Reposição'}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      aria-label="Abrir ações de criação da agenda"
+                      className="rounded-none rounded-r-xl border-l border-white/20 bg-brand-accent px-3 text-white hover:bg-brand-accent/90"
+                      data-testid="agenda-create-menu-trigger"
+                      disabled={
+                        calendarLoading ||
+                        !calendarAgenda.data ||
+                        loadingMakeupResources
+                      }
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setExperimentalCreateOpen(true);
+                      }}
+                    >
+                      Aula experimental
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void handleOpenMakeupDialog()}>
+                      {loadingMakeupResources ? 'Carregando reposição...' : 'Reposição'}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
 
+              <Tabs
+                value={calendarAgenda.filters.viewMode}
+                onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
+              >
                 <TabsList className="h-9">
-                  <TabsTrigger value="calendar" className="text-xs px-4">Calendário</TabsTrigger>
-                  <TabsTrigger value="timeline" className="text-xs px-4">Timeline</TabsTrigger>
+                  {AGENDA_VIEW_OPTIONS.map((option) => (
+                    <TabsTrigger key={option.value} value={option.value} className="text-xs px-4">
+                      {option.label}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
-
-                {activeTab === 'calendar' ? (
-                  <Tabs
-                    value={calendarAgenda.filters.viewMode}
-                    onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
-                  >
-                    <TabsList className="h-9">
-                      {AGENDA_VIEW_OPTIONS.map((option) => (
-                        <TabsTrigger key={option.value} value={option.value} className="text-xs px-4">
-                          {option.label}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </Tabs>
-                ) : null}
-              </div>
-
-              <div className="flex flex-col gap-3 xl:items-end">
-                <AgendaFilters
-                  embedded
-                  showCurrentLabel={false}
-                  filters={activeFilters}
-                  resources={resources}
-                  timeZone={accountTimeZone}
-                  timelineGroupBy={activeTab === 'timeline' ? timelineGroupBy : undefined}
-                  onTimelineGroupByChange={activeTab === 'timeline' ? setTimelineGroupBy : undefined}
-                  onFiltersChange={applySharedFilters}
-                  onNavigatePeriod={handleNavigatePeriod}
-                />
-
-              </div>
+              </Tabs>
             </div>
 
-            <TabsContent value="calendar" className="mt-0">
-              {calendarAgenda.loading ? (
-                <div className="px-6 py-12 text-sm text-slate-500">
-                  Carregando calendário...
-                </div>
-              ) : (
-                <CalendarScheduler
-                  events={calendarEvents}
-                  viewMode={calendarAgenda.filters.viewMode}
-                  anchorDate={calendarAgenda.filters.start}
-                  timeZone={accountTimeZone}
-                  onEventSelect={setSelectedEventId}
-                />
-              )}
-            </TabsContent>
+            <div className="flex flex-col gap-3 xl:items-end">
+              <AgendaFilters
+                embedded
+                showCurrentLabel={false}
+                filters={filters}
+                resources={resources}
+                timeZone={accountTimeZone}
+                onFiltersChange={applyFilters}
+                onNavigatePeriod={handleNavigatePeriod}
+              />
 
-            <TabsContent value="timeline" className="mt-0">
-              {timelineAgenda.loading ? (
-                <div className="px-6 py-12 text-sm text-slate-500">
-                  Carregando timeline...
-                </div>
-              ) : (
-                <div className="p-4">
-                  <TimelineScheduler
-                    events={timelineEvents}
-                    start={timelineAgenda.filters.start}
-                    end={timelineAgenda.filters.end}
-                    timeZone={accountTimeZone}
-                    groupBy={timelineGroupBy}
-                    onEventSelect={setSelectedEventId}
-                  />
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
+            </div>
+          </div>
+
+          <div className="mt-0">
+            {calendarLoading ? (
+              <div className="px-6 py-12 text-sm text-slate-500">
+                Carregando calendário...
+              </div>
+            ) : (
+              <CalendarScheduler
+                events={calendarEvents}
+                viewMode={calendarAgenda.filters.viewMode}
+                anchorDate={calendarAgenda.filters.start}
+                timeZone={accountTimeZone}
+                onEventSelect={setSelectedEventId}
+              />
+            )}
+          </div>
         </Card>
       </div>
 

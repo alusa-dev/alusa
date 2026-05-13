@@ -1109,9 +1109,40 @@ svg:hover,
 }
 
 .calendar-scheduler-wrapper .fc-event {
-	border: none;
-	background: transparent;
-	padding: 1px;
+	border: none !important;
+	box-shadow: none !important;
+	outline: none !important;
+	background: transparent !important;
+	/* Era 1px no mês/outras vistas — aparecia halo branco em volta dos cards React. */
+	padding: 0;
+	cursor: pointer;
+}
+
+.calendar-scheduler-wrapper .fc-timegrid-event,
+.calendar-scheduler-wrapper .fc-timegrid-event .fc-event-main {
+	border-width: 0 !important;
+	border-style: none !important;
+	box-shadow: none !important;
+}
+
+.calendar-scheduler-wrapper .fc-event-main-frame {
+	border-width: 0 !important;
+	box-shadow: none !important;
+}
+
+.calendar-scheduler-wrapper .fc-daygrid-dot-event.fc-event,
+.calendar-scheduler-wrapper .fc-daygrid-event .fc-event-main,
+.calendar-scheduler-wrapper .fc-h-event {
+	border: none !important;
+	box-shadow: none !important;
+	outline: none !important;
+}
+
+.calendar-scheduler-wrapper .fc-event .fc-event-main,
+.calendar-scheduler-wrapper .fc-timegrid-event-harness,
+.calendar-scheduler-wrapper .fc-daygrid-event-harness {
+	cursor: pointer;
+	box-shadow: none !important;
 }
 
 /* Semana: sem padding no wrapper do evento — evita deslocamento visual face às linhas horárias. */
@@ -1119,8 +1150,17 @@ svg:hover,
 	padding: 0;
 }
 
+/* FullCalendar LTR usa margin lateral em fc-timegrid-col-events (≈2,5%), estreita os cards. */
+.calendar-scheduler-wrapper--week .fc-direction-ltr .fc-timegrid-col-events {
+	margin: 0 1px !important;
+}
+
+.calendar-scheduler-wrapper--week .fc-direction-rtl .fc-timegrid-col-events {
+	margin: 0 1px !important;
+}
+
 .calendar-scheduler-wrapper--week .fc-timegrid-event-harness {
-	margin-inline: 2px;
+	margin-inline: 0;
 }
 
 .calendar-scheduler-wrapper--week .fc-timegrid-event {
@@ -1199,7 +1239,9 @@ svg:hover,
 }
 
 .calendar-scheduler-wrapper {
+	/* Remove halos/tracejados padrão do tema em eventos (nossos cards já trazem o fundo). */
 	--fc-today-bg-color: transparent;
+	--fc-event-border-color: transparent;
 }
 
 .calendar-scheduler-wrapper .fc-day-today {

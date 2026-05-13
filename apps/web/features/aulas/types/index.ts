@@ -5,18 +5,11 @@ import type {
   CalendarEventTypeDTO,
   MakeupClassScopeDTO,
   MakeupClassStatusDTO,
-  TimelineGroupByDTO,
 } from '../dtos';
 
 export const AGENDA_VIEW_OPTIONS: Array<{ value: AgendaViewModeDTO; label: string }> = [
   { value: 'week', label: 'Semana' },
   { value: 'month-detailed', label: 'Mês detalhado' },
-];
-
-export const TIMELINE_GROUP_OPTIONS: Array<{ value: TimelineGroupByDTO; label: string }> = [
-  { value: 'professor', label: 'Professor' },
-  { value: 'sala', label: 'Sala' },
-  { value: 'turma', label: 'Turma' },
 ];
 
 export const CALENDAR_EVENT_TYPE_OPTIONS: Array<{ value: CalendarEventTypeDTO; label: string }> = [

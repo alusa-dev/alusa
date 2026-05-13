@@ -7,7 +7,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import luxonPlugin from '@fullcalendar/luxon3';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/core';
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { AgendaViewModeDTO, CalendarEventListItemDTO } from '@/features/aulas/dtos';
 import {
@@ -25,17 +25,51 @@ type CalendarSchedulerProps = {
   onEventSelect: (_eventId: string) => void;
 };
 
+/** Alinha ao slotMinTime / slotMaxTime do timeGridWeek */
+const TIME_GRID_DAY_START_MINUTES = 6 * 60;
+const TIME_GRID_DAY_END_MINUTES = 22 * 60;
+
+function clampRatio(n: number) {
+  return Math.max(0, Math.min(1, n));
+}
+
+function roundedMinutesFromPointerY(relY: number, areaHeightPx: number) {
+  if (areaHeightPx <= 0) return TIME_GRID_DAY_START_MINUTES;
+  const total = TIME_GRID_DAY_END_MINUTES - TIME_GRID_DAY_START_MINUTES;
+  const pct = clampRatio(relY / areaHeightPx);
+  const approx = TIME_GRID_DAY_START_MINUTES + pct * total;
+  return Math.round(
+    Math.min(TIME_GRID_DAY_END_MINUTES, Math.max(TIME_GRID_DAY_START_MINUTES, approx)),
+  );
+}
+
+function formatHoverClockLabel(totalMinutes: number) {
+  const hour = Math.floor(totalMinutes / 60);
+  const minute = Math.floor(totalMinutes % 60);
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+type HoverGuideState = {
+  lineLeft: number;
+  lineRight: number;
+  lineCenterY: number;
+  badgeLeftViewport: number;
+  /** Horário interpolado pela posição vertical nos slots */
+  timeLabel: string;
+};
+
+/** Tons violeta/indigo derivados dos tokens `--brand-accent`, `--brand-primary` (globals). Sem traço. */
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
-  AULA: 'border-purple-200 bg-purple-50 text-brand-accent',
-  AULA_EXPERIMENTAL: 'border-sky-200 bg-sky-50 text-sky-800',
-  REPOSICAO: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  EVENTO_INTERNO: 'border-amber-200 bg-amber-50 text-amber-800',
-  EVENTO_EXTERNO: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800',
-  WORKSHOP: 'border-rose-200 bg-rose-50 text-rose-800',
-  FERIADO: 'border-slate-200 bg-slate-50 text-slate-700',
-  PAUSA: 'border-orange-200 bg-orange-50 text-orange-800',
-  CANCELAMENTO: 'border-red-200 bg-red-50 text-red-800',
-  SUBSTITUICAO: 'border-cyan-200 bg-cyan-50 text-cyan-800',
+  AULA: 'border-0 bg-[#EEE6F4] text-[#19143A]',
+  AULA_EXPERIMENTAL: 'border-0 bg-[#EDE8FB] text-[#5c2f91]',
+  REPOSICAO: 'border-0 bg-[#E8E4F9] text-[#3e1f63]',
+  EVENTO_INTERNO: 'border-0 bg-[#F4EEFC] text-[#4b217a]',
+  EVENTO_EXTERNO: 'border-0 bg-[#EFE7FA] text-[#602b96]',
+  WORKSHOP: 'border-0 bg-[#F3EBFA] text-[#7243aa]',
+  FERIADO: 'border-0 bg-[#ECEBF3] text-[#554f6d]',
+  PAUSA: 'border-0 bg-[#EDE6F9] text-[#5c5277]',
+  CANCELAMENTO: 'border-0 bg-[#EFE8EE] text-[#6b5570]',
+  SUBSTITUICAO: 'border-0 bg-[#E8EAFA] text-[#382f7a]',
 };
 
 function toEventInput(event: CalendarEventListItemDTO): EventInput {
@@ -160,13 +194,13 @@ function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
         data-event-title={arg.event.title}
         className={cn(
           isCompactMonth
-            ? 'h-full rounded-full border px-2.5 py-1 text-[10px] leading-4'
-            : 'h-full rounded-lg border px-2 py-1.5 text-[11px] leading-4',
+            ? 'h-full rounded-full border-0 px-2.5 py-1 text-[10px] leading-4'
+            : 'h-full rounded-lg border-0 px-2 py-1.5 text-[11px] leading-4',
           COLOR_BY_TYPE[type] ?? COLOR_BY_TYPE.AULA,
-          cardTone === 'in_progress' && 'ring-1 ring-inset ring-brand-accent/20',
-          cardTone === 'past' && 'border-emerald-200 bg-emerald-50/70 text-emerald-800',
-          cardTone === 'completed' && 'border-emerald-300 bg-emerald-100/80 text-emerald-900',
-          cardTone === 'cancelled' && 'border-slate-200 bg-slate-100 text-slate-500',
+          cardTone === 'in_progress' && 'shadow-[inset_0_0_0_1px_rgba(92,47,145,0.28)]',
+          cardTone === 'past' && 'border-0 bg-[#EDE9F7]/85 text-brand-muted opacity-95',
+          cardTone === 'completed' && 'border-0 bg-[#E8EAF3] text-[#3f4c66]',
+          cardTone === 'cancelled' && 'border-0 bg-[#EDE9EF] text-brand-muted opacity-95',
         )}
       >
         {isCompactMonth ? (
@@ -201,6 +235,13 @@ export function CalendarScheduler({
   const isWeekView = viewMode === 'week';
   const isCompactMonth = viewMode === 'month-compact';
   const isDetailedMonth = viewMode === 'month-detailed';
+
+  const fullCalendarEvents = useMemo(() => events.map(toEventInput), [events]);
+
+  const eventContentRenderer = useMemo(
+    () => renderEventContent(isCompactMonth, isWeekView),
+    [isCompactMonth, isWeekView],
+  );
 
   /** timeGrid + height:auto: garantir medida estável dos slats após paint (sub-hora / :30). */
   const bumpTimeGridLayout = useCallback(() => {
@@ -238,6 +279,98 @@ export function CalendarScheduler({
     return () => ro.disconnect();
   }, [bumpTimeGridLayout, isWeekView]);
 
+  const [hoverGuide, setHoverGuide] = useState<HoverGuideState | null>(null);
+
+  useEffect(() => {
+    if (!isWeekView) {
+      setHoverGuide(null);
+      return;
+    }
+
+    const root = wrapperRef.current;
+    if (!root || typeof window === 'undefined') {
+      return;
+    }
+
+    const hideGuide = () => setHoverGuide(null);
+
+    function onPointerMove(ev: PointerEvent) {
+      const host = wrapperRef.current;
+      if (!host) return;
+
+      const slotsEl = host.querySelector('.fc-timegrid-slots') as HTMLElement | null;
+      const colsEl = host.querySelector('.fc-timegrid-cols') as HTMLElement | null;
+      if (!slotsEl) {
+        setHoverGuide(null);
+        return;
+      }
+
+      const srSlots = slotsEl.getBoundingClientRect();
+      const colsRect = colsEl?.getBoundingClientRect();
+
+      const lineLeft =
+        colsRect &&
+        colsRect.height >= 40 &&
+        colsRect.width >= 48 &&
+        Number.isFinite(colsRect.right - colsRect.left)
+          ? colsRect.left
+          : srSlots.left;
+      const lineRight =
+        colsRect &&
+        colsRect.height >= 40 &&
+        colsRect.width >= 48 &&
+        Number.isFinite(colsRect.right - colsRect.left)
+          ? colsRect.right
+          : srSlots.right;
+
+      const axisEl = host.querySelector('.fc-timegrid-body .fc-timegrid-axis') as HTMLElement | null;
+      const axisRect = axisEl?.getBoundingClientRect();
+      const hitLeft = axisRect && axisRect.width > 10 ? axisRect.left : lineLeft;
+
+      const x = ev.clientX;
+      const y = ev.clientY;
+
+      if (
+        x < hitLeft ||
+        x > lineRight ||
+        y < srSlots.top ||
+        y > srSlots.bottom ||
+        srSlots.height < 1
+      ) {
+        setHoverGuide(null);
+        return;
+      }
+
+      const lineCenterY = Math.min(srSlots.bottom - 2, Math.max(srSlots.top + 2, y));
+      const relY = lineCenterY - srSlots.top;
+      const minsRounded = roundedMinutesFromPointerY(relY, srSlots.height);
+      const timeLabel = formatHoverClockLabel(minsRounded);
+
+      const badgeLeftViewport = axisRect
+        ? axisRect.right - Math.min(Math.max(32, axisRect.width * 0.55), 48)
+        : Math.max(lineLeft - 52, 4);
+
+      setHoverGuide({
+        lineLeft,
+        lineRight,
+        lineCenterY,
+        badgeLeftViewport,
+        timeLabel,
+      });
+    }
+
+    /** Captura garante atualização mesmo com o cursor sobre fc-event */
+    root.addEventListener('pointermove', onPointerMove, true);
+    root.addEventListener('pointerleave', hideGuide);
+    root.addEventListener('pointercancel', hideGuide);
+
+    return () => {
+      root.removeEventListener('pointermove', onPointerMove, true);
+      root.removeEventListener('pointerleave', hideGuide);
+      root.removeEventListener('pointercancel', hideGuide);
+    };
+  }, [isWeekView]);
+
   return (
     <div
       ref={wrapperRef}
@@ -248,6 +381,46 @@ export function CalendarScheduler({
         isDetailedMonth && 'calendar-scheduler-wrapper--month-detailed',
       )}
     >
+      {hoverGuide && isWeekView ? (
+        <div aria-hidden className="pointer-events-none calendar-timegrid-hover-layer">
+          <div
+            className="calendar-timegrid-hover-line fixed z-[60] h-[2px] rounded-full bg-[color:var(--brand-accent)] shadow-[0_0_10px_rgba(92,47,145,0.28)]"
+            style={{
+              left: hoverGuide.lineLeft,
+              width: hoverGuide.lineRight - hoverGuide.lineLeft,
+              top: hoverGuide.lineCenterY - 1,
+            }}
+          />
+          <div
+            aria-hidden
+            className="fixed z-[61] box-border size-2 shrink-0 rounded-full bg-[color:var(--brand-accent)] shadow-[0_1px_3px_rgba(25,20,58,0.35)]"
+            style={{
+              left: hoverGuide.lineLeft + 4,
+              top: hoverGuide.lineCenterY,
+              transform: 'translate(-50%, -50%)',
+            }}
+          />
+          <div
+            aria-hidden
+            className="fixed z-[61] box-border size-2 shrink-0 rounded-full bg-[color:var(--brand-accent)] shadow-[0_1px_3px_rgba(25,20,58,0.35)]"
+            style={{
+              left: hoverGuide.lineRight - 4,
+              top: hoverGuide.lineCenterY,
+              transform: 'translate(-50%, -50%)',
+            }}
+          />
+          <div
+            className="fixed z-[62] whitespace-nowrap rounded-full bg-[color:var(--brand-accent)] px-2.5 py-1 text-[11px] font-semibold leading-none text-white shadow-[0_2px_8px_rgba(25,20,58,0.28)]"
+            style={{
+              left: Math.max(hoverGuide.badgeLeftViewport, 4),
+              top: hoverGuide.lineCenterY,
+              transform: 'translate(0, -50%)',
+            }}
+          >
+            {hoverGuide.timeLabel}
+          </div>
+        </div>
+      ) : null}
       <FullCalendar
         ref={calendarRef}
         key={`${viewMode}:${anchorDate}:${timeZone}`}
@@ -276,8 +449,8 @@ export function CalendarScheduler({
         eventDisplay="block"
         fixedWeekCount={false}
         moreLinkClick="popover"
-        events={events.map(toEventInput)}
-        eventContent={renderEventContent(isCompactMonth, isWeekView)}
+        events={fullCalendarEvents}
+        eventContent={eventContentRenderer}
         eventDidMount={(arg) => {
           arg.el.title = buildEventTooltip(arg);
         }}

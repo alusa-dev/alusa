@@ -37,7 +37,6 @@ export const experimentalClassStatusSchema = z.enum(['AGENDADA', 'REAGENDADA', '
 export const makeupClassStatusSchema = z.enum(['AGENDADA', 'REALIZADA', 'CANCELADA']);
 export const makeupClassScopeSchema = z.enum(['INDIVIDUAL', 'COLETIVA']);
 export const aulasOperationLogLevelSchema = z.enum(['INFO', 'WARNING', 'ERROR']);
-export const timelineGroupBySchema = z.enum(['professor', 'sala', 'turma']).default('professor');
 export const agendaViewModeSchema = z
   .enum(['week', 'month-detailed', 'month-compact'])
   .default('week');
@@ -134,7 +133,6 @@ export const listCalendarEventsQuerySchema = z.object({
   type: csvArray(calendarEventTypeSchema).optional(),
   status: csvArray(calendarEventStatusSchema).optional(),
   viewMode: agendaViewModeSchema.optional(),
-  timelineGroupBy: timelineGroupBySchema.optional(),
   includeResources: z
     .preprocess((value) => {
       if (typeof value === 'boolean') return value;
@@ -567,7 +565,6 @@ export type MakeupClassStatusDTO = z.infer<typeof makeupClassStatusSchema>;
 export type MakeupClassScopeDTO = z.infer<typeof makeupClassScopeSchema>;
 export type AulasOperationLogLevelDTO = z.infer<typeof aulasOperationLogLevelSchema>;
 export type AgendaViewModeDTO = z.infer<typeof agendaViewModeSchema>;
-export type TimelineGroupByDTO = z.infer<typeof timelineGroupBySchema>;
 export type AulasLookupItemDTO = z.infer<typeof aulasLookupItemSchema>;
 export type AulasTurmaLookupItemDTO = z.infer<typeof aulasTurmaLookupItemSchema>;
 export type CalendarEventProfessorDTO = z.infer<typeof calendarEventProfessorSchema>;

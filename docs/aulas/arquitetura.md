@@ -87,7 +87,7 @@ Exemplos de erros de domínio relevantes:
 - editar evento
 - marcar evento como realizado ou cancelado
 - visualizar conflitos e relações com reposições
-- navegar por calendário e timeline
+- navegar por calendário (modos semana/mês)
 
 ### Frequência
 

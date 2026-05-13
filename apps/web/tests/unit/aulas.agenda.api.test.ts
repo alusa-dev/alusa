@@ -57,6 +57,7 @@ describe('/api/aulas/agenda', () => {
           start: '2026-03-15T00:00:00.000Z',
           end: '2026-03-21T23:59:59.999Z',
         },
+        timeZone: 'America/Sao_Paulo',
         resources: {
           turmas: [{ id: 'turma-1', label: 'Ballet Kids' }],
           professores: [{ id: 'prof-1', label: 'Ana' }],
@@ -74,17 +75,21 @@ describe('/api/aulas/agenda', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(listAgendaEvents).toHaveBeenCalledWith('conta-1', {
-      start: '2026-03-15T00:00:00.000Z',
-      end: '2026-03-21T23:59:59.999Z',
-      turmaId: 'turma-1',
-      professorId: undefined,
-      salaId: undefined,
-      type: ['AULA'],
-      status: undefined,
-      viewMode: undefined,
-      timelineGroupBy: undefined,
-    });
+    expect(listAgendaEvents).toHaveBeenCalledWith(
+      'conta-1',
+      {
+        start: '2026-03-15T00:00:00.000Z',
+        end: '2026-03-21T23:59:59.999Z',
+        turmaId: 'turma-1',
+        professorId: undefined,
+        salaId: undefined,
+        type: ['AULA'],
+        status: undefined,
+        viewMode: undefined,
+      },
+      expect.any(Object),
+    );
+    expect(response.headers.get('server-timing')).toBeTruthy();
     expect(json.success).toBe(true);
     expect(json.data.resources.turmas[0]).toEqual({ id: 'turma-1', label: 'Ballet Kids' });
   });
@@ -111,6 +116,7 @@ describe('/api/aulas/agenda', () => {
           start: '2026-03-15T00:00:00.000Z',
           end: '2026-03-21T23:59:59.999Z',
         },
+        timeZone: 'America/Sao_Paulo',
         events: [],
       },
     } as never);
@@ -123,20 +129,24 @@ describe('/api/aulas/agenda', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(listAgendaEvents).toHaveBeenCalledWith('conta-1', {
-      start: '2026-03-15T00:00:00.000Z',
-      end: '2026-03-21T23:59:59.999Z',
-      turmaId: undefined,
-      professorId: undefined,
-      salaId: undefined,
-      type: undefined,
-      status: undefined,
-      viewMode: undefined,
-      timelineGroupBy: undefined,
-      includeResources: false,
-    });
+    expect(listAgendaEvents).toHaveBeenCalledWith(
+      'conta-1',
+      {
+        start: '2026-03-15T00:00:00.000Z',
+        end: '2026-03-21T23:59:59.999Z',
+        turmaId: undefined,
+        professorId: undefined,
+        salaId: undefined,
+        type: undefined,
+        status: undefined,
+        viewMode: undefined,
+        includeResources: false,
+      },
+      expect.any(Object),
+    );
     expect(json.data.resources).toBeUndefined();
     expect(json.data.events).toEqual([]);
+    expect(response.headers.get('server-timing')).toBeTruthy();
   });
 
   it('cria um evento manual', async () => {

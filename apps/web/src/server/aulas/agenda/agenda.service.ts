@@ -186,8 +186,18 @@ async function syncExperimentalStatusForEventUpdate(params: {
   };
 }
 
-export async function listAgendaEvents(contaId: string, query: ListCalendarEventsQueryDTO) {
+export async function listAgendaEvents(
+  contaId: string,
+  query: ListCalendarEventsQueryDTO,
+  timingsSink?: Record<string, number>,
+) {
+  const tzStart = timingsSink ? performance.now() : undefined;
   const timeZone = await resolveAccountTimeZone(contaId, prisma);
+  if (timingsSink !== undefined && tzStart !== undefined) {
+    timingsSink.timezone = performance.now() - tzStart;
+  }
+
+  const acStart = timingsSink ? performance.now() : undefined;
   const range = normalizeAgendaRange(query.start, query.end, timeZone);
   await autoCloseAgendaEventsInRange({
     contaId,
@@ -195,6 +205,9 @@ export async function listAgendaEvents(contaId: string, query: ListCalendarEvent
     end: range.end,
     prismaClient: prisma,
   });
+  if (timingsSink !== undefined && acStart !== undefined) {
+    timingsSink.autoClose = performance.now() - acStart;
+  }
 
   return {
     success: true as const,
@@ -210,6 +223,7 @@ export async function listAgendaEvents(contaId: string, query: ListCalendarEvent
       status: query.status,
       includeResources: query.includeResources,
       prismaClient: prisma,
+      timingsSink,
     }),
   };
 }

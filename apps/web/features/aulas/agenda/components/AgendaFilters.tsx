@@ -3,12 +3,8 @@
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type {
-  AulasLookupItemDTO,
-  CalendarEventTypeDTO,
-  TimelineGroupByDTO,
-} from '@/features/aulas/dtos';
-import { CALENDAR_EVENT_TYPE_OPTIONS, TIMELINE_GROUP_OPTIONS } from '@/features/aulas/types';
+import type { AulasLookupItemDTO, CalendarEventTypeDTO } from '@/features/aulas/dtos';
+import { CALENDAR_EVENT_TYPE_OPTIONS } from '@/features/aulas/types';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
 import { ChevronLeft, ChevronRight, Filter } from '@/components/icons/icons';
 import {
@@ -27,8 +23,6 @@ type AgendaFiltersProps = {
   timeZone?: string;
   onFiltersChange: (_patch: Partial<AgendaFiltersState>) => void;
   onNavigatePeriod: (_direction: 'prev' | 'next' | 'today') => void;
-  timelineGroupBy?: TimelineGroupByDTO;
-  onTimelineGroupByChange?: (_value: TimelineGroupByDTO) => void;
   embedded?: boolean;
   showCurrentLabel?: boolean;
 };
@@ -41,8 +35,6 @@ export function AgendaFilters({
   timeZone = DEFAULT_ACCOUNT_TIMEZONE,
   onFiltersChange,
   onNavigatePeriod,
-  timelineGroupBy,
-  onTimelineGroupByChange,
   embedded = false,
   showCurrentLabel = true,
 }: AgendaFiltersProps) {
@@ -55,8 +47,7 @@ export function AgendaFilters({
     (filters.turmaId ? 1 : 0) +
     (filters.professorId ? 1 : 0) +
     (filters.salaId ? 1 : 0) +
-    (filters.type?.length ? 1 : 0) +
-    (timelineGroupBy && timelineGroupBy !== 'professor' ? 1 : 0);
+    (filters.type?.length ? 1 : 0);
 
   return (
     <div className={embedded ? '' : 'rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm'}>
@@ -190,29 +181,6 @@ export function AgendaFilters({
                         </SelectContent>
                       </Select>
                     </div>
-
-                    {timelineGroupBy && onTimelineGroupByChange ? (
-                      <div className="space-y-2">
-                        <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                          Agrupar por
-                        </label>
-                        <Select
-                          value={timelineGroupBy}
-                          onValueChange={(value: TimelineGroupByDTO) => onTimelineGroupByChange(value)}
-                        >
-                          <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white">
-                            <SelectValue placeholder="Agrupar por" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {TIMELINE_GROUP_OPTIONS.map((option) => (
-                              <SelectItem key={option.value} value={option.value}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : null}
                   </div>
 
                   {activeSecondaryFilters > 0 ? (
@@ -227,7 +195,6 @@ export function AgendaFilters({
                           salaId: undefined,
                           type: undefined,
                         });
-                        onTimelineGroupByChange?.('professor');
                       }}
                     >
                       Limpar filtros adicionais

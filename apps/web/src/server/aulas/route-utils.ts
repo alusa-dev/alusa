@@ -3,10 +3,29 @@ import { ZodError } from 'zod';
 
 import { AulasError } from '@/src/server/aulas/aulas-error';
 
-export function json(status: number, body: unknown) {
+const SERVER_TIMING_SAFE = /^[a-z0-9_-]+$/i;
+
+function roundTimingMs(ms: number) {
+  return Math.round(ms * 1000) / 1000;
+}
+
+/** Formato W3C Server-Timing para observabilidade (dev/prod-safe). */
+export function buildAgendaServerTimingHeader(timings: Record<string, number | undefined>) {
+  const parts: string[] = [];
+
+  Object.entries(timings).forEach(([rawName, dur]) => {
+    if (typeof dur !== 'number' || Number.isNaN(dur) || dur < 0) return;
+    const name = SERVER_TIMING_SAFE.test(rawName) ? rawName : rawName.replace(/[^a-z0-9_-]/gi, '_');
+    parts.push(`${name};dur=${roundTimingMs(dur)}`);
+  });
+
+  return parts.join(', ');
+}
+
+export function json(status: number, body: unknown, extraHeaders?: Record<string, string>) {
   return NextResponse.json(body, {
     status,
-    headers: { 'cache-control': 'no-store' },
+    headers: { 'cache-control': 'no-store', ...(extraHeaders ?? {}) },
   });
 }
 

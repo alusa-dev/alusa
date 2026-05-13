@@ -96,6 +96,12 @@ export type AgendaListFilters = {
   accountTimeZone?: string;
 };
 
+/** Preenchido por `listCalendarEventsRaw` quando passado pelo caller (somente medição). */
+export type AgendaListFetchStageTimings = {
+  materialization: number;
+  queryEvents: number;
+};
+
 export type MaterializeCalendarSummary = {
   start: string;
   end: string;
@@ -756,7 +762,11 @@ export async function assertNoCalendarConflicts(params: {
 }
 
 export async function listCalendarEventsRaw(
-  filters: AgendaListFilters & { contaId: string; prismaClient?: PrismaClient },
+  filters: AgendaListFilters & {
+    contaId: string;
+    prismaClient?: PrismaClient;
+    fetchStageTimings?: AgendaListFetchStageTimings;
+  },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
   const timeZone =
@@ -768,6 +778,7 @@ export async function listCalendarEventsRaw(
     ':',
   );
 
+  const timingMatMark = filters.fetchStageTimings ? performance.now() : undefined;
   const inFlightMaterialization = materializationInFlight.get(materializationKey);
 
   if (inFlightMaterialization) {
@@ -790,6 +801,11 @@ export async function listCalendarEventsRaw(
     }
   }
 
+  if (filters.fetchStageTimings && timingMatMark !== undefined) {
+    filters.fetchStageTimings.materialization += performance.now() - timingMatMark;
+  }
+
+  const timingQueryMark = filters.fetchStageTimings ? performance.now() : undefined;
   const events = await prismaClient.calendarEvent.findMany({
     where: {
       contaId: filters.contaId,
@@ -840,6 +856,10 @@ export async function listCalendarEventsRaw(
     },
     orderBy: [{ startAt: 'asc' }, { titulo: 'asc' }],
   });
+
+  if (filters.fetchStageTimings && timingQueryMark !== undefined) {
+    filters.fetchStageTimings.queryEvents += performance.now() - timingQueryMark;
+  }
 
   return events;
 }
@@ -900,18 +920,26 @@ export async function mapCalendarEventListItem(
   event: CalendarEventListWithRelations,
   prismaClient: PrismaClient = prisma,
   conflicts: CalendarEventConflictDTO[] = [],
+  options?: { compactList?: boolean },
 ): Promise<CalendarEventListItemDTO> {
-  const totalEligible = await countEligibleStudentsForEvent(
-    { id: event.id, contaId: event.contaId, turmaId: event.turmaId, startAt: event.startAt },
-    prismaClient,
-  );
+  const compact = options?.compactList === true;
+
+  const attendanceSummary = compact
+    ? null
+    : buildAttendanceSummary(
+        await countEligibleStudentsForEvent(
+          { id: event.id, contaId: event.contaId, turmaId: event.turmaId, startAt: event.startAt },
+          prismaClient,
+        ),
+        event.attendanceRecords.map((item) => item.status),
+      );
 
   return {
     id: event.id,
     type: event.tipo,
     status: event.status,
     title: event.titulo,
-    description: event.descricao ?? null,
+    description: compact ? null : event.descricao ?? null,
     startAt: event.startAt.toISOString(),
     endAt: event.endAt.toISOString(),
     source: event.source ?? null,
@@ -922,10 +950,7 @@ export async function mapCalendarEventListItem(
       id: item.professor.id,
       nome: item.professor.nome,
     })),
-    attendanceSummary: buildAttendanceSummary(
-      totalEligible,
-      event.attendanceRecords.map((item) => item.status),
-    ),
+    attendanceSummary,
     conflicts,
   };
 }
@@ -1031,10 +1056,18 @@ export async function buildAgendaListPayload(
     timeZone: string;
     prismaClient?: PrismaClient;
     includeResources?: boolean;
+    /** Somente medição `Server-Timing` – preenchido quando fornecido. */
+    timingsSink?: Record<string, number>;
   },
 ) {
   const prismaClient = filters.prismaClient ?? prisma;
   const timeZone = normalizeAccountTimeZone(filters.timeZone);
+
+  const fetchStages: AgendaListFetchStageTimings = {
+    materialization: 0,
+    queryEvents: 0,
+  };
+
   const events = await listCalendarEventsRaw({
     contaId: filters.contaId,
     start: filters.start,
@@ -1046,17 +1079,43 @@ export async function buildAgendaListPayload(
     status: filters.status,
     accountTimeZone: timeZone,
     prismaClient,
+    fetchStageTimings: filters.timingsSink ? fetchStages : undefined,
   });
 
+  if (filters.timingsSink) {
+    filters.timingsSink.materialization = fetchStages.materialization;
+    filters.timingsSink.queryEvents = fetchStages.queryEvents;
+  }
+
+  const tConflicts = filters.timingsSink ? performance.now() : undefined;
   const conflictMap = buildConflictMap(events);
+  if (filters.timingsSink && tConflicts !== undefined) {
+    filters.timingsSink.conflicts = performance.now() - tConflicts;
+  }
+
+  const tMapper = filters.timingsSink ? performance.now() : undefined;
   const mappedEvents = await Promise.all(
-    events.map((event) => mapCalendarEventListItem(event, prismaClient, conflictMap.get(event.id) ?? [])),
+    events.map((event) =>
+      mapCalendarEventListItem(event, prismaClient, conflictMap.get(event.id) ?? [], { compactList: true }),
+    ),
   );
+  if (filters.timingsSink && tMapper !== undefined) {
+    filters.timingsSink.mapper = performance.now() - tMapper;
+  }
 
   const resources =
     filters.includeResources === false
       ? undefined
-      : await loadAulasResources(filters.contaId, prismaClient);
+      : await (async () => {
+          const tr = filters.timingsSink ? performance.now() : undefined;
+          const payload = await loadAulasResources(filters.contaId, prismaClient);
+
+          if (filters.timingsSink && tr !== undefined) {
+            filters.timingsSink.resources = performance.now() - tr;
+          }
+
+          return payload;
+        })();
 
   return {
     range: {

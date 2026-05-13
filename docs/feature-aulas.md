@@ -50,7 +50,7 @@ AULAS
 
 - Agenda operacional da escola
 - Calendário centralizado da Alusa
-- Visualizações de calendário e timeline
+- Visualizações de calendário (semana / mês)
 - Registro e consulta de frequência
 - Controle de reposições
 - Preparação estrutural para eventos internos e externos da escola
@@ -198,7 +198,7 @@ O padrão mais maduro é:
 - usar um **calendário central como infraestrutura**
 - tratar **aula realizada** como evento operacional
 - registrar frequência na ocorrência, não na regra da turma
-- permitir visões de calendário, timeline e dashboards resumidos
+- permitir visões de calendário e dashboards resumidos
 
 A Alusa deve seguir essa mesma linha, porém com execução minimalista.
 
@@ -234,17 +234,15 @@ A experiência diária será concentrada em **Agenda**, com filtros e visões ad
 
 ## 8.3. Visões da Agenda
 
-A Agenda terá duas abas principais:
+A Agenda concentra a operação na **visualização FullCalendar**:
 
 ```text
-Agenda
- ├ Calendário
- └ Timeline
+Agenda → Calendário (modos por tabs)
 ```
 
-### 8.3.1. Aba Calendário
+### 8.3.1. Calendário
 
-Visualização tradicional do calendário.
+Visualização principal do calendário.
 
 Modos previstos:
 
@@ -258,26 +256,11 @@ Uso principal:
 - entender o mês
 - localizar eventos rapidamente
 - navegar pela operação da escola
+- filtros por turma, professor, sala e tipo
 
-### 8.3.2. Aba Timeline
+### 8.3.2. Regra de dados
 
-Visualização por recurso, adequada para cenários operacionais.
-
-Pode agrupar por:
-
-- professor
-- sala
-- turma
-
-Uso principal:
-
-- identificar conflitos
-- enxergar ocupação por recurso
-- analisar alocação operacional
-
-### 8.3.3. Regra de dados
-
-As abas **Calendário** e **Timeline** devem consumir a **mesma fonte de dados**, mudando apenas a apresentação.
+A listagem usa o mesmo contrato **`GET /api/aulas/agenda`** por intervalo; detalhes completos vêm em **`GET /api/aulas/agenda/[eventId]`**.
 
 ---
 
@@ -368,7 +351,6 @@ Tomar como referência o conjunto de telas analisado, especialmente:
 - calendário semanal
 - calendário mensal detalhado
 - calendário mensal compacto
-- timeline por recurso
 - modal de criação de evento
 - painel de detalhes do evento
 - card resumido no dashboard
@@ -405,7 +387,7 @@ Detalhes completos devem abrir em **modal** ou **sheet**, não ficar sempre expo
 
 ## 11.5. Visualização do dashboard
 
-O dashboard principal pode ter um **card resumido de agenda**, com visão compacta da programação do dia ou timeline reduzida.
+O dashboard principal pode ter um **card resumido de agenda**, com visão compacta da programação do dia.
 
 Esse card deve:
 
@@ -430,9 +412,9 @@ npm install @fullcalendar/timegrid
 npm install @fullcalendar/interaction
 ```
 
-### Dependência para timeline / recursos
+### Payload de recursos na lista
 
-Conforme necessidade da implementação escolhida, preparar a camada para suportar visão por recurso/timeline de forma organizada.
+Opcionalmente, `GET /api/aulas/agenda` pode retornar catálogo de turmas/professores/salas quando `includeResources` não está em `false` (filtros da UI consomem com `includeResources=false` na grade para reduzir payload).
 
 ## 12.2. UI base
 
@@ -445,7 +427,7 @@ Usar os componentes já coerentes com o stack da Alusa, especialmente:
 
 ### Agenda
 
-- Tabs: `Calendário | Timeline`
+- Tabs ou seletores de modo: semana / mês detalhado / mês compacto
 - filtros por período, professor, sala, turma, tipo
 - seletor de visão (`semana`, `mês`, etc.)
 - botões de navegação de período
@@ -837,11 +819,8 @@ Mesmo com integração futura, a regra deve continuar sendo:
 ## 19.1. Agenda
 
 - `AgendaPage`
-- `AgendaViewTabs`
+- `AgendaFilters`
 - `CalendarScheduler`
-- `TimelineScheduler`
-- `CalendarToolbar`
-- `CalendarFilters`
 - `CalendarEventCard`
 - `CalendarEventDialog`
 - `CalendarEventSheet`
@@ -875,7 +854,7 @@ Mesmo com integração futura, a regra deve continuar sendo:
 
 - visualizar eventos por período
 - navegar entre períodos
-- alternar entre calendário e timeline
+- alternar entre modos calendário (semana / mês detalhado / mês compacto)
 - filtrar por turma, professor, sala e tipo
 - abrir detalhe do evento
 - criar evento quando aplicável
@@ -923,9 +902,8 @@ Mesmo com integração futura, a regra deve continuar sendo:
 - reflexo no calendário
 - rastreamento entre origem e destino
 
-## Fase 4 — Timeline e dashboard
+## Fase 4 — Dashboard e refinamentos
 
-- visão timeline por recurso
 - card resumido no dashboard
 
 ## Fase 5 — Preparação avançada
@@ -945,7 +923,7 @@ Mesmo com integração futura, a regra deve continuar sendo:
 - **não haverá módulo Hoje neste momento**
 - **Agenda será o centro operacional**
 - haverá **Calendário Centralizado da Alusa**
-- a Agenda terá abas **Calendário** e **Timeline**
+- a Agenda terá modo **Semana**, **Mês detalhado** e **Mês compacto** na mesma tela (`AgendaFilters` + `Tabs`)
 - o padrão visual será **minimalista, limpo e sem poluição**
 - base recomendada do scheduler: **FullCalendar**
 - preparar estrutura para futuras integrações, sem implementá-las agora

@@ -14,7 +14,6 @@ Componentes centrais:
 
 - AgendaPage
 - CalendarScheduler
-- TimelineScheduler
 - AgendaFilters
 - CalendarEventDialog
 - CalendarEventSheet
@@ -25,7 +24,7 @@ Componentes centrais:
 - criar evento manual
 - editar evento existente
 - listar por intervalo
-- alternar entre visão calendário e timeline
+- alternar modo de visualização da grade (semana / mês compacto / mês detalhado)
 - filtrar por turma, professor, sala, tipo e status
 - abrir evento com detalhes operacionais
 - marcar como realizado
@@ -50,7 +49,6 @@ Parâmetros relevantes:
 - type
 - status
 - viewMode
-- timelineGroupBy
 
 Observação:
 
