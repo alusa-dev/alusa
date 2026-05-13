@@ -1,22 +1,12 @@
-import { notFound } from 'next/navigation';
+import type { Metadata } from 'next';
 import { SentryExampleClient } from './SentryExampleClient';
 
-/** Mesmo URL público do projeto javascript-nextjs (org alusa) — precisa estar em env na Vercel. */
-function hasSentryDsnConfigured(): boolean {
-  const candidate = process.env.NEXT_PUBLIC_SENTRY_DSN ?? process.env.SENTRY_DSN;
-  return typeof candidate === 'string' && candidate.startsWith('https://');
-}
-
-function isExamplePageEnabled(): boolean {
-  if (process.env.NODE_ENV === 'development') return true;
-  if (process.env.NEXT_PUBLIC_SENTRY_EXAMPLE_PAGE === '1') return true;
-  return hasSentryDsnConfigured();
-}
+/** Mesmo comportamento do wizard Sentry: rota pública para o passo Verify (DSN opcional até você configurar na Vercel). */
+export const metadata: Metadata = {
+  title: 'Verificação Sentry',
+  robots: { index: false, follow: false },
+};
 
 export default function SentryExamplePage() {
-  if (!isExamplePageEnabled()) {
-    notFound();
-  }
-
   return <SentryExampleClient />;
 }
