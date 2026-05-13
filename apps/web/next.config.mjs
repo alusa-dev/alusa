@@ -1,5 +1,7 @@
 import { dirname, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
+import { withSentryConfig } from '@sentry/nextjs';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
@@ -49,4 +51,11 @@ const nextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: 'alusa',
+  project: 'javascript-nextjs',
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+  widenClientFileUpload: true,
+  tunnelRoute: '/monitoring',
+  silent: !process.env.CI,
+});
