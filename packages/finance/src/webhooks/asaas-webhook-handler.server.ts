@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from 'crypto';
 import { prisma } from '@alusa/database';
 import { Prisma, NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
 import { createNotification } from '@alusa/lib';
@@ -20,6 +19,12 @@ import {
   alertQueueLagCritical,
 } from './webhook-observability.service';
 import { getWebhookQueueMetrics, evaluateRetentionAlert } from './webhook-reconciliation.service';
+import {
+  authenticateAsaasWebhookToken,
+  hashAsaasWebhookAccessToken,
+  getAsaasWebhookTokenHashPrefix,
+} from './asaas-webhook-auth';
+import { redactWebhookLogObject } from './webhook-redaction';
 
 type AttemptLogEntry = {
   at: string;
@@ -165,10 +170,6 @@ export type QueueWebhookResult = {
   eventId?: string | null;
 };
 
-function sha256Hex(input: string): string {
-  return createHash('sha256').update(input).digest('hex');
-}
-
 /**
  * Persiste webhook rejeitado para auditoria.
  * Rejeições (JSON inválido, token inválido, evento ausente) são registradas
@@ -192,7 +193,7 @@ async function persistRejectedWebhook(params: {
         contaId: params.contaId ?? null,
         evento: params.event ?? 'UNKNOWN',
         eventId: params.eventId,
-        payloadHash: sha256Hex(params.rawBody),
+        payloadHash: hashAsaasWebhookAccessToken(params.rawBody),
         payload: safePayload as object,
         reason: params.reason,
       },
@@ -200,34 +201,6 @@ async function persistRejectedWebhook(params: {
   } catch {
     // Fail-safe: não travar fluxo por falha de auditoria
   }
-}
-
-async function resolveContaIdFromAuthToken(accessToken: string): Promise<string | null> {
-  const tokenHash = sha256Hex(accessToken);
-
-  const asaasAccount = await prisma.asaasAccount.findFirst({
-    where: {
-      webhookAuthTokenHash: tokenHash,
-    },
-    select: {
-      webhookAuthTokenHash: true,
-      financeProfile: {
-        select: {
-          contaId: true,
-        },
-      },
-    },
-  });
-
-  if (!asaasAccount?.webhookAuthTokenHash) return null;
-
-  // constant-time compare (mesmo já tendo filtrado por hash)
-  const stored = Buffer.from(asaasAccount.webhookAuthTokenHash);
-  const incoming = Buffer.from(tokenHash);
-  if (stored.length !== incoming.length) return null;
-  if (!timingSafeEqual(stored, incoming)) return null;
-
-  return asaasAccount.financeProfile.contaId;
 }
 
 async function processAsaasWebhookForRecord(params: {
@@ -489,7 +462,7 @@ async function processAsaasWebhookForRecord(params: {
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
         metadata: { webhookEvent: event, eventId: payload.id ?? null },
       }).catch((err: unknown) => {
-        console.warn('[finance][handleAsaasWebhook][balance-notify-failed]', { contaId, event, err });
+          console.warn('[finance][handleAsaasWebhook][balance-notify-failed]', redactWebhookLogObject({ contaId, event, err }));
       });
 
       await auditLogService.record({
@@ -534,7 +507,7 @@ async function processAsaasWebhookForRecord(params: {
           recipientRoles: [Role.ADMIN],
           metadata: { webhookEvent: event, eventId: payload.id ?? null },
         }).catch((err: unknown) => {
-          console.warn('[finance][handleAsaasWebhook][access-token-notify-failed]', { contaId, event, err });
+          console.warn('[finance][handleAsaasWebhook][access-token-notify-failed]', redactWebhookLogObject({ contaId, event, err }));
         });
       }
 
@@ -601,16 +574,19 @@ export async function enqueueAsaasWebhookEvent(
     return { success: false, status: 401, error: 'Assinatura inválida' };
   }
 
-  const contaId = await resolveContaIdFromAuthToken(params.accessToken);
-  if (!contaId) {
+  const auth = await authenticateAsaasWebhookToken(params.accessToken);
+  if (!auth) {
     alertTokenRejected({
-      tokenHashPrefix: sha256Hex(params.accessToken).slice(0, 12),
+      tokenHashPrefix: getAsaasWebhookTokenHashPrefix(params.accessToken) ?? 'invalid-format',
       event,
       eventId: payload.id ?? null,
-    });    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token inv\u00e1lido', event, eventId: payload.id ?? null });    return { success: false, status: 403, error: 'Assinatura inválida' };
+    });
+    await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token inválido', event, eventId: payload.id ?? null });
+    return { success: false, status: 403, error: 'Assinatura inválida' };
   }
+  const contaId = auth.contaId;
 
-  const payloadHash = sha256Hex(params.rawBody);
+  const payloadHash = hashAsaasWebhookAccessToken(params.rawBody);
   const eventId = payload.id ?? null;
   const now = new Date();
 
@@ -951,10 +927,10 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
 
   // Prioridade: authToken por tenant (ADR-009 / Fase 2)
   if (params.accessToken) {
-    const contaIdFromAuthToken = await resolveContaIdFromAuthToken(params.accessToken);
-    if (!contaIdFromAuthToken) {
+    const auth = await authenticateAsaasWebhookToken(params.accessToken);
+    if (!auth) {
       alertTokenRejected({
-        tokenHashPrefix: sha256Hex(params.accessToken).slice(0, 12),
+        tokenHashPrefix: getAsaasWebhookTokenHashPrefix(params.accessToken) ?? 'invalid-format',
         event,
         eventId: payload.id ?? null,
       });
@@ -962,9 +938,9 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
       return { success: false, status: 403, error: 'Assinatura inválida' };
     }
 
-    const contaId = contaIdFromAuthToken;
+    const contaId = auth.contaId;
 
-    const payloadHash = sha256Hex(params.rawBody);
+    const payloadHash = hashAsaasWebhookAccessToken(params.rawBody);
     const eventId = payload.id;
 
     const existing = eventId

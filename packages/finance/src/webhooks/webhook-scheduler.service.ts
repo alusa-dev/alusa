@@ -67,6 +67,16 @@ export interface WebhookSchedulerOptions {
   reconciliationWindowHours?: number;
 }
 
+export interface WebhookMaintenanceResult {
+  executedAt: Date;
+  completedAt: Date;
+  accountsChecked: number;
+  driftsFound: number;
+  driftsRepaired: number;
+  health: Awaited<ReturnType<typeof checkWebhookHealth>>;
+  errors: Array<{ contaId: string; error: string }>;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function timed<T>(
@@ -283,5 +293,81 @@ export async function runWebhookScheduler(
     hasErrors: steps.some((s) => !s.ok),
     retentionAlert,
     slo,
+  };
+}
+
+export async function runWebhookHealthAndDriftMaintenance(options: {
+  contaId?: string;
+  autoRepair?: boolean;
+} = {}): Promise<WebhookMaintenanceResult> {
+  const executedAt = new Date();
+  const autoRepair = options.autoRepair ?? true;
+  const errors: Array<{ contaId: string; error: string }> = [];
+
+  const health = await checkWebhookHealth({
+    contaId: options.contaId,
+    autoRecover: autoRepair,
+  });
+
+  const accounts = await prisma.asaasAccount.findMany({
+    where: {
+      asaasAccountId: { not: null },
+      ...(options.contaId
+        ? { financeProfile: { contaId: options.contaId } }
+        : { status: { in: ['APPROVED', 'UNDER_REVIEW', 'CREATED'] } }),
+    },
+    select: { financeProfile: { select: { contaId: true } } },
+    take: 500,
+  });
+
+  let driftsFound = 0;
+  let driftsRepaired = 0;
+
+  for (const account of accounts) {
+    const contaId = account.financeProfile.contaId;
+    try {
+      const status = await getWebhookConfigDriftStatus(contaId);
+      if (!status) continue;
+
+      const hasDrift =
+        status.drift.remoteMissing ||
+        status.drift.urlMismatch ||
+        status.drift.disabled ||
+        status.drift.interrupted ||
+        status.drift.missingAuthToken ||
+        status.drift.sendTypeMismatch ||
+        status.drift.eventsMismatch ||
+        status.drift.localHashMismatch ||
+        status.drift.penalized;
+
+      if (!hasDrift) continue;
+
+      driftsFound++;
+      if (autoRepair) {
+        const repair = await repairWebhookConfigDrift({
+          contaId,
+          actor: { type: 'SYSTEM' },
+        });
+        if (repair.repaired) driftsRepaired++;
+        if (repair.failureCategory) {
+          errors.push({ contaId, error: repair.failureCategory });
+        }
+      }
+    } catch (error) {
+      errors.push({
+        contaId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return {
+    executedAt,
+    completedAt: new Date(),
+    accountsChecked: accounts.length,
+    driftsFound,
+    driftsRepaired,
+    health,
+    errors: [...errors, ...health.errors.map((item) => ({ contaId: item.contaId, error: item.error }))],
   };
 }

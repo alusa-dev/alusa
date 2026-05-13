@@ -56,6 +56,25 @@ export class WebhookRateLimiter {
   }
 }
 
+export function isWebhookAuthScopedRateLimitEnabled(): boolean {
+  return process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT === 'true';
+}
+
+export function buildWebhookRateLimitKey(params: {
+  ip: string | null;
+  contaId?: string | null;
+  tokenHashPrefix?: string | null;
+}): string {
+  const ipPart = params.ip ?? 'unknown';
+  if (!isWebhookAuthScopedRateLimitEnabled()) {
+    return `ip:${ipPart}`;
+  }
+
+  const tenantPart = params.contaId ? `conta:${params.contaId}` : 'conta:unknown';
+  const tokenPart = params.tokenHashPrefix ? `token:${params.tokenHashPrefix}` : 'token:missing';
+  return `${tenantPart}:${tokenPart}:ip:${ipPart}`;
+}
+
 // Singleton — 200 req/min por IP por padrão
 export const globalWebhookRateLimiter = new WebhookRateLimiter();
 

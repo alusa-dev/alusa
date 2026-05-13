@@ -343,19 +343,21 @@ export default function LoginClient() {
 
   return (
     <AuthShell>
-      <div className="flex flex-col items-start w-full max-w-[320px]">
-        <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-left">
+      <div className="flex w-full max-w-[320px] flex-col items-center text-center">
+        <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
           Bem-vindo de volta!
         </h1>
-        <p className="mt-2 text-[12px] font-medium text-brand-muted text-left">
-          Informe seu e-mail e senha para acessar<br />sua conta na alusa.
+        <p className="mt-2 text-[12px] font-medium leading-normal text-brand-muted text-pretty">
+          Informe seu e-mail e senha para acessar
+          <br />
+          sua conta na alusa.
         </p>
         <form
           method="post"
           action="/auth/login"
           onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
           data-testid="login-form"
-          className="mt-6 flex flex-col gap-4 w-full items-start"
+          className="mt-6 flex w-full flex-col items-stretch gap-4"
           noValidate
         >
           <div className="relative w-full h-12">
@@ -415,7 +417,7 @@ export default function LoginClient() {
               Fazer login
             </button>
           </div>
-          <p className="text-left text-[11px] font-medium w-full mt-4">
+          <p className="mt-4 w-full text-center text-[11px] font-medium">
             <span className="text-[#686868]">Não tem uma conta? </span>
             <Link href="/auth/register" className="text-brand-accent hover:underline outline-none rounded">
               Cadastre-se

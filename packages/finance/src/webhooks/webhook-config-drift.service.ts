@@ -11,6 +11,7 @@ import {
   normalizeWebhookUrlBase,
 } from '../use-cases/asaas-account/expected-webhook-config.server';
 import { resolveWebhookNotificationEmail } from '../use-cases/asaas-account/webhook-notification-email.server';
+import { buildWebhookAuthTokenRotationData } from './asaas-webhook-auth';
 
 const MAX_WEBHOOK_PAGES = 10;
 const PAGE_SIZE = 100;
@@ -131,6 +132,22 @@ function computeDrift(params: {
   };
 }
 
+async function updateWebhookAuthHashWithRotation(financeProfileId: string, nextHash: string): Promise<void> {
+  const account = await prisma.asaasAccount.findUnique({
+    where: { financeProfileId },
+    select: { webhookAuthTokenHash: true },
+  });
+
+  await prisma.asaasAccount.update({
+    where: { financeProfileId },
+    data: buildWebhookAuthTokenRotationData({
+      currentHash: account?.webhookAuthTokenHash,
+      nextHash,
+    }),
+    select: { id: true },
+  });
+}
+
 export async function getWebhookConfigDriftStatus(contaId: string): Promise<WebhookConfigDriftStatus | null> {
   const account = await prisma.asaasAccount.findFirst({
     where: {
@@ -226,11 +243,7 @@ export async function repairWebhookConfigDrift(params: {
       });
 
       if (before.drift.localHashMismatch) {
-        await prisma.asaasAccount.update({
-          where: { financeProfileId: before.financeProfileId },
-          data: { webhookAuthTokenHash: expected.authTokenHash },
-          select: { id: true },
-        });
+        await updateWebhookAuthHashWithRotation(before.financeProfileId, expected.authTokenHash);
       }
 
       const after = await getWebhookConfigDriftStatus(params.contaId);
@@ -243,6 +256,7 @@ export async function repairWebhookConfigDrift(params: {
           webhookId: created.id,
           url: expected.url,
           eventsCount: expected.events.length,
+          rotatedWebhookAuthToken: before.drift.localHashMismatch,
         },
         actor: params.actor,
       });
@@ -288,11 +302,7 @@ export async function repairWebhookConfigDrift(params: {
     });
 
     if (before.drift.localHashMismatch) {
-      await prisma.asaasAccount.update({
-        where: { financeProfileId: before.financeProfileId },
-        data: { webhookAuthTokenHash: expected.authTokenHash },
-        select: { id: true },
-      });
+      await updateWebhookAuthHashWithRotation(before.financeProfileId, expected.authTokenHash);
     }
 
     const after = await getWebhookConfigDriftStatus(params.contaId);
@@ -311,6 +321,7 @@ export async function repairWebhookConfigDrift(params: {
         repairedSendTypeMismatch: before.drift.sendTypeMismatch,
         repairedUrlMismatch: before.drift.urlMismatch,
         repairedLocalHashMismatch: before.drift.localHashMismatch,
+        rotatedWebhookAuthToken: before.drift.localHashMismatch,
       },
       actor: params.actor,
     });

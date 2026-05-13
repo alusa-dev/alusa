@@ -694,6 +694,11 @@ export {
 export { reprocessErroredAsaasWebhooks } from './webhooks/asaas-webhook-handler';
 export {
   ASAAS_WEBHOOK_TOKEN_HEADERS,
+  authenticateAsaasWebhookToken,
+  buildWebhookAuthTokenRotationData,
+  getAsaasWebhookTokenHashPrefix,
+  hashAsaasWebhookAccessToken,
+  isValidAsaasWebhookTokenFormat,
   resolveAsaasWebhookAccessToken,
   resolveContaIdFromWebhookAuthToken,
 } from './webhooks/asaas-webhook-auth';
@@ -903,8 +908,12 @@ export { reconcileAsaasAccountsJob, shouldReconcileNow } from './jobs/reconcile-
 export type { ReconcileJobResult } from './jobs/reconcile-asaas-accounts';
 
 // Webhook Scheduler
-export { runWebhookScheduler } from './webhooks/webhook-scheduler.service';
+export {
+  runWebhookHealthAndDriftMaintenance,
+  runWebhookScheduler,
+} from './webhooks/webhook-scheduler.service';
 export type {
+  WebhookMaintenanceResult,
   WebhookSchedulerResult,
   WebhookSchedulerOptions,
   SchedulerStepResult,
@@ -962,7 +971,18 @@ export {
 } from './webhooks/webhook-ip-whitelist';
 
 // Webhook Rate Limiter
-export { WebhookRateLimiter, globalWebhookRateLimiter } from './webhooks/webhook-rate-limiter';
+export {
+  WebhookRateLimiter,
+  buildWebhookRateLimitKey,
+  globalWebhookRateLimiter,
+  isWebhookAuthScopedRateLimitEnabled,
+} from './webhooks/webhook-rate-limiter';
+
+export {
+  redactWebhookLogObject,
+  redactWebhookLogValue,
+  redactWebhookString,
+} from './webhooks/webhook-redaction';
 
 // Webhook DLQ Admin
 export {
@@ -1033,8 +1053,13 @@ export { startWorker, stopWorker } from './workers/webhook-worker';
 export type { WorkerCycleResult } from './workers/webhook-worker';
 
 // Webhook Diagnostics
-export { getWebhookOperationalDiagnostics } from './webhooks/webhook-operational-diagnostics.service';
+export {
+  getAsaasWebhookOperationalStatus,
+  getWebhookOperationalDiagnostics,
+} from './webhooks/webhook-operational-diagnostics.service';
 export type {
+  AsaasWebhookOperationalStatus,
+  GetAsaasWebhookOperationalStatusOptions,
   GetWebhookOperationalDiagnosticsOptions,
   WebhookOperationalDiagnostics,
   WebhookOperationalRecommendation,

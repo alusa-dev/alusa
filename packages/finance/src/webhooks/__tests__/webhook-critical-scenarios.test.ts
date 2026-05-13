@@ -27,6 +27,14 @@ vi.mock('@alusa/database', async () => {
   };
 });
 
+vi.mock('@alusa/lib', async () => {
+  const actual = await vi.importActual<typeof import('@alusa/lib')>('@alusa/lib').catch(() => ({}));
+  return {
+    ...actual,
+    createNotification: vi.fn().mockResolvedValue({ id: 'notification-1' }),
+  };
+});
+
 function sha256Hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
@@ -41,7 +49,7 @@ async function setupTestAccount(): Promise<TestContext> {
   const conta = await prisma.conta.create({
     data: {
       nome: 'Conta Teste Webhook Critical',
-      cpfCnpj: `000000000001${String(Date.now()).slice(-2)}`,
+      cpfCnpj: `00${unique.replaceAll('-', '').slice(0, 12)}`,
     },
   });
 
@@ -84,6 +92,11 @@ async function cleanupTestAccount(contaId: string) {
   });
 
   await prisma.webhookAsaas.deleteMany({ where: { contaId } });
+  await prisma.asaasIntegrationJob.deleteMany({ where: { contaId } });
+  await prisma.invoice.deleteMany({ where: { contaId } });
+  await prisma.sale.deleteMany({ where: { contaId } });
+  await prisma.chargeReadModel.deleteMany({ where: { contaId } });
+  await prisma.charge.deleteMany({ where: { contaId } });
 
   if (profile) {
     await prisma.asaasAccount.deleteMany({ where: { financeProfileId: profile.id } });
@@ -245,16 +258,47 @@ describe('Webhook Critical Tests - Idempotência', () => {
       expect(result.status).toBe(200);
     }
 
-    // Apenas uma deve ter sido processada, as outras devem ser idempotentes
-    const processed = results.filter((r) => !r.message || r.message !== 'Evento já processado');
-    const idempotent = results.filter((r) => r.message === 'Evento já processado');
-
     // Pode haver concorrência no processamento, mas no final deve haver apenas 1 registro
     const webhooks = await prisma.webhookAsaas.findMany({
       where: { contaId: ctx.contaId, eventId },
     });
     expect(webhooks.length).toBe(1);
     expect(webhooks[0].status).toBe('PROCESSADO');
+  });
+
+  it('não colide mesmo eventId e payloadHash entre tenants diferentes', async () => {
+    const other = await setupTestAccount();
+    const eventId = `evt_${randomUUID()}`;
+    const rawBody = JSON.stringify({
+      id: eventId,
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: `pay_${randomUUID()}`,
+        status: 'PENDING',
+        value: 100,
+        netValue: 100,
+      },
+    });
+
+    try {
+      const first = await handleAsaasWebhookEvent({ rawBody, accessToken: ctx.authToken });
+      const second = await handleAsaasWebhookEvent({ rawBody, accessToken: other.authToken });
+
+      expect(first.success).toBe(true);
+      expect(second.success).toBe(true);
+
+      const currentTenantCount = await prisma.webhookAsaas.count({
+        where: { contaId: ctx.contaId, eventId },
+      });
+      const otherTenantCount = await prisma.webhookAsaas.count({
+        where: { contaId: other.contaId, eventId },
+      });
+
+      expect(currentTenantCount).toBe(1);
+      expect(otherTenantCount).toBe(1);
+    } finally {
+      await cleanupTestAccount(other.contaId);
+    }
   });
 });
 
@@ -434,6 +478,74 @@ describe('Webhook Critical Tests - Validação de Origem', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe(200);
+  });
+
+  it('deve aceitar token anterior dentro da janela de rotação', async () => {
+    const previousToken = `token_${randomUUID()}`;
+    const profile = await prisma.financeProfile.findUniqueOrThrow({
+      where: { contaId: ctx.contaId },
+      select: { id: true },
+    });
+    await prisma.asaasAccount.update({
+      where: { financeProfileId: profile.id },
+      data: {
+        previousWebhookAuthTokenHash: sha256Hex(previousToken),
+        previousWebhookAuthTokenExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+
+    const rawBody = JSON.stringify({
+      id: `evt_${randomUUID()}`,
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: `pay_${randomUUID()}`,
+        status: 'PENDING',
+        value: 100,
+        netValue: 100,
+      },
+    });
+
+    const result = await handleAsaasWebhookEvent({
+      rawBody,
+      accessToken: previousToken,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.status).toBe(200);
+  });
+
+  it('deve rejeitar token anterior expirado', async () => {
+    const previousToken = `token_${randomUUID()}`;
+    const profile = await prisma.financeProfile.findUniqueOrThrow({
+      where: { contaId: ctx.contaId },
+      select: { id: true },
+    });
+    await prisma.asaasAccount.update({
+      where: { financeProfileId: profile.id },
+      data: {
+        previousWebhookAuthTokenHash: sha256Hex(previousToken),
+        previousWebhookAuthTokenExpiresAt: new Date(Date.now() - 60_000),
+      },
+    });
+
+    const rawBody = JSON.stringify({
+      id: `evt_${randomUUID()}`,
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: `pay_${randomUUID()}`,
+        status: 'PENDING',
+        value: 100,
+        netValue: 100,
+      },
+    });
+
+    const result = await handleAsaasWebhookEvent({
+      rawBody,
+      accessToken: previousToken,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(403);
   });
 });
 

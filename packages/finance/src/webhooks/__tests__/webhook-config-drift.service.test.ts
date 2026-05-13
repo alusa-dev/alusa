@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockFindFirst,
+  mockFindUnique,
   mockUpdateAccount,
   mockLoadCreds,
   mockCreateWebhook,
@@ -12,6 +13,7 @@ const {
   mockResolveWebhookNotificationEmail,
 } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
+  mockFindUnique: vi.fn(),
   mockUpdateAccount: vi.fn(),
   mockLoadCreds: vi.fn(),
   mockCreateWebhook: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('@alusa/database', () => ({
   prisma: {
     asaasAccount: {
       findFirst: mockFindFirst,
+      findUnique: mockFindUnique,
       update: mockUpdateAccount,
     },
   },
@@ -33,6 +36,13 @@ vi.mock('@alusa/database', () => ({
 }));
 
 vi.mock('@alusa/asaas', () => ({
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status: number;
+    constructor(message = 'AsaasHttpError', status = 500) {
+      super(message);
+      this.status = status;
+    }
+  },
   createWebhook: mockCreateWebhook,
   listWebhooks: mockListWebhooks,
   updateWebhook: mockUpdateWebhook,
@@ -53,6 +63,7 @@ vi.mock('../../use-cases/asaas-account/asaas-env', () => ({
 
 vi.mock('../../use-cases/asaas-account/webhook-auth-token', () => ({
   deriveWebhookAuthToken: vi.fn(() => 'token-1'),
+  resolveWebhookAuthToken: vi.fn(() => 'token-1'),
   hashWebhookAuthToken: vi.fn(() => 'hash-1'),
 }));
 
@@ -73,6 +84,7 @@ describe('webhook-config-drift.service', () => {
       webhookAuthTokenHash: 'hash-old',
       financeProfile: { contaId: 'conta-1' },
     });
+    mockFindUnique.mockResolvedValue({ webhookAuthTokenHash: 'hash-old' });
     mockLoadCreds.mockResolvedValue({ apiKey: 'key_1' });
     mockResolveWebhookNotificationEmail.mockResolvedValue('billing@alusa.test');
   });
@@ -165,7 +177,11 @@ describe('webhook-config-drift.service', () => {
     expect(mockUpdateAccount).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { financeProfileId: 'fp_1' },
-        data: { webhookAuthTokenHash: 'hash-1' },
+        data: expect.objectContaining({
+          webhookAuthTokenHash: 'hash-1',
+          previousWebhookAuthTokenHash: 'hash-old',
+          previousWebhookAuthTokenExpiresAt: expect.any(Date),
+        }),
       }),
     );
     expect(mockAuditRecord).toHaveBeenCalledWith(
@@ -270,7 +286,11 @@ describe('webhook-config-drift.service', () => {
     expect(mockUpdateAccount).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { financeProfileId: 'fp_1' },
-        data: { webhookAuthTokenHash: 'hash-1' },
+        data: expect.objectContaining({
+          webhookAuthTokenHash: 'hash-1',
+          previousWebhookAuthTokenHash: 'hash-old',
+          previousWebhookAuthTokenExpiresAt: expect.any(Date),
+        }),
       }),
     );
   });

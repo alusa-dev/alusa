@@ -21,6 +21,7 @@ import { NotificationType, NotificationCategory, NotificationSeverity, Role } fr
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { auditLogService } from '../foundation/audit-log.service';
 import { alertService } from '../foundation/alert-channel';
+import { redactWebhookLogObject } from './webhook-redaction';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -96,16 +97,16 @@ export async function checkWebhookHealth(opts?: {
 
       result.interruptedFound += interrupted.length;
 
-      console.warn('[webhook-health] Webhook interrompido detectado', {
+      console.warn('[webhook-health] Webhook interrompido detectado', redactWebhookLogObject({
         contaId,
         asaasAccountId: account.asaasAccountId,
         webhookIds: interrupted.map((w) => w.id),
-      });
+      }));
 
       await alertService
         .alertInterruptedQueue(contaId, interrupted.map((w) => w.id))
         .catch((err: unknown) => {
-          console.warn('[webhook-health][alert-failed]', { contaId, err });
+          console.warn('[webhook-health][alert-failed]', redactWebhookLogObject({ contaId, err }));
         });
 
       // Notificação interna para admins
@@ -125,7 +126,7 @@ export async function checkWebhookHealth(opts?: {
           asaasAccountId: account.asaasAccountId,
         },
       }).catch((err: unknown) => {
-        console.warn('[webhook-health][notify-failed]', { contaId, err });
+        console.warn('[webhook-health][notify-failed]', redactWebhookLogObject({ contaId, err }));
       });
 
       if (!autoRecover) continue;
@@ -153,10 +154,10 @@ export async function checkWebhookHealth(opts?: {
           } else {
             result.recoveredSuccessfully++;
 
-            console.info('[webhook-health] Webhook recuperado', {
+            console.info('[webhook-health] Webhook recuperado', redactWebhookLogObject({
               contaId,
               webhookId: webhook.id,
-            });
+            }));
           }
 
           await auditLogService.record({
@@ -193,13 +194,13 @@ export async function checkWebhookHealth(opts?: {
     }
   }
 
-  console.info('[webhook-health] Health check concluído', {
+  console.info('[webhook-health] Health check concluído', redactWebhookLogObject({
     checkedAccounts: result.checkedAccounts,
     interruptedFound: result.interruptedFound,
     recoveredSuccessfully: result.recoveredSuccessfully,
     recoveryFailed: result.recoveryFailed,
     errors: result.errors.length,
-  });
+  }));
 
   return result;
 }

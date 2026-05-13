@@ -86,12 +86,12 @@ export default function ConfirmEmailPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="w-full max-w-[360px] flex flex-col items-start gap-5">
+        <div className="flex w-full max-w-[360px] flex-col items-center gap-5 text-center">
           <div className="space-y-2">
-            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-left">
+            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
               Confirme seu e-mail
             </h1>
-            <p className="text-[12px] font-medium text-brand-muted text-left leading-relaxed">
+            <p className="text-[12px] font-medium text-brand-muted leading-relaxed text-pretty">
               Enviamos um link de confirmação para{' '}
               <span className="font-semibold text-[#4a3f35]">{session?.user?.email || 'seu e-mail'}</span>.
               Abra a mensagem para validar seu endereço e concluir a criação da conta.
@@ -121,7 +121,7 @@ export default function ConfirmEmailPage() {
             </button>
           </div>
 
-          <p className="text-left text-[11px] font-medium w-full">
+          <p className="w-full text-center text-[11px] font-medium">
             <span className="text-[#686868]">Entrou com o e-mail errado? </span>
             <Link href="/auth/login" className="text-brand-accent hover:underline">
               Voltar para login

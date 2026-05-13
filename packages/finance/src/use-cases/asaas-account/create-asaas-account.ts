@@ -28,6 +28,7 @@ import {
   RECOMMENDED_WEBHOOK_NAME,
   RECOMMENDED_WEBHOOK_SEND_TYPE,
 } from './expected-webhook-config.server';
+import { buildWebhookAuthTokenRotationData } from '../../webhooks/asaas-webhook-auth';
 import {
   deriveLegacyAliasedSubaccountEmail,
   matchesSubaccountEmail,
@@ -472,7 +473,10 @@ async function ensureExistingWebhookConfig(params: {
     if (params.webhookAuthTokenHash !== expectedWebhook.authTokenHash) {
       await prisma.asaasAccount.update({
         where: { financeProfileId: params.financeProfileId },
-        data: { webhookAuthTokenHash: expectedWebhook.authTokenHash },
+        data: buildWebhookAuthTokenRotationData({
+          currentHash: params.webhookAuthTokenHash,
+          nextHash: expectedWebhook.authTokenHash,
+        }),
         select: { id: true },
       });
     }
@@ -515,7 +519,10 @@ async function ensureExistingWebhookConfig(params: {
   if (params.webhookAuthTokenHash !== expectedWebhook.authTokenHash) {
     await prisma.asaasAccount.update({
       where: { financeProfileId: params.financeProfileId },
-      data: { webhookAuthTokenHash: expectedWebhook.authTokenHash },
+      data: buildWebhookAuthTokenRotationData({
+        currentHash: params.webhookAuthTokenHash,
+        nextHash: expectedWebhook.authTokenHash,
+      }),
       select: { id: true },
     });
   }

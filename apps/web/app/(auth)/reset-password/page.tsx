@@ -65,21 +65,21 @@ export default function ResetPasswordPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="w-full max-w-[320px] flex flex-col items-start px-0">
-          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-left">
+        <div className="flex w-full max-w-[320px] flex-col items-center px-0 text-center">
+          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
             Redefinir senha
           </h1>
-          <p className="mt-2 text-[12px] font-medium text-brand-muted text-left">
+          <p className="mt-2 text-[12px] font-medium text-brand-muted text-pretty">
             Defina uma nova senha para acessar sua conta.
           </p>
 
           {!token ? (
-            <div className="mt-6 w-full rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-[13px] text-[#5c544b]">
+            <div className="mt-6 w-full rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[13px] text-[#5c544b]">
               Link inválido. Solicite um novo e-mail de redefinição.
             </div>
           ) : done ? (
             <div className="mt-6 w-full flex flex-col gap-4">
-              <div className="rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-[13px] text-[#5c544b]">
+              <div className="rounded-[16px] border border-[#eadfce] bg-white px-5 py-4 text-center text-[13px] text-[#5c544b]">
                 Sua senha foi alterada com sucesso.
               </div>
               <Link
@@ -135,7 +135,7 @@ export default function ResetPasswordPage() {
                   {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="px-1 text-[11px] font-medium leading-relaxed text-brand-muted">
+              <p className="px-1 text-center text-[11px] font-medium leading-relaxed text-brand-muted">
                 Use no mínimo 8 caracteres, com letra maiúscula, letra minúscula, número e caractere especial.
               </p>
               <button

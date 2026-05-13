@@ -9,6 +9,9 @@ import {
   isAsaasWebhookIpAllowed,
   shouldBlockAsaasWebhookByIp,
   globalWebhookRateLimiter,
+  buildWebhookRateLimitKey,
+  getAsaasWebhookTokenHashPrefix,
+  redactWebhookLogObject,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
 import { emitBillingNotificationCandidate, emitBillingNotifications } from '@/lib/notifications/emit-billing-notifications';
@@ -28,6 +31,16 @@ function isJsonContentType(value: string | null): boolean {
   return value.toLowerCase().startsWith('application/json');
 }
 
+function isStrictHttpRejectionsEnabled(): boolean {
+  return process.env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS === 'true';
+}
+
+function resolveWebhookResponseStatus(resultStatus: number | undefined): number {
+  if (!isStrictHttpRejectionsEnabled()) return 200;
+  if (resultStatus === 400 || resultStatus === 401 || resultStatus === 403) return resultStatus;
+  return 200;
+}
+
 export async function POST(req: NextRequest) {
   try {
     // IP allowlist é diagnóstica por padrão. O authToken do webhook é a
@@ -35,13 +48,15 @@ export async function POST(req: NextRequest) {
     // o sandbox usar IP adicional ou a CDN alterar X-Forwarded-For.
     const clientIps = extractClientIps(req.headers);
     const clientIp = clientIps[0] ?? null;
+    const accessToken = resolveAsaasWebhookAccessToken(req.headers);
+    const tokenHashPrefix = getAsaasWebhookTokenHashPrefix(accessToken);
     const ipAllowed = isAsaasWebhookIpAllowed(clientIps.length > 0 ? clientIps : null);
     if (!ipAllowed) {
-      console.warn('[Asaas Webhook] IP fora da allowlist diagnóstica', {
+      console.warn('[Asaas Webhook] IP fora da allowlist diagnóstica', redactWebhookLogObject({
         clientIp,
         candidateCount: clientIps.length,
         strict: process.env.ASAAS_WEBHOOK_IP_CHECK === 'strict',
-      });
+      }));
     }
 
     if (shouldBlockAsaasWebhookByIp(clientIps.length > 0 ? clientIps : null)) {
@@ -52,9 +67,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Rate limiting por IP
-    const rateLimitKey = clientIp ?? 'unknown';
+    const rateLimitKey = buildWebhookRateLimitKey({ ip: clientIp, tokenHashPrefix });
     const rateCheck = globalWebhookRateLimiter.check(rateLimitKey);
     if (!rateCheck.allowed) {
+      console.warn('[Asaas Webhook] Rate limit aplicado', redactWebhookLogObject({
+        clientIp,
+        tokenHashPrefix,
+        scoped: process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT === 'true',
+      }));
       return NextResponse.json(
         { success: false, error: 'RATE_LIMITED' },
         { status: 429, headers: { 'Retry-After': String(Math.ceil(rateCheck.resetMs / 1000)) } },
@@ -67,8 +87,6 @@ export async function POST(req: NextRequest) {
         { status: 415 },
       );
     }
-
-    const accessToken = resolveAsaasWebhookAccessToken(req.headers);
 
     const contentLength = Number(req.headers.get('content-length') ?? '0');
     if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
@@ -109,10 +127,10 @@ export async function POST(req: NextRequest) {
           });
           await emitBillingNotifications(drainResult.processedPayments, 'ASAAS_WEBHOOK');
         } catch (drainError) {
-          console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', {
+          console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', redactWebhookLogObject({
             contaId: queued.contaId,
             error: drainError instanceof Error ? drainError.message : String(drainError),
-          });
+          }));
         }
       }
     } else {
@@ -135,11 +153,11 @@ export async function POST(req: NextRequest) {
             'ASAAS_WEBHOOK',
           );
         } catch (notificationError) {
-          console.warn('[Asaas Webhook][notification-candidate] Falha ao emitir notificação', {
+          console.warn('[Asaas Webhook][notification-candidate] Falha ao emitir notificação', redactWebhookLogObject({
             asaasPaymentId: payload.payment.id,
             event: payload.event,
             error: notificationError instanceof Error ? notificationError.message : String(notificationError),
-          });
+          }));
         }
       }
     }
@@ -153,7 +171,7 @@ export async function POST(req: NextRequest) {
         error: result.error,
         mode: useAsyncQueue ? 'QUEUE' : 'SYNC',
       },
-      { status: 200 },
+      { status: resolveWebhookResponseStatus(result.status) },
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET')) {
@@ -167,7 +185,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.error('[Asaas Webhook][POST]', error);
+    console.error('[Asaas Webhook][POST]', redactWebhookLogObject({
+      error: error instanceof Error ? error : String(error),
+    }));
     // 200 para evitar retries do Asaas — erros persistem no banco para reprocessamento
     return NextResponse.json(
       {

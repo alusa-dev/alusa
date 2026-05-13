@@ -32,6 +32,14 @@ vi.mock('@alusa/database', async () => {
   };
 });
 
+vi.mock('@alusa/lib', async () => {
+  const actual = await vi.importActual<typeof import('@alusa/lib')>('@alusa/lib').catch(() => ({}));
+  return {
+    ...actual,
+    createNotification: vi.fn().mockResolvedValue({ id: 'notification-1' }),
+  };
+});
+
 function sha256Hex(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
@@ -40,6 +48,12 @@ async function cleanup(contaId: string) {
   const profile = await prisma.financeProfile.findUnique({ where: { contaId }, select: { id: true } });
 
   await prisma.webhookAsaas.deleteMany({ where: { contaId } });
+  await prisma.logIntegracao.deleteMany({ where: { contaId } });
+  await prisma.asaasIntegrationJob.deleteMany({ where: { contaId } });
+  await prisma.invoice.deleteMany({ where: { contaId } });
+  await prisma.sale.deleteMany({ where: { contaId } });
+  await prisma.chargeReadModel.deleteMany({ where: { contaId } });
+  await prisma.charge.deleteMany({ where: { contaId } });
   await prisma.lancamento.deleteMany({ where: { contaId } });
   await prisma.pagamento.deleteMany({ where: { cobranca: { matricula: { aluno: { contaId } } } } });
   await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId } } } });
@@ -286,6 +300,7 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
 
     const matricula = await prisma.matricula.create({
       data: {
+        contaId: conta.id,
         alunoId: aluno.id,
         dataInicio: new Date('2025-01-01T00:00:00.000Z'),
         dataFimContrato: new Date('2026-01-01T00:00:00.000Z'),
@@ -296,6 +311,7 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
     const paymentId = `pay_${randomUUID()}`;
     await prisma.cobranca.create({
       data: {
+        contaId: conta.id,
         matriculaId: matricula.id,
         competenciaInicio: new Date('2025-01-01T00:00:00.000Z'),
         competenciaFim: new Date('2025-01-31T00:00:00.000Z'),

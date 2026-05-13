@@ -36,7 +36,7 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
                             <img
                                 src="/brand/logo.svg"
                                 alt="Alusa"
-                                className="h-8 brightness-0 invert"
+                                className="h-12 w-auto brightness-0 invert"
                             />
                         </div>
                         {heroContent}
@@ -51,15 +51,19 @@ export default function AuthShell({ children, heroImageSrc = '/images/image-logi
 
             {/* Direita: painel branco com formulário */}
             <div className="flex min-h-screen w-full flex-col bg-white lg:w-1/2">
-                {/* Logo visível apenas no mobile */}
-                <div className="flex items-center px-8 py-6 lg:hidden">
-                    <img src="/brand/logo.svg" alt="Alusa" className="h-8" />
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-8 py-8 lg:py-16">
+                    <div className="flex w-full flex-col items-center">
+                        {/* Mobile: logo centralizada; paddings laterais iguais vêm do px-8 acima */}
+                        <div className="mb-8 flex w-full justify-center lg:hidden">
+                            <img src="/brand/logo.svg" alt="Alusa" className="h-12 w-auto" />
+                        </div>
+                        <div className="flex w-full flex-col items-center">{children}</div>
+                    </div>
                 </div>
 
-                {/* Conteúdo centralizado */}
-                <div className="flex flex-1 items-center justify-center px-8 py-10 lg:py-16">
-                    {children}
-                </div>
+                <footer className="flex shrink-0 justify-center px-8 pb-8 pt-2 lg:hidden" aria-label="Parceria de pagamentos">
+                    <AsaasSeal variant="negativo-preto" />
+                </footer>
             </div>
         </div>
     );

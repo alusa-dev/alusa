@@ -17,6 +17,7 @@ vi.mock('@alusa/finance', () => ({
   reconcileWithAsaas: vi.fn(),
   reconcileAsaasAccountsJob: vi.fn(),
   processAsaasWebhookQueue: vi.fn(),
+  runWebhookHealthAndDriftMaintenance: vi.fn(),
   archiveProcessedWebhooks: vi.fn(),
   syncPaymentStateFromAsaas: vi.fn(),
 }));
@@ -37,6 +38,7 @@ import {
   processAsaasWebhookQueue,
   reconcileAsaasAccountsJob,
   reconcileWithAsaas,
+  runWebhookHealthAndDriftMaintenance,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
 import { encerrarContratosExpirados } from '@alusa/lib';
@@ -46,6 +48,7 @@ import { POST as postEncerrarContratos } from '@/app/api/jobs/encerrar-contratos
 import { POST as postProcessWebhooks } from '@/app/api/jobs/process-finance-webhooks/route';
 import { POST as postReconcileAccounts } from '@/app/api/jobs/reconcile-finance-accounts/route';
 import { POST as postReconcileWebhooks } from '@/app/api/jobs/reconcile-finance-webhooks/route';
+import { POST as postWebhookMaintenance } from '@/app/api/jobs/webhook-maintenance/route';
 
 function makeRequest(url: string, headers?: HeadersInit) {
   return new Request(url, {
@@ -68,6 +71,12 @@ describe('admin jobs multi-tenant isolation', () => {
     vi.mocked(detectWebhookGaps).mockResolvedValue(null as never);
     vi.mocked(reconcileAsaasAccountsJob).mockResolvedValue({ processed: 1 } as never);
     vi.mocked(processAsaasWebhookQueue).mockResolvedValue({ processed: 1 } as never);
+    vi.mocked(runWebhookHealthAndDriftMaintenance).mockResolvedValue({
+      accountsChecked: 1,
+      driftsFound: 0,
+      driftsRepaired: 0,
+      errors: [],
+    } as never);
     vi.mocked(archiveProcessedWebhooks).mockResolvedValue({ archived: 1 } as never);
     vi.mocked(syncPaymentStateFromAsaas).mockResolvedValue({ success: true, paymentStatus: 'CONFIRMED', appliedEvent: 'PAYMENT_CONFIRMED' } as never);
     vi.mocked(encerrarContratosExpirados).mockResolvedValue({ processed: 1, updated: 1 } as never);
@@ -134,6 +143,31 @@ describe('admin jobs multi-tenant isolation', () => {
 
     expect(response.status).toBe(403);
     expect(processAsaasWebhookQueue).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia webhook-maintenance para outra conta quando executado por admin humano', async () => {
+    const response = await postWebhookMaintenance(
+      makeRequest('http://localhost/api/jobs/webhook-maintenance?contaId=conta-2'),
+    );
+
+    expect(response.status).toBe(403);
+    expect(runWebhookHealthAndDriftMaintenance).not.toHaveBeenCalled();
+  });
+
+  it('permite webhook-maintenance global via cron autenticado', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+
+    const response = await postWebhookMaintenance(
+      makeRequest('http://localhost/api/jobs/webhook-maintenance', {
+        'x-cron-token': 'cron-secret',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(runWebhookHealthAndDriftMaintenance).toHaveBeenCalledWith({
+      contaId: undefined,
+      autoRepair: true,
+    });
   });
 
   it('bloqueia archive-finance-webhooks para outra conta quando executado por admin humano', async () => {

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   mockFindFirst,
-  mockCount,
+  mockWebhookCount,
+  mockRejectionCount,
+  mockRejectionGroupBy,
   mockLoadCreds,
   mockGetQueueMetrics,
   mockDetectWebhookGaps,
@@ -15,7 +17,9 @@ const {
   mockInspectWebhookProcessingRuntimeStatus,
 } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
-  mockCount: vi.fn(),
+  mockWebhookCount: vi.fn(),
+  mockRejectionCount: vi.fn(),
+  mockRejectionGroupBy: vi.fn(),
   mockLoadCreds: vi.fn(),
   mockGetQueueMetrics: vi.fn(),
   mockDetectWebhookGaps: vi.fn(),
@@ -35,7 +39,11 @@ vi.mock('@alusa/database', () => ({
       findFirst: mockFindFirst,
     },
     webhookAsaas: {
-      count: mockCount,
+      count: mockWebhookCount,
+    },
+    webhookAsaasRejection: {
+      count: mockRejectionCount,
+      groupBy: mockRejectionGroupBy,
     },
   },
 }));
@@ -64,7 +72,10 @@ vi.mock('../webhook-runtime-config', () => ({
   inspectWebhookProcessingRuntimeStatus: mockInspectWebhookProcessingRuntimeStatus,
 }));
 
-import { getWebhookOperationalDiagnostics } from '../webhook-operational-diagnostics.service';
+import {
+  getAsaasWebhookOperationalStatus,
+  getWebhookOperationalDiagnostics,
+} from '../webhook-operational-diagnostics.service';
 
 describe('getWebhookOperationalDiagnostics', () => {
   const originalEnv = { ...process.env };
@@ -83,7 +94,9 @@ describe('getWebhookOperationalDiagnostics', () => {
       status: 'APPROVED',
       webhookAuthTokenHash: 'hash_1',
     });
-    mockCount.mockResolvedValue(0);
+    mockWebhookCount.mockResolvedValue(0);
+    mockRejectionCount.mockResolvedValue(0);
+    mockRejectionGroupBy.mockResolvedValue([]);
     mockLoadCreds.mockResolvedValue({ apiKey: 'key_1' });
     mockGetQueueMetrics.mockResolvedValue({
       contaId: 'conta-1',
@@ -204,7 +217,7 @@ describe('getWebhookOperationalDiagnostics', () => {
 
     mockFindFirst.mockResolvedValue(null);
     mockLoadCreds.mockResolvedValue(null);
-    mockCount.mockResolvedValue(3);
+    mockWebhookCount.mockResolvedValue(3);
     mockGetQueueMetrics.mockResolvedValue({
       contaId: 'conta-1',
       backlog: 5,
@@ -340,5 +353,58 @@ describe('getWebhookOperationalDiagnostics', () => {
         'WEBHOOK_REGISTRY_CRITICAL_GAP',
       ]),
     );
+  });
+});
+
+describe('getAsaasWebhookOperationalStatus', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetQueueMetrics.mockResolvedValue({
+      contaId: 'conta-1',
+      backlog: 3,
+      pending: 1,
+      processing: 1,
+      errored: 1,
+      processed: 10,
+      highRetryBacklog: 2,
+      stuckProcessing: 1,
+      oldestPendingAt: new Date('2026-03-27T00:00:00.000Z'),
+      lagSeconds: 60,
+      generatedAt: new Date('2026-03-27T00:01:00.000Z'),
+    });
+    mockWebhookCount
+      .mockResolvedValueOnce(4)
+      .mockResolvedValueOnce(25);
+    mockRejectionCount
+      .mockResolvedValueOnce(2)
+      .mockResolvedValueOnce(7);
+    mockRejectionGroupBy.mockResolvedValue([
+      { reason: 'Token inválido', _count: { _all: 5 } },
+      { reason: 'JSON inválido', _count: { _all: 2 } },
+    ]);
+  });
+
+  it('retorna snapshot operacional sem payload bruto', async () => {
+    const result = await getAsaasWebhookOperationalStatus({ contaId: 'conta-1' });
+
+    expect(result).toMatchObject({
+      contaId: 'conta-1',
+      pending: 1,
+      processing: 1,
+      errored: 1,
+      exhausted: 4,
+      processedLast24h: 25,
+      lagSeconds: 60,
+      highRetryBacklog: 2,
+      stuckProcessing: 1,
+      rejectionCountLast1h: 2,
+      rejectionCountLast24h: 7,
+      rejectionsByReason: [
+        { reason: 'Token inválido', count: 5 },
+        { reason: 'JSON inválido', count: 2 },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain('payload');
+    expect(JSON.stringify(result)).not.toContain('token_');
   });
 });

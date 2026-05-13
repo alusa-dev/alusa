@@ -68,6 +68,27 @@ export interface GetWebhookOperationalDiagnosticsOptions {
   windowDays?: number;
 }
 
+export interface AsaasWebhookOperationalStatus {
+  contaId: string | 'ALL';
+  generatedAt: Date;
+  pending: number;
+  processing: number;
+  errored: number;
+  exhausted: number;
+  processedLast24h: number;
+  oldestPendingAt: Date | null;
+  lagSeconds: number | null;
+  highRetryBacklog: number;
+  stuckProcessing: number;
+  rejectionCountLast1h: number;
+  rejectionCountLast24h: number;
+  rejectionsByReason: Array<{ reason: string; count: number }>;
+}
+
+export interface GetAsaasWebhookOperationalStatusOptions {
+  contaId?: string;
+}
+
 function pushRecommendation(
   target: WebhookOperationalRecommendation[],
   recommendation: WebhookOperationalRecommendation | null,
@@ -90,6 +111,74 @@ function resolveDiagnosticsStatus(
   if (recommendations.some((item) => item.severity === 'critical')) return 'ERROR';
   if (recommendations.some((item) => item.severity === 'warning')) return 'WARNING';
   return 'OK';
+}
+
+export async function getAsaasWebhookOperationalStatus(
+  options: GetAsaasWebhookOperationalStatusOptions = {},
+): Promise<AsaasWebhookOperationalStatus> {
+  const generatedAt = new Date();
+  const since1h = new Date(generatedAt.getTime() - 60 * 60 * 1000);
+  const since24h = new Date(generatedAt.getTime() - 24 * 60 * 60 * 1000);
+
+  const [queue, exhausted, processedLast24h, rejectionCountLast1h, rejectionCountLast24h, rejectionsByReasonRaw] =
+    await Promise.all([
+      getWebhookQueueMetrics({ contaId: options.contaId }),
+      prisma.webhookAsaas.count({
+        where: {
+          ...(options.contaId ? { contaId: options.contaId } : {}),
+          status: 'EXAURIDO',
+        },
+      }),
+      prisma.webhookAsaas.count({
+        where: {
+          ...(options.contaId ? { contaId: options.contaId } : {}),
+          status: 'PROCESSADO',
+          processadoEm: { gte: since24h },
+        },
+      }),
+      prisma.webhookAsaasRejection.count({
+        where: {
+          ...(options.contaId ? { contaId: options.contaId } : {}),
+          recebidoEm: { gte: since1h },
+        },
+      }),
+      prisma.webhookAsaasRejection.count({
+        where: {
+          ...(options.contaId ? { contaId: options.contaId } : {}),
+          recebidoEm: { gte: since24h },
+        },
+      }),
+      prisma.webhookAsaasRejection.groupBy({
+        by: ['reason'],
+        where: {
+          ...(options.contaId ? { contaId: options.contaId } : {}),
+          recebidoEm: { gte: since24h },
+        },
+        _count: { _all: true },
+        orderBy: { _count: { reason: 'desc' } },
+        take: 20,
+      }),
+    ]);
+
+  return {
+    contaId: options.contaId ?? 'ALL',
+    generatedAt,
+    pending: queue.pending,
+    processing: queue.processing,
+    errored: queue.errored,
+    exhausted,
+    processedLast24h,
+    oldestPendingAt: queue.oldestPendingAt,
+    lagSeconds: queue.lagSeconds,
+    highRetryBacklog: queue.highRetryBacklog,
+    stuckProcessing: queue.stuckProcessing,
+    rejectionCountLast1h,
+    rejectionCountLast24h,
+    rejectionsByReason: rejectionsByReasonRaw.map((item) => ({
+      reason: item.reason,
+      count: item._count._all,
+    })),
+  };
 }
 
 export async function getWebhookOperationalDiagnostics(

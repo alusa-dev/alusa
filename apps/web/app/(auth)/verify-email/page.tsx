@@ -143,9 +143,9 @@ export default function VerifyEmailPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="w-full max-w-[360px] flex flex-col items-start gap-5">
+        <div className="flex w-full max-w-[360px] flex-col items-center gap-5 text-center">
           <div className="space-y-2">
-            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-left">
+            <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
               {state === 'success'
                 ? isReactivationFlow
                   ? 'Conta reativada'
@@ -154,7 +154,7 @@ export default function VerifyEmailPage() {
                   ? 'Falha na confirmação'
                   : 'Confirmando e-mail'}
             </h1>
-            <p className="text-[12px] font-medium text-brand-muted text-left leading-relaxed">
+            <p className="text-[12px] font-medium text-brand-muted leading-relaxed text-pretty">
               {message}
             </p>
           </div>

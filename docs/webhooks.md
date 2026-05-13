@@ -92,7 +92,7 @@ Cada subconta (instituição) possui um `webhookAuthToken` único. O token é en
 Webhooks rejeitados (JSON inválido, token inválido, evento ausente) são:
 - Persistidos na tabela **`WebhookAsaasRejection`** (sem FK para Conta — permite auditoria quando `contaId` é desconhecido)
 - Logados via `alertTokenRejected()` com log estruturado JSON
-- Retornados com HTTP 4xx para indicar erro ao Asaas
+- Retornados com HTTP `200` e `success: false` quando a rejeição é tratada/persistida pela rota, evitando retry infinito do Asaas para falhas permanentes. Bloqueios iniciais continuam retornando `403`, `429`, `415` ou `413` conforme a matriz operacional em `docs/runbooks/webhooks-asaas.md`.
 
 > A tabela `WebhookAsaasRejection` foi criada separada da `WebhookAsaas` porque rejeições com token inválido não possuem `contaId` válido, e a FK obrigatória da tabela principal impedia a persistência. Campos: `id`, `contaId?` (nullable), `evento?`, `eventId?`, `payloadHash?`, `payload` (Json), `reason` (String), `recebidoEm`.
 
@@ -353,7 +353,8 @@ Mesma estrutura, com campo `archivedAt` adicional. Sem constraints de unicidade 
 - Comparação de hash usa `timingSafeEqual` (constant-time)
 - Payload máximo: 512KB
 - Content-Type validado (application/json)
-- Erros 5xx retornam 200 para evitar retries infinitos do Asaas
+- Erros tratados/persistidos retornam 200 para evitar retries infinitos do Asaas
+- Bloqueios iniciais da rota podem retornar 403, 429, 415 ou 413 antes de persistência/processamento
 - Webhooks rejeitados persistidos para auditoria forense
 
 ## Casos de Borda Tratados

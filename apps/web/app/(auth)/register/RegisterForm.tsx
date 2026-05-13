@@ -263,8 +263,8 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         </div>
       )}
     >
-      <div data-layer="form register" className="w-full max-w-[320px] flex flex-col items-start">
-        <header className="text-left mb-8 space-y-2">
+      <div data-layer="form register" className="flex w-full max-w-[320px] flex-col items-center text-center">
+        <header className="mb-8 space-y-2">
           <h1 className="text-[30px] font-semibold leading-tight tracking-tight">
             {mode === 'invite' ? 'Aceitar Convite' : 'Abra sua conta'}
           </h1>
@@ -276,11 +276,11 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           </p>
           {/* No modo convite, o e-mail é editável no campo abaixo (pré-preenchido pelo convite) */}
           {/* Erro global visível apenas se necessário */}
-          {globalError && <p data-testid="register-error" className="text-[12px] text-red-600" role="alert">{globalError}</p>}
+          {globalError && <p data-testid="register-error" className="text-[12px] text-red-600 text-center" role="alert">{globalError}</p>}
         </header>
 
 
-        <form onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }} className="w-full flex flex-col gap-4 items-start" data-testid="register-form" noValidate>
+        <form onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }} className="flex w-full flex-col items-stretch gap-4" data-testid="register-form" noValidate>
           <div className="flex gap-4 w-full">
             <div className="flex-1">
               <div className="relative h-12">
@@ -337,20 +337,20 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
               <input type={showConfirmPassword ? 'text' : 'password'} placeholder="Confirmar senha" data-testid="register-senha-confirmar" autoComplete="new-password" className="w-full h-12 rounded-[12px] border border-gray-300 bg-white pl-5 pr-11 text-[14px] font-medium text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0" {...register('confirmarSenha')} />
               <button type="button" onClick={() => { setShowConfirmPassword(s => !s); }} aria-label={showConfirmPassword ? 'Ocultar senha' : 'Mostrar senha'} className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted p-1 rounded outline-none">{showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
             </div>
-            <p className="mt-2 px-1 text-[11px] font-medium leading-relaxed text-brand-muted">
+            <p className="mt-2 px-1 text-center text-[11px] font-medium leading-relaxed text-brand-muted">
               {passwordRequirementsText}
             </p>
           </div>
-          <div className="pt-1">
-            <label className="flex items-center gap-2 text-[12px] font-medium cursor-pointer select-none leading-relaxed">
-              <input type="checkbox" className="h-4 w-4 rounded-[5px] border border-brand-accent accent-brand-accent outline-none" {...register('termos')} />
+          <div className="flex w-full justify-center pt-1">
+            <label className="flex max-w-[300px] items-start gap-2 text-center text-[12px] font-medium cursor-pointer select-none leading-relaxed">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 shrink-0 rounded-[5px] border border-brand-accent accent-brand-accent outline-none" {...register('termos')} />
               <span className="text-[#686868]">Aceito os <a className="text-brand-accent hover:underline" href="/termos" target="_blank" rel="noopener noreferrer">Termos de Uso</a></span>
             </label>
           </div>
           <button type="submit" data-testid="register-submit" disabled={isSubmitting} className="w-full mt-1 h-12 rounded-[12px] bg-[#3e1f63] hover:bg-[#4b217a] text-white text-[14px] font-medium flex items-center justify-center transition-colors outline-none disabled:opacity-60">
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
-          <p className="text-left text-[11px] font-medium mt-2">
+          <p className="mt-2 text-center text-[11px] font-medium">
             <span className="text-[#686868]">{mode === 'invite' ? 'Não recebeu este convite? ' : 'Já tenho uma conta! '}</span>
             <a href="/auth/login" className="text-brand-accent hover:underline">
               {mode === 'invite' ? 'Contatar administrador' : 'Fazer login'}

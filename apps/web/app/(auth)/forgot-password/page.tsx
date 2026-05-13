@@ -85,14 +85,14 @@ export default function ForgotPasswordPage() {
   return (
     <AuthPageContainer>
       <AuthShell>
-        <div className="w-full max-w-[320px] flex flex-col items-start px-0">
-          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-left">
+        <div className="flex w-full max-w-[320px] flex-col items-center px-0 text-center">
+          <h1 className="text-[30px] font-semibold leading-tight tracking-tight text-pretty">
             Recuperar senha
           </h1>
-          <p className="mt-2 text-[12px] font-medium text-brand-muted text-left">
+          <p className="mt-2 text-[12px] font-medium text-brand-muted text-pretty">
             Informe o e-mail cadastrado. Enviaremos um link para redefinir sua senha.
           </p>
-          <form onSubmit={(e) => { void onSubmit(e); }} className="mt-6 flex flex-col gap-5 items-start w-full" noValidate>
+          <form onSubmit={(e) => { void onSubmit(e); }} className="mt-6 flex w-full flex-col items-stretch gap-5" noValidate>
             <div className="relative w-full h-12">
               <label htmlFor="email" className="sr-only">E-mail</label>
               <input
@@ -115,7 +115,7 @@ export default function ForgotPasswordPage() {
             >
               {loading ? 'Enviando...' : 'Enviar link'}
             </button>
-            <p className="text-left text-[11px] font-medium w-full mt-1">
+            <p className="mt-1 w-full text-center text-[11px] font-medium">
               <span className="text-[#686868]">Tenho uma conta? </span>
               <a href="/auth/login" className="text-[#5c2f91] hover:underline">Fazer login</a>
             </p>

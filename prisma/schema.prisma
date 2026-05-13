@@ -2381,6 +2381,8 @@ model AsaasAccount {
 
   // Webhook (Fase 2): authToken configurado no Asaas (persistido como hash)
   webhookAuthTokenHash String? @unique
+  previousWebhookAuthTokenHash      String?   @unique
+  previousWebhookAuthTokenExpiresAt DateTime?
 
   // ==================== Delete Account (external-first) ====================
   deletionState          AsaasAccountDeletionState @default(NOT_REQUESTED)
@@ -2406,6 +2408,7 @@ model AsaasAccount {
   @@index([asaasAccountId])
   @@index([status])
   @@index([deletionState])
+  @@index([previousWebhookAuthTokenExpiresAt], name: "idx_asaas_account_prev_webhook_token_expires")
 }
 
 model AsaasAccountStatusHistory {
