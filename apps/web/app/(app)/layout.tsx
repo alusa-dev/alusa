@@ -1,20 +1,28 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-// Constante de debounce pode ficar em nível de módulo (não é hook)
-const DEBOUNCE_MS = 500;
+import dynamic from 'next/dynamic';
+import { useEffect } from 'react';
+
 import { useSession } from 'next-auth/react';
-import { useUserStore } from '@/lib/stores/user-store';
-import { Sidebar } from '@/components/layout/Sidebar';
 import CardHeader from '@/components/layout/CardHeader';
-import { ExternalAsaasOnboardingPersistentModal } from '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal';
-import useCurrentUser from '@/hooks/use-current-user';
-import ModalidadeDialog from '@/components/modalidades/ModalidadeDialog';
-import SalaDialog from '@/components/salas/SalaDialog';
-import { toast } from '@/components/ui/toast';
-import { CustomToast } from '@/components/ui/toast';
-import { createModalidade } from '@/features/cadastro/modalidades/services/modalidades-service';
-import { createSala } from '@/features/cadastro/salas/services/salas-service';
+import { Sidebar } from '@/components/layout/Sidebar';
+import { useUserStore } from '@/lib/stores/user-store';
+
+const ExternalAsaasOnboardingPersistentModal = dynamic(
+  () =>
+    import('@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal').then((m) => ({
+      default: m.ExternalAsaasOnboardingPersistentModal,
+    })),
+  { ssr: false },
+);
+
+const GlobalQuickCreatePortals = dynamic(
+  () =>
+    import('@/app/(app)/global-quick-create-portals').then((m) => ({
+      default: m.GlobalQuickCreatePortals,
+    })),
+  { ssr: false },
+);
 
 /** Espaçamentos já validados por você */
 const CONTENT_GAP_PX = 12;
@@ -109,185 +117,5 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     </div>
-  );
-}
-
-// Portal global para tratar eventos de criação disparados em selects (ex.: TurmaDialog)
-function GlobalQuickCreatePortals() {
-  const { user } = useCurrentUser();
-  const contaId = user?.contaId ?? null;
-
-  // Refs de controle de debounce DEVEM estar dentro do componente (hooks não podem ser usados no módulo)
-  const lastOpenModalidadeRef = useRef(0);
-  const lastOpenSalaRef = useRef(0);
-
-  const [openModalidade, setOpenModalidade] = useState(false);
-  const [openSala, setOpenSala] = useState(false);
-
-  // Estados de formulário simplificados
-  const [submitting, setSubmitting] = useState(false);
-
-  const resetModalidade = useCallback(() => {
-    /* estados removidos - função mantida para compatibilidade futura */
-  }, []);
-  const resetSala = useCallback(() => {
-    /* estados removidos - função mantida para compatibilidade futura */
-  }, []);
-
-  useEffect(() => {
-    function handleOpenModalidade() {
-      const now = Date.now();
-      if (openModalidade || now - lastOpenModalidadeRef.current < DEBOUNCE_MS) return;
-      lastOpenModalidadeRef.current = now;
-      resetModalidade();
-      setOpenModalidade(true);
-    }
-    function handleOpenSala() {
-      const now = Date.now();
-      if (openSala || now - lastOpenSalaRef.current < DEBOUNCE_MS) return;
-      lastOpenSalaRef.current = now;
-      resetSala();
-      setOpenSala(true);
-    }
-    window.addEventListener('modalidade:dialog:new', handleOpenModalidade);
-    window.addEventListener('sala:dialog:new', handleOpenSala);
-    return () => {
-      window.removeEventListener('modalidade:dialog:new', handleOpenModalidade);
-      window.removeEventListener('sala:dialog:new', handleOpenSala);
-    };
-  }, [resetModalidade, resetSala, openModalidade, openSala]);
-
-  async function handleCreateModalidadeDirect(vals: {
-    nome: string;
-    descricao: string;
-    status: string;
-  }) {
-    if (!contaId) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Conta não encontrada"
-          description="Não foi possível identificar a conta para salvar a modalidade."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      return;
-    }
-    if (submitting) return;
-    try {
-      setSubmitting(true);
-      const created = await createModalidade({
-        contaId,
-        nome: vals.nome.trim(),
-        descricao: vals.descricao.trim() || undefined,
-        status: vals.status === 'INATIVO' ? 'INATIVO' : 'ATIVO',
-      });
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Modalidade criada"
-          description="A modalidade foi cadastrada."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      setOpenModalidade(false);
-      window.dispatchEvent(new CustomEvent('modalidades:changed'));
-      window.dispatchEvent(
-        new CustomEvent('modalidade:created', { detail: { id: created.id, nome: created.nome } }),
-      );
-    } catch (e) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Erro ao criar"
-          description={(e as Error).message}
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function handleCreateSalaDirect(vals: {
-    nome: string;
-    descricao: string;
-    capacidade: string;
-    status: string;
-  }) {
-    if (!contaId) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Conta não encontrada"
-          description="Não foi possível identificar a conta para salvar a sala."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      return;
-    }
-    if (submitting) return;
-    try {
-      setSubmitting(true);
-      const created = await createSala({
-        contaId,
-        nome: vals.nome.trim(),
-        descricao: vals.descricao.trim() || undefined,
-        capacidade: Number(vals.capacidade) || 0,
-        status: vals.status === 'INATIVO' ? 'INATIVO' : 'ATIVO',
-      });
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Sala criada"
-          description="A sala foi cadastrada."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      setOpenSala(false);
-      window.dispatchEvent(new CustomEvent('salas:changed'));
-      window.dispatchEvent(
-        new CustomEvent('sala:created', { detail: { id: created.id, nome: created.nome } }),
-      );
-    } catch (e) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Erro ao criar"
-          description={(e as Error).message}
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  // Reaproveita componentes existentes para consistência visual
-  return (
-    <>
-      <ModalidadeDialog
-        open={openModalidade}
-        creating
-        modalidade={null}
-        onOpenChange={(open) => {
-          if (!open) setOpenModalidade(false);
-        }}
-        onSubmit={async (vals: { nome: string; descricao: string; status: string }) => {
-          await handleCreateModalidadeDirect(vals);
-        }}
-      />
-      <SalaDialog
-        open={openSala}
-        creating
-        sala={null}
-        onOpenChange={(open) => {
-          if (!open) setOpenSala(false);
-        }}
-        onSubmit={async (vals) => {
-          await handleCreateSalaDirect(vals);
-        }}
-      />
-    </>
   );
 }

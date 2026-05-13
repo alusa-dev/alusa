@@ -281,6 +281,17 @@ export function CalendarScheduler({
 
   const [hoverGuide, setHoverGuide] = useState<HoverGuideState | null>(null);
 
+  const calendarPaintKey = `${viewMode}:${anchorDate}:${timeZone}`;
+  const [calendarPaintReady, setCalendarPaintReady] = useState(false);
+
+  useEffect(() => {
+    setCalendarPaintReady(false);
+    const frame = requestAnimationFrame(() => {
+      setCalendarPaintReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [calendarPaintKey]);
+
   useEffect(() => {
     if (!isWeekView) {
       setHoverGuide(null);
@@ -421,51 +432,53 @@ export function CalendarScheduler({
           </div>
         </div>
       ) : null}
-      <FullCalendar
-        ref={calendarRef}
-        key={`${viewMode}:${anchorDate}:${timeZone}`}
-        plugins={[luxonPlugin, dayGridPlugin, timeGridPlugin, interactionPlugin]}
-        initialView={initialView}
-        initialDate={anchorDate}
-        locale="pt-br"
-        timeZone={timeZone}
-        headerToolbar={false}
-        dayMaxEventRows={viewMode === 'month-detailed' ? 4 : viewMode === 'month-compact' ? 6 : 3}
-        eventMaxStack={isWeekView ? 2 : undefined}
-        allDaySlot={false}
-        slotMinTime="06:00:00"
-        slotMaxTime="22:00:00"
-        slotDuration={isWeekView ? '00:30:00' : undefined}
-        slotLabelInterval={isWeekView ? '01:00:00' : undefined}
-        expandRows={isWeekView}
-        slotEventOverlap={!isWeekView}
-        eventMinHeight={isWeekView ? 22 : undefined}
-        eventShortHeight={isWeekView ? 22 : undefined}
-        height="auto"
-        datesSet={isWeekView ? bumpTimeGridLayout : undefined}
-        eventsSet={isWeekView ? bumpTimeGridLayout : undefined}
-        viewDidMount={isWeekView ? bumpTimeGridLayout : undefined}
-        weekends
-        eventDisplay="block"
-        fixedWeekCount={false}
-        moreLinkClick="popover"
-        events={fullCalendarEvents}
-        eventContent={eventContentRenderer}
-        eventDidMount={(arg) => {
-          arg.el.title = buildEventTooltip(arg);
-        }}
-        dayCellClassNames={() =>
-          isCompactMonth
-            ? ['calendar-scheduler-day-compact']
-            : isDetailedMonth
-              ? ['calendar-scheduler-day-detailed']
-              : []
-        }
-        eventClick={(info) => {
-          info.jsEvent.preventDefault();
-          onEventSelect(info.event.id);
-        }}
-      />
+      {calendarPaintReady ? (
+        <FullCalendar
+          ref={calendarRef}
+          key={`${viewMode}:${anchorDate}:${timeZone}`}
+          plugins={[luxonPlugin, dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          initialView={initialView}
+          initialDate={anchorDate}
+          locale="pt-br"
+          timeZone={timeZone}
+          headerToolbar={false}
+          dayMaxEventRows={viewMode === 'month-detailed' ? 4 : viewMode === 'month-compact' ? 6 : 3}
+          eventMaxStack={isWeekView ? 2 : undefined}
+          allDaySlot={false}
+          slotMinTime="06:00:00"
+          slotMaxTime="22:00:00"
+          slotDuration={isWeekView ? '00:30:00' : undefined}
+          slotLabelInterval={isWeekView ? '01:00:00' : undefined}
+          expandRows={isWeekView}
+          slotEventOverlap={!isWeekView}
+          eventMinHeight={isWeekView ? 22 : undefined}
+          eventShortHeight={isWeekView ? 22 : undefined}
+          height="auto"
+          datesSet={isWeekView ? bumpTimeGridLayout : undefined}
+          eventsSet={isWeekView ? bumpTimeGridLayout : undefined}
+          viewDidMount={isWeekView ? bumpTimeGridLayout : undefined}
+          weekends
+          eventDisplay="block"
+          fixedWeekCount={false}
+          moreLinkClick="popover"
+          events={fullCalendarEvents}
+          eventContent={eventContentRenderer}
+          eventDidMount={(arg) => {
+            arg.el.title = buildEventTooltip(arg);
+          }}
+          dayCellClassNames={() =>
+            isCompactMonth
+              ? ['calendar-scheduler-day-compact']
+              : isDetailedMonth
+                ? ['calendar-scheduler-day-detailed']
+                : []
+          }
+          eventClick={(info) => {
+            info.jsEvent.preventDefault();
+            onEventSelect(info.event.id);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
