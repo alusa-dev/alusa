@@ -10,6 +10,16 @@ const nextConfig = {
     // Evita falhas no build devido à configuração ESLint da raiz (fora do workspace)
     ignoreDuringBuilds: true,
   },
+  // Sentry no servidor via require() real — evita vendor-chunks webpack desencontrados após mudanças de deps / cache .next
+  serverExternalPackages: [
+    '@sentry/nextjs',
+    '@sentry/node',
+    '@sentry/node-core',
+    '@sentry/core',
+    '@sentry/opentelemetry',
+    '@sentry/react',
+    '@sentry/browser',
+  ],
   transpilePackages: ['@alusa/lib', '@alusa/ui'],
   async rewrites() {
     return [
