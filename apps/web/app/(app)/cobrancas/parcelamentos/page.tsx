@@ -3,17 +3,11 @@
 /**
  * Página: Cobranças → Parcelamentos
  *
- * Exibe a lista de parcelamentos (InstallmentPlans) agrupados.
- * Cada item representa o parcelamento pai, não a parcela individual.
- * Inspirado no modelo do Asaas.
- *
- * Domínio: Navegação / Agregação
- * Esta página agrupa visualmente os parcelamentos sem alterar entidades financeiras.
+ * Lista de parcelamentos agregados. UI alinhada à página "Todas as cobranças".
  */
 
 import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -22,22 +16,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Search,
-  Filter,
-  CheckCircle,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-} from '@/components/icons/icons';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
+import { Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
+import TableLayout from '@/components/layout/TableLayout';
+import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
 import { pushToast } from '@/components/ui/toast';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { InstallmentActionsMenu } from '@/components/financeiro/InstallmentActionsMenu';
@@ -79,7 +61,7 @@ export default function ParcelamentosPage() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const searchParams = useSearchParams();
   const statusFilter = searchParams.get('status') || 'all';
-  const [sortOrder, setSortOrder] = useState<'DESC' | 'ASC'>('DESC');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const load = useCallback(async () => {
@@ -150,97 +132,73 @@ export default function ParcelamentosPage() {
   }, [parcelamentos, sortOrder]);
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
-            Parcelamentos
-          </h1>
-          <p className="text-[13px] text-gray-500">
-            Visualize e gerencie parcelamentos. Clique em um parcelamento para ver todas as parcelas.
-          </p>
-        </div>
-        <div className="flex justify-start md:justify-end">
-          <AsaasSeal variant="negativo-preto" />
-        </div>
-      </div>
-      {/* Barra de filtros */}
-      <div className="bg-white rounded-xl border px-6 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3 flex-wrap md:flex-nowrap">
-            {/* Filtro de Ordenação */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="h-10 px-4 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-none"
-                >
-                  <Filter className="h-4 w-4 mr-2" /> Ordenar
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                  Ordenar por data
-                </div>
-                <DropdownMenuItem
-                  onClick={() => setSortOrder('DESC')}
-                  className={'justify-between ' + (sortOrder === 'DESC' ? 'text-brand-accent' : '')}
-                >
-                  Mais recente primeiro
-                  {sortOrder === 'DESC' ? <CheckCircle className="h-4 w-4" /> : null}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setSortOrder('ASC')}
-                  className={'justify-between ' + (sortOrder === 'ASC' ? 'text-brand-accent' : '')}
-                >
-                  Mais antigo primeiro
-                  {sortOrder === 'ASC' ? <CheckCircle className="h-4 w-4" /> : null}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Filtro de Status */}
-            <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
-              <SelectTrigger className="h-10 w-full md:w-auto md:min-w-[150px] md:max-w-[190px] shrink-0 whitespace-nowrap bg-white text-gray-700 border border-gray-300 shadow-none px-3">
-                <SelectValue placeholder="Todos os status" />
-              </SelectTrigger>
-              <SelectContent align="end" className="text-[13px]">
-                <SelectItem value="all">Todos os status</SelectItem>
-                <SelectItem value="ACTIVE">Em andamento</SelectItem>
-                <SelectItem value="COMPLETED">Quitados</SelectItem>
-                <SelectItem value="CANCELED">Cancelados</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex w-full md:ml-auto md:flex-1 md:items-center md:justify-end gap-3">
-            {/* Busca */}
-            <div className="relative w-full md:max-w-[360px] lg:max-w-[420px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Buscar por aluno..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 pl-10 border border-gray-300 shadow-none"
-              />
+    <TableLayout
+      className="min-w-0 max-w-full pb-6"
+      title="Parcelamentos"
+      subtitle="Visualize e gerencie parcelamentos. Clique em um parcelamento para ver todas as parcelas."
+      headerEnd={<AsaasSeal variant="negativo-preto" />}
+      actions={
+        <Button
+          className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+          onClick={() => setCreateModalOpen(true)}
+        >
+          <Plus className="mr-2 h-4 w-4 transition-none" />
+          Adicionar parcelamento
+        </Button>
+      }
+      filtersBar={
+        <EntityFiltersBar
+          searchValue={searchQuery}
+          onSearchChange={(v) => {
+            setSearchQuery(v);
+            setPage(1);
+          }}
+          searchPlaceholder="Buscar por aluno..."
+          statusValue="TODOS"
+          onStatusChange={() => {}}
+          hideStatusFilter
+          sortOrder={sortOrder}
+          onSortChange={setSortOrder}
+          sortMenuTitle="Ordenar por data"
+          sortAscLabel="Mais antigo primeiro"
+          sortDescLabel="Mais recente primeiro"
+          extraLeft={
+            <div className="grid min-w-0 w-full grid-cols-1 gap-2 lg:flex lg:w-auto lg:shrink-0 lg:gap-2">
+              <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
+                <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+                  <SelectValue placeholder="Todos os status" />
+                </SelectTrigger>
+                <SelectContent align="end" className="text-[13px]">
+                  <SelectItem value="all">Todos os status</SelectItem>
+                  <SelectItem value="ACTIVE">Em andamento</SelectItem>
+                  <SelectItem value="COMPLETED">Quitados</SelectItem>
+                  <SelectItem value="CANCELED">Cancelados</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-
-            <Button
-              className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
-              onClick={() => setCreateModalOpen(true)}
-            >
-              Adicionar parcelamento
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabela */}
-      <div className="bg-white rounded-xl border overflow-hidden">
+          }
+        />
+      }
+      footer={
+        <>
+          {orderedParcelamentos.length > 0 ? (
+            <Pagination
+              totalItems={orderedParcelamentos.length}
+              pageSize={pageSize}
+              page={page}
+              onChange={setPage}
+            />
+          ) : null}
+          <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8 lg:hidden">
+            <AsaasSeal variant="negativo-preto" />
+          </footer>
+        </>
+      }
+    >
+      <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
         {loading ? (
           <>
-            <div className="bg-gray-50 px-6 py-3 border-b">
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
                 <Skeleton className="col-span-3 h-4" />
                 <Skeleton className="col-span-2 h-4" />
@@ -250,110 +208,159 @@ export default function ParcelamentosPage() {
                 <Skeleton className="col-span-1 h-4" />
               </div>
             </div>
+            <div className="divide-y lg:hidden">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="min-w-0 space-y-2 px-4 py-3 sm:px-5">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                  <Skeleton className="h-3 w-full" />
+                </div>
+              ))}
+            </div>
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="px-6 py-3">
-                <div className="grid grid-cols-12 gap-4 items-center">
+              <div key={i} className="hidden px-6 py-3 lg:block">
+                <div className="grid grid-cols-12 items-center gap-4">
                   <Skeleton className="col-span-3 h-4 w-40" />
                   <Skeleton className="col-span-2 h-4 w-24" />
                   <Skeleton className="col-span-2 h-4 w-20" />
                   <Skeleton className="col-span-2 h-4 w-24" />
                   <Skeleton className="col-span-2 h-6 w-20 rounded-full" />
-                  <Skeleton className="col-span-1 h-4 w-8" />
+                  <Skeleton className="col-span-1 h-8 w-8 justify-self-center" />
                 </div>
               </div>
             ))}
           </>
         ) : (
           <>
-            <div className="bg-gray-50 px-6 py-3 border-b">
-              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
+              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium uppercase tracking-wider text-gray-500">
                 <div className="col-span-3">Aluno</div>
                 <div className="col-span-2 text-center">Valor Total</div>
                 <div className="col-span-2 text-center">Parcelas</div>
                 <div className="col-span-2 text-center">Próx. Vencimento</div>
                 <div className="col-span-2 text-center">Status</div>
-                <div className="col-span-1 text-center"></div>
+                <div className="col-span-1 text-center">Ações</div>
               </div>
             </div>
 
-            <div className="divide-y">
+            <div className="min-w-0 divide-y">
               {orderedParcelamentos.length === 0 ? (
                 <div className="px-6 py-12 text-center text-gray-500">
                   Nenhum parcelamento encontrado
                 </div>
               ) : (
-                orderedParcelamentos.slice((page - 1) * pageSize, page * pageSize).map((p) => (
-                  <div
-                    key={p.id}
-                    className="px-6 py-3 hover:bg-gray-50 transition-colors bg-white cursor-pointer"
-                    onClick={() => router.push(`/cobrancas/parcelamentos/${p.id}`)}
-                  >
-                    <div className="grid grid-cols-12 gap-4 items-center">
-                      {/* Aluno */}
-                      <div className="col-span-3">
-                        <div className="font-medium text-gray-900 text-[13px] truncate">
-                          {p.studentName}
+                orderedParcelamentos.slice((page - 1) * pageSize, page * pageSize).map((p) => {
+                  const handleRowClick = () => router.push(`/cobrancas/parcelamentos/${p.id}`);
+                  return (
+                    <div key={p.id}>
+                      <div
+                        className="cursor-pointer bg-white transition-colors hover:bg-gray-50"
+                        onClick={handleRowClick}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleRowClick();
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                      >
+                        <div className="flex min-w-0 w-full max-w-full gap-2 px-4 py-3 box-border sm:gap-3 sm:px-5 lg:hidden">
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="truncate text-[13px] font-medium text-gray-900">
+                              {p.studentName}
+                            </div>
+                            <div className="mt-2 space-y-1 text-[12px] text-gray-600">
+                              <div className="break-words font-semibold text-gray-900">
+                                {formatCurrency(p.totalValue)}
+                              </div>
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                                <span className="tabular-nums">
+                                  {p.installmentsPaid}/{p.installmentCount} parcelas
+                                </span>
+                                <span className="shrink-0 text-gray-300" aria-hidden>
+                                  ·
+                                </span>
+                                <span className="shrink-0 tabular-nums text-gray-700">
+                                  {p.proximoVencimento ? formatDate(p.proximoVencimento) : '-'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            className="flex w-14 shrink-0 flex-col items-end self-stretch sm:w-[3.75rem]"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <div className="shrink-0">
+                              <InstallmentActionsMenu
+                                installmentId={p.id}
+                                asaasInstallmentId={(p as { asaasInstallmentId?: string | null }).asaasInstallmentId ?? null}
+                                statusConsolidado={p.statusConsolidado}
+                                matriculaId={p.matriculaId}
+                                contratoId={p.contratoId}
+                                onActionComplete={() => load()}
+                              />
+                            </div>
+                            <div className="mt-auto shrink-0 pt-1">
+                              <span
+                                className={`inline-flex max-w-full items-center justify-center rounded-full px-2 py-0.5 text-center text-[10px] font-medium leading-snug whitespace-normal ${statusColors[p.statusConsolidado]}`}
+                              >
+                                {statusLabels[p.statusConsolidado]}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Valor Total */}
-                      <div className="col-span-2 text-[13px] text-gray-900 text-center font-semibold">
-                        {formatCurrency(p.totalValue)}
-                      </div>
-
-                      {/* Parcelas */}
-                      <div className="col-span-2 text-[13px] text-gray-700 text-center">
-                        <span className="font-medium">{p.installmentsPaid}</span>
-                        <span className="text-gray-400"> / {p.installmentCount}</span>
-                      </div>
-
-                      {/* Próximo Vencimento */}
-                      <div className="col-span-2 text-center">
-                        <div className="text-[13px] text-gray-700">
-                          {p.proximoVencimento ? formatDate(p.proximoVencimento) : '-'}
-                        </div>
-                      </div>
-
-                      {/* Status */}
-                      <div className="col-span-2 flex justify-center">
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[p.statusConsolidado]}`}
-                        >
-                          {statusLabels[p.statusConsolidado]}
-                        </span>
-                      </div>
-
-                      {/* Ação */}
-                      <div className="col-span-1 flex justify-center">
-                        <div onClick={(event) => event.stopPropagation()}>
-                          <InstallmentActionsMenu
-                            installmentId={p.id}
-                            asaasInstallmentId={(p as { asaasInstallmentId?: string | null }).asaasInstallmentId ?? null}
-                            statusConsolidado={p.statusConsolidado}
-                            matriculaId={p.matriculaId}
-                            contratoId={p.contratoId}
-                            onActionComplete={() => load()}
-                          />
+                        <div className="hidden min-w-0 px-6 py-3 lg:block">
+                          <div className="grid min-w-0 grid-cols-12 items-center gap-4">
+                            <div className="col-span-3 min-w-0">
+                              <div className="truncate text-[13px] font-medium text-gray-900">
+                                {p.studentName}
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] font-semibold text-gray-900">
+                              {formatCurrency(p.totalValue)}
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] text-gray-700">
+                              <span className="font-medium">{p.installmentsPaid}</span>
+                              <span className="text-gray-400"> / {p.installmentCount}</span>
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] text-gray-700">
+                              {p.proximoVencimento ? formatDate(p.proximoVencimento) : '-'}
+                            </div>
+                            <div className="col-span-2 flex justify-center">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[p.statusConsolidado]}`}
+                              >
+                                {statusLabels[p.statusConsolidado]}
+                              </span>
+                            </div>
+                            <div
+                              className="col-span-1 flex justify-center"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <InstallmentActionsMenu
+                                installmentId={p.id}
+                                asaasInstallmentId={(p as { asaasInstallmentId?: string | null }).asaasInstallmentId ?? null}
+                                statusConsolidado={p.statusConsolidado}
+                                matriculaId={p.matriculaId}
+                                contratoId={p.contratoId}
+                                onActionComplete={() => load()}
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </>
         )}
       </div>
-
-      {/* Paginação */}
-      {orderedParcelamentos.length > 0 && (
-        <Pagination
-          totalItems={orderedParcelamentos.length}
-          pageSize={pageSize}
-          page={page}
-          onChange={setPage}
-        />
-      )}
 
       <CreateChargeModal
         open={createModalOpen}
@@ -364,7 +371,7 @@ export default function ParcelamentosPage() {
         }}
         defaultChargeType="INSTALLMENT"
       />
-    </div>
+    </TableLayout>
   );
 }
 
@@ -403,44 +410,48 @@ function Pagination({
   const pages = makePages();
 
   return (
-    <div className="flex items-center justify-center py-6">
-      <div className="flex items-center gap-2 text-sm">
-        <IconButton aria-label="Primeira página" disabled={page === 1} onClick={() => onChange(1)}>
-          <ChevronsLeft className="h-4 w-4" />
-        </IconButton>
-        <IconButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
-          <ChevronLeft className="h-4 w-4" />
-        </IconButton>
+    <div className="flex flex-wrap items-center justify-center gap-2 py-6 sm:gap-3">
+      <IconButton aria-label="Primeira página" disabled={page === 1} onClick={() => onChange(1)}>
+        <ChevronsLeft className="h-4 w-4" />
+      </IconButton>
+      <IconButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
+        <ChevronLeft className="h-4 w-4" />
+      </IconButton>
 
-        {pages.map((p, idx) =>
-          p === '…' ? (
-            <span key={`e-${idx}`} className="px-2 text-brand-accent/50">…</span>
-          ) : (
-            <button
-              key={p}
-              onClick={() => onChange(p)}
-              aria-current={p === page ? 'page' : undefined}
-              className={
-                'h-8 w-8 rounded-md border transition grid place-items-center ' +
-                'border-brand-accent/30 text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent ' +
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 ' +
-                (p === page
-                  ? 'bg-brand-accent text-white border-brand-accent hover:bg-brand-accent/90'
-                  : 'bg-white')
-              }
-            >
-              {p}
-            </button>
-          ),
-        )}
+      {pages.map((p, idx) =>
+        p === '…' ? (
+          <span key={`e-${idx}`} className="px-2 text-brand-accent/50">
+            …
+          </span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onChange(p)}
+            aria-current={p === page ? 'page' : undefined}
+            className={
+              'h-8 w-8 rounded-md border transition grid place-items-center ' +
+              'border-brand-accent/30 text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent ' +
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 ' +
+              (p === page
+                ? 'bg-brand-accent text-white border-brand-accent hover:bg-brand-accent/90'
+                : 'bg-white')
+            }
+          >
+            {p}
+          </button>
+        ),
+      )}
 
-        <IconButton aria-label="Próxima página" disabled={page === totalPages} onClick={() => onChange(clamp(page + 1))}>
-          <ChevronRight className="h-4 w-4" />
-        </IconButton>
-        <IconButton aria-label="Última página" disabled={page === totalPages} onClick={() => onChange(totalPages)}>
-          <ChevronsRight className="h-4 w-4" />
-        </IconButton>
-      </div>
+      <IconButton
+        aria-label="Próxima página"
+        disabled={page === totalPages}
+        onClick={() => onChange(clamp(page + 1))}
+      >
+        <ChevronRight className="h-4 w-4" />
+      </IconButton>
+      <IconButton aria-label="Última página" disabled={page === totalPages} onClick={() => onChange(totalPages)}>
+        <ChevronsRight className="h-4 w-4" />
+      </IconButton>
     </div>
   );
 }

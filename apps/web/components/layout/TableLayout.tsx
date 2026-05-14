@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils';
 export interface TableLayoutProps {
   title: string;
   subtitle?: string;
+  /** Conteúdo à direita do bloco de título (ex.: selo Asaas). Visível apenas a partir de `lg`. */
+  headerEnd?: React.ReactNode;
   actions?: React.ReactNode; // barra de ações (botões, selects)
   filtersBar?: React.ReactNode; // área complementar (ex: busca)
   children: React.ReactNode; // tabela ou grid
@@ -18,6 +20,7 @@ export interface TableLayoutProps {
 export function TableLayout({
   title,
   subtitle,
+  headerEnd,
   actions,
   filtersBar,
   children,
@@ -29,11 +32,18 @@ export function TableLayout({
   return (
     <div className={cn('w-full space-y-5', className)}>
       {/* space-y reduzido para aproximar seções e px-6 para alinhar com headers das tabelas */}
-      <div className="space-y-1">
-        <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
-          {title}
-        </h1>
-        {subtitle && <p className="text-[13px] text-gray-500">{subtitle}</p>}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
+        <div className="min-w-0 space-y-1">
+          <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
+            {title}
+          </h1>
+          {subtitle && <p className="text-[13px] text-gray-500">{subtitle}</p>}
+        </div>
+        {headerEnd ? (
+          <div className="hidden shrink-0 justify-start lg:flex lg:justify-end lg:pt-0.5">
+            {headerEnd}
+          </div>
+        ) : null}
       </div>
       {hasToolbar ? (
         <div className="rounded-xl border bg-white px-3 py-3 md:px-6 md:py-4">
