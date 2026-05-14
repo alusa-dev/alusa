@@ -497,53 +497,62 @@ function Collapsible({ open, children }: { open: boolean; children: React.ReactN
   );
 }
 
-/** Marcador flutuante que desliza entre os itens selecionados */
-function useFloatingMarker() {
+/** Marcador flutuante que desliza entre os itens selecionados (altura real: scaleY quebrava o border-radius). */
+function useFloatingMarker(deps: {
+  pathname: string;
+  collapsed: boolean;
+  openKey: string | null;
+  activeKey: string | 'dashboard' | null;
+}) {
+  const { pathname, collapsed, openKey, activeKey } = deps;
   const navRef = useRef<HTMLElement | null>(null);
-  const markerRef = useRef<HTMLSpanElement | null>(null);
   const activeElRef = useRef<HTMLElement | null>(null);
   const [visible, setVisible] = useState(false);
+  const [markerLayout, setMarkerLayout] = useState({ top: 0, height: 0 });
 
   const update = useCallback(() => {
     const nav = navRef.current;
-    const marker = markerRef.current;
     const el = activeElRef.current;
-    if (!nav || !marker || !el) return;
+    if (!nav || !el) {
+      setVisible((v) => (v ? false : v));
+      return;
+    }
     const n = nav.getBoundingClientRect();
     const e = el.getBoundingClientRect();
-    const top = e.top - n.top + nav.scrollTop; // relativo ao nav
-    const height = Math.max(el.offsetHeight, 1);
-    marker.style.top = '0';
-    marker.style.height = '1px';
-    marker.style.transformOrigin = 'left top';
-    marker.style.transform = `translateY(${top}px) scaleY(${height})`;
-    setVisible(true);
+    const top = Math.round(e.top - n.top + nav.scrollTop);
+    const height = Math.round(Math.max(el.offsetHeight, 1));
+    setMarkerLayout((prev) => (prev.top === top && prev.height === height ? prev : { top, height }));
+    setVisible((v) => (v ? v : true));
   }, []);
 
-  // Atualiza ao redimensionar/scroll
   useEffect(() => {
     const handler = () => update();
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
   }, [update]);
 
-  // Atualiza na próxima pintura quando o alvo mudar
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const handler = () => update();
+    nav.addEventListener('scroll', handler, { passive: true });
+    return () => nav.removeEventListener('scroll', handler);
+  }, [update, collapsed, pathname, openKey, activeKey]);
+
   useLayoutEffect(() => {
+    if (collapsed) return;
     update();
-  });
+  }, [update, collapsed, pathname, openKey, activeKey]);
 
   const setActiveElement = useCallback(
     (el: HTMLElement | null) => {
-      if (el) {
-        activeElRef.current = el;
-        // aguarda layout para posicionar
-        requestAnimationFrame(() => update());
-      }
+      activeElRef.current = el;
+      requestAnimationFrame(() => update());
     },
     [update],
   );
 
-  return { navRef, markerRef, setActiveElement, visible } as const;
+  return { navRef, setActiveElement, visible, markerLayout } as const;
 }
 
 function Sidebar() {
@@ -563,7 +572,12 @@ function Sidebar() {
   const [openKey, setOpenKey] = useState<string | null>(null); // apenas 1 grupo aberto
   const [activeKey, setActiveKey] = useState<string | 'dashboard' | null>('dashboard'); // quem está selecionado
   const { isDark } = useTheme();
-  const { navRef, markerRef, setActiveElement, visible } = useFloatingMarker();
+  const { navRef, setActiveElement, visible, markerLayout } = useFloatingMarker({
+    pathname,
+    collapsed,
+    openKey,
+    activeKey,
+  });
   const { notifications } = usePortalNotifications();
   const { verification, loading: verificationLoading, isApproved } = useKycEnforcement();
   const isPortalUser = role === 'ALUNO' || role === 'RESPONSAVEL';
@@ -783,18 +797,18 @@ function Sidebar() {
         {/* Marcador flutuante: visível apenas no estado expandido */}
         {!collapsed && (
           <span
-            ref={markerRef}
             aria-hidden
             className="absolute left-0 w-2 rounded-r-full z-10"
             style={{
               backgroundColor: 'var(--sidebar-active-bg)',
               top: 0,
-              height: '1px',
+              height: markerLayout.height,
+              transform: `translateY(${markerLayout.top}px)`,
               transformOrigin: 'left top',
-              opacity: visible ? 1 : 0,
+              opacity: visible && markerLayout.height > 0 ? 1 : 0,
               left: '0px',
               transition:
-                'transform 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms cubic-bezier(0.22,1,0.36,1)',
+                'transform 300ms cubic-bezier(0.22,1,0.36,1), height 300ms cubic-bezier(0.22,1,0.36,1), opacity 300ms cubic-bezier(0.22,1,0.36,1)',
               transitionDelay: visible ? '60ms' : '0ms',
             }}
           />
