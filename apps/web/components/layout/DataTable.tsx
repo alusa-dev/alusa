@@ -45,7 +45,9 @@ export function DataTable<T extends object>({
   loading,
   skeletonRows = 5,
   emptyMessage = (
-    <div className="px-6 py-12 text-center text-gray-500 text-sm">Nenhum registro encontrado</div>
+    <div className="px-6 py-12 text-center text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+      Nenhum registro encontrado
+    </div>
   ),
   tableClassName,
   bodyClassName,
@@ -59,10 +61,13 @@ export function DataTable<T extends object>({
   return (
     <div className="w-full overflow-x-auto">
       <table
-        className={cn('w-full table-fixed border-collapse bg-white', tableClassName)}
+        className={cn(
+          'w-full table-fixed border-collapse bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
+          tableClassName,
+        )}
         aria-label={ariaLabel}
       >
-        <thead className="bg-gray-50">
+        <thead className="bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
           <tr>
             {columns.map((col) => {
               const isSorted = sort?.columnId === col.id;
@@ -77,13 +82,14 @@ export function DataTable<T extends object>({
                   scope="col"
                   aria-sort={ariaSort as React.AriaAttributes['aria-sort']}
                   className={cn(
-                    'px-3 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide md:px-6 md:py-3',
+                    'px-3 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide alusa-dark:text-[color:var(--color-text-secondary)] md:px-6 md:py-3',
                     col.width,
                     col.align === 'center' && 'text-center',
                     col.align === 'right' && 'text-right',
                     col.align === 'left' && 'text-left',
                     col.headerClassName,
-                    col.sortable && 'cursor-pointer select-none hover:text-gray-700',
+                    col.sortable &&
+                      'cursor-pointer select-none hover:text-gray-700 alusa-dark:hover:text-[color:var(--color-text-primary)]',
                   )}
                   onClick={() => {
                     if (!col.sortable || !onSortChange) return;
@@ -102,10 +108,15 @@ export function DataTable<T extends object>({
           </tr>
         </thead>
 
-        <tbody className={cn('divide-y divide-gray-200 text-sm text-gray-700', bodyClassName)}>
+        <tbody
+          className={cn(
+            'divide-y divide-gray-200 text-sm text-gray-700 alusa-dark:divide-[color:var(--color-border-default)] alusa-dark:text-[color:var(--color-text-primary)]',
+            bodyClassName,
+          )}
+        >
           {loading ? (
             [...Array(skeletonRows)].map((_, idx) => (
-              <tr key={idx} className="bg-white">
+              <tr key={idx} className="bg-white alusa-dark:bg-[color:var(--color-bg-card)]">
                 {columns.map((col) => (
                   <td
                     key={col.id}
@@ -128,7 +139,7 @@ export function DataTable<T extends object>({
               <tr
                 key={rowKey(row)}
                 className={cn(
-                  'bg-white hover:bg-gray-50 transition-colors',
+                  'bg-white transition-colors hover:bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.04)]',
                   onRowClick && 'cursor-pointer'
                 )}
                 onClick={() => onRowClick?.(row)}
@@ -137,7 +148,7 @@ export function DataTable<T extends object>({
                   <td
                     key={col.id}
                     className={cn(
-                      'px-3 py-3 align-middle text-sm leading-5 text-gray-700 md:px-6 md:py-4',
+                      'px-3 py-3 align-middle text-sm leading-5 text-gray-700 alusa-dark:text-[color:var(--color-text-primary)] md:px-6 md:py-4',
                       col.width,
                       col.align === 'center' && 'text-center',
                       col.align === 'right' && 'text-right',

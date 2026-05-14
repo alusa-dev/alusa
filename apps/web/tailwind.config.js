@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
-// por quê: adiciona tokens de cor e mantém extensões futuras centralizadas
+// por quê: variante compatível com `data-theme` no `<html>` (não usar `prefers-color-scheme`)
+const plugin = require('tailwindcss/plugin')
+
 module.exports = {
   content: [
     './app/**/*.{ts,tsx}',
@@ -74,5 +76,9 @@ module.exports = {
       },
     }
   },
-  plugins: []
+  plugins: [
+    plugin(function ({ addVariant }) {
+      addVariant('alusa-dark', 'html[data-theme="dark"] &')
+    }),
+  ]
 };

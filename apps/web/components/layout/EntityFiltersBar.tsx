@@ -69,7 +69,7 @@ export default function EntityFiltersBar({
     >
       {/* Ordem: busca → extraLeft → status → Filtro; no desktop o bloco alinha à direita da seção. */}
       <div className="relative w-full min-w-0 shrink-0 lg:w-[360px] xl:w-[420px]">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]" />
         <Input
           placeholder={searchPlaceholder}
           value={searchValue}
@@ -77,7 +77,7 @@ export default function EntityFiltersBar({
           onKeyDown={(e) => {
             if (e.key === 'Enter') onSearchEnter?.();
           }}
-          className="h-10 rounded-lg border-slate-200 pl-10 shadow-none"
+          className="h-10 rounded-lg border-slate-200 pl-10 shadow-none alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
         />
       </div>
       {extraLeft ? <div className="min-w-0 lg:shrink-0">{extraLeft}</div> : null}
@@ -89,7 +89,7 @@ export default function EntityFiltersBar({
       >
         {hideStatusFilter ? null : (
           <Select value={statusValue} onValueChange={(v: StatusValue) => onStatusChange(v)}>
-            <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+            <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
               <SelectValue placeholder="Todos os status" />
             </SelectTrigger>
             <SelectContent align="end" className="text-[13px]">
@@ -103,13 +103,13 @@ export default function EntityFiltersBar({
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
-              className="h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 lg:w-auto"
+              className="h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)] lg:w-auto"
             >
               <Filter className="mr-2 h-4 w-4" /> Filtro
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">
+            <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
               {sortMenuTitle}
             </div>
             <DropdownMenuItem
@@ -128,7 +128,7 @@ export default function EntityFiltersBar({
             </DropdownMenuItem>
             {extraFilters && (
               <>
-                <div className="my-1 h-px bg-gray-100" />
+                <div className="my-1 h-px bg-gray-100 alusa-dark:bg-[color:var(--color-border-subtle)]" />
                 <div className="px-2 py-1.5">
                   {extraFilters}
                 </div>

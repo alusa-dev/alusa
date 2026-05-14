@@ -1,6 +1,5 @@
 "use client";
 
-import React from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 type RecentStudentInput = {
@@ -35,9 +34,11 @@ function getInitials(name: string) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
+const cardSurface =
+  'flex flex-col min-h-[220px] rounded-2xl border border-transparent bg-[#e6d6fb] px-5 py-4 text-[#2b2634] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]';
+
 export function TotalAlunosCard({
   total,
-  ativos = 0,
   recentes,
   recentStudents,
   onAddAluno,
@@ -47,27 +48,26 @@ export function TotalAlunosCard({
   if (loading) {
     return (
       <div
-        className="flex flex-col min-h-[220px] rounded-2xl px-5 py-4"
-        style={{ backgroundColor: '#e6d6fb', color: '#2b2634' }}
+        className={`${cardSurface} animate-pulse`}
         data-testid="total-alunos-card"
         aria-label="Resumo do total de alunos"
       >
         <div className="flex items-center justify-between">
-          <Skeleton className="h-4 w-24 bg-white/50" />
-          <Skeleton className="h-7 w-24 rounded-full bg-white/45" />
+          <Skeleton className="h-4 w-24 bg-white/50 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
+          <Skeleton className="h-7 w-24 rounded-full bg-white/45 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
         </div>
 
         <div className="flex flex-1 flex-col justify-center">
-          <Skeleton className="h-12 w-16 bg-white/50" />
+          <Skeleton className="h-12 w-16 bg-white/50 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Skeleton className="h-9 w-9 rounded-full bg-white/45" />
-            <Skeleton className="h-9 w-9 rounded-full bg-white/45" />
-            <Skeleton className="h-9 w-9 rounded-full bg-white/45" />
+            <Skeleton className="h-9 w-9 rounded-full bg-white/45 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
+            <Skeleton className="h-9 w-9 rounded-full bg-white/45 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
+            <Skeleton className="h-9 w-9 rounded-full bg-white/45 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
           </div>
-          <Skeleton className="h-10 w-10 rounded-full bg-white/50" />
+          <Skeleton className="h-10 w-10 rounded-full bg-white/50 alusa-dark:bg-[color:var(--color-border-strong)]/35" />
         </div>
       </div>
     );
@@ -95,22 +95,25 @@ export function TotalAlunosCard({
 
   return (
     <div
-      className="flex flex-col min-h-[220px] rounded-2xl px-5 py-4"
-      style={{ backgroundColor: '#e6d6fb', color: '#2b2634' }}
+      className={cardSurface}
       data-testid="total-alunos-card"
       aria-label="Resumo do total de alunos"
     >
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <span className="text-[13px] font-normal tracking-wide" style={{ color: '#2b2634' }}>Alunos ativos</span>
+          <span className="text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
+            Alunos ativos
+          </span>
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full bg-[#2b2634]/5 px-3 py-1 text-xs font-medium" style={{ color: '#2b2634' }}>
-          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: '#38C256' }} aria-hidden />
+        <span className="inline-flex items-center gap-2 rounded-full bg-[#2b2634]/5 px-3 py-1 text-xs font-medium text-[#2b2634] alusa-dark:bg-[color:rgba(195,163,235,0.16)] alusa-dark:text-[color:var(--color-text-secondary)]">
+          <span className="h-2 w-2 rounded-full bg-[#38C256]" aria-hidden />
           Atualizado
         </span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
-        <span className="text-5xl font-medium leading-none" style={{ color: '#2b2634' }}>{total}</span>
+        <span className="text-5xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
+          {total}
+        </span>
       </div>
       <div className="mt-4 flex items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
@@ -125,8 +128,7 @@ export function TotalAlunosCard({
                 return (
                   <div
                     key={student?.id ?? `placeholder-${index}`}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full outline outline-4 ${hasAvatar ? 'bg-transparent' : gradientFallback} text-xs font-semibold text-white pointer-events-none select-none overflow-hidden`}
-                    style={{ outlineColor: '#e6d6fb' }}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full outline outline-4 outline-[#e6d6fb] alusa-dark:outline-[color:var(--color-bg-card-soft)] ${hasAvatar ? 'bg-transparent' : gradientFallback} pointer-events-none select-none overflow-hidden text-xs font-semibold text-white`}
                     title={displayName}
                     data-testid="student-avatar"
                   >
@@ -144,13 +146,15 @@ export function TotalAlunosCard({
                         }}
                       />
                     ) : null}
-                    {!hasAvatar && <span>{displayInitials}</span>}
+                    {!hasAvatar ? <span>{displayInitials}</span> : null}
                   </div>
                 );
               })}
             </div>
           ) : (
-            <span className="text-xs text-[#2b2634] opacity-80">Sem cadastros recentes</span>
+            <span className="text-xs text-[#2b2634]/80 alusa-dark:text-[color:var(--color-text-muted)]">
+              Sem cadastros recentes
+            </span>
           )}
         </div>
         <button
@@ -158,8 +162,7 @@ export function TotalAlunosCard({
           onClick={disableAddAluno ? undefined : onAddAluno}
           disabled={disableAddAluno}
           title={disableAddAluno ? 'Conclua seu cadastro para cadastrar alunos.' : undefined}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-current text-xl font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black disabled:cursor-not-allowed disabled:opacity-40"
-          style={{ color: '#000000' }}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-current text-xl font-semibold text-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black disabled:cursor-not-allowed disabled:opacity-40 alusa-dark:border-[color:var(--color-brand-400)] alusa-dark:text-[color:var(--color-brand-300)] alusa-dark:focus-visible:ring-[color:var(--color-brand-400)]"
           aria-label="Cadastrar novo aluno"
           data-testid="add-student-btn"
         >

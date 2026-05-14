@@ -2,7 +2,8 @@
 import { useFormContext, Controller } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FieldError, FieldLabel } from "../ui";
+import { cn } from "@/lib/utils";
+import { FieldError, FieldLabel, wizardFieldInputClass } from "../ui";
 import type { AlunoInput } from "../../../../../../prisma/zod/aluno";
 
 export default function PerfilFields() {
@@ -12,17 +13,17 @@ export default function PerfilFields() {
     <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
       <div>
         <FieldLabel>Modalidade principal</FieldLabel>
-  <Input {...register("modalidadePrincipal")} placeholder="Ex.: Ballet" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input {...register("modalidadePrincipal")} placeholder="Ex.: Ballet" className={wizardFieldInputClass} />
         <FieldError name="modalidadePrincipal" />
       </div>
       <div>
         <FieldLabel>Nível</FieldLabel>
-  <Input {...register("nivel")} placeholder="Ex.: Intermediário" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input {...register("nivel")} placeholder="Ex.: Intermediário" className={wizardFieldInputClass} />
         <FieldError name="nivel" />
       </div>
       <div>
         <FieldLabel>Origem cadastro</FieldLabel>
-  <Input {...register("origemCadastro")} placeholder="Ex.: Indicação" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input {...register("origemCadastro")} placeholder="Ex.: Indicação" className={wizardFieldInputClass} />
         <FieldError name="origemCadastro" />
       </div>
       <div>
@@ -32,7 +33,7 @@ export default function PerfilFields() {
           name="tamanhoCamiseta"
           render={({ field }) => (
             <Select value={field.value ?? undefined} onValueChange={field.onChange}>
-              <SelectTrigger className="h-10 bg-white border border-gray-300 shadow-none">
+              <SelectTrigger className={cn(wizardFieldInputClass, 'h-10')}>
                 <SelectValue placeholder="PP/P/M/G/GG" />
               </SelectTrigger>
               <SelectContent>
@@ -47,15 +48,15 @@ export default function PerfilFields() {
       </div>
       <div>
         <FieldLabel>Tam. Calçado</FieldLabel>
-  <Input {...register("tamanhoCalcado")} placeholder="Ex.: 37" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input {...register("tamanhoCalcado")} placeholder="Ex.: 37" className={wizardFieldInputClass} />
         <FieldError name="tamanhoCalcado" />
       </div>
       <div className="md:col-span-2">
         <FieldLabel>Tags (separadas por vírgula)</FieldLabel>
-  <Input {...register("tags" as const)} placeholder="Ex.: bolsista, potencial indicação" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input {...register("tags" as const)} placeholder="Ex.: bolsista, potencial indicação" className={wizardFieldInputClass} />
       </div>
       <div className="md:col-span-4 grid gap-4 sm:grid-cols-2">
-        <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3">
+        <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3 alusa-dark:border-[color:var(--color-border-default)]">
           <input
             type="checkbox"
             id="consentimentoImagem"
@@ -63,11 +64,11 @@ export default function PerfilFields() {
             checked={!!consentimentoImagem}
             onChange={(e) => setValue("consentimentoImagem", e.target.checked, { shouldValidate: true })}
           />
-          <label htmlFor="consentimentoImagem" className="text-xs text-slate-600 leading-snug cursor-pointer select-none">
+          <label htmlFor="consentimentoImagem" className="cursor-pointer select-none text-xs leading-snug text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
             Autorizo uso de imagem do aluno em materiais institucionais.
           </label>
         </div>
-        <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3">
+        <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3 alusa-dark:border-[color:var(--color-border-default)]">
           <Controller
             control={control}
             name="consentimentoComunicacoes"
@@ -81,7 +82,7 @@ export default function PerfilFields() {
               />
             )}
           />
-          <label htmlFor="consentimentoComunicacoes" className="text-xs text-slate-600 leading-snug cursor-pointer select-none">
+          <label htmlFor="consentimentoComunicacoes" className="cursor-pointer select-none text-xs leading-snug text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
             Aceito receber comunicações (avisos, lembretes e novidades) por e-mail/telefone.
           </label>
         </div>

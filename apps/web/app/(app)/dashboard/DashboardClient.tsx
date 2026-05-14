@@ -193,10 +193,10 @@ export default function DashboardClient() {
   return (
     <section aria-label="Conteúdo do Dashboard" aria-busy={isMetricsLoading} className="flex flex-col gap-6 pb-8">
       <header>
-        <h1 className="text-2xl font-semibold text-gray-900">
+        <h1 className="text-2xl font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
           Olá, {user?.name || 'Usuário'}
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-gray-500 mt-1 alusa-dark:text-[color:var(--color-text-muted)]">
           Veja o resumo das suas métricas e acompanhe o desempenho do seu negócio.
         </p>
       </header>

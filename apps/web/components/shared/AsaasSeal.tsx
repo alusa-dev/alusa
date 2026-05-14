@@ -1,5 +1,8 @@
+'use client';
+
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/components/theme/ThemeProvider';
 
 type AsaasSealVariant = 'positivo' | 'negativo-preto' | 'negativo-branco';
 
@@ -14,10 +17,14 @@ const SEAL_URLS: Record<AsaasSealVariant, string> = {
 
 interface AsaasSealProps {
   variant?: AsaasSealVariant;
+  darkVariant?: AsaasSealVariant;
   className?: string;
 }
 
-export function AsaasSeal({ variant = 'positivo', className }: AsaasSealProps) {
+export function AsaasSeal({ variant = 'positivo', darkVariant, className }: AsaasSealProps) {
+  const { isDark } = useTheme();
+  const resolvedVariant = isDark ? (darkVariant ?? (variant === 'negativo-preto' ? 'negativo-branco' : variant)) : variant;
+
   return (
     <a
       href="https://asaas.com"
@@ -27,7 +34,7 @@ export function AsaasSeal({ variant = 'positivo', className }: AsaasSealProps) {
       aria-label="Serviços financeiros Asaas"
     >
       <img
-        src={SEAL_URLS[variant]}
+        src={SEAL_URLS[resolvedVariant]}
         alt="Serviços financeiros Asaas"
         width={160}
         height={48}

@@ -131,7 +131,7 @@ function NotificationListSkeleton() {
 function NotificationEmptyState({ archived }: { archived: boolean }) {
   return (
     <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-3 px-6 text-center">
-      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f4f1fb] text-[#7b56b8]">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#f4f1fb] text-[#7b56b8] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
         <Bell className="h-6 w-6" />
       </div>
       <div className="space-y-1">
@@ -255,20 +255,20 @@ export function NotificationsInboxPage() {
       aria-label="Conteúdo da central de notificações"
       className="box-border flex h-full min-h-0 flex-col gap-6 overflow-hidden pr-6 pb-8"
     >
-      <div className="flex flex-col gap-4 rounded-xl border border-[#ece7f5] bg-white p-6 shadow-sm shadow-[#1f163014] md:flex-row md:items-end md:justify-between">
+      <div className="flex flex-col gap-4 rounded-xl border border-[#ece7f5] bg-white p-6 shadow-sm shadow-[#1f163014] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-gray-950">Central de Notificações</h1>
-            <p className="mt-1 text-sm text-gray-600">
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-950 alusa-dark:text-[color:var(--color-text-primary)]">Central de Notificações</h1>
+            <p className="mt-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
               Veja todas as notificações de matrículas, cobranças e pagamentos da equipe administrativa.
             </p>
-            <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em] text-[#7b56b8]">
+            <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em] text-[#7b56b8] alusa-dark:text-[color:var(--color-brand-300)]">
               {unreadCount} não lida{unreadCount === 1 ? '' : 's'}
             </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 rounded-full border border-[#ece7f5] bg-white p-1">
+          <div className="flex items-center gap-2 rounded-full border border-[#ece7f5] bg-white p-1 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
             {[
               { value: 'active', label: 'Ativas' },
               { value: 'archived', label: 'Arquivadas' },
@@ -282,7 +282,7 @@ export function NotificationsInboxPage() {
                   'rounded-full px-3 py-1.5 text-xs font-medium transition-colors',
                   view === option.value
                     ? 'bg-[#7b56b8] text-white shadow-sm'
-                    : 'text-gray-600 hover:bg-[#f4f1fb] hover:text-gray-900',
+                    : 'text-gray-600 hover:bg-[#f4f1fb] hover:text-gray-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-bg-elevated)] alusa-dark:hover:text-[color:var(--color-text-primary)]',
                 )}
               >
                 {option.label}
@@ -292,7 +292,7 @@ export function NotificationsInboxPage() {
           <Button
             type="button"
             variant="ghost"
-            className="rounded-full border border-[#ece7f5] px-4 text-xs font-medium text-gray-600 hover:bg-[#f7f3fc] hover:text-gray-900"
+            className="rounded-full border border-[#ece7f5] px-4 text-xs font-medium text-gray-600 hover:bg-[#f7f3fc] hover:text-gray-900 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
             onClick={() => void markAllAsRead()}
             disabled={submitting || unreadCount === 0}
           >
@@ -316,7 +316,7 @@ export function NotificationsInboxPage() {
               ) : items.length === 0 ? (
                 <NotificationEmptyState archived={view === 'archived'} />
               ) : (
-                <div className="divide-y divide-[#f2edf8]">
+                <div className="divide-y divide-[#f2edf8] alusa-dark:divide-[color:var(--color-border-subtle)]">
                   {items.map((item) => {
                     const severity = getSeverityMeta(item.severity);
                     const isActive = item.id === selectedId;
@@ -327,7 +327,9 @@ export function NotificationsInboxPage() {
                         onClick={() => void handleSelect(item)}
                         className={cn(
                           'flex w-full items-start gap-3 px-4 py-4 text-left transition-colors',
-                          isActive ? 'bg-[#faf6ff]' : 'bg-white hover:bg-[#fcfbfe]',
+                          isActive
+                            ? 'bg-[#faf6ff] alusa-dark:bg-[color:var(--color-bg-card-soft)]'
+                            : 'bg-white hover:bg-[#fcfbfe] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)]',
                         )}
                       >
                         <div className={cn('mt-0.5 h-[76px] w-[3px] flex-none rounded-full', severity.accentClassName)} />
@@ -354,7 +356,7 @@ export function NotificationsInboxPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-[#ece7f5] bg-white shadow-sm shadow-[#1f163010] xl:flex xl:h-full xl:min-h-0 xl:flex-col">
+            <Card className="border-[#ece7f5] bg-white shadow-sm shadow-[#1f163010] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] xl:flex xl:h-full xl:min-h-0 xl:flex-col">
           {loading ? (
             <CardContent className="space-y-4 p-6 xl:min-h-0 xl:flex-1">
               <Skeleton className="h-6 w-48" />
@@ -367,13 +369,13 @@ export function NotificationsInboxPage() {
               <CardContent className="p-0 xl:min-h-0 xl:flex-1">
                 <CustomScrollArea className="h-[520px] xl:h-full" disableInnerWrapper>
                   <div className="flex flex-col">
-                    <div className="flex w-full items-center justify-center border-b border-[#f0ebf7] px-8 py-3">
+                    <div className="flex w-full items-center justify-center border-b border-[#f0ebf7] px-8 py-3 alusa-dark:border-[color:var(--color-border-subtle)]">
                       <div className="flex items-center gap-3">
                         <Button
                           type="button"
                           variant="ghost"
                           aria-busy={submitting}
-                          className="flex items-center gap-2 rounded-full text-gray-500 hover:bg-[#f7f3fc] hover:text-gray-900 px-3 py-2"
+                          className="flex items-center gap-2 rounded-full px-3 py-2 text-gray-500 hover:bg-[#f7f3fc] hover:text-gray-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                           title={selectedItem.readAt ? 'Marcar como não lida' : 'Marcar como lida'}
                           aria-label={selectedItem.readAt ? 'Marcar como não lida' : 'Marcar como lida'}
                           onClick={() => void updateNotification(selectedItem.id, selectedItem.readAt ? 'unread' : 'read')}
@@ -388,7 +390,7 @@ export function NotificationsInboxPage() {
                           type="button"
                           variant="ghost"
                           aria-busy={submitting}
-                          className="flex items-center gap-2 rounded-full text-gray-500 hover:bg-[#f7f3fc] hover:text-gray-900 px-3 py-2"
+                          className="flex items-center gap-2 rounded-full px-3 py-2 text-gray-500 hover:bg-[#f7f3fc] hover:text-gray-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                           title={selectedItem.archivedAt ? 'Desarquivar' : 'Arquivar'}
                           aria-label={selectedItem.archivedAt ? 'Desarquivar' : 'Arquivar'}
                           onClick={() => void updateNotification(selectedItem.id, selectedItem.archivedAt ? 'unarchive' : 'archive')}
@@ -403,7 +405,7 @@ export function NotificationsInboxPage() {
                           type="button"
                           variant="ghost"
                           aria-busy={submitting}
-                          className="flex items-center gap-2 rounded-full text-[#c9485b] hover:bg-[#fff5f6] hover:text-[#b33f51] px-3 py-2"
+                          className="flex items-center gap-2 rounded-full px-3 py-2 text-[#c9485b] hover:bg-[#fff5f6] hover:text-[#b33f51] alusa-dark:text-[color:#ff8fa0] alusa-dark:hover:bg-[color:rgba(255,99,132,0.14)] alusa-dark:hover:text-[color:#ffc1ca]"
                           title="Excluir notificação"
                           aria-label="Excluir notificação"
                           onClick={() => void handleDeleteSelected()}

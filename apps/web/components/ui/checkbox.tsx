@@ -23,6 +23,7 @@ const Checkbox = React.forwardRef<React.ComponentRef<typeof CheckboxPrimitive.Ro
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-2 focus-visible:ring-offset-white',
         'disabled:cursor-not-allowed disabled:opacity-50',
         'data-[state=checked]:border-[#3e1f63] data-[state=checked]:bg-[#3e1f63] data-[state=checked]:text-white',
+        'alusa-dark:border-[color:var(--color-border-strong)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:focus-visible:ring-[color:var(--focus-ring-brand)] alusa-dark:focus-visible:ring-offset-[color:var(--color-bg-card)] alusa-dark:data-[state=checked]:border-[color:var(--color-sidebar-accent)] alusa-dark:data-[state=checked]:bg-[color:var(--color-sidebar-accent)]',
         className,
       )}
       onCheckedChange={(state) => onCheckedChange?.(state === true)}

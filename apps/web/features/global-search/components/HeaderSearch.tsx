@@ -218,14 +218,14 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                       onFocus={() => setOpen(true)}
                       placeholder="Pesquise aqui"
                       aria-label="Pesquisar"
-                      className="h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-10 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none"
+                      className="h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-10 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]"
                     />
                     {query.trim() ? (
                       <button
                         type="button"
                         aria-label="Limpar pesquisa"
                         onClick={handleClearQuery}
-                        className="absolute right-3 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-[#4c6fb3] transition-colors hover:bg-[#f3f6fb] hover:text-[#34548f] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/40"
+                        className="absolute right-3 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-[#4c6fb3] transition-colors hover:bg-[#f3f6fb] hover:text-[#34548f] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/40 alusa-dark:text-[color:rgba(237,239,255,0.82)] alusa-dark:hover:bg-white/6 alusa-dark:hover:text-white"
                       >
                         <Close className="h-4 w-4" />
                       </button>
@@ -286,7 +286,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                 aria-label="Pesquisar"
                 tabIndex={shouldShowPopover ? -1 : 0}
                 className={cn(
-                  'relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none',
+                  'relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]',
                   shouldShowPopover && 'pointer-events-none opacity-0',
                 )}
               />
@@ -297,7 +297,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
             forceMount
             align="start"
             sideOffset={8}
-            className="z-[70] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[26px] border border-[#ece7f5] bg-white p-0 shadow-xl shadow-[#1f163014] ring-1 ring-black/5 outline-none duration-200 will-change-[transform,opacity] focus:outline-none focus-visible:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] data-[side=bottom]:slide-in-from-top-3 data-[side=top]:slide-in-from-bottom-3 data-[state=closed]:slide-out-to-top-1 data-[state=closed]:pointer-events-none data-[state=closed]:invisible"
+            className="z-[70] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[26px] border border-[#ece7f5] bg-white p-0 shadow-xl shadow-[#1f163014] ring-1 ring-black/5 outline-none duration-200 will-change-[transform,opacity] focus:outline-none focus-visible:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-[0.985] data-[state=closed]:zoom-out-[0.985] data-[side=bottom]:slide-in-from-top-3 data-[side=top]:slide-in-from-bottom-3 data-[state=closed]:slide-out-to-top-1 data-[state=closed]:pointer-events-none data-[state=closed]:invisible alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-[0_28px_60px_-32px_rgb(19_16_52_/_72%)] alusa-dark:ring-[rgba(148,146,209,0.12)]"
             style={{ borderRadius: 26, transformOrigin: 'var(--radix-popover-content-transform-origin)' }}
             onOpenAutoFocus={(event) => event.preventDefault()}
             onInteractOutside={(event) => {
@@ -311,21 +311,21 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
               className="search-suggest-scroll-area max-h-[420px] overflow-y-auto py-2.5 outline-none focus:outline-none focus-visible:outline-none"
             >
             {loading && (
-              <div className="px-4 py-4 text-sm text-gray-500">Carregando...</div>
+              <div className="px-4 py-4 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">Carregando...</div>
             )}
 
             {!loading &&
               groups.map((group, groupIndex) => (
                 <div key={group.key} className={cn(groupIndex > 0 && 'mt-1.5')}>
                   <div className="flex items-center justify-between gap-3 px-5 pb-1.5 pt-2.5">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.52)]">
                       {group.label}
                     </div>
                     {group.key === 'recent' ? (
                       <button
                         type="button"
                         onClick={handleClearRecents}
-                        className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#6b7280] transition-colors hover:text-[#374151] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                        className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#6b7280] transition-colors hover:text-[#374151] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 alusa-dark:text-[color:rgba(237,239,255,0.62)] alusa-dark:hover:text-white"
                       >
                         Limpar
                       </button>
@@ -337,11 +337,13 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                       value={`${item.title} ${item.description ?? ''}`}
                       keywords={item.description ? [item.description] : undefined}
                       onSelect={() => handleSelect(item)}
-                      className="mx-2.5 cursor-pointer rounded-2xl px-4 py-3 text-left outline-none transition-colors hover:bg-[#f5f1fb] focus:outline-none focus-visible:outline-none data-[selected=true]:bg-[#f5f1fb] aria-selected:bg-[#f5f1fb]"
+                      className="mx-2.5 cursor-pointer rounded-2xl px-4 py-3 text-left outline-none transition-colors hover:bg-[#f5f1fb] focus:outline-none focus-visible:outline-none data-[selected=true]:bg-[#f5f1fb] aria-selected:bg-[#f5f1fb] alusa-dark:hover:bg-white/6 alusa-dark:data-[selected=true]:bg-white/8 alusa-dark:aria-selected:bg-white/8"
                     >
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center justify-between gap-3.5">
-                          <span className="min-w-0 text-sm font-medium text-gray-900">{item.title}</span>
+                          <span className="min-w-0 text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                            {item.title}
+                          </span>
                           <Badge
                             variant={RESULT_TYPE_VARIANTS[item.type]}
                             size="sm"
@@ -351,7 +353,9 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                           </Badge>
                         </div>
                         {item.description ? (
-                          <span className="text-xs text-gray-500">{item.description}</span>
+                          <span className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+                            {item.description}
+                          </span>
                         ) : null}
                       </div>
                     </CommandPrimitive.Item>
@@ -360,29 +364,33 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
               ))}
 
             {!loading && showPrompt && (
-              <CommandPrimitive.Empty className="px-4 py-4 text-sm text-gray-500">
+              <CommandPrimitive.Empty className="px-4 py-4 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                 {emptyMessage}
               </CommandPrimitive.Empty>
             )}
 
             {!loading && !error && query.trim().length >= GLOBAL_SEARCH_MIN_QUERY_LENGTH && (
               <>
-                <div className="mx-3 my-2 h-px bg-gray-100" />
+                <div className="mx-3 my-2 h-px bg-gray-100 alusa-dark:bg-[color:rgba(148,146,209,0.14)]" />
                 <CommandPrimitive.Item
                   value={`ver-todos ${query}`}
                   onSelect={handleViewAll}
-                  className="mx-2 cursor-pointer rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-[#f5f1fb] focus:outline-none focus-visible:outline-none data-[selected=true]:bg-[#f5f1fb] aria-selected:bg-[#f5f1fb]"
+                  className="mx-2 cursor-pointer rounded-2xl px-3 py-2.5 text-left outline-none transition-colors hover:bg-[#f5f1fb] focus:outline-none focus-visible:outline-none data-[selected=true]:bg-[#f5f1fb] aria-selected:bg-[#f5f1fb] alusa-dark:hover:bg-white/6 alusa-dark:data-[selected=true]:bg-white/8 alusa-dark:aria-selected:bg-white/8"
                 >
                   <div className="flex flex-col gap-0.5">
-                    <span className="text-sm font-medium text-gray-900">Ver todos os resultados</span>
-                    <span className="text-xs text-gray-500">Abrir a busca completa</span>
+                    <span className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                      Ver todos os resultados
+                    </span>
+                    <span className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+                      Abrir a busca completa
+                    </span>
                   </div>
                 </CommandPrimitive.Item>
               </>
             )}
 
             {!loading && error && (
-              <div className="px-4 py-4 text-sm text-gray-500">{error}</div>
+              <div className="px-4 py-4 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">{error}</div>
             )}
             </CommandPrimitive.List>
           </PopoverContent>

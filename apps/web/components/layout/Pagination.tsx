@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { cn } from '@/lib/utils';
 
 export interface PaginationProps {
   total: number;
@@ -89,12 +90,12 @@ function PageBtn({ children, onClick, disabled, active, label, ...rest }: PageBt
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={
-        'h-8 w-8 rounded-md border grid place-items-center transition text-[13px] ' +
-        (active
-          ? 'bg-brand-accent text-white border-brand-accent'
-          : 'border-brand-accent/30 text-brand-accent bg-white hover:bg-brand-accent hover:text-white disabled:opacity-40')
-      }
+      className={cn(
+        'grid h-8 w-8 place-items-center rounded-md border text-[13px] transition',
+        active
+          ? 'border-brand-accent bg-brand-accent text-white'
+          : 'border-brand-accent/30 bg-white text-brand-accent hover:bg-brand-accent hover:text-white alusa-dark:bg-[color:var(--color-bg-card-soft)] disabled:opacity-40',
+      )}
       {...rest}
     >
       {children}

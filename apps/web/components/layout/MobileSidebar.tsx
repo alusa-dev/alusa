@@ -11,6 +11,7 @@ import {
 } from '@/components/icons/icons';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
+import { SidebarLogoMark } from '@/components/layout/SidebarLogoMark';
 import { FINANCE_LOCKED_GROUP_KEYS } from '@/components/layout/sidebar-config';
 import { useSidebarNavAccess } from '@/components/layout/use-sidebar-nav-access';
 
@@ -53,14 +54,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
             onClick={() => onOpenChange(false)}
             className="inline-flex"
           >
-            <img
-              src={isDark ? '/brand/logo-sidebar-dark.svg' : '/brand/logo-sidebar.svg'}
-              alt="Alusa"
-              width={108}
-              height={32}
-              className="h-8 w-auto select-none"
-              draggable={false}
-            />
+            <SidebarLogoMark isDark={isDark} size="compact" className="select-none" />
           </Link>
           <button
             type="button"
@@ -135,7 +129,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
                             <span className="shrink-0">{item.icon}</span>
                             <span className="min-w-0 flex-1">{item.label}</span>
                             {badgeCount > 0 ? (
-                              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">
                                 {badgeCount}
                               </span>
                             ) : null}
@@ -161,7 +155,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
                           <span className="shrink-0">{active ? item.iconSolid : item.icon}</span>
                           <span className="min-w-0 flex-1">{item.label}</span>
                           {badgeCount > 0 ? (
-                            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">
                               {badgeCount}
                             </span>
                           ) : null}

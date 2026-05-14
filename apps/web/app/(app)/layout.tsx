@@ -72,7 +72,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // (Mantemos session effect/health ping para consistência.)
 
   return (
-    <div className="relative flex min-h-[100svh] w-full flex-col overflow-x-hidden bg-white lg:block lg:h-screen lg:min-h-0 lg:overflow-hidden lg:bg-[var(--app-bg)]">
+    <div className="relative flex min-h-[100svh] w-full flex-col overflow-x-hidden bg-[var(--app-shell-page-bg,white)] lg:block lg:h-screen lg:min-h-0 lg:overflow-hidden lg:bg-[var(--app-bg)]">
       <Sidebar />
       <MobileAppHeader />
 

@@ -99,8 +99,8 @@ export default function AccountSettingsNav() {
                 className={[
                   'flex w-full items-center rounded-lg px-3 py-2 text-sm transition-colors duration-150',
                   active
-                    ? 'bg-purple-50 text-purple-700 font-medium'
-                    : 'bg-white text-gray-700 hover:bg-gray-50',
+                    ? 'bg-purple-50 font-medium text-purple-700 alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-primary)]'
+                    : 'bg-white text-gray-700 hover:bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]',
                   'focus:outline-none focus:ring-0',
                 ].join(' ')}
               >

@@ -34,10 +34,14 @@ export function TableLayout({
       {/* space-y reduzido para aproximar seções e px-6 para alinhar com headers das tabelas */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
+          <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
             {title}
           </h1>
-          {subtitle && <p className="text-[13px] text-gray-500">{subtitle}</p>}
+          {subtitle && (
+            <p className="text-[13px] text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+              {subtitle}
+            </p>
+          )}
         </div>
         {headerEnd ? (
           <div className="hidden shrink-0 justify-start lg:flex lg:justify-end lg:pt-0.5">
@@ -46,7 +50,7 @@ export function TableLayout({
         ) : null}
       </div>
       {hasToolbar ? (
-        <div className="rounded-xl border bg-white px-3 py-3 md:px-6 md:py-4">
+        <div className="rounded-xl border bg-white px-3 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex w-full shrink-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:w-auto">
               {actions}

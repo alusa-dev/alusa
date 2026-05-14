@@ -179,12 +179,12 @@ export default function NotificationsPanel({
             exit={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.94, y: -4 }}
             transition={floatingTransition}
             style={{ position: 'fixed', top: anchorPos.top, left: anchorPos.left, width: anchorPos.size, height: anchorPos.size }}
-            className="z-[72] inline-flex items-center justify-center rounded-full bg-white text-gray-900 shadow-lg ring-1 ring-black/10 hover:bg-white"
+            className="z-[72] inline-flex items-center justify-center rounded-full bg-white text-gray-900 shadow-lg ring-1 ring-black/10 hover:bg-white alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:ring-white/10 alusa-dark:hover:bg-[color:var(--color-bg-elevated)]"
           >
             <Bell className="h-5 w-5" />
             {notificationCount > 0 && (
               <span
-                className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white ring-2 ring-white"
+                className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white ring-2 ring-white alusa-dark:ring-[color:var(--color-bg-elevated)]"
                 aria-hidden="true"
               >
                 {notificationCount > 99 ? '99+' : notificationCount}
@@ -201,17 +201,17 @@ export default function NotificationsPanel({
             exit={prefersReducedMotion ? { opacity: 1 } : { opacity: 0, scale: 0.985, y: -10 }}
             transition={floatingTransition}
             style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
-            className="z-[70] max-w-[calc(100vw-1rem)] flex max-h-[72vh] flex-col overflow-hidden rounded-3xl border border-[#ece7f5] bg-white shadow-xl shadow-[#1f163014] ring-1 ring-black/5 origin-top-right"
+            className="z-[70] max-w-[calc(100vw-1rem)] flex max-h-[72vh] flex-col overflow-hidden rounded-3xl border border-[#ece7f5] bg-white shadow-xl shadow-[#1f163014] ring-1 ring-black/5 origin-top-right alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-black/40 alusa-dark:ring-white/5"
           >
-        <div className="flex items-center justify-between border-b border-[#f0ebf7] px-5 pt-4 pb-3">
+        <div className="flex items-center justify-between border-b border-[#f0ebf7] px-5 pt-4 pb-3 alusa-dark:border-[color:var(--color-border-subtle)]">
           <div>
-            <h2 className="text-[15px] font-semibold tracking-tight text-gray-900">Notificações</h2>
-            <p className="mt-1 text-xs text-gray-500">Atualizações internas da operação</p>
+            <h2 className="text-[15px] font-semibold tracking-tight text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Notificações</h2>
+            <p className="mt-1 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Atualizações internas da operação</p>
           </div>
           <button
             onClick={onClose}
             aria-label="Fechar painel"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)] alusa-dark:focus:ring-offset-[color:var(--color-bg-card)]"
           >
             <Close className="h-4 w-4" />
           </button>
@@ -220,15 +220,15 @@ export default function NotificationsPanel({
           {loading ? (
             <div className="space-y-0 px-4 py-1.5">
               {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="border-b border-[#f0ebf7] py-3 last:border-b-0">
-                  <div className="h-3.5 w-24 animate-pulse rounded bg-gray-200" />
-                  <div className="mt-2 h-3.5 w-full animate-pulse rounded bg-gray-200" />
-                  <div className="mt-1.5 h-3 w-20 animate-pulse rounded bg-gray-200" />
+                <div key={index} className="border-b border-[#f0ebf7] py-3 last:border-b-0 alusa-dark:border-[color:var(--color-border-subtle)]">
+                  <div className="h-3.5 w-24 animate-pulse rounded bg-gray-200 alusa-dark:bg-[color:var(--color-border-strong)]/40" />
+                  <div className="mt-2 h-3.5 w-full animate-pulse rounded bg-gray-200 alusa-dark:bg-[color:var(--color-border-strong)]/40" />
+                  <div className="mt-1.5 h-3 w-20 animate-pulse rounded bg-gray-200 alusa-dark:bg-[color:var(--color-border-strong)]/40" />
                 </div>
               ))}
             </div>
           ) : hasItems ? (
-            <div className="divide-y divide-[#f0ebf7] px-4 py-1.5">
+            <div className="divide-y divide-[#f0ebf7] px-4 py-1.5 alusa-dark:divide-[color:var(--color-border-subtle)]">
               {items.map((n) => (
                 <button
                   key={n.id}
@@ -236,19 +236,21 @@ export default function NotificationsPanel({
                   onClick={() => onItemClick?.(n.id)}
                   className={cn(
                     '-mx-4 flex w-[calc(100%+2rem)] items-start gap-2.5 px-4 py-3 text-left text-sm transition-colors',
-                    n.read ? 'hover:bg-[#fcfbfe]' : 'hover:bg-[#faf6ff]',
+                    n.read
+                      ? 'hover:bg-[#fcfbfe] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)]/70'
+                      : 'hover:bg-[#faf6ff] alusa-dark:bg-[color:var(--color-bg-card-soft)]/35 alusa-dark:hover:bg-[color:var(--color-bg-card-soft)]',
                   )}
                 >
                   <div className={cn('mt-0.5 h-[70px] w-[3px] flex-none rounded-full', getSeverityMeta(n.severity).accentClassName)} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[13px] font-medium leading-4.5 text-gray-900">{n.title}</p>
-                        <p className="mt-0.5 line-clamp-1 text-[12px] leading-4.5 text-gray-600">
+                        <p className="text-[13px] font-medium leading-4.5 text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{n.title}</p>
+                        <p className="mt-0.5 line-clamp-1 text-[12px] leading-4.5 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                           {summarizeNotificationMessage(n.description)}
                         </p>
                         {n.createdAt && (
-                          <p className="mt-1 text-[10px] text-gray-400">
+                          <p className="mt-1 text-[10px] text-gray-400 alusa-dark:text-[color:var(--color-text-muted)]">
                             {new Date(n.createdAt).toLocaleDateString()} •{' '}
                             {new Date(n.createdAt).toLocaleTimeString([], {
                               hour: '2-digit',
@@ -259,7 +261,7 @@ export default function NotificationsPanel({
                       </div>
                       {!n.read && (
                         <span
-                          className="mt-1.5 h-2 w-2 flex-none rounded-full bg-violet-600"
+                          className="mt-1.5 h-2 w-2 flex-none rounded-full bg-violet-600 alusa-dark:bg-[color:var(--color-brand-400)]"
                           aria-label="Não lida"
                         />
                       )}
@@ -270,19 +272,19 @@ export default function NotificationsPanel({
             </div>
           ) : (
             <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 px-4 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f4f1fb] text-[#7b56b8]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f4f1fb] text-[#7b56b8] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
                 <Bell className="h-5 w-5" />
               </div>
-              <p className="text-sm font-medium text-gray-900">Nenhuma notificação por enquanto.</p>
-              <p className="text-xs text-gray-500">Novas atualizações internas aparecerão aqui.</p>
+              <p className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Nenhuma notificação por enquanto.</p>
+              <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Novas atualizações internas aparecerão aqui.</p>
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t border-[#f0ebf7] bg-[#faf8fd] px-4 py-3">
+        <div className="flex items-center justify-between gap-2 border-t border-[#f0ebf7] bg-[#faf8fd] px-4 py-3 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
           <Button
             type="button"
             variant="ghost"
-            className="h-8 px-2 text-xs font-medium text-gray-600 hover:bg-transparent hover:text-gray-900"
+            className="h-8 px-2 text-xs font-medium text-gray-600 hover:bg-transparent hover:text-gray-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
             onClick={onMarkAllAsRead}
             disabled={!onMarkAllAsRead || loading || !hasItems}
           >
@@ -290,7 +292,7 @@ export default function NotificationsPanel({
           </Button>
           <Button
             type="button"
-            className="h-8 bg-[#7b56b8] px-3 text-xs text-white hover:bg-[#6d4aa2]"
+            className="h-8 bg-[#7b56b8] px-3 text-xs text-white hover:bg-[#6d4aa2] alusa-dark:bg-[color:var(--color-button-primary-bg)] alusa-dark:hover:bg-[color:var(--color-button-primary-hover)]"
             onClick={onViewAll}
             disabled={!onViewAll}
           >

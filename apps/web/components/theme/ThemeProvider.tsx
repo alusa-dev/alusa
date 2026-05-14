@@ -45,6 +45,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { applyTheme(theme); }, [theme, applyTheme]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    try {
+      const content = theme === "dark" ? "#0D1015" : "#FFFFFF";
+      let meta = document.querySelector('meta[name="theme-color"]');
+      if (!meta) {
+        meta = document.createElement("meta");
+        meta.setAttribute("name", "theme-color");
+        document.head.appendChild(meta);
+      }
+      meta.setAttribute("content", content);
+    } catch {
+      /* noop */
+    }
+  }, [theme]);
+
   const setTheme = useCallback((t: Theme) => setThemeState(t), []);
   const toggleTheme = useCallback(() => setThemeState((p) => (p === "light" ? "dark" : "light")), []);
 

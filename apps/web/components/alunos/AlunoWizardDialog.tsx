@@ -358,24 +358,24 @@ export default function AlunoWizardDialog({
     <Dialog open={open} onOpenChange={requestClose}>
       <DialogContent
         fullScreenMobile
-        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
         data-testid="aluno-wizard"
       >
         <div
           className={
-            'relative border-b border-slate-200 bg-slate-50 p-4 transition-shadow duration-200 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:p-6 ' +
+            'relative border-b border-slate-200 bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] p-4 transition-shadow duration-200 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:p-6 ' +
             (headerElevated ? 'shadow-sm' : '')
           }
         >
           <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-          <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
+          <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
             Cadastrar aluno
           </DialogTitle>
-          <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600">
+          <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
             Preencha os dados do aluno em etapas.
           </DialogDescription>
           <div className="mt-4">
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50 alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:ring-[color:var(--color-border-default)]">
               <Progress
                 value={((activeIndex + 1) / steps.length) * 100}
                 className="h-2 bg-transparent [&>div]:bg-gradient-to-r [&>div]:from-brand-accent [&>div]:to-brand-accent/70"
@@ -386,7 +386,7 @@ export default function AlunoWizardDialog({
               />
             </div>
             <div
-              className="mt-2 text-xs font-medium text-slate-600"
+              className="mt-2 text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]"
               aria-live="polite"
               data-testid="wizard-progress-text"
             >
@@ -403,7 +403,7 @@ export default function AlunoWizardDialog({
                 if (sc > 4 && !headerElevated) setHeaderElevated(true);
                 else if (sc <= 4 && headerElevated) setHeaderElevated(false);
               }}
-              className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth bg-slate-50 p-4 max-md:min-h-0 md:p-6"
+              className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth bg-slate-50 p-4 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:min-h-0 md:p-6"
             >
               <div className="mx-auto w-full max-w-5xl">
                 <AnimatePresence mode="wait">
@@ -486,13 +486,13 @@ export default function AlunoWizardDialog({
                 </AnimatePresence>
               </div>
             </div>
-            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:p-6">
+            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-slate-200 bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:p-6">
               <Button
                 type="button"
                 variant="outline"
                 onClick={goPrev}
                 disabled={!canGoPrev() || submitting}
-                className="h-11 min-h-11 min-w-0 border-slate-200 bg-white px-4 text-slate-600 shadow-none hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/50 md:h-10 md:min-h-0 md:min-w-[140px]"
+                className="h-11 min-h-11 min-w-0 border-slate-200 bg-white px-4 text-slate-600 shadow-none hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)] md:h-10 md:min-h-0 md:min-w-[140px]"
                 data-testid="wizard-prev"
               >
                 Etapa Anterior
@@ -522,10 +522,12 @@ export default function AlunoWizardDialog({
           </div>
         </FormProvider>
         {confirmClose && (
-          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 p-4 backdrop-blur-sm max-md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] max-md:pt-[calc(1rem+env(safe-area-inset-top,0px))]">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95">
-              <h4 className="text-sm font-semibold text-slate-800">Descartar cadastro?</h4>
-              <p className="mt-2 text-xs text-slate-600 leading-relaxed">
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 p-4 backdrop-blur-sm max-md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] max-md:pt-[calc(1rem+env(safe-area-inset-top,0px))] alusa-dark:bg-black/55">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl ring-1 ring-black/5 alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:ring-[color:var(--color-border-default)] animate-in fade-in-0 zoom-in-95">
+              <h4 className="text-sm font-semibold text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">
+                Descartar cadastro?
+              </h4>
+              <p className="mt-2 text-xs text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)] leading-relaxed">
                 Existem informações não salvas. Se você sair agora, todos os dados digitados serão
                 perdidos.
               </p>
@@ -534,7 +536,7 @@ export default function AlunoWizardDialog({
                   type="button"
                   variant="outline"
                   autoFocus
-                  className="border-slate-300 text-slate-700 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-brand-accent/40"
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-brand-accent/40 alusa-dark:border-[color:var(--color-border-strong)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]"
                   onClick={() => setConfirmClose(false)}
                 >
                   Continuar preenchendo

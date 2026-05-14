@@ -4,12 +4,38 @@ import { useFormContext } from 'react-hook-form';
 import { IMaskInput } from 'react-imask';
 import { useEffect, useMemo, useState } from 'react';
 
+import { cn } from '@/lib/utils';
+
+/** Classes compartilhadas para inputs do wizard cadastro — light + modo Alusa Dark */
+export const wizardFieldInputClass = cn(
+  'flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-none placeholder:text-gray-400',
+  'focus:outline-none focus:ring-0 focus:shadow-none focus:border-gray-300 focus:bg-white focus-visible:outline-none focus-visible:ring-0',
+  'alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]',
+  'alusa-dark:placeholder:text-[color:var(--color-input-placeholder)] alusa-dark:focus:border-[color:var(--color-input-border)]',
+  'alusa-dark:focus:bg-[color:var(--color-input-bg)]',
+);
+
+/** Textareas (altura variável) */
+export const wizardTextareaFieldClass = cn(
+  'min-h-24 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-none placeholder:text-gray-400',
+  'focus:outline-none focus:ring-0 focus:shadow-none focus:border-gray-300 focus:bg-white focus-visible:outline-none focus-visible:ring-0',
+  'alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]',
+  'alusa-dark:placeholder:text-[color:var(--color-input-placeholder)] alusa-dark:focus:border-[color:var(--color-input-border)]',
+  'alusa-dark:focus:bg-[color:var(--color-input-bg)]',
+);
+
 export function StepHeader({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-4 flex items-end justify-between">
       <div>
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        {hint && <p className="mt-0.5 text-[11px] text-slate-500">{hint}</p>}
+        <h3 className="text-sm font-semibold text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">
+          {title}
+        </h3>
+        {hint && (
+          <p className="mt-0.5 text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+            {hint}
+          </p>
+        )}
       </div>
       <div />
     </div>
@@ -18,7 +44,7 @@ export function StepHeader({ title, hint }: { title: string; hint?: string }) {
 
 export function SectionCard({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm space-y-4">
+    <div className="space-y-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       {children}
     </div>
   );
@@ -34,7 +60,10 @@ export function FieldLabel({
   htmlFor?: string;
 }) {
   return (
-    <label htmlFor={htmlFor} className="text-xs font-medium text-slate-600">
+    <label
+      htmlFor={htmlFor}
+      className="text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]"
+    >
       {children}{' '}
       {required && (
         <span aria-hidden="true" className="text-red-600">
@@ -94,7 +123,7 @@ export function IMaskControlled({
       value={val}
       onAccept={(v: unknown) => ctx.setValue(name, String(v), { shouldValidate: false })}
       onBlur={onBlur}
-      className={`flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-gray-300 focus:bg-white focus-visible:outline-none focus-visible:ring-0 ${inputClassName ?? ''}`}
+      className={cn(wizardFieldInputClass, inputClassName)}
       placeholder={placeholder}
       aria-label={ariaLabel}
       id={id}
@@ -170,7 +199,12 @@ export function DateMaskControlled({
       mask={'00/00/0000' as any}
       value={input}
       onAccept={handleAccept}
-      className={`flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0 focus:shadow-none focus:border-gray-300 focus:bg-white focus-visible:outline-none focus-visible:ring-0 ${leftIcon ? 'pl-9' : ''} ${rightIcon ? 'pr-9' : ''} ${inputClassName ?? className ?? ''}`}
+      className={cn(
+        wizardFieldInputClass,
+        leftIcon && 'pl-9',
+        rightIcon && 'pr-9',
+        inputClassName ?? className,
+      )}
       placeholder={placeholder}
       aria-label={ariaLabel}
       id={id}

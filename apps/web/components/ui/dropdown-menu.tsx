@@ -17,7 +17,7 @@ const DropdownMenuSubTrigger = React.forwardRef<
   <DropdownMenuPrimitive.SubTrigger
     ref={ref}
     className={cn(
-      "flex cursor-default select-none items-center rounded-md px-3 py-2 text-sm font-medium outline-none transition-all duration-200",
+      "flex cursor-default select-none items-center rounded-md px-3 py-2 text-sm font-medium outline-none transition-all duration-200 alusa-dropdown-item",
       // Hover/realce: apenas fundo suave; não alterar cor do texto
       "hover:bg-purple-50 data-[highlighted]:bg-purple-50",
       "focus:bg-purple-50 focus:outline-none",
@@ -39,7 +39,7 @@ const DropdownMenuSubContent = React.forwardRef<
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 animate-in slide-in-from-left-1",
+      "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 animate-in slide-in-from-left-1 alusa-dropdown-subcontent",
       className
     )}
     style={{
@@ -61,7 +61,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-    "z-50 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 transition-transform duration-150",
+    "z-50 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 transition-transform duration-150 alusa-dropdown-content",
         className
       )}
       style={{
@@ -82,7 +82,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm font-medium outline-none transition-all duration-200",
+      "relative flex cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm font-medium outline-none transition-all duration-200 alusa-dropdown-item",
       // Hover/realce: apenas fundo suave; não alterar cor do texto
       "hover:bg-purple-50 data-[highlighted]:bg-purple-50",
       "focus:bg-purple-50 focus:outline-none",
@@ -101,7 +101,7 @@ const DropdownMenuSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-gray-200", className)}
+    className={cn("-mx-1 my-1 h-px bg-gray-200 alusa-dropdown-separator", className)}
     {...props}
   />
 ));

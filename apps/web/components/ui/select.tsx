@@ -18,7 +18,7 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900",
+      "flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 alusa-select-trigger",
       "placeholder:text-gray-500",
       "transition-colors duration-200",
       "hover:border-gray-400",
@@ -81,7 +81,7 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg",
+        "relative z-50 max-h-96 min-w-[8rem] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg alusa-select-content",
         "data-[state=open]:animate-in data-[state=closed]:animate-out",
         "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         "data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
@@ -116,7 +116,7 @@ const SelectLabel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Label
     ref={ref}
-    className={cn("px-2 py-1.5 text-sm font-semibold text-gray-900", className)}
+    className={cn("px-2 py-1.5 text-sm font-semibold text-gray-900 alusa-select-label", className)}
     {...props}
   />
 ));
@@ -129,7 +129,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full max-w-full cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm text-gray-900 outline-none",
+      "relative flex w-full max-w-full cursor-pointer select-none items-center rounded-md px-3 py-2 text-sm text-gray-900 outline-none alusa-select-item",
       "box-border transition-colors duration-150",
       "data-[highlighted]:bg-gray-100 data-[highlighted]:text-gray-900",
       "data-[state=checked]:bg-gray-100 data-[state=checked]:font-medium",
@@ -149,7 +149,7 @@ const SelectSeparator = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <SelectPrimitive.Separator
     ref={ref}
-    className={cn("-mx-1 my-1 h-px bg-gray-200", className)}
+    className={cn("-mx-1 my-1 h-px bg-gray-200 alusa-select-separator", className)}
     {...props}
   />
 ));

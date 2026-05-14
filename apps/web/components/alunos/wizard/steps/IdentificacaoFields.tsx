@@ -14,6 +14,7 @@ import {
   FieldLabel,
   IMaskControlled,
   DateMaskControlled,
+  wizardFieldInputClass,
 } from "../ui";
 import { Calendar } from "@/components/icons/icons";
 import type { AlunoInput } from "../../../../../../prisma/zod/aluno";
@@ -41,8 +42,7 @@ export default function IdentificacaoFields() {
   const cpfRequired = !isMenorIdade;
   const contatoAlunoRequired = !isMenorIdade;
 
-  const baseInputClasses =
-    "h-10 px-3 bg-white border border-gray-300 placeholder:text-gray-400 text-gray-900 shadow-none";
+  const baseInputClasses = wizardFieldInputClass;
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
@@ -79,7 +79,7 @@ export default function IdentificacaoFields() {
           name="dataNasc"
           id="aluno-data-nasc"
           ariaLabel="Data de nascimento"
-          rightIcon={<Calendar className="h-4 w-4 text-gray-600" aria-hidden="true" />}
+          rightIcon={<Calendar className="h-4 w-4 text-gray-600 alusa-dark:text-[color:var(--color-text-muted)]" aria-hidden="true" />}
           inputClassName={baseInputClasses}
         />
         <FieldError name="dataNasc" />

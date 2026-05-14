@@ -361,17 +361,17 @@ function TransferTableSection({
   ].filter(Boolean).length;
 
   return (
-    <div className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <div className="min-w-0 border-b border-slate-100 bg-gray-50 px-3 py-3 sm:px-4 md:px-5 md:py-4">
-        <p className="text-sm font-semibold text-slate-900">Saídas e transferências</p>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500 break-words">
+    <div className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+      <div className="min-w-0 border-b border-slate-100 bg-gray-50 px-3 py-3 sm:px-4 md:px-5 md:py-4 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
+        <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Saídas e transferências</p>
+        <p className="mt-1 text-xs leading-relaxed text-slate-500 break-words alusa-dark:text-[color:var(--color-text-muted)]">
           Acompanhe as movimentações enviadas pela sua conta. Abra uma linha para ver detalhes completos ou cancelar,
           quando a operação ainda permitir.
         </p>
       </div>
 
-      <div className="min-w-0 border-b border-slate-100 bg-[#F8FAFC] p-3 sm:p-4 md:p-5">
-        <div className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+      <div className="min-w-0 border-b border-slate-100 bg-[#F8FAFC] p-3 sm:p-4 md:p-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+        <div className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
             <div className="relative min-w-0 w-full">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
@@ -486,42 +486,42 @@ function TransferTableSection({
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-100">
+        <table className="min-w-full divide-y divide-gray-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
           <thead>
-            <tr className="bg-gray-50">
-              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 lg:px-6">
+            <tr className="bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
                 Solicitação
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Agendada para
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Data da transferência
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Operação
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Nome
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 CPF ou CNPJ
               </th>
-              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Banco
               </th>
-              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Taxa
               </th>
-              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell">
+              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell alusa-dark:text-[color:var(--color-text-muted)]">
                 Valor enviado
               </th>
-              <th className="hidden px-3 py-3 text-center text-xs font-medium text-gray-500 lg:table-cell lg:px-6">
+              <th className="hidden px-3 py-3 text-center text-xs font-medium text-gray-500 lg:table-cell lg:px-6 alusa-dark:text-[color:var(--color-text-muted)]">
                 Situação
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
+          <tbody className="divide-y divide-gray-200 bg-white alusa-dark:divide-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
             {loading ? (
               <tr>
                 <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={10}>
@@ -537,7 +537,7 @@ function TransferTableSection({
                 return (
                   <tr
                     key={item.id}
-                    className="cursor-pointer transition-colors hover:bg-gray-50 focus-within:bg-gray-50"
+                    className="cursor-pointer transition-colors hover:bg-gray-50 focus-within:bg-gray-50 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:focus-within:bg-[color:var(--color-nav-hover-bg)]"
                     onClick={() => onViewTransfer(item)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
@@ -549,38 +549,38 @@ function TransferTableSection({
                     role="link"
                     aria-label={`Abrir detalhes da transferência ${item.externalReference}, situação ${ariaStatus}`}
                   >
-                    <td className="px-3 py-2 text-sm text-slate-700 sm:py-3 lg:px-6 lg:py-4">
+                    <td className="px-3 py-2 text-sm text-slate-700 sm:py-3 lg:px-6 lg:py-4 alusa-dark:text-[color:var(--color-text-secondary)]">
                       <span className="hidden font-medium lg:inline">{formatTableDate(item.createdAt)}</span>
                       <div className="flex items-stretch gap-3 lg:hidden">
                         <ul
                           className="m-0 min-w-0 flex-1 list-none space-y-1 p-0"
                           role="list"
                         >
-                          <li className="text-[13px] font-semibold leading-snug text-slate-900">
+                          <li className="text-[13px] font-semibold leading-snug text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                             {displayName}
                           </li>
                           {maskedDoc ? (
-                            <li className="font-mono text-[11px] tabular-nums leading-snug text-slate-600">
+                            <li className="font-mono text-[11px] tabular-nums leading-snug text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                               {maskedDoc}
                             </li>
                           ) : null}
-                          <li className="text-[12px] font-medium leading-snug text-slate-800">
+                          <li className="text-[12px] font-medium leading-snug text-slate-800 alusa-dark:text-[color:var(--color-text-secondary)]">
                             {formatTransferOperation(item.operation)}
                           </li>
                           <li
-                            className="text-[12px] leading-snug text-slate-700"
+                            className="text-[12px] leading-snug text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]"
                             title={item.bankName ?? undefined}
                           >
                             {abbreviateBankName(item.bankName)}
                           </li>
-                          <li className="text-[12px] tabular-nums leading-snug text-slate-600">
+                          <li className="text-[12px] tabular-nums leading-snug text-slate-600 alusa-dark:text-[color:var(--color-text-muted)]">
                             {formatTableDate(item.createdAt)}
                           </li>
                         </ul>
                         <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
                           <button
                             type="button"
-                            className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1"
+                            className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                             aria-label={`Ver detalhes da transferência ${item.externalReference}`}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -599,16 +599,16 @@ function TransferTableSection({
                         </div>
                       </div>
                     </td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTableDate(item.scheduleDate)}</td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTableDate(item.transferDate)}</td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTransferOperation(item.operation)}</td>
-                    <td className="hidden px-6 py-4 text-sm font-medium text-slate-900 lg:table-cell">{compactPersonName(item.recipientName ?? item.description)}</td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{item.cpfCnpj ?? '—'}</td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{item.bankName ?? '—'}</td>
-                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell">
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTableDate(item.scheduleDate)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTableDate(item.transferDate)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTransferOperation(item.operation)}</td>
+                    <td className="hidden px-6 py-4 text-sm font-medium text-slate-900 lg:table-cell alusa-dark:text-[color:var(--color-text-primary)]">{compactPersonName(item.recipientName ?? item.description)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{item.cpfCnpj ?? '—'}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{item.bankName ?? '—'}</td>
+                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
                       {formatOfficialFee(item.feeAmount)}
                     </td>
-                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell">
+                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
                       {formatCurrency(Number(item.amount))}
                     </td>
                     <td className="hidden px-2 py-2 text-center sm:py-3 lg:table-cell lg:px-6 lg:py-4">
@@ -632,7 +632,7 @@ function TransferTableSection({
 
       {data && data.totalPages > 1 ? (
         <div
-          className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50/50 p-4 sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50/50 p-4 sm:flex-row sm:items-center sm:justify-between alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]"
           role="navigation"
         >
           <span className="text-xs font-medium text-gray-500">
@@ -834,30 +834,30 @@ export function ContaPage() {
   return (
     <div className="w-full min-w-0 max-w-full space-y-5 pb-2 sm:space-y-6 sm:pb-0">
       <section className="min-w-0 space-y-1">
-        <h1 className="text-[22px] font-semibold tracking-tight text-slate-900 sm:text-2xl">
+        <h1 className="text-[22px] font-semibold tracking-tight text-slate-900 sm:text-2xl alusa-dark:text-[color:var(--color-text-primary)]">
           Saldo
         </h1>
-        <p className="text-sm leading-relaxed text-slate-500 break-words">
+        <p className="text-sm leading-relaxed text-slate-500 break-words alusa-dark:text-[color:var(--color-text-muted)]">
           Acompanhe o saldo disponível, as receitas do extrato e as transferências da conta.
         </p>
       </section>
-      <section className="min-w-0 rounded-xl bg-[#EEE7FB] px-4 py-6 shadow-sm sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      <section className="min-w-0 rounded-xl bg-[#EEE7FB] px-4 py-6 shadow-sm sm:px-6 sm:py-8 lg:px-8 lg:py-10 alusa-dark:border alusa-dark:border-[color:var(--color-border-brand)]/60 alusa-dark:bg-[linear-gradient(135deg,var(--color-bg-card-soft)_0%,var(--color-bg-elevated)_100%)]">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
           <div className="min-w-0 space-y-3 sm:space-y-4">
             <div>
-              <p className="text-sm font-medium text-[#6B6480]">Saldo disponível</p>
-              <p className="mt-2 break-words text-3xl font-semibold leading-none tracking-tight text-[#15121D] sm:text-[2.5rem] lg:text-[2.75rem]">
+              <p className="text-sm font-medium text-[#6B6480] alusa-dark:text-[color:var(--color-text-secondary)]">Saldo disponível</p>
+              <p className="mt-2 break-words text-3xl font-semibold leading-none tracking-tight text-[#15121D] sm:text-[2.5rem] lg:text-[2.75rem] alusa-dark:text-[color:var(--color-text-primary)]">
                 {formatCurrency(availableBalance)}
               </p>
             </div>
 
-            <p className="text-sm leading-relaxed text-[#6B6480] break-words">
+            <p className="text-sm leading-relaxed text-[#6B6480] break-words alusa-dark:text-[color:var(--color-text-muted)]">
               Este saldo já está disponível para transferência.
             </p>
           </div>
 
           <div className="flex min-w-0 flex-col gap-3 lg:items-end">
-            <p className="text-sm leading-relaxed text-[#6B6480] break-words lg:max-w-sm lg:text-right">
+            <p className="text-sm leading-relaxed text-[#6B6480] break-words lg:max-w-sm lg:text-right alusa-dark:text-[color:var(--color-text-secondary)]">
               Transfira valores para contas cadastradas e acompanhe cada saída da conta pelo extrato.
             </p>
 

@@ -1,7 +1,7 @@
 "use client"
 
 import { usePathname } from "next/navigation"
-import { useTheme } from "next-themes"
+import { useTheme } from "@/components/theme/ThemeProvider"
 import { Toaster as Sonner } from "sonner"
 import { cn } from "@/lib/utils"
 
@@ -15,13 +15,13 @@ const AUTH_CENTERED_TOAST_ROUTES = new Set([
 ])
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  const { isDark } = useTheme()
   const pathname = usePathname()
   const isAuthCenteredToast = pathname ? AUTH_CENTERED_TOAST_ROUTES.has(pathname) : false
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
+      theme={(isDark ? "dark" : "light") as ToasterProps["theme"]}
       className={cn("toaster group", isAuthCenteredToast && "auth-toaster")}
       position={isAuthCenteredToast ? "top-center" : "top-right"}
       offset={0}

@@ -33,25 +33,29 @@ function KpiCard({
 }: KpiCardProps) {
   if (loading) {
     return (
-      <div className="flex flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full animate-pulse">
+      <div className="flex flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full animate-pulse alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
         <div>
-          <Skeleton className="h-4 w-24 bg-[#e9dffc] mb-2" />
-          <Skeleton className="h-10 w-32 bg-[#e9dffc]" />
+          <Skeleton className="mb-2 h-4 w-24 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
+          <Skeleton className="h-10 w-32 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full">
+    <div className="flex flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]">
       <div>
-        <p className="text-[13px] font-normal tracking-wide text-[#2b2634] mb-2">
+        <p className="mb-2 text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
           {titulo}
         </p>
-        <span className="text-4xl leading-none font-medium text-[#2b2634] mb-1 block">
+        <span className="mb-1 block text-4xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
           {formato === 'moeda' ? formatCurrency(valor) : formatCount(valor)}
         </span>
-        {descricao ? <span className="text-xs text-[#2b2634]/70">{descricao}</span> : null}
+        {descricao ? (
+          <span className="text-xs text-[#2b2634]/70 alusa-dark:text-[color:var(--color-text-muted)]">
+            {descricao}
+          </span>
+        ) : null}
       </div>
     </div>
   );

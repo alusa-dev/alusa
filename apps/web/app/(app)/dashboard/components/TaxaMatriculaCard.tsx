@@ -91,7 +91,7 @@ function TaxaMatriculaToggle({
 
   return (
     <div
-      className="relative inline-flex w-fit items-center rounded-full bg-[#eadcf8] p-1"
+      className="relative inline-flex w-fit items-center rounded-full bg-[#eadcf8] p-1 alusa-dark:bg-[color:rgba(201,167,255,0.22)]"
       role="group"
       aria-label="Selecionar período da taxa de matrícula"
     >
@@ -104,7 +104,9 @@ function TaxaMatriculaToggle({
             aria-pressed={isActive}
             aria-label={`Filtrar por ${opt.label}`}
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
-              isActive ? "bg-[#f8f3fd] text-[#2b2634] shadow-sm" : "text-[#4c4459] hover:text-[#2b2634]"
+              isActive
+                ? 'bg-[#f8f3fd] text-[#2b2634] shadow-sm alusa-dark:bg-[color:#49275f] alusa-dark:text-white alusa-dark:shadow-none'
+                : 'text-[#4c4459] hover:text-[#2b2634] alusa-dark:text-[color:rgba(237,229,255,0.62)] alusa-dark:hover:text-[color:var(--color-text-primary)]'
             }`}
             onClick={() => onPeriodoChange?.(opt.value)}
           >
@@ -126,28 +128,28 @@ export function TaxaMatriculaCard({
 
   if (loading) {
     return (
-      <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 animate-pulse">
+      <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
         <div>
           <div>
-            <Skeleton className="mb-2 h-4 w-28 bg-[#e9dffc]" />
-            <Skeleton className="h-10 w-32 bg-[#e9dffc]" />
+            <Skeleton className="mb-2 h-4 w-28 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
+            <Skeleton className="h-10 w-32 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
           </div>
         </div>
         <div className="mt-3 flex items-end">
-          <Skeleton className="h-8 w-36 rounded-full bg-[#e9dffc]" />
+          <Skeleton className="h-8 w-36 rounded-full bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4">
+    <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]">
       <div>
         <div>
-          <p className="text-[13px] font-normal tracking-wide text-[#2b2634] mb-2 text-left">
+          <p className="mb-2 text-left text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
             Taxa de matrícula
           </p>
-          <span className="text-4xl leading-none font-medium text-[#2b2634] mb-1 block">
+          <span className="mb-1 block text-4xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
             {formatCurrency(valorPago)}
           </span>
         </div>

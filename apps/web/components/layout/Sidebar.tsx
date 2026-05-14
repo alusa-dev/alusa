@@ -14,6 +14,7 @@ import { useTheme } from '@/components/theme/ThemeProvider';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 
 import { FINANCE_LOCKED_GROUP_KEYS } from './sidebar-config';
+import { SidebarLogoMark } from './SidebarLogoMark';
 import { useSidebarNavAccess } from './use-sidebar-nav-access';
 
 /** Tokens visuais (mantém sua coluna/tamanho) */
@@ -174,7 +175,11 @@ function Sidebar() {
     return {
       width: collapsed ? TOKENS.itemH : TOKENS.itemW,
       height: TOKENS.itemH,
-      color: 'var(--sidebar-text)',
+      color: isDark
+        ? activeBg
+          ? 'var(--color-nav-active-text)'
+          : 'var(--color-nav-icon)'
+        : 'var(--sidebar-text)',
       backgroundColor: activeBg ? 'var(--sidebar-active-bg-light)' : 'transparent',
       marginLeft: collapsed ? collapsedOffset : 0,
       transition:
@@ -226,18 +231,12 @@ function Sidebar() {
             tabIndex={collapsed ? -1 : 0}
             prefetch={false}
           >
-            <img
-              src={isDark ? '/brand/logo-sidebar-dark.svg' : '/brand/logo-sidebar.svg'}
-              alt="Alusa"
-              width={132}
-              height={40}
+            <SidebarLogoMark
+              isDark={isDark}
+              size="desktop"
+              collapsed={collapsed}
               fetchPriority="high"
-              className="h-10 w-auto select-none transition-all duration-300"
-              style={{
-                opacity: collapsed ? 0 : 1,
-                transform: collapsed ? 'scale(0.98)' : 'scale(1)',
-              }}
-              draggable={false}
+              className="select-none"
             />
           </Link>
         </div>
@@ -489,7 +488,7 @@ function Sidebar() {
                                 (notifications.cobrancasPendentes > 0 ||
                                   notifications.cobrancasAtrasadas > 0) &&
                                 !collapsed && (
-                                  <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white relative z-10">
+                                  <span className="ml-auto flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white relative z-10">
                                     {notifications.cobrancasPendentes +
                                       notifications.cobrancasAtrasadas}
                                   </span>

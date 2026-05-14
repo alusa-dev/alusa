@@ -1,6 +1,6 @@
 "use client";
 import { Input } from "@/components/ui/input";
-import { FieldError, FieldLabel, IMaskControlled } from "../ui";
+import { FieldError, FieldLabel, IMaskControlled, wizardFieldInputClass, wizardTextareaFieldClass } from "../ui";
 import { useFormContext } from "react-hook-form";
 import { toast } from "@/components/ui/toast";
 function toastError(msg: string) {
@@ -99,27 +99,27 @@ export default function EnderecoFields() {
       </div>
       <div className="md:col-span-3">
         <FieldLabel htmlFor="aluno-endereco-logradouro">Endereço</FieldLabel>
-  <Input id="aluno-endereco-logradouro" data-testid="aluno-endereco-logradouro" {...register("enderecoLogradouro")} placeholder="Rua/Av., travessa..." disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-logradouro" data-testid="aluno-endereco-logradouro" {...register("enderecoLogradouro")} placeholder="Rua/Av., travessa..." disabled={loading} className={wizardFieldInputClass} />
       </div>
       <div>
         <FieldLabel htmlFor="aluno-endereco-numero">Número</FieldLabel>
-  <Input id="aluno-endereco-numero" data-testid="aluno-endereco-numero" {...register("enderecoNumero")} placeholder="Nº" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-numero" data-testid="aluno-endereco-numero" {...register("enderecoNumero")} placeholder="Nº" className={wizardFieldInputClass} />
       </div>
       <div>
         <FieldLabel htmlFor="aluno-endereco-complemento">Complemento</FieldLabel>
-  <Input id="aluno-endereco-complemento" {...register("enderecoComplemento")} placeholder="Apto, bloco..." className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-complemento" {...register("enderecoComplemento")} placeholder="Apto, bloco..." className={wizardFieldInputClass} />
       </div>
       <div>
         <FieldLabel htmlFor="aluno-endereco-bairro">Bairro</FieldLabel>
-  <Input id="aluno-endereco-bairro" data-testid="aluno-endereco-bairro" {...register("enderecoBairro")} placeholder="Ex.: Centro" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-bairro" data-testid="aluno-endereco-bairro" {...register("enderecoBairro")} placeholder="Ex.: Centro" className={wizardFieldInputClass} />
       </div>
       <div className="md:col-span-3">
         <FieldLabel htmlFor="aluno-endereco-cidade">Cidade</FieldLabel>
-  <Input id="aluno-endereco-cidade" data-testid="aluno-endereco-cidade" {...register("enderecoCidade")} placeholder="Ex.: Recife" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-cidade" data-testid="aluno-endereco-cidade" {...register("enderecoCidade")} placeholder="Ex.: Recife" className={wizardFieldInputClass} />
       </div>
       <div>
         <FieldLabel htmlFor="aluno-endereco-uf">UF</FieldLabel>
-  <Input id="aluno-endereco-uf" data-testid="aluno-endereco-uf" maxLength={2} {...register("enderecoUf")} placeholder="PE" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+  <Input id="aluno-endereco-uf" data-testid="aluno-endereco-uf" maxLength={2} {...register("enderecoUf")} placeholder="PE" className={wizardFieldInputClass} />
         <FieldError name="enderecoUf" />
       </div>
       <div className="md:col-span-6">
@@ -128,7 +128,7 @@ export default function EnderecoFields() {
           id="aluno-observacao"
           {...register("observacao")}
           rows={3}
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-0 focus-visible:shadow-none placeholder:text-gray-400"
+          className={wizardTextareaFieldClass}
           placeholder="Notas gerais sobre o aluno (opcional)"
         />
       </div>

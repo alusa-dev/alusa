@@ -10,6 +10,7 @@ import UserMenu from './UserMenu';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 import { useNotificationsFeed } from '@/features/notificacoes/hooks/use-notifications-feed';
 import { HeaderSearch } from '@/features/global-search/components/HeaderSearch';
+import { useTheme } from '@/components/theme/ThemeProvider';
 
 export default function CardHeader(): JSX.Element {
   const router = useRouter();
@@ -138,6 +139,8 @@ export default function CardHeader(): JSX.Element {
     router.push(isPortalUser ? '/portal' : '/notificacoes');
   }, [closeNotifications, isPortalUser, router]);
 
+  const { isDark } = useTheme();
+
   return (
     <div className="relative flex items-center justify-between" aria-label="Header do conteúdo">
       <HeaderSearch role={userRole ?? null} />
@@ -150,15 +153,21 @@ export default function CardHeader(): JSX.Element {
             type="button"
             aria-label={`Notificações${activeNotificationsCount > 0 ? ` (${activeNotificationsCount})` : ''}`}
             onClick={toggleNotifications}
-            className={notificationsOpen
-              ? 'relative inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-gray-900 shadow-lg ring-1 ring-black/10 transition-colors hover:bg-white'
-              : 'relative inline-flex h-11 w-11 items-center justify-center rounded-full ring-1 ring-black/5 transition-colors hover:bg-black/5'}
+            className={
+              notificationsOpen
+                ? isDark
+                    ? 'relative inline-flex h-11 w-11 items-center justify-center rounded-full bg-[color:var(--color-bg-elevated)] text-[color:var(--color-text-primary)] shadow-lg ring-1 ring-[color:var(--color-border-subtle)] transition-colors hover:bg-[color:var(--color-bg-card-soft)]'
+                    : 'relative inline-flex h-11 w-11 items-center justify-center rounded-full bg-white text-gray-900 shadow-lg ring-1 ring-black/10 transition-colors hover:bg-white'
+                : isDark
+                    ? 'relative inline-flex h-11 w-11 items-center justify-center rounded-full text-[color:var(--color-text-primary)] ring-1 ring-white/10 transition-colors hover:bg-white/5'
+                    : 'relative inline-flex h-11 w-11 items-center justify-center rounded-full ring-1 ring-black/5 transition-colors hover:bg-black/5'
+            }
           >
             <Bell className="h-5 w-5" />
             {/* Badge de notificações */}
             {activeNotificationsCount > 0 && (
               <span
-                className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white ring-2 ring-white"
+                className={`absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white ring-2 ${isDark ? 'ring-[color:var(--color-bg-card)]' : 'ring-white'}`}
                 aria-hidden="true"
               >
                 {activeNotificationsCount > 99 ? '99+' : activeNotificationsCount}

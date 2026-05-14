@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { Menu } from '@/components/icons/icons';
 import { MobileSidebar } from '@/components/layout/MobileSidebar';
+import { SidebarLogoMark } from '@/components/layout/SidebarLogoMark';
 import { MobileUserMenuDrawer } from '@/components/layout/MobileUserMenuDrawer';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
@@ -38,15 +39,18 @@ export function MobileAppHeader() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 lg:hidden">
+      <header
+        className={`sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b px-4 lg:hidden ${
+          isDark
+            ? 'border-[color:var(--color-border-subtle)] bg-[color:var(--color-bg-sidebar)] text-[color:var(--color-text-primary)]'
+            : 'border-gray-100 bg-white text-gray-900'
+        }`}
+      >
         <Link href={homeHref} prefetch={false} className="inline-flex min-w-0">
-          <img
-            src={isDark ? '/brand/logo-sidebar-dark.svg' : '/brand/logo-sidebar.svg'}
-            alt="Alusa"
-            width={108}
-            height={32}
-            className="h-8 w-auto max-w-[40vw] select-none"
-            draggable={false}
+          <SidebarLogoMark
+            isDark={isDark}
+            size="compact"
+            className="max-w-[40vw] select-none"
           />
         </Link>
 
@@ -54,7 +58,11 @@ export function MobileAppHeader() {
           <button
             type="button"
             onClick={() => setUserMenuOpen(true)}
-            className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-black/5"
+            className={`relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ${
+              isDark
+                ? 'bg-[color:var(--color-bg-card-soft)] ring-white/10'
+                : 'bg-white ring-black/5'
+            }`}
             aria-label="Menu da conta"
             aria-haspopup="dialog"
             aria-expanded={userMenuOpen}
@@ -62,7 +70,7 @@ export function MobileAppHeader() {
             {avatarUrl ? (
               <Image src={avatarUrl} alt="" fill sizes="40px" className="object-cover" />
             ) : (
-              <span className="text-[12px] font-semibold text-[#2A004A]">
+              <span className={`text-[12px] font-semibold ${isDark ? 'text-[color:var(--color-brand-300)]' : 'text-[#2A004A]'}`}>
                 {storeUser?.name ? `${storeUser.name[0]}` : initials}
               </span>
             )}
@@ -71,7 +79,11 @@ export function MobileAppHeader() {
           <button
             type="button"
             onClick={() => setNavOpen(true)}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white text-gray-900 ring-1 ring-black/5"
+            className={`inline-flex h-10 w-10 items-center justify-center rounded-full ring-1 ${
+              isDark
+                ? 'bg-[color:var(--color-bg-card-soft)] text-[color:var(--color-text-primary)] ring-white/10'
+                : 'bg-white text-gray-900 ring-black/5'
+            }`}
             aria-label="Abrir menu"
           >
             <Menu className="h-5 w-5" aria-hidden />

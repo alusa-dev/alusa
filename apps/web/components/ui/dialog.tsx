@@ -21,7 +21,7 @@ const DialogOverlay = React.forwardRef<
     ref={ref}
     className={cn(
       // Fullscreen backdrop + flex para centralizar o conteúdo sem depender de translate
-      'fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 md:p-6',
+      'fixed inset-0 z-50 flex items-center justify-center alusa-overlay-heavy bg-black/80 p-4 md:p-6',
       // Blur suave (fallback para navegadores sem suporte)
       'backdrop-blur-sm supports-[backdrop-filter]:backdrop-blur-md',
       // Fade animations
@@ -54,7 +54,7 @@ const DialogContent = React.forwardRef<
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          'relative z-50 grid w-full max-w-lg gap-4 border bg-white p-6 shadow-lg outline-none sm:rounded-xl',
+          'relative z-50 grid w-full max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg outline-none sm:rounded-xl',
           'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
           fullScreenMobile &&
             'max-md:box-border max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:w-full max-md:max-w-none max-md:min-h-0 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:border-b-0 max-md:shadow-none max-md:pb-[env(safe-area-inset-bottom,0px)] max-md:pl-[env(safe-area-inset-left,0px)] max-md:pr-[env(safe-area-inset-right,0px)]',

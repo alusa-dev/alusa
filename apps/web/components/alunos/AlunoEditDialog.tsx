@@ -120,11 +120,13 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
   const [submitting, setSubmitting] = React.useState(false);
 
   const controlClass =
-    'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
+    'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]';
   const textAreaClass =
-    'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
-  const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
-  const labelClass = 'text-xs font-medium text-slate-600';
+    'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]';
+  const sectionClass =
+    'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]';
+  const labelClass =
+    'text-xs font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]';
 
   React.useEffect(() => {
     if (aluno && open) {
@@ -450,7 +452,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
       <DialogContent
         data-testid="edit-aluno-dialog"
         fullScreenMobile
-        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
       >
         {aluno && (
           <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
@@ -461,21 +463,21 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
               className="hidden"
               onChange={handleFileInputChange}
             />
-            <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
+            <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:px-8 md:py-6">
               <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-              <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
+              <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
                 Editar aluno
               </DialogTitle>
-              <DialogDescription className="mt-2 text-sm text-slate-600">
+              <DialogDescription className="mt-2 text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                 Atualize os dados cadastrais, endereços e informações de emergência do aluno.
               </DialogDescription>
             </div>
-            <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 max-md:min-h-0 md:px-8 md:py-6">
+            <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 alusa-dark:bg-transparent md:px-8 md:py-6">
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Foto</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Foto</span>
                 <div className="flex flex-col gap-5 md:flex-row md:items-center">
                   <div className="flex items-center justify-center">
-                    <div className="relative h-28 w-28 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
+                    <div className="relative h-28 w-28 overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
                       {fotoPreview ? (
                         <img
                           src={fotoPreview}
@@ -483,14 +485,14 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-500">
+                        <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
                           {avatarFallback}
                         </div>
                       )}
                     </div>
                   </div>
                   <div className="flex-1 space-y-3">
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                       A foto ajuda na identificação rápida do aluno em turmas, carteirinhas e
                       relatórios internos.
                     </p>
@@ -498,7 +500,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       <Button
                         type="button"
                         variant="outline"
-                        className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                        className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]"
                         onClick={handleEditPhoto}
                         disabled={!fotoPreview}
                       >
@@ -507,7 +509,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       <Button
                         type="button"
                         variant="outline"
-                        className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                        className="border-slate-300 bg-white text-slate-700 hover:bg-slate-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]"
                         onClick={handlePickPhoto}
                       >
                         {fotoPreview ? 'Substituir' : 'Enviar foto'}
@@ -522,14 +524,14 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                         Remover
                       </Button>
                     </div>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                       Formatos suportados: JPG ou PNG até 5MB.
                     </p>
                   </div>
                 </div>
               </div>
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Identificação</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Identificação</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="md:col-span-2 space-y-1">
                     <label className={labelClass}>Nome</label>
@@ -537,7 +539,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={nome}
                       onChange={(e) => setNome(e.target.value)}
                       placeholder="Nome completo"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -546,7 +548,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={nomeSocial}
                       onChange={(e) => setNomeSocial(e.target.value)}
                       placeholder="Opcional"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -555,7 +557,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       type="date"
                       value={dataNasc}
                       onChange={(e) => setDataNasc(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -564,12 +566,12 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       mask="000.000.000-00"
                       value={cpf}
                       onAccept={(v: unknown) => setCpf(String(v))}
-                      className={`${controlClass} ${aluno?.cpf ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                      className={`${controlClass} ${aluno?.cpf ? 'cursor-not-allowed bg-slate-100 opacity-60 alusa-dark:bg-[color:rgba(255,255,255,0.05)]' : ''}`}
                       placeholder="000.000.000-00"
                       disabled={Boolean(aluno?.cpf)}
                     />
                     {aluno?.cpf && (
-                      <p className="text-xs text-slate-500">CPF não pode ser alterado após cadastro.</p>
+                      <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">CPF não pode ser alterado após cadastro.</p>
                     )}
                   </div>
                   <div className="space-y-1">
@@ -579,7 +581,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="email@exemplo.com"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -598,7 +600,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={genero || undefined}
                       onValueChange={(v) => setGenero(v as EditAluno['genero'])}
                     >
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30">
+                      <SelectTrigger className={controlClass}>
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
@@ -613,7 +615,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                   <div className="space-y-1">
                     <label className={labelClass}>Status</label>
                     <Select value={status} onValueChange={(v) => setStatus(v as StatusAluno)}>
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30">
+                      <SelectTrigger className={controlClass}>
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>
                       <SelectContent>
@@ -628,7 +630,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={codigoInterno}
                       onChange={(e) => setCodigoInterno(e.target.value)}
                       placeholder="00001"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -637,15 +639,15 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={aluno?.asaasCustomerId || '—'}
                       disabled
                       readOnly
-                      className="h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-500 shadow-sm cursor-not-allowed"
+                      className="h-10 cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-500 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:rgba(255,255,255,0.05)] alusa-dark:text-[color:var(--color-text-muted)]"
                       title="Identificador do customer no sistema de pagamentos (somente leitura)"
                     />
-                    <p className="text-xs text-slate-500">Identificador único no sistema de pagamentos.</p>
+                    <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Identificador único no sistema de pagamentos.</p>
                   </div>
                 </div>
               </div>
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Endereço do aluno</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Endereço do aluno</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-6">
                   <div className="space-y-1">
                     <label className={labelClass}>CEP</label>
@@ -663,7 +665,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={logradouro}
                       onChange={(e) => setLogradouro(e.target.value)}
                       placeholder="Rua/Av"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -672,7 +674,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={numero}
                       onChange={(e) => setNumero(e.target.value)}
                       placeholder="Nº"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -681,7 +683,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={complemento}
                       onChange={(e) => setComplemento(e.target.value)}
                       placeholder="Opcional"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -689,7 +691,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={bairro}
                       onChange={(e) => setBairro(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1 md:col-span-3">
@@ -697,7 +699,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={cidade}
                       onChange={(e) => setCidade(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -707,13 +709,13 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       onChange={(e) => setUf(e.target.value.toUpperCase().slice(0, 2))}
                       placeholder="UF"
                       maxLength={2}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                 </div>
               </div>
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Saúde e emergência</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Saúde e emergência</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="md:col-span-3 space-y-1">
                     <label className={labelClass}>Observações</label>
@@ -748,7 +750,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={contatoNome}
                       onChange={(e) => setContatoNome(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -765,7 +767,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
               </div>
               {aluno?.responsavel && (
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Responsável principal</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Responsável principal</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="md:col-span-2 space-y-1">
                     <label className={labelClass}>Nome</label>
@@ -773,7 +775,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={respNome}
                       onChange={(e) => setRespNome(e.target.value)}
                       placeholder="Nome do responsável"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -793,7 +795,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={respEmail}
                       onChange={(e) => setRespEmail(e.target.value)}
                       placeholder="email@exemplo.com"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -823,7 +825,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={respLogradouro}
                       onChange={(e) => setRespLogradouro(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -831,7 +833,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={respNumero}
                       onChange={(e) => setRespNumero(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -840,7 +842,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       value={respComplemento}
                       onChange={(e) => setRespComplemento(e.target.value)}
                       placeholder="Opcional"
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -848,7 +850,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={respBairro}
                       onChange={(e) => setRespBairro(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1 md:col-span-3">
@@ -856,7 +858,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                     <Input
                       value={respCidade}
                       onChange={(e) => setRespCidade(e.target.value)}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                   <div className="space-y-1">
@@ -866,18 +868,18 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                       onChange={(e) => setRespUf(e.target.value.toUpperCase().slice(0, 2))}
                       placeholder="UF"
                       maxLength={2}
-                      className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                      className={controlClass}
                     />
                   </div>
                 </div>
               </div>
               )}
             </div>
-            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
               <Button
                 type="button"
                 variant="outline"
-                className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
+                className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)] md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >

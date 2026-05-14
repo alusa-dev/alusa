@@ -23,7 +23,7 @@ export default function Loading() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <div className="md:col-span-2 lg:col-span-3 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="md:col-span-2 lg:col-span-3 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
           <Skeleton className="mb-5 h-5 w-40" />
           <div className="space-y-4">
             <Skeleton className="h-10 w-full" />
@@ -31,7 +31,7 @@ export default function Loading() {
             <Skeleton className="h-10 w-full" />
           </div>
         </div>
-        <div className="md:col-span-2 lg:col-span-1 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="md:col-span-2 lg:col-span-1 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
           <Skeleton className="mb-5 h-5 w-36" />
           <div className="space-y-3">
             <Skeleton className="h-12 w-full" />

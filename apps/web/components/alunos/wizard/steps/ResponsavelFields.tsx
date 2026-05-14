@@ -3,7 +3,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { useFormContext } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FieldError, FieldLabel, IMaskControlled } from "../ui";
+import { FieldError, FieldLabel, IMaskControlled, wizardFieldInputClass } from "../ui";
 import { toast } from "@/components/ui/toast";
 import { listResponsaveis, type ResponsavelListItem } from "@/features/cadastro/responsaveis/services/responsaveis-service";
 import { Search as SearchIcon } from "@/components/icons/icons";
@@ -209,11 +209,11 @@ export default function ResponsavelFields() {
   return (
     <div className="space-y-4">
       <Tabs value={responsavelModo} onValueChange={handleModoChange}>
-        <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1">
-          <TabsTrigger value="existente" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none">
+        <TabsList className="h-10 rounded-xl bg-slate-100/80 p-1 alusa-dark:bg-[color:rgba(255,255,255,0.06)]">
+          <TabsTrigger value="existente" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none alusa-dark:text-[color:var(--color-text-primary)]">
             Escolher responsável
           </TabsTrigger>
-          <TabsTrigger value="novo" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none">
+          <TabsTrigger value="novo" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none alusa-dark:text-[color:var(--color-text-primary)]">
             Criar responsável
           </TabsTrigger>
         </TabsList>
@@ -221,15 +221,17 @@ export default function ResponsavelFields() {
 
       {responsavelModo === "existente" ? (
         <div className="space-y-4">
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
             Reutilize um responsável já cadastrado para evitar duplicidade e vincular este aluno ao cadastro correto.
           </p>
 
           {selectedResponsavel ? (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
               <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1 text-sm text-slate-700">
-                  <div className="font-semibold text-slate-900">{selectedResponsavel.nome}</div>
+                <div className="space-y-1 text-sm text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+                  <div className="font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                    {selectedResponsavel.nome}
+                  </div>
                   <div>CPF: {selectedResponsavel.cpf || "-"}</div>
                   <div>E-mail: {selectedResponsavel.email || "-"}</div>
                   <div>Telefone: {selectedResponsavel.telefone || "-"}</div>
@@ -250,7 +252,7 @@ export default function ResponsavelFields() {
                 <Popover.Root open={showDropdown} onOpenChange={setOpen}>
                   <Popover.Anchor asChild>
                     <div className="relative">
-                      <SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <SearchIcon className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:var(--color-text-muted)]" />
                       <input
                         ref={inputRef}
                         id="resp-existente-search"
@@ -272,7 +274,10 @@ export default function ResponsavelFields() {
                           if (event.key === "Escape") setOpen(false);
                         }}
                         placeholder="Digite nome, CPF ou e-mail"
-                        className="flex h-10 w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-[#5c2f91] focus:outline-none focus:ring-2 focus:ring-[#5c2f91]/30 disabled:cursor-not-allowed disabled:opacity-50"
+                        className={cn(
+                          wizardFieldInputClass,
+                          'rounded-lg py-2 pl-10 focus:border-brand-accent focus:ring-2 focus:ring-brand-accent/30 disabled:cursor-not-allowed disabled:opacity-50',
+                        )}
                         aria-autocomplete="list"
                         aria-expanded={showDropdown}
                         aria-controls="responsavel-existente-suggestions"
@@ -281,7 +286,7 @@ export default function ResponsavelFields() {
                   </Popover.Anchor>
                   <Popover.Portal>
                     <Popover.Content
-                      className="z-[99999] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+                      className="z-[99999] w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]"
                       sideOffset={4}
                       align="start"
                       onOpenAutoFocus={(event) => event.preventDefault()}
@@ -299,7 +304,7 @@ export default function ResponsavelFields() {
                         }}
                       >
                         {loadingResponsaveis && (
-                          <div className="select-none px-4 py-3 text-sm text-gray-500">
+                          <div className="select-none px-4 py-3 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                             Carregando...
                           </div>
                         )}
@@ -311,7 +316,7 @@ export default function ResponsavelFields() {
                         )}
 
                         {!loadingResponsaveis && !responsaveisError && responsaveis.length === 0 && (
-                          <div className="select-none px-4 py-3 text-sm text-gray-500">
+                          <div className="select-none px-4 py-3 text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                             Nenhum responsável encontrado
                           </div>
                         )}
@@ -323,12 +328,17 @@ export default function ResponsavelFields() {
                             className={cn(
                               "w-full cursor-pointer bg-white px-3 py-2.5 text-left text-sm text-gray-900 transition-colors",
                               "hover:bg-gray-50 focus:bg-gray-100 focus:outline-none",
-                              index < Math.min(responsaveis.length, 10) - 1 && "border-b border-gray-100",
+                              "alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-text-primary)]",
+                              "alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)] alusa-dark:focus:bg-[color:rgba(255,255,255,0.09)]",
+                              index < Math.min(responsaveis.length, 10) - 1 &&
+                                'border-b border-gray-100 alusa-dark:border-[color:var(--color-border-default)]',
                             )}
                             onClick={() => handleSelectResponsavel(item)}
                           >
-                            <span className="block font-medium text-gray-900">{item.nome}</span>
-                            <span className="block text-xs text-gray-500">
+                            <span className="block font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                              {item.nome}
+                            </span>
+                            <span className="block text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                               {[item.cpf, item.email, item.telefone].filter(Boolean).join(" • ") || "Sem dados adicionais"}
                             </span>
                           </button>
@@ -344,7 +354,7 @@ export default function ResponsavelFields() {
               )}
 
               {!query.trim() && (
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                   Digite para buscar um responsável já cadastrado. Se ele não existir, use a aba criar responsável.
                 </p>
               )}
@@ -352,7 +362,7 @@ export default function ResponsavelFields() {
           )}
 
           <div className="pt-1">
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
               Ao concluir, o aluno será vinculado ao responsável selecionado sem criar um novo cadastro.
             </p>
           </div>
@@ -361,7 +371,7 @@ export default function ResponsavelFields() {
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
           <div className="md:col-span-2">
             <FieldLabel htmlFor="resp-nome" required>Nome do responsável</FieldLabel>
-            <Input id="resp-nome" {...register("responsavel.nome" as const)} placeholder="Ex.: João dos Santos" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-nome" {...register("responsavel.nome" as const)} placeholder="Ex.: João dos Santos" className={wizardFieldInputClass} />
             <FieldError name="responsavel.nome" />
           </div>
           <div>
@@ -371,7 +381,7 @@ export default function ResponsavelFields() {
           </div>
           <div>
             <FieldLabel htmlFor="resp-email" required>E-mail</FieldLabel>
-            <Input id="resp-email" type="email" {...register("responsavel.email" as const)} placeholder="email@exemplo.com" className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-email" type="email" {...register("responsavel.email" as const)} placeholder="email@exemplo.com" className={wizardFieldInputClass} />
             <FieldError name="responsavel.email" />
           </div>
           <div>
@@ -412,36 +422,36 @@ export default function ResponsavelFields() {
           </div>
           <div className="md:col-span-2">
             <FieldLabel htmlFor="resp-logradouro">Endereço</FieldLabel>
-            <Input id="resp-logradouro" {...register("responsavel.enderecoLogradouro" as const)} placeholder="Rua/Av." disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-logradouro" {...register("responsavel.enderecoLogradouro" as const)} placeholder="Rua/Av." disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
             <FieldLabel htmlFor="resp-numero">Número</FieldLabel>
-            <Input id="resp-numero" {...register("responsavel.enderecoNumero" as const)} placeholder="Nº" disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-numero" {...register("responsavel.enderecoNumero" as const)} placeholder="Nº" disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
             <FieldLabel htmlFor="resp-complemento">Complemento</FieldLabel>
-            <Input id="resp-complemento" {...register("responsavel.enderecoComplemento" as const)} placeholder="Apto, bloco" disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-complemento" {...register("responsavel.enderecoComplemento" as const)} placeholder="Apto, bloco" disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
             <FieldLabel htmlFor="resp-bairro">Bairro</FieldLabel>
-            <Input id="resp-bairro" {...register("responsavel.enderecoBairro" as const)} placeholder="Bairro" disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-bairro" {...register("responsavel.enderecoBairro" as const)} placeholder="Bairro" disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
             <FieldLabel htmlFor="resp-cidade">Cidade</FieldLabel>
-            <Input id="resp-cidade" {...register("responsavel.enderecoCidade" as const)} placeholder="Cidade" disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-cidade" {...register("responsavel.enderecoCidade" as const)} placeholder="Cidade" disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
             <FieldLabel htmlFor="resp-uf">UF</FieldLabel>
-            <Input id="resp-uf" maxLength={2} {...register("responsavel.enderecoUf" as const)} placeholder="UF" disabled={loading} className="h-10 border-gray-300 bg-white shadow-none placeholder:text-gray-400" />
+            <Input id="resp-uf" maxLength={2} {...register("responsavel.enderecoUf" as const)} placeholder="UF" disabled={loading} className={wizardFieldInputClass} />
           </div>
-          <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3 md:col-span-2">
+          <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3 alusa-dark:border-[color:var(--color-border-default)] md:col-span-2">
             <input type="checkbox" id="responsavelFinanceiro" className="mt-0.5 h-4 w-4" {...register("responsavel.financeiro" as const)} />
-            <label htmlFor="responsavelFinanceiro" className="text-xs text-slate-600 leading-snug cursor-pointer select-none">
+            <label htmlFor="responsavelFinanceiro" className="cursor-pointer select-none text-xs leading-snug text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
               Este responsável será o pagador (financeiro)
             </label>
           </div>
           <div className="md:col-span-4 pt-1">
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
               Dados completos do responsável são necessários para emissão de cobranças futuras (Asaas).
             </p>
           </div>

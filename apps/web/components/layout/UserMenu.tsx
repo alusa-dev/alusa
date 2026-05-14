@@ -124,29 +124,31 @@ export default function UserMenu({ name, email, initials, foto }: Props) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="group flex items-center gap-3 rounded-full pl-1 pr-3 py-1 ring-1 ring-black/5 transition-colors hover:bg-black/5"
+        className="group flex items-center gap-3 rounded-full pl-1 pr-3 py-1 ring-1 ring-black/5 transition-colors hover:bg-black/5 alusa-dark:ring-[rgba(148,146,209,0.14)] alusa-dark:hover:bg-white/[0.06]"
       >
-        <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/5 bg-white">
+        <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/5 bg-white alusa-dark:ring-[rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
           {avatarUrl ? (
             <Image src={avatarUrl} alt="" fill sizes="40px" className="object-cover" />
           ) : (
-            <span className="text-[12px] font-semibold text-[#2A004A]">
+            <span className="text-[12px] font-semibold text-[#2A004A] alusa-dark:text-[color:var(--color-brand-300)]">
               {storeUser?.name ? `${storeUser.name[0]}` : initials}
             </span>
           )}
         </span>
         <span className="hidden sm:flex flex-col items-start text-left">
-          <span className="text-[14px] font-medium leading-tight text-black">{name}</span>
-          <span className="text-[12px] leading-tight text-gray-500">{email}</span>
+          <span className="text-[14px] font-medium leading-tight text-black alusa-dark:text-[color:var(--color-text-primary)]">
+            {name}
+          </span>
+          <span className="text-[12px] leading-tight text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">{email}</span>
         </span>
-        <ChevronDownIcon className="ml-1 h-4 w-4 opacity-70 group-hover:opacity-100" />
+        <ChevronDownIcon className="ml-1 h-4 w-4 opacity-70 group-hover:opacity-100 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:group-hover:text-[color:var(--color-text-primary)]" />
       </button>
 
       {/* Dropdown */}
       {open && (
         <div
           ref={menuRef}
-          className="absolute right-0 top-[56px] w-[320px] rounded-[20px] bg-white ring-1 ring-black/5 z-overlay"
+          className="absolute right-0 top-[56px] w-[320px] rounded-[20px] bg-white ring-1 ring-black/5 z-overlay alusa-dark:border alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:ring-[rgba(148,146,209,0.08)]"
           style={{
             boxShadow:
               'rgba(14, 63, 126, 0.06) 0px 0px 0px 1px, rgba(42, 51, 70, 0.03) 0px 1px 1px -0.5px, rgba(42, 51, 70, 0.04) 0px 2px 2px -1px, rgba(42, 51, 70, 0.04) 0px 3px 3px -1.5px, rgba(42, 51, 70, 0.03) 0px 5px 5px -2.5px, rgba(42, 51, 70, 0.03) 0px 10px 10px -5px, rgba(42, 51, 70, 0.03) 0px 24px 24px -8px',
@@ -162,7 +164,7 @@ export default function UserMenu({ name, email, initials, foto }: Props) {
 /* ----------------------- Subcomponentes ----------------------- */
 
 function Divider() {
-  return <div className="mx-2 my-2 h-px bg-black/5" />;
+  return <div className="mx-2 my-2 h-px bg-black/5 alusa-dark:bg-[color:rgba(148,146,209,0.14)]" />;
 }
 
 function MenuLink({
@@ -181,9 +183,9 @@ function MenuLink({
       href={href}
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+      className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/[0.06]"
     >
-      <span className="text-black/80">{icon}</span>
+      <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">{icon}</span>
       <span>{children}</span>
     </Link>
   );
@@ -203,9 +205,9 @@ function MenuDisabledItem({
       role="menuitem"
       aria-disabled="true"
       title={title}
-      className="flex w-full cursor-not-allowed items-center gap-3 rounded-[12px] px-3 py-2 text-[15px] font-medium text-black/60"
+      className="flex w-full cursor-not-allowed items-center gap-3 rounded-[12px] px-3 py-2 text-[15px] font-medium text-black/60 alusa-dark:text-[color:rgba(237,239,255,0.45)]"
     >
-      <span className="text-black/50">{icon}</span>
+      <span className="text-black/50 alusa-dark:text-[color:rgba(237,239,255,0.42)]">{icon}</span>
       <span>{children}</span>
     </div>
   );
@@ -225,9 +227,9 @@ function MenuButton({
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2 text-left text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+      className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2 text-left text-[15px] font-medium text-black transition-colors hover:bg-black/5 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/[0.06]"
     >
-      <span className="text-black/80">{icon}</span>
+      <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">{icon}</span>
       <span>{children}</span>
     </button>
   );
@@ -241,11 +243,11 @@ function ThemeMenuItem({ isOn, onToggle }: { isOn: boolean; onToggle: () => void
   return (
     <div
       role="menuitem"
-      className="flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5"
+      className="flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/[0.06]"
       onClick={onToggle}
     >
       <span className="flex items-center gap-3">
-        <span className="text-black/80">
+        <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">
           {isOn ? (
             <MoonIcon className="h-5 w-5 transition-transform duration-200" />
           ) : (
@@ -260,7 +262,7 @@ function ThemeMenuItem({ isOn, onToggle }: { isOn: boolean; onToggle: () => void
         aria-hidden="true"
         className={[
           'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-          isOn ? 'bg-[#A94DFF]' : 'bg-black/10',
+          isOn ? 'bg-[#A94DFF]' : 'bg-black/10 alusa-dark:bg-white/12',
         ].join(' ')}
       >
         <span

@@ -62,15 +62,15 @@ function LimitCard({
   const percentage = total > 0 ? Math.min(100, Math.max(0, (available / total) * 100)) : 0;
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-900">{title}</p>
-        <span className="text-xs text-slate-500">{percentage.toFixed(0)}% livre</span>
+        <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{title}</p>
+        <span className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{percentage.toFixed(0)}% livre</span>
       </div>
-      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
         <div className="h-full rounded-full bg-brand-accent" style={{ width: `${percentage}%` }} />
       </div>
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+      <div className="mt-3 flex items-center justify-between text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
         <span>Disponível {formatCurrency(available)}</span>
         <span>Total {formatCurrency(total)}</span>
       </div>
@@ -96,7 +96,9 @@ function CandidateDesktopRow({
         'hidden min-w-[858px] items-center py-4 transition lg:grid',
         CANDIDATE_TABLE_GUTTER,
         CANDIDATE_TABLE_GRID,
-        checked ? 'bg-[#f7f2ff] shadow-[inset_2px_0_0_#8b5cf6]' : 'bg-white hover:bg-slate-50',
+        checked
+          ? 'bg-[#f7f2ff] shadow-[inset_2px_0_0_#8b5cf6] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-[inset_2px_0_0_var(--color-sidebar-accent)]'
+          : 'bg-white hover:bg-slate-50 alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]',
       )}
     >
       <div className="flex items-center justify-start">
@@ -109,21 +111,21 @@ function CandidateDesktopRow({
       </div>
 
       <div className="min-w-0 pr-2">
-        <p className="truncate text-sm font-semibold text-slate-900">{clientName}</p>
+        <p className="truncate text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{clientName}</p>
 
-        <p className="mt-1.5 truncate text-xs leading-5 text-slate-500">ID {candidateIdentifier}</p>
+        <p className="mt-1.5 truncate text-xs leading-5 text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">ID {candidateIdentifier}</p>
       </div>
 
       <div>
-        <p className="text-sm text-slate-700">{formatBillingType(candidate.billingType)}</p>
+        <p className="text-sm text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]">{formatBillingType(candidate.billingType)}</p>
       </div>
 
       <div>
-        <p className="text-sm text-slate-700">{formatDate(candidate.dueDate)}</p>
+        <p className="text-sm text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]">{formatDate(candidate.dueDate)}</p>
       </div>
 
       <div className="justify-self-end text-right">
-        <p className="text-sm font-semibold text-slate-900">{formatCurrency(candidate.value)}</p>
+        <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(candidate.value)}</p>
       </div>
     </div>
   );
@@ -148,7 +150,9 @@ function CandidateMobileRow({
     <li
       className={cn(
         'flex items-stretch gap-3 px-4 py-4 md:px-5',
-        checked ? 'bg-[#f7f2ff] shadow-[inset_2px_0_0_#8b5cf6]' : 'bg-white',
+        checked
+          ? 'bg-[#f7f2ff] shadow-[inset_2px_0_0_#8b5cf6] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-[inset_2px_0_0_var(--color-sidebar-accent)]'
+          : 'bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
       )}
     >
       <div className="flex shrink-0 items-start pt-0.5">
@@ -162,20 +166,20 @@ function CandidateMobileRow({
 
       <div className="m-0 min-w-0 flex-1 space-y-1 p-0">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="text-[13px] font-semibold leading-snug text-slate-900">{clientName}</span>
-          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-900">
+          <span className="text-[13px] font-semibold leading-snug text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{clientName}</span>
+          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
             {formatCurrency(candidate.value)}
           </span>
         </div>
-        <div className="break-all text-xs text-slate-500">ID {candidateIdentifier}</div>
-        <div className="text-[12px] font-medium text-slate-800">{formatBillingType(candidate.billingType)}</div>
-        <div className="text-[12px] tabular-nums text-slate-600">Venc. {formatDate(candidate.dueDate)}</div>
+        <div className="break-all text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">ID {candidateIdentifier}</div>
+        <div className="text-[12px] font-medium text-slate-800 alusa-dark:text-[color:var(--color-text-secondary)]">{formatBillingType(candidate.billingType)}</div>
+        <div className="text-[12px] tabular-nums text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Venc. {formatDate(candidate.dueDate)}</div>
       </div>
 
       <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
         <button
           type="button"
-          className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1"
+          className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
           aria-label="Ver detalhes do recebível"
           onClick={() => onPreview(candidate)}
         >
@@ -297,28 +301,28 @@ function SummaryPanel({
   const canSubmit = Boolean(singleSelection && selected && simulation && !simulating && !submitting);
 
   return (
-    <aside className="rounded-xl border border-slate-200 bg-white p-5">
+    <aside className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
           <DollarSign className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="text-base font-semibold text-slate-900">Resumo</h2>
-          <p className="text-xs text-slate-500">Valores oficiais da simulação</p>
+          <h2 className="text-base font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Resumo</h2>
+          <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Valores oficiais da simulação</p>
         </div>
       </div>
 
-      <div className="mt-5 space-y-3 border-t border-slate-100 pt-4">
+      <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 alusa-dark:border-[color:var(--color-border-subtle)]">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-500">Total selecionado</span>
-          <span className="font-medium text-slate-900">{formatCurrency(singleSelection ? (simulation?.value ?? selectedValue) : selectedValue)}</span>
+          <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Total selecionado</span>
+          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(singleSelection ? (simulation?.value ?? selectedValue) : selectedValue)}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-500">Taxa</span>
-          <span className="font-medium text-slate-900">{feeValue == null ? '-' : formatCurrency(feeValue)}</span>
+          <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Taxa</span>
+          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{feeValue == null ? '-' : formatCurrency(feeValue)}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-500">Valor a receber</span>
+          <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Valor a receber</span>
           <span className="font-semibold text-emerald-700">
             {singleSelection
               ? formatCurrency(simulation?.netValue ?? selectedNetValue ?? 0)
@@ -328,17 +332,17 @@ function SummaryPanel({
           </span>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-500">Data prevista</span>
-          <span className="font-medium text-slate-900">{singleSelection ? formatDate(simulation?.anticipationDate ?? null) : '-'}</span>
+          <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Data prevista</span>
+          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{singleSelection ? formatDate(simulation?.anticipationDate ?? null) : '-'}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-500">Dias antecipados</span>
-          <span className="font-medium text-slate-900">{singleSelection ? (simulation?.anticipationDays ?? '-') : '-'}</span>
+          <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Dias antecipados</span>
+          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{singleSelection ? (simulation?.anticipationDays ?? '-') : '-'}</span>
         </div>
       </div>
 
       {selectedCount > 1 ? (
-        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
           A seleção em massa serve para conferência da lista. Para solicitar a antecipação, deixe apenas um recebível marcado.
         </div>
       ) : null}
@@ -577,12 +581,12 @@ export function AnteciparRecebimentoPage() {
 
   return (
     <div className="w-full min-w-0 space-y-5">
-      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Antecipações</p>
-            <h1 className="mt-1 text-[22px] font-semibold text-gray-900 md:text-[24px]">Antecipar recebimento</h1>
-            <p className="mt-1 text-[13px] leading-5 text-slate-600">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Antecipações</p>
+            <h1 className="mt-1 text-[22px] font-semibold text-gray-900 md:text-[24px] alusa-dark:text-[color:var(--color-text-primary)]">Antecipar recebimento</h1>
+            <p className="mt-1 text-[13px] leading-5 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
               Selecione um recebível elegível, simule o valor líquido e envie a solicitação para análise.
             </p>
           </div>
@@ -609,12 +613,12 @@ export function AnteciparRecebimentoPage() {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-100 bg-gray-50 px-4 py-4 md:px-5">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+          <div className="border-b border-slate-100 bg-gray-50 px-4 py-4 md:px-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card)]">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div>
-                <p className="text-sm font-semibold text-slate-900">Disponível para antecipar</p>
-                <p className="mt-1 text-xs text-slate-500">{candidates?.total ?? 0} recebível(is) elegíveis no Asaas</p>
+                <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Disponível para antecipar</p>
+                <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{candidates?.total ?? 0} recebível(is) elegíveis no Asaas</p>
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
                 <div className="relative min-w-0 w-full">
@@ -650,7 +654,7 @@ export function AnteciparRecebimentoPage() {
             </div>
           ) : candidateItems.length ? (
             <>
-              <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 md:px-5 lg:hidden">
+              <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 md:px-5 lg:hidden alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
                 <div className="flex items-center gap-3">
                   <Checkbox
                     checked={allVisibleSelected}
@@ -658,7 +662,7 @@ export function AnteciparRecebimentoPage() {
                     className="shrink-0 border-slate-300"
                     onCheckedChange={handleToggleAllCandidates}
                   />
-                  <span className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500">
+                  <span className="text-xs font-medium uppercase tracking-[0.08em] text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
                     Selecionar todos visíveis
                   </span>
                 </div>
@@ -680,7 +684,7 @@ export function AnteciparRecebimentoPage() {
                 <div className="min-w-[858px]">
                   <div
                     className={cn(
-                      'grid items-center border-b border-slate-200 bg-slate-50/80 py-3',
+                      'grid items-center border-b border-slate-200 bg-slate-50/80 py-3 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]',
                       CANDIDATE_TABLE_GUTTER,
                       CANDIDATE_TABLE_GRID,
                     )}
@@ -693,15 +697,15 @@ export function AnteciparRecebimentoPage() {
                         onCheckedChange={handleToggleAllCandidates}
                       />
                     </div>
-                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Recebível</span>
-                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Forma</span>
-                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">Vencimento</span>
-                    <span className="justify-self-end text-right text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500">
+                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Recebível</span>
+                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Forma</span>
+                    <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Vencimento</span>
+                    <span className="justify-self-end text-right text-[11px] font-medium uppercase tracking-[0.08em] text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
                       Valor
                     </span>
                   </div>
 
-                  <div className="divide-y divide-slate-100">
+                  <div className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
                     {candidateItems.map((candidate) => (
                       <CandidateDesktopRow
                         key={candidate.id}
@@ -716,11 +720,11 @@ export function AnteciparRecebimentoPage() {
             </>
           ) : (
             <div className="flex min-h-[320px] flex-col items-center justify-center px-6 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634]">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]">
                 <DollarSign className="h-7 w-7" />
               </div>
-              <h2 className="mt-5 text-lg font-semibold text-slate-900">Nenhum recebível elegível</h2>
-              <p className="mt-2 max-w-lg text-sm leading-6 text-slate-500">
+              <h2 className="mt-5 text-lg font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Nenhum recebível elegível</h2>
+              <p className="mt-2 max-w-lg text-sm leading-6 text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
                 Quando o Asaas liberar cobranças para antecipação, elas aparecerão nesta lista.
               </p>
             </div>

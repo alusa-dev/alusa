@@ -16,7 +16,7 @@ const SheetOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 bg-slate-950/30 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out',
+      'fixed inset-0 z-50 alusa-overlay-soft bg-slate-950/30 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out',
       className,
     )}
     {...props}
@@ -26,9 +26,9 @@ SheetOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 const sheetVariants = {
   right:
-    'fixed inset-y-0 right-0 z-50 h-full w-full border-l border-slate-200 bg-white shadow-2xl sm:max-w-xl',
+    'fixed inset-y-0 right-0 z-50 h-full w-full border-l border-slate-200 bg-white alusa-sheet-surface shadow-2xl sm:max-w-xl',
   left:
-    'fixed inset-y-0 left-0 z-50 h-full w-full border-r border-slate-200 bg-white shadow-2xl sm:max-w-xl',
+    'fixed inset-y-0 left-0 z-50 h-full w-full border-r border-slate-200 bg-white alusa-sheet-surface shadow-2xl sm:max-w-xl',
 };
 
 const SheetContent = React.forwardRef<
@@ -49,7 +49,7 @@ const SheetContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900">
+      <DialogPrimitive.Close className="alusa-sheet-close-btn absolute right-4 top-4 rounded-full p-1 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900">
         <X className="h-4 w-4" />
         <span className="sr-only">Fechar</span>
       </DialogPrimitive.Close>
@@ -62,7 +62,7 @@ const SheetHeader = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn('flex flex-col space-y-1.5 border-b border-slate-100 px-6 py-5', className)} {...props} />
+  <div className={cn('alusa-sheet-header flex flex-col space-y-1.5 border-b border-slate-100 px-6 py-5', className)} {...props} />
 );
 SheetHeader.displayName = 'SheetHeader';
 
@@ -70,7 +70,7 @@ const SheetFooter = ({
   className,
   ...props
 }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn('mt-auto flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4', className)} {...props} />
+  <div className={cn('alusa-sheet-footer mt-auto flex items-center justify-end gap-3 border-t border-slate-100 px-6 py-4', className)} {...props} />
 );
 SheetFooter.displayName = 'SheetFooter';
 
@@ -80,7 +80,7 @@ const SheetTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('text-lg font-semibold text-slate-900', className)}
+    className={cn('alusa-sheet-title text-lg font-semibold text-slate-900', className)}
     {...props}
   />
 ));
