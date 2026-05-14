@@ -23,7 +23,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -477,12 +476,21 @@ export function InventoryFeature() {
       </TableLayout>
 
       <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Adicionar estoque</DialogTitle>
-            <DialogDescription>Use quando novos itens chegaram ao estoque.</DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-2xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+              Adicionar estoque
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
+              Use quando novos itens chegaram ao estoque.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
             <div className="space-y-2">
               <label className="text-xs font-medium text-gray-500">Produto</label>
               <Select
@@ -563,31 +571,45 @@ export function InventoryFeature() {
                 placeholder="Ex: compra recebida pela secretaria"
               />
             </div>
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+                onClick={() => setEntryOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleRegisterEntry()}
+                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[180px]"
+              >
+                Adicionar ao estoque
+              </Button>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEntryOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void handleRegisterEntry()}
-              className="bg-brand-accent text-white hover:bg-brand-accent/90"
-            >
-              Adicionar ao estoque
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Corrigir contagem</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-2xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+              Corrigir contagem
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
               Use quando o estoque físico contado for diferente do sistema.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
             <div className="space-y-2">
               <label className="text-xs font-medium text-gray-500">Produto</label>
               <Select value={adjustForm.targetKey} onValueChange={handleAdjustTargetChange}>
@@ -690,19 +712,26 @@ export function InventoryFeature() {
                 placeholder="Ex: contagem feita no fechamento do dia"
               />
             </div>
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+                onClick={() => setAdjustOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleAdjustInventory()}
+                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[160px]"
+              >
+                Salvar correção
+              </Button>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAdjustOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void handleAdjustInventory()}
-              className="bg-brand-accent text-white hover:bg-brand-accent/90"
-            >
-              Salvar correção
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

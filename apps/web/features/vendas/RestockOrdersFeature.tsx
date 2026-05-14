@@ -18,7 +18,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -458,15 +457,22 @@ export function RestockOrdersFeature() {
       </TableLayout>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Nova reposição</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-2xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+              Nova reposição
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
               Use quando fez ou planejou uma compra que ainda pode chegar depois.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
+              <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <label className="text-xs font-medium text-gray-500">Fornecedor opcional</label>
                 <Input
@@ -483,8 +489,8 @@ export function RestockOrdersFeature() {
                 </label>
                 <DatePicker value={expectedAt} onChange={setExpectedAt} variant="input" />
               </div>
-            </div>
-            <div className="space-y-2">
+              </div>
+              <div className="space-y-2">
               <label className="text-xs font-medium text-gray-500">Observação opcional</label>
               <Textarea
                 rows={3}
@@ -492,8 +498,8 @@ export function RestockOrdersFeature() {
                 onChange={(event) => setNotes(event.target.value)}
                 placeholder="Ex: pedido feito por WhatsApp"
               />
-            </div>
-            <div className="space-y-3">
+              </div>
+              <div className="space-y-3">
               <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500">
                 Produtos da reposição
                 <LabelWithTooltip tooltip="Essas quantidades aparecem como “em compra” até serem recebidas.">
@@ -579,82 +585,103 @@ export function RestockOrdersFeature() {
               >
                 Adicionar produto
               </Button>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleCreateOrder()}
+                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[180px]"
+              >
+                Criar reposição
+              </Button>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void handleCreateOrder()}
-              className="bg-brand-accent text-white hover:bg-brand-accent/90"
-            >
-              Criar reposição
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(receiveOrder)} onOpenChange={(open) => !open && setReceiveOrder(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Receber reposição</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-2xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+              Receber reposição
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
               Informe apenas o que chegou fisicamente agora. Recebimentos parciais continuam
               pendentes para depois.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            {receiveOrder?.items
-              .filter((item) => item.quantityPending > 0)
-              .map((item) => (
-                <div
-                  key={item.id}
-                  className="grid gap-3 rounded-xl border border-gray-200 p-3 md:grid-cols-[1fr,150px,150px]"
-                >
-                  <div>
-                    <div className="font-normal text-[13px] text-gray-900">
-                      {item.productName}
-                      {item.variantTitle ? ` · ${item.variantTitle}` : ''}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
+              {receiveOrder?.items
+                .filter((item) => item.quantityPending > 0)
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    className="grid gap-3 rounded-xl border border-gray-200 p-3 md:grid-cols-[1fr,150px,150px]"
+                  >
+                    <div>
+                      <div className="font-normal text-[13px] text-gray-900">
+                        {item.productName}
+                        {item.variantTitle ? ` · ${item.variantTitle}` : ''}
+                      </div>
+                      <div className="text-xs text-gray-500">Pendente: {item.quantityPending}</div>
                     </div>
-                    <div className="text-xs text-gray-500">Pendente: {item.quantityPending}</div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-gray-500">Recebido agora</label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max={item.quantityPending}
+                        value={receiptValues[item.id] ?? '0'}
+                        onChange={(event) =>
+                          setReceiptValues((current) => ({
+                            ...current,
+                            [item.id]: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 text-sm text-gray-500">
+                      <span className="block text-xs font-medium text-gray-500">Custo estimado</span>
+                      <span>{formatInventoryCurrency(Number(item.estimatedUnitCost ?? 0))}</span>
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-gray-500">Recebido agora</label>
-                    <Input
-                      type="number"
-                      min="0"
-                      max={item.quantityPending}
-                      value={receiptValues[item.id] ?? '0'}
-                      onChange={(event) =>
-                        setReceiptValues((current) => ({
-                          ...current,
-                          [item.id]: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1 text-sm text-gray-500">
-                    <span className="block text-xs font-medium text-gray-500">Custo estimado</span>
-                    <span>{formatInventoryCurrency(Number(item.estimatedUnitCost ?? 0))}</span>
-                  </div>
-                </div>
-              ))}
+                ))}
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+                onClick={() => setReceiveOrder(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleReceiveOrder()}
+                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[200px]"
+              >
+                <CheckCircle className="mr-2 h-4 w-4" />
+                Confirmar recebimento
+              </Button>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReceiveOrder(null)}>
-              Cancelar
-            </Button>
-            <Button
-              disabled={submitting}
-              onClick={() => void handleReceiveOrder()}
-              className="bg-brand-accent text-white hover:bg-brand-accent/90"
-            >
-              <CheckCircle className="mr-2 h-4 w-4" />
-              Confirmar recebimento
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

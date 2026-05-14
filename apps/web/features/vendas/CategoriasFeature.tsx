@@ -209,39 +209,54 @@ export function CategoriasFeature() {
 
       {/* Dialog criar */}
       <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) setCreateOpen(open); }}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle>Nova categoria</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 sm:max-w-[400px] md:rounded-2xl"
+        >
+          <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] sm:px-6 sm:py-5">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 sm:pr-0">
+              Nova categoria
+            </DialogTitle>
+            <DialogDescription className="pt-1 text-sm text-slate-600">
               Insira o nome da categoria. Ele deve ser único dentro da sua conta.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Input
-              autoFocus
-              placeholder="Ex.: Roupas, Acessórios..."
-              value={newName}
-              onChange={(e) => { setNewName(e.target.value); setCreateError(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate(); }}
-              disabled={creating}
-            />
-            {createError && (
-              <p className="text-xs font-medium text-red-600">{createError}</p>
-            )}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4 max-md:min-h-0 sm:px-6 sm:py-5">
+              <Input
+                autoFocus
+                placeholder="Ex.: Roupas, Acessórios..."
+                value={newName}
+                onChange={(e) => { setNewName(e.target.value); setCreateError(null); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate(); }}
+                disabled={creating}
+              />
+              {createError && (
+                <p className="text-xs font-medium text-red-600">{createError}</p>
+              )}
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-6 sm:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 bg-white shadow-none hover:bg-slate-100 sm:h-10 sm:min-h-0 sm:w-auto"
+                onClick={() => setCreateOpen(false)}
+                disabled={creating}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 sm:h-10 sm:min-h-0 sm:w-auto sm:min-w-[120px]"
+                onClick={() => void handleCreate()}
+                disabled={creating || !newName.trim()}
+              >
+                {creating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Criar
+              </Button>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>
-              Cancelar
-            </Button>
-            <Button
-              className="bg-brand-accent text-white hover:bg-brand-accent/90"
-              onClick={() => void handleCreate()}
-              disabled={creating || !newName.trim()}
-            >
-              {creating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-              Criar
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
