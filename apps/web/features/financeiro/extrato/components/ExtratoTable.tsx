@@ -23,28 +23,49 @@ export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: E
       <table className="min-w-full divide-y divide-gray-100">
         <thead>
           <tr className="bg-gray-50">
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th
+              scope="col"
+              className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider lg:px-6 lg:py-3"
+            >
               Cliente
             </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[160px]">
+            <th
+              scope="col"
+              className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell lg:w-[160px]"
+            >
               Cobrança
             </th>
-            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th
+              scope="col"
+              className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell"
+            >
               Data
             </th>
-            <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th
+              scope="col"
+              className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell"
+            >
               Valor
             </th>
-            <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <th
+              scope="col"
+              className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell"
+            >
               Taxa
             </th>
-            <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[130px]">
+            <th
+              scope="col"
+              className="hidden w-[130px] px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell"
+            >
               Tipo
             </th>
-            <th scope="col" className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-[120px]">
+            <th
+              scope="col"
+              className="hidden w-[120px] px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider lg:table-cell"
+            >
               Status
             </th>
-            <th scope="col" className="w-[36px] px-4 py-3" />
+            <th scope="col" className="w-9 px-2 py-3 lg:w-[36px] lg:px-4" />
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-200 bg-white">
@@ -73,44 +94,68 @@ export function ExtratoTable({ entries, loading, hasActiveFilters, onSelect }: E
                 className="cursor-pointer transition-colors hover:bg-gray-50 group"
                 onClick={() => onSelect(entry)}
               >
-                <td className="px-6 py-4">
+                <td className="px-3 py-4 lg:px-6">
                   <div className="flex items-center gap-3">
                     <span className={`inline-flex h-2 w-2 shrink-0 rounded-full ${isPositive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                     <div className="min-w-0">
-                        <span className="block text-sm font-medium text-gray-900">
-                          {formatClientName(resolveDisplayCustomer(entry))}
-                        </span>
+                      <span className="block text-sm font-medium text-gray-900">
+                        {formatClientName(resolveDisplayCustomer(entry))}
+                      </span>
+                      <div className="mt-1 space-y-1 lg:hidden">
+                        <p className="truncate text-xs text-gray-500">{resolveDisplayReference(entry)}</p>
+                        <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                          <CalendarDaysIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                          {formatDate(entry.date)}
+                        </p>
+                        <p
+                          className={`text-xs font-medium ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}
+                        >
+                          {isPositive ? '+' : '-'} {formatCurrency(entry.grossValue, { absolute: true })}
+                          <span className="font-normal text-gray-500">
+                            {' '}
+                            · Taxa {formatFee(entry, relatedTransferFees)}
+                          </span>
+                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant={getTypeBadgeVariant(entry.type)} className="text-[10px]">
+                            {formatTypeLabel(entry.type)}
+                          </Badge>
+                          <Badge variant={getStatusBadgeVariant(entry.status)} className="text-[10px]">
+                            {formatStatusLabel(entry.status)}
+                          </Badge>
+                        </div>
                       </div>
+                    </div>
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 truncate max-w-[160px]">
+                <td className="hidden max-w-[160px] whitespace-nowrap px-6 py-4 text-sm text-gray-500 lg:table-cell truncate">
                   {resolveDisplayReference(entry)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-gray-500 text-sm">
+                <td className="hidden whitespace-nowrap px-6 py-4 text-sm text-gray-500 lg:table-cell">
                   <div className="flex items-center gap-2">
                     <CalendarDaysIcon className="h-4 w-4 text-gray-400" />
                     {formatDate(entry.date)}
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm lg:table-cell">
                   <span className={`font-medium ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
                     {isPositive ? '+' : '-'} {formatCurrency(entry.grossValue, { absolute: true })}
                   </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
+                <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm text-gray-500 lg:table-cell">
                   {formatFee(entry, relatedTransferFees)}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">
+                <td className="hidden whitespace-nowrap px-6 py-4 text-center lg:table-cell">
                   <Badge variant={getTypeBadgeVariant(entry.type)}>
                     {formatTypeLabel(entry.type)}
                   </Badge>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center">
+                <td className="hidden whitespace-nowrap px-6 py-4 text-center lg:table-cell">
                   <Badge variant={getStatusBadgeVariant(entry.status)}>
                     {formatStatusLabel(entry.status)}
                   </Badge>
                 </td>
-                <td className="px-4 py-4 text-right text-slate-300 transition-colors group-hover:text-slate-500">
+                <td className="px-2 py-4 text-right text-slate-300 transition-colors group-hover:text-slate-500 lg:px-4">
                   <ChevronRightIcon className="h-4 w-4" />
                 </td>
               </tr>

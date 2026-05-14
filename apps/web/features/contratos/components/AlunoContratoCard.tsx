@@ -23,12 +23,12 @@ export function AlunoContratoCard({ aluno, onClick, className }: AlunoContratoCa
       type="button"
       onClick={() => onClick(aluno.id)}
       className={cn(
-        'group flex w-full items-center justify-between gap-4 rounded-2xl border border-gray-200 bg-white px-5 py-4 text-left shadow-sm transition-colors duration-200 hover:bg-gray-50',
+        'group flex w-full items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm transition-colors duration-200 hover:bg-gray-50 lg:gap-4 lg:rounded-2xl lg:px-5 lg:py-4',
         className,
       )}
     >
-      <div className="flex items-center gap-4">
-        <Avatar className="h-11 w-11">
+      <div className="flex items-center gap-3 lg:gap-4">
+        <Avatar className="h-10 w-10 shrink-0 lg:h-11 lg:w-11">
           <AvatarImage src={aluno.foto ?? ''} alt={aluno.nome} />
           <AvatarFallback className="bg-brand-accent text-white">
             {formatInitials(aluno.nome)}

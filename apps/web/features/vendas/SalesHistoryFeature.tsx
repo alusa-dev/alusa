@@ -152,31 +152,57 @@ export function SalesHistoryFeature() {
       {
         id: 'numero',
         header: 'Venda',
-        width: 'w-[9%]',
+        width: 'min-w-0 lg:w-[14%]',
         align: 'left',
         render: (sale) => (
-          <span className="font-medium text-slate-900">{formatSaleNumber(sale.saleNumber)}</span>
+          <div className="min-w-0">
+            <span className="font-medium text-slate-900">{formatSaleNumber(sale.saleNumber)}</span>
+            <div className="mt-1 space-y-0.5 lg:hidden">
+              <p className="text-xs text-slate-600">{formatDateBR(sale.createdAt)}</p>
+              <p className="truncate text-xs text-slate-600">{formatProductSummary(sale)}</p>
+              <p className="truncate text-xs font-medium text-slate-900">
+                {formatFirstLast(sale.customer.displayName) || sale.customer.displayName}
+              </p>
+              <p className="text-xs font-semibold text-slate-900">{formatCurrencyBRL(sale.total)}</p>
+              <p className="line-clamp-2 text-[11px] text-slate-500">{formatPaymentSummary(sale)}</p>
+              {sale.grossProfit != null ? (
+                <p
+                  className={
+                    sale.grossProfit >= 0 ? 'text-xs font-semibold text-emerald-700' : 'text-xs font-semibold text-red-700'
+                  }
+                >
+                  Lucro {formatCurrencyBRL(sale.grossProfit)}
+                </p>
+              ) : null}
+            </div>
+          </div>
         ),
       },
       {
         id: 'data',
         header: 'Data',
-        width: 'w-[12%]',
+        width: 'lg:w-[12%]',
         align: 'left',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => <span className="text-slate-700">{formatDateBR(sale.createdAt)}</span>,
       },
       {
         id: 'produto',
         header: 'Produto',
-        width: 'w-[18%]',
+        width: 'lg:w-[18%]',
         align: 'left',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => <span className="text-slate-700">{formatProductSummary(sale)}</span>,
       },
       {
         id: 'cliente',
         header: 'Cliente',
-        width: 'w-[17%]',
+        width: 'lg:w-[17%]',
         align: 'left',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => (
           <span className="font-medium text-slate-900">
             {formatFirstLast(sale.customer.displayName) || sale.customer.displayName}
@@ -186,15 +212,19 @@ export function SalesHistoryFeature() {
       {
         id: 'pagamento',
         header: 'Pagamento',
-        width: 'w-[18%]',
+        width: 'lg:w-[18%]',
         align: 'left',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => <span className="text-slate-700">{formatPaymentSummary(sale)}</span>,
       },
       {
         id: 'total',
         header: 'Total',
-        width: 'w-[10%]',
+        width: 'lg:w-[10%]',
         align: 'right',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => (
           <span className="font-semibold text-slate-900">{formatCurrencyBRL(sale.total)}</span>
         ),
@@ -202,8 +232,10 @@ export function SalesHistoryFeature() {
       {
         id: 'lucro',
         header: 'Lucro',
-        width: 'w-[10%]',
+        width: 'lg:w-[10%]',
         align: 'right',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (sale) => {
           if (sale.grossProfit == null) {
             return <span className="text-slate-300">—</span>;
@@ -225,8 +257,10 @@ export function SalesHistoryFeature() {
       {
         id: 'status',
         header: 'Status',
-        width: 'w-[11%]',
+        width: 'w-[36%] max-lg:shrink-0 lg:w-[11%]',
         align: 'left',
+        headerClassName: 'max-lg:px-2',
+        cellClassName: 'max-lg:px-2',
         render: (sale) => <SaleStatusBadge status={sale.status} />,
       },
     ],
@@ -250,7 +284,7 @@ export function SalesHistoryFeature() {
         actions={
           <Button
             asChild
-            className="h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
           >
             <Link href="/vendas/nova">Nova venda</Link>
           </Button>
@@ -258,7 +292,7 @@ export function SalesHistoryFeature() {
         filtersBar={
           <div className="flex w-full flex-col gap-3">
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative min-w-0 w-full sm:flex-1 xl:max-w-[420px]">
+              <div className="relative min-w-0 w-full flex-1 lg:max-w-[420px]">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   placeholder="Buscar por cliente, número da venda ou produto"
@@ -268,12 +302,12 @@ export function SalesHistoryFeature() {
                 />
               </div>
 
-              <div className="flex flex-nowrap items-center gap-2 sm:ml-auto sm:justify-end">
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:flex-nowrap sm:items-center sm:justify-end sm:gap-2 sm:ml-auto">
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
-                      className="h-10 shrink-0 whitespace-nowrap rounded-xl border-slate-200 px-4 shadow-none"
+                      className="h-10 w-full min-w-0 shrink-0 rounded-xl border-slate-200 px-4 shadow-none sm:w-auto"
                     >
                       <Filter className="mr-2 h-4 w-4" />
                       {activeFilters > 0 ? `Filtros (${activeFilters})` : 'Filtros'}
@@ -379,7 +413,7 @@ export function SalesHistoryFeature() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 shrink-0 whitespace-nowrap rounded-xl border-slate-200 px-4 shadow-none"
+                  className="col-span-2 h-10 w-full rounded-xl border-slate-200 px-4 shadow-none sm:col-span-1 sm:w-auto"
                   onClick={clearFilters}
                   disabled={!hasRefinements}
                 >
@@ -438,7 +472,7 @@ export function SalesHistoryFeature() {
         footer={<Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />}
       >
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-6">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">Registros da Loja</h2>
               <p className="mt-1 text-xs text-slate-500">

@@ -27,6 +27,8 @@ import useCurrentUser from '@/hooks/use-current-user';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
 import { formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
 import { actionsColumn } from '@alusa/ui/datatable/columns';
+import { cn } from '@/lib/utils';
+import { table } from '@/components/layout/TableStyles';
 
 import { useResponsaveis } from './hooks/use-responsaveis';
 import { createResponsavel, type ResponsavelListItem } from './services/responsaveis-service';
@@ -133,7 +135,7 @@ export function ResponsaveisFeature() {
         <>
           <Button
             onClick={() => setDialogOpen(true)}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             disabled={!user?.contaId}
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
@@ -157,7 +159,7 @@ export function ResponsaveisFeature() {
         <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
       }
     >
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className={table.container}>
         <ResponsaveisTable
           responsaveis={paginated}
           loading={loading || userLoading}
@@ -301,31 +303,43 @@ function ResponsaveisTable({
     {
       id: 'responsavel',
       header: 'Responsável',
-      width: 'w-[32%]',
+      width: 'min-w-0 lg:w-[32%]',
       align: 'left',
       noWrap: false,
       skeleton: (
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-gray-200" />
-          <div className="h-4 w-40 bg-gray-200 rounded" />
+        <div className="flex items-center gap-2 lg:gap-3">
+          <div className="h-9 w-9 shrink-0 rounded-full bg-gray-200 lg:h-10 lg:w-10" />
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-40 rounded bg-gray-200" />
+            <div className="h-3 w-28 rounded bg-gray-200 lg:hidden" />
+          </div>
         </div>
       ),
       render: (responsavel) => (
-        <div className="flex items-center gap-3 min-w-0">
-          <Avatar className="h-10 w-10 shrink-0">
-            <AvatarFallback className="bg-violet-100 text-violet-700 font-medium">
+        <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+          <Avatar className="h-9 w-9 shrink-0 lg:h-10 lg:w-10">
+            <AvatarFallback className="bg-violet-100 font-medium text-violet-700">
               {formatInitials(responsavel.nome ?? '')}
             </AvatarFallback>
           </Avatar>
-          <div className="min-w-0 truncate font-normal text-gray-900 text-[13px]">{responsavel.nome}</div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[13px] font-normal text-gray-900">
+              {responsavel.nome}
+            </div>
+            <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
+              {responsavel.cpf ? maskCpf(responsavel.cpf) : '—'}
+            </div>
+          </div>
         </div>
       ),
     },
     {
       id: 'vinculos',
       header: 'Alunos',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (responsavel) => {
         const count = responsavel.alunosCount ?? 0;
         if (count === 0) {
@@ -337,14 +351,15 @@ function ResponsaveisTable({
           </Badge>
         );
       },
-      skeleton: <div className="h-6 w-14 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-6 w-14 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'cpf',
       header: 'CPF',
-      width: 'w-[14%]',
+      width: 'lg:w-[14%]',
       align: 'center',
-      cellClassName: 'overflow-hidden',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell overflow-hidden',
       render: (responsavel) => (
         <span
           className="block w-full truncate tabular-nums leading-5 text-gray-900"
@@ -353,15 +368,15 @@ function ResponsaveisTable({
           {responsavel.cpf ? maskCpf(responsavel.cpf) : '-'}
         </span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'email',
       header: 'E-mail',
-      width: 'w-[22%]',
+      width: 'lg:w-[22%]',
       align: 'left',
-      headerClassName: 'pl-6 pr-2',
-      cellClassName: 'overflow-hidden pl-6 pr-2',
+      headerClassName: 'hidden lg:table-cell pl-6 pr-2',
+      cellClassName: 'hidden lg:table-cell overflow-hidden pl-6 pr-2',
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] leading-5 text-gray-900"
@@ -370,15 +385,15 @@ function ResponsaveisTable({
           {responsavel.email?.trim() || '—'}
         </span>
       ),
-      skeleton: <div className="h-4 w-36 max-w-full bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 max-w-full w-36 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'telefone',
       header: 'Telefone',
-      width: 'w-[14%]',
+      width: 'lg:w-[14%]',
       align: 'left',
-      headerClassName: 'pl-2 pr-6',
-      cellClassName: 'overflow-hidden pl-2 pr-6',
+      headerClassName: 'hidden lg:table-cell pl-2 pr-6',
+      cellClassName: 'hidden lg:table-cell overflow-hidden pl-2 pr-6',
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900"
@@ -387,29 +402,31 @@ function ResponsaveisTable({
           {maskPhone(responsavel.telefone) || '—'}
         </span>
       ),
-      skeleton: <div className="h-4 w-28 bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 w-28 rounded bg-gray-200 lg:block" />,
     },
-    {
-      ...actionsColumn<ResponsavelListItem>({
+    (() => {
+      const col = actionsColumn<ResponsavelListItem>({
         onEdit: onOpenDetail,
         editLabel: 'Ver detalhes',
         editButtonAriaLabel: (responsavel) => `Ver responsável ${responsavel.nome}`,
         editIcon: <Eye className="h-4 w-4" />,
         skeleton: (
           <div className="flex justify-center">
-            <div className="h-8 w-8 bg-gray-200 rounded" />
+            <div className="h-8 w-8 rounded bg-gray-200" />
           </div>
         ),
-      }),
-      width: 'w-[8%]',
-      headerClassName: undefined,
-      cellClassName: undefined,
-    },
+      });
+      return {
+        ...col,
+        width: 'w-[3.25rem] max-lg:shrink-0 lg:w-[8%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (
     <DataTable
-      tableClassName="min-w-[1040px] table-fixed"
       columns={columns}
       data={responsaveis}
       rowKey={(responsavel) => responsavel.id}

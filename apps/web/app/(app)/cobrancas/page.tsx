@@ -14,7 +14,6 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -23,23 +22,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Plus,
-  Search,
-  Filter,
-  CheckCircle,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-} from '@/components/icons/icons';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@/components/icons/icons';
+import TableLayout from '@/components/layout/TableLayout';
+import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
+import { Badge, type BadgeVariant, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -63,6 +49,29 @@ const getTipoLabel = (tipo: string) => {
   };
   return labels[tipo] || tipo;
 };
+
+/** Rótulos curtos para listagens (evita badge largo tipo "Aguardando Pagamento"). */
+function getChargeBadgePresentation(mapped: StatusType): { variant: BadgeVariant; label: string } {
+  if (['CONFIRMED', 'RECEIVED', 'PAGO', 'MANUAL', 'RECEIVED_IN_CASH', 'CONCLUIDO'].includes(mapped)) {
+    return { variant: 'success', label: 'Pago' };
+  }
+  if (mapped === 'FAILED') {
+    return { variant: 'destructive', label: 'Falha' };
+  }
+  if (['OVERDUE', 'ATRASADO'].includes(mapped)) {
+    return { variant: 'destructive', label: 'Atrasado' };
+  }
+  if (['CANCELED', 'CANCELADO', 'EXPIRADO', 'CANCELADA'].includes(mapped)) {
+    return { variant: 'neutral', label: 'Cancelado' };
+  }
+  if (['REFUNDED', 'ESTORNADO', 'REFUND_REQUESTED', 'ESTORNADO_PARCIAL'].includes(mapped)) {
+    return { variant: 'neutral', label: 'Estorno' };
+  }
+  if (mapped === 'PROCESSANDO') {
+    return { variant: 'info', label: 'Processando' };
+  }
+  return { variant: 'warning', label: 'Pendente' };
+}
 
 type Cobranca = {
   id: string;
@@ -95,7 +104,7 @@ export default function CobrancasTodasPage() {
   const searchParams = useSearchParams();
   const statusView = searchParams.get('view') || 'open';
   const shouldOpenCreateModal = searchParams.get('new') === '1';
-  const [sortOrder, setSortOrder] = useState<'DESC' | 'ASC'>('DESC');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
 
   const actionLoading = false;
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
@@ -270,162 +279,137 @@ export default function CobrancasTodasPage() {
   }, []);
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
-            Todas as Cobranças
-          </h1>
-          <p className="text-[13px] text-gray-500">
-            Visão operacional de todas as cobranças da instituição.
-          </p>
-        </div>
-        <div className="flex justify-start md:justify-end">
-          <AsaasSeal variant="negativo-preto" />
-        </div>
-      </div>
-      {/* Barra de ações e filtros */}
-      <div className="bg-white rounded-xl border px-6 py-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3 flex-wrap">
-            <Button
-              onClick={handleCreateCharge}
-              className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
-              aria-label="Gerar nova cobrança"
-              disabled={actionLoading}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Nova cobrança
-            </Button>
-          </div>
-          <div className="flex-1 md:flex-none w-full md:w-auto">
-            <div className="flex w-full flex-col gap-3 md:flex-row md:items-center">
-              <div className="flex items-center gap-3 flex-wrap md:flex-nowrap">
-                {/* Filtro de Ordenação */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="h-10 px-4 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-none"
-                    >
-                      <Filter className="h-4 w-4 mr-2" /> Filtro
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">
-                      Ordenar por vencimento
-                    </div>
-                    <DropdownMenuItem
-                      onClick={() => setSortOrder('DESC')}
-                      className={'justify-between ' + (sortOrder === 'DESC' ? 'text-brand-accent' : '')}
-                    >
-                      Mais recente primeiro
-                      {sortOrder === 'DESC' ? <CheckCircle className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setSortOrder('ASC')}
-                      className={'justify-between ' + (sortOrder === 'ASC' ? 'text-brand-accent' : '')}
-                    >
-                      Mais antigo primeiro
-                      {sortOrder === 'ASC' ? <CheckCircle className="h-4 w-4" /> : null}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                {/* Filtro de Tipo */}
-                <Select value={tipoFilter} onValueChange={(value) => setTipoFilter(value)}>
-                  <SelectTrigger className="h-10 w-full md:w-auto md:min-w-[150px] md:max-w-[190px] shrink-0 whitespace-nowrap bg-white text-gray-700 border border-gray-300 shadow-none px-3">
-                    <SelectValue placeholder="Todos os tipos" />
-                  </SelectTrigger>
-                  <SelectContent align="end" className="text-[13px]">
-                    <SelectItem value="TODOS">Todos os tipos</SelectItem>
-                    <SelectItem value="MENSALIDADE">Mensalidade</SelectItem>
-                    <SelectItem value="TAXA_MATRICULA">Taxa de Matrícula</SelectItem>
-                    <SelectItem value="EXTRA">Extra</SelectItem>
-                    <SelectItem value="AVULSA">Avulsa</SelectItem>
-                    <SelectItem value="PARCELADA">Parcelamento</SelectItem>
-                    <SelectItem value="RECORRENTE">Assinatura</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {/* Filtro de Visualização */}
-                <Select value={statusView} onValueChange={handleStatusViewChange}>
-                  <SelectTrigger className="h-10 w-full md:w-auto md:min-w-[150px] md:max-w-[190px] shrink-0 whitespace-nowrap bg-white text-gray-700 border border-gray-300 shadow-none px-3">
-                    <SelectValue placeholder="Em aberto" />
-                  </SelectTrigger>
-                  <SelectContent align="end" className="text-[13px]">
-                    <SelectItem value="open">Em aberto</SelectItem>
-                    <SelectItem value="paid">Pagas</SelectItem>
-                    <SelectItem value="all">Todas</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Busca */}
-              <div className="relative w-full md:ml-auto md:flex-1 md:max-w-[360px] lg:max-w-[420px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Buscar por aluno ou descrição..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-10 pl-10 border border-gray-300 shadow-none"
-                />
-              </div>
+    <TableLayout
+      className="min-w-0 max-w-full pb-6"
+      title="Todas as Cobranças"
+      subtitle="Visão operacional de todas as cobranças da instituição."
+      actions={
+        <Button
+          onClick={handleCreateCharge}
+          className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+          aria-label="Gerar nova cobrança"
+          disabled={actionLoading}
+        >
+          <Plus className="mr-2 h-4 w-4 transition-none" />
+          Nova cobrança
+        </Button>
+      }
+      filtersBar={
+        <EntityFiltersBar
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="Buscar por aluno ou descrição..."
+          statusValue="TODOS"
+          onStatusChange={() => {}}
+          hideStatusFilter
+          sortOrder={sortOrder}
+          onSortChange={setSortOrder}
+          sortMenuTitle="Ordenar por vencimento"
+          sortAscLabel="Mais antigo primeiro"
+          sortDescLabel="Mais recente primeiro"
+          extraLeft={
+            <div className="grid min-w-0 w-full grid-cols-2 gap-2 lg:flex lg:w-auto lg:shrink-0 lg:gap-2">
+              <Select value={tipoFilter} onValueChange={setTipoFilter}>
+                <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+                  <SelectValue placeholder="Todos os tipos" />
+                </SelectTrigger>
+                <SelectContent align="end" className="text-[13px]">
+                  <SelectItem value="TODOS">Todos os tipos</SelectItem>
+                  <SelectItem value="MENSALIDADE">Mensalidade</SelectItem>
+                  <SelectItem value="TAXA_MATRICULA">Taxa de Matrícula</SelectItem>
+                  <SelectItem value="EXTRA">Extra</SelectItem>
+                  <SelectItem value="AVULSA">Avulsa</SelectItem>
+                  <SelectItem value="PARCELADA">Parcelamento</SelectItem>
+                  <SelectItem value="RECORRENTE">Assinatura</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={statusView} onValueChange={handleStatusViewChange}>
+                <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
+                  <SelectValue placeholder="Em aberto" />
+                </SelectTrigger>
+                <SelectContent align="end" className="text-[13px]">
+                  <SelectItem value="open">Em aberto</SelectItem>
+                  <SelectItem value="paid">Pagas</SelectItem>
+                  <SelectItem value="all">Todas</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabela */}
-      <div className="bg-white rounded-xl border overflow-hidden">
+          }
+        />
+      }
+      footer={
+        <>
+          {orderedCobrancas.length > 0 ? (
+            <Pagination
+              totalItems={orderedCobrancas.length}
+              pageSize={pageSize}
+              page={page}
+              onChange={setPage}
+            />
+          ) : null}
+          <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8">
+            <AsaasSeal variant="negativo-preto" />
+          </footer>
+        </>
+      }
+    >
+      <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
         {loading ? (
           <>
-            <div className="bg-gray-50 px-6 py-3 border-b">
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
-                <Skeleton className="col-span-3 h-4" />
-                <Skeleton className="col-span-2 h-4" />
+                <Skeleton className="col-span-4 h-4" />
                 <Skeleton className="col-span-2 h-4" />
                 <Skeleton className="col-span-2 h-4" />
                 <Skeleton className="col-span-2 h-4" />
                 <Skeleton className="col-span-1 h-4" />
+                <Skeleton className="col-span-1 h-4" />
               </div>
             </div>
+            <div className="divide-y lg:hidden">
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="min-w-0 space-y-2 px-4 py-3 sm:px-5">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                  <Skeleton className="h-3 w-full" />
+                </div>
+              ))}
+            </div>
             {[...Array(5)].map((_, i) => (
-              <div key={i} className="px-6 py-3">
-                <div className="grid grid-cols-12 gap-4 items-center">
-                  <Skeleton className="col-span-3 h-4 w-40" />
+              <div key={i} className="hidden px-6 py-3 lg:block">
+                <div className="grid grid-cols-12 items-center gap-4">
+                  <Skeleton className="col-span-4 h-4 w-40" />
                   <Skeleton className="col-span-2 h-4 w-24" />
                   <Skeleton className="col-span-2 h-4 w-28" />
                   <Skeleton className="col-span-2 h-4 w-24" />
-                  <Skeleton className="col-span-2 h-6 w-20 rounded-full" />
-                  <Skeleton className="col-span-1 h-8 w-8" />
+                  <Skeleton className="col-span-1 h-6 w-16 rounded-full" />
+                  <Skeleton className="col-span-1 h-8 w-8 justify-self-center" />
                 </div>
               </div>
             ))}
           </>
         ) : (
           <>
-            <div className="bg-gray-50 px-6 py-3 border-b">
-              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
-                <div className="col-span-3">Nome</div>
+            <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
+              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium uppercase tracking-wider text-gray-500">
+                <div className="col-span-4">Nome</div>
                 <div className="col-span-2 text-center">Valor</div>
                 <div className="col-span-2 text-center">Tipo</div>
                 <div className="col-span-2 text-center">Vencimento</div>
-                <div className="col-span-2 text-center">Status</div>
+                <div className="col-span-1 text-center">Status</div>
                 <div className="col-span-1 text-center">Ações</div>
               </div>
             </div>
 
-            <div className="divide-y">
+            <div className="min-w-0 divide-y">
               {orderedCobrancas.length === 0 ? (
-                <div className="px-6 py-12 text-center text-gray-500">
-                  Nenhuma cobrança encontrada
-                </div>
+                <div className="px-6 py-12 text-center text-gray-500">Nenhuma cobrança encontrada</div>
               ) : (
                 orderedCobrancas.slice((page - 1) * pageSize, page * pageSize).map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
+                  const mappedStatus = (statusMap[cobranca.status ?? 'PENDING'] ?? 'PENDING') as StatusType;
+                  const badge = getChargeBadgePresentation(mappedStatus);
 
                   const handleRowClick = () => {
                     if (isInstallmentGroup && cobranca.groupId) {
@@ -438,70 +422,151 @@ export default function CobrancasTodasPage() {
                   return (
                     <div key={cobranca.id}>
                       <div
-                        className={`px-6 py-3 hover:bg-gray-50 transition-colors cursor-pointer ${isInstallmentGroup ? 'bg-gray-50/50' : 'bg-white'}`}
+                        className={`cursor-pointer transition-colors hover:bg-gray-50 ${
+                          isInstallmentGroup ? 'bg-gray-50/50' : 'bg-white'
+                        }`}
                         onClick={handleRowClick}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleRowClick();
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                       >
-                        <div className="grid grid-cols-12 gap-4 items-center">
-                          <div className="col-span-3 flex items-center gap-2">
-                            <div className="min-w-0">
-                              <div className="font-medium text-gray-900 text-[13px] truncate">
-                                {cobranca.payerName ?? '-'}
+                        {/* Mobile: uma coluna — valor, tipo e vencimento em linha auxiliar */}
+                        <div className="flex min-w-0 w-full max-w-full gap-2 px-4 py-3 box-border sm:gap-3 sm:px-5 lg:hidden">
+                          <div className="min-w-0 flex-1 overflow-hidden">
+                            <div className="truncate text-[13px] font-medium text-gray-900">
+                              {cobranca.payerName ?? '—'}
+                            </div>
+                            {cobranca.description ? (
+                              <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-gray-500">
+                                {cobranca.description}
                               </div>
-                              {cobranca.description ? (
-                                <div className="truncate text-[11px] text-gray-500">
-                                  {cobranca.description}
-                                </div>
+                            ) : null}
+                            <div className="mt-2 space-y-1 text-[12px] text-gray-600">
+                              <div className="break-words font-semibold text-gray-900">
+                                {formatCurrency(cobranca.valor)}
+                                {isInstallmentGroup && cobranca.installmentCount ? (
+                                  <span className="ml-1 text-[11px] font-normal text-gray-500">
+                                    ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                                <span className="min-w-0 break-words text-gray-600">
+                                  {getTipoLabel(cobranca.tipo ?? '')}
+                                </span>
+                                <span className="shrink-0 text-gray-300" aria-hidden>
+                                  ·
+                                </span>
+                                <span
+                                  className={`shrink-0 tabular-nums ${
+                                    isOverdue ? 'font-medium text-red-600' : 'text-gray-700'
+                                  }`}
+                                >
+                                  {formatDate(cobranca.vencimento ?? '')}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            className="flex w-14 shrink-0 flex-col items-end self-stretch sm:w-[3.75rem]"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <div className="shrink-0">
+                              {!isInstallmentGroup ? (
+                                <CobrancaActionsMenu
+                                  cobranca={{
+                                    id: cobranca.id,
+                                    status: (cobranca.status ?? '') as string,
+                                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
+                                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
+                                    matriculaId: cobranca.matriculaId ?? '',
+                                    formaPagamento: cobranca.formaPagamento ?? undefined,
+                                    atrasado: isOverdue,
+                                  }}
+                                  onPrint={() => handlePrint(cobranca)}
+                                  onActionComplete={() => load()}
+                                  variant="icon"
+                                />
                               ) : null}
                             </div>
-                          </div>
-                          <div className="col-span-2 text-[13px] text-gray-900 text-center font-semibold">
-                            {formatCurrency(cobranca.valor)}
-                            {isInstallmentGroup && cobranca.installmentCount && (
-                              <span className="text-[11px] text-gray-500 font-normal ml-1">
-                                ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
-                              </span>
-                            )}
-                          </div>
-                          <div className="col-span-2 text-[13px] text-gray-700 text-center">
-                            {getTipoLabel(cobranca.tipo ?? '')}
-                          </div>
-                          <div className="col-span-2 text-center">
-                            <div className={`text-[13px] ${isOverdue ? 'text-red-600 font-medium' : 'text-gray-700'}`}>
-                              {formatDate(cobranca.vencimento ?? '')}
+                            <div className="mt-auto shrink-0 pt-1">
+                              <Badge
+                                variant={badge.variant}
+                                size="sm"
+                                className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
+                              >
+                                {badge.label}
+                              </Badge>
                             </div>
                           </div>
-                          <div className="col-span-2 flex justify-center">
-                            <Badge
-                              status={(statusMap[cobranca.status ?? 'PENDING'] ?? 'PENDING') as StatusType}
+                        </div>
+
+                        {/* Desktop: grade completa */}
+                        <div className="hidden min-w-0 px-6 py-3 lg:block">
+                          <div className="grid min-w-0 grid-cols-12 items-center gap-4">
+                            <div className="col-span-4 flex min-w-0 items-center gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate text-[13px] font-medium text-gray-900">
+                                  {cobranca.payerName ?? '-'}
+                                </div>
+                                {cobranca.description ? (
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    {cobranca.description}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] font-semibold text-gray-900">
+                              {formatCurrency(cobranca.valor)}
+                              {isInstallmentGroup && cobranca.installmentCount && (
+                                <span className="ml-1 text-[11px] font-normal text-gray-500">
+                                  ({cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount})
+                                </span>
+                              )}
+                            </div>
+                            <div className="col-span-2 text-center text-[13px] text-gray-700">
+                              {getTipoLabel(cobranca.tipo ?? '')}
+                            </div>
+                            <div className="col-span-2 text-center">
+                              <div
+                                className={`text-[13px] ${isOverdue ? 'font-medium text-red-600' : 'text-gray-700'}`}
+                              >
+                                {formatDate(cobranca.vencimento ?? '')}
+                              </div>
+                            </div>
+                            <div className="col-span-1 flex justify-center">
+                              <Badge variant={badge.variant} size="sm">
+                                {badge.label}
+                              </Badge>
+                            </div>
+                            <div
+                              className="col-span-1 flex justify-center"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
                             >
-                              {(() => {
-                                const mapped = statusMap[cobranca.status ?? 'PENDING'] ?? 'PENDING';
-                                if (mapped === 'CONFIRMED') return 'Pago';
-                                if (mapped === 'OVERDUE') return 'Atrasado';
-                                if (mapped === 'PENDING') return 'Pendente';
-                                if (mapped === 'CANCELED') return 'Cancelado';
-                                if (mapped === 'REFUNDED') return 'Estornado';
-                                return cobranca.status ?? '';
-                              })()}
-                            </Badge>
-                          </div>
-                          <div className="col-span-1 flex justify-center">
-                            {!isInstallmentGroup && (
-                              <CobrancaActionsMenu
-                                cobranca={{
-                                  id: cobranca.id,
-                                  status: (cobranca.status ?? '') as string,
-                                  asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
-                                  invoiceUrl: cobranca.invoiceUrl ?? undefined,
-                                  matriculaId: cobranca.matriculaId ?? '',
-                                  formaPagamento: cobranca.formaPagamento ?? undefined,
-                                  atrasado: isOverdue,
-                                }}
-                                onPrint={() => handlePrint(cobranca)}
-                                onActionComplete={() => load()}
-                                variant="icon"
-                              />
-                            )}
+                              {!isInstallmentGroup && (
+                                <CobrancaActionsMenu
+                                  cobranca={{
+                                    id: cobranca.id,
+                                    status: (cobranca.status ?? '') as string,
+                                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
+                                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
+                                    matriculaId: cobranca.matriculaId ?? '',
+                                    formaPagamento: cobranca.formaPagamento ?? undefined,
+                                    atrasado: isOverdue,
+                                  }}
+                                  onPrint={() => handlePrint(cobranca)}
+                                  onActionComplete={() => load()}
+                                  variant="icon"
+                                />
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -513,16 +578,6 @@ export default function CobrancasTodasPage() {
           </>
         )}
       </div>
-
-      {/* Paginação */}
-      {orderedCobrancas.length > 0 && (
-        <Pagination
-          totalItems={orderedCobrancas.length}
-          pageSize={pageSize}
-          page={page}
-          onChange={setPage}
-        />
-      )}
 
       <ConfirmDialog
         open={confirmDialog.open}
@@ -540,7 +595,7 @@ export default function CobrancasTodasPage() {
         onOpenChange={setCreateModalOpen}
         onSuccess={load}
       />
-    </div>
+    </TableLayout>
   );
 }
 
@@ -579,44 +634,42 @@ function Pagination({
   const pages = makePages();
 
   return (
-    <div className="flex items-center justify-center py-6">
-      <div className="flex items-center gap-2 text-sm">
-        <IconButton aria-label="Primeira página" disabled={page === 1} onClick={() => onChange(1)}>
-          <ChevronsLeft className="h-4 w-4" />
-        </IconButton>
-        <IconButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
-          <ChevronLeft className="h-4 w-4" />
-        </IconButton>
+    <div className="flex flex-wrap items-center justify-center gap-2 py-6 sm:gap-3">
+      <IconButton aria-label="Primeira página" disabled={page === 1} onClick={() => onChange(1)}>
+        <ChevronsLeft className="h-4 w-4" />
+      </IconButton>
+      <IconButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
+        <ChevronLeft className="h-4 w-4" />
+      </IconButton>
 
-        {pages.map((p, idx) =>
-          p === '…' ? (
-            <span key={`e-${idx}`} className="px-2 text-brand-accent/50">…</span>
-          ) : (
-            <button
-              key={p}
-              onClick={() => onChange(p)}
-              aria-current={p === page ? 'page' : undefined}
-              className={
-                'h-8 w-8 rounded-md border transition grid place-items-center ' +
-                'border-brand-accent/30 text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent ' +
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 ' +
-                (p === page
-                  ? 'bg-brand-accent text-white border-brand-accent hover:bg-brand-accent/90'
-                  : 'bg-white')
-              }
-            >
-              {p}
-            </button>
-          ),
-        )}
+      {pages.map((p, idx) =>
+        p === '…' ? (
+          <span key={`e-${idx}`} className="px-2 text-brand-accent/50">…</span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onChange(p)}
+            aria-current={p === page ? 'page' : undefined}
+            className={
+              'h-8 w-8 rounded-md border transition grid place-items-center ' +
+              'border-brand-accent/30 text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent ' +
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 ' +
+              (p === page
+                ? 'bg-brand-accent text-white border-brand-accent hover:bg-brand-accent/90'
+                : 'bg-white')
+            }
+          >
+            {p}
+          </button>
+        ),
+      )}
 
-        <IconButton aria-label="Próxima página" disabled={page === totalPages} onClick={() => onChange(clamp(page + 1))}>
-          <ChevronRight className="h-4 w-4" />
-        </IconButton>
-        <IconButton aria-label="Última página" disabled={page === totalPages} onClick={() => onChange(totalPages)}>
-          <ChevronsRight className="h-4 w-4" />
-        </IconButton>
-      </div>
+      <IconButton aria-label="Próxima página" disabled={page === totalPages} onClick={() => onChange(clamp(page + 1))}>
+        <ChevronRight className="h-4 w-4" />
+      </IconButton>
+      <IconButton aria-label="Última página" disabled={page === totalPages} onClick={() => onChange(totalPages)}>
+        <ChevronsRight className="h-4 w-4" />
+      </IconButton>
     </div>
   );
 }

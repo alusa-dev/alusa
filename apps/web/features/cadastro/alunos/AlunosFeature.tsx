@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 // (Busca agora controlada pelo EntityFiltersBar; Input removido)
 // Removido select custom inline (usaremos EntityFiltersBar)
 import { Badge } from '@/components/ui/badge';
@@ -142,7 +143,7 @@ export function AlunosFeature() {
         <>
           <Button
             onClick={handleOpenWizard}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar aluno"
             data-testid="abrir-wizard-aluno"
             disabled={!contaId}
@@ -167,7 +168,7 @@ export function AlunosFeature() {
         <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
       }
     >
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className="w-full overflow-hidden rounded-lg border bg-white md:rounded-xl">
         <AlunosTable
           alunos={paginated}
           onEdit={(aluno) => {
@@ -266,17 +267,18 @@ function AlunosTable({
     {
       id: 'aluno',
       header: 'Aluno',
-      width: 'w-1/4', // 25%
+      width: 'min-w-0 lg:w-[26%]',
       align: 'left',
       noWrap: false,
       skeleton: (
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-gray-200" />
+        <div className="flex items-center gap-2 lg:gap-3">
+          <div className="h-9 w-9 rounded-full bg-gray-200 lg:h-10 lg:w-10" />
           <div className="flex-1 space-y-2">
-            <div className="h-4 w-40 bg-gray-200 rounded" />
+            <div className="h-4 w-40 rounded bg-gray-200" />
+            <div className="h-3 w-28 rounded bg-gray-200 lg:hidden" />
             <div className="flex gap-2">
-              <div className="h-4 w-12 bg-gray-200 rounded" />
-              <div className="h-4 w-16 bg-gray-200 rounded" />
+              <div className="h-4 w-12 rounded bg-gray-200" />
+              <div className="h-4 w-16 rounded bg-gray-200" />
             </div>
           </div>
         </div>
@@ -284,21 +286,24 @@ function AlunosTable({
       render: (aluno) => {
         const initials = formatInitials(aluno.nome ?? '');
         return (
-          <div className="flex items-center gap-3 min-w-0">
-            <Avatar className="h-10 w-10">
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <Avatar className="h-9 w-9 shrink-0 lg:h-10 lg:w-10">
               {aluno.foto ? <AvatarImage src={aluno.foto} alt={aluno.nome ?? ''} /> : null}
-              <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
+              <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
                 {initials}
               </AvatarFallback>
             </Avatar>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div
-                className="font-normal text-gray-900 text-[13px] truncate"
+                className="truncate text-[13px] font-normal text-gray-900"
                 data-testid={`aluno-nome-${aluno.id}`}
               >
                 {aluno.nome}
               </div>
-              <div className="flex flex-wrap gap-1 mt-1">
+              <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
+                {aluno.cpf ? maskCpf(aluno.cpf) : '—'}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1">
                 {aluno.isentoTaxaMatricula && (
                   <Badge variant="info" className="text-[10px] font-bold tracking-widest uppercase">
                     Isento
@@ -321,20 +326,24 @@ function AlunosTable({
     {
       id: 'cpf',
       header: 'CPF',
-      width: 'w-1/6', // ~16.66%
+      width: 'lg:w-[14%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
         <span className="tabular-nums leading-[20px]">
           {aluno.cpf ? maskCpf(aluno.cpf) : '-'}
         </span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'email',
       header: 'E-mail',
-      width: 'w-1/4',
+      width: 'lg:w-[24%]',
       align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
         <span
           className="inline-block max-w-full truncate leading-[20px]"
@@ -343,29 +352,46 @@ function AlunosTable({
           {aluno.email || '-'}
         </span>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
+      skeleton: <div className="mx-auto hidden h-4 w-40 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'telefone',
       header: 'Telefone',
-      width: 'w-1/6',
+      width: 'lg:w-[14%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
         <span className="tabular-nums leading-[20px]">{maskPhone(aluno.telefone) || '-'}</span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
-    statusColumn<AlunoListItem>({
-      render: (aluno: AlunoListItem) => (
-        <Badge status={aluno.status === 'ATIVO' ? 'ATIVO' : 'INATIVO'} />
-      ),
-    }),
-    actionsColumn<AlunoListItem>({
-      onEdit,
-      onDelete,
-      editButtonAriaLabel: (aluno: AlunoListItem) => `Editar aluno ${aluno.nome ?? ''}`,
-      deleteButtonAriaLabel: (aluno: AlunoListItem) => `Excluir aluno ${aluno.nome ?? ''}`,
-    }),
+    (() => {
+      const col = statusColumn<AlunoListItem>({
+        render: (aluno: AlunoListItem) => (
+          <Badge status={aluno.status === 'ATIVO' ? 'ATIVO' : 'INATIVO'} />
+        ),
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<AlunoListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (aluno: AlunoListItem) => `Editar aluno ${aluno.nome ?? ''}`,
+        deleteButtonAriaLabel: (aluno: AlunoListItem) => `Excluir aluno ${aluno.nome ?? ''}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (

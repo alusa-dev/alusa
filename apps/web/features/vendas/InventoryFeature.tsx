@@ -220,7 +220,7 @@ export function InventoryFeature() {
     {
       id: 'item',
       header: 'Produto',
-      width: 'w-[34%]',
+      width: 'min-w-0 lg:w-[34%]',
       align: 'left',
       noWrap: false,
       render: (item) => (
@@ -230,6 +230,15 @@ export function InventoryFeature() {
             {item.sku ? `SKU ${item.sku}` : 'Sem SKU'}
             {item.categoryName ? ` · ${item.categoryName}` : ''}
           </div>
+          <div className="space-y-0.5 text-[11px] text-gray-600 lg:hidden">
+            <div>
+              Em estoque {item.onHand} · Disp. {item.available}
+            </div>
+            <div>
+              Reserv. {item.reserved} · Compra {item.incoming}
+            </div>
+            <div className="font-medium text-gray-900">{formatInventoryCurrency(item.inventoryValue)}</div>
+          </div>
         </div>
       ),
     },
@@ -237,35 +246,45 @@ export function InventoryFeature() {
       id: 'onHand',
       header: 'Em estoque',
       align: 'right',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (item) => item.onHand,
     },
     {
       id: 'reserved',
       header: 'Reservado',
       align: 'right',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (item) => item.reserved,
     },
     {
       id: 'available',
       header: 'Disponível',
       align: 'right',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (item) => item.available,
     },
     {
       id: 'incoming',
       header: 'Em compra',
       align: 'right',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (item) => item.incoming,
     },
     {
       id: 'alert',
       header: 'Alerta',
       align: 'center',
-      width: 'w-[10%]',
+      width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+      headerClassName: 'max-lg:px-1',
+      cellClassName: 'max-lg:px-1',
       render: (item) => (
         <Badge variant={ALERT_VARIANTS[item.alertState]} size="sm">
           {ALERT_LABELS[item.alertState]}
@@ -276,7 +295,9 @@ export function InventoryFeature() {
       id: 'value',
       header: 'Valor em estoque',
       align: 'right',
-      width: 'w-[16%]',
+      width: 'lg:w-[16%]',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (item) => formatInventoryCurrency(item.inventoryValue),
     },
   ];
@@ -352,10 +373,10 @@ export function InventoryFeature() {
         title="Estoque"
         subtitle="Acompanhe estoque físico, reservas e compras pendentes com histórico automático."
         actions={
-          <>
+          <div className="flex w-full flex-col gap-2 lg:flex-row lg:flex-wrap lg:justify-end">
             <Button
               type="button"
-              className="h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
+              className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
               onClick={openEntryDialog}
             >
               <Plus className="mr-2 h-4 w-4" />
@@ -364,7 +385,7 @@ export function InventoryFeature() {
             <Button
               type="button"
               variant="outline"
-              className="h-10 bg-white px-4 shadow-none"
+              className="h-10 w-full bg-white px-4 shadow-none lg:w-auto"
               onClick={openAdjustDialog}
             >
               <Refresh className="mr-2 h-4 w-4" />
@@ -373,7 +394,7 @@ export function InventoryFeature() {
             <Button
               type="button"
               variant="outline"
-              className="h-10 bg-white px-4 shadow-none"
+              className="h-10 w-full bg-white px-4 shadow-none lg:w-auto"
               asChild
             >
               <Link href="/vendas/estoque/historico">
@@ -381,11 +402,11 @@ export function InventoryFeature() {
                 Ver histórico
               </Link>
             </Button>
-          </>
+          </div>
         }
         filtersBar={
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-end">
-            <div className="relative w-full md:w-[340px] lg:w-[400px]">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
+            <div className="relative w-full lg:w-[400px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 value={search}
@@ -397,7 +418,7 @@ export function InventoryFeature() {
             <Button
               type="button"
               variant={lowOnly ? 'default' : 'outline'}
-              className="h-10 whitespace-nowrap px-4 shadow-none"
+              className="h-10 w-full whitespace-nowrap px-4 shadow-none lg:w-auto"
               onClick={() => setLowOnly((current) => !current)}
             >
               <Filter className="mr-2 h-4 w-4" />

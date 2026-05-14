@@ -19,6 +19,7 @@ import ComboDialog from './ComboDialog';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import { cn } from '@/lib/utils';
 import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
 import { formatPlanoValorBRL } from '@/features/cadastro/planos/services/planos-service';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
@@ -120,69 +121,103 @@ export function CombosFeature() {
     }
   }
 
+  const periodicidadeLabel = (p: string) => {
+    const labels: Record<string, string> = {
+      SEMANAL: 'Semanal',
+      QUINZENAL: 'Quinzenal',
+      MENSAL: 'Mensal',
+      TRIMESTRAL: 'Trimestral',
+      ANUAL: 'Anual',
+    };
+    return labels[p] ?? p;
+  };
+
   const columns: DataTableColumn<ComboListItem>[] = [
     {
       id: 'nome',
       header: 'Nome',
-      width: 'w-1/3',
+      width: 'min-w-0 lg:w-[28%]',
       align: 'left',
       render: (c) => (
-        <div className={table.primaryText} title={c.nome}>
-          <span className="font-medium text-gray-900 whitespace-normal break-words">{c.nome}</span>
+        <div className="min-w-0">
+          <div className={cn(table.primaryText, 'whitespace-normal break-words font-medium')} title={c.nome}>
+            {c.nome}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+            {formatPlanoValorBRL(c.valor)} · {periodicidadeLabel(c.periodicidade)} · {c.turmas.length}{' '}
+            turma{c.turmas.length === 1 ? '' : 's'}
+          </div>
         </div>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
+      skeleton: (
+        <div className="space-y-2">
+          <div className="h-4 w-40 rounded bg-gray-200" />
+          <div className="h-3 w-36 rounded bg-gray-200 lg:hidden" />
+        </div>
+      ),
     },
     {
       id: 'valor',
       header: 'Valor do Ciclo',
-      width: 'w-32',
+      width: 'lg:w-[15%]',
       align: 'right',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (c) => (
-        <span className="font-medium text-gray-900 whitespace-nowrap">
+        <span className="whitespace-nowrap font-medium text-gray-900">
           {formatPlanoValorBRL(c.valor)}
         </span>
       ),
-      skeleton: <div className="h-4 w-16 bg-gray-200 rounded ml-auto" />,
+      skeleton: <div className="ml-auto hidden h-4 w-16 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'periodicidade',
       header: 'Periodicidade',
-      width: 'w-28',
+      width: 'lg:w-[15%]',
       align: 'center',
-      render: (c) => {
-        const labels: Record<string, string> = {
-          SEMANAL: 'Semanal',
-          QUINZENAL: 'Quinzenal',
-          MENSAL: 'Mensal',
-          TRIMESTRAL: 'Trimestral',
-          ANUAL: 'Anual',
-        };
-        return <span className="text-gray-700">{labels[c.periodicidade] ?? c.periodicidade}</span>;
-      },
-      skeleton: <div className="h-4 w-16 bg-gray-200 rounded mx-auto" />,
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
+      render: (c) => <span className="text-gray-700">{periodicidadeLabel(c.periodicidade)}</span>,
+      skeleton: <div className="mx-auto hidden h-4 w-16 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'qtd',
       header: 'Qtd Turmas',
-      width: 'w-24',
+      width: 'lg:w-[12%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (c) => c.turmas.length,
-      skeleton: <div className="h-4 w-6 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-6 rounded bg-gray-200 lg:block" />,
     },
-    statusColumn<ComboListItem>({ activeLabel: 'Ativo', inactiveLabel: 'Inativo' }),
-    actionsColumn<ComboListItem>({
-      onEdit: (c) => openEdit(c),
-      onDelete: (c) => deleteDialog.openDialog(c),
-      editButtonAriaLabel: (c) => `Editar combo ${c.nome}`,
-      deleteButtonAriaLabel: (c) => `Excluir combo ${c.nome}`,
-    }),
+    (() => {
+      const col = statusColumn<ComboListItem>({ activeLabel: 'Ativo', inactiveLabel: 'Inativo' });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[14%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<ComboListItem>({
+        onEdit: (c) => openEdit(c),
+        onDelete: (c) => deleteDialog.openDialog(c),
+        editButtonAriaLabel: (c) => `Editar combo ${c.nome}`,
+        deleteButtonAriaLabel: (c) => `Excluir combo ${c.nome}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[16%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   const total = ordered.length;
 
   const tableContent = accountMissing ? (
-    <div className="bg-white rounded-xl border px-6 py-12 text-center text-gray-500">
+    <div className={cn(table.container, 'px-6 py-12 text-center text-gray-500')}>
       Conecte-se a uma conta para visualizar os combos cadastrados.
     </div>
   ) : (
@@ -210,7 +245,7 @@ export function CombosFeature() {
           <Button
             onClick={openCreate}
             disabled={!contaId}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
           >
             <Plus className="h-4 w-4 mr-2" /> Novo combo
           </Button>

@@ -1,7 +1,8 @@
 // Centraliza classes utilitárias para manter consistência visual entre tabelas.
 // Se futuramente quisermos ajustar altura, tipografia ou cores, alteramos aqui.
 export const table = {
-  container: 'bg-white border border-gray-200 rounded-xl overflow-hidden',
+  container:
+    'w-full overflow-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl',
   headerRow:
     'grid grid-cols-12 gap-4 text-[11px] font-medium text-gray-500 uppercase tracking-wider',
   headerWrap: 'bg-gray-50 px-6 py-3 border-b border-gray-200',

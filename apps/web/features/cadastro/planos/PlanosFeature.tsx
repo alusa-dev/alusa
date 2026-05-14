@@ -8,6 +8,7 @@ import EntityFiltersBar from '@/components/layout/EntityFiltersBar';
 import Pagination from '@/components/layout/Pagination';
 import { Button } from '@/components/ui/button';
 import { Plus } from '@/components/icons/icons';
+import { cn } from '@/lib/utils';
 import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import { CustomToast } from '@/components/ui/toast';
@@ -119,7 +120,7 @@ export function PlanosFeature() {
           <Button
             data-testid="novo-plano"
             disabled={!contaId}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             onClick={openCreateDialog}
           >
             <Plus className="mr-2 h-4 w-4" /> Novo Plano
@@ -228,7 +229,7 @@ interface PlanosTableProps {
 function PlanosTable({ data, accountMissing, loading, onEdit, onDelete }: PlanosTableProps) {
   if (accountMissing) {
     return (
-      <div className="bg-white rounded-xl border px-6 py-12 text-center text-gray-500">
+      <div className={cn(table.container, 'px-6 py-12 text-center text-gray-500')}>
         Conecte-se a uma conta para visualizar os planos cadastrados.
       </div>
     );
@@ -238,24 +239,32 @@ function PlanosTable({ data, accountMissing, loading, onEdit, onDelete }: Planos
     {
       id: 'nome',
       header: 'Plano',
-      width: 'w-1/4',
+      width: 'min-w-0 lg:w-[24%]',
       align: 'left',
       render: (p) => (
-        <div className={table.primaryText} title={p.nome}>
-          {p.nome}
+        <div className="min-w-0">
+          <div className={cn(table.primaryText)} title={p.nome}>
+            {p.nome}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+            {formatPeriodicidade(p.periodicidade)} · {formatPlanoValorBRL(p.valor)}
+          </div>
         </div>
       ),
       skeleton: (
         <div className="space-y-2">
-          <div className="h-4 w-40 bg-gray-200 rounded" />
+          <div className="h-4 w-40 rounded bg-gray-200" />
+          <div className="h-3 w-32 rounded bg-gray-200 lg:hidden" />
         </div>
       ),
     },
     {
       id: 'descricao',
       header: 'Descrição',
-      width: 'w-1/4',
+      width: 'lg:w-[26%]',
       align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (p) => (
         <div className="w-full min-w-0">
           <span className="block truncate" title={p.descricao ?? ''}>
@@ -263,38 +272,57 @@ function PlanosTable({ data, accountMissing, loading, onEdit, onDelete }: Planos
           </span>
         </div>
       ),
-      skeleton: <div className="h-4 w-full bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 w-full rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'periodicidade',
       header: 'Periodicidade',
-      width: 'w-1/6',
+      width: 'lg:w-[14%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (p) => formatPeriodicidade(p.periodicidade),
-      skeleton: <div className="h-4 w-20 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-20 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'valor',
       header: 'Valor',
-      width: 'w-24',
+      width: 'lg:w-[14%]',
       align: 'right',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (p) => (
-        <span className="font-medium text-gray-900 whitespace-nowrap">
+        <span className="whitespace-nowrap font-medium text-gray-900">
           {formatPlanoValorBRL(p.valor)}
         </span>
       ),
-      skeleton: <div className="h-4 w-16 bg-gray-200 rounded ml-auto" />,
+      skeleton: <div className="ml-auto hidden h-4 w-16 rounded bg-gray-200 lg:block" />,
     },
-    statusColumn<PlanoListItem>({
-      activeLabel: 'Ativo',
-      inactiveLabel: 'Inativo',
-    }),
-    actionsColumn<PlanoListItem>({
-      onEdit,
-      onDelete,
-      editButtonAriaLabel: (plano: PlanoListItem) => `Editar plano ${plano.nome}`,
-      deleteButtonAriaLabel: (plano: PlanoListItem) => `Excluir plano ${plano.nome}`,
-    }),
+    (() => {
+      const col = statusColumn<PlanoListItem>({
+        activeLabel: 'Ativo',
+        inactiveLabel: 'Inativo',
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<PlanoListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (plano) => `Editar plano ${plano.nome}`,
+        deleteButtonAriaLabel: (plano) => `Excluir plano ${plano.nome}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (

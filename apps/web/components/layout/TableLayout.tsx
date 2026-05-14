@@ -27,7 +27,7 @@ export function TableLayout({
   const hasToolbar = Boolean(actions) || Boolean(filtersBar);
 
   return (
-    <div className={cn('space-y-5', className)}>
+    <div className={cn('w-full space-y-5', className)}>
       {/* space-y reduzido para aproximar seções e px-6 para alinhar com headers das tabelas */}
       <div className="space-y-1">
         <h1 className="text-[22px] md:text-[24px] font-semibold tracking-tight text-gray-900">
@@ -36,10 +36,12 @@ export function TableLayout({
         {subtitle && <p className="text-[13px] text-gray-500">{subtitle}</p>}
       </div>
       {hasToolbar ? (
-        <div className="bg-white rounded-xl border px-6 py-4">
+        <div className="rounded-xl border bg-white px-3 py-3 md:px-6 md:py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3 flex-wrap">{actions}</div>
-            <div className="flex-1 md:flex-none w-full md:w-auto">{filtersBar}</div>
+            <div className="flex w-full shrink-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:w-auto">
+              {actions}
+            </div>
+            <div className="min-w-0 w-full flex-1 md:min-w-0 md:flex-1">{filtersBar}</div>
           </div>
         </div>
       ) : null}

@@ -5,58 +5,16 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Squares2X2Icon,
-  AcademicCapIcon,
-  UserIcon,
-  UsersIcon,
-  BookOpenIcon,
-  BuildingLibraryIcon,
-  RectangleStackIcon,
-  ClipboardDocumentCheckIcon,
-  BanknotesIcon,
-  CalendarDaysIcon,
-  ChartBarIcon,
-  ShoppingBagIcon,
-  ShoppingCartIcon,
-  ClockIcon,
-  CubeIcon,
-  CircleStackIcon,
-  ArrowPathRoundedSquareIcon,
-  TagIcon,
-  TicketIcon,
   Cog6ToothIcon,
   ChevronLeftIcon,
   Squares2X2Solid,
-  AcademicCapSolid,
-  UserSolid,
-  UsersSolid,
-  BookOpenSolid,
-  BuildingLibrarySolid,
-  RectangleStackSolid,
-  ClipboardDocumentCheckSolid,
-  BanknotesSolid,
-  CalendarDaysSolid,
-  ChartBarSolid,
-  ShoppingBagSolid,
-  ShoppingCartSolid,
-  ClockSolid,
-  CubeSolid,
-  CircleStackSolid,
-  ArrowPathRoundedSquareSolid,
-  TagSolid,
-  TicketSolid,
   Cog6ToothSolid,
-  WalletIcon,
-  WalletSolid,
-  DocumentText,
-  DocumentDuplicate,
-  DocumentTextSolid,
-  DocumentDuplicateSolid,
 } from '@/components/icons/icons';
 import { useTheme } from '@/components/theme/ThemeProvider';
-import { useSession } from 'next-auth/react';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
-import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
-import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabilities';
+
+import { FINANCE_LOCKED_GROUP_KEYS } from './sidebar-config';
+import { useSidebarNavAccess } from './use-sidebar-nav-access';
 
 /** Tokens visuais (mantém sua coluna/tamanho) */
 const TOKENS = {
@@ -65,421 +23,6 @@ const TOKENS = {
   itemW: 192, // largura comum a grupo e submenu
   itemH: 52, // altura comum a grupo e submenu
 } as const;
-
-const FINANCE_LOCKED_GROUP_KEYS = new Set(['financeiro', 'meu-dinheiro', 'antecipacoes']);
-const AUTOMATIC_ANTICIPATION_ITEM_HREF = '/antecipacoes/automatica';
-
-type SubItem = { label: string; href: string; icon: React.ReactNode; iconSolid: React.ReactNode };
-type Group = {
-  key: string;
-  label: string;
-  icon: React.ReactNode;
-  iconSolid: React.ReactNode;
-  items: SubItem[];
-  comingSoon?: boolean;
-};
-
-const GROUPS: Group[] = [
-  {
-    key: 'cadastro',
-    label: 'Cadastro',
-    icon: <AcademicCapIcon className="h-5 w-5" />,
-    iconSolid: <AcademicCapSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Alunos',
-        href: '/alunos',
-        icon: <UserIcon className="h-5 w-5" />,
-        iconSolid: <UserSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Responsáveis',
-        href: '/responsaveis',
-        icon: <UsersIcon className="h-5 w-5" />,
-        iconSolid: <UsersSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Colaboradores',
-        href: '/colaboradores',
-        icon: <UsersIcon className="h-5 w-5" />,
-        iconSolid: <UsersSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Turmas',
-        href: '/turmas',
-        icon: <BookOpenIcon className="h-5 w-5" />,
-        iconSolid: <BookOpenSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Planos',
-        href: '/planos',
-        icon: <RectangleStackIcon className="h-5 w-5" />,
-        iconSolid: <RectangleStackSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Combos',
-        href: '/combos',
-        icon: <RectangleStackIcon className="h-5 w-5" />,
-        iconSolid: <RectangleStackSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Modalidades',
-        href: '/modalidades',
-        icon: <BookOpenIcon className="h-5 w-5" />,
-        iconSolid: <BookOpenSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Salas',
-        href: '/salas',
-        icon: <BuildingLibraryIcon className="h-5 w-5" />,
-        iconSolid: <BuildingLibrarySolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'matriculas',
-    label: 'Matrículas',
-    icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-    iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Minhas Matrículas',
-        href: '/matriculas',
-        icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-        iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Rematrículas',
-        href: '/rematriculas',
-        icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-        iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'contratos',
-    label: 'Contratos',
-    icon: <DocumentText className="h-5 w-5" />,
-    iconSolid: <DocumentTextSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Gestão de Contratos',
-        href: '/contratos',
-        icon: <DocumentText className="h-5 w-5" />,
-        iconSolid: <DocumentTextSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Modelos',
-        href: '/contratos/modelos',
-        icon: <DocumentDuplicate className="h-5 w-5" />,
-        iconSolid: <DocumentDuplicateSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  // Novo grupo "Cobranças" - separação de domínios conforme padrão Asaas
-  {
-    key: 'cobrancas',
-    label: 'Cobranças',
-    icon: <BanknotesIcon className="h-5 w-5" />,
-    iconSolid: <BanknotesSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Todas',
-        href: '/cobrancas',
-        icon: <BanknotesIcon className="h-5 w-5" />,
-        iconSolid: <BanknotesSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Avulsas',
-        href: '/cobrancas/avulsas',
-        icon: <BanknotesIcon className="h-5 w-5" />,
-        iconSolid: <BanknotesSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Parcelamentos',
-        href: '/cobrancas/parcelamentos',
-        icon: <RectangleStackIcon className="h-5 w-5" />,
-        iconSolid: <RectangleStackSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Assinaturas',
-        href: '/cobrancas/assinaturas',
-        icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-        iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'meu-dinheiro',
-    label: 'Meu Dinheiro',
-    icon: <WalletIcon className="h-5 w-5" />,
-    iconSolid: <WalletSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Saldo',
-        href: '/financeiro/conta',
-        icon: <WalletIcon className="h-5 w-5" />,
-        iconSolid: <WalletSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Extrato',
-        href: '/financeiro/extrato',
-        icon: <DocumentText className="h-5 w-5" />,
-        iconSolid: <DocumentTextSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'antecipacoes',
-    label: 'Antecipações',
-    icon: <BanknotesIcon className="h-5 w-5" />,
-    iconSolid: <BanknotesSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Minhas antecipações',
-        href: '/antecipacoes/minhas',
-        icon: <DocumentText className="h-5 w-5" />,
-        iconSolid: <DocumentTextSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Antecipar recebimento',
-        href: '/antecipacoes/antecipar',
-        icon: <BanknotesIcon className="h-5 w-5" />,
-        iconSolid: <BanknotesSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Antecipação automática',
-        href: '/antecipacoes/automatica',
-        icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
-        iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'financeiro',
-    label: 'Financeiro',
-    icon: <ChartBarIcon className="h-5 w-5" />,
-    iconSolid: <ChartBarSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Pagamentos',
-        href: '/financeiro/pagamentos',
-        icon: <BanknotesIcon className="h-5 w-5" />,
-        iconSolid: <BanknotesSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Relatórios',
-        href: '/financeiro/relatorios',
-        icon: <ChartBarIcon className="h-5 w-5" />,
-        iconSolid: <ChartBarSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'aulas',
-    label: 'Aulas',
-    icon: <CalendarDaysIcon className="h-5 w-5" />,
-    iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Agenda',
-        href: '/aulas/agenda',
-        icon: <BookOpenIcon className="h-5 w-5" />,
-        iconSolid: <BookOpenSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Frequência',
-        href: '/aulas/frequencia',
-        icon: <CalendarDaysIcon className="h-5 w-5" />,
-        iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Reposições de aula',
-        href: '/aulas/reposicoes',
-        icon: <CalendarDaysIcon className="h-5 w-5" />,
-        iconSolid: <CalendarDaysSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'vendas',
-    label: 'Loja',
-    icon: <ShoppingBagIcon className="h-5 w-5" />,
-    iconSolid: <ShoppingBagSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Nova Venda',
-        href: '/vendas/nova',
-        icon: <ShoppingCartIcon className="h-5 w-5" />,
-        iconSolid: <ShoppingCartSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Histórico',
-        href: '/vendas/historico',
-        icon: <ClockIcon className="h-5 w-5" />,
-        iconSolid: <ClockSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Produtos',
-        href: '/vendas/produtos',
-        icon: <CubeIcon className="h-5 w-5" />,
-        iconSolid: <CubeSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Estoque',
-        href: '/vendas/estoque',
-        icon: <CircleStackIcon className="h-5 w-5" />,
-        iconSolid: <CircleStackSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Reposições de estoque',
-        href: '/vendas/reposicoes',
-        icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
-        iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Categorias',
-        href: '/vendas/categorias',
-        icon: <TagIcon className="h-5 w-5" />,
-        iconSolid: <TagSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'eventos',
-    label: 'Eventos',
-    icon: <TicketIcon className="h-5 w-5" />,
-    iconSolid: <TicketSolid className="h-5 w-5" />,
-    comingSoon: true,
-    items: [
-      {
-        label: 'Lista',
-        href: '/eventos',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Criar',
-        href: '/eventos/novo',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Ingressos',
-        href: '/eventos/ingressos',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-];
-
-// Grupos específicos para Portal do Aluno/Responsável
-const PORTAL_GROUPS: Group[] = [
-  {
-    key: 'portal-matriculas',
-    label: 'Matrículas',
-    icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-    iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Minhas Matrículas',
-        href: '/portal/matriculas',
-        icon: <ClipboardDocumentCheckIcon className="h-5 w-5" />,
-        iconSolid: <ClipboardDocumentCheckSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'portal-financeiro',
-    label: 'Financeiro',
-    icon: <BanknotesIcon className="h-5 w-5" />,
-    iconSolid: <BanknotesSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Cobranças',
-        href: '/portal/financeiro',
-        icon: <BanknotesIcon className="h-5 w-5" />,
-        iconSolid: <BanknotesSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-  {
-    key: 'portal-eventos',
-    label: 'Eventos',
-    icon: <TicketIcon className="h-5 w-5" />,
-    iconSolid: <TicketSolid className="h-5 w-5" />,
-    items: [
-      {
-        label: 'Meus Eventos',
-        href: '/portal/eventos',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-    ],
-  },
-];
-
-// Mapa de permissões por role
-type RoleKey = 'ADMIN' | 'FINANCEIRO' | 'RECEPCAO' | 'PROFESSOR' | 'RESPONSAVEL' | 'ALUNO' | string;
-const PERMISSIONS: Record<
-  RoleKey,
-  {
-    allowDashboard: boolean;
-    allowGroups: Array<{ key: string; items?: string[] }>;
-    allowSettings?: boolean;
-    allowPortal?: boolean;
-  }
-> = {
-  ADMIN: {
-    allowDashboard: true,
-    allowGroups: GROUPS.map((g) => ({ key: g.key })),
-    allowSettings: true,
-    allowPortal: true,
-  },
-  FINANCEIRO: {
-    allowDashboard: true,
-    allowGroups: [
-      { key: 'cobrancas' },
-      { key: 'meu-dinheiro' },
-      { key: 'antecipacoes' },
-      { key: 'financeiro' },
-      { key: 'relatorios' },
-    ],
-    allowPortal: false,
-    allowSettings: false,
-  },
-  RECEPCAO: {
-    allowDashboard: true,
-    allowGroups: [
-      { key: 'cadastro', items: ['/alunos', '/responsaveis', '/colaboradores'] },
-      { key: 'matriculas' },
-      { key: 'aulas' },
-      { key: 'vendas' },
-      { key: 'eventos' },
-    ],
-    allowPortal: false,
-    allowSettings: false,
-  },
-  PROFESSOR: {
-    allowDashboard: true,
-    allowGroups: [{ key: 'aulas' }, { key: 'relatorios' }],
-    allowPortal: false,
-    allowSettings: false,
-  },
-  RESPONSAVEL: {
-    allowDashboard: true,
-    allowGroups: PORTAL_GROUPS.map((g) => ({ key: g.key })),
-    allowPortal: true,
-    allowSettings: false,
-  },
-  ALUNO: {
-    allowDashboard: true,
-    allowGroups: PORTAL_GROUPS.map((g) => ({ key: g.key })),
-    allowPortal: true,
-    allowSettings: false,
-  },
-};
 
 /** Collapsible com overflow hidden (evita “vazar” conteúdo fechado) */
 function Collapsible({ open, children }: { open: boolean; children: React.ReactNode }) {
@@ -556,17 +99,15 @@ function useFloatingMarker(deps: {
 }
 
 function Sidebar() {
-  const { data: session } = useSession();
-  const financeIntegrationMode =
-    typeof session?.user === 'object' && session?.user && 'financeIntegrationMode' in session.user
-      ? ((session.user as { financeIntegrationMode?: string }).financeIntegrationMode ?? null)
-      : null;
-  const financialCapabilities = resolveFinancialCapabilities(financeIntegrationMode);
-  const role =
-    typeof session?.user === 'object' && session?.user && 'role' in session.user
-      ? ((session.user as { role?: string }).role as RoleKey | undefined)
-      : undefined;
-  const perm = role && PERMISSIONS[role] ? PERMISSIONS[role] : PERMISSIONS['RESPONSAVEL'];
+  const {
+    role,
+    perm,
+    isPortalUser,
+    sidebarLocked,
+    financeLocked,
+    allowedGroups,
+    sourceGroups,
+  } = useSidebarNavAccess();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [openKey, setOpenKey] = useState<string | null>(null); // apenas 1 grupo aberto
@@ -579,18 +120,7 @@ function Sidebar() {
     activeKey,
   });
   const { notifications } = usePortalNotifications();
-  const { verification, loading: verificationLoading, isApproved } = useKycEnforcement();
-  const isPortalUser = role === 'ALUNO' || role === 'RESPONSAVEL';
-  const roleUpper = typeof role === 'string' ? role.toUpperCase() : null;
-  const sidebarLocked =
-    !isPortalUser && !verificationLoading && Boolean(verification) && !isApproved;
-  const financeLocked = false;
   const anyGroupOpen = !collapsed && openKey !== null;
-  const shouldLoadAutomaticAnticipationVisibility =
-    !isPortalUser &&
-    financialCapabilities.canUseAnticipations &&
-    (roleUpper === 'ADMIN' || roleUpper === 'FINANCEIRO');
-  const [showAutomaticAnticipationItem, setShowAutomaticAnticipationItem] = useState(true);
   // Gutter lateral quando recolhido (para centralizar e evitar cortar bordas)
   const collapsedGutter = Math.max(0, (TOKENS.widthCollapsed - TOKENS.itemH) / 2); // 6px
 
@@ -605,10 +135,8 @@ function Sidebar() {
 
   // Rota → abre grupo correspondente e controla seleção
   useEffect(() => {
-    // Usa sourceGroups baseado no role
-    const currentGroups = role === 'ALUNO' || role === 'RESPONSAVEL' ? PORTAL_GROUPS : GROUPS;
     let found: string | null = null;
-    for (const g of currentGroups) {
+    for (const g of sourceGroups) {
       if (g.items.some((i) => pathname.startsWith(i.href))) {
         found = g.key;
         break;
@@ -624,40 +152,7 @@ function Sidebar() {
       setActiveKey(null);
       setOpenKey(null);
     }
-  }, [pathname, role]);
-
-  useEffect(() => {
-    if (!shouldLoadAutomaticAnticipationVisibility) {
-      setShowAutomaticAnticipationItem(true);
-      return;
-    }
-
-    const controller = new AbortController();
-
-    async function loadAutomaticAnticipationVisibility() {
-      try {
-        const response = await fetch('/api/financeiro/antecipacoes/visibilidade', {
-          cache: 'no-store',
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          setShowAutomaticAnticipationItem(true);
-          return;
-        }
-
-        const payload = await response.json();
-        setShowAutomaticAnticipationItem(payload?.data?.showAutomaticAnticipationItem !== false);
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setShowAutomaticAnticipationItem(true);
-      }
-    }
-
-    void loadAutomaticAnticipationVisibility();
-
-    return () => controller.abort();
-  }, [shouldLoadAutomaticAnticipationVisibility]);
+  }, [pathname, sourceGroups]);
 
   const toggleSidebar = useCallback(() => setCollapsed((c) => !c), []);
   const onClickDashboard = () => {
@@ -687,55 +182,13 @@ function Sidebar() {
     } as React.CSSProperties;
   };
 
-  // Escolhe o conjunto de grupos baseado no role
-  const sourceGroups = role === 'ALUNO' || role === 'RESPONSAVEL' ? PORTAL_GROUPS : GROUPS;
-
-  // Filtra grupos conforme permissões
-  const allowedGroups = sourceGroups
-    .filter((g) => {
-      if (
-        g.key === 'meu-dinheiro' &&
-        (!financialCapabilities.canUseAccountBalance || !financialCapabilities.canUseStatement)
-      ) {
-        return false;
-      }
-
-      if (g.key === 'antecipacoes' && !financialCapabilities.canUseAnticipations) {
-        return false;
-      }
-
-      if (perm.allowGroups.some((p) => p.key === g.key && (!p.items || p.items.length === 0)))
-        return true;
-      // se houver filtro por items, mantenha o grupo e filtra itens adiante
-      return perm.allowGroups.some((p) => p.key === g.key);
-    })
-    .map((g) => {
-      const entry = perm.allowGroups.find((p) => p.key === g.key);
-      const scopedItems =
-        g.key === 'antecipacoes' && !showAutomaticAnticipationItem
-          ? g.items.filter((item) => item.href !== AUTOMATIC_ANTICIPATION_ITEM_HREF)
-          : g.items;
-
-      if (!entry || !entry.items || entry.items.length === 0) {
-        return {
-          ...g,
-          items: scopedItems,
-        } as Group;
-      }
-
-      return {
-        ...g,
-        items: scopedItems.filter((i) => entry.items!.includes(i.href)),
-      } as Group;
-    });
-
   return (
     <aside
       aria-label="Menu principal"
       className={[
-        'fixed inset-y-0 left-0 z-40 flex flex-col',
+        'hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-40 lg:flex lg:flex-col',
         'transition-[width] duration-300 ease-in-out',
-        collapsed ? 'w-16' : 'w-[262px]',
+        collapsed ? 'lg:w-16' : 'lg:w-[262px]',
       ].join(' ')}
       style={{ backgroundColor: `var(--sidebar-bg)` }}
     >
@@ -767,7 +220,12 @@ function Sidebar() {
           ].join(' ')}
           aria-hidden={collapsed ? true : undefined}
         >
-          <Link href="/dashboard" aria-label="Alusa" tabIndex={collapsed ? -1 : 0} prefetch={false}>
+          <Link
+            href={isPortalUser ? '/portal' : '/dashboard'}
+            aria-label="Alusa"
+            tabIndex={collapsed ? -1 : 0}
+            prefetch={false}
+          >
             <img
               src={isDark ? '/brand/logo-sidebar-dark.svg' : '/brand/logo-sidebar.svg'}
               alt="Alusa"

@@ -695,9 +695,47 @@ html:not(.theme-ready) [data-theme] *::after {
 
 /* Container principal quando há sidebar fixo à esquerda */
 .with-sidebar {
-	/* permite um espaçamento adicional opcional via --sidebar-gap */
-	padding-left: calc(var(--sidebar-w) + var(--sidebar-gap, 0px));
+	padding-left: 0;
 	transition: padding-left var(--theme-duration) var(--theme-ease);
+}
+
+@media (min-width: 1024px) {
+	.with-sidebar {
+		/* permite um espaçamento adicional opcional via --sidebar-gap */
+		padding-left: calc(var(--sidebar-w) + var(--sidebar-gap, 0px));
+	}
+}
+
+/* Mobile: área de conteúdo em tela cheia (wrapper técnico sem aparência de card desktop) */
+@media (max-width: 1023px) {
+	.app-shell-outer {
+		min-height: 0;
+		flex: 1 1 auto;
+		padding: 0 !important;
+	}
+
+	[data-app-shell-card] {
+		width: 100% !important;
+		min-height: calc(100svh - 4rem) !important;
+		height: auto !important;
+		border-radius: 0 !important;
+		padding: 16px !important;
+		box-shadow: none !important;
+		overflow: visible !important;
+		--app-shell-card-shadow: transparent !important;
+	}
+
+	[data-app-shell-card]:hover,
+	[data-app-shell-card]:active,
+	[data-app-shell-card]:focus,
+	[data-app-shell-card]:focus-within {
+		box-shadow: none !important;
+	}
+
+	.app-content-scroll {
+		overflow: visible !important;
+		padding-right: 0 !important;
+	}
 }
 
 /* Garantir dropdowns acima do card */

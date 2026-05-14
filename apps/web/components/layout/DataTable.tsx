@@ -59,7 +59,7 @@ export function DataTable<T extends object>({
   return (
     <div className="w-full overflow-x-auto">
       <table
-        className={cn('w-full border-collapse bg-white', tableClassName)}
+        className={cn('w-full table-fixed border-collapse bg-white', tableClassName)}
         aria-label={ariaLabel}
       >
         <thead className="bg-gray-50">
@@ -77,7 +77,7 @@ export function DataTable<T extends object>({
                   scope="col"
                   aria-sort={ariaSort as React.AriaAttributes['aria-sort']}
                   className={cn(
-                    'px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide',
+                    'px-3 py-2.5 text-xs font-medium text-gray-500 uppercase tracking-wide md:px-6 md:py-3',
                     col.width,
                     col.align === 'center' && 'text-center',
                     col.align === 'right' && 'text-right',
@@ -110,11 +110,12 @@ export function DataTable<T extends object>({
                   <td
                     key={col.id}
                     className={cn(
-                      'px-6 py-4 align-middle',
+                      'px-3 py-3 align-middle md:px-6 md:py-4',
                       col.width,
                       col.align === 'center' && 'text-center',
                       col.align === 'right' && 'text-right',
                       col.align === 'left' && 'text-left',
+                      col.cellClassName,
                     )}
                   >
                     {col.skeleton || <Skeleton className="h-4 w-3/4 rounded" />}
@@ -136,7 +137,7 @@ export function DataTable<T extends object>({
                   <td
                     key={col.id}
                     className={cn(
-                      'px-6 py-4 align-middle text-sm leading-5 text-gray-700',
+                      'px-3 py-3 align-middle text-sm leading-5 text-gray-700 md:px-6 md:py-4',
                       col.width,
                       col.align === 'center' && 'text-center',
                       col.align === 'right' && 'text-right',

@@ -89,7 +89,7 @@ function AttendanceHistoryRow({
     <button
       type="button"
       onClick={() => item.turma && onSelect(item.turma.id)}
-      className="grid w-full gap-4 border-b border-slate-100 px-6 py-4 text-left transition-colors hover:bg-slate-50 md:grid-cols-[1.5fr_1fr_1fr_auto]"
+      className="grid w-full gap-4 border-b border-slate-100 px-4 py-4 text-left transition-colors hover:bg-slate-50 lg:grid-cols-[1.5fr_1fr_1fr_auto] lg:px-6"
     >
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-slate-900">{item.turma?.label ?? 'Turma sem vínculo'}</div>
@@ -113,7 +113,7 @@ function AttendanceHistoryRow({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 md:justify-end">
+      <div className="flex flex-col items-stretch justify-between gap-3 lg:flex-row lg:items-center lg:justify-end">
         <Badge variant="info">{item.occurrenceCount} ocorrência(s)</Badge>
         <span className="text-xs font-medium text-slate-400">Abrir histórico</span>
       </div>
@@ -375,7 +375,7 @@ function AttendanceHistoryContent({
       ) : null}
 
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+        <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-center sm:px-6">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">Histórico por turma</h2>
             <p className="mt-1 text-xs text-slate-500">
@@ -457,8 +457,8 @@ export function FrequenciaPage() {
       <div className="space-y-5">
         <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
           <Tabs value={view} onValueChange={(value) => setView(value as 'workspace' | 'history')}>
-            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
                 <TabsList className="h-9">
                   <TabsTrigger value="workspace" className="px-4 text-xs">
                     Lançar frequência
@@ -562,7 +562,7 @@ export function FrequenciaPage() {
           ) : null}
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
+            <div className="flex flex-col justify-between gap-3 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-center sm:px-6">
               <div>
                 <h2 className="text-sm font-semibold text-slate-900">Turmas operacionais</h2>
                 <p className="mt-1 text-xs text-slate-500">
@@ -578,7 +578,7 @@ export function FrequenciaPage() {
             {loading ? (
               <div className="px-6 py-10 text-sm text-slate-500">Carregando turmas...</div>
             ) : workspace?.items.length ? (
-              <div className="grid gap-6 p-6 md:grid-cols-2 2xl:grid-cols-3">
+              <div className="grid gap-6 p-4 sm:p-6 lg:grid-cols-2 2xl:grid-cols-3">
                 {workspace.items.map((item) => (
                   <AttendanceTurmaCard
                     key={item.turma.id}

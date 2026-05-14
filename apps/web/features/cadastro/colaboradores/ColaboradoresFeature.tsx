@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 // Skeleton manual substituído pelos skeletons do DataTable
-import { Trash2, Plus, Edit3 } from '@/components/icons/icons';
+import { Plus } from '@/components/icons/icons';
 // Dropdown de ordenação incorporado no EntityFiltersBar
 import ColaboradorWizardDialog from '@/components/colaboradores/ColaboradorWizardDialog';
 import ColaboradorEditDialog, {
@@ -26,7 +26,10 @@ import { useColaboradores } from './hooks/use-colaboradores';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
 import type { ColaboradorListItem } from './services/colaboradores-service';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import { table } from '@/components/layout/TableStyles';
 import { formatFirstLast, formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
+import { cn } from '@/lib/utils';
+import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
 import { toast } from '@/components/ui/toast';
 import useCurrentUser from '@/hooks/use-current-user';
 
@@ -133,7 +136,7 @@ export function ColaboradoresFeature() {
         <>
           <Button
             onClick={() => setWizardOpen(true)}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar colaborador"
             disabled={!contaId}
           >
@@ -157,7 +160,7 @@ export function ColaboradoresFeature() {
         <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
       }
     >
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className={table.container}>
         <ColaboradoresTable
           colaboradores={paginated}
           onEdit={(colaborador) => {
@@ -254,26 +257,29 @@ function ColaboradoresTable({
     {
       id: 'colaborador',
       header: 'Colaborador',
-      width: 'w-[22%]',
+      width: 'min-w-0 lg:w-[22%]',
       noWrap: false,
       align: 'left',
       skeleton: (
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-full bg-gray-200" />
+        <div className="flex items-center gap-2 lg:gap-3">
+          <div className="h-9 w-9 rounded-full bg-gray-200 lg:h-10 lg:w-10" />
           <div className="flex-1 space-y-2">
-            <div className="h-4 w-40 bg-gray-200 rounded" />
+            <div className="h-4 w-40 rounded bg-gray-200" />
+            <div className="h-3 w-28 rounded bg-gray-200 lg:hidden" />
             <div className="flex gap-2">
-              <div className="h-4 w-12 bg-gray-200 rounded" />
-              <div className="h-4 w-16 bg-gray-200 rounded" />
+              <div className="h-4 w-12 rounded bg-gray-200" />
+              <div className="h-4 w-16 rounded bg-gray-200" />
             </div>
           </div>
         </div>
       ),
       render: (colaborador) => {
         const initials = formatInitials(colaborador.nome ?? '');
+        const badge = resolveColaboradorCargoBadge(colaborador.cargo);
+        const cargoLabel = badge.status ? undefined : badge.label;
         return (
-          <div className="flex items-center gap-3 min-w-0">
-            <Avatar className="h-10 w-10">
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <Avatar className="h-9 w-9 shrink-0 lg:h-10 lg:w-10">
               {colaborador.foto ? (
                 <AvatarImage
                   src={colaborador.foto}
@@ -285,18 +291,26 @@ function ColaboradoresTable({
                   }}
                 />
               ) : null}
-              <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
+              <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
                 {initials}
               </AvatarFallback>
             </Avatar>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div
-                className="font-normal text-gray-900 text-[13px] truncate"
+                className="truncate text-[13px] font-normal text-gray-900"
                 data-testid={`colaborador-nome-${colaborador.id}`}
               >
                 {colaborador.nome}
               </div>
-              <div className="flex flex-wrap gap-1 mt-1">
+              <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
+                {colaborador.cpf ? maskCpf(colaborador.cpf) : '—'}
+              </div>
+              {(cargoLabel || colaborador.especialidade) && (
+                <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+                  {[cargoLabel, colaborador.especialidade].filter(Boolean).join(' · ')}
+                </div>
+              )}
+              <div className="mt-1 hidden flex-wrap gap-1 lg:flex">
                 {colaborador.especialidade && (
                   <Badge variant="default" size="sm">
                     {colaborador.especialidade}
@@ -311,18 +325,22 @@ function ColaboradoresTable({
     {
       id: 'cpf',
       header: 'CPF',
-      width: 'w-[11%]',
+      width: 'lg:w-[11%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (c) => (
         <span className="tabular-nums leading-[20px]">{c.cpf ? maskCpf(c.cpf) : '-'}</span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'email',
       header: 'E-mail',
-      width: 'w-[22%]',
+      width: 'lg:w-[22%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       noWrap: false,
       render: (c) => (
         <span
@@ -332,23 +350,27 @@ function ColaboradoresTable({
           {c.email ?? '-'}
         </span>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-40 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'telefone',
       header: 'Telefone',
-      width: 'w-[13%]',
+      width: 'lg:w-[13%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (c) => (
         <span className="tabular-nums leading-[20px]">{maskPhone(c.telefone1) || '-'}</span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'funcao',
       header: 'Função',
-      width: 'w-[10%]',
+      width: 'lg:w-[10%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (c) => {
         const badge = resolveColaboradorCargoBadge(c.cargo);
 
@@ -362,50 +384,32 @@ function ColaboradoresTable({
           </Badge>
         );
       },
-      skeleton: <div className="h-4 w-16 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-16 rounded bg-gray-200 lg:block" />,
     },
-    {
-      id: 'status',
-      header: 'Status',
-      width: 'w-[12%]',
-      align: 'center',
-      render: (c) => <Badge status={c.status === 'ATIVO' ? 'ATIVO' : 'INATIVO'} />,
-      skeleton: <div className="h-6 w-14 bg-gray-200 rounded-full mx-auto" />,
-    },
-    {
-      id: 'acoes',
-      header: 'Ações',
-      width: 'w-[10%]',
-      align: 'center',
-      render: (c) => (
-        <div className="flex justify-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
-            aria-label="Editar colaborador"
-            onClick={() => onEdit(c)}
-          >
-            <Edit3 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-            aria-label="Excluir colaborador"
-            onClick={() => onDelete(c)}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ),
-      skeleton: (
-        <div className="flex justify-center gap-2">
-          <div className="h-8 w-8 bg-gray-200 rounded" />
-          <div className="h-8 w-8 bg-gray-200 rounded" />
-        </div>
-      ),
-    },
+    (() => {
+      const col = statusColumn<ColaboradorListItem>({
+        render: (c) => <Badge status={c.status === 'ATIVO' ? 'ATIVO' : 'INATIVO'} />,
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<ColaboradorListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (c) => `Editar colaborador ${c.nome ?? ''}`,
+        deleteButtonAriaLabel: (c) => `Excluir colaborador ${c.nome ?? ''}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (

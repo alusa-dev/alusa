@@ -344,9 +344,9 @@ function TransferTableSection({
               />
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row xl:justify-end">
+            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-3 lg:items-center">
               <Select value={filters.direction} onValueChange={(value) => onFiltersChange({ direction: value as 'asc' | 'desc' })}>
-                <SelectTrigger className="h-10 w-full min-w-[170px] rounded-xl border-slate-200 bg-white sm:w-[170px]">
+                <SelectTrigger className="h-10 w-full min-w-0 rounded-xl border-slate-200 bg-white lg:w-[170px]">
                   <SelectValue placeholder="Ordem" />
                 </SelectTrigger>
                 <SelectContent>
@@ -357,7 +357,7 @@ function TransferTableSection({
 
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" className="relative h-10 rounded-xl border-slate-200 bg-white px-4">
+                  <Button variant="outline" className="relative h-10 w-full rounded-xl border-slate-200 bg-white px-4 lg:w-auto">
                     <Filter className="mr-2 h-4 w-4" />
                     Filtros avançados
                     {activeCount > 0 ? (
@@ -438,7 +438,7 @@ function TransferTableSection({
                 </PopoverContent>
               </Popover>
 
-              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 rounded-xl bg-[#A78BFA] px-4 text-white hover:bg-[#8B5CF6] disabled:bg-[#DDD6FE]">
+              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 w-full rounded-xl bg-[#A78BFA] px-4 text-white hover:bg-[#8B5CF6] disabled:bg-[#DDD6FE] lg:w-auto">
                 <Download className="mr-2 h-4 w-4" />
                 {exporting ? 'Exportando...' : 'Exportar Dados'}
               </Button>
@@ -450,37 +450,37 @@ function TransferTableSection({
         <table className="min-w-full divide-y divide-gray-100">
           <thead>
             <tr className="bg-gray-50">
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 lg:px-6">
                 Solicitação
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 Agendada para
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 Data da transferência
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 Operação
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 Nome
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 CPF ou CNPJ
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-left text-xs font-medium text-gray-500 lg:table-cell">
                 Banco
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell">
                 Taxa
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500">
+              <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell">
                 Valor enviado
               </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500">
+              <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 lg:px-6">
                 Situação
               </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500">
+              <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 lg:px-6">
                 Acoes
               </th>
             </tr>
@@ -510,28 +510,46 @@ function TransferTableSection({
                     role="link"
                     aria-label={`Abrir detalhes da transferência ${item.externalReference}`}
                   >
-                    <td className="px-6 py-4 text-sm text-slate-700">{formatTableDate(item.createdAt)}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{formatTableDate(item.scheduleDate)}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{formatTableDate(item.transferDate)}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{formatTransferOperation(item.operation)}</td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-900">{compactPersonName(item.recipientName ?? item.description)}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{item.cpfCnpj ?? '—'}</td>
-                    <td className="px-6 py-4 text-sm text-slate-700">{item.bankName ?? '—'}</td>
-                    <td className="px-6 py-4 text-right text-sm text-slate-700">
+                    <td className="px-3 py-4 text-sm text-slate-700 lg:px-6">
+                      <span className="font-medium">{formatTableDate(item.createdAt)}</span>
+                      <div className="mt-1.5 space-y-1 text-xs text-slate-600 lg:hidden">
+                        <div>Agend.: {formatTableDate(item.scheduleDate)}</div>
+                        <div>Transferido: {formatTableDate(item.transferDate)}</div>
+                        <div>{formatTransferOperation(item.operation)}</div>
+                        <div className="font-medium text-slate-900">
+                          {compactPersonName(item.recipientName ?? item.description)}
+                        </div>
+                        {item.cpfCnpj ? <div className="font-mono text-[11px]">{item.cpfCnpj}</div> : null}
+                        {item.bankName ? <div className="truncate">{item.bankName}</div> : null}
+                        <div>
+                          {formatCurrency(Number(item.amount))}
+                          {item.feeAmount != null && Number(item.feeAmount) > 0 ? (
+                            <span className="text-slate-500"> · taxa {formatOfficialFee(item.feeAmount)}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTableDate(item.scheduleDate)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTableDate(item.transferDate)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{formatTransferOperation(item.operation)}</td>
+                    <td className="hidden px-6 py-4 text-sm font-medium text-slate-900 lg:table-cell">{compactPersonName(item.recipientName ?? item.description)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{item.cpfCnpj ?? '—'}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell">{item.bankName ?? '—'}</td>
+                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell">
                       {formatOfficialFee(item.feeAmount)}
                     </td>
-                    <td className="px-6 py-4 text-right text-sm text-slate-700">
+                    <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell">
                       {formatCurrency(Number(item.amount))}
                     </td>
-                    <td className="px-6 py-4 text-center">
+                    <td className="px-3 py-4 text-center lg:px-6">
                       <Badge variant={status.variant}>{status.label}</Badge>
                     </td>
-                    <td className="px-6 py-4 text-center">
+                    <td className="px-2 py-4 text-center lg:px-6">
                       {canCancelTransfer(item.status) ? (
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-8 text-xs"
+                          className="h-8 max-lg:px-2 max-lg:text-[11px] text-xs"
                           onClick={(event) => {
                             event.stopPropagation();
                             onRequestCancel(item);
@@ -558,11 +576,14 @@ function TransferTableSection({
       </div>
 
       {data && data.totalPages > 1 ? (
-        <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 p-4" role="navigation">
+        <div
+          className="flex flex-col gap-3 border-t border-gray-100 bg-gray-50/50 p-4 sm:flex-row sm:items-center sm:justify-between"
+          role="navigation"
+        >
           <span className="text-xs font-medium text-gray-500">
             Página {data.page} de {data.totalPages} - {data.total} transferência(s)
           </span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -811,18 +832,18 @@ export function ContaPage() {
               e acompanhe cada saída da conta pelo extrato.
             </p>
 
-            <div className="flex flex-wrap items-center gap-3 lg:justify-end">
+            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-3 lg:justify-end">
             <Button
               onClick={() => openTransferDialog()}
               disabled={!canTransfer}
-              className="h-10 rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40"
+              className="h-10 w-full rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 lg:w-auto"
             >
               <ArrowUpRight className="mr-2 h-4 w-4" />
               Transferir
             </Button>
             <Link
               href="/financeiro/extrato"
-              className="inline-flex h-10 items-center justify-center rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none transition hover:bg-brand-accent/90"
+              className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none transition hover:bg-brand-accent/90 lg:w-auto"
             >
               <ReceiptText className="mr-2 h-4 w-4" />
               Ver extrato

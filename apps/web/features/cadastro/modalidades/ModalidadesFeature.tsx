@@ -19,6 +19,7 @@ import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering
 import useCurrentUser from '@/hooks/use-current-user';
 import { formatFirstLast } from '@alusa/lib/client';
 import ModalidadeDialog from '@/components/modalidades/ModalidadeDialog';
+import { cn } from '@/lib/utils';
 import {
   type ModalidadeListItem,
   type UpdateModalidadePayload,
@@ -111,7 +112,7 @@ export function ModalidadesFeature() {
         actions={
           <Button
             disabled={!contaId}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             onClick={() => {
               editDialog.closeDialog();
               setDialogOpen(true);
@@ -310,27 +311,34 @@ function ModalidadesTable({
     {
       id: 'nome',
       header: 'Modalidade',
-      width: 'w-1/4',
+      width: 'min-w-0 lg:w-[40%]',
       align: 'left',
       render: (m) => (
         <div className="min-w-0">
           <div className={table.primaryText} title={m.nome}>
             {m.nome}
           </div>
+          {m.descricao?.trim() ? (
+            <div className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-gray-500 lg:hidden">
+              {m.descricao}
+            </div>
+          ) : null}
         </div>
       ),
       skeleton: (
         <div className="space-y-2">
-          <div className="h-4 w-48 bg-gray-200 rounded" />
-          <div className="h-3 w-28 bg-gray-200 rounded" />
+          <div className="h-4 w-48 rounded bg-gray-200" />
+          <div className="h-3 w-full max-w-[180px] rounded bg-gray-200 lg:hidden" />
         </div>
       ),
     },
     {
       id: 'descricao',
       header: 'Descrição',
-      width: 'w-1/4',
+      width: 'lg:w-[36%]',
       align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (m) => (
         <div className="w-full min-w-0">
           {m.descricao?.trim() ? (
@@ -342,21 +350,34 @@ function ModalidadesTable({
           )}
         </div>
       ),
-      skeleton: <div className="h-4 w-full bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 w-full rounded bg-gray-200 lg:block" />,
     },
-    statusColumn<ModalidadeListItem>({
-      activeLabel: 'Ativa',
-      inactiveLabel: 'Inativa',
-      getStatus: (modalidade: ModalidadeListItem) => modalidade.status,
-    }),
-    actionsColumn<ModalidadeListItem>({
-      onEdit,
-      onDelete,
-      editButtonAriaLabel: (modalidade: ModalidadeListItem) =>
-        `Editar modalidade ${modalidade.nome}`,
-      deleteButtonAriaLabel: (modalidade: ModalidadeListItem) =>
-        `Excluir modalidade ${modalidade.nome}`,
-    }),
+    (() => {
+      const col = statusColumn<ModalidadeListItem>({
+        activeLabel: 'Ativa',
+        inactiveLabel: 'Inativa',
+        getStatus: (modalidade) => modalidade.status,
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<ModalidadeListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (modalidade) => `Editar modalidade ${modalidade.nome}`,
+        deleteButtonAriaLabel: (modalidade) => `Excluir modalidade ${modalidade.nome}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[12%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (

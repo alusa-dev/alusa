@@ -247,11 +247,11 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         ) : null}
 
         <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-6 py-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex overflow-hidden rounded-xl shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="inline-flex w-full max-w-full overflow-hidden rounded-xl shadow-sm sm:w-auto">
                 <Button
-                  className="rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+                  className="min-w-0 flex-1 rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90 sm:flex-none"
                   onClick={() => setCreateOpen(true)}
                   data-testid="agenda-new-event"
                   disabled={calendarLoading || !calendarAgenda.data}
@@ -293,8 +293,9 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
               <Tabs
                 value={calendarAgenda.filters.viewMode}
                 onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
+                className="w-full sm:w-auto"
               >
-                <TabsList className="h-9">
+                <TabsList className="h-9 w-full justify-start overflow-x-auto sm:w-auto">
                   {AGENDA_VIEW_OPTIONS.map((option) => (
                     <TabsTrigger key={option.value} value={option.value} className="text-xs px-4">
                       {option.label}

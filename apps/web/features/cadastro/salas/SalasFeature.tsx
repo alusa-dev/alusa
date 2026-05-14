@@ -22,6 +22,7 @@ import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering
 import useCurrentUser from '@/hooks/use-current-user';
 import { formatFirstLast } from '@alusa/lib/client';
 import SalaDialog from '@/components/salas/SalaDialog';
+import { cn } from '@/lib/utils';
 import { useSalas } from './hooks/use-salas';
 import {
   updateSala,
@@ -119,7 +120,7 @@ export function SalasFeature() {
             editDialog.closeDialog();
             setDialogOpen(true);
           }}
-          className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+          className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
           disabled={!contaId}
         >
           <Plus className="h-4 w-4 mr-2" /> Nova sala
@@ -324,20 +325,33 @@ function SalasTable({ salas, accountMissing, onEdit, onDelete, loading }: SalasT
     {
       id: 'nome',
       header: 'Sala',
-      width: 'w-1/4',
+      width: 'min-w-0 lg:w-[34%]',
       align: 'left',
       render: (s) => (
-        <div className="text-[13px] text-gray-900 font-normal truncate" title={s.nome}>
-          {s.nome}
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-normal text-gray-900" title={s.nome}>
+            {s.nome}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+            {s.descricao?.trim() || '—'}
+            <span className="tabular-nums"> · Cap. {s.capacidade}</span>
+          </div>
         </div>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
+      skeleton: (
+        <div className="space-y-2">
+          <div className="h-4 w-40 rounded bg-gray-200" />
+          <div className="h-3 w-32 rounded bg-gray-200 lg:hidden" />
+        </div>
+      ),
     },
     {
       id: 'descricao',
       header: 'Descrição',
-      width: 'w-1/4',
+      width: 'lg:w-[30%]',
       align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (s) => (
         <div className="w-full min-w-0">
           <span className="block truncate" title={s.descricao ?? ''}>
@@ -345,27 +359,44 @@ function SalasTable({ salas, accountMissing, onEdit, onDelete, loading }: SalasT
           </span>
         </div>
       ),
-      skeleton: <div className="h-4 w-full bg-gray-200 rounded" />,
+      skeleton: <div className="hidden h-4 w-full rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'capacidade',
       header: 'Capacidade',
-      width: 'w-1/6',
+      width: 'lg:w-[14%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (s) => <span className="text-gray-700">{s.capacidade}</span>,
-      skeleton: <div className="h-4 w-10 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-10 rounded bg-gray-200 lg:block" />,
     },
-    statusColumn<SalaListItem>({
-      activeLabel: 'Ativa',
-      inactiveLabel: 'Inativa',
-      getStatus: (sala: SalaListItem) => sala.status,
-    }),
-    actionsColumn<SalaListItem>({
-      onEdit,
-      onDelete,
-      editButtonAriaLabel: (sala: SalaListItem) => `Editar sala ${sala.nome}`,
-      deleteButtonAriaLabel: (sala: SalaListItem) => `Inativar sala ${sala.nome}`,
-    }),
+    (() => {
+      const col = statusColumn<SalaListItem>({
+        activeLabel: 'Ativa',
+        inactiveLabel: 'Inativa',
+        getStatus: (sala) => sala.status,
+      });
+      return {
+        ...col,
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[12%]',
+        cellClassName: cn(col.cellClassName, 'align-middle'),
+      };
+    })(),
+    (() => {
+      const col = actionsColumn<SalaListItem>({
+        onEdit,
+        onDelete,
+        editButtonAriaLabel: (sala) => `Editar sala ${sala.nome}`,
+        deleteButtonAriaLabel: (sala) => `Inativar sala ${sala.nome}`,
+      });
+      return {
+        ...col,
+        width: 'w-[5.5rem] max-lg:shrink-0 lg:w-[10%]',
+        headerClassName: cn(col.headerClassName, 'max-lg:px-1'),
+        cellClassName: cn(col.cellClassName, 'max-lg:px-1'),
+      };
+    })(),
   ];
 
   return (

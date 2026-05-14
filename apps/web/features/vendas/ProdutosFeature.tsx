@@ -125,8 +125,10 @@ function ProdutosTable({
   const actionColumn = {
     id: 'actions',
     header: 'Ações',
-    width: viewMode === 'archived' ? 'w-[12%]' : 'w-[16%]',
+    width: viewMode === 'archived' ? 'w-[7rem] max-lg:shrink-0 lg:w-[12%]' : 'w-[3.25rem] max-lg:shrink-0 lg:w-[16%]',
     align: 'right',
+    headerClassName: 'max-lg:px-1',
+    cellClassName: 'max-lg:px-1',
     skeleton: <div className="ml-auto h-8 w-28 rounded-lg bg-gray-200" />,
     render: (row: ProductListItem) => {
       const isPending = pendingIds.has(row.id);
@@ -138,7 +140,7 @@ function ProdutosTable({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-8 rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              className="h-8 max-lg:px-2 max-lg:text-[11px] rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
               disabled={isPending}
               onClick={() => onRestore(row)}
             >
@@ -181,7 +183,7 @@ function ProdutosTable({
     {
       id: 'name',
       header: 'Produto',
-      width: 'w-[28%]',
+      width: 'min-w-0 lg:w-[28%]',
       align: 'left',
       noWrap: false,
       skeleton: (
@@ -195,6 +197,7 @@ function ProdutosTable({
       ),
       render: (row) => {
         const reference = getProductReference(row);
+        const effectiveStock = row.totalStock;
 
         return (
           <div className="flex min-w-0 items-center gap-3">
@@ -216,6 +219,11 @@ function ProdutosTable({
               <div className="mt-0.5 truncate text-[11px] text-slate-400">
                 {reference.label}: {reference.value}
               </div>
+              <div className="mt-1.5 space-y-0.5 lg:hidden text-[11px] text-slate-600">
+                {row.category?.name ? <div className="truncate">{row.category.name}</div> : null}
+                <div className="font-medium text-slate-900">{formatCurrency(row.price)}</div>
+                <div>{effectiveStock} un. em estoque</div>
+              </div>
             </div>
           </div>
         );
@@ -224,9 +232,11 @@ function ProdutosTable({
     {
       id: 'category',
       header: 'Categoria',
-      width: 'w-[16%]',
+      width: 'lg:w-[16%]',
       align: 'left',
       noWrap: false,
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       skeleton: <div className="h-4 w-28 rounded bg-gray-200" />,
       render: (row) => (
         <div className="min-w-0">
@@ -241,8 +251,10 @@ function ProdutosTable({
     {
       id: 'price',
       header: 'Preço',
-      width: 'w-[14%]',
+      width: 'lg:w-[14%]',
       align: 'left',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       skeleton: <div className="h-4 w-24 rounded bg-gray-200" />,
       render: (row) => (
         <div>
@@ -256,9 +268,11 @@ function ProdutosTable({
     {
       id: 'margin',
       header: 'Custo e margem',
-      width: 'w-[18%]',
+      width: 'lg:w-[18%]',
       align: 'left',
       noWrap: false,
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       skeleton: (
         <div className="space-y-1.5">
           <div className="h-3 w-24 rounded bg-gray-100" />
@@ -281,9 +295,11 @@ function ProdutosTable({
     {
       id: 'stock',
       header: 'Estoque',
-      width: 'w-[14%]',
+      width: 'lg:w-[14%]',
       align: 'left',
       noWrap: false,
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       skeleton: (
         <div className="space-y-2">
           <div className="h-1.5 w-28 rounded-full bg-gray-100" />
@@ -312,8 +328,10 @@ function ProdutosTable({
     {
       id: 'status',
       header: 'Status',
-      width: 'w-[10%]',
+      width: 'w-[4.5rem] max-lg:shrink-0 lg:w-[10%]',
       align: 'center',
+      headerClassName: 'max-lg:px-1',
+      cellClassName: 'max-lg:px-1',
       skeleton: <div className="mx-auto h-5 w-9 rounded-full bg-gray-200" />,
       render: (row) => {
         const isPending = pendingIds.has(row.id);
@@ -483,7 +501,7 @@ export function ProdutosFeature() {
         actions={
           <Button
             onClick={() => router.push('/vendas/produtos/novo')}
-            className="h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
           >
             <Plus className="h-4 w-4" />
             Novo produto

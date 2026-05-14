@@ -29,6 +29,7 @@ export {
   // Ações / Controles
   MagnifyingGlassIcon as Search,
   BellIcon as Bell,
+  Bars3Icon as Menu,
   ChevronDownIcon as ChevronDown,
   ChevronUpIcon as ChevronUp,
   ChevronLeftIcon as ChevronLeft,

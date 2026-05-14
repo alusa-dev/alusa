@@ -124,13 +124,27 @@ function AnticipationsTable({
       <table className="min-w-full divide-y divide-slate-100">
         <thead className="bg-gray-50">
           <tr>
-            <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Recebível</th>
-            <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Status</th>
-            <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Valor</th>
-            <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Taxa</th>
-            <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Líquido</th>
-            <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Previsão</th>
-            <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">Ações</th>
+            <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5">
+              Recebível
+            </th>
+            <th className="w-[1%] whitespace-nowrap px-2 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5">
+              Status
+            </th>
+            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell">
+              Valor
+            </th>
+            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell">
+              Taxa
+            </th>
+            <th className="hidden px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell">
+              Líquido
+            </th>
+            <th className="hidden px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:table-cell">
+              Previsão
+            </th>
+            <th className="w-[1%] whitespace-nowrap px-2 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5">
+              Ações
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100 bg-white">
@@ -138,24 +152,46 @@ function AnticipationsTable({
             const canCancel = item.status === 'PENDING' || item.status === 'SCHEDULED';
             return (
               <tr key={item.id} className="hover:bg-slate-50/80">
-                <td className="max-w-[320px] px-5 py-4">
+                <td className="max-w-[min(100vw-8rem,320px)] px-3 py-4 lg:max-w-[320px] lg:px-5">
                   <p className="truncate text-sm font-medium text-slate-900">
                     {item.context.description ?? item.payment ?? item.installment ?? item.id}
                   </p>
                   <p className="mt-1 truncate text-xs text-slate-500">
                     {item.context.payerName ?? sourceLabel(item.context.source)} • {item.payment ?? item.installment}
                   </p>
+                  <div className="mt-2 space-y-0.5 text-xs text-slate-600 lg:hidden">
+                    <p>
+                      <span className="text-slate-400">Valor </span>
+                      {formatCurrency(item.value)}
+                      <span className="text-slate-400"> · Taxa </span>
+                      {formatCurrency(item.fee)}
+                    </p>
+                    <p className="font-semibold text-emerald-700">Líquido {formatCurrency(item.netValue)}</p>
+                    <p className="text-slate-500">
+                      Previsão {formatDate(item.anticipationDate ?? item.dueDate)}
+                    </p>
+                  </div>
                 </td>
-                <td className="px-5 py-4"><StatusBadge status={item.status} /></td>
-                <td className="px-5 py-4 text-right text-sm text-slate-700">{formatCurrency(item.value)}</td>
-                <td className="px-5 py-4 text-right text-sm text-slate-700">{formatCurrency(item.fee)}</td>
-                <td className="px-5 py-4 text-right text-sm font-semibold text-emerald-700">{formatCurrency(item.netValue)}</td>
-                <td className="px-5 py-4 text-sm text-slate-600">{formatDate(item.anticipationDate ?? item.dueDate)}</td>
-                <td className="px-5 py-4 text-right">
+                <td className="px-2 py-4 lg:px-5">
+                  <StatusBadge status={item.status} />
+                </td>
+                <td className="hidden px-5 py-4 text-right text-sm text-slate-700 lg:table-cell">
+                  {formatCurrency(item.value)}
+                </td>
+                <td className="hidden px-5 py-4 text-right text-sm text-slate-700 lg:table-cell">
+                  {formatCurrency(item.fee)}
+                </td>
+                <td className="hidden px-5 py-4 text-right text-sm font-semibold text-emerald-700 lg:table-cell">
+                  {formatCurrency(item.netValue)}
+                </td>
+                <td className="hidden px-5 py-4 text-sm text-slate-600 lg:table-cell">
+                  {formatDate(item.anticipationDate ?? item.dueDate)}
+                </td>
+                <td className="px-2 py-4 text-right lg:px-5">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 rounded-lg"
+                    className="h-8 rounded-lg max-lg:px-2 max-lg:text-xs"
                     disabled={!canCancel || cancelingId === item.id}
                     onClick={() => onCancel(item)}
                   >
@@ -279,7 +315,7 @@ export function MinhasAntecipacoesPage() {
               Acompanhe solicitações de recebíveis, taxas, valor líquido e retorno da análise feita pelo Asaas.
             </p>
           </div>
-          <Button asChild className="h-10 rounded-xl bg-brand-accent px-5 text-white hover:bg-brand-accent/90">
+          <Button asChild className="h-10 w-full rounded-xl bg-brand-accent px-5 text-white hover:bg-brand-accent/90 lg:w-auto">
             <Link href="/antecipacoes/antecipar">
               Antecipar recebimento
               <ChevronRight className="ml-2 h-4 w-4" />
@@ -305,8 +341,8 @@ export function MinhasAntecipacoesPage() {
                 {lastSyncLabel ? ` • atualizado às ${lastSyncLabel}` : ''}
               </p>
             </div>
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,320px)_180px_auto]">
-              <div className="relative">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,320px)_180px_auto]">
+              <div className="relative min-w-0">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <Input
                   value={search}
@@ -322,8 +358,8 @@ export function MinhasAntecipacoesPage() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="h-10 rounded-lg border-slate-200 bg-white">
-                  <Filter className="mr-2 h-4 w-4" />
+                <SelectTrigger className="h-10 w-full min-w-0 rounded-lg border-slate-200 bg-white lg:w-[180px]">
+                  <Filter className="mr-2 h-4 w-4 shrink-0" />
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -338,7 +374,7 @@ export function MinhasAntecipacoesPage() {
               </Select>
               <Button
                 variant="outline"
-                className="h-10 rounded-lg"
+                className="h-10 w-full rounded-lg lg:w-auto"
                 disabled={loading}
                 onClick={() => void load()}
               >
@@ -355,7 +391,7 @@ export function MinhasAntecipacoesPage() {
           cancelingId={cancelingId}
         />
 
-        <div className="flex items-center justify-between border-t border-slate-100 px-5 py-3 text-sm text-slate-500">
+        <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-5">
           <span>Página {page}</span>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" className="rounded-lg" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>

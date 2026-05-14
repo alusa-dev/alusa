@@ -17,12 +17,13 @@ import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering
 import useCurrentUser from '@/hooks/use-current-user';
 import { formatFirstLast } from '@alusa/lib/client';
 import TurmaDialog, { type TurmaDialogMode } from '@/components/turmas/TurmaDialog';
+import { table } from '@/components/layout/TableStyles';
 import { type TurmaListItem } from './services/turmas-service';
 import { useTurmas, type UseTurmasFilters } from './hooks/use-turmas';
+import { cn } from '@/lib/utils';
+import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 
 const PAGE_SIZE = 10;
-
-import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 
 interface TurmasTableProps {
   turmas: TurmaListItem[];
@@ -122,7 +123,7 @@ export function TurmasFeature() {
         actions={
           <Button
             disabled={!contaId}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             onClick={() => setDialogState({ open: true, mode: 'create', turma: null })}
           >
             <Plus className="h-4 w-4 mr-2" /> Nova turma
@@ -145,7 +146,7 @@ export function TurmasFeature() {
         }
         footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
       >
-        <div className="bg-white rounded-xl border overflow-hidden">
+        <div className={table.container}>
           <TurmasTable
             turmas={paginated}
             accountMissing={accountMissing}
@@ -291,47 +292,64 @@ function TurmasTable({
     {
       id: 'nome',
       header: 'Turma',
-      width: 'w-1/5',
+      width: 'min-w-0 lg:w-[22%]',
       align: 'left',
       render: (t) => (
-        <div className="text-[13px] text-gray-900 font-medium truncate" title={t.nome}>
-          {t.nome}
+        <div className="min-w-0">
+          <div className="truncate text-[13px] font-medium text-gray-900" title={t.nome}>
+            {t.nome}
+          </div>
+          <div className="mt-0.5 text-[11px] leading-snug text-gray-500 lg:hidden">
+            {formatDiasSemana(t.diasSemana)} · {t.horaInicio}–{t.horaFim}
+            {t.capacidade != null ? ` · Cap. ${t.capacidade}` : ''}
+          </div>
         </div>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded" />,
+      skeleton: (
+        <div className="space-y-2">
+          <div className="h-4 w-40 rounded bg-gray-200" />
+          <div className="h-3 w-full max-w-[200px] rounded bg-gray-200 lg:hidden" />
+        </div>
+      ),
     },
     {
       id: 'dias',
       header: 'Dias',
-      width: 'w-1/5',
+      width: 'lg:w-[14%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (t) => (
-        <span className="text-[13px] text-gray-600 whitespace-nowrap">
+        <span className="whitespace-nowrap text-[13px] text-gray-600">
           {formatDiasSemana(t.diasSemana)}
         </span>
       ),
-      skeleton: <div className="h-4 w-28 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-28 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'horario',
       header: 'Horário',
-      width: 'w-1/6',
+      width: 'lg:w-[12%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (t) => (
-        <span className="text-[13px] text-gray-600 whitespace-nowrap">
+        <span className="whitespace-nowrap text-[13px] text-gray-600">
           {t.horaInicio} - {t.horaFim}
         </span>
       ),
-      skeleton: <div className="h-4 w-24 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'professores',
       header: 'Professores',
-      width: 'w-1/4',
+      width: 'lg:w-[24%]',
       align: 'center',
       noWrap: false,
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (t) => (
-        <div className="flex flex-wrap gap-1 justify-center">
+        <div className="flex flex-wrap justify-center gap-1">
           {t.professores.length > 0 ? (
             <>
               {t.professores.slice(0, 3).map((professor) => (
@@ -357,33 +375,35 @@ function TurmasTable({
           )}
         </div>
       ),
-      skeleton: <div className="h-4 w-40 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-40 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'capacidade',
       header: 'Capacidade',
-      width: 'w-1/6',
+      width: 'lg:w-[12%]',
       align: 'center',
+      headerClassName: 'hidden lg:table-cell',
+      cellClassName: 'hidden lg:table-cell',
       render: (t) => (
-        <span className="text-[13px] text-gray-700 whitespace-nowrap">
+        <span className="whitespace-nowrap text-[13px] text-gray-700">
           {t.capacidade ?? '—'}
         </span>
       ),
-      skeleton: <div className="h-4 w-10 bg-gray-200 rounded mx-auto" />,
+      skeleton: <div className="mx-auto hidden h-4 w-10 rounded bg-gray-200 lg:block" />,
     },
     {
       id: 'acoes',
       header: 'Ações',
-      width: 'w-24',
+      width: 'w-[6.75rem] max-lg:shrink-0 lg:w-[16%]',
       align: 'right',
-      headerClassName: 'px-6',
-      cellClassName: 'px-6',
+      headerClassName: 'px-3 lg:px-6',
+      cellClassName: cn('px-2 lg:px-6', 'text-right'),
       render: (t) => (
-        <>
+        <div className="inline-flex justify-end gap-0 sm:gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+            className="h-8 w-8 shrink-0 text-slate-600 hover:bg-slate-50 hover:text-slate-900"
             aria-label="Ver agenda da turma"
             onClick={() => onViewAgenda(t)}
           >
@@ -392,7 +412,7 @@ function TurmasTable({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+            className="h-8 w-8 shrink-0 text-gray-600 hover:bg-gray-50 hover:text-gray-800"
             aria-label="Editar turma"
             onClick={() => onEdit(t)}
           >
@@ -401,19 +421,19 @@ function TurmasTable({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+            className="h-8 w-8 shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
             aria-label="Excluir turma"
             onClick={() => onDelete(t)}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
-        </>
+        </div>
       ),
       skeleton: (
-        <div className="flex justify-center gap-2">
-          <div className="h-8 w-8 bg-gray-200 rounded" />
-          <div className="h-8 w-8 bg-gray-200 rounded" />
-          <div className="h-8 w-8 bg-gray-200 rounded" />
+        <div className="flex justify-end gap-2">
+          <div className="h-8 w-8 rounded bg-gray-200" />
+          <div className="h-8 w-8 rounded bg-gray-200" />
+          <div className="h-8 w-8 rounded bg-gray-200" />
         </div>
       ),
     },

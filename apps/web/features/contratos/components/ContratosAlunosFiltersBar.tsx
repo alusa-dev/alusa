@@ -45,7 +45,7 @@ export function ContratosAlunosFiltersBar({
 }: ContratosAlunosFiltersBarProps) {
   if (mode === 'search') {
     return (
-      <div className={cn('relative w-full md:max-w-[420px]', className)}>
+      <div className={cn('relative w-full lg:max-w-[420px]', className)}>
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <Input
           placeholder="Buscar aluno por nome, CPF ou e-mail..."
@@ -62,13 +62,13 @@ export function ContratosAlunosFiltersBar({
     return (
       <div
         className={cn(
-          'flex w-full items-center gap-3 flex-wrap md:flex-nowrap md:justify-end',
+          'grid w-full min-w-0 grid-cols-2 gap-2 lg:flex lg:flex-nowrap lg:items-center lg:justify-end lg:gap-3',
           className,
         )}
       >
         <Select value={statusValue} onValueChange={(v) => onStatusChange(v as ContratosAlunoStatusFilter)}>
           <SelectTrigger
-            className="h-10 w-full md:w-auto md:min-w-[190px] bg-white text-gray-700 border border-gray-300 shadow-none px-3"
+            className="h-10 w-full min-w-0 border border-gray-300 bg-white px-3 text-gray-700 shadow-none lg:w-auto lg:min-w-[190px]"
             disabled={disabled}
           >
             <SelectValue placeholder="Status do contrato" />
@@ -87,7 +87,7 @@ export function ContratosAlunosFiltersBar({
           onValueChange={(v) => onTurmaChange(v === 'TODAS' ? '' : v)}
           disabled={disabled || turmasLoading}
         >
-          <SelectTrigger className="h-10 w-full md:w-auto md:min-w-[220px] bg-white text-gray-700 border border-gray-300 shadow-none px-3">
+          <SelectTrigger className="h-10 w-full min-w-0 border border-gray-300 bg-white px-3 text-gray-700 shadow-none lg:w-auto lg:min-w-[220px]">
             <SelectValue placeholder="Todas as turmas" />
           </SelectTrigger>
           <SelectContent align="end" className="text-[13px]">
@@ -106,11 +106,11 @@ export function ContratosAlunosFiltersBar({
   return (
     <div
       className={cn(
-        'flex w-full flex-col gap-3 md:flex-row md:items-center md:justify-between',
+        'flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-between',
         className,
       )}
     >
-      <div className="relative w-full md:max-w-[420px]">
+      <div className="relative w-full lg:max-w-[420px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
         <Input
           placeholder="Buscar aluno por nome, CPF ou e-mail..."
@@ -121,10 +121,10 @@ export function ContratosAlunosFiltersBar({
         />
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap md:flex-nowrap md:justify-end">
+      <div className="grid w-full min-w-0 grid-cols-2 gap-2 lg:flex lg:flex-nowrap lg:items-center lg:justify-end lg:gap-3">
         <Select value={statusValue} onValueChange={(v) => onStatusChange(v as ContratosAlunoStatusFilter)}>
           <SelectTrigger
-            className="h-10 w-full md:w-auto md:min-w-[190px] bg-white text-gray-700 border border-gray-300 shadow-none px-3"
+            className="h-10 w-full min-w-0 border border-gray-300 bg-white px-3 text-gray-700 shadow-none lg:w-auto lg:min-w-[190px]"
             disabled={disabled}
           >
             <SelectValue placeholder="Status do contrato" />
@@ -143,7 +143,7 @@ export function ContratosAlunosFiltersBar({
           onValueChange={(v) => onTurmaChange(v === 'TODAS' ? '' : v)}
           disabled={disabled || turmasLoading}
         >
-          <SelectTrigger className="h-10 w-full md:w-auto md:min-w-[220px] bg-white text-gray-700 border border-gray-300 shadow-none px-3">
+          <SelectTrigger className="h-10 w-full min-w-0 border border-gray-300 bg-white px-3 text-gray-700 shadow-none lg:w-auto lg:min-w-[220px]">
             <SelectValue placeholder="Todas as turmas" />
           </SelectTrigger>
           <SelectContent align="end" className="text-[13px]">

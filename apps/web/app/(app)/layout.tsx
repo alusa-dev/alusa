@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 
 import { useSession } from 'next-auth/react';
 import CardHeader from '@/components/layout/CardHeader';
+import { MobileAppHeader } from '@/components/layout/MobileAppHeader';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { useUserStore } from '@/lib/stores/user-store';
 
@@ -71,11 +72,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // (Mantemos session effect/health ping para consistência.)
 
   return (
-    <div className="relative h-screen min-h-[100svh] w-full app-surface-bg overflow-hidden">
+    <div className="relative flex min-h-[100svh] w-full flex-col overflow-x-hidden bg-white lg:block lg:h-screen lg:min-h-0 lg:overflow-hidden lg:bg-[var(--app-bg)]">
       <Sidebar />
+      <MobileAppHeader />
 
       <main
-        className="with-sidebar h-full overflow-hidden transition-[padding-left] duration-300 ease-in-out"
+        className="with-sidebar flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden transition-[padding-left] duration-300 ease-in-out lg:h-full lg:overflow-hidden"
         style={{ ['--sidebar-gap' as string]: `${CONTENT_GAP_PX}px` } as Record<string, string>}
       >
         <div
@@ -85,11 +87,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             paddingBottom: OUTER_PADDING_BOTTOM_PX,
             paddingLeft: OUTER_PADDING_LEFT_PX,
           }}
-          className="h-full overflow-visible"
+          className="app-shell-outer flex min-h-0 flex-1 flex-col overflow-visible lg:h-full"
         >
           <div
             data-app-shell-card
-            className="flex h-full w-full flex-col overflow-hidden transition-[width] duration-300 ease-in-out"
+            className="flex min-h-0 w-full flex-1 flex-col overflow-hidden transition-[width] duration-300 ease-in-out lg:h-full"
             style={{
               height: `calc(100vh - ${OUTER_PADDING_TOP_PX + OUTER_PADDING_BOTTOM_PX}px)`,
               background: '#FFFFFF',
@@ -101,12 +103,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               zIndex: 1,
             }}
           >
-            <CardHeader />
+            <div className="hidden shrink-0 lg:block">
+              <CardHeader />
+            </div>
             {/* Wrapper para o conteúdo das páginas. Removido CustomScrollArea para evitar scroll duplo no Editor.
                 Páginas que precisam de scroll devem gerenciar seu próprio overflow (ex: DataTables, Dashboards).
              */}
             <div
-              className="mt-6 flex-1 min-h-0 app-content-scroll relative"
+              className="relative mt-0 flex min-h-0 flex-1 app-content-scroll lg:mt-6"
               style={{ paddingRight: OUTER_PADDING_RIGHT_PX }}
             >
               {children}

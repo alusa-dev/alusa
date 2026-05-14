@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
-import { useSession } from 'next-auth/react';
 // Heroicons
 import {
   ChevronDownIcon,
@@ -24,19 +23,59 @@ type Props = {
   foto?: string | null;
 };
 
+/** Itens do menu de usuário — reutilizado no dropdown desktop e no drawer mobile. */
+export function UserMenuPanel({ onClose }: { onClose: () => void }) {
+  const { isDark, toggleTheme } = useTheme();
+  const myAccountLocked = false;
+
+  return (
+    <nav className="p-2" role="menu" aria-label="Menu do usuário">
+      {myAccountLocked ? (
+        <MenuDisabledItem
+          icon={<UserCircleIcon className="h-5 w-5" />}
+          title="Finalize o cadastro financeiro para acessar Minha conta."
+        >
+          Minha conta
+        </MenuDisabledItem>
+      ) : (
+        <MenuLink
+          href="/conta"
+          icon={<UserCircleIcon className="h-5 w-5" />}
+          onClick={onClose}
+        >
+          Minha conta
+        </MenuLink>
+      )}
+
+      <MenuLink href="/ajuda" icon={<QuestionMarkCircleIcon className="h-5 w-5" />} onClick={onClose}>
+        Ajuda
+      </MenuLink>
+
+      <Divider />
+
+      <ThemeMenuItem isOn={isDark} onToggle={toggleTheme} />
+
+      <Divider />
+
+      <MenuButton
+        icon={<ArrowRightStartOnRectangleIcon className="h-5 w-5" />}
+        onClick={() => {
+          onClose();
+          void signOut({ callbackUrl: '/' });
+        }}
+      >
+        Encerrar sessão
+      </MenuButton>
+    </nav>
+  );
+}
+
 export default function UserMenu({ name, email, initials, foto }: Props) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const { isDark, toggleTheme } = useTheme();
-  const { data: session } = useSession();
   const storeUser = useUserStore((state: UserState) => state.user);
   const updateUser = useUserStore((state: UserState) => state.updateUser);
-  const roleFromSession = (session?.user as { role?: string } | undefined)?.role;
-  const isAdmin = typeof roleFromSession === 'string' && roleFromSession.toUpperCase() === 'ADMIN';
-  // myAccountLocked removido - wizard é o único onboarding
-  const myAccountLocked = false;
-  // Avatar derives from store (preferido) e depois prop (fallback)
   const avatarUrl = storeUser?.foto ?? foto ?? null;
 
   // Atualiza avatar ao receber evento global de atualização do usuário
@@ -107,58 +146,13 @@ export default function UserMenu({ name, email, initials, foto }: Props) {
       {open && (
         <div
           ref={menuRef}
-          role="menu"
-          aria-label="Menu do usuário"
           className="absolute right-0 top-[56px] w-[320px] rounded-[20px] bg-white ring-1 ring-black/5 z-overlay"
           style={{
             boxShadow:
               'rgba(14, 63, 126, 0.06) 0px 0px 0px 1px, rgba(42, 51, 70, 0.03) 0px 1px 1px -0.5px, rgba(42, 51, 70, 0.04) 0px 2px 2px -1px, rgba(42, 51, 70, 0.04) 0px 3px 3px -1.5px, rgba(42, 51, 70, 0.03) 0px 5px 5px -2.5px, rgba(42, 51, 70, 0.03) 0px 10px 10px -5px, rgba(42, 51, 70, 0.03) 0px 24px 24px -8px',
           }}
         >
-          <nav className="p-2">
-            {/* Minha conta */}
-            {myAccountLocked ? (
-              <MenuDisabledItem icon={<UserCircleIcon className="h-5 w-5" />} title="Finalize o cadastro financeiro para acessar Minha conta.">
-                Minha conta
-              </MenuDisabledItem>
-            ) : (
-              <MenuLink
-                href="/conta"
-                icon={<UserCircleIcon className="h-5 w-5" />}
-                onClick={() => setOpen(false)}
-              >
-                Minha conta
-              </MenuLink>
-            )}
-
-            {/* Ajuda */}
-            <MenuLink
-              href="/ajuda"
-              icon={<QuestionMarkCircleIcon className="h-5 w-5" />}
-              onClick={() => setOpen(false)}
-            >
-              Ajuda
-            </MenuLink>
-
-            <Divider />
-
-            {/* Tema — Toggle com Sol/Lua (funcional) */}
-            <ThemeMenuItem isOn={isDark} onToggle={toggleTheme} />
-
-            <Divider />
-
-            {/* Encerrar sessão */}
-            <MenuButton
-              icon={<ArrowRightStartOnRectangleIcon className="h-5 w-5" />}
-              onClick={() => {
-                setOpen(false);
-                // Usa fluxo padrão com callbackUrl explícito para minimizar chamadas extras a /api/auth/session
-                void signOut({ callbackUrl: '/' });
-              }}
-            >
-              Encerrar sessão
-            </MenuButton>
-          </nav>
+          <UserMenuPanel onClose={() => setOpen(false)} />
         </div>
       )}
     </div>

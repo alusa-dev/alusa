@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import TableLayout from '@/components/layout/TableLayout';
+import { table } from '@/components/layout/TableStyles';
 import EntityFiltersBar, {
   type StatusValue,
   type SortOrder as SortOrderEF,
@@ -510,19 +511,23 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'aluno',
         header: 'Aluno',
         align: 'left',
-        width: 'w-[22%]',
+        width: 'min-w-0 lg:w-[24%]',
         render: (m) => (
           <button
-            onClick={() => window.location.href = `/matriculas/${m.id}`}
-            className="flex flex-col leading-tight text-left hover:bg-gray-50 w-full p-2 -m-2 rounded transition-colors"
+            type="button"
+            onClick={() => (window.location.href = `/matriculas/${m.id}`)}
+            className="-m-2 flex w-full flex-col rounded p-2 text-left leading-tight transition-colors hover:bg-gray-50"
           >
-            <span className="font-medium text-gray-900 truncate max-w-[220px]">
+            <span className="max-w-full truncate font-medium text-gray-900 lg:max-w-[220px]">
               {m.aluno.nome || '—'}
             </span>
-            <span className="text-xs text-gray-500 mt-0.5">
+            <span className="mt-0.5 text-xs text-gray-500">
               {m.aluno.cpf
                 ? `CPF: ${m.aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}`
                 : 'Sem CPF'}
+            </span>
+            <span className="mt-1 line-clamp-2 text-[11px] text-gray-500 lg:hidden">
+              {m.combo?.nome || m.turma?.nome || '—'} · {m.plano?.nome ?? '—'}
             </span>
           </button>
         ),
@@ -532,7 +537,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'turma-combo',
         header: 'Turma/Combo',
         align: 'left',
-        width: 'w-[18%]',
+        width: 'lg:w-[16%]',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (m) => (
           <span className="text-gray-700 text-sm truncate max-w-[180px] block">
             {m.combo?.nome || m.turma?.nome || '—'}
@@ -544,7 +551,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'plano',
         header: 'Plano',
         align: 'left',
-        width: 'w-[15%]',
+        width: 'lg:w-[14%]',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (m) => (
           <div className="flex flex-col leading-tight">
             <span className="text-gray-800 text-sm font-medium truncate max-w-[180px]">
@@ -561,7 +570,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'taxa',
         header: 'Taxa de Matrícula',
         align: 'center',
-        width: 'w-[15%]',
+        width: 'lg:w-[12%]',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (m) => {
           const taxaCobranca = m.cobrancas.find((c) => c.tipo === 'TAXA_MATRICULA');
 
@@ -599,7 +610,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'status',
         header: 'Status',
         align: 'center',
-        width: 'w-[12%]',
+        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[10%]',
         render: (m) => (
           <div data-testid={`matricula-status-${m.id}`} className="flex items-center justify-center">
             <Badge status={m.status as StatusType} size="sm" />
@@ -610,7 +621,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'contrato',
         header: 'Contrato',
         align: 'center',
-        width: 'w-[15%]',
+        width: 'lg:w-[12%]',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
         render: (m) => {
           const contrato = m.contratos?.[0];
           if (!contrato) {
@@ -635,7 +648,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'acoes',
         header: 'Ações',
         align: 'right',
-        width: 'w-[20%]',
+        width: 'w-[3.25rem] max-lg:shrink-0 lg:w-[12%]',
+        headerClassName: 'max-lg:px-1',
+        cellClassName: 'max-lg:px-1',
         render: (m) => {
           const cobrancaBloqueante = m.cobrancas?.find((c) =>
             COBRANCA_BLOCKING_STATUSES.includes(c.status),
@@ -816,14 +831,18 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       }
       actions={
         initialTurmaId ? (
-          <Button variant="outline" onClick={() => router.back()}>
+          <Button
+            variant="outline"
+            className="h-10 w-full md:w-auto"
+            onClick={() => router.back()}
+          >
             <ArrowLeftIcon className="mr-2 h-4 w-4" />
             Voltar
           </Button>
         ) : (
           <Button
             onClick={handleOpenWizard}
-            className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar matrícula"
             disabled={!contaId}
           >
@@ -844,7 +863,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       }
       footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
     >
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className={table.container}>
         <DataTable
           data={items}
           columns={columns}
