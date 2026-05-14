@@ -1,7 +1,34 @@
 /* por quê: define fundação Tailwind + tokens CSS custom para fallback */
 @tailwind base;
+
+@layer base {
+
+	html {
+		min-height: 100%;
+		background: #ffffff;
+	}
+
+	body {
+		min-height: 100svh;
+		margin: 0;
+		background: #ffffff;
+	}
+}
+
 @tailwind components;
 @tailwind utilities;
+
+/* iOS Safari: altura útil da barra dinâmica */
+@supports (-webkit-touch-callout: none) {
+
+	body {
+		min-height: -webkit-fill-available;
+	}
+
+	.auth-mobile-viewport {
+		min-height: 100svh;
+	}
+}
 
 /* NOTA: Os estilos do editor (.editor-wrapper, .page-a4, .ProseMirror) 
    estão definidos mais abaixo na seção "Editor A4 Page Styles" */
@@ -551,12 +578,6 @@ select:focus {
 	font-weight: 600;
 }
 
-/* Layout auth: passthrough — AuthShell controla o layout full-page */
-.auth-shell {
-	min-height: 100dvh;
-	width: 100%;
-}
-
 @layer utilities {
 
 	/* AuthShell: altura viewport estável no mobile (Safari barra dinâmica) */
@@ -568,13 +589,6 @@ select:focus {
 
 	.auth-mobile-scroll {
 		padding-bottom: max(1rem, env(safe-area-inset-bottom));
-	}
-}
-
-@supports (-webkit-touch-callout: none) {
-
-	.auth-mobile-viewport {
-		min-height: 100svh;
 	}
 }
 

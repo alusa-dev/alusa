@@ -1,8 +1,10 @@
-// pixel-perfect login
-// Layout escopo (auth): centraliza vertical/horizontal, remove scroll e aplica fundo.
-// Não recria <html>/<body>; root layout mantém providers/sessão.
+// Layout escopo (auth): fundo branco full-viewport; RootLayout já define html/body brancos.
 import React from 'react';
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  return <div className="auth-shell">{children}</div>;
+  return (
+    <main className="min-h-[100svh] min-h-dvh w-full bg-white text-gray-900 antialiased">
+      {children}
+    </main>
+  );
 }

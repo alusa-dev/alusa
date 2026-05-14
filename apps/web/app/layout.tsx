@@ -13,28 +13,33 @@ export const metadata: Metadata = {
     template: "%s | Alusa",
   },
   description: "Gestão escolar, matrículas, cobranças e financeiro em uma operação integrada.",
+  manifest: "/site.webmanifest",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
     apple: "/favicon.svg",
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Alusa",
+  },
 };
 
 export const viewport: Viewport = {
-  colorScheme: "light dark",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
-  /** Alinha o chrome mobile (Safari/Chrome) ao token --app-bg em cada esquema. */
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#F7F5F8" },
-    { media: "(prefers-color-scheme: dark)", color: "#2A004A" },
-  ],
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = cookies();
   const themeCookie = (cookieStore.get('alusa.theme')?.value as 'light' | 'dark' | undefined) ?? undefined;
   return (
-    <html lang="pt-BR" className="min-h-dvh app-surface-bg" data-theme={themeCookie}>
+    <html lang="pt-BR" className="min-h-full bg-white" data-theme={themeCookie}>
       <head>
         {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar) */}
         <Script id="theme-init" strategy="beforeInteractive">
@@ -45,7 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {`(function(){try{document.documentElement.classList.add('theme-ready');document.body.classList.add('theme-ready');}catch(e){}})();`}
         </Script>
       </head>
-      <body className="min-h-dvh text-gray-900 antialiased app-surface-bg">
+      <body className="bg-white text-gray-900 antialiased">
         <AppProviders>
           {children}
         </AppProviders>

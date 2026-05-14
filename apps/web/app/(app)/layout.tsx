@@ -71,7 +71,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // (Mantemos session effect/health ping para consistência.)
 
   return (
-    <div className="relative h-screen w-full app-surface-bg overflow-hidden">
+    <div className="relative h-screen min-h-[100svh] w-full app-surface-bg overflow-hidden">
       <Sidebar />
 
       <main

@@ -39,7 +39,7 @@ export default function AuthShell({
     heroContent = defaultHeroContent,
 }: AuthShellProps) {
     return (
-        <main className="auth-mobile-viewport flex w-full overflow-hidden bg-white lg:min-h-screen">
+        <div className="auth-mobile-viewport flex w-full overflow-hidden bg-white lg:min-h-screen">
             {/* Esquerda: desktop */}
             <aside className="hidden lg:sticky lg:top-0 lg:block lg:h-screen lg:w-1/2 lg:flex-shrink-0 lg:overflow-hidden">
                 <img
@@ -76,12 +76,12 @@ export default function AuthShell({
                             </div>
                             <div className="-mx-4 border-b border-gray-200" aria-hidden="true" />
                         </header>
-                        <div className="flex w-full flex-1 flex-col items-center justify-start pt-6 lg:flex-none lg:items-center lg:justify-center lg:pt-0">
+                        <div className="flex w-full flex-1 flex-col items-center justify-center pt-6 lg:flex-none lg:items-center lg:justify-center lg:pt-0">
                             {children}
                         </div>
                     </div>
                 </div>
             </section>
-        </main>
+        </div>
     );
 }

@@ -1,0 +1,8 @@
+{
+  "name": "Alusa",
+  "short_name": "Alusa",
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "start_url": "/"
+}
