@@ -1054,7 +1054,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
   // Loading state
   if (loading) {
     return (
-      <div className="container mx-auto py-6 px-4 max-w-7xl">
+      <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
         <div className="mb-8">
           <Skeleton className="h-10 w-32 mb-5" />
           <div className="flex items-start justify-between gap-6">
@@ -1100,12 +1100,13 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
   // Error state
   if (error || !cobranca) {
     return (
-      <div className="container mx-auto py-6 px-4 max-w-7xl">
+      <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
         <button
+          type="button"
           onClick={() => router.back()}
-          className="mb-8 flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+          className="mb-6 flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 sm:mb-8"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 shrink-0" />
           Voltar
         </button>
 
@@ -1147,20 +1148,21 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
   const invoiceUrl = cobranca.asaasData?.invoiceUrl as string | undefined;
 
   return (
-    <div className="container mx-auto py-6 px-4 max-w-7xl pb-8">
+    <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 pb-8 sm:px-4 sm:py-6">
         {/* Header com espaçamento consistente */}
-        <div className="mb-8">
+        <div className="mb-6 sm:mb-8">
         <button
+          type="button"
           onClick={() => router.back()}
-          className="mb-5 flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
+          className="mb-4 flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 sm:mb-5"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="h-4 w-4 shrink-0" />
           Voltar
         </button>
 
         {/* Banner: Faz parte de um parcelamento */}
         {cobranca.tipo === 'PARCELADA' && cobranca.installmentPlanId && (
-          <div className="mb-5 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 sm:mb-5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
             <InformationCircleIcon className="h-5 w-5 text-blue-600 flex-shrink-0" />
             <p className="text-sm text-blue-800">
               Esta cobrança faz parte de um parcelamento.{' '}
@@ -1176,7 +1178,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
 
         {/* Banner: Gerada por uma assinatura */}
         {(cobranca.tipo === 'MENSALIDADE' || cobranca.tipo === 'RECORRENTE') && cobranca.subscriptionId && (
-          <div className="mb-5 flex items-center gap-3 rounded-lg border border-purple-200 bg-purple-50 px-4 py-3">
+          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-3 sm:mb-5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
             <InformationCircleIcon className="h-5 w-5 text-purple-600 flex-shrink-0" />
             <p className="text-sm text-purple-800">
               Esta cobrança foi gerada por uma assinatura.{' '}
@@ -1190,51 +1192,53 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
           </div>
         )}
 
-        <div className="flex items-start justify-between gap-6">
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-gray-900 leading-tight">Detalhes da Cobrança</h1>
-            <p className="text-sm text-gray-600 mt-2 font-mono">ID: {cobranca.id}</p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-gray-900 md:text-3xl md:font-bold">
+              Detalhes da Cobrança
+            </h1>
+            <p className="mt-2 break-all font-mono text-xs text-gray-600 sm:text-sm">ID: {cobranca.id}</p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch lg:w-auto lg:flex-initial lg:items-center lg:justify-end">
             {/* Botão Editar/Salvar - Apenas se pendente */}
             {isPendente && (
               <>
                 {isEditing ? (
-                  <>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:flex-wrap sm:gap-3">
                     <Button
                       variant="outline"
                       onClick={handleCancelEdit}
                       disabled={isSaving}
-                      className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                      className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto"
                     >
                       Cancelar
                     </Button>
                     <Button
                       onClick={handleEdit}
                       disabled={isSaving}
-                      className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white"
+                      className="h-10 w-full justify-center bg-brand-accent px-4 text-white hover:bg-brand-accent/90 sm:w-auto"
                     >
                       {isSaving ? (
                         <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                          <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-white" />
                           Salvando...
                         </>
                       ) : (
                         <>
-                          <Edit className="h-4 w-4 mr-2" />
+                          <Edit className="mr-2 h-4 w-4" />
                           Salvar
                         </>
                       )}
                     </Button>
-                  </>
+                  </div>
                 ) : (
                   <Button
                     variant="outline"
                     onClick={handleEdit}
-                    className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                    className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto"
                   >
-                    <Edit className="h-4 w-4 mr-2" />
+                    <Edit className="mr-2 h-4 w-4" />
                     Editar
                   </Button>
                 )}
@@ -1245,7 +1249,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
             {!isEditing && isPago && (
               <Button
                 onClick={handleVisualizarFatura}
-                className="h-10 px-4 bg-green-600 hover:bg-green-700 text-white"
+                className="h-10 w-full justify-center bg-green-600 px-4 text-white hover:bg-green-700 sm:w-auto"
               >
                 <svg className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
@@ -1264,6 +1268,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
               <CobrancaCompartilharButton
                 cobranca={cobranca}
                 invoiceUrl={invoiceUrl}
+                triggerClassName="w-full sm:w-auto"
               />
             )}
 
@@ -1273,7 +1278,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
-                    className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                    className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto"
                   >
                     <MoreVertical className="h-4 w-4 mr-2" />
                     Mais ações
@@ -1372,18 +1377,18 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
             : 'border-gray-200'
         }`}
       >
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Informações da Cobrança</h2>
+        <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Informações da Cobrança</h2>
               <p className="mt-1 text-sm text-gray-600">
                 Detalhes financeiros e situação do pagamento
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               {isEditing && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
-                  <Edit className="h-4 w-4" />
+                <div className="flex w-full items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700 sm:w-auto">
+                  <Edit className="h-4 w-4 shrink-0" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
               )}
@@ -1391,8 +1396,8 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
           </div>
         </div>
 
-        <div className="px-6 py-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
+        <div className="px-4 py-5 sm:px-6 sm:py-6">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 md:gap-y-6 lg:grid-cols-3 lg:gap-x-8">
             <div>
               <p className="text-sm font-medium text-gray-500 mb-2">Situação</p>
               <Badge
@@ -1705,66 +1710,66 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
 
       {/* Juros, Multa e Desconto */}
       <div
-        className={`mt-8 bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+        className={`mt-6 bg-white rounded-xl border shadow-sm transition-all duration-200 sm:mt-8 ${
           isEditingAjustes
             ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
             : 'border-gray-200'
         }`}
       >
-        <div className="px-6 py-5 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Juros, Multa e Desconto</h2>
+        <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Juros, Multa e Desconto</h2>
               <p className="mt-1 text-sm text-gray-600">
                 Ajustes financeiros aplicados sobre o valor da cobrança
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
               {isPendente && (
                 <>
                   {isEditingAjustes ? (
-                    <>
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row sm:gap-3">
                       <Button
                         variant="outline"
                         onClick={handleCancelAjustes}
                         disabled={isSavingAjustes}
-                        className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                        className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto"
                       >
                         Cancelar
                       </Button>
                       <Button
                         onClick={handleEditAjustes}
                         disabled={isSavingAjustes}
-                        className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white"
+                        className="h-10 w-full justify-center bg-brand-accent px-4 text-white hover:bg-brand-accent/90 sm:w-auto"
                       >
                         {isSavingAjustes ? (
                           <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                            <div className="mr-2 h-4 w-4 animate-spin rounded-full border-b-2 border-white" />
                             Salvando...
                           </>
                         ) : (
                           <>
-                            <Edit className="h-4 w-4 mr-2" />
+                            <Edit className="mr-2 h-4 w-4" />
                             Salvar
                           </>
                         )}
                       </Button>
-                    </>
+                    </div>
                   ) : (
                     <Button
                       variant="outline"
                       onClick={handleEditAjustes}
-                      className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+                      className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto"
                     >
-                      <Edit className="h-4 w-4 mr-2" />
+                      <Edit className="mr-2 h-4 w-4" />
                       Editar
                     </Button>
                   )}
                 </>
               )}
               {isEditingAjustes && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg ml-2">
-                  <Edit className="h-4 w-4" />
+                <div className="flex w-full items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700 sm:ml-0 sm:w-auto">
+                  <Edit className="h-4 w-4 shrink-0" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
               )}
@@ -1772,7 +1777,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
           </div>
         </div>
 
-        <div className="px-6 py-6">
+        <div className="px-4 py-5 sm:px-6 sm:py-6">
           {/* Juros */}
           <div className="mb-6">
             <h3 className="text-sm font-medium text-gray-700 mb-3">Juros ao mês</h3>
@@ -1976,13 +1981,13 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
       </div>
 
       {/* Dados do Aluno */}
-      <div className="mt-8 bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h2 className="text-xl font-semibold text-gray-900">Dados do Aluno</h2>
+      <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm sm:mt-8">
+        <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
+          <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Dados do Aluno</h2>
           <p className="mt-1 text-sm text-gray-600">Informações de contato e matrícula</p>
         </div>
 
-        <div className="px-6 py-6">
+        <div className="px-4 py-5 sm:px-6 sm:py-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label htmlFor="alunoNome" className="block text-xs text-gray-600 mb-1.5">
@@ -2080,7 +2085,7 @@ export default function CobrancaDetalhesPage({ params }: { params: { id: string 
         logs={cobranca.logsFinanceiros}
       />
 
-      <div className="flex justify-center pt-6 pb-4">
+      <div className="flex justify-center px-2 pt-6 pb-4">
         <AsaasSeal variant="negativo-preto" />
       </div>
 

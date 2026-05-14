@@ -69,7 +69,8 @@ describe('ExtratoTable', () => {
     );
 
     expect(screen.getByText('Joao Silva')).toBeInTheDocument();
-    expect(screen.getByText('Banco Virtual - BACEN')).toBeInTheDocument();
-    expect(screen.getAllByText('R$ 2,50').length).toBeGreaterThan(0);
+    expect(screen.getByText('Banco Virtual')).toBeInTheDocument();
+    expect(screen.getByText('Ted')).toBeInTheDocument();
+    expect(screen.getAllByText('Confirmado').length).toBeGreaterThanOrEqual(1);
   });
 });

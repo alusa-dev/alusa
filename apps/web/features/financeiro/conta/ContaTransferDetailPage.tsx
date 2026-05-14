@@ -155,7 +155,7 @@ function buildTransferInfoFields(data: TransferDetailResultDTO) {
 
 function DetailSkeleton() {
   return (
-    <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+    <div className="w-full min-w-0 px-4 py-6 pb-8">
       <div className="mb-8 space-y-5">
         <Skeleton className="h-5 w-24" />
         <Skeleton className="h-10 w-80" />
@@ -254,7 +254,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
 
   if (!data || error) {
     return (
-      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-6 py-5">
           <p className="text-sm font-semibold text-rose-900">Não foi possível carregar a transferência</p>
           <p className="mt-1 text-sm text-rose-700">
@@ -274,7 +274,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
   }
 
   return (
-    <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+    <div className="w-full min-w-0 px-4 py-6 pb-8">
       <div className="mb-8">
         <Link
           href="/financeiro/conta"

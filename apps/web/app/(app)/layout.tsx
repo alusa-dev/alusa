@@ -110,7 +110,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 Páginas que precisam de scroll devem gerenciar seu próprio overflow (ex: DataTables, Dashboards).
              */}
             <div
-              className="relative mt-0 flex min-h-0 flex-1 app-content-scroll lg:mt-6"
+              className="relative mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col app-content-scroll lg:mt-6"
               style={{ paddingRight: OUTER_PADDING_RIGHT_PX }}
             >
               {children}

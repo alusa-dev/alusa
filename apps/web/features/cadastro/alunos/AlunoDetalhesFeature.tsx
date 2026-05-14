@@ -275,7 +275,13 @@ const emptyForm: AlunoForm = {
   responsavelUf: '',
 };
 
-const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+/** Largura máxima alinhada ao cabeçalho nas páginas de detalhe (cadastro). */
+const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
+
+const sectionClass = cn(
+  'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4',
+  DETAIL_SECTION_MAX,
+);
 const labelClass = 'text-xs font-medium text-slate-600';
 const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50';
 const controlClass =
@@ -766,9 +772,11 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
   if (loading) {
     return (
       <div className="h-full overflow-y-auto">
-        <div className="container mx-auto max-w-7xl px-4 py-6">
-          <Skeleton className="mb-5 h-5 w-24" />
-          <Skeleton className="mb-8 h-16 w-96" />
+        <div className="w-full min-w-0 px-4 py-6 pb-8">
+          <div className={cn('mb-8 space-y-4', DETAIL_SECTION_MAX)}>
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-16 w-96 max-w-full" />
+          </div>
           <div className="space-y-8">
             {[1, 2, 3].map((item) => (
               <div key={item} className={sectionClass}>
@@ -785,7 +793,7 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
   if (error || !aluno) {
     return (
       <div className="h-full overflow-y-auto">
-        <div className="container mx-auto max-w-7xl px-4 py-6">
+        <div className="w-full min-w-0 px-4 py-6">
           <BackButton onClick={() => router.push('/alunos')} />
           <div className="rounded-xl border border-gray-200 bg-white px-6 py-16 text-center shadow-sm">
             <h2 className="text-2xl font-bold text-gray-900">Erro ao carregar aluno</h2>
@@ -804,25 +812,16 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
-        <div className="mb-8">
+        <div className="w-full min-w-0 px-4 py-6 pb-8">
+        <div className={cn(DETAIL_SECTION_MAX, 'mb-8')}>
           <BackButton onClick={() => router.push('/alunos')} />
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex-1">
-              <h1 className="mb-2 text-3xl font-bold leading-tight text-gray-900">
-                Detalhes do aluno
-              </h1>
-              <p className="text-base text-gray-600">
-                Gerencie e visualize cadastro, responsáveis, matrículas e dados financeiros do aluno
-              </p>
-            </div>
-            <Button
-              onClick={() => setDeleteOpen(true)}
-              className="h-10 rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700"
-            >
-              <Trash className="mr-2 h-4 w-4" />
-              Remover aluno
-            </Button>
+          <div>
+            <h1 className="mb-2 text-3xl font-bold leading-tight text-gray-900">
+              Detalhes do aluno
+            </h1>
+            <p className="text-base text-gray-600">
+              Gerencie e visualize cadastro, responsáveis, matrículas e dados financeiros do aluno
+            </p>
           </div>
         </div>
 
@@ -1002,11 +1001,13 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
               customerId={aluno.notificacoes.asaasCustomerId}
             />
           ) : (
-            <CustomerNotificationsEditor
-              customerId={aluno.notificacoes.asaasCustomerId}
-              endpoint={`/api/alunos/${aluno.id}/notificacoes`}
-              description="Configuração individual do customer do aluno no Asaas. Para alunos com responsável financeiro, use a tela do responsável."
-            />
+            <div className={DETAIL_SECTION_MAX}>
+              <CustomerNotificationsEditor
+                customerId={aluno.notificacoes.asaasCustomerId}
+                endpoint={`/api/alunos/${aluno.id}/notificacoes`}
+                description="Configuração individual do customer do aluno no Asaas. Para alunos com responsável financeiro, use a tela do responsável."
+              />
+            </div>
           )}
 
           <FinancialAccordion
@@ -1041,6 +1042,17 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
           >
             <CobrancasTable cobrancas={pendingCharges} />
           </FinancialAccordion>
+
+          <div className={cn('border-t border-gray-200 pt-6', DETAIL_SECTION_MAX)}>
+            <Button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              className="h-10 w-full rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700 md:w-auto"
+            >
+              <Trash className="mr-2 h-4 w-4" />
+              Remover aluno
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -1356,7 +1368,7 @@ function FinancialAccordion({
   children: ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+    <section className={cn('overflow-hidden rounded-xl border border-slate-200 bg-slate-50', DETAIL_SECTION_MAX)}>
       <button
         type="button"
         onClick={onToggle}

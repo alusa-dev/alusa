@@ -68,7 +68,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="flex w-full min-w-0 items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.back()}>
               <ArrowLeftIcon className="h-5 w-5" />
@@ -104,7 +104,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="w-full min-w-0 px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* PDF Viewer */}
           <div className="lg:col-span-2">

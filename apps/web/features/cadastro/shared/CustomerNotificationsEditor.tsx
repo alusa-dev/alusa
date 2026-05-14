@@ -81,7 +81,8 @@ function serializeNotificationPreferences(preferences: CustomerNotificationPrefe
   );
 }
 
-const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+const sectionClass =
+  'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 sm:px-5 sm:py-4';
 
 export function CustomerNotificationsEditor({
   customerId,
@@ -283,9 +284,34 @@ export function CustomerNotificationsEditor({
                   const preference = preferences.find(row.match);
                   if (!preference) return null;
                   return (
-                    <div key={row.id} className="space-y-4 p-5">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div className="flex-1 space-y-0.5">
+                    <div key={row.id} className="space-y-4 p-4 sm:p-5">
+                      <div className="flex flex-col gap-4">
+                        <NotificationChannelGroup
+                          title="Para mim"
+                          channels={row.providerChannels ?? []}
+                          preference={preference}
+                          disabled={controlsDisabled}
+                          onToggle={(key, checked) =>
+                            updatePreference(preference.event, preference.scheduleOffset, {
+                              [key]: checked,
+                            } as Partial<CustomerNotificationPreference>)
+                          }
+                        />
+                        <NotificationChannelGroup
+                          title="Meu cliente"
+                          channels={row.customerChannels}
+                          preference={preference}
+                          disabled={controlsDisabled}
+                          onToggle={(key, checked) =>
+                            updatePreference(preference.event, preference.scheduleOffset, {
+                              [key]: checked,
+                            } as Partial<CustomerNotificationPreference>)
+                          }
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-gray-100 pt-4 md:flex-row md:items-start md:justify-between">
+                        <div className="min-w-0 flex-1 space-y-0.5">
                           <p className="text-sm font-medium text-gray-900">{row.title}</p>
                           <p className="text-xs text-gray-500">{row.description}</p>
                         </div>
@@ -322,30 +348,6 @@ export function CustomerNotificationsEditor({
                           </div>
                         ) : null}
                       </div>
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-8">
-                        <NotificationChannelGroup
-                          title="Para mim"
-                          channels={row.providerChannels ?? []}
-                          preference={preference}
-                          disabled={controlsDisabled}
-                          onToggle={(key, checked) =>
-                            updatePreference(preference.event, preference.scheduleOffset, {
-                              [key]: checked,
-                            } as Partial<CustomerNotificationPreference>)
-                          }
-                        />
-                        <NotificationChannelGroup
-                          title="Meu cliente"
-                          channels={row.customerChannels}
-                          preference={preference}
-                          disabled={controlsDisabled}
-                          onToggle={(key, checked) =>
-                            updatePreference(preference.event, preference.scheduleOffset, {
-                              [key]: checked,
-                            } as Partial<CustomerNotificationPreference>)
-                          }
-                        />
-                      </div>
                     </div>
                   );
                 })}
@@ -373,11 +375,9 @@ function NotificationChannelGroup({
 }) {
   if (!channels.length) return null;
   return (
-    <div className="flex items-center gap-3">
-      <span className="shrink-0 text-xs font-medium uppercase tracking-wide text-gray-500">
-        {title}:
-      </span>
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium uppercase tracking-wide text-gray-500">{title}:</span>
+      <div className="-mx-1 flex max-w-full flex-nowrap items-center gap-2 overflow-x-auto px-1 pb-0.5">
         {channels.map((channel) => {
           const checked = Boolean(preference[channel.key]);
           const channelDisabled = disabled || channel.disabled;
@@ -385,7 +385,7 @@ function NotificationChannelGroup({
             <label
               key={channel.key}
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
                 channelDisabled
                   ? checked
                     ? 'cursor-not-allowed border-purple-200 bg-purple-50 text-purple-500'
@@ -399,7 +399,7 @@ function NotificationChannelGroup({
                 checked={checked}
                 disabled={channelDisabled}
                 onCheckedChange={(value) => onToggle(channel.key, Boolean(value))}
-                className="h-3.5 w-3.5"
+                className="h-3 w-3 shrink-0 sm:h-4 sm:w-4"
               />
               {channel.label}
             </label>

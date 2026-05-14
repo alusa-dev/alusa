@@ -229,7 +229,7 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
 
   if (loading) {
     return (
-      <div className="container mx-auto max-w-7xl px-4 py-6">
+      <div className="w-full min-w-0 px-4 py-6">
         <Skeleton className="mb-5 h-10 w-28" />
         <div className="mb-8 flex items-start justify-between gap-6">
           <div className="flex-1">
@@ -252,7 +252,7 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
 
   if (error || !sale) {
     return (
-      <div className="container mx-auto max-w-7xl px-4 py-6">
+      <div className="w-full min-w-0 px-4 py-6">
         <button
           onClick={() => router.push('/vendas/historico')}
           className="mb-8 flex items-center gap-2 text-sm text-gray-600 transition-colors hover:text-gray-900"
@@ -280,7 +280,7 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
     sale.items.some((item) => item.quantity - item.returnedQuantity > 0);
 
   return (
-    <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
+    <div className="w-full min-w-0 px-4 py-6 pb-8">
       <div className="mb-8">
         <button
           onClick={() => router.push('/vendas/historico')}

@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { ChevronRight, Search, User, X } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 
 interface AlunoComPagamentos {
   id: string;
@@ -113,34 +114,36 @@ export default function FinanceiroPagamentosPage() {
     statusFilter !== 'TODOS' ? `Status: ${statusLabel}` : null,
   ].filter(Boolean) as string[];
 
+  const cellX = 'px-4 md:px-6';
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="space-y-1">
-        <h1 className="text-[22px] font-semibold tracking-tight text-gray-900 md:text-[24px]">
-          Pagamentos
-        </h1>
-        <p className="text-[13px] text-gray-500">
-          Visualize o histórico de pagamentos por aluno. Clique em um aluno para ver o detalhamento.
-        </p>
-      </div>
-      {/* Filtros */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="w-full min-w-0 space-y-4 sm:space-y-6">
+      {/* Título + filtros no mesmo bloco: alinhamento consistente no mobile */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
+        <div className="space-y-1 pb-4">
+          <h1 className="text-xl font-semibold tracking-tight text-gray-900 sm:text-[22px] md:text-2xl">
+            Pagamentos
+          </h1>
+          <p className="text-[13px] leading-snug text-gray-500 sm:max-w-2xl">
+            Histórico por aluno. Toque em um aluno para ver o detalhamento.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-gray-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 sm:left-4" />
               <Input
-                placeholder="Buscar por nome do aluno..."
+                placeholder="Buscar por nome..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 border border-gray-300 bg-white pl-10 pr-10 text-[13px] shadow-none"
+                className="h-11 border border-gray-300 bg-white pl-9 pr-10 text-[13px] shadow-none sm:h-10 sm:pl-10"
               />
               {searchQuery ? (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700 sm:right-4"
                   aria-label="Limpar busca"
                 >
                   <X className="h-4 w-4" />
@@ -149,9 +152,9 @@ export default function FinanceiroPagamentosPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:shrink-0">
+          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:flex-nowrap lg:shrink-0">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-10 w-full rounded-md border border-gray-300 bg-white px-3 text-[13px] text-gray-700 shadow-none lg:min-w-[170px]">
+              <SelectTrigger className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-[13px] text-gray-700 shadow-none sm:h-10 lg:min-w-[170px]">
                 <SelectValue placeholder="Todos status" />
               </SelectTrigger>
               <SelectContent align="end">
@@ -165,127 +168,190 @@ export default function FinanceiroPagamentosPage() {
           </div>
         </div>
 
-        <div className="mt-4 flex min-h-6 flex-wrap items-center gap-2">
+        <div className="mt-3 flex min-h-6 flex-wrap items-center gap-2 sm:mt-4">
           {chipsFiltros.length > 0 ? (
             chipsFiltros.map((chip) => (
               <span
                 key={chip}
-                className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700"
+                className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:px-3 sm:text-xs"
               >
                 {chip}
               </span>
             ))
           ) : (
-            <p className="text-xs text-slate-500">Use a busca e o status para refinar o histórico.</p>
+            <p className="text-[11px] leading-snug text-slate-500 sm:text-xs">
+              Use a busca e o status para refinar o histórico.
+            </p>
           )}
         </div>
       </div>
 
-      {/* Tabela */}
+      {/* Lista (mobile: cartões) / tabela (md+) */}
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         {loading ? (
           <>
-            {/* Header da tabela (skeleton) */}
-            <div className="border-b bg-gray-50 px-6 py-3">
-              <div className="grid grid-cols-12 gap-4">
-                <Skeleton className="col-span-4 h-4" />
-                <Skeleton className="col-span-2 h-4" />
-                <Skeleton className="col-span-3 h-4" />
-                <Skeleton className="col-span-2 h-4" />
-                <Skeleton className="col-span-1 h-4" />
-              </div>
-            </div>
-            {/* Linhas (skeleton) */}
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="px-6 py-4">
-                <div className="grid grid-cols-12 gap-4 items-center">
-                  <div className="col-span-4 flex items-center gap-3">
-                    <Skeleton className="h-10 w-10 rounded-full" />
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-4 w-48" />
-                      <Skeleton className="h-4 w-32" />
-                    </div>
-                  </div>
-                  <Skeleton className="col-span-2 h-4 w-12 mx-auto" />
-                  <Skeleton className="col-span-3 h-4 w-28 mx-auto" />
-                  <Skeleton className="col-span-2 h-4 w-24 mx-auto" />
-                  <Skeleton className="col-span-1 h-4 w-4 ml-auto" />
+            {/* Skeleton desktop */}
+            <div className="hidden md:block">
+              <div className={cn('border-b bg-gray-50 py-3', cellX)}>
+                <div className="grid grid-cols-12 gap-4">
+                  <Skeleton className="col-span-4 h-4" />
+                  <Skeleton className="col-span-2 h-4" />
+                  <Skeleton className="col-span-3 h-4" />
+                  <Skeleton className="col-span-2 h-4" />
+                  <Skeleton className="col-span-1 h-4" />
                 </div>
               </div>
-            ))}
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className={cn('py-4', cellX)}>
+                  <div className="grid grid-cols-12 items-center gap-4">
+                    <div className="col-span-4 flex items-center gap-3">
+                      <Skeleton className="h-10 w-10 rounded-full" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-48" />
+                        <Skeleton className="h-4 w-32" />
+                      </div>
+                    </div>
+                    <Skeleton className="col-span-2 mx-auto h-4 w-12" />
+                    <Skeleton className="col-span-3 mx-auto h-4 w-28" />
+                    <Skeleton className="col-span-2 mx-auto h-4 w-24" />
+                    <Skeleton className="col-span-1 ml-auto h-4 w-4" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Skeleton mobile */}
+            <div className="divide-y md:hidden">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="flex gap-3 px-4 py-4">
+                  <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-[85%] max-w-xs" />
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-3 w-full max-w-[12rem]" />
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         ) : (
           <>
-            {/* Cabeçalho da tabela */}
-            <div className="border-b bg-gray-50 px-6 py-3">
-              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium text-gray-500 uppercase tracking-wider">
+            {/* Cabeçalho tabela — só md+ */}
+            <div className={cn('hidden border-b bg-gray-50 py-3 md:block', cellX)}>
+              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium uppercase tracking-wider text-gray-500">
                 <div className="col-span-4">Aluno</div>
                 <div className="col-span-2 text-center">Histórico</div>
-                <div className="col-span-3 text-center">Total Pago</div>
-                <div className="col-span-2 text-center">Última Movimentação</div>
+                <div className="col-span-3 text-center">Total pago</div>
+                <div className="col-span-2 text-center">Última</div>
                 <div className="col-span-1" />
               </div>
             </div>
 
-            {/* Linhas */}
             <div className="divide-y">
               {alunos.length === 0 ? (
-                <div className="px-6 py-14 text-center text-gray-500">
-                  <User className="mx-auto h-12 w-12 text-gray-400 mb-3" />
-                  <p className="text-sm">Nenhum aluno com histórico de pagamento encontrado</p>
+                <div className={cn('py-12 text-center text-gray-500 sm:py-14', cellX)}>
+                  <User className="mx-auto mb-3 h-12 w-12 text-gray-400" />
+                  <p className="text-sm leading-snug">Nenhum aluno com histórico de pagamento encontrado</p>
+                  {filtrosAtivos > 0 ? (
+                    <p className="mt-2 text-xs text-slate-400">Tente ajustar busca ou status.</p>
+                  ) : null}
                 </div>
               ) : (
-                alunos.map((aluno) => (
-                  <div
-                    key={aluno.id}
-                    className="group cursor-pointer bg-white px-6 py-4 transition-colors hover:bg-gray-50"
-                    onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
-                  >
-                    <div className="grid grid-cols-12 gap-4 items-center">
-                      {/* Aluno */}
-                      <div className="col-span-4 flex items-center gap-3">
-                        <Avatar className="h-10 w-10">
+                <>
+                  {/* Mobile: cartões */}
+                  <div className="md:hidden">
+                    {alunos.map((aluno) => (
+                      <button
+                        key={aluno.id}
+                        type="button"
+                        className="group flex w-full gap-3 px-4 py-4 text-left transition-colors active:bg-gray-50"
+                        onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
+                      >
+                        <Avatar className="h-11 w-11 shrink-0">
                           <AvatarImage src={aluno.foto || undefined} alt={aluno.nome} />
-                          <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
+                          <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
                             {getInitials(aluno.nome)}
                           </AvatarFallback>
                         </Avatar>
-                        <div className="min-w-0">
-                          <div className="font-normal text-gray-900 text-[13px] truncate">
-                            {aluno.nome}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="line-clamp-2 text-[14px] font-medium leading-snug text-gray-900">
+                              {aluno.nome}
+                            </span>
+                            <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-gray-300 group-hover:text-violet-600" />
                           </div>
-                          {aluno.cpf && (
-                            <p className="text-[11px] text-gray-500 mt-0.5">
-                              CPF:{' '}
+                          {aluno.cpf ? (
+                            <p className="mt-0.5 text-[11px] text-gray-500">
                               {aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}
                             </p>
-                          )}
+                          ) : null}
+                          <div className="mt-2 flex flex-col gap-1.5 text-[12px]">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
+                                {aluno.pagamentosCount} pagamentos
+                              </span>
+                              <span className="font-semibold tabular-nums text-gray-900">
+                                {formatCurrency(aluno.valorTotal)}
+                              </span>
+                            </div>
+                            <p className="text-gray-600">
+                              <span className="text-gray-500">Última: </span>
+                              {aluno.ultimoPagamento ? formatDate(aluno.ultimoPagamento) : '—'}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Desktop: tabela */}
+                  <div className="hidden md:block">
+                    {alunos.map((aluno) => (
+                      <div
+                        key={aluno.id}
+                        className="group cursor-pointer bg-white px-6 py-4 transition-colors hover:bg-gray-50"
+                        onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
+                      >
+                        <div className="grid grid-cols-12 items-center gap-4">
+                          <div className="col-span-4 flex items-center gap-3">
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={aluno.foto || undefined} alt={aluno.nome} />
+                              <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
+                                {getInitials(aluno.nome)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <div className="truncate text-[13px] font-normal text-gray-900">{aluno.nome}</div>
+                              {aluno.cpf ? (
+                                <p className="mt-0.5 text-[11px] text-gray-500">
+                                  CPF:{' '}
+                                  {aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <div className="col-span-2 text-center">
+                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-700">
+                              {aluno.pagamentosCount} itens
+                            </span>
+                          </div>
+
+                          <div className="col-span-3 text-center text-[13px] font-medium text-gray-900">
+                            {formatCurrency(aluno.valorTotal)}
+                          </div>
+
+                          <div className="col-span-2 text-center text-[13px] text-gray-700">
+                            {aluno.ultimoPagamento ? formatDate(aluno.ultimoPagamento) : '—'}
+                          </div>
+
+                          <div className="col-span-1 flex justify-end">
+                            <ChevronRight className="h-4 w-4 text-gray-300 transition-colors group-hover:text-violet-600" />
+                          </div>
                         </div>
                       </div>
-
-                      {/* Quantidade de Pagamentos */}
-                      <div className="col-span-2 text-center">
-                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-700">
-                          {aluno.pagamentosCount} itens
-                        </span>
-                      </div>
-
-                      {/* Valor Total */}
-                      <div className="col-span-3 text-center text-[13px] font-medium text-gray-900">
-                        {formatCurrency(aluno.valorTotal)}
-                      </div>
-
-                      {/* Último Pagamento */}
-                      <div className="col-span-2 text-center text-[13px] text-gray-700">
-                        {aluno.ultimoPagamento ? formatDate(aluno.ultimoPagamento) : '—'}
-                      </div>
-
-                      <div className="col-span-1 flex justify-end">
-                        <ChevronRight className="h-4 w-4 text-gray-300 transition-colors group-hover:text-violet-600" />
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))
+                </>
               )}
             </div>
           </>

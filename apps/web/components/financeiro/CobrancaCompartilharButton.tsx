@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Share2 } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 import {
   ChatBubbleLeftRightIcon,
   DocumentDuplicateIcon,
@@ -17,6 +18,8 @@ import {
 } from '@heroicons/react/24/outline';
 
 type CobrancaCompartilharButtonProps = {
+  /** Classes extra no botão gatilho (ex.: largura total em mobile) */
+  triggerClassName?: string;
   cobranca: {
     id: string;
     asaasPaymentId?: string | null;
@@ -33,6 +36,7 @@ type CobrancaCompartilharButtonProps = {
 };
 
 export function CobrancaCompartilharButton({
+  triggerClassName,
   cobranca,
   invoiceUrl,
   onNotifySuccess,
@@ -165,7 +169,10 @@ export function CobrancaCompartilharButton({
         <Button
           variant="outline"
           disabled={emailLoading}
-          className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
+          className={cn(
+            'h-10 justify-center px-4 border-gray-300 text-gray-700 hover:bg-gray-50',
+            triggerClassName,
+          )}
         >
           <Share2 className="h-4 w-4 mr-2" />
           Compartilhar

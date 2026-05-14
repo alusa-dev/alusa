@@ -4,10 +4,9 @@ import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, ReceiptText } from 'lucide-react';
+import { ArrowUpRight, Eye, ReceiptText } from 'lucide-react';
 
 import { Download, Filter, Search } from '@/components/icons/icons';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,21 +73,6 @@ function sanitizeErrorMessage(error: unknown) {
   return 'Não foi possível concluir a operação.';
 }
 
-function mapCancelTransferErrorMessage(message: string) {
-  switch (message) {
-    case 'TRANSFER_NAO_CANCELAVEL':
-      return 'A transferência já foi concluída ou não pode mais ser cancelada.';
-    case 'TRANSFER_SEM_ID_ASAAS':
-      return 'A transferência ainda não possui identificador externo para cancelamento.';
-    case 'TRANSFER_NAO_ENCONTRADA':
-      return 'A transferência não foi encontrada.';
-    case 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS':
-      return 'A conta financeira ainda não está configurada para cancelar esta transferência.';
-    default:
-      return message;
-  }
-}
-
 function mapTransferStatus(status: TransferStatus) {
   switch (status) {
     case 'DONE':
@@ -109,9 +93,65 @@ function mapTransferStatus(status: TransferStatus) {
   }
 }
 
-function canCancelTransfer(status: TransferStatus) {
-  // PROCESSING = BANK_PROCESSING no Asaas — não pode ser cancelado nesse estágio
-  return status === 'REQUESTED' || status === 'PENDING' || status === 'BLOCKED';
+/** Rótulos completos nos badges da lista mobile (evita "Ok", "Canc.", etc.). */
+function mapTransferStatusMobileBadge(status: TransferStatus) {
+  switch (status) {
+    case 'DONE':
+      return 'Confirmado';
+    case 'FAILED':
+      return 'Falhou';
+    case 'BLOCKED':
+      return 'Bloqueada';
+    case 'PROCESSING':
+      return 'Processando';
+    case 'CANCELED':
+      return 'Cancelado';
+    case 'REQUESTED':
+      return 'Solicitada';
+    case 'PENDING':
+    default:
+      return 'Pendente';
+  }
+}
+
+/** Nome curto da instituição para listagens compactas; use `title` com o nome completo no elemento. */
+function abbreviateBankName(name: string | null | undefined) {
+  if (!name?.trim()) return '—';
+  let t = name.trim();
+  t = t.replace(/\s*-\s*INSTITUI[ÇC][AÃ]O\s+DE\s+PAGAMENTO.*$/i, '');
+  t = t.replace(/\s*-\s*IP\b.*$/i, '');
+  t = t.replace(/\s+\(?IP\)?\s*$/i, '');
+  t = t.replace(/\b(S\.A\.|SA|LTDA\.?)\s*,?\s*$/i, '');
+  t = t.replace(/\s{2,}/g, ' ').trim();
+
+  const compact = t.toLowerCase();
+  if (compact.includes('nu pagamentos') || compact === 'nubank') return 'Nubank';
+  if (compact.includes('banco do brasil')) return 'BB';
+  if (compact.includes('bradesco')) return 'Bradesco';
+  if (compact.includes('santander')) return 'Santander';
+  if (compact.includes('caixa')) return 'Caixa';
+  if (compact.includes('itaú') || compact.includes('itau')) return 'Itaú';
+  if (compact.includes('inter')) return 'Inter';
+  if (compact.includes('c6 bank') || compact.includes('c6 ')) return 'C6';
+  if (compact.includes('btg')) return 'BTG';
+  if (compact.includes('picpay')) return 'PicPay';
+  if (compact.includes('mercado pago')) return 'Mercado Pago';
+  if (compact.includes('stone')) return 'Stone';
+
+  const maxLen = 18;
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen - 1)}…`;
+}
+
+/** Documento na lista mobile: preserva máscara da API ou aplica formato *** .xxx. ***. *** (CPF). */
+function transferDocumentForList(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null;
+  const v = value.trim();
+  if (/\*/.test(v)) return v;
+  const digits = v.replace(/\D/g, '');
+  if (digits.length === 11) return `***.${digits.slice(3, 6)}.***.***`;
+  if (digits.length === 14) return `**.***.${digits.slice(6, 9)}/****-**`;
+  return v;
 }
 
 function formatTableDate(value: string | null | undefined) {
@@ -259,11 +299,11 @@ function getAccountSummaryUrl(opts: { bypassCache?: boolean } = {}) {
 
 function ContaSkeleton() {
   return (
-    <div className="space-y-5 pr-4 xl:pr-6">
+    <div className="w-full min-w-0 max-w-full space-y-5">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <Skeleton className="h-8 w-40" />
-          <Skeleton className="h-4 w-80" />
+          <Skeleton className="h-4 w-full max-w-md" />
         </div>
         <div className="flex gap-2">
           <Skeleton className="h-10 w-28" />
@@ -271,15 +311,15 @@ function ContaSkeleton() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
         <Skeleton className="h-4 w-32" />
         <Skeleton className="mt-4 h-10 w-44" />
-        <Skeleton className="mt-3 h-4 w-60" />
+        <Skeleton className="mt-3 h-4 w-3/5 max-w-sm" />
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
         <Skeleton className="h-5 w-44" />
-        <Skeleton className="mt-2 h-4 w-72" />
+        <Skeleton className="mt-2 h-4 w-full max-w-lg" />
         <div className="mt-4 space-y-3">
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
@@ -295,7 +335,6 @@ function TransferTableSection({
   data,
   loading,
   onPageChange,
-  onRequestCancel,
   onViewTransfer,
   filters,
   onFiltersChange,
@@ -306,7 +345,6 @@ function TransferTableSection({
   data: TransfersResponse | null;
   loading: boolean;
   onPageChange: (page: number) => void;
-  onRequestCancel: (transfer: TransfersResponse['items'][number]) => void;
   onViewTransfer: (transfer: TransfersResponse['items'][number]) => void;
   filters: TransferFiltersState;
   onFiltersChange: (patch: Partial<TransferFiltersState>) => void;
@@ -323,17 +361,18 @@ function TransferTableSection({
   ].filter(Boolean).length;
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <div className="flex flex-col gap-2 border-b border-slate-100 bg-gray-50 px-4 py-4 md:px-5">
+    <div className="flex min-w-0 max-w-full flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="min-w-0 border-b border-slate-100 bg-gray-50 px-3 py-3 sm:px-4 md:px-5 md:py-4">
         <p className="text-sm font-semibold text-slate-900">Saídas e transferências</p>
-        <p className="text-xs text-slate-500">
-          Acompanhe as movimentações enviadas pela sua conta, consulte o status de cada transferência e cancele quando a operação ainda permitir.
+        <p className="mt-1 text-xs leading-relaxed text-slate-500 break-words">
+          Acompanhe as movimentações enviadas pela sua conta. Abra uma linha para ver detalhes completos ou cancelar,
+          quando a operação ainda permitir.
         </p>
       </div>
 
-      <div className="border-b border-slate-100 bg-[#F8FAFC] p-4 md:p-5">
-        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-            <div className="relative w-full max-w-xl">
+      <div className="min-w-0 border-b border-slate-100 bg-[#F8FAFC] p-3 sm:p-4 md:p-5">
+        <div className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+            <div className="relative min-w-0 w-full">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 type="text"
@@ -438,7 +477,7 @@ function TransferTableSection({
                 </PopoverContent>
               </Popover>
 
-              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 w-full rounded-xl bg-[#A78BFA] px-4 text-white hover:bg-[#8B5CF6] disabled:bg-[#DDD6FE] lg:w-auto">
+              <Button onClick={onExport} disabled={exporting || !data?.items.length} className="h-10 w-full rounded-xl bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 sm:px-4 lg:w-auto">
                 <Download className="mr-2 h-4 w-4" />
                 {exporting ? 'Exportando...' : 'Exportar Dados'}
               </Button>
@@ -477,24 +516,24 @@ function TransferTableSection({
               <th className="hidden px-6 py-3 text-right text-xs font-medium text-gray-500 lg:table-cell">
                 Valor enviado
               </th>
-              <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 lg:px-6">
+              <th className="hidden px-3 py-3 text-center text-xs font-medium text-gray-500 lg:table-cell lg:px-6">
                 Situação
-              </th>
-              <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 lg:px-6">
-                Acoes
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 bg-white">
             {loading ? (
               <tr>
-                <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={11}>
+                <td className="px-6 py-8 text-center text-sm text-gray-500" colSpan={10}>
                   Carregando transferências...
                 </td>
               </tr>
             ) : data?.items.length ? (
               data.items.map((item) => {
                 const status = mapTransferStatus(item.status);
+                const displayName = compactPersonName(item.recipientName ?? item.description);
+                const maskedDoc = transferDocumentForList(item.cpfCnpj);
+                const ariaStatus = mapTransferStatusMobileBadge(item.status);
                 return (
                   <tr
                     key={item.id}
@@ -508,24 +547,55 @@ function TransferTableSection({
                     }}
                     tabIndex={0}
                     role="link"
-                    aria-label={`Abrir detalhes da transferência ${item.externalReference}`}
+                    aria-label={`Abrir detalhes da transferência ${item.externalReference}, situação ${ariaStatus}`}
                   >
-                    <td className="px-3 py-4 text-sm text-slate-700 lg:px-6">
-                      <span className="font-medium">{formatTableDate(item.createdAt)}</span>
-                      <div className="mt-1.5 space-y-1 text-xs text-slate-600 lg:hidden">
-                        <div>Agend.: {formatTableDate(item.scheduleDate)}</div>
-                        <div>Transferido: {formatTableDate(item.transferDate)}</div>
-                        <div>{formatTransferOperation(item.operation)}</div>
-                        <div className="font-medium text-slate-900">
-                          {compactPersonName(item.recipientName ?? item.description)}
-                        </div>
-                        {item.cpfCnpj ? <div className="font-mono text-[11px]">{item.cpfCnpj}</div> : null}
-                        {item.bankName ? <div className="truncate">{item.bankName}</div> : null}
-                        <div>
-                          {formatCurrency(Number(item.amount))}
-                          {item.feeAmount != null && Number(item.feeAmount) > 0 ? (
-                            <span className="text-slate-500"> · taxa {formatOfficialFee(item.feeAmount)}</span>
+                    <td className="px-3 py-2 text-sm text-slate-700 sm:py-3 lg:px-6 lg:py-4">
+                      <span className="hidden font-medium lg:inline">{formatTableDate(item.createdAt)}</span>
+                      <div className="flex items-stretch gap-3 lg:hidden">
+                        <ul
+                          className="m-0 min-w-0 flex-1 list-none space-y-1 p-0"
+                          role="list"
+                        >
+                          <li className="text-[13px] font-semibold leading-snug text-slate-900">
+                            {displayName}
+                          </li>
+                          {maskedDoc ? (
+                            <li className="font-mono text-[11px] tabular-nums leading-snug text-slate-600">
+                              {maskedDoc}
+                            </li>
                           ) : null}
+                          <li className="text-[12px] font-medium leading-snug text-slate-800">
+                            {formatTransferOperation(item.operation)}
+                          </li>
+                          <li
+                            className="text-[12px] leading-snug text-slate-700"
+                            title={item.bankName ?? undefined}
+                          >
+                            {abbreviateBankName(item.bankName)}
+                          </li>
+                          <li className="text-[12px] tabular-nums leading-snug text-slate-600">
+                            {formatTableDate(item.createdAt)}
+                          </li>
+                        </ul>
+                        <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
+                          <button
+                            type="button"
+                            className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1"
+                            aria-label={`Ver detalhes da transferência ${item.externalReference}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onViewTransfer(item);
+                            }}
+                          >
+                            <Eye className="h-4 w-4 shrink-0" aria-hidden />
+                          </button>
+                          <Badge
+                            variant={status.variant}
+                            size="default"
+                            className="max-w-[10.5rem] whitespace-normal text-right text-xs leading-snug"
+                          >
+                            {mapTransferStatusMobileBadge(item.status)}
+                          </Badge>
                         </div>
                       </div>
                     </td>
@@ -541,32 +611,17 @@ function TransferTableSection({
                     <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell">
                       {formatCurrency(Number(item.amount))}
                     </td>
-                    <td className="px-3 py-4 text-center lg:px-6">
-                      <Badge variant={status.variant}>{status.label}</Badge>
-                    </td>
-                    <td className="px-2 py-4 text-center lg:px-6">
-                      {canCancelTransfer(item.status) ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 max-lg:px-2 max-lg:text-[11px] text-xs"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onRequestCancel(item);
-                          }}
-                        >
-                          Cancelar
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-slate-400">-</span>
-                      )}
+                    <td className="hidden px-2 py-2 text-center sm:py-3 lg:table-cell lg:px-6 lg:py-4">
+                      <Badge variant={status.variant} size="sm">
+                        {status.label}
+                      </Badge>
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td className="px-6 py-10 text-center text-sm text-slate-500" colSpan={11}>
+                <td className="px-6 py-10 text-center text-sm text-slate-500" colSpan={10}>
                   Nenhuma transferência encontrada para esta conta.
                 </td>
               </tr>
@@ -619,8 +674,6 @@ export function ContaPage() {
   const [tableLoading, setTableLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
-  const [transferToCancel, setTransferToCancel] = useState<TransfersResponse['items'][number] | null>(null);
-  const [canceling, setCanceling] = useState(false);
   const [prefilledRecipient, setPrefilledRecipient] = useState<TransferRecipient | null>(null);
   const [filters, setFilters] = useState<TransferFiltersState>({
     search: '',
@@ -758,42 +811,14 @@ export function ContaPage() {
     router.push(`/financeiro/conta/transferencias/${transfer.id}`);
   }
 
-  async function handleCancelTransfer() {
-    if (!transferToCancel) return;
-
-    setCanceling(true);
-    try {
-      await readJson(`/api/finance/transfers/${transferToCancel.id}/cancel`, {
-        method: 'POST',
-      });
-
-      pushToast({
-        title: 'Transferência cancelada',
-        description: 'A solicitação foi cancelada e a tabela foi atualizada com o estado oficial retornado.',
-        variant: 'success',
-      });
-
-      setTransferToCancel(null);
-      await refreshCurrentView();
-    } catch (error) {
-      pushToast({
-        title: 'Não foi possível cancelar a transferência',
-        description: mapCancelTransferErrorMessage(sanitizeErrorMessage(error)),
-        variant: 'error',
-      });
-    } finally {
-      setCanceling(false);
-    }
-  }
-
   if (loading) {
     return <ContaSkeleton />;
   }
 
   if (error || !overview || !transfers) {
     return (
-      <div className="space-y-5 pr-4 xl:pr-6">
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-6 py-5">
+      <div className="w-full min-w-0 max-w-full space-y-5">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-5 sm:px-6">
           <p className="text-sm font-semibold text-rose-900">Não foi possível carregar a conta</p>
           <p className="mt-1 text-sm text-rose-700">
             Recarregue os dados para consultar saldo, transferências e disponibilidade operacional.
@@ -807,43 +832,47 @@ export function ContaPage() {
   }
 
   return (
-    <div className="space-y-6 pr-4 xl:pr-6">
-      <section className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Saldo</h1>
-        <p className="text-sm text-slate-500">Acompanhe o saldo disponível, as receitas do extrato e as transferências da conta.</p>
+    <div className="w-full min-w-0 max-w-full space-y-5 pb-2 sm:space-y-6 sm:pb-0">
+      <section className="min-w-0 space-y-1">
+        <h1 className="text-[22px] font-semibold tracking-tight text-slate-900 sm:text-2xl">
+          Saldo
+        </h1>
+        <p className="text-sm leading-relaxed text-slate-500 break-words">
+          Acompanhe o saldo disponível, as receitas do extrato e as transferências da conta.
+        </p>
       </section>
-      <section className="rounded-xl bg-[#EEE7FB] px-8 py-10 shadow-sm">
-        <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-4">
+      <section className="min-w-0 rounded-xl bg-[#EEE7FB] px-4 py-6 shadow-sm sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between lg:gap-8">
+          <div className="min-w-0 space-y-3 sm:space-y-4">
             <div>
               <p className="text-sm font-medium text-[#6B6480]">Saldo disponível</p>
-              <p className="mt-2 text-3xl font-semibold leading-none tracking-tight text-[#15121D] sm:text-[2.5rem] lg:text-[2.75rem]">
+              <p className="mt-2 break-words text-3xl font-semibold leading-none tracking-tight text-[#15121D] sm:text-[2.5rem] lg:text-[2.75rem]">
                 {formatCurrency(availableBalance)}
               </p>
             </div>
 
-            <p className="text-sm text-[#6B6480]">Este saldo já está disponível para transferência.</p>
+            <p className="text-sm leading-relaxed text-[#6B6480] break-words">
+              Este saldo já está disponível para transferência.
+            </p>
           </div>
 
-          <div className="flex flex-col gap-3 lg:items-end">
-            <p className="max-w-sm text-sm leading-6 text-[#6B6480] lg:text-right">
-              Transfira valores para contas cadastradas
-              <br />
-              e acompanhe cada saída da conta pelo extrato.
+          <div className="flex min-w-0 flex-col gap-3 lg:items-end">
+            <p className="text-sm leading-relaxed text-[#6B6480] break-words lg:max-w-sm lg:text-right">
+              Transfira valores para contas cadastradas e acompanhe cada saída da conta pelo extrato.
             </p>
 
-            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-3 lg:justify-end">
+            <div className="flex max-lg:flex-col flex-wrap items-stretch gap-2 sm:gap-3 lg:justify-end">
             <Button
               onClick={() => openTransferDialog()}
               disabled={!canTransfer}
-              className="h-10 w-full rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 lg:w-auto"
+              className="h-10 w-full justify-center rounded-xl bg-brand-accent px-6 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 disabled:bg-brand-accent/40 sm:px-8 lg:w-auto"
             >
               <ArrowUpRight className="mr-2 h-4 w-4" />
               Transferir
             </Button>
             <Link
               href="/financeiro/extrato"
-              className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-brand-accent px-8 text-sm font-medium text-white shadow-none transition hover:bg-brand-accent/90 lg:w-auto"
+              className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-brand-accent px-6 text-sm font-medium text-white shadow-none transition hover:bg-brand-accent/90 sm:px-8 lg:w-auto"
             >
               <ReceiptText className="mr-2 h-4 w-4" />
               Ver extrato
@@ -857,7 +886,6 @@ export function ContaPage() {
         data={transfers}
         loading={tableLoading}
         onPageChange={(nextPage) => void loadInitialData(nextPage)}
-        onRequestCancel={setTransferToCancel}
         onViewTransfer={openTransferDetail}
         filters={filters}
         onFiltersChange={handleFiltersChange}
@@ -883,23 +911,7 @@ export function ContaPage() {
         onRecipientsChange={loadOverviewAndRecipients}
       />
 
-      <ConfirmDialog
-        open={transferToCancel !== null}
-        onOpenChange={(open) => {
-          if (!open) setTransferToCancel(null);
-        }}
-        title="Cancelar transferência?"
-        description="Fluxo afetado: matrícula - plano - cobrança - pagamento. O cancelamento só é permitido enquanto a transferência ainda não chegou a estado terminal, preservando auditoria e reprocessamento seguro."
-        confirmText="Cancelar transferência"
-        cancelText="Voltar"
-        variant="destructive"
-        loading={canceling}
-        onConfirm={() => {
-          void handleCancelTransfer();
-        }}
-      />
-
-      <div className="flex justify-center pt-1 pb-2">
+      <div className="flex justify-center px-2 pt-2 pb-1 min-[1024px]:pt-1">
         <AsaasSeal variant="negativo-preto" />
       </div>
     </div>

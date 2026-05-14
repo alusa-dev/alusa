@@ -1,3 +1,5 @@
+import type { BadgeVariant } from '@/components/ui/badge';
+
 import type { AnticipationStatus } from './types';
 
 export function formatCurrency(value: number | null | undefined): string {
@@ -81,4 +83,60 @@ export function sourceLabel(value: string): string {
     default:
       return 'Asaas';
   }
+}
+
+/** Rótulo e variante de badge para status de cobrança/recebível no Asaas (lista de candidatos). */
+export function getReceivableStatusPresentation(status: string): { variant: BadgeVariant; label: string } {
+  const normalized = (status ?? '').trim().toUpperCase();
+  const labels: Record<string, string> = {
+    PENDING: 'Pendente',
+    AWAITING_RISK_ANALYSIS: 'Em análise de risco',
+    RECEIVED: 'Confirmado',
+    CONFIRMED: 'Confirmado',
+    DUNNING_RECEIVED: 'Confirmado',
+    RECEIVED_IN_CASH: 'Recebido em dinheiro',
+    OVERDUE: 'Atrasado',
+    DUNNING_REQUESTED: 'Em régua de cobrança',
+    REFUNDED: 'Estornado',
+    REFUND_IN_PROGRESS: 'Estorno em andamento',
+    REFUND_REQUESTED: 'Estorno solicitado',
+    CHARGEBACK_REQUESTED: 'Chargeback',
+    CHARGEBACK_DISPUTE: 'Chargeback em disputa',
+    AWAITING_CHARGEBACK_REVERSAL: 'Aguardando reversão de chargeback',
+    DELETED: 'Cancelado',
+  };
+  const label =
+    labels[normalized] ??
+    (normalized
+      ? normalized
+          .toLowerCase()
+          .split(/_+/g)
+          .filter(Boolean)
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ')
+      : '—');
+
+  let variant: BadgeVariant = 'neutral';
+  if (['CONFIRMED', 'RECEIVED', 'DUNNING_RECEIVED', 'RECEIVED_IN_CASH'].includes(normalized)) {
+    variant = 'success';
+  } else if (['PENDING', 'AWAITING_RISK_ANALYSIS'].includes(normalized)) {
+    variant = 'warning';
+  } else if (
+    [
+      'OVERDUE',
+      'DUNNING_REQUESTED',
+      'REFUNDED',
+      'REFUND_IN_PROGRESS',
+      'REFUND_REQUESTED',
+      'CHARGEBACK_REQUESTED',
+      'CHARGEBACK_DISPUTE',
+      'AWAITING_CHARGEBACK_REVERSAL',
+    ].includes(normalized)
+  ) {
+    variant = 'destructive';
+  } else if (['DELETED'].includes(normalized)) {
+    variant = 'neutral';
+  }
+
+  return { variant, label };
 }

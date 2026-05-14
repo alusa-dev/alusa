@@ -197,6 +197,7 @@ export default function CobrancasAvulsasPage() {
       className="min-w-0 max-w-full pb-6"
       title="Cobranças Avulsas"
       subtitle="Cobranças independentes, não vinculadas a parcelamentos ou assinaturas."
+      headerEnd={<AsaasSeal variant="negativo-preto" />}
       actions={
         <Button
           onClick={handleCreateCharge}
@@ -247,7 +248,7 @@ export default function CobrancasAvulsasPage() {
               onChange={setPage}
             />
           ) : null}
-          <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8">
+          <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8 lg:hidden">
             <AsaasSeal variant="negativo-preto" />
           </footer>
         </>

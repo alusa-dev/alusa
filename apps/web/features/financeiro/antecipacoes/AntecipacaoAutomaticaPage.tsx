@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { pushToast } from '@/components/ui/toast';
-import { CheckCircle, CreditCard, Warning } from '@/components/icons/icons';
+import { CheckCircle, Warning } from '@/components/icons/icons';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { AnticipationConfiguration, AnticipationLimits } from './types';
 import { formatCurrency } from './utils';
@@ -124,7 +124,7 @@ export function AntecipacaoAutomaticaPage() {
   }
 
   return (
-    <div className="space-y-5 pr-4 xl:pr-6">
+    <div className="w-full min-w-0 space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
         <div className="max-w-2xl">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Antecipações</p>
@@ -137,63 +137,54 @@ export function AntecipacaoAutomaticaPage() {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <section className="rounded-xl border border-slate-200 bg-white p-6">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f4ecfd] text-[#2b2634]">
-              <CreditCard className="h-6 w-6" />
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-slate-900">Antecipação automática de cartão</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Quando ativa, o Asaas solicita automaticamente a antecipação dos recebíveis de cartão elegíveis.
+            </p>
+
+            <div className="mt-5 grid gap-3 text-sm text-slate-700">
+              <div className="flex gap-3">
+                <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
+                <span>Aplicável somente a recebíveis de cartão de crédito.</span>
+              </div>
+              <div className="flex gap-3">
+                <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
+                <span>Solicitações seguem sujeitas a análise de crédito do Asaas.</span>
+              </div>
+              <div className="flex gap-3">
+                <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
+                <span>Você pode ativar ou desativar a configuração a qualquer momento.</span>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold text-slate-900">Antecipação automática de cartão</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                Quando ativa, o Asaas solicita automaticamente a antecipação dos recebíveis de cartão elegíveis.
+
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              {loading ? (
+                <Button disabled className="rounded-xl">Carregando...</Button>
+              ) : enabled ? (
+                <Button
+                  className="rounded-xl bg-rose-700 text-white hover:bg-rose-800"
+                  disabled={saving}
+                  onClick={() => setConfirmDisable(true)}
+                >
+                  Desativar antecipação automática
+                </Button>
+              ) : (
+                <Button
+                  className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
+                  disabled={saving || !automaticEligible}
+                  onClick={() => void updateConfiguration(true)}
+                >
+                  Ativar antecipação automática
+                </Button>
+              )}
+            </div>
+
+            {!enabled && automaticBlockedByPersonType ? (
+              <p className="mt-3 text-sm leading-6 text-amber-700">
+                Esta subconta está cadastrada como pessoa física no Asaas. A antecipação automática só pode ser ativada para contas PJ.
               </p>
-
-              <div className="mt-5 grid gap-3 text-sm text-slate-700">
-                <div className="flex gap-3">
-                  <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
-                  <span>Aplicável somente a recebíveis de cartão de crédito.</span>
-                </div>
-                <div className="flex gap-3">
-                  <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
-                  <span>Solicitações seguem sujeitas a análise de crédito do Asaas.</span>
-                </div>
-                <div className="flex gap-3">
-                  <CheckCircle className="mt-0.5 h-5 w-5 text-emerald-600" />
-                  <span>Você pode ativar ou desativar a configuração a qualquer momento.</span>
-                </div>
-              </div>
-
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                {loading ? (
-                  <Button disabled className="rounded-xl">Carregando...</Button>
-                ) : enabled ? (
-                  <Button
-                    className="rounded-xl bg-rose-700 text-white hover:bg-rose-800"
-                    disabled={saving}
-                    onClick={() => setConfirmDisable(true)}
-                  >
-                    Desativar antecipação automática
-                  </Button>
-                ) : (
-                  <Button
-                    className="rounded-xl bg-brand-accent text-white hover:bg-brand-accent/90"
-                    disabled={saving || !automaticEligible}
-                    onClick={() => void updateConfiguration(true)}
-                  >
-                    Ativar antecipação automática
-                  </Button>
-                )}
-
-                <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
-                  {enabled ? 'Ativada' : 'Desativada'}
-                </span>
-              </div>
-
-              {!enabled && automaticBlockedByPersonType ? (
-                <p className="mt-3 text-sm leading-6 text-amber-700">
-                  Esta subconta está cadastrada como pessoa física no Asaas. A antecipação automática só pode ser ativada para contas PJ.
-                </p>
-              ) : null}
-            </div>
+            ) : null}
           </div>
         </section>
 

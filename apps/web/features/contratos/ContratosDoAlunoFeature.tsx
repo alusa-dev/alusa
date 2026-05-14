@@ -8,15 +8,21 @@ import { TableLayout } from '@/components/layout/TableLayout';
 import { Eye, Trash, ArrowPrev } from '@/components/icons/icons';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import { toast } from '@/components/ui/toast';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import {
   cancelContrato as cancelContratoService,
   getContratosByAluno,
   type Contrato,
 } from './services/contratos-service';
-import { Badge, type StatusType } from '@/components/ui/badge';
 
 interface ContratosDoAlunoFeatureProps {
   alunoId: string;
+}
+
+function contratoTipoTurmaLine(c: Contrato): string {
+  const tipo = c.modelo?.nome || 'Personalizado';
+  const turma = c.matricula.turma?.nome;
+  return turma ? `${tipo} · ${turma}` : tipo;
 }
 
 export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProps) {
@@ -57,7 +63,11 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
         header: 'Status',
         align: 'center',
         width: 'w-[130px]',
-        render: (c) => <Badge status={c.status as StatusType} size="sm" />,
+        render: (c) => (
+          <div className="flex justify-center">
+            <Badge status={c.status as StatusType} size="sm" />
+          </div>
+        ),
       },
       {
         id: 'criadoEm',
@@ -65,7 +75,7 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
         align: 'center',
         width: 'w-[120px]',
         render: (c) => (
-          <span className="text-gray-500 text-xs">
+          <span className="text-xs text-gray-500">
             {new Date(c.createdAt).toLocaleDateString('pt-BR')}
           </span>
         ),
@@ -91,7 +101,7 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
                 size="icon"
                 onClick={() => setCancelTarget(c)}
                 title="Cancelar"
-                className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                className="text-red-500 hover:bg-red-50 hover:text-red-600"
               >
                 <Trash className="h-4 w-4" />
               </Button>
@@ -116,16 +126,78 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
 
   return (
     <TableLayout
+      className="w-full min-w-0"
       title={alunoNome ? `Contratos de ${alunoNome}` : 'Contratos do aluno'}
       subtitle="Veja e gerencie os contratos vinculados a este aluno."
       actions={
         <Button variant="outline" onClick={() => router.push('/contratos')} className="h-10 px-4">
-          <ArrowPrev className="h-4 w-4 mr-2" />
+          <ArrowPrev className="mr-2 h-4 w-4" />
           Voltar
         </Button>
       }
     >
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className="overflow-hidden rounded-xl border bg-white lg:hidden">
+        {loading ? (
+          <ul className="m-0 divide-y divide-gray-100 p-0">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="px-4 py-4">
+                <div className="h-4 w-3/4 animate-pulse rounded bg-gray-100" />
+                <div className="mt-2 h-3 w-24 animate-pulse rounded bg-gray-100" />
+              </li>
+            ))}
+          </ul>
+        ) : contratos.length === 0 ? (
+          <div className="px-6 py-12 text-center text-sm text-gray-500">
+            Nenhum contrato encontrado para este aluno.
+          </div>
+        ) : (
+          <ul className="m-0 list-none divide-y divide-gray-100 p-0" role="list">
+            {contratos.map((c) => (
+              <li key={c.id} className="flex items-start gap-3 px-4 py-4">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <p className="text-[13px] font-semibold leading-snug text-gray-900">
+                    {contratoTipoTurmaLine(c)}
+                  </p>
+                  <p className="text-xs tabular-nums text-gray-500">
+                    Gerado em {new Date(c.createdAt).toLocaleDateString('pt-BR')}
+                  </p>
+                  <Badge
+                    status={c.status as StatusType}
+                    size="sm"
+                    className="w-fit max-w-full whitespace-normal leading-tight"
+                  />
+                </div>
+                <div className="flex shrink-0 items-start">
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0"
+                      onClick={() => router.push(`/contratos/${c.id}`)}
+                      title="Ver detalhes"
+                    >
+                      <Eye className="h-4 w-4 text-gray-500" />
+                    </Button>
+                    {c.status === 'PENDENTE' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0 text-red-500 hover:bg-red-50 hover:text-red-600"
+                        onClick={() => setCancelTarget(c)}
+                        title="Cancelar"
+                      >
+                        <Trash className="h-4 w-4" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="hidden overflow-hidden rounded-xl border bg-white lg:block">
         <DataTable
           data={contratos}
           columns={columns}

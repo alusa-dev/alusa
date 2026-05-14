@@ -105,7 +105,7 @@ export function ModeloDetalhesFeature({ modeloId }: ModeloDetalhesFeatureProps) 
     <div className="min-h-screen bg-gray-50/50">
       {/* Header */}
       <div className="bg-white border-b px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="flex w-full min-w-0 items-center justify-between">
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
@@ -163,7 +163,7 @@ export function ModeloDetalhesFeature({ modeloId }: ModeloDetalhesFeatureProps) 
       </div>
 
       {/* Content */}
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="w-full min-w-0 px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* PDF Viewer */}
           <div className="lg:col-span-2">

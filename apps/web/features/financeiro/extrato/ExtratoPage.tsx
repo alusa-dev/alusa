@@ -18,7 +18,7 @@ export function ExtratoPage() {
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntry | null>(null);
 
   return (
-    <div className="space-y-5 pr-4 xl:pr-6">
+    <div className="w-full min-w-0 space-y-5">
       <ExtratoHeader
         filters={filters}
       />

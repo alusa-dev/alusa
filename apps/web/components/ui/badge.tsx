@@ -21,10 +21,10 @@ const VARIANT_STYLES: Record<BadgeVariant, string> = {
 };
 
 const statusConfig = {
-  CONFIRMED: { text: 'Pagamento Confirmado', className: 'bg-[#CFF2DA] text-[#144E22]' },
+  CONFIRMED: { text: 'confirmado', className: 'bg-[#CFF2DA] text-[#144E22]' },
   RECEIVED: { text: 'Pagamento Recebido', className: 'bg-[#CFF2DA] text-[#144E22]' },
   PAGO: { text: 'Pago', className: 'bg-[#CFF2DA] text-[#144E22]' },
-  PENDING: { text: 'Aguardando Pagamento', className: 'bg-[#F3F9B3] text-[#5A630F]' },
+  PENDING: { text: 'aguardando', className: 'bg-[#F3F9B3] text-[#5A630F]' },
   PENDENTE: { text: 'Pendente', className: 'bg-[#F3F9B3] text-[#5A630F]' },
   OVERDUE: { text: 'Atrasado', className: 'bg-[#FFD9B3] text-[#5C2A00]' },
   ATRASADO: { text: 'Atrasado', className: 'bg-[#FFD9B3] text-[#5C2A00]' },

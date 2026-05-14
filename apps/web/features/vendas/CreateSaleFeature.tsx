@@ -1,12 +1,13 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
 import { PayerSearchInput } from '@/components/financeiro/PayerSearchInput';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -48,6 +49,7 @@ import {
   type SalePaymentMethodValue,
 } from './services/sales-service';
 import { VariantSelectorModal } from './components/VariantSelectorModal';
+import type { ProductListItem } from './services/products-service';
 
 type CustomerMode = 'REGISTRADO' | 'AVULSO';
 type WizardStep = 0 | 1 | 2;
@@ -167,6 +169,48 @@ export function CreateSaleFeature() {
   const canUseInstallments = billingType === 'BOLETO' || billingType === 'CREDIT_CARD';
   const activeProducts = useMemo(() => products.filter((product) => product.isActive), [products]);
 
+  const addProductToCart = useCallback((product: ProductListItem) => {
+    const availableStock = product.totalAvailable;
+
+    if (product.hasVariants) {
+      setVariantSelectorProduct(product);
+      return;
+    }
+
+    setCart((current) => {
+      const existing = current.find(
+        (item) => item.productId === product.id && !item.variantId,
+      );
+      if (!existing) {
+        return [
+          ...current,
+          {
+            productId: product.id,
+            productName: product.name,
+            price: product.price,
+            stock: availableStock,
+            quantity: 1,
+            categoryName: product.category?.name ?? null,
+          },
+        ];
+      }
+
+      if (existing.quantity >= availableStock) {
+        toast.warning({
+          title: 'Estoque atingido',
+          description: `Não há mais unidades disponíveis de ${product.name}.`,
+        });
+        return current;
+      }
+
+      return current.map((item) =>
+        item.productId === product.id && !item.variantId
+          ? { ...item, quantity: item.quantity + 1, stock: availableStock }
+          : item,
+      );
+    });
+  }, []);
+
   useEffect(() => {
     void reload({
       search: deferredProductSearch,
@@ -280,44 +324,7 @@ export function CreateSaleFeature() {
             disabled={availableStock <= 0}
             onClick={(event) => {
               event.stopPropagation();
-
-              if (product.hasVariants) {
-                setVariantSelectorProduct(product);
-                return;
-              }
-
-              setCart((current) => {
-                const existing = current.find(
-                  (item) => item.productId === product.id && !item.variantId,
-                );
-                if (!existing) {
-                  return [
-                    ...current,
-                    {
-                      productId: product.id,
-                      productName: product.name,
-                      price: product.price,
-                      stock: availableStock,
-                      quantity: 1,
-                      categoryName: product.category?.name ?? null,
-                    },
-                  ];
-                }
-
-                if (existing.quantity >= availableStock) {
-                  toast.warning({
-                    title: 'Estoque atingido',
-                    description: `Não há mais unidades disponíveis de ${product.name}.`,
-                  });
-                  return current;
-                }
-
-                return current.map((item) =>
-                  item.productId === product.id && !item.variantId
-                    ? { ...item, quantity: item.quantity + 1, stock: availableStock }
-                    : item,
-                );
-              });
+              addProductToCart(product);
             }}
           >
             <Plus className="mr-2 h-4 w-4" />
@@ -599,57 +606,74 @@ export function CreateSaleFeature() {
         />
       )}
       <div
-        className={cn('mx-auto w-full', isIntroStep && 'grid h-full min-h-full place-items-center')}
+        className={cn(
+          'mx-auto w-full min-w-0',
+          isIntroStep && 'md:grid md:min-h-[min(100%,720px)] md:place-items-center',
+        )}
       >
         <div
-          className={cn('mx-auto w-full space-y-6', isIntroStep ? 'max-w-[640px]' : 'max-w-4xl')}
+          className={cn(
+            'mx-auto w-full min-w-0 space-y-4 sm:space-y-5 md:space-y-6',
+            isIntroStep ? 'max-w-full md:max-w-xl lg:max-w-2xl' : 'max-w-4xl',
+          )}
         >
           {/* Cabeçalho */}
           <div className={cn(isIntroStep && 'text-center')}>
-            <h1 className="text-[24px] font-semibold tracking-tight text-slate-900">Nova venda</h1>
-            <p className="text-sm text-slate-500">
+            <h1 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl md:text-[24px]">
+              Nova venda
+            </h1>
+            <p className="mt-1 text-sm leading-snug text-slate-500 sm:mt-0">
               Preencha as informações para registrar uma nova venda.
             </p>
           </div>
 
           {/* Indicador de etapas */}
-          <div className="rounded-xl border border-slate-200 bg-white px-6 py-5">
-            <div className="flex items-start justify-center gap-0">
-              {STEP_LABELS.map((label, index) => {
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-4 sm:px-6 sm:py-5">
+            <div className="flex w-full items-start">
+              {STEP_LABELS.flatMap((label, index) => {
                 const isDone = index < wizardStep;
                 const isActive = index === wizardStep;
-                return (
-                  <div key={label} className="flex items-start">
-                    <div className="flex flex-col items-center gap-2">
-                      <div
-                        className={cn(
-                          'flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold transition-all',
-                          isDone && 'bg-brand-accent text-white',
-                          isActive && 'bg-brand-accent text-white ring-4 ring-brand-accent/20',
-                          !isDone && !isActive && 'bg-slate-100 text-slate-400',
-                        )}
-                      >
-                        {isDone ? <Check className="h-4 w-4" /> : index + 1}
-                      </div>
-                      <span
-                        className={cn(
-                          'text-xs font-medium',
-                          isActive ? 'text-slate-900' : 'text-slate-400',
-                        )}
-                      >
-                        {label}
-                      </span>
+                const stepEl = (
+                  <div
+                    key={label}
+                    className="flex w-[4.5rem] shrink-0 flex-col items-center gap-1.5 sm:w-[5.5rem] md:w-24"
+                  >
+                    <div
+                      className={cn(
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-all',
+                        isDone && 'bg-brand-accent text-white',
+                        isActive && 'bg-brand-accent text-white ring-4 ring-brand-accent/20',
+                        !isDone && !isActive && 'bg-slate-100 text-slate-400',
+                      )}
+                    >
+                      {isDone ? <Check className="h-4 w-4" /> : index + 1}
                     </div>
-                    {index < STEP_LABELS.length - 1 && (
-                      <div
-                        className={cn(
-                          'mx-4 mt-4 h-px w-20 transition-colors',
-                          index < wizardStep ? 'bg-brand-accent' : 'bg-slate-200',
-                        )}
-                      />
-                    )}
+                    <span
+                      className={cn(
+                        'w-full text-center text-[10px] font-medium leading-tight sm:text-xs',
+                        isActive ? 'text-slate-900' : 'text-slate-400',
+                      )}
+                    >
+                      {label}
+                    </span>
                   </div>
                 );
+
+                if (index >= STEP_LABELS.length - 1) {
+                  return [stepEl];
+                }
+
+                const lineEl = (
+                  <div
+                    key={`${label}-sep`}
+                    className={cn(
+                      'mx-0.5 mt-4 h-px min-w-[8px] flex-1 sm:mx-2 md:mx-3',
+                      index < wizardStep ? 'bg-brand-accent' : 'bg-slate-200',
+                    )}
+                    aria-hidden
+                  />
+                );
+                return [stepEl, lineEl];
               })}
             </div>
           </div>
@@ -662,7 +686,7 @@ export function CreateSaleFeature() {
                   type="button"
                   onClick={() => setCustomerMode('REGISTRADO')}
                   className={cn(
-                    'relative flex flex-col gap-3 rounded-xl border-2 p-5 text-left transition-all',
+                    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl border-2 p-4 text-left transition-all active:scale-[0.99] sm:min-h-0 sm:p-5',
                     customerMode === 'REGISTRADO'
                       ? 'border-brand-accent bg-brand-accent/5'
                       : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
@@ -695,7 +719,7 @@ export function CreateSaleFeature() {
                   type="button"
                   onClick={() => setCustomerMode('AVULSO')}
                   className={cn(
-                    'relative flex flex-col gap-3 rounded-xl border-2 p-5 text-left transition-all',
+                    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl border-2 p-4 text-left transition-all active:scale-[0.99] sm:min-h-0 sm:p-5',
                     customerMode === 'AVULSO'
                       ? 'border-brand-accent bg-brand-accent/5'
                       : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
@@ -814,15 +838,19 @@ export function CreateSaleFeature() {
           )}
 
           {wizardStep === 1 && (
-            <div className="grid gap-6 xl:grid-cols-[1fr,360px]">
+            <div className="grid gap-5 xl:grid-cols-[1fr,360px] xl:gap-6">
               {/* Tabela de produtos */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Escolha os produtos</CardTitle>
+              <Card className="min-w-0">
+                <CardHeader className="space-y-1 pb-4">
+                  <CardTitle className="text-lg md:text-xl">Escolha os produtos</CardTitle>
+                  <p className="text-sm text-slate-500">
+                    Busque, filtre por categoria e adicione itens ao carrinho.
+                  </p>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 md:grid-cols-[1fr,200px]">
+                <CardContent className="space-y-5">
+                  <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[1fr,200px] sm:items-stretch">
                     <Input
+                      className="h-11"
                       placeholder="Buscar por produto ou SKU"
                       value={productSearch}
                       onChange={(event) => {
@@ -837,7 +865,7 @@ export function CreateSaleFeature() {
                         setCategoryId(value);
                       }}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className="h-11 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -851,7 +879,78 @@ export function CreateSaleFeature() {
                     </Select>
                   </div>
 
-                  <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  {/* Mobile: cartões empilhados; desktop: tabela */}
+                  <div className="md:hidden">
+                    {loading ? (
+                      <div className="space-y-3">
+                        {[0, 1, 2].map((key) => (
+                          <div
+                            key={key}
+                            className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
+                          >
+                            <Skeleton className="h-5 w-4/5" />
+                            <Skeleton className="h-3 w-1/2" />
+                            <div className="flex gap-4">
+                              <Skeleton className="h-4 flex-1" />
+                              <Skeleton className="h-4 w-16" />
+                            </div>
+                            <Skeleton className="h-11 w-full rounded-md" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : activeProducts.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                        Nenhum produto disponível para venda.
+                      </div>
+                    ) : (
+                      <ul className="space-y-3">
+                        {activeProducts.map((product) => {
+                          const available = product.totalAvailable;
+                          return (
+                            <li
+                              key={product.id}
+                              className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                            >
+                              <div className="space-y-3">
+                                <div>
+                                  <p className="font-medium leading-snug text-slate-900">
+                                    {product.name}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {product.category?.name ?? 'Sem categoria'}
+                                    {product.sku ? ` · SKU ${product.sku}` : ''}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
+                                  <span>
+                                    Preço{' '}
+                                    <span className="font-medium text-slate-900">
+                                      {formatCurrencyBRL(product.price)}
+                                    </span>
+                                  </span>
+                                  <span>
+                                    Disponível{' '}
+                                    <span className="font-medium text-slate-900">{available}</span>
+                                  </span>
+                                </div>
+                                <Button
+                                  type="button"
+                                  className="h-11 w-full"
+                                  disabled={available <= 0}
+                                  onClick={() => addProductToCart(product)}
+                                >
+                                  <Plus className="mr-2 h-4 w-4" />
+                                  {product.hasVariants ? 'Escolher variante' : 'Adicionar ao carrinho'}
+                                </Button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white md:block">
                     <DataTable
                       columns={productColumns}
                       data={activeProducts}
@@ -865,6 +964,7 @@ export function CreateSaleFeature() {
                     />
                   </div>
                   <Pagination
+                    className="w-full min-w-0"
                     total={meta.total}
                     page={meta.page}
                     pageSize={meta.pageSize}
@@ -874,14 +974,19 @@ export function CreateSaleFeature() {
               </Card>
 
               {/* Carrinho */}
-              <div className="xl:sticky xl:top-24 xl:self-start">
+              <div className="min-w-0 xl:sticky xl:top-24 xl:self-start">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Carrinho</CardTitle>
+                  <CardHeader className="space-y-1 pb-4">
+                    <CardTitle className="text-lg md:text-xl">Carrinho</CardTitle>
+                    {cart.length > 0 ? (
+                      <p className="text-sm text-slate-500">
+                        {cart.length} {cart.length === 1 ? 'item' : 'itens'}
+                      </p>
+                    ) : null}
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                  <CardContent className="space-y-5">
                     {cart.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
                         Nenhum item adicionado.
                       </div>
                     ) : (
@@ -889,12 +994,14 @@ export function CreateSaleFeature() {
                         {cart.map((item) => (
                           <div
                             key={`${item.productId}-${item.variantId ?? 'base'}`}
-                            className="rounded-xl border border-slate-200 p-3"
+                            className="rounded-xl border border-slate-200 p-4"
                           >
                             <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="font-medium text-slate-900">{item.productName}</p>
-                                <p className="text-xs text-slate-500">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium leading-snug text-slate-900">
+                                  {item.productName}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
                                   {item.variantTitle ? `${item.variantTitle} · ` : ''}
                                   {item.categoryName ?? 'Sem categoria'} ·{' '}
                                   {formatCurrencyBRL(item.price)}
@@ -903,7 +1010,8 @@ export function CreateSaleFeature() {
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="text-slate-500"
+                                className="h-10 w-10 shrink-0 text-slate-500 md:h-9 md:w-9"
+                                aria-label="Remover do carrinho"
                                 onClick={() =>
                                   setCart((current) =>
                                     current.filter(
@@ -919,12 +1027,13 @@ export function CreateSaleFeature() {
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
-                            <div className="mt-3 flex items-center justify-between">
-                              <div className="flex items-center gap-2 rounded-full border border-slate-200 px-2 py-1">
+                            <div className="mt-4 flex min-h-11 items-center justify-between gap-3">
+                              <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-1.5 py-1">
                                 <Button
                                   size="icon"
                                   variant="ghost"
-                                  className="h-7 w-7"
+                                  className="h-9 w-9 md:h-7 md:w-7"
+                                  aria-label="Diminuir quantidade"
                                   onClick={() =>
                                     setCart((current) =>
                                       current
@@ -943,13 +1052,14 @@ export function CreateSaleFeature() {
                                 >
                                   <Minus className="h-4 w-4" />
                                 </Button>
-                                <span className="min-w-[20px] text-center text-sm font-medium text-slate-900">
+                                <span className="min-w-[2rem] px-1 text-center text-sm font-medium text-slate-900 tabular-nums">
                                   {item.quantity}
                                 </span>
                                 <Button
                                   size="icon"
                                   variant="ghost"
-                                  className="h-7 w-7"
+                                  className="h-9 w-9 md:h-7 md:w-7"
+                                  aria-label="Aumentar quantidade"
                                   onClick={() => {
                                     if (item.quantity >= item.stock) {
                                       toast.warning({
@@ -971,7 +1081,7 @@ export function CreateSaleFeature() {
                                   <Plus className="h-4 w-4" />
                                 </Button>
                               </div>
-                              <p className="text-sm font-semibold text-slate-900">
+                              <p className="text-sm font-semibold tabular-nums text-slate-900">
                                 {formatCurrencyBRL(item.price * item.quantity)}
                               </p>
                             </div>
@@ -983,6 +1093,7 @@ export function CreateSaleFeature() {
                     <div className="space-y-2">
                       <label className={labelClass}>Desconto</label>
                       <Input
+                        className="h-11"
                         inputMode="numeric"
                         placeholder="0,00"
                         value={discountInput}
@@ -991,17 +1102,17 @@ export function CreateSaleFeature() {
                     </div>
 
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-2">
                         <span>Subtotal</span>
-                        <span>{formatCurrencyBRL(cartSubtotal)}</span>
+                        <span className="tabular-nums">{formatCurrencyBRL(cartSubtotal)}</span>
                       </div>
-                      <div className="mt-2 flex items-center justify-between">
+                      <div className="mt-2 flex items-center justify-between gap-2">
                         <span>Desconto</span>
-                        <span>{formatCurrencyBRL(discount)}</span>
+                        <span className="tabular-nums">{formatCurrencyBRL(discount)}</span>
                       </div>
-                      <div className="mt-3 flex items-center justify-between text-base font-semibold text-slate-900">
+                      <div className="mt-3 flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
                         <span>Total</span>
-                        <span>{formatCurrencyBRL(total)}</span>
+                        <span className="tabular-nums">{formatCurrencyBRL(total)}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -1011,13 +1122,16 @@ export function CreateSaleFeature() {
           )}
 
           {wizardStep === 2 && (
-            <div className="grid gap-6 xl:grid-cols-[1fr,320px]">
+            <div className="grid gap-5 xl:grid-cols-[1fr,320px] xl:gap-6">
               {/* Opções de pagamento */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Estoque e pagamento</CardTitle>
+              <Card className="min-w-0 order-2 xl:order-none">
+                <CardHeader className="space-y-1 pb-4">
+                  <CardTitle className="text-lg md:text-xl">Estoque e pagamento</CardTitle>
+                  <p className="text-sm text-slate-500">
+                    Defina como o estoque será tratado e como a venda será finalizada.
+                  </p>
                 </CardHeader>
-                <CardContent className="space-y-6">
+                <CardContent className="space-y-5 sm:space-y-6">
                   <div className="space-y-2">
                     <label className={labelClass}>Operação de estoque</label>
                     <Select
@@ -1025,7 +1139,7 @@ export function CreateSaleFeature() {
                       onValueChange={(value: InventoryModeValue) => setInventoryMode(value)}
                       disabled={finalizationType === 'COBRANCA'}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className="h-11 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1051,7 +1165,7 @@ export function CreateSaleFeature() {
                       value={finalizationType}
                       onValueChange={(value: SaleFinalizationValue) => setFinalizationType(value)}
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className="h-11 w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1072,7 +1186,7 @@ export function CreateSaleFeature() {
                         value={saveWalkInCustomer}
                         onValueChange={(value: 'NAO' | 'SIM') => setSaveWalkInCustomer(value)}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger className="h-11 w-full">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -1084,14 +1198,14 @@ export function CreateSaleFeature() {
                   ) : null}
 
                   {finalizationType === 'RECEBIMENTO_PRESENCIAL' ? (
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 sm:gap-5 md:grid-cols-2">
                       <div className="space-y-2">
                         <label className={labelClass}>Método de recebimento</label>
                         <Select
                           value={paymentMethod}
                           onValueChange={(value: SalePaymentMethodValue) => setPaymentMethod(value)}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-11 w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1108,6 +1222,7 @@ export function CreateSaleFeature() {
                         <div className="space-y-2">
                           <label className={labelClass}>Valor recebido</label>
                           <Input
+                            className="h-11"
                             inputMode="numeric"
                             placeholder="0,00"
                             value={amountReceivedInput}
@@ -1121,10 +1236,11 @@ export function CreateSaleFeature() {
                   ) : null}
 
                   {finalizationType === 'COBRANCA' ? (
-                    <div className="grid gap-4 md:grid-cols-2">
+                    <div className="grid gap-4 sm:gap-5 md:grid-cols-2">
                       <div className="space-y-2">
                         <label className={labelClass}>Vencimento</label>
                         <DatePicker
+                          className="h-11 w-full"
                           value={chargeDueDate}
                           onChange={setChargeDueDate}
                           variant="input"
@@ -1141,7 +1257,7 @@ export function CreateSaleFeature() {
                             }
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-11 w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1153,14 +1269,14 @@ export function CreateSaleFeature() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-2 md:col-span-2">
                         <label className={labelClass}>Parcelamento</label>
                         <Select
                           value={String(installmentCount)}
                           disabled={!canUseInstallments}
                           onValueChange={(value) => setInstallmentCount(Number(value))}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className="h-11 w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1184,52 +1300,57 @@ export function CreateSaleFeature() {
                 </CardContent>
               </Card>
 
-              {/* Resumo do pedido */}
-              <div className="xl:sticky xl:top-24 xl:self-start">
+              {/* Resumo do pedido — no mobile aparece primeiro para contexto rápido */}
+              <div className="order-1 min-w-0 xl:order-none xl:sticky xl:top-24 xl:self-start">
                 <Card>
-                  <CardHeader>
-                    <CardTitle>Resumo</CardTitle>
+                  <CardHeader className="space-y-1 pb-4">
+                    <CardTitle className="text-lg md:text-xl">Resumo</CardTitle>
+                    <p className="text-sm text-slate-500">Itens e valores desta venda.</p>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="space-y-2">
+                    <div className="divide-y divide-slate-100">
                       {cart.map((item) => (
                         <div
                           key={`${item.productId}-${item.variantId ?? 'base'}`}
-                          className="flex items-center justify-between text-sm"
+                          className="flex items-start justify-between gap-3 py-3 text-sm first:pt-0 last:pb-0"
                         >
-                          <span className="text-slate-700">
-                            {item.productName}
+                          <span className="min-w-0 flex-1 leading-snug text-slate-700">
+                            <span className="font-medium text-slate-900">{item.productName}</span>
                             {item.variantTitle ? (
                               <span className="text-slate-500"> ({item.variantTitle})</span>
-                            ) : null}{' '}
-                            <span className="text-slate-400">× {item.quantity}</span>
+                            ) : null}
+                            <span className="block text-xs text-slate-500 sm:inline sm:before:mx-1 sm:before:content-['·']">
+                              Qtd. {item.quantity}
+                            </span>
                           </span>
-                          <span className="font-medium text-slate-900">
+                          <span className="shrink-0 font-medium tabular-nums text-slate-900">
                             {formatCurrencyBRL(item.price * item.quantity)}
                           </span>
                         </div>
                       ))}
                     </div>
 
-                    <div className="border-t border-slate-100 pt-3 text-sm text-slate-600">
-                      <div className="flex items-center justify-between">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="flex items-center justify-between gap-2">
                         <span>Subtotal</span>
-                        <span>{formatCurrencyBRL(cartSubtotal)}</span>
+                        <span className="tabular-nums">{formatCurrencyBRL(cartSubtotal)}</span>
                       </div>
                       {discount > 0 ? (
-                        <div className="mt-1.5 flex items-center justify-between">
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
                           <span>Desconto</span>
-                          <span>−{formatCurrencyBRL(discount)}</span>
+                          <span className="tabular-nums">−{formatCurrencyBRL(discount)}</span>
                         </div>
                       ) : null}
-                      <div className="mt-3 flex items-center justify-between text-base font-semibold text-slate-900">
+                      <div className="mt-3 flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
                         <span>Total</span>
-                        <span>{formatCurrencyBRL(total)}</span>
+                        <span className="tabular-nums">{formatCurrencyBRL(total)}</span>
                       </div>
                       {paymentMethod === 'DINHEIRO' && amountReceivedInput ? (
-                        <div className="mt-2 flex items-center justify-between">
+                        <div className="mt-2 flex items-center justify-between gap-2">
                           <span>Troco</span>
-                          <span>{formatCurrencyBRL(Math.max(amountReceived - total, 0))}</span>
+                          <span className="tabular-nums">
+                            {formatCurrencyBRL(Math.max(amountReceived - total, 0))}
+                          </span>
                         </div>
                       ) : null}
                     </div>
@@ -1239,19 +1360,21 @@ export function CreateSaleFeature() {
             </div>
           )}
 
-          {/* Navegação entre etapas */}
-          <div className="flex items-center justify-between border-t border-slate-100 pt-4">
+          {/* Navegação entre etapas — mobile: Voltar acima, ação principal abaixo (alvo de toque maior) */}
+          <div
+            className={cn(
+              'flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center',
+              wizardStep > 0 ? 'sm:justify-between' : 'sm:justify-end',
+            )}
+          >
             {wizardStep > 0 ? (
-              <Button variant="outline" onClick={goBack}>
+              <Button variant="outline" className="h-11 w-full sm:h-10 sm:w-auto" onClick={goBack}>
                 Voltar
               </Button>
-            ) : (
-              <div />
-            )}
-
+            ) : null}
             {wizardStep < 2 ? (
               <Button
-                className="bg-brand-accent text-white hover:bg-brand-accent/90"
+                className="h-11 w-full bg-brand-accent text-white hover:bg-brand-accent/90 sm:h-10 sm:w-auto"
                 disabled={wizardStep === 0 ? !canAdvanceStep0 : !canAdvanceStep1}
                 onClick={goNext}
               >
@@ -1259,7 +1382,7 @@ export function CreateSaleFeature() {
               </Button>
             ) : (
               <Button
-                className="bg-brand-accent text-white hover:bg-brand-accent/90"
+                className="h-11 w-full bg-brand-accent text-white hover:bg-brand-accent/90 sm:h-10 sm:w-auto"
                 disabled={submitting || cart.length === 0}
                 onClick={handleSubmit}
               >

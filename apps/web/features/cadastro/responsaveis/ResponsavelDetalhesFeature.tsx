@@ -82,7 +82,13 @@ function formatCurrency(value: number | null | undefined) {
   return currencyFormatter.format(value);
 }
 
-const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
+/** Largura máxima das seções em detalhe (formulários, painéis, listas) — alinhada ao cabeçalho da página. */
+const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
+
+const sectionClass = cn(
+  'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 sm:px-5 sm:py-4',
+  DETAIL_SECTION_MAX,
+);
 const labelClass = 'text-xs font-medium text-slate-600';
 const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50';
 const controlClass =
@@ -250,51 +256,41 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
 
   if (!responsavel) {
     return (
-      <div className="space-y-4">
-        <Button
-          variant="ghost"
-          className="h-9 px-2 text-slate-600"
-          onClick={() => router.push('/responsaveis')}
-        >
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Voltar
-        </Button>
-        <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-500">
-          Responsável não encontrado.
+      <div className="h-full min-w-0 overflow-y-auto">
+        <div className="w-full min-w-0 space-y-4 px-4 py-6">
+          <Button
+            variant="ghost"
+            className="h-9 px-2 text-slate-600"
+            onClick={() => router.push('/responsaveis')}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Voltar
+          </Button>
+          <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-500">
+            Responsável não encontrado.
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-y-auto">
-      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
-        <div className="mb-8">
+    <div className="h-full min-w-0 overflow-y-auto">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
+        <div className={cn(DETAIL_SECTION_MAX, 'mb-8')}>
           <BackButton onClick={() => router.push('/responsaveis')} />
 
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex-1">
-              <h1 className="mb-2 text-3xl font-bold leading-tight text-gray-900">
-                Detalhes do responsável
-              </h1>
-              <p className="text-base text-gray-600">
-                Gerencie cadastro e alunos vinculados a este responsável.
-              </p>
-            </div>
-
-            <Button
-              type="button"
-              onClick={() => setDeleteOpen(true)}
-              className="h-10 rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700"
-              title="Excluir este cadastro de responsável"
-            >
-              <Trash className="mr-2 h-4 w-4" />
-              Excluir Responsável
-            </Button>
+          <div>
+            <h1 className="mb-2 text-2xl font-bold leading-tight text-gray-900 sm:text-3xl">
+              Detalhes do responsável
+            </h1>
+            <p className="text-sm text-gray-600 sm:text-base">
+              Gerencie cadastro e alunos vinculados a este responsável.
+            </p>
           </div>
         </div>
 
-        <div className="space-y-8">
+        <div className="space-y-6 sm:space-y-8">
           {form ? (
             <>
               <EditableSection
@@ -338,45 +334,53 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             </>
           ) : null}
 
-          <CustomerNotificationsEditor
-            customerId={responsavel.asaasCustomerId}
-            endpoint={`/api/responsaveis/${responsavel.id}/notificacoes`}
-            description="Configuração do customer do responsável no Asaas. Essas preferências são usadas pelas cobranças dos alunos vinculados quando este responsável é o pagador."
-            emptyMessage="Este responsável ainda não possui customer Asaas sincronizado para configurar notificações."
-          />
+          <div className={DETAIL_SECTION_MAX}>
+            <CustomerNotificationsEditor
+              customerId={responsavel.asaasCustomerId}
+              endpoint={`/api/responsaveis/${responsavel.id}/notificacoes`}
+              description="Configuração do customer do responsável no Asaas. Essas preferências são usadas pelas cobranças dos alunos vinculados quando este responsável é o pagador."
+              emptyMessage="Este responsável ainda não possui customer Asaas sincronizado para configurar notificações."
+            />
+          </div>
 
-          <FinancialAccordion
-            title="Assinaturas"
-            open={openPanels.assinaturas}
-            onToggle={() => setOpenPanels((current) => ({ ...current, assinaturas: !current.assinaturas }))}
-            count={subscriptions.length}
-            viewAllHref="/cobrancas/assinaturas"
-            viewAllLabel="Visualizar todas as assinaturas"
-          >
-            <AssinaturasTable assinaturas={subscriptions.slice(0, 4)} />
-          </FinancialAccordion>
+          <div className={DETAIL_SECTION_MAX}>
+            <FinancialAccordion
+              title="Assinaturas"
+              open={openPanels.assinaturas}
+              onToggle={() => setOpenPanels((current) => ({ ...current, assinaturas: !current.assinaturas }))}
+              count={subscriptions.length}
+              viewAllHref="/cobrancas/assinaturas"
+              viewAllLabel="Visualizar todas as assinaturas"
+            >
+              <AssinaturasTable assinaturas={subscriptions.slice(0, 4)} />
+            </FinancialAccordion>
+          </div>
 
-          <FinancialAccordion
-            title="Parcelamentos"
-            open={openPanels.parcelamentos}
-            onToggle={() => setOpenPanels((current) => ({ ...current, parcelamentos: !current.parcelamentos }))}
-            count={installmentPlans.length}
-            viewAllHref="/cobrancas/parcelamentos"
-            viewAllLabel="Visualizar todos os parcelamentos"
-          >
-            <ParcelamentosTable parcelamentos={installmentPlans.slice(0, 4)} />
-          </FinancialAccordion>
+          <div className={DETAIL_SECTION_MAX}>
+            <FinancialAccordion
+              title="Parcelamentos"
+              open={openPanels.parcelamentos}
+              onToggle={() => setOpenPanels((current) => ({ ...current, parcelamentos: !current.parcelamentos }))}
+              count={installmentPlans.length}
+              viewAllHref="/cobrancas/parcelamentos"
+              viewAllLabel="Visualizar todos os parcelamentos"
+            >
+              <ParcelamentosTable parcelamentos={installmentPlans.slice(0, 4)} />
+            </FinancialAccordion>
+          </div>
 
-          <FinancialAccordion
-            title="Cobranças"
-            open={openPanels.cobrancas}
-            onToggle={() => setOpenPanels((current) => ({ ...current, cobrancas: !current.cobrancas }))}
-            count={overview?.charges.length ?? 0}
-            viewAllHref="/cobrancas"
-            viewAllLabel="Visualizar todas as cobranças"
-          >
-            <CobrancasTable cobrancas={recentCharges} />
-          </FinancialAccordion>
+          <div className={DETAIL_SECTION_MAX}>
+            <FinancialAccordion
+              title="Cobranças"
+              open={openPanels.cobrancas}
+              onToggle={() => setOpenPanels((current) => ({ ...current, cobrancas: !current.cobrancas }))}
+              count={overview?.charges.length ?? 0}
+              viewAllHref="/cobrancas"
+              viewAllLabel="Visualizar todas as cobranças"
+            >
+              <CobrancasTable cobrancas={recentCharges} />
+            </FinancialAccordion>
+          </div>
 
           <section className={sectionClass}>
             <div className="mb-4">
@@ -392,7 +396,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                   <Link
                     key={aluno.id}
                     href={`/alunos/${aluno.id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-slate-50"
+                    className="flex min-w-0 items-center gap-3 rounded-lg px-1 py-3 transition-colors hover:bg-slate-50 sm:px-2"
                   >
                     <Avatar className="h-10 w-10">
                       {aluno.foto ? <AvatarImage src={aluno.foto} alt={aluno.nome} /> : null}
@@ -406,8 +410,8 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                         {aluno.cpf ? maskCpf(aluno.cpf) : 'CPF não informado'}
                       </div>
                     </div>
-                    <Badge status={aluno.ativo ? 'ATIVO' : 'INATIVO'} size="sm" />
-                    <ExternalLink className="h-4 w-4 text-slate-400" />
+                    <Badge status={aluno.ativo ? 'ATIVO' : 'INATIVO'} size="sm" className="shrink-0" />
+                    <ExternalLink className="h-4 w-4 shrink-0 text-slate-400" />
                   </Link>
                 ))}
               </div>
@@ -421,6 +425,18 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
               </div>
             )}
           </section>
+
+          <div className={cn('border-t border-gray-200 pt-6', DETAIL_SECTION_MAX)}>
+            <Button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              className="h-10 w-full rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700 md:w-auto"
+              title="Excluir este cadastro de responsável"
+            >
+              <Trash className="mr-2 h-4 w-4" />
+              Excluir Responsável
+            </Button>
+          </div>
         </div>
 
       <ExcluirResponsavelDialog
@@ -472,17 +488,17 @@ function EditableSection({
   const editing = activeSection === editSection;
   return (
     <section className={sectionClass}>
-      <div className="mb-4 flex items-start justify-between">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <span className="text-sm font-semibold text-slate-700">{title}</span>
         {!hideActions ? (
           editing ? (
-            <div className="flex gap-2">
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={onCancel}
                 disabled={saving}
-                className="border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                className="min-h-10 flex-1 border-slate-200 bg-white text-slate-600 hover:bg-slate-100 sm:flex-initial"
               >
                 Cancelar
               </Button>
@@ -490,7 +506,7 @@ function EditableSection({
                 size="sm"
                 onClick={onSave}
                 disabled={saving}
-                className="bg-[#A94DFF] text-white shadow-none hover:bg-[#A94DFF]/90"
+                className="min-h-10 flex-1 bg-[#A94DFF] text-white shadow-none hover:bg-[#A94DFF]/90 sm:flex-initial"
               >
                 {saving ? 'Salvando...' : 'Salvar'}
               </Button>
@@ -501,7 +517,7 @@ function EditableSection({
               size="sm"
               disabled={Boolean(activeSection)}
               onClick={() => onEdit(editSection)}
-              className={editButtonClass}
+              className={cn(editButtonClass, 'w-full sm:w-auto')}
             >
               Editar
             </Button>
@@ -579,20 +595,20 @@ function FinancialAccordion({
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between px-5 py-4 text-left"
+        className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 px-4 py-4 text-left sm:flex-nowrap sm:px-5"
       >
-        <span className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+        <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-700">
           {title}
-          {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          {open ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
         </span>
-        <span className="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">
+        <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">
           {count} registros
         </span>
       </button>
       {open ? (
         <div className="border-t border-slate-200 bg-white">
           {children}
-          <div className="border-t border-slate-200 bg-slate-50 px-5 py-4">
+          <div className="border-t border-slate-200 bg-slate-50 px-4 py-4 sm:px-5">
             <Link href={viewAllHref} className="text-sm font-medium text-blue-600 hover:text-blue-700">
               {viewAllLabel}
             </Link>
@@ -784,25 +800,27 @@ function ExcluirResponsavelDialog({
 function ResponsavelDetalhesSkeleton() {
   return (
     <div className="h-full overflow-y-auto">
-      <div className="container mx-auto max-w-7xl px-4 py-6 pb-8">
-        <div className="mb-8 space-y-4">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
+        <div className={cn('mb-8 space-y-4', DETAIL_SECTION_MAX)}>
           <Skeleton className="h-9 w-24" />
-          <Skeleton className="h-9 w-72" />
+          <Skeleton className="h-9 w-72 max-w-full" />
           <Skeleton className="h-5 w-[30rem] max-w-full" />
+        </div>
+        <div className={cn('space-y-4', DETAIL_SECTION_MAX)}>
           <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
             <Skeleton className="h-14 w-14 rounded-full" />
             <div className="space-y-2">
-              <Skeleton className="h-6 w-72" />
+              <Skeleton className="h-6 w-72 max-w-full" />
               <Skeleton className="h-4 w-96 max-w-full" />
             </div>
           </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            {[...Array(3)].map((_, index) => (
+              <Skeleton key={index} className="h-24 rounded-xl" />
+            ))}
+          </div>
+          <Skeleton className="h-48 rounded-xl" />
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          {[...Array(3)].map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-xl" />
-          ))}
-        </div>
-        <Skeleton className="mt-5 h-48 rounded-xl" />
       </div>
     </div>
   );

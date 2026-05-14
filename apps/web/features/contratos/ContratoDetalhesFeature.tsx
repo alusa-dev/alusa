@@ -86,7 +86,7 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 via-gray-50 to-white">
       <div className="bg-white/90 backdrop-blur border-b px-6 py-5 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto flex flex-col gap-4">
+        <div className="flex w-full min-w-0 flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
               <Button
@@ -149,7 +149,7 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="w-full min-w-0 px-6 py-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="lg:col-span-8 xl:col-span-9">
             <Card className="flex flex-col overflow-hidden border-gray-200/70 shadow-sm ring-1 ring-gray-200/60">

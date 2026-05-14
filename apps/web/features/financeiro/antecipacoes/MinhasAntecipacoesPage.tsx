@@ -5,14 +5,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
+import { cn } from '@/lib/cn';
 import { ChevronRight, DollarSign, Filter, Search } from '@/components/icons/icons';
+import { Eye } from 'lucide-react';
 import type { AnticipationItem, AnticipationStatus, ListAnticipationsResponse } from './types';
 import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
 import {
   formatAnticipationStatus,
+  formatBillingType,
   formatCurrency,
   formatDate,
   sourceLabel,
@@ -65,9 +69,9 @@ function getAnticipationBadgeVariant(status: AnticipationStatus): BadgeVariant {
   }
 }
 
-function StatusBadge({ status }: { status: AnticipationStatus }) {
+function StatusBadge({ status, className }: { status: AnticipationStatus; className?: string }) {
   return (
-    <Badge variant={getAnticipationBadgeVariant(status)}>
+    <Badge variant={getAnticipationBadgeVariant(status)} className={cn(className)}>
       {formatAnticipationStatus(status)}
     </Badge>
   );
@@ -95,34 +99,53 @@ function AnticipationsTable({
   loading,
   onCancel,
   cancelingId,
+  onPreview,
 }: {
   items: AnticipationItem[];
   loading: boolean;
   onCancel: (_item: AnticipationItem) => void;
   cancelingId: string | null;
+  onPreview: (_item: AnticipationItem) => void;
 }) {
   if (loading) {
     return (
-      <div className="divide-y divide-slate-100">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <div key={index} className="grid grid-cols-12 gap-4 px-5 py-4">
-            <div className="col-span-4 h-5 rounded bg-slate-100" />
-            <div className="col-span-2 h-5 rounded bg-slate-100" />
-            <div className="col-span-2 h-5 rounded bg-slate-100" />
-            <div className="col-span-2 h-5 rounded bg-slate-100" />
-            <div className="col-span-2 h-5 rounded bg-slate-100" />
-          </div>
-        ))}
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-slate-100">
+          <tbody>
+            <tr>
+              <td colSpan={7} className="px-6 py-10 text-center text-sm text-slate-500">
+                <div className="flex items-center justify-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+                  Carregando...
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     );
   }
 
-  if (!items.length) return <EmptyState />;
+  if (!items.length) {
+    return (
+      <div className="overflow-x-auto">
+        <table className="min-w-full">
+          <tbody>
+            <tr>
+              <td colSpan={7} className="p-0">
+                <EmptyState />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    );
+  }
 
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full divide-y divide-slate-100">
-        <thead className="bg-gray-50">
+        <thead className="hidden bg-gray-50 lg:table-header-group">
           <tr>
             <th className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 lg:px-5">
               Recebível
@@ -150,29 +173,73 @@ function AnticipationsTable({
         <tbody className="divide-y divide-slate-100 bg-white">
           {items.map((item) => {
             const canCancel = item.status === 'PENDING' || item.status === 'SCHEDULED';
+            const title = item.context.description ?? item.payment ?? item.installment ?? item.id;
+            const subtitle = `${item.context.payerName ?? sourceLabel(item.context.source)} • ${item.payment ?? item.installment ?? '—'}`;
+            const billing = item.context.billingType ? formatBillingType(item.context.billingType) : null;
             return (
-              <tr key={item.id} className="hover:bg-slate-50/80">
-                <td className="max-w-[min(100vw-8rem,320px)] px-3 py-4 lg:max-w-[320px] lg:px-5">
-                  <p className="truncate text-sm font-medium text-slate-900">
-                    {item.context.description ?? item.payment ?? item.installment ?? item.id}
-                  </p>
-                  <p className="mt-1 truncate text-xs text-slate-500">
-                    {item.context.payerName ?? sourceLabel(item.context.source)} • {item.payment ?? item.installment}
-                  </p>
-                  <div className="mt-2 space-y-0.5 text-xs text-slate-600 lg:hidden">
-                    <p>
-                      <span className="text-slate-400">Valor </span>
-                      {formatCurrency(item.value)}
-                      <span className="text-slate-400"> · Taxa </span>
-                      {formatCurrency(item.fee)}
-                    </p>
-                    <p className="font-semibold text-emerald-700">Líquido {formatCurrency(item.netValue)}</p>
-                    <p className="text-slate-500">
-                      Previsão {formatDate(item.anticipationDate ?? item.dueDate)}
-                    </p>
+              <tr key={item.id} className="transition-colors hover:bg-slate-50/80">
+                <td className="min-w-0 px-3 py-3 lg:px-5 lg:py-4">
+                  <div className="flex items-stretch gap-3 lg:hidden">
+                    <ul className="m-0 min-w-0 flex-1 list-none space-y-1 p-0" role="list">
+                      <li className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                        <span className="text-[13px] font-semibold leading-snug text-slate-900">{title}</span>
+                        <span className="text-xs font-semibold tabular-nums text-slate-900">
+                          {formatCurrency(item.value)}
+                        </span>
+                      </li>
+                      <li className="truncate text-xs text-slate-500">{subtitle}</li>
+                      {billing ? (
+                        <li className="text-[12px] font-medium text-slate-800">{billing}</li>
+                      ) : null}
+                      <li className="text-[12px] font-semibold text-emerald-700">
+                        Líquido {formatCurrency(item.netValue)}
+                      </li>
+                      <li className="text-[12px] tabular-nums text-slate-600">Taxa {formatCurrency(item.fee)}</li>
+                      <li className="text-[12px] tabular-nums text-slate-600">
+                        {formatDate(item.anticipationDate ?? item.dueDate)}
+                      </li>
+                      {canCancel ? (
+                        <li className="pt-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-lg text-xs"
+                            disabled={cancelingId === item.id}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onCancel(item);
+                            }}
+                          >
+                            {cancelingId === item.id ? 'Cancelando...' : 'Cancelar'}
+                          </Button>
+                        </li>
+                      ) : null}
+                    </ul>
+                    <div className="flex shrink-0 flex-col items-end justify-between self-stretch">
+                      <button
+                        type="button"
+                        className="-mr-1 -mt-0.5 rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#753CB8] focus-visible:ring-offset-1"
+                        aria-label="Ver detalhes da antecipação"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onPreview(item);
+                        }}
+                      >
+                        <Eye className="h-4 w-4 shrink-0" aria-hidden />
+                      </button>
+                      <StatusBadge
+                        status={item.status}
+                        className="max-w-[10.5rem] whitespace-normal text-right text-xs leading-tight"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="hidden lg:block">
+                    <p className="truncate text-sm font-medium text-slate-900">{title}</p>
+                    <p className="mt-1 truncate text-xs text-slate-500">{subtitle}</p>
                   </div>
                 </td>
-                <td className="px-2 py-4 lg:px-5">
+                <td className="hidden px-2 py-4 lg:table-cell lg:px-5">
                   <StatusBadge status={item.status} />
                 </td>
                 <td className="hidden px-5 py-4 text-right text-sm text-slate-700 lg:table-cell">
@@ -187,11 +254,11 @@ function AnticipationsTable({
                 <td className="hidden px-5 py-4 text-sm text-slate-600 lg:table-cell">
                   {formatDate(item.anticipationDate ?? item.dueDate)}
                 </td>
-                <td className="px-2 py-4 text-right lg:px-5">
+                <td className="hidden px-2 py-4 text-right lg:table-cell lg:px-5">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-8 rounded-lg max-lg:px-2 max-lg:text-xs"
+                    className="h-8 rounded-lg"
                     disabled={!canCancel || cancelingId === item.id}
                     onClick={() => onCancel(item)}
                   >
@@ -215,6 +282,7 @@ export function MinhasAntecipacoesPage() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [previewItem, setPreviewItem] = useState<AnticipationItem | null>(null);
   const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const load = useCallback(async (silent = false) => {
@@ -305,7 +373,7 @@ export function MinhasAntecipacoesPage() {
     : null;
 
   return (
-    <div className="space-y-5 pr-4 xl:pr-6">
+    <div className="w-full min-w-0 space-y-5">
       <section className="rounded-xl border border-slate-200 bg-white px-5 py-5 md:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
@@ -324,7 +392,7 @@ export function MinhasAntecipacoesPage() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Solicitado" detail="página atual" value={data?.summary.requestedValue ?? 0} />
         <SummaryCard label="Líquido previsto" detail="após taxa Asaas" value={data?.summary.netValue ?? 0} />
         <SummaryCard label="Taxas" detail="custo das antecipações" value={data?.summary.fees ?? 0} />
@@ -341,7 +409,7 @@ export function MinhasAntecipacoesPage() {
                 {lastSyncLabel ? ` • atualizado às ${lastSyncLabel}` : ''}
               </p>
             </div>
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,320px)_180px_auto]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_auto]">
               <div className="relative min-w-0">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <Input
@@ -389,6 +457,7 @@ export function MinhasAntecipacoesPage() {
           loading={loading}
           onCancel={handleCancel}
           cancelingId={cancelingId}
+          onPreview={setPreviewItem}
         />
 
         <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-5">
@@ -403,6 +472,66 @@ export function MinhasAntecipacoesPage() {
           </div>
         </div>
       </section>
+
+      <Dialog open={previewItem !== null} onOpenChange={(open) => !open && setPreviewItem(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalhes da antecipação</DialogTitle>
+            <DialogDescription>Resumo da solicitação conforme o Asaas.</DialogDescription>
+          </DialogHeader>
+          {previewItem ? (
+            <div className="grid gap-3 text-sm">
+              <div>
+                <p className="text-xs font-medium text-slate-500">Recebível</p>
+                <p className="font-medium text-slate-900">
+                  {previewItem.context.description
+                    ?? previewItem.payment
+                    ?? previewItem.installment
+                    ?? previewItem.id}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Pagador / origem</p>
+                <p className="text-slate-800">
+                  {previewItem.context.payerName ?? '—'} · {sourceLabel(previewItem.context.source)}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Valor</p>
+                  <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(previewItem.value)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Taxa</p>
+                  <p className="tabular-nums text-slate-800">{formatCurrency(previewItem.fee)}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Líquido</p>
+                <p className="font-semibold tabular-nums text-emerald-700">
+                  {formatCurrency(previewItem.netValue)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Previsão</p>
+                <p className="tabular-nums text-slate-800">
+                  {formatDate(previewItem.anticipationDate ?? previewItem.dueDate)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Status</p>
+                <StatusBadge status={previewItem.status} />
+              </div>
+              {previewItem.denialObservation ? (
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Observação</p>
+                  <p className="text-slate-800">{previewItem.denialObservation}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
