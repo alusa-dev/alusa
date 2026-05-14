@@ -229,27 +229,27 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
     >
       <div className="space-y-5">
         {calendarError ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 alusa-dark:border-rose-500/30 alusa-dark:bg-rose-500/10 alusa-dark:text-rose-200">
             {calendarError}
           </div>
         ) : null}
 
         {actionError ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 alusa-dark:border-rose-500/30 alusa-dark:bg-rose-500/10 alusa-dark:text-rose-200">
             {actionError}
           </div>
         ) : null}
 
         {resourcesError ? (
-          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 alusa-dark:border-rose-500/30 alusa-dark:bg-rose-500/10 alusa-dark:text-rose-200">
             {resourcesError}
           </div>
         ) : null}
 
-        <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+        <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-none">
+          <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] sm:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="inline-flex w-full max-w-full overflow-hidden rounded-xl shadow-sm sm:w-auto">
+                <div className="inline-flex w-full max-w-full overflow-hidden rounded-xl shadow-sm alusa-dark:shadow-none sm:w-auto">
                 <Button
                   className="min-w-0 flex-1 rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90 sm:flex-none"
                   onClick={() => setCreateOpen(true)}
@@ -295,9 +295,9 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                 onValueChange={(value) => handleViewModeChange(value as AgendaViewModeDTO)}
                 className="w-full sm:w-auto"
               >
-                <TabsList className="h-9 w-full justify-start overflow-x-auto sm:w-auto">
+                <TabsList className="h-9 w-full justify-start overflow-x-auto bg-slate-100/80 alusa-dark:bg-[color:var(--color-bg-elevated)] sm:w-auto">
                   {AGENDA_VIEW_OPTIONS.map((option) => (
-                    <TabsTrigger key={option.value} value={option.value} className="text-xs px-4">
+                    <TabsTrigger key={option.value} value={option.value} className="text-xs px-4 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-card)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
                       {option.label}
                     </TabsTrigger>
                   ))}
@@ -321,7 +321,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
 
           <div className="mt-0">
             {calendarLoading ? (
-              <div className="px-6 py-12 text-sm text-slate-500">
+              <div className="px-6 py-12 text-sm text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
                 Carregando calendário...
               </div>
             ) : (

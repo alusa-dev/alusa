@@ -43,7 +43,7 @@ const SheetContent = React.forwardRef<
       ref={ref}
       className={cn(
         sheetVariants[side],
-        'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right-2 data-[state=closed]:slide-out-to-right-2',
+        'outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-within:ring-0 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-right-2 data-[state=closed]:slide-out-to-right-2',
         className,
       )}
       {...props}

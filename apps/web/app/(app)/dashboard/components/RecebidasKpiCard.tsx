@@ -3,6 +3,8 @@
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
+import { DASHBOARD_KPI_TILE_CLASSNAME } from './utils';
+
 type RecebidasKpiCardProps = {
   data: DashboardMetricsDataDTO | null;
   loading: boolean;
@@ -19,7 +21,9 @@ export function RecebidasKpiCard({ data, loading, error = null }: RecebidasKpiCa
 
   if (loading && !data) {
     return (
-      <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+      <div
+        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
+      >
         <div>
           <Skeleton className="mb-2 h-4 w-24 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
           <Skeleton className="h-10 w-32 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
@@ -31,7 +35,9 @@ export function RecebidasKpiCard({ data, loading, error = null }: RecebidasKpiCa
   const valor = data?.turmasAtivas ?? 0;
 
   return (
-    <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]">
+    <div
+      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
+    >
       <div>
         <p className="mb-2 text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
           Turmas ativas

@@ -39,7 +39,7 @@ const DropdownMenuSubContent = React.forwardRef<
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 animate-in slide-in-from-left-1 alusa-dropdown-subcontent",
+      "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-within:ring-0 animate-in slide-in-from-left-1 alusa-dropdown-subcontent",
       className
     )}
     style={{
@@ -61,7 +61,7 @@ const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-    "z-50 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 transition-transform duration-150 alusa-dropdown-content",
+    "z-50 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white p-1 text-gray-900 outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-within:ring-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 transition-transform duration-150 alusa-dropdown-content",
         className
       )}
       style={{

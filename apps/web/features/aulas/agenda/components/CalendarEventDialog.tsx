@@ -63,7 +63,7 @@ type EventFormState = {
 };
 
 const EMPTY_VALUE = '__NONE__';
-const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px]';
+const CONTROL_CLASS = 'h-10 rounded-xl border-slate-200 bg-white text-[13px] alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]';
 const CREATE_EVENT_TYPE_OPTIONS = CALENDAR_EVENT_TYPE_OPTIONS.filter((option) => option.value !== 'AULA_EXPERIMENTAL');
 
 function wallCalendarPickerDate(year: number, month: number, day: number, accountTz: string) {
@@ -163,7 +163,7 @@ function buildAgendaEventToast(error: unknown) {
 }
 
 function FieldLabel({ children }: { children: string }) {
-  return <label className="text-xs font-medium uppercase tracking-wide text-slate-500">{children}</label>;
+  return <label className="text-xs font-medium uppercase tracking-wide text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{children}</label>;
 }
 
 function SectionBlock({
@@ -176,10 +176,10 @@ function SectionBlock({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-5">
+    <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
       <div>
-        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-        <p className="mt-1 text-xs text-slate-500">{description}</p>
+        <h3 className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{title}</h3>
+        <p className="mt-1 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{description}</p>
       </div>
       {children}
     </section>
@@ -294,19 +294,19 @@ export function CalendarEventDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-3xl gap-0 overflow-hidden rounded-3xl p-0">
+      <DialogContent className="w-[96vw] max-w-3xl gap-0 overflow-hidden rounded-3xl p-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         <form
           onSubmit={(event) => {
             event.preventDefault();
             void handleSubmit();
           }}
-          className="flex h-full max-h-[85vh] flex-col bg-white"
+          className="flex h-full max-h-[85vh] flex-col bg-white alusa-dark:bg-[color:var(--color-bg-card)]"
         >
-          <DialogHeader className="border-b border-slate-100 px-6 py-5">
-            <DialogTitle className="text-lg font-semibold text-slate-900">
+          <DialogHeader className="border-b border-slate-100 px-6 py-5 alusa-dark:border-[color:var(--color-border-default)]">
+            <DialogTitle className="text-lg font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
               {mode === 'edit' ? 'Editar evento' : 'Novo evento'}
             </DialogTitle>
-            <DialogDescription className="text-sm text-slate-500">
+            <DialogDescription className="text-sm text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
               Cadastre o essencial e mantenha a agenda operacional organizada no mesmo padrão do sistema.
             </DialogDescription>
           </DialogHeader>
@@ -497,7 +497,7 @@ export function CalendarEventDialog({
                     <Textarea
                       value={values.description}
                       onChange={(event) => setValues((current) => ({ ...current, description: event.target.value }))}
-                      className="min-h-[120px] rounded-2xl border-slate-200 bg-white"
+                      className="min-h-[120px] rounded-2xl border-slate-200 bg-white alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
                       placeholder="Observações rápidas, instruções internas ou contexto operacional."
                     />
                   </div>
@@ -507,11 +507,11 @@ export function CalendarEventDialog({
             </div>
           </div>
 
-          <DialogFooter className="border-t border-slate-100 px-6 py-4 sm:justify-between sm:space-x-0">
+          <DialogFooter className="border-t border-slate-100 px-6 py-4 alusa-dark:border-[color:var(--color-border-default)] sm:justify-between sm:space-x-0">
             <Button
               type="button"
               variant="outline"
-              className="rounded-xl"
+              className="rounded-xl alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)]"
               onClick={() => onOpenChange(false)}
             >
               Cancelar

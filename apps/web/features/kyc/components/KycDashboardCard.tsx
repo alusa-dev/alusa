@@ -32,7 +32,7 @@ export function KycDashboardCard({ onDismiss }: KycDashboardCardProps) {
 
   return (
     <div
-      className="relative flex h-full min-h-[220px] w-full flex-col justify-between rounded-2xl px-5 py-4"
+      className="relative flex h-full min-h-[220px] w-full flex-col justify-between rounded-2xl px-5 py-4 outline-none ring-0 focus-within:ring-0"
       style={{ backgroundColor: '#e6d6fb', color: '#2b2634' }}
     >
       {onDismiss ? (
@@ -40,7 +40,7 @@ export function KycDashboardCard({ onDismiss }: KycDashboardCardProps) {
           type="button"
           onClick={onDismiss}
           aria-label="Fechar aviso de cadastro"
-          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-[#2b2634]/70 transition hover:bg-[#2b2634]/5 hover:text-[#2b2634]"
+          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-[#2b2634]/70 transition hover:bg-[#2b2634]/5 hover:text-[#2b2634] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 focus-visible:ring-offset-0"
         >
           <Close className="h-4 w-4" />
         </button>

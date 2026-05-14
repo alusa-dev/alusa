@@ -77,7 +77,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <MobileAppHeader />
 
       <main
-        className="with-sidebar flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden transition-[padding-left] duration-300 ease-in-out lg:h-full lg:overflow-hidden"
+        className="with-sidebar flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-x-hidden outline-none ring-0 ring-offset-0 transition-[padding-left] duration-300 ease-in-out focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 lg:h-full lg:overflow-hidden"
         style={{ ['--sidebar-gap' as string]: `${CONTENT_GAP_PX}px` } as Record<string, string>}
       >
         <div
@@ -91,7 +91,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         >
           <div
             data-app-shell-card
-            className="flex min-h-0 w-full flex-1 flex-col overflow-hidden transition-[width] duration-300 ease-in-out lg:h-full"
+            className="flex min-h-0 w-full flex-1 flex-col overflow-hidden outline-none ring-0 ring-offset-0 transition-[width] duration-300 ease-in-out focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 lg:h-full"
             style={{
               height: `calc(100vh - ${OUTER_PADDING_TOP_PX + OUTER_PADDING_BOTTOM_PX}px)`,
               background: '#FFFFFF',
@@ -110,7 +110,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 Páginas que precisam de scroll devem gerenciar seu próprio overflow (ex: DataTables, Dashboards).
              */}
             <div
-              className="relative mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col app-content-scroll lg:mt-6"
+              className="relative mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col app-content-scroll outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 lg:mt-6"
               style={{ paddingRight: OUTER_PADDING_RIGHT_PX }}
             >
               {children}

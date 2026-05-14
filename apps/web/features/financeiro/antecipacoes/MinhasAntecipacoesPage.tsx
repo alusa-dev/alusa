@@ -474,60 +474,70 @@ export function MinhasAntecipacoesPage() {
       </section>
 
       <Dialog open={previewItem !== null} onOpenChange={(open) => !open && setPreviewItem(null)}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Detalhes da antecipação</DialogTitle>
-            <DialogDescription>Resumo da solicitação conforme o Asaas.</DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-md max-md:gap-0 max-md:overflow-hidden max-md:bg-slate-50 max-md:p-0 max-md:flex max-md:flex-col max-md:min-h-0 md:grid md:gap-4 md:bg-white md:p-6"
+        >
+          <DialogHeader className="relative max-md:shrink-0 max-md:space-y-0 max-md:border-b max-md:border-slate-200 max-md:bg-slate-50 max-md:px-4 max-md:py-4 max-md:text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:space-y-1.5 md:border-0 md:bg-transparent md:p-0 md:text-left">
+            <span className="pointer-events-none absolute inset-x-0 top-0 hidden h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent max-md:block" />
+            <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">Detalhes da antecipação</DialogTitle>
+            <DialogDescription className="max-md:mt-1.5 max-md:text-sm max-md:text-slate-600">
+              Resumo da solicitação conforme o Asaas.
+            </DialogDescription>
           </DialogHeader>
           {previewItem ? (
-            <div className="grid gap-3 text-sm">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Recebível</p>
-                <p className="font-medium text-slate-900">
-                  {previewItem.context.description
-                    ?? previewItem.payment
-                    ?? previewItem.installment
-                    ?? previewItem.id}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Pagador / origem</p>
-                <p className="text-slate-800">
-                  {previewItem.context.payerName ?? '—'} · {sourceLabel(previewItem.context.source)}
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Valor</p>
-                  <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(previewItem.value)}</p>
+            <div className="max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:overflow-hidden md:block md:overflow-visible">
+              <div className="max-md:flex-1 max-md:overflow-y-auto max-md:px-4 max-md:py-5 max-md:min-h-0 md:overflow-visible md:p-0">
+                <div className="grid gap-3 text-sm">
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Recebível</p>
+                    <p className="font-medium text-slate-900">
+                      {previewItem.context.description
+                        ?? previewItem.payment
+                        ?? previewItem.installment
+                        ?? previewItem.id}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Pagador / origem</p>
+                    <p className="text-slate-800">
+                      {previewItem.context.payerName ?? '—'} · {sourceLabel(previewItem.context.source)}
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Valor</p>
+                      <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(previewItem.value)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Taxa</p>
+                      <p className="tabular-nums text-slate-800">{formatCurrency(previewItem.fee)}</p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Líquido</p>
+                    <p className="font-semibold tabular-nums text-emerald-700">
+                      {formatCurrency(previewItem.netValue)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Previsão</p>
+                    <p className="tabular-nums text-slate-800">
+                      {formatDate(previewItem.anticipationDate ?? previewItem.dueDate)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-500">Status</p>
+                    <StatusBadge status={previewItem.status} />
+                  </div>
+                  {previewItem.denialObservation ? (
+                    <div>
+                      <p className="text-xs font-medium text-slate-500">Observação</p>
+                      <p className="text-slate-800">{previewItem.denialObservation}</p>
+                    </div>
+                  ) : null}
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Taxa</p>
-                  <p className="tabular-nums text-slate-800">{formatCurrency(previewItem.fee)}</p>
-                </div>
               </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Líquido</p>
-                <p className="font-semibold tabular-nums text-emerald-700">
-                  {formatCurrency(previewItem.netValue)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Previsão</p>
-                <p className="tabular-nums text-slate-800">
-                  {formatDate(previewItem.anticipationDate ?? previewItem.dueDate)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Status</p>
-                <StatusBadge status={previewItem.status} />
-              </div>
-              {previewItem.denialObservation ? (
-                <div>
-                  <p className="text-xs font-medium text-slate-500">Observação</p>
-                  <p className="text-slate-800">{previewItem.denialObservation}</p>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </DialogContent>

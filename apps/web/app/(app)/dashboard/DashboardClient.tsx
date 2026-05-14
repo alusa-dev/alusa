@@ -191,7 +191,11 @@ export default function DashboardClient() {
   const isMetricsLoading = loading && !metrics;
 
   return (
-    <section aria-label="Conteúdo do Dashboard" aria-busy={isMetricsLoading} className="flex flex-col gap-6 pb-8">
+    <section
+      aria-label="Conteúdo do Dashboard"
+      aria-busy={isMetricsLoading}
+      className="alusa-dashboard-page flex flex-col gap-6 pb-8"
+    >
       <header>
         <h1 className="text-2xl font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
           Olá, {user?.name || 'Usuário'}

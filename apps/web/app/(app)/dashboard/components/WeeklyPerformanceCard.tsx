@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { formatCurrency } from "./utils";
+import { DASHBOARD_SECTION_CARD_CLASSNAME, formatCurrency } from "./utils";
 
 const CARD_WIDTH = 700;
 const CARD_HEIGHT = 260;
@@ -121,7 +121,7 @@ export function WeeklyPerformanceCard() {
   }, [labels, matriculas, receita]);
 
   return (
-    <div className="rounded-2xl bg-white p-6 md:p-8 pb-8 border border-gray-200">
+    <div className={`${DASHBOARD_SECTION_CARD_CLASSNAME} rounded-2xl bg-white p-6 md:p-8 pb-8`}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="text-2xl font-medium text-gray-900">Desempenho semanal</p>
@@ -138,7 +138,7 @@ export function WeeklyPerformanceCard() {
                     key={opt.value}
                     type="button"
                     aria-label={`Filtrar desempenho por ${opt.label}`}
-                    className={`px-2 py-0.5 text-xs rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-gray-300 ${isActive
+                    className={`px-2 py-0.5 text-xs rounded-md font-medium transition-colors focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 ${isActive
                         ? "bg-white text-gray-900 border border-gray-300 shadow-sm"
                         : "bg-transparent text-gray-600 hover:bg-gray-200"
                       }`}

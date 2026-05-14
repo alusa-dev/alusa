@@ -1,3 +1,15 @@
+/** Combina com `.alusa-dashboard-kpi-tile` em `globals.css` — traço só no modo escuro; outline/toque neutros. */
+export const DASHBOARD_KPI_TILE_CLASSNAME =
+  'alusa-dashboard-kpi-tile [-webkit-tap-highlight-color:transparent] touch-manipulation outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-within:ring-0';
+
+/** Blocos lilás opcionais (mesmo tratamento anti-halo; borda só se usar classes border no TSX). */
+export const DASHBOARD_LILAC_SURFACE_CLASSNAME =
+  'alusa-dashboard-lilac-surface [-webkit-tap-highlight-color:transparent] touch-manipulation outline-none ring-0 ring-offset-0 focus-within:ring-0';
+
+/** Cartões brancos — traço visível (gray-200); cor fixa também ao focar/clicar (ver globals). */
+export const DASHBOARD_SECTION_CARD_CLASSNAME =
+  'alusa-dashboard-section-card [-webkit-tap-highlight-color:transparent] touch-manipulation outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-within:ring-0 border border-solid border-gray-200 shadow-sm alusa-dark:border alusa-dark:border-solid alusa-dark:border-[color:var(--color-border-default)]';
+
 export const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',

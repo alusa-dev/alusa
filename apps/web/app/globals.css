@@ -83,8 +83,10 @@
 /* Card branco principal (sidebar + conteúdo): mantém sombra estável ao focar/clicar dentro da página. */
 [data-app-shell-card] {
 	box-shadow: var(--app-shell-card-shadow) !important;
-	transition-property: background, background-color, color, border-color, outline-color,
-		text-decoration-color, caret-color, fill, stroke !important;
+	outline: none !important;
+	/* não animar outline-color — em alguns browsers isso causa “flash” de contorno ao clicar na área da página */
+	transition-property: background, background-color, color, border-color, text-decoration-color, caret-color, fill,
+		stroke !important;
 	transition-duration: var(--theme-duration) !important;
 	transition-timing-function: var(--theme-ease) !important;
 }
@@ -96,7 +98,351 @@
 	box-shadow: var(--app-shell-card-shadow) !important;
 }
 
-/* Linha horizontal */
+/* Viewports estruturais — sem outline ao focar/clicar (ex.: scrollbar, área vazia). */
+main.with-sidebar,
+main.with-sidebar:focus,
+main.with-sidebar:focus-visible,
+.app-content-scroll,
+.app-content-scroll:focus,
+.app-content-scroll:focus-visible {
+	outline: none !important;
+	outline-offset: 0 !important;
+}
+
+/* Painéis com borda (toolbar + card de lista): moldura estável mesmo com foco nos filhos. */
+.alusa-session-panel,
+.alusa-session-panel:focus,
+.alusa-session-panel:focus-visible,
+.alusa-session-panel:focus-within {
+	outline: none !important;
+	outline-offset: 0 !important;
+}
+
+/* Toolbar / cards `.border`: evita mudar cor do traçado quando input ou botões dentro recebem foco. */
+.alusa-session-panel.border,
+.alusa-session-panel.border:focus-within {
+	border-color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .alusa-session-panel.border,
+[data-theme='dark'] .alusa-session-panel.border:focus-within {
+	border-color: var(--color-border-default) !important;
+}
+
+/* KPIs — claro: sem traço; escuro: traço neutro também em hover/focus (ver regra `.cursor`/shell). */
+.alusa-dashboard-kpi-tile,
+.alusa-dashboard-kpi-tile:focus,
+.alusa-dashboard-kpi-tile:focus-visible,
+.alusa-dashboard-kpi-tile:focus-within,
+.alusa-dashboard-kpi-tile:active {
+	outline: none !important;
+	outline-offset: 0 !important;
+	-webkit-tap-highlight-color: transparent;
+}
+
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile,
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:hover,
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:focus,
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:focus-visible,
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:focus-within,
+html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:active {
+	border-width: 0 !important;
+	border-style: solid !important;
+	border-color: transparent !important;
+}
+
+[data-theme='dark'] .alusa-dashboard-kpi-tile,
+[data-theme='dark'] .alusa-dashboard-kpi-tile:hover,
+[data-theme='dark'] .alusa-dashboard-kpi-tile:focus,
+[data-theme='dark'] .alusa-dashboard-kpi-tile:focus-visible,
+[data-theme='dark'] .alusa-dashboard-kpi-tile:focus-within,
+[data-theme='dark'] .alusa-dashboard-kpi-tile:active {
+	border-width: 1px !important;
+	border-style: solid !important;
+	border-color: var(--color-border-default) !important;
+}
+
+/* Clique com mouse: sem anel; teclado usa :focus-visible nos botões (escopo KPI). */
+.alusa-dashboard-kpi-tile button:focus:not(:focus-visible) {
+	outline: none !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+/* Lilás (#f4ecfd): sem halo de outline/toque — não mascara sombras de filhos. */
+.alusa-dashboard-lilac-surface:focus,
+.alusa-dashboard-lilac-surface:active {
+	outline: none !important;
+	outline-offset: 0 !important;
+	-webkit-tap-highlight-color: transparent;
+}
+
+/* Cartões brancos dashboard — mesmo pin de borda que painéis de sessão (:hover/:focus dentro). */
+.alusa-dashboard-section-card,
+.alusa-dashboard-section-card:focus,
+.alusa-dashboard-section-card:focus-visible,
+.alusa-dashboard-section-card:focus-within,
+.alusa-dashboard-section-card:active {
+	outline: none !important;
+	outline-offset: 0 !important;
+	-webkit-tap-highlight-color: transparent;
+}
+
+html:not([data-theme='dark']) .alusa-dashboard-section-card,
+html:not([data-theme='dark']) .alusa-dashboard-section-card:hover,
+html:not([data-theme='dark']) .alusa-dashboard-section-card:focus,
+html:not([data-theme='dark']) .alusa-dashboard-section-card:focus-visible,
+html:not([data-theme='dark']) .alusa-dashboard-section-card:focus-within,
+html:not([data-theme='dark']) .alusa-dashboard-section-card:active {
+	border-color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .alusa-dashboard-section-card,
+[data-theme='dark'] .alusa-dashboard-section-card:hover,
+[data-theme='dark'] .alusa-dashboard-section-card:focus,
+[data-theme='dark'] .alusa-dashboard-section-card:focus-visible,
+[data-theme='dark'] .alusa-dashboard-section-card:focus-within,
+[data-theme='dark'] .alusa-dashboard-section-card:active {
+	border-color: var(--color-border-default) !important;
+}
+
+.alusa-dashboard-page button:focus:not(:focus-visible) {
+	outline: none !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+/* Dias destacados nos calendários do dashboard: a célula externa deve ficar transparente;
+   a cor pertence só ao botão interno do dia. */
+.alusa-calendar-event-day,
+.alusa-calendar-event-day:hover,
+.alusa-calendar-event-day:focus,
+.alusa-calendar-event-day:focus-visible,
+.alusa-calendar-event-day:active,
+.alusa-calendar-today-day,
+.alusa-calendar-today-day:hover,
+.alusa-calendar-today-day:focus,
+.alusa-calendar-today-day:focus-visible,
+.alusa-calendar-today-day:active {
+	background: transparent !important;
+	background-color: transparent !important;
+	color: inherit !important;
+	box-shadow: none !important;
+}
+
+.alusa-calendar-event-day button {
+	background-color: #f4ecfd !important;
+	color: #4c1d95 !important;
+	font-weight: 600 !important;
+	border-radius: 0.375rem !important;
+	box-shadow: none !important;
+}
+
+.alusa-calendar-today-day button {
+	background-color: #6b21a8 !important;
+	color: #ffffff !important;
+	font-weight: 600 !important;
+	border-radius: 0.375rem !important;
+	box-shadow: none !important;
+}
+
+.alusa-calendar-event-day button:hover {
+	background-color: #eadcfb !important;
+}
+
+.alusa-calendar-today-day button:hover {
+	background-color: #581c87 !important;
+}
+
+[data-theme='dark'] .alusa-calendar-event-day,
+[data-theme='dark'] .alusa-calendar-today-day {
+	background: transparent !important;
+	background-color: transparent !important;
+	color: inherit !important;
+}
+
+[data-theme='dark'] .alusa-calendar-event-day button {
+	background-color: rgba(169, 77, 255, 0.16) !important;
+	color: #c9a7ff !important;
+}
+
+[data-theme='dark'] .alusa-calendar-today-day button {
+	background-color: #6b21a8 !important;
+	color: #ffffff !important;
+}
+
+/*
+ * Shells Radix/shadcn (modal, drawer, popover, lista): evita outline/anéis no container
+ * quando filhos recebem foco e mantém cor de borda neutra no claro (equiv. gray/slate-200).
+ */
+.alusa-modal-surface,
+.alusa-modal-surface:focus,
+.alusa-modal-surface:focus-visible,
+.alusa-modal-surface:focus-within,
+.alusa-sheet-surface,
+.alusa-sheet-surface:focus,
+.alusa-sheet-surface:focus-visible,
+.alusa-sheet-surface:focus-within,
+.alusa-popover-surface,
+.alusa-popover-surface:focus,
+.alusa-popover-surface:focus-visible,
+.alusa-popover-surface:focus-within,
+.alusa-dropdown-content,
+.alusa-dropdown-content:focus,
+.alusa-dropdown-content:focus-visible,
+.alusa-dropdown-content:focus-within,
+.alusa-dropdown-subcontent,
+.alusa-dropdown-subcontent:focus,
+.alusa-dropdown-subcontent:focus-visible,
+.alusa-dropdown-subcontent:focus-within,
+.alusa-select-content,
+.alusa-select-content:focus,
+.alusa-select-content:focus-visible,
+.alusa-select-content:focus-within {
+	outline: none !important;
+	outline-offset: 0 !important;
+}
+
+.alusa-modal-surface,
+.alusa-modal-surface:hover,
+.alusa-modal-surface:focus,
+.alusa-modal-surface:focus-visible,
+.alusa-modal-surface:focus-within,
+.alusa-modal-surface:active {
+	border-color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .alusa-modal-surface,
+[data-theme='dark'] .alusa-modal-surface:hover,
+[data-theme='dark'] .alusa-modal-surface:focus,
+[data-theme='dark'] .alusa-modal-surface:focus-visible,
+[data-theme='dark'] .alusa-modal-surface:focus-within,
+[data-theme='dark'] .alusa-modal-surface:active {
+	border-color: var(--modal-border) !important;
+}
+
+/*
+ * Portais Radix ficam fora de .alusa-dashboard-page: o anel do Button (focus-visible:ring)
+ * permanecia no clique com mouse. No próprio shell do dialog e nos filhos interativos,
+ * removemos ring/outline só para :focus sem :focus-visible (clique/toque); teclado mantém o anel.
+ */
+.alusa-modal-surface:focus,
+.alusa-modal-surface:focus-visible {
+	outline: none !important;
+	outline-offset: 0 !important;
+	-webkit-tap-highlight-color: transparent;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+.alusa-modal-surface :where(button, a, [role='button']):focus:not(:focus-visible),
+.alusa-sheet-surface :where(button, a, [role='button']):focus:not(:focus-visible),
+.alusa-popover-surface :where(button, a, [role='button']):focus:not(:focus-visible) {
+	outline: none !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+.alusa-sheet-surface:focus,
+.alusa-sheet-surface:focus-visible,
+.alusa-popover-surface:focus,
+.alusa-popover-surface:focus-visible {
+	outline: none !important;
+	outline-offset: 0 !important;
+	-webkit-tap-highlight-color: transparent;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+/* Painéis internos nos diálogos do dashboard — traço neutro igual ao clicar/abrir/teclado (exc. botões de calendário etc.). */
+.alusa-dialog-empty-slot,
+.alusa-dialog-empty-slot:focus-visible,
+.alusa-dialog-empty-slot:focus-within {
+	outline: none !important;
+}
+
+html:not([data-theme='dark']) .alusa-dialog-empty-slot,
+html:not([data-theme='dark']) .alusa-dialog-empty-slot:hover,
+html:not([data-theme='dark']) .alusa-dialog-empty-slot:focus-visible,
+html:not([data-theme='dark']) .alusa-dialog-empty-slot:focus-within,
+html:not([data-theme='dark']) .alusa-dialog-empty-slot:active {
+	border-color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .alusa-dialog-empty-slot,
+[data-theme='dark'] .alusa-dialog-empty-slot:hover,
+[data-theme='dark'] .alusa-dialog-empty-slot:focus-visible,
+[data-theme='dark'] .alusa-dialog-empty-slot:focus-within,
+[data-theme='dark'] .alusa-dialog-empty-slot:active {
+	border-color: rgba(148, 146, 209, 0.22) !important;
+}
+
+.alusa-dialog-list-row-slot,
+.alusa-dialog-list-row-slot:focus-visible,
+.alusa-dialog-list-row-slot:focus-within {
+	outline: none !important;
+}
+
+html:not([data-theme='dark']) .alusa-dialog-list-row-slot,
+html:not([data-theme='dark']) .alusa-dialog-list-row-slot:hover,
+html:not([data-theme='dark']) .alusa-dialog-list-row-slot:focus-visible,
+html:not([data-theme='dark']) .alusa-dialog-list-row-slot:focus-within,
+html:not([data-theme='dark']) .alusa-dialog-list-row-slot:active {
+	border-color: #f3f4f6 !important;
+}
+
+[data-theme='dark'] .alusa-dialog-list-row-slot,
+[data-theme='dark'] .alusa-dialog-list-row-slot:hover,
+[data-theme='dark'] .alusa-dialog-list-row-slot:focus-visible,
+[data-theme='dark'] .alusa-dialog-list-row-slot:focus-within,
+[data-theme='dark'] .alusa-dialog-list-row-slot:active {
+	border-color: rgba(148, 146, 209, 0.14) !important;
+}
+
+.alusa-popover-surface,
+.alusa-popover-surface:focus-within {
+	border-color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .alusa-popover-surface,
+[data-theme='dark'] .alusa-popover-surface:focus-within {
+	border-color: var(--popover-border) !important;
+}
+
+.alusa-sheet-surface,
+.alusa-sheet-surface:focus-within {
+	border-color: #e2e8f0 !important;
+}
+
+[data-theme='dark'] .alusa-sheet-surface,
+[data-theme='dark'] .alusa-sheet-surface:focus-within {
+	border-color: var(--modal-border) !important;
+}
+
+.alusa-dropdown-content,
+.alusa-dropdown-content:focus-within,
+.alusa-dropdown-subcontent,
+.alusa-dropdown-subcontent:focus-within {
+	border-color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .alusa-dropdown-content,
+[data-theme='dark'] .alusa-dropdown-content:focus-within,
+[data-theme='dark'] .alusa-dropdown-subcontent,
+[data-theme='dark'] .alusa-dropdown-subcontent:focus-within {
+	border-color: var(--dropdown-border) !important;
+}
+
+.alusa-select-content,
+.alusa-select-content:focus-within {
+	border-color: #e5e7eb !important;
+}
+
+[data-theme='dark'] .alusa-select-content,
+[data-theme='dark'] .alusa-select-content:focus-within {
+	border-color: var(--dropdown-border) !important;
+}
+
 .editor-hr {
 	border: none;
 	border-top: 1px solid #e2e8f0;
@@ -399,12 +745,11 @@ html {
 	background-color: #9ca3af;
 }
 
-/* Outline global: não usar box-shadow:none em * — isso apagava a sombra do shell ao clicar/focar dentro do card. */
+/* Outline global: não alterar border-color em estados de foco/toque; isso fazia cards herdarem traços escuros ao clicar. */
 *:focus,
 *:focus-visible,
 *:active {
 	outline: none !important;
-	border-color: inherit !important;
 }
 
 /* Ring/sombra de foco só em controles interativos */
@@ -441,7 +786,6 @@ div[role="button"]:focus-visible,
 div[role="button"]:active {
 	outline: none !important;
 	box-shadow: none !important;
-	border-color: inherit !important;
 }
 
 /* Força remoção de outline para todos os elementos de formulário */
@@ -2547,6 +2891,42 @@ svg:hover,
 
 [data-theme="dark"] .calendar-scheduler-wrapper .calendar-scheduler-day-compact {
 	background: var(--color-bg-card) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-view-harness,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-view,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-scroller {
+	background: var(--color-bg-card) !important;
+	color: var(--color-text-primary) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-theme-standard td,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-theme-standard th {
+	border-color: var(--color-border-default) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-col-header-cell,
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-timegrid-axis {
+	background-color: var(--color-bg-card-soft) !important;
+	border-bottom-color: var(--color-border-default) !important;
+	color: var(--color-text-secondary) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-daygrid-day-number {
+	color: var(--color-text-secondary) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper .fc-timegrid-slot-label-cushion {
+	color: var(--color-text-muted) !important;
+}
+
+[data-theme="dark"] .calendar-scheduler-wrapper--week .fc-timegrid-more-link,
+[data-theme="dark"] .calendar-scheduler-wrapper--week .fc-more-link {
+	background: var(--color-bg-card-soft) !important;
+	border-color: var(--color-border-default) !important;
+	color: var(--color-text-secondary) !important;
+	box-shadow: none !important;
 }
 
 [data-theme="dark"] .calendar-scheduler-wrapper--week .fc-timegrid-slot-minor,

@@ -22,8 +22,9 @@ interface AsaasSealProps {
 }
 
 export function AsaasSeal({ variant = 'positivo', darkVariant, className }: AsaasSealProps) {
-  const { isDark } = useTheme();
-  const resolvedVariant = isDark ? (darkVariant ?? (variant === 'negativo-preto' ? 'negativo-branco' : variant)) : variant;
+  const { resolvedTheme } = useTheme();
+  const isDarkResolved = resolvedTheme === 'dark';
+  const resolvedVariant = isDarkResolved ? (darkVariant ?? (variant === 'negativo-preto' ? 'negativo-branco' : variant)) : variant;
 
   return (
     <a

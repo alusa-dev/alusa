@@ -130,7 +130,7 @@ export function ContaFinancialPolicySettings() {
   };
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+    <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04)] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-none">
       <button
         type="button"
         className="flex w-full items-start justify-between gap-6 px-6 py-5 text-left sm:px-7 sm:py-5"
@@ -138,17 +138,17 @@ export function ContaFinancialPolicySettings() {
         data-testid="policy-section-rematricula-trigger"
       >
         <div className="max-w-3xl space-y-2">
-          <p className="text-xs font-medium uppercase tracking-[0.2em] text-violet-600">Rematrícula</p>
+          <p className="text-xs font-medium uppercase tracking-[0.2em] text-violet-600 alusa-dark:text-[color:var(--color-text-brand)]">Rematrícula</p>
           <div className="space-y-1">
-            <h3 className="text-lg font-semibold text-gray-900">Regra financeira da rematrícula</h3>
-            <p className="text-sm leading-6 text-gray-600">{currentSummary}</p>
+            <h3 className="text-lg font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Regra financeira da rematrícula</h3>
+            <p className="text-sm leading-6 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">{currentSummary}</p>
           </div>
         </div>
-        <span className="mt-1 shrink-0 text-sm font-medium text-gray-500">{expanded ? 'Recolher' : 'Expandir'}</span>
+        <span className="mt-1 shrink-0 text-sm font-medium text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{expanded ? 'Recolher' : 'Expandir'}</span>
       </button>
 
       {expanded ? (
-        <div className="border-t border-gray-100 bg-slate-50/40 px-6 py-5 sm:px-7 sm:py-6">
+        <div className="border-t border-gray-100 bg-slate-50/40 px-6 py-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:rgba(255,255,255,0.02)] sm:px-7 sm:py-6">
           {error ? (
             <Alert variant="destructive" className="mb-6">
               <AlertTitle>Falha ao carregar a regra</AlertTitle>
@@ -162,10 +162,10 @@ export function ContaFinancialPolicySettings() {
           ) : null}
 
           <form onSubmit={handleSubmit} className="space-y-6">
-            <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-5">
+            <section className="rounded-2xl border border-gray-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] sm:p-5">
               <div className="space-y-1">
-                <h4 className="text-sm font-semibold text-gray-900">Como a escola trata pendências na rematrícula</h4>
-                <p className="text-sm leading-6 text-gray-600">
+                <h4 className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Como a escola trata pendências na rematrícula</h4>
+                <p className="text-sm leading-6 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                   Esta regra define o que acontece quando ainda existem pendências financeiras da matrícula anterior.
                 </p>
               </div>
@@ -195,18 +195,20 @@ export function ContaFinancialPolicySettings() {
                       }
                       className={`h-full rounded-2xl border px-4 py-4 text-left transition ${
                         active
-                          ? 'border-violet-300 bg-violet-50 shadow-[0_10px_30px_rgba(124,58,237,0.08)]'
-                          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-slate-50/70'
+                          ? 'border-violet-300 bg-violet-50 shadow-[0_10px_30px_rgba(124,58,237,0.08)] alusa-dark:border-[color:var(--color-border-brand)] alusa-dark:bg-[color:rgba(169,77,255,0.14)] alusa-dark:shadow-none'
+                          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-slate-50/70 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:border-[color:var(--color-border-strong)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)]'
                       }`}
                     >
                       <div className="flex h-full min-h-[120px] flex-col justify-between gap-3">
                         <div className="space-y-2">
-                          <p className="text-sm font-semibold text-gray-900">{option.label}</p>
-                          <p className="text-sm leading-6 text-gray-600">{option.description}</p>
+                          <p className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{option.label}</p>
+                          <p className="text-sm leading-6 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">{option.description}</p>
                         </div>
                         <span
                           className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${
-                            active ? 'bg-white text-violet-700' : 'bg-slate-100 text-gray-500'
+                            active
+                              ? 'bg-white text-violet-700 alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-brand)]'
+                              : 'bg-slate-100 text-gray-500 alusa-dark:bg-[color:rgba(255,255,255,0.05)] alusa-dark:text-[color:var(--color-text-muted)]'
                           }`}
                         >
                           {active ? 'Selecionado' : 'Disponível'}
@@ -220,10 +222,10 @@ export function ContaFinancialPolicySettings() {
 
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.95fr)]">
               <div className="space-y-6">
-                <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-5">
+                <section className="rounded-2xl border border-gray-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] sm:p-5">
                   <div className="space-y-1">
-                    <Label className="text-sm font-semibold text-gray-900">O que conta como pendência relevante</Label>
-                    <p className="text-sm leading-6 text-gray-600">
+                    <Label className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">O que conta como pendência relevante</Label>
+                    <p className="text-sm leading-6 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                       Escolha se a rematrícula considera qualquer cobrança em aberto ou somente títulos vencidos.
                     </p>
                   </div>
@@ -243,7 +245,7 @@ export function ContaFinancialPolicySettings() {
                         )
                       }
                     >
-                      <SelectTrigger data-testid="financial-policy-scope-trigger" className="bg-white">
+                      <SelectTrigger data-testid="financial-policy-scope-trigger" className="bg-white alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]">
                         <SelectValue placeholder="Selecione o critério" />
                       </SelectTrigger>
                       <SelectContent>
@@ -255,7 +257,7 @@ export function ContaFinancialPolicySettings() {
                       </SelectContent>
                     </Select>
 
-                    <p className="text-xs leading-5 text-gray-500">
+                    <p className="text-xs leading-5 text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                       {form?.debtScope === 'APENAS_VENCIDAS'
                         ? 'A escola só considera cobranças vencidas para decidir a rematrícula.'
                         : 'A escola considera cobranças futuras, pendentes e vencidas para decidir a rematrícula.'}
@@ -264,10 +266,10 @@ export function ContaFinancialPolicySettings() {
                 </section>
 
                 {requiresApproval ? (
-                  <section className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-5">
+                  <section className="rounded-2xl border border-gray-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] sm:p-5">
                     <div className="space-y-1">
-                      <h4 className="text-sm font-semibold text-gray-900">Quem pode autorizar exceções</h4>
-                      <p className="text-sm leading-6 text-gray-600">
+                      <h4 className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Quem pode autorizar exceções</h4>
+                      <p className="text-sm leading-6 text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                         Somente estes perfis poderão aprovar a rematrícula quando a regra exigir autorização.
                       </p>
                     </div>
@@ -278,7 +280,7 @@ export function ContaFinancialPolicySettings() {
                         return (
                           <label
                             key={role}
-                            className="flex min-h-[52px] items-center gap-3 rounded-xl border border-gray-200 bg-slate-50/70 px-4 py-3 text-sm text-gray-700"
+                            className="flex min-h-[52px] items-center gap-3 rounded-xl border border-gray-200 bg-slate-50/70 px-4 py-3 text-sm text-gray-700 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]"
                           >
                             <Checkbox
                               checked={checked}
@@ -297,13 +299,13 @@ export function ContaFinancialPolicySettings() {
                                 })
                               }
                             />
-                            <span className="font-medium text-gray-800">{roleLabels[role]}</span>
+                            <span className="font-medium text-gray-800 alusa-dark:text-[color:var(--color-text-primary)]">{roleLabels[role]}</span>
                           </label>
                         );
                       })}
                     </div>
 
-                    <p className="mt-4 text-xs leading-5 text-gray-500">
+                    <p className="mt-4 text-xs leading-5 text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                       O motivo da autorização será sempre obrigatório para manter rastreabilidade da decisão.
                     </p>
                   </section>
@@ -311,30 +313,30 @@ export function ContaFinancialPolicySettings() {
               </div>
 
               <aside className="self-start xl:sticky xl:top-6">
-                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)] sm:p-6">
+                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-none sm:p-6">
                   <div className="space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-[0.18em] text-gray-500">Resumo atual da regra</p>
-                    <p data-testid="financial-policy-live-summary" className="text-sm leading-6 text-gray-700">
+                    <p className="text-xs font-medium uppercase tracking-[0.18em] text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Resumo atual da regra</p>
+                    <p data-testid="financial-policy-live-summary" className="text-sm leading-6 text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
                       {currentSummary}
                     </p>
                   </div>
 
                   <div className="mt-5 space-y-3">
-                    <div className="rounded-xl border border-gray-200 bg-slate-50/80 px-4 py-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Tratamento</p>
-                      <p className="mt-1 text-sm font-semibold text-gray-900">{selectedPresetOption?.label ?? '-'}</p>
+                    <div className="rounded-xl border border-gray-200 bg-slate-50/80 px-4 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Tratamento</p>
+                      <p className="mt-1 text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{selectedPresetOption?.label ?? '-'}</p>
                     </div>
 
-                    <div className="rounded-xl border border-gray-200 bg-slate-50/80 px-4 py-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Pendência considerada</p>
-                      <p className="mt-1 text-sm font-semibold text-gray-900">{selectedDebtScopeOption?.label ?? '-'}</p>
+                    <div className="rounded-xl border border-gray-200 bg-slate-50/80 px-4 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Pendência considerada</p>
+                      <p className="mt-1 text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{selectedDebtScopeOption?.label ?? '-'}</p>
                     </div>
                   </div>
 
-                  <p className="mt-5 text-xs leading-5 text-gray-500">{livePreview}</p>
+                  <p className="mt-5 text-xs leading-5 text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{livePreview}</p>
 
                   {!canSubmit ? (
-                    <p className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                    <p className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 alusa-dark:border-red-500/30 alusa-dark:bg-red-500/10 alusa-dark:text-red-200">
                       Selecione pelo menos um perfil autorizador para usar a regra “{getPresetLabel('CONTROLADA')}”.
                     </p>
                   ) : null}

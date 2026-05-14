@@ -200,7 +200,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                     <label htmlFor={`${searchId}-floating`} className="sr-only">
                       Pesquisar
                     </label>
-                    <div className="absolute left-3 top-1/2 z-10 -translate-y-1/2 opacity-70" aria-hidden="true">
+                    <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
                       <Search className="h-4 w-4" />
                     </div>
                     <input
@@ -249,7 +249,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
               <label htmlFor={searchId} className="sr-only">
                 Pesquisar
               </label>
-              <div className="absolute left-3 top-1/2 z-10 -translate-y-1/2 opacity-70" aria-hidden="true">
+              <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
                 <Search className="h-4 w-4" />
               </div>
               {/* cmdk exige Command.Input para estado de busca/teclado; fora da árvore de acessibilidade — o input visível define o combobox */}

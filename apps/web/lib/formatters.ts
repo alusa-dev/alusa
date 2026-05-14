@@ -93,5 +93,7 @@ export function isValidCpfCnpjBR(digits: string): boolean {
 }
 
 export function disabledInputClasses(disabled: boolean): string | undefined {
-  return disabled ? 'bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed' : undefined;
+  return disabled
+    ? 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-text-muted)]'
+    : 'alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]';
 }

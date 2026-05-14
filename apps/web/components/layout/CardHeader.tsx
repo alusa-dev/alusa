@@ -167,7 +167,7 @@ export default function CardHeader(): JSX.Element {
             {/* Badge de notificações */}
             {activeNotificationsCount > 0 && (
               <span
-                className={`absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white ring-2 ${isDark ? 'ring-[color:var(--color-bg-card)]' : 'ring-white'}`}
+                className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white"
                 aria-hidden="true"
               >
                 {activeNotificationsCount > 99 ? '99+' : activeNotificationsCount}

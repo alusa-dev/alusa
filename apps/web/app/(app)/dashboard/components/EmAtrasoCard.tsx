@@ -37,7 +37,7 @@ function EmAtrasoToggle({
             key={opt.value}
             type="button"
             aria-label={`Filtrar cobranças em atraso por ${opt.label}`}
-            className={`px-2 py-0.5 text-xs rounded-md font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-brand-accent
+            className={`px-2 py-0.5 text-xs rounded-md font-medium transition-colors focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-2 focus-visible:ring-brand-accent focus-visible:ring-offset-0
               ${isActive
                 ? 'bg-[#f4ecfd] text-[#2b2634]'
                 : 'bg-transparent text-[#2b2634]/70 hover:bg-[#f4ecfd]/50'}

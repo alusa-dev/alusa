@@ -8,6 +8,7 @@ import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { DashboardSecondarySkeleton } from './dashboard-secondary-skeletons';
+import { DASHBOARD_SECTION_CARD_CLASSNAME } from './components/utils';
 
 const AulaExperimentalCard = dynamic(
   () =>
@@ -92,7 +93,9 @@ export default function DashboardSecondarySection({
         </div>
 
         <div className="h-[260px]">
-          <div className="flex h-full flex-col rounded-2xl border border-gray-200 bg-white px-5 py-4 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+          <div
+            className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col rounded-2xl bg-white px-5 py-4 alusa-dark:bg-[color:var(--color-bg-card)]`}
+          >
             <h2 className="mb-0.5 text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
               Atalhos Administrativos
             </h2>
@@ -103,7 +106,7 @@ export default function DashboardSecondarySection({
             <div className="flex flex-1 flex-col justify-center space-y-2">
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/alunos')}
               >
                 <span>Alunos</span>
@@ -113,7 +116,7 @@ export default function DashboardSecondarySection({
               </button>
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/matriculas')}
               >
                 <span>Matrículas</span>
@@ -123,7 +126,7 @@ export default function DashboardSecondarySection({
               </button>
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/financeiro/relatorios')}
               >
                 <span>Relatórios financeiros</span>
@@ -136,7 +139,9 @@ export default function DashboardSecondarySection({
         </div>
 
         <div className="h-[260px]">
-          <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+          <div
+            className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+          >
             <div className="border-b border-gray-100 bg-gray-50/50 px-5 py-4 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
               <h2 className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                 Acesso Rápido
@@ -146,7 +151,7 @@ export default function DashboardSecondarySection({
               <button
                 type="button"
                 onClick={() => router.push('/cobrancas?new=1')}
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
@@ -176,7 +181,7 @@ export default function DashboardSecondarySection({
               <button
                 type="button"
                 onClick={() => router.push('/matriculas?new=1')}
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
@@ -206,7 +211,7 @@ export default function DashboardSecondarySection({
               <button
                 type="button"
                 onClick={() => router.push('/rematriculas')}
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
@@ -242,7 +247,9 @@ export default function DashboardSecondarySection({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <div className="md:col-span-2 lg:col-span-3">
-              <div className="h-fit overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+              <div
+                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} h-fit overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+              >
                 <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
                   <h2 className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                     Últimas Cobranças
@@ -250,7 +257,7 @@ export default function DashboardSecondarySection({
                   <button
                     type="button"
                     onClick={() => router.push('/financeiro/cobrancas')}
-                    className="rounded-lg bg-[#f4ecfd] px-4 py-1.5 text-sm font-medium text-[#383242] transition-colors hover:bg-[#e9dffc] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
+                    className="rounded-lg bg-[#f4ecfd] px-4 py-1.5 text-sm font-medium text-[#383242] transition-colors hover:bg-[#e9dffc] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
                   >
                     Ver Todas
                   </button>
@@ -324,7 +331,9 @@ export default function DashboardSecondarySection({
             </div>
 
             <div className="md:col-span-2 lg:col-span-1">
-              <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+              <div
+                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+              >
                 <div className="border-b border-gray-100 px-5 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
                   <h2 className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                     Alunos Recentes
@@ -345,7 +354,7 @@ export default function DashboardSecondarySection({
                         key={aluno.id}
                         type="button"
                         onClick={() => router.push(`/alunos/${aluno.id}`)}
-                        className="group flex w-full items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                        className="group flex w-full items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                       >
                         <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#383242]/10 text-sm font-bold text-[#383242] alusa-dark:bg-[color:var(--color-brand-950)] alusa-dark:text-[color:var(--color-brand-300)]">
                           {aluno.foto ? (
@@ -378,7 +387,7 @@ export default function DashboardSecondarySection({
                   <button
                     type="button"
                     onClick={() => router.push('/alunos')}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-[#383242] shadow-sm transition-all hover:border-[#383242]/20 hover:shadow-md alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-[#383242] shadow-sm transition-all hover:border-[#383242]/20 hover:shadow-md focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

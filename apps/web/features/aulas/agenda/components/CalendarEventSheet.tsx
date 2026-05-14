@@ -145,8 +145,8 @@ export function CalendarEventSheet({
         <SheetDescription className="sr-only">
           Visualize dados do evento, acompanhe conflitos e execute ações operacionais da agenda.
         </SheetDescription>
-        <div className="flex h-full flex-col overflow-hidden bg-white sm:rounded-2xl sm:border sm:border-slate-200 sm:shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
-          <div className="flex-1 overflow-y-auto bg-white px-6 pb-6 pt-12">
+        <div className="flex h-full flex-col overflow-hidden bg-white alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-2xl sm:border sm:border-slate-200 sm:shadow-[0_20px_60px_rgba(15,23,42,0.18)] alusa-dark:sm:border-[color:var(--color-border-default)] alusa-dark:sm:shadow-none">
+          <div className="flex-1 overflow-y-auto bg-white px-6 pb-6 pt-12 alusa-dark:bg-[color:var(--color-bg-card)]">
             <div className="space-y-5">
           {loading ? (
             <div className="space-y-3 text-sm text-slate-500">Carregando evento...</div>
@@ -157,18 +157,18 @@ export function CalendarEventSheet({
           ) : event ? (
             <>
               <section className="space-y-3 text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-slate-100">
-                  <BookOpen className="h-7 w-7 text-slate-500" />
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-slate-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                  <BookOpen className="h-7 w-7 text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]" />
                 </div>
 
                 <div className="space-y-1">
-                  <h2 className="text-sm font-medium text-slate-500">Detalhes do evento</h2>
-                  <p className="text-[30px] font-semibold tracking-[-0.03em] text-slate-900">
+                  <h2 className="text-sm font-medium text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">Detalhes do evento</h2>
+                  <p className="text-[30px] font-semibold tracking-[-0.03em] text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                     {formatInstantInAccountZone(event.startAt, 'HH:mm', eventTimeZone)}
                     {' - '}
                     {formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone)}
                   </p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">
                     {formatInstantInAccountZone(event.startAt, "dd 'de' MMMM", eventTimeZone, { locale: ptBR })}
                     {' · '}
                     {event.title}
@@ -197,8 +197,8 @@ export function CalendarEventSheet({
                 </div>
               </section>
 
-              <section className="rounded-xl border border-slate-200 bg-white">
-                <div className="divide-y divide-slate-100">
+              <section className="rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+                <div className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-default)]">
                   <DetailRow
                     label="Quando"
                     value={`${formatInstantInAccountZone(event.startAt, "dd 'de' MMMM, HH:mm", eventTimeZone, { locale: ptBR })} - ${formatInstantInAccountZone(event.endAt, 'HH:mm', eventTimeZone, { locale: ptBR })}`}
@@ -227,11 +227,11 @@ export function CalendarEventSheet({
               </section>
 
               {event.experimental ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-slate-900">Aula experimental</div>
-                      <p className="mt-1 text-sm text-slate-600">Aluno: {event.experimental.aluno.label}</p>
+                      <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Aula experimental</div>
+                      <p className="mt-1 text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Aluno: {event.experimental.aluno.label}</p>
                     </div>
                     <Badge variant={getExperimentalStatusVariant(event.experimental.status)}>
                       {event.experimental.status}
@@ -239,49 +239,49 @@ export function CalendarEventSheet({
                   </div>
 
                   {event.experimental.observacao ? (
-                    <p className="mt-3 text-sm leading-6 text-slate-600">{event.experimental.observacao}</p>
+                    <p className="mt-3 text-sm leading-6 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{event.experimental.observacao}</p>
                   ) : null}
                 </section>
               ) : null}
 
               {event.description ? (
-                <section className="rounded-xl border border-slate-200 bg-white">
+                <section className="rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
                   <div className="flex items-start gap-3 px-5 py-4">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-muted)]">
                       <DocumentText className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-600">Descrição</div>
-                      <p className="mt-1 text-sm leading-6 text-slate-600">{event.description}</p>
+                      <div className="text-sm font-medium text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Descrição</div>
+                      <p className="mt-1 text-sm leading-6 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{event.description}</p>
                     </div>
                   </div>
                 </section>
               ) : null}
 
               {event.attendanceSummary ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5">
+                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
                   <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400">Elegíveis</div>
-                    <div className="mt-1 text-xl font-semibold text-slate-900">
+                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Elegíveis</div>
+                    <div className="mt-1 text-xl font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                       {event.attendanceSummary.totalEligible}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400">Registrados</div>
-                    <div className="mt-1 text-xl font-semibold text-slate-900">
+                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Registrados</div>
+                    <div className="mt-1 text-xl font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                       {event.attendanceSummary.recorded}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400">Presentes</div>
-                    <div className="mt-1 text-base font-semibold text-slate-900">
+                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Presentes</div>
+                    <div className="mt-1 text-base font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                       {event.attendanceSummary.presente}
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400">Faltas</div>
-                    <div className="mt-1 text-base font-semibold text-slate-900">
+                    <div className="text-xs uppercase tracking-wide text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">Faltas</div>
+                    <div className="mt-1 text-base font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                       {event.attendanceSummary.falta + event.attendanceSummary.faltaJustificada}
                     </div>
                   </div>
@@ -328,11 +328,11 @@ export function CalendarEventSheet({
               ) : null}
 
               {event.makeupsAsOrigin.length ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5">
-                  <div className="text-sm font-semibold text-slate-900">Reposições originadas aqui</div>
+                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+                  <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Reposições originadas aqui</div>
                   <div className="mt-2 space-y-2">
                     {event.makeupsAsOrigin.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
                         <span>{item.scope}</span>
                         <Badge variant="outline">{item.status}</Badge>
                       </div>
@@ -342,11 +342,11 @@ export function CalendarEventSheet({
               ) : null}
 
               {event.makeupsAsDestination.length ? (
-                <section className="rounded-xl border border-slate-200 bg-white p-5">
-                  <div className="text-sm font-semibold text-slate-900">Reposições atendidas neste evento</div>
+                <section className="rounded-xl border border-slate-200 bg-white p-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+                  <div className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">Reposições atendidas neste evento</div>
                   <div className="mt-2 space-y-2">
                     {event.makeupsAsDestination.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                      <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
                         <span>{item.scope}</span>
                         <Badge variant="outline">{item.status}</Badge>
                       </div>
@@ -366,7 +366,7 @@ export function CalendarEventSheet({
             </div>
         </div>
 
-        <div className="border-t border-slate-100 bg-white px-6 py-5">
+        <div className="border-t border-slate-100 bg-white px-6 py-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
           <div className="space-y-3">
           {canRegisterAttendance && event ? (
             <Button
@@ -383,7 +383,7 @@ export function CalendarEventSheet({
                 <Button
                   variant="outline"
                   className={cn(
-                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100',
+                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]',
                     secondaryActionsCount === 1 && 'col-span-2',
                   )}
                   onClick={() => onRequestEdit(event)}
@@ -395,7 +395,7 @@ export function CalendarEventSheet({
                 <Button
                   variant="outline"
                   className={cn(
-                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100',
+                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-100 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]',
                     secondaryActionsCount === 1 && 'col-span-2',
                     secondaryActionsCount === 3 && !canCancel && 'col-span-2',
                   )}
@@ -410,7 +410,7 @@ export function CalendarEventSheet({
                 <Button
                   variant="outline"
                   className={cn(
-                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-rose-700 hover:bg-rose-50',
+                    'h-10 w-full rounded-lg border-slate-200 text-sm font-medium text-rose-700 hover:bg-rose-50 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-rose-300 alusa-dark:hover:bg-rose-500/10 alusa-dark:hover:text-rose-200',
                     secondaryActionsCount % 2 === 1 && 'col-span-2',
                   )}
                   onClick={() => handleUpdateStatus('CANCELADO')}
@@ -442,14 +442,14 @@ function DetailRow({
   return (
     <div className="flex items-start justify-between gap-4 px-5 py-4">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-muted)]">
           <Icon className="h-4 w-4" />
         </div>
-        <span className="min-w-0 text-sm font-medium leading-5 text-slate-600">{label}</span>
+        <span className="min-w-0 text-sm font-medium leading-5 text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">{label}</span>
       </div>
       <span
         className={cn(
-          'max-w-[58%] break-words text-right text-sm font-semibold leading-5 text-slate-700',
+          'max-w-[58%] break-words text-right text-sm font-semibold leading-5 text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]',
           label === 'Professor(es)' && 'max-w-[62%]',
         )}
       >

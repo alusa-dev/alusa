@@ -6,6 +6,10 @@ import Script from "next/script";
 import { cookies } from "next/headers";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
+import {
+  AUTH_LIGHT_THEME_PATH_PREFIXES,
+  AUTH_LIGHT_THEME_ROOT_PATHS,
+} from "@/lib/auth-light-theme-paths";
 
 export const metadata: Metadata = {
   title: {
@@ -38,12 +42,14 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = cookies();
   const themeCookie = (cookieStore.get('alusa.theme')?.value as 'light' | 'dark' | undefined) ?? undefined;
+  const themeInitPrefixes = JSON.stringify([...AUTH_LIGHT_THEME_PATH_PREFIXES]);
+  const themeInitRoots = JSON.stringify([...AUTH_LIGHT_THEME_ROOT_PATHS]);
   return (
     <html lang="pt-BR" className="min-h-full bg-white" data-theme={themeCookie}>
       <head>
-        {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar) */}
+        {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar); auth/onboarding financeiro forçam claro antes do React. */}
         <Script id="theme-init" strategy="beforeInteractive">
-          {`(function(){try{var d=document.documentElement;if(d.hasAttribute('data-theme'))return;var t=localStorage.getItem('alusa.theme');if(!t){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}d.setAttribute('data-theme',t);}catch(e){}})();`}
+          {`(function(){try{var d=document.documentElement;var path=typeof location!=="undefined"?location.pathname||"":"";var prefixes=${themeInitPrefixes};var roots=${themeInitRoots};function forceLight(p){for(var i=0;i<prefixes.length;i++){var pr=prefixes[i];if(p===pr||p.indexOf(pr+"/")===0)return true;}for(var j=0;j<roots.length;j++){var r=roots[j];if(p===r||p.indexOf(r+"/")===0)return true;}return false;}if(forceLight(path)){d.setAttribute("data-theme","light");return;}if(d.hasAttribute("data-theme"))return;var t=null;try{t=localStorage.getItem("alusa.theme");}catch(e){}if(!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}d.setAttribute("data-theme",t);}catch(e){}})();`}
         </Script>
         {/* Após interatividade, habilita transições já com o tema aplicado */}
         <Script id="theme-ready" strategy="afterInteractive">

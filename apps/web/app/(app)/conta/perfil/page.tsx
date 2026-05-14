@@ -104,6 +104,27 @@ type FinanceOnboardingSnapshot = {
   };
 };
 
+const profileSurfaceClassName =
+  'space-y-6 rounded-lg bg-white p-6 alusa-dark:bg-transparent md:p-8';
+
+const profileCardClassName =
+  'rounded-xl border border-gray-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]';
+
+const profileCardHeaderClassName =
+  'border-b border-gray-100 px-6 py-5 alusa-dark:border-[color:var(--color-border-subtle)]';
+
+const profileCardTitleClassName =
+  'text-xl font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]';
+
+const profileCardDescriptionClassName =
+  'mt-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]';
+
+const profileEditingCardClassName =
+  'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100 alusa-dark:border-[color:var(--color-border-brand)] alusa-dark:shadow-none alusa-dark:ring-[color:rgba(148,146,209,0.16)]';
+
+const profileEditingBadgeClassName =
+  'flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]';
+
 export default function ContaPerfilPage() {
   const [profile, setProfile] = useState<UserProfileWithSchool | null>(null);
   const [loading, setLoading] = useState(true);
@@ -634,7 +655,7 @@ export default function ContaPerfilPage() {
         <header>
           <div className="h-7 w-56"><Skeleton className="h-7 w-56" /></div>
         </header>
-        <Card className="border bg-white rounded-xl shadow-sm">
+        <Card className={profileCardClassName}>
           <CardHeader className="pb-2">
             <div className="space-y-1">
               <Skeleton className="h-5 w-40" />
@@ -650,7 +671,7 @@ export default function ContaPerfilPage() {
           </CardContent>
         </Card>
         {[1, 2, 3].map((i) => (
-          <Card key={i} className="border bg-white rounded-xl shadow-sm">
+          <Card key={i} className={profileCardClassName}>
             <CardHeader className="pb-2">
               <div className="flex justify-between items-center">
                 <Skeleton className="h-5 w-40" />
@@ -795,32 +816,32 @@ export default function ContaPerfilPage() {
   return (
     <section
       aria-labelledby="perfil-title"
-      className="space-y-6 rounded-lg bg-white p-6 md:p-8"
+      className={profileSurfaceClassName}
     >
       <header className="space-y-1">
         <h2
           id="perfil-title"
-          className="text-xl md:text-2xl font-medium tracking-tight text-gray-900"
+          className="text-xl font-medium tracking-tight text-gray-900 alusa-dark:text-[color:var(--color-text-primary)] md:text-2xl"
         >
           Altere seus dados
         </h2>
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
           Atualize sua foto de perfil, dados pessoais e informações da escola.
         </p>
       </header>
 
       {/* Foto do perfil */}
-      <Card className="border bg-white rounded-xl shadow-sm">
-        <CardHeader className="px-6 py-5 border-b border-gray-100">
+      <Card className={profileCardClassName}>
+        <CardHeader className={profileCardHeaderClassName}>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-gray-900">Foto do perfil</CardTitle>
-              <CardDescription className="mt-1 text-sm text-gray-600">
+              <CardTitle className={profileCardTitleClassName}>Foto do perfil</CardTitle>
+              <CardDescription className={profileCardDescriptionClassName}>
                 Personalize sua foto de perfil. Recomendamos uma imagem quadrada de alta qualidade.
               </CardDescription>
             </div>
             {isUploadingPhoto && (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+              <div className={profileEditingBadgeClassName}>
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-700" />
                 <span className="text-sm font-medium">Enviando...</span>
               </div>
@@ -830,7 +851,7 @@ export default function ContaPerfilPage() {
         <CardContent className="px-6 py-6">
           <div className="flex items-start gap-6">
             <div className="relative group">
-              <Avatar className="h-24 w-24 border-2 border-gray-200 shadow-sm">
+              <Avatar className="h-24 w-24 border-2 border-gray-200 shadow-sm alusa-dark:border-[color:var(--color-border-default)]">
                 <AvatarImage 
                   src={photoPreview ?? profile.foto ?? undefined} 
                   alt={profile.name}
@@ -841,15 +862,15 @@ export default function ContaPerfilPage() {
                 </AvatarFallback>
               </Avatar>
               {isUploadingPhoto && (
-                <div className="absolute inset-0 bg-white/80 rounded-full grid place-items-center backdrop-blur-sm">
+                <div className="absolute inset-0 grid place-items-center rounded-full bg-white/80 backdrop-blur-sm alusa-dark:bg-[color:rgba(18,19,26,0.78)]">
                   <div className="h-8 w-8 rounded-full border-3 border-violet-300 border-t-violet-600 animate-spin" />
                 </div>
               )}
             </div>
             <div className="flex-1 space-y-3">
-              <div className="text-sm text-gray-600">
-                <p className="font-medium text-gray-900 mb-1">Requisitos da imagem:</p>
-                <ul className="list-disc list-inside space-y-0.5 text-xs text-gray-500">
+              <div className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+                <p className="mb-1 font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">Requisitos da imagem:</p>
+                <ul className="list-inside list-disc space-y-0.5 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                   <li>Formatos aceitos: JPG, PNG ou WebP</li>
                   <li>Tamanho máximo: 15MB</li>
                   <li>Recomendado: imagem quadrada com pelo menos 512x512px</li>
@@ -882,7 +903,7 @@ export default function ContaPerfilPage() {
                     variant="outline" 
                     onClick={handleRemovePhoto} 
                     disabled={isUploadingPhoto}
-                    className="border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+                    className="border-red-200 text-red-600 hover:border-red-300 hover:bg-red-50 alusa-dark:border-red-900/50 alusa-dark:text-red-300 alusa-dark:hover:border-red-800 alusa-dark:hover:bg-red-950/30"
                   >
                     Remover foto
                   </Button>
@@ -894,22 +915,22 @@ export default function ContaPerfilPage() {
       </Card>
 
       {/* 1. Dados pessoais */}
-      <Card className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+      <Card className={`${profileCardClassName} transition-all duration-200 ${
         isEditingPersonal
-          ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-          : 'border-gray-200'
+          ? profileEditingCardClassName
+          : ''
       }`}>
-        <CardHeader className="px-6 py-5 border-b border-gray-100">
+        <CardHeader className={profileCardHeaderClassName}>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-gray-900">Dados pessoais</CardTitle>
-              <CardDescription className="mt-1 text-sm text-gray-600">
+              <CardTitle className={profileCardTitleClassName}>Dados pessoais</CardTitle>
+              <CardDescription className={profileCardDescriptionClassName}>
                 Informações básicas e de contato do usuário
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {isEditingPersonal && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                <div className={profileEditingBadgeClassName}>
                   <Edit className="h-4 w-4" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
@@ -950,7 +971,7 @@ export default function ContaPerfilPage() {
               <Input
                 value={profile.email}
                 disabled
-                className="bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed"
+                className={disabledInputClasses(true)}
               />
             </div>
             <div>
@@ -978,22 +999,22 @@ export default function ContaPerfilPage() {
       </Card>
 
       {/* 2. Dados da escola */}
-      <Card className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+      <Card className={`${profileCardClassName} transition-all duration-200 ${
         isEditingSchool
-          ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-          : 'border-gray-200'
+          ? profileEditingCardClassName
+          : ''
       }`}>
-        <CardHeader className="px-6 py-5 border-b border-gray-100">
+        <CardHeader className={profileCardHeaderClassName}>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-gray-900">Dados da escola</CardTitle>
-              <CardDescription className="mt-1 text-sm text-gray-600">
+              <CardTitle className={profileCardTitleClassName}>Dados da escola</CardTitle>
+              <CardDescription className={profileCardDescriptionClassName}>
                 Informações da instituição vinculada à sua conta
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {isEditingSchool && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                <div className={profileEditingBadgeClassName}>
                   <Edit className="h-4 w-4" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
@@ -1013,7 +1034,7 @@ export default function ContaPerfilPage() {
                   saveDisabled={!schoolDirty || (schoolCpfCnpj ? !isValidCpfCnpjBR(schoolCpfCnpj) : false)}
                 />
               ) : (
-                <span className="text-xs text-gray-500">Somente admins podem editar</span>
+                <span className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Somente admins podem editar</span>
               )}
             </div>
           </div>
@@ -1045,29 +1066,29 @@ export default function ContaPerfilPage() {
             <Input
               value={profile.school?.status || 'Não informado'}
               disabled
-              className="bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed"
+              className={disabledInputClasses(true)}
             />
           </div>
         </CardContent>
       </Card>
 
       {/* 3. Endereço */}
-      <Card className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+      <Card className={`${profileCardClassName} transition-all duration-200 ${
         isEditingAddress
-          ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-          : 'border-gray-200'
+          ? profileEditingCardClassName
+          : ''
       }`}>
-        <CardHeader className="px-6 py-5 border-b border-gray-100">
+        <CardHeader className={profileCardHeaderClassName}>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-gray-900">Endereço da escola</CardTitle>
-              <CardDescription className="mt-1 text-sm text-gray-600">
+              <CardTitle className={profileCardTitleClassName}>Endereço da escola</CardTitle>
+              <CardDescription className={profileCardDescriptionClassName}>
                 Localização física da instituição
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {isEditingAddress && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                <div className={profileEditingBadgeClassName}>
                   <Edit className="h-4 w-4" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
@@ -1116,7 +1137,7 @@ export default function ContaPerfilPage() {
                   saveDisabled={!addressDirty || (schoolAddress.cep ? !isValidCepBR(schoolAddress.cep) : false)}
                 />
               ) : (
-                <span className="text-xs text-gray-500">Somente admins podem editar</span>
+                <span className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">Somente admins podem editar</span>
               )}
             </div>
           </div>
@@ -1143,23 +1164,23 @@ export default function ContaPerfilPage() {
 
       {profile.role?.toUpperCase() === 'ADMIN' && (
         <Card
-          className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+          className={`${profileCardClassName} transition-all duration-200 ${
             isEditingFinance
-              ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-              : 'border-gray-200'
+              ? profileEditingCardClassName
+              : ''
           }`}
         >
-          <CardHeader className="px-6 py-5 border-b border-gray-100">
+          <CardHeader className={profileCardHeaderClassName}>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-xl font-semibold text-gray-900">Dados financeiros</CardTitle>
-                <CardDescription className="mt-1 text-sm text-gray-600">
+                <CardTitle className={profileCardTitleClassName}>Dados financeiros</CardTitle>
+                <CardDescription className={profileCardDescriptionClassName}>
                   Informações usadas na ativação financeira
                 </CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 {isEditingFinance && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                  <div className={profileEditingBadgeClassName}>
                     <Edit className="h-4 w-4" />
                     <span className="text-sm font-medium">Modo de edição</span>
                   </div>
@@ -1416,22 +1437,22 @@ export default function ContaPerfilPage() {
       )}
 
       {/* 4. Preferências */}
-      <Card className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
+      <Card className={`${profileCardClassName} transition-all duration-200 ${
         isEditingPrefs
-          ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-          : 'border-gray-200'
+          ? profileEditingCardClassName
+          : ''
       }`}>
-        <CardHeader className="px-6 py-5 border-b border-gray-100">
+        <CardHeader className={profileCardHeaderClassName}>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-xl font-semibold text-gray-900">Preferências</CardTitle>
-              <CardDescription className="mt-1 text-sm text-gray-600">
+              <CardTitle className={profileCardTitleClassName}>Preferências</CardTitle>
+              <CardDescription className={profileCardDescriptionClassName}>
                 Personalize sua experiência na plataforma
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               {isEditingPrefs && (
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-lg">
+                <div className={profileEditingBadgeClassName}>
                   <Edit className="h-4 w-4" />
                   <span className="text-sm font-medium">Modo de edição</span>
                 </div>
@@ -1471,7 +1492,7 @@ export default function ContaPerfilPage() {
               <Input
                 value={profile.theme || 'system'}
                 disabled
-                className="bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed"
+                className={disabledInputClasses(true)}
               />
             )}
           </div>
@@ -1494,7 +1515,7 @@ export default function ContaPerfilPage() {
               <Input
                 value={profile.locale || 'pt-BR'}
                 disabled
-                className="bg-gray-50 text-gray-500 border-gray-200 cursor-not-allowed"
+                className={disabledInputClasses(true)}
               />
             )}
           </div>

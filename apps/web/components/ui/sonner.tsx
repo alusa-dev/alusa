@@ -15,13 +15,13 @@ const AUTH_CENTERED_TOAST_ROUTES = new Set([
 ])
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { isDark } = useTheme()
+  const { resolvedTheme } = useTheme()
   const pathname = usePathname()
   const isAuthCenteredToast = pathname ? AUTH_CENTERED_TOAST_ROUTES.has(pathname) : false
 
   return (
     <Sonner
-      theme={(isDark ? "dark" : "light") as ToasterProps["theme"]}
+      theme={(resolvedTheme === "dark" ? "dark" : "light") as ToasterProps["theme"]}
       className={cn("toaster group", isAuthCenteredToast && "auth-toaster")}
       position={isAuthCenteredToast ? "top-center" : "top-right"}
       offset={0}

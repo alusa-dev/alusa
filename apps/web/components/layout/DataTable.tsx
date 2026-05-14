@@ -59,7 +59,7 @@ export function DataTable<T extends object>({
   const hasData = data.length > 0;
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="alusa-session-panel w-full overflow-x-auto">
       <table
         className={cn(
           'w-full table-fixed border-collapse bg-white alusa-dark:bg-[color:var(--color-bg-card)]',

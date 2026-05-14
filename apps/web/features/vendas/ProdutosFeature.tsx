@@ -140,7 +140,7 @@ function ProdutosTable({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-8 max-lg:px-2 max-lg:text-[11px] rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              className="h-8 max-lg:px-2 max-lg:text-[11px] rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
               disabled={isPending}
               onClick={() => onRestore(row)}
             >
@@ -157,7 +157,7 @@ function ProdutosTable({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+            className="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
             aria-label={`Editar produto ${row.name}`}
             onClick={() => onEdit(row)}
           >
@@ -167,7 +167,7 @@ function ProdutosTable({
             type="button"
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700"
+            className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 alusa-dark:text-amber-300 alusa-dark:hover:bg-amber-500/10 alusa-dark:hover:text-amber-200"
             disabled={isPending}
             aria-label={`Arquivar produto ${row.name}`}
             onClick={() => onDelete(row)}
@@ -201,7 +201,7 @@ function ProdutosTable({
 
         return (
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 shadow-sm overflow-hidden">
+            <div className="flex size-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 shadow-sm overflow-hidden alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-none">
               {row.primaryImageUrl ? (
                 <img
                   src={row.primaryImageUrl}
@@ -209,19 +209,19 @@ function ProdutosTable({
                   className="h-full w-full object-cover"
                 />
               ) : (
-                <Package2 className="h-6 w-6 text-slate-400" />
+                <Package2 className="h-6 w-6 text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]" />
               )}
             </div>
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium leading-tight text-slate-900">
+              <div className="truncate text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
                 {row.name}
               </div>
-              <div className="mt-0.5 truncate text-[11px] text-slate-400">
+              <div className="mt-0.5 truncate text-[11px] text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">
                 {reference.label}: {reference.value}
               </div>
-              <div className="mt-1.5 space-y-0.5 lg:hidden text-[11px] text-slate-600">
+              <div className="mt-1.5 space-y-0.5 lg:hidden text-[11px] text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                 {row.category?.name ? <div className="truncate">{row.category.name}</div> : null}
-                <div className="font-medium text-slate-900">{formatCurrency(row.price)}</div>
+                <div className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(row.price)}</div>
                 <div>{effectiveStock} un. em estoque</div>
               </div>
             </div>
@@ -241,9 +241,9 @@ function ProdutosTable({
       render: (row) => (
         <div className="min-w-0">
           {row.category?.name ? (
-            <span className="block truncate text-sm text-slate-700">{row.category.name}</span>
+            <span className="block truncate text-sm text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]">{row.category.name}</span>
           ) : (
-            <span className="text-sm text-slate-300">—</span>
+            <span className="text-sm text-slate-300 alusa-dark:text-[color:var(--color-text-muted)]">—</span>
           )}
         </div>
       ),
@@ -258,9 +258,9 @@ function ProdutosTable({
       skeleton: <div className="h-4 w-24 rounded bg-gray-200" />,
       render: (row) => (
         <div>
-          <span className="text-sm font-semibold text-slate-900">{formatCurrency(row.price)}</span>
+          <span className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(row.price)}</span>
           {row.hasVariants ? (
-            <span className="mt-0.5 block text-[11px] text-slate-400">padrão</span>
+            <span className="mt-0.5 block text-[11px] text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">padrão</span>
           ) : null}
         </div>
       ),
@@ -280,15 +280,15 @@ function ProdutosTable({
         </div>
       ),
       render: (row) => (
-        <div className="space-y-0.5 text-[11px] text-slate-500">
+        <div className="space-y-0.5 text-[11px] text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
           <div>Custo: {formatCurrency(row.averageCost)}</div>
           <div>
             Lucro: {formatCurrency(row.profitPerUnit)} ·{' '}
-            <span className={row.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700'}>
+            <span className={row.profitPerUnit >= 0 ? 'text-emerald-700 alusa-dark:text-emerald-300' : 'text-red-700 alusa-dark:text-red-300'}>
               {formatMarginPercent(row.marginPercent)}
             </span>
           </div>
-          {row.hasVariants ? <div className="text-slate-400">média das variantes</div> : null}
+          {row.hasVariants ? <div className="text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">média das variantes</div> : null}
         </div>
       ),
     },
@@ -320,7 +320,7 @@ function ProdutosTable({
               indicatorClassName={stockProgress.indicatorClassName}
               aria-label={`${stockProgress.label}: ${effectiveStock} unidade(s) em estoque`}
             />
-            <div className="mt-1 text-[11px] text-slate-400">{effectiveStock} unidade(s)</div>
+            <div className="mt-1 text-[11px] text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]">{effectiveStock} unidade(s)</div>
           </div>
         );
       },
@@ -339,7 +339,7 @@ function ProdutosTable({
         if (viewMode === 'archived') {
           return (
             <div className="flex justify-center">
-              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500">
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-500 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
                 Arquivado
               </span>
             </div>
@@ -375,7 +375,7 @@ function ProdutosTable({
       ariaLabel="Tabela de produtos"
       onRowClick={viewMode === 'catalog' ? onEdit : undefined}
       emptyMessage={
-        <div className="px-6 py-12 text-center text-gray-500 text-sm">
+        <div className="px-6 py-12 text-center text-gray-500 text-sm alusa-dark:text-[color:var(--color-text-secondary)]">
           {searchTerm
             ? 'Nenhum produto encontrado para esta busca.'
             : viewMode === 'archived'
@@ -482,11 +482,11 @@ export function ProdutosFeature() {
         setStatusFilter('TODOS');
       }}
     >
-      <TabsList className="h-10 rounded-lg bg-slate-100/80">
-        <TabsTrigger value="catalog" className="h-8 rounded-md px-4 text-sm shadow-none">
+      <TabsList className="h-10 rounded-lg bg-slate-100/80 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+        <TabsTrigger value="catalog" className="h-8 rounded-md px-4 text-sm shadow-none alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
           Catálogo
         </TabsTrigger>
-        <TabsTrigger value="archived" className="h-8 rounded-md px-4 text-sm shadow-none">
+        <TabsTrigger value="archived" className="h-8 rounded-md px-4 text-sm shadow-none alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
           Arquivados
         </TabsTrigger>
       </TabsList>
@@ -534,7 +534,7 @@ export function ProdutosFeature() {
           ) : null
         }
       >
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
           <ProdutosTable
             products={sorted}
             loading={loading}

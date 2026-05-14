@@ -389,10 +389,10 @@ export default function ConfigUsuariosPage() {
       : users;
 
     return (
-      <div className="overflow-auto rounded-lg border bg-white">
+      <div className="overflow-auto rounded-lg border bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
         {/* Cabeçalho sticky */}
-        <div className="sticky top-0 z-10 bg-gray-50 px-6 py-2 border-b">
-          <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-600">
+        <div className="sticky top-0 z-10 border-b bg-gray-50 px-6 py-2 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+          <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
             <div className="col-span-4 text-left">Nome</div>
             <div className="col-span-4 text-left">Email</div>
             <div className="col-span-2 text-left">Função</div>
@@ -402,14 +402,14 @@ export default function ConfigUsuariosPage() {
         </div>
 
         {/* Linhas */}
-        <div className="divide-y">
+        <div className="divide-y alusa-dark:divide-[color:var(--color-border-default)]">
           {filtered.length === 0 ? (
-            <div className="px-6 py-10 text-center text-gray-500">Nenhum usuário encontrado</div>
+            <div className="px-6 py-10 text-center text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">Nenhum usuário encontrado</div>
           ) : (
             filtered.map((u) => (
-              <div key={u.id} className="px-6 py-3 hover:bg-gray-50 transition-colors duration-150">
+              <div key={u.id} className="px-6 py-3 transition-colors duration-150 hover:bg-gray-50 alusa-dark:hover:bg-[color:rgba(255,255,255,0.04)]">
                 <div className="grid grid-cols-12 gap-4 items-center">
-                  <div className="col-span-4 text-sm text-gray-900 truncate flex items-center gap-2">
+                  <div className="col-span-4 text-sm text-gray-900 truncate flex items-center gap-2 alusa-dark:text-[color:var(--color-text-primary)]">
                     <span className="truncate">{u.name}</span>
                     {u.isCurrentUser && (
                       <Badge
@@ -434,7 +434,7 @@ export default function ConfigUsuariosPage() {
                   </div>
 
                   <div
-                    className="col-span-4 text-sm text-gray-700 text-left truncate"
+                    className="col-span-4 text-sm text-gray-700 text-left truncate alusa-dark:text-[color:var(--color-text-secondary)]"
                     title={u.email}
                   >
                     {u.email}
@@ -462,12 +462,12 @@ export default function ConfigUsuariosPage() {
                       }}
                       className={[
                         'relative inline-flex h-6 w-11 items-center rounded-full p-[2px]',
-                        'transition-colors duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-violet-500',
+                        'transition-colors duration-200 ease-out focus:outline-none focus:ring-0 focus-visible:ring-0',
                         !u.permissions.canToggleStatus
-                          ? 'bg-gray-300 cursor-not-allowed'
+                          ? 'bg-gray-300 cursor-not-allowed alusa-dark:bg-[color:var(--color-bg-elevated)]'
                           : u.status === 'ATIVO'
                             ? 'bg-green-500 cursor-pointer'
-                            : 'bg-gray-300 cursor-pointer',
+                            : 'bg-gray-300 cursor-pointer alusa-dark:bg-[color:var(--color-bg-elevated)]',
                       ].join(' ')}
                     >
                       <span className="sr-only">{u.status === 'ATIVO' ? 'Ativo' : 'Inativo'}</span>
@@ -488,7 +488,7 @@ export default function ConfigUsuariosPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className={`h-8 w-8 text-gray-600 hover:text-gray-800 hover:bg-gray-50 ${!u.permissions.canEdit ? 'opacity-40 pointer-events-none' : ''}`}
+                      className={`h-8 w-8 text-gray-600 hover:text-gray-800 hover:bg-gray-50 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)] ${!u.permissions.canEdit ? 'opacity-40 pointer-events-none' : ''}`}
                       aria-label="Editar usuário"
                       onClick={() => onEditUser(u.id)}
                       disabled={!u.permissions.canEdit}
@@ -498,7 +498,7 @@ export default function ConfigUsuariosPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className={`h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 ${!u.permissions.canDelete ? 'opacity-40 pointer-events-none' : ''}`}
+                      className={`h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200 ${!u.permissions.canDelete ? 'opacity-40 pointer-events-none' : ''}`}
                       aria-label="Excluir usuário"
                       onClick={() => onDeleteUser(u.id)}
                       disabled={!u.permissions.canDelete}
@@ -543,9 +543,9 @@ export default function ConfigUsuariosPage() {
       : invites;
 
     return (
-      <div className="overflow-auto rounded-lg border bg-white">
-        <div className="sticky top-0 z-10 bg-gray-50 px-6 py-2 border-b">
-          <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-600">
+      <div className="overflow-auto rounded-lg border bg-white alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+        <div className="sticky top-0 z-10 border-b bg-gray-50 px-6 py-2 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+          <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
             <div className="col-span-4 text-left">Email</div>
             <div className="col-span-2 text-left">Função</div>
             <div className="col-span-3 text-left">Data de envio</div>
@@ -553,14 +553,14 @@ export default function ConfigUsuariosPage() {
             <div className="col-span-1 text-center">Excluir</div>
           </div>
         </div>
-        <div className="divide-y">
+        <div className="divide-y alusa-dark:divide-[color:var(--color-border-default)]">
           {filtered.length === 0 ? (
-            <div className="px-6 py-10 text-center text-gray-500">Nenhum convite pendente</div>
+            <div className="px-6 py-10 text-center text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">Nenhum convite pendente</div>
           ) : (
             filtered.map((i) => (
-              <div key={i.id} className="px-6 py-3 hover:bg-gray-50 transition-colors duration-150">
+              <div key={i.id} className="px-6 py-3 transition-colors duration-150 hover:bg-gray-50 alusa-dark:hover:bg-[color:rgba(255,255,255,0.04)]">
                 <div className="grid grid-cols-12 gap-4 items-center">
-                  <div className="col-span-4 text-sm text-gray-900 truncate" title={i.email ?? 'Definido no cadastro'}>
+                  <div className="col-span-4 text-sm text-gray-900 truncate alusa-dark:text-[color:var(--color-text-primary)]" title={i.email ?? 'Definido no cadastro'}>
                     {i.email ?? 'Definido no cadastro'}
                   </div>
                   <div className="col-span-2 text-sm">
@@ -568,7 +568,7 @@ export default function ConfigUsuariosPage() {
                       {labelRole(i.role)}
                     </Badge>
                   </div>
-                  <div className="col-span-3 text-sm text-gray-700 text-left">
+                  <div className="col-span-3 text-sm text-gray-700 text-left alusa-dark:text-[color:var(--color-text-secondary)]">
                     {formatDateTime(i.createdAt)}
                   </div>
                   <div className="col-span-2 flex justify-center">{statusBadge(i.status)}</div>
@@ -576,7 +576,7 @@ export default function ConfigUsuariosPage() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+                      className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200"
                       aria-label="Excluir convite"
                       onClick={() => onDeleteInvite(i.id)}
                     >
@@ -594,25 +594,25 @@ export default function ConfigUsuariosPage() {
 
   // Render
   return (
-    <div className="rounded-lg bg-white p-6">
-      <h2 className="text-xl md:text-2xl font-medium tracking-tight text-gray-900">
+    <div className="rounded-lg bg-white p-6 alusa-dark:bg-[color:var(--color-bg-card)]">
+      <h2 className="text-xl md:text-2xl font-medium tracking-tight text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
         Usuários e Convites
       </h2>
-      <p className="mt-1 text-sm text-gray-600">Gerencie convites e usuários do sistema.</p>
+      <p className="mt-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">Gerencie convites e usuários do sistema.</p>
 
       {/* Card: Enviar convite */}
-      <section className="mt-4 rounded-md border border-gray-200 p-4" aria-label="Enviar convite">
+      <section className="mt-4 rounded-md border border-gray-200 p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]" aria-label="Enviar convite">
         <div className="grid grid-cols-12 gap-3 items-end">
           {/* Campo adaptável: Email ou Autocomplete de Alunos */}
           <div className="col-span-12 md:col-span-5">
-            <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
               {role === 'RESPONSAVEL' ? 'Pesquise e selecione os alunos *' : 'E-mail'}
             </label>
             
             {role === 'RESPONSAVEL' ? (
               // Input com tags inline para RESPONSAVEL
               <div className="relative mt-1">
-                <div className="flex flex-wrap items-center gap-1.5 min-h-[40px] w-full rounded-md border border-gray-300 px-2 py-1.5 focus-within:border-violet-400 focus-within:ring-2 focus-within:ring-violet-500/20">
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[40px] w-full rounded-md border border-gray-300 px-2 py-1.5 focus-within:border-gray-300 focus-within:ring-0 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:focus-within:border-[color:var(--color-input-border)]">
                   {/* Tags dos alunos selecionados */}
                   {selectedAlunos.map((alunoId) => {
                     const aluno = alunosList.find(a => a.id === alunoId);
@@ -620,13 +620,13 @@ export default function ConfigUsuariosPage() {
                     return (
                       <span
                         key={alunoId}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-brand)]"
                       >
                         {aluno.nome}
                         <button
                           type="button"
                           onClick={() => setSelectedAlunos(selectedAlunos.filter(id => id !== alunoId))}
-                          className="hover:bg-violet-200 rounded-full p-0.5 transition-colors"
+                          className="hover:bg-violet-200 rounded-full p-0.5 transition-colors alusa-dark:hover:bg-[color:rgba(169,77,255,0.24)]"
                           aria-label={`Remover ${aluno.nome}`}
                         >
                           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -643,7 +643,7 @@ export default function ConfigUsuariosPage() {
                     type="text"
                     placeholder={loadingAlunos ? "Carregando..." : selectedAlunos.length === 0 ? "Pesquise o aluno..." : "Adicionar mais..."}
                     disabled={loadingAlunos}
-                    className="flex-1 min-w-[120px] outline-none text-sm py-1 disabled:bg-gray-50 disabled:cursor-not-allowed"
+                    className="flex-1 min-w-[120px] outline-none text-sm py-1 disabled:bg-gray-50 disabled:cursor-not-allowed alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)] alusa-dark:disabled:bg-transparent"
                     value={searchAlunoTerm}
                     onChange={(e) => setSearchAlunoTerm(e.target.value)}
                     onFocus={() => setShowAlunoDropdown(true)}
@@ -652,9 +652,9 @@ export default function ConfigUsuariosPage() {
                 
                 {/* Dropdown de sugestões */}
                 {showAlunoDropdown && searchAlunoTerm.trim().length > 0 && (
-                  <div className="aluno-dropdown absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                  <div className="aluno-dropdown absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-popover)]">
                     {filteredAlunos.length === 0 ? (
-                      <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                      <div className="px-4 py-3 text-sm text-gray-500 text-center alusa-dark:text-[color:var(--color-text-muted)]">
                         Nenhum aluno encontrado
                       </div>
                     ) : (
@@ -671,18 +671,18 @@ export default function ConfigUsuariosPage() {
                               setSearchAlunoTerm('');
                             }}
                             disabled={isSelected}
-                            className={`w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                              isSelected ? 'bg-gray-50' : ''
+                            className={`w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] ${
+                              isSelected ? 'bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]' : ''
                             }`}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex-1">
-                                <p className="text-sm font-medium text-gray-900">{aluno.nome}</p>
+                                <p className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{aluno.nome}</p>
                                 {aluno.email && (
-                                  <p className="text-xs text-gray-500">{aluno.email}</p>
+                                  <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{aluno.email}</p>
                                 )}
                                 {aluno.idade && (
-                                  <p className="text-xs text-gray-500">{aluno.idade} anos</p>
+                                  <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{aluno.idade} anos</p>
                                 )}
                               </div>
                               {isSelected && (
@@ -698,7 +698,7 @@ export default function ConfigUsuariosPage() {
                 
                 {/* Helper text */}
                 {!loadingAlunos && alunosList.length === 0 && (
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 mt-1 alusa-dark:text-[color:var(--color-text-muted)]">
                     Nenhum aluno disponível. Cadastre alunos primeiro.
                   </p>
                 )}
@@ -712,13 +712,13 @@ export default function ConfigUsuariosPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="email@exemplo.com"
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 h-10 text-sm outline-none focus:border-violet-400"
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 h-10 text-sm outline-none focus:border-violet-400 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
               />
             )}
           </div>
           
           <div className="col-span-12 md:col-span-3">
-            <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
               Função
             </label>
             <Select value={role} onValueChange={(v: Role) => setRole(v)}>
@@ -761,12 +761,12 @@ export default function ConfigUsuariosPage() {
           >
             <TabsList
               aria-label="Alternar listagens"
-              className="h-10 rounded-xl bg-slate-100/80 p-1"
+              className="h-10 rounded-xl bg-slate-100/80 p-1 alusa-dark:bg-[color:var(--color-bg-card-soft)]"
             >
-              <TabsTrigger value="USERS" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none">
+              <TabsTrigger value="USERS" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none data-[state=active]:bg-white data-[state=active]:text-gray-900 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
                 Usuários
               </TabsTrigger>
-              <TabsTrigger value="PENDING" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none">
+              <TabsTrigger value="PENDING" className="h-8 rounded-lg px-4 py-0 text-sm shadow-none data-[state=active]:bg-white data-[state=active]:text-gray-900 alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:data-[state=active]:bg-[color:var(--color-bg-elevated)] alusa-dark:data-[state=active]:text-[color:var(--color-text-primary)]">
                 Pendentes
               </TabsTrigger>
             </TabsList>
@@ -775,11 +775,11 @@ export default function ConfigUsuariosPage() {
           {/* Busca sem sombra, dimensões coerentes e alinhada */}
           <div className="relative w-full md:w-[320px] max-w-sm">
             <Search
-              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400"
+              className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 alusa-dark:text-[color:var(--color-text-muted)]"
               aria-hidden="true"
             />
             <Input
-              className="h-10 pl-8 rounded-md border border-gray-300 shadow-none focus:ring-0 focus-visible:ring-0 focus:ring-offset-0 focus-visible:ring-offset-0 focus:border-violet-400"
+              className="h-10 pl-8 rounded-md border border-gray-300 shadow-none focus:ring-0 focus-visible:ring-0 focus:ring-offset-0 focus-visible:ring-offset-0 focus:border-violet-400 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
               placeholder={
                 tab === 'USERS'
                   ? 'Buscar por nome, email ou função...'
@@ -793,9 +793,9 @@ export default function ConfigUsuariosPage() {
 
         <div className="mt-4">
           {typeof userCount === 'number' && (
-            <div className="mb-2 text-[12px] text-gray-500">
+            <div className="mb-2 text-[12px] text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
               Total de usuários cadastrados:{' '}
-              <span className="font-medium text-gray-700">{userCount}</span>
+              <span className="font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">{userCount}</span>
             </div>
           )}
           {tab === 'USERS' ? renderUserTable() : renderInviteTable()}

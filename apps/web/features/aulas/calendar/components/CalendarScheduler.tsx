@@ -60,16 +60,16 @@ type HoverGuideState = {
 
 /** Tons violeta/indigo derivados dos tokens `--brand-accent`, `--brand-primary` (globals). Sem traço. */
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
-  AULA: 'border-0 bg-[#EEE6F4] text-[#19143A]',
-  AULA_EXPERIMENTAL: 'border-0 bg-[#EDE8FB] text-[#5c2f91]',
-  REPOSICAO: 'border-0 bg-[#E8E4F9] text-[#3e1f63]',
-  EVENTO_INTERNO: 'border-0 bg-[#F4EEFC] text-[#4b217a]',
-  EVENTO_EXTERNO: 'border-0 bg-[#EFE7FA] text-[#602b96]',
-  WORKSHOP: 'border-0 bg-[#F3EBFA] text-[#7243aa]',
-  FERIADO: 'border-0 bg-[#ECEBF3] text-[#554f6d]',
-  PAUSA: 'border-0 bg-[#EDE6F9] text-[#5c5277]',
-  CANCELAMENTO: 'border-0 bg-[#EFE8EE] text-[#6b5570]',
-  SUBSTITUICAO: 'border-0 bg-[#E8EAFA] text-[#382f7a]',
+  AULA: 'border-0 bg-[#EEE6F4] text-[#19143A] alusa-dark:bg-[color:rgba(237,230,244,0.13)] alusa-dark:text-[color:var(--color-text-primary)]',
+  AULA_EXPERIMENTAL: 'border-0 bg-[#EDE8FB] text-[#5c2f91] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:var(--color-text-brand)]',
+  REPOSICAO: 'border-0 bg-[#E8E4F9] text-[#3e1f63] alusa-dark:bg-[color:rgba(126,87,194,0.18)] alusa-dark:text-[color:#d9c7ff]',
+  EVENTO_INTERNO: 'border-0 bg-[#F4EEFC] text-[#4b217a] alusa-dark:bg-[color:rgba(169,77,255,0.12)] alusa-dark:text-[color:#dcc7ff]',
+  EVENTO_EXTERNO: 'border-0 bg-[#EFE7FA] text-[#602b96] alusa-dark:bg-[color:rgba(169,77,255,0.14)] alusa-dark:text-[color:#d4b8ff]',
+  WORKSHOP: 'border-0 bg-[#F3EBFA] text-[#7243aa] alusa-dark:bg-[color:rgba(169,77,255,0.12)] alusa-dark:text-[color:#d8c1ff]',
+  FERIADO: 'border-0 bg-[#ECEBF3] text-[#554f6d] alusa-dark:bg-[color:rgba(255,255,255,0.07)] alusa-dark:text-[color:var(--color-text-secondary)]',
+  PAUSA: 'border-0 bg-[#EDE6F9] text-[#5c5277] alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:text-[color:var(--color-text-secondary)]',
+  CANCELAMENTO: 'border-0 bg-[#EFE8EE] text-[#6b5570] alusa-dark:bg-[color:rgba(239,68,68,0.12)] alusa-dark:text-red-200',
+  SUBSTITUICAO: 'border-0 bg-[#E8EAFA] text-[#382f7a] alusa-dark:bg-[color:rgba(99,102,241,0.16)] alusa-dark:text-[color:#c7d2fe]',
 };
 
 function toEventInput(event: CalendarEventListItemDTO): EventInput {
@@ -198,9 +198,9 @@ function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
             : 'h-full rounded-lg border-0 px-2 py-1.5 text-[11px] leading-4',
           COLOR_BY_TYPE[type] ?? COLOR_BY_TYPE.AULA,
           cardTone === 'in_progress' && 'shadow-[inset_0_0_0_1px_rgba(92,47,145,0.28)]',
-          cardTone === 'past' && 'border-0 bg-[#EDE9F7]/85 text-brand-muted opacity-95',
-          cardTone === 'completed' && 'border-0 bg-[#E8EAF3] text-[#3f4c66]',
-          cardTone === 'cancelled' && 'border-0 bg-[#EDE9EF] text-brand-muted opacity-95',
+          cardTone === 'past' && 'border-0 bg-[#EDE9F7]/85 text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:text-[color:var(--color-text-muted)]',
+          cardTone === 'completed' && 'border-0 bg-[#E8EAF3] text-[#3f4c66] alusa-dark:bg-[color:rgba(34,197,94,0.13)] alusa-dark:text-emerald-100',
+          cardTone === 'cancelled' && 'border-0 bg-[#EDE9EF] text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(239,68,68,0.12)] alusa-dark:text-red-200',
         )}
       >
         {isCompactMonth ? (
@@ -386,7 +386,7 @@ export function CalendarScheduler({
     <div
       ref={wrapperRef}
       className={cn(
-        'calendar-scheduler-wrapper bg-white',
+        'calendar-scheduler-wrapper bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
         isWeekView && 'calendar-scheduler-wrapper--week',
         isCompactMonth && 'calendar-scheduler-wrapper--month-compact',
         isDetailedMonth && 'calendar-scheduler-wrapper--month-detailed',

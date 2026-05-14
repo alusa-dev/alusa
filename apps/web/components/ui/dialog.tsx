@@ -47,14 +47,14 @@ const DialogContent = React.forwardRef<
     {/* Wrapper flex para centralização perfeita e suportar scroll em telas baixas */}
     <div
       className={cn(
-        'fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 overflow-y-auto',
+        'fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-4 outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:p-6',
         fullScreenMobile && 'max-md:overflow-hidden max-md:p-0',
       )}
     >
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          'relative z-50 grid w-full max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg outline-none sm:rounded-xl',
+          'relative z-50 grid w-full max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:rounded-xl',
           'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
           fullScreenMobile &&
             'max-md:box-border max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:w-full max-md:max-w-none max-md:min-h-0 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:border-b-0 max-md:shadow-none max-md:pb-[env(safe-area-inset-bottom,0px)] max-md:pl-[env(safe-area-inset-left,0px)] max-md:pr-[env(safe-area-inset-right,0px)]',

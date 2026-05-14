@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
-import { formatCurrency } from "./utils";
+import { DASHBOARD_KPI_TILE_CLASSNAME, formatCurrency } from './utils';
 
 export type PeriodoTaxaMatricula = "15d" | "30d" | "1a";
 
@@ -103,7 +103,7 @@ function TaxaMatriculaToggle({
             type="button"
             aria-pressed={isActive}
             aria-label={`Filtrar por ${opt.label}`}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors duration-150 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 ${
               isActive
                 ? 'bg-[#f8f3fd] text-[#2b2634] shadow-sm alusa-dark:bg-[color:#49275f] alusa-dark:text-white alusa-dark:shadow-none'
                 : 'text-[#4c4459] hover:text-[#2b2634] alusa-dark:text-[color:rgba(237,229,255,0.62)] alusa-dark:hover:text-[color:var(--color-text-primary)]'
@@ -128,7 +128,9 @@ export function TaxaMatriculaCard({
 
   if (loading) {
     return (
-      <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+      <div
+        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
+      >
         <div>
           <div>
             <Skeleton className="mb-2 h-4 w-28 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
@@ -143,7 +145,9 @@ export function TaxaMatriculaCard({
   }
 
   return (
-    <div className="flex h-full min-h-[220px] flex-col justify-between rounded-2xl border border-transparent bg-[#f4ecfd] px-5 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]">
+    <div
+      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
+    >
       <div>
         <div>
           <p className="mb-2 text-left text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">

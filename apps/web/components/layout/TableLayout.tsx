@@ -30,7 +30,7 @@ export function TableLayout({
   const hasToolbar = Boolean(actions) || Boolean(filtersBar);
 
   return (
-    <div className={cn('w-full space-y-5', className)}>
+    <div className={cn('alusa-session-panel w-full space-y-5', className)}>
       {/* space-y reduzido para aproximar seções e px-6 para alinhar com headers das tabelas */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
         <div className="min-w-0 space-y-1">
@@ -50,7 +50,7 @@ export function TableLayout({
         ) : null}
       </div>
       {hasToolbar ? (
-        <div className="rounded-xl border bg-white px-3 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-4">
+        <div className="alusa-session-panel rounded-xl border border-slate-200 bg-white px-3 py-3 ring-0 ring-offset-0 focus-within:ring-0 focus-within:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex w-full shrink-0 flex-col gap-2 md:flex-row md:flex-wrap md:items-center md:gap-3 md:w-auto">
               {actions}

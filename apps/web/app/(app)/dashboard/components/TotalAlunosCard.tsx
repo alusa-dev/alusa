@@ -2,6 +2,8 @@
 
 import { Skeleton } from '@/components/ui/skeleton';
 
+import { DASHBOARD_KPI_TILE_CLASSNAME } from './utils';
+
 type RecentStudentInput = {
   id: string;
   nome?: string;
@@ -34,8 +36,7 @@ function getInitials(name: string) {
   return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
-const cardSurface =
-  'flex flex-col min-h-[220px] rounded-2xl border border-transparent bg-[#e6d6fb] px-5 py-4 text-[#2b2634] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]';
+const cardSurface = `${DASHBOARD_KPI_TILE_CLASSNAME} flex flex-col min-h-[220px] rounded-2xl bg-[#e6d6fb] px-5 py-4 text-[#2b2634] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]`;
 
 export function TotalAlunosCard({
   total,
@@ -162,7 +163,7 @@ export function TotalAlunosCard({
           onClick={disableAddAluno ? undefined : onAddAluno}
           disabled={disableAddAluno}
           title={disableAddAluno ? 'Conclua seu cadastro para cadastrar alunos.' : undefined}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-current text-xl font-semibold text-black transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black disabled:cursor-not-allowed disabled:opacity-40 alusa-dark:border-[color:var(--color-brand-400)] alusa-dark:text-[color:var(--color-brand-300)] alusa-dark:focus-visible:ring-[color:var(--color-brand-400)]"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-current text-xl font-semibold text-black transition focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-40 alusa-dark:border-[color:var(--color-brand-400)] alusa-dark:text-[color:var(--color-brand-300)] alusa-dark:focus-visible:ring-[color:var(--color-brand-400)]"
           aria-label="Cadastrar novo aluno"
           data-testid="add-student-btn"
         >
