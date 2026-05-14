@@ -10,8 +10,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -168,122 +166,134 @@ export function ResponsaveisFeature() {
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Novo responsável</DialogTitle>
-            <DialogDescription>
+        <DialogContent
+          fullScreenMobile
+          className="max-w-2xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
+        >
+          <div className="relative border-b border-slate-200 bg-slate-50 p-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:p-6">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
+              Novo responsável
+            </DialogTitle>
+            <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600">
               Cadastre a pessoa que poderá concentrar vínculos familiares, cobranças e acesso ao
               portal.
             </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label
-                className="mb-1.5 block text-xs font-medium text-slate-600"
-                htmlFor="responsavel-nome"
-              >
-                Nome completo
-              </label>
-              <Input
-                id="responsavel-nome"
-                value={form.nome}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, nome: event.target.value }))
-                }
-                placeholder="Ex.: Elaine Costa"
-                className="h-10 rounded-lg border-slate-200 shadow-none"
-              />
-            </div>
-            <div>
-              <label
-                className="mb-1.5 block text-xs font-medium text-slate-600"
-                htmlFor="responsavel-cpf"
-              >
-                CPF
-              </label>
-              <Input
-                id="responsavel-cpf"
-                value={form.cpf}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, cpf: event.target.value }))
-                }
-                placeholder="000.000.000-00"
-                className="h-10 rounded-lg border-slate-200 shadow-none"
-              />
-            </div>
-            <div>
-              <label
-                className="mb-1.5 block text-xs font-medium text-slate-600"
-                htmlFor="responsavel-telefone"
-              >
-                Telefone
-              </label>
-              <Input
-                id="responsavel-telefone"
-                value={form.telefone}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, telefone: event.target.value }))
-                }
-                placeholder="(11) 99999-9999"
-                className="h-10 rounded-lg border-slate-200 shadow-none"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label
-                className="mb-1.5 block text-xs font-medium text-slate-600"
-                htmlFor="responsavel-email"
-              >
-                E-mail
-              </label>
-              <Input
-                id="responsavel-email"
-                type="email"
-                value={form.email}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, email: event.target.value }))
-                }
-                placeholder="responsavel@email.com"
-                className="h-10 rounded-lg border-slate-200 shadow-none"
-              />
-            </div>
-            <label className="sm:col-span-2 flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4 rounded border-slate-300 text-brand-accent"
-                checked={form.financeiro}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, financeiro: event.target.checked }))
-                }
-              />
-              <span>
-                <span className="block font-medium text-slate-800">
-                  Marcar como responsável financeiro
-                </span>
-                <span className="block text-xs text-slate-500">
-                  Este será o padrão para cobranças familiares e futuras rematrículas.
-                </span>
-              </span>
-            </label>
           </div>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              className="h-10 rounded-lg border-slate-200 shadow-none"
-              onClick={() => setDialogOpen(false)}
-              disabled={creating}
-            >
-              Cancelar
-            </Button>
-            <Button
-              className="h-10 rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
-              onClick={handleCreate}
-              disabled={creating}
-            >
-              {creating ? 'Salvando...' : 'Salvar responsável'}
-            </Button>
-          </DialogFooter>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:max-h-none">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth bg-slate-50 p-4 max-md:min-h-0 md:p-6">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label
+                    className="mb-1.5 block text-xs font-medium text-slate-600"
+                    htmlFor="responsavel-nome"
+                  >
+                    Nome completo
+                  </label>
+                  <Input
+                    id="responsavel-nome"
+                    value={form.nome}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, nome: event.target.value }))
+                    }
+                    placeholder="Ex.: Elaine Costa"
+                    className="h-11 rounded-lg border-slate-200 shadow-none md:h-10"
+                  />
+                </div>
+                <div>
+                  <label
+                    className="mb-1.5 block text-xs font-medium text-slate-600"
+                    htmlFor="responsavel-cpf"
+                  >
+                    CPF
+                  </label>
+                  <Input
+                    id="responsavel-cpf"
+                    value={form.cpf}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, cpf: event.target.value }))
+                    }
+                    placeholder="000.000.000-00"
+                    className="h-11 rounded-lg border-slate-200 shadow-none md:h-10"
+                  />
+                </div>
+                <div>
+                  <label
+                    className="mb-1.5 block text-xs font-medium text-slate-600"
+                    htmlFor="responsavel-telefone"
+                  >
+                    Telefone
+                  </label>
+                  <Input
+                    id="responsavel-telefone"
+                    value={form.telefone}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, telefone: event.target.value }))
+                    }
+                    placeholder="(11) 99999-9999"
+                    className="h-11 rounded-lg border-slate-200 shadow-none md:h-10"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label
+                    className="mb-1.5 block text-xs font-medium text-slate-600"
+                    htmlFor="responsavel-email"
+                  >
+                    E-mail
+                  </label>
+                  <Input
+                    id="responsavel-email"
+                    type="email"
+                    value={form.email}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, email: event.target.value }))
+                    }
+                    placeholder="responsavel@email.com"
+                    className="h-11 rounded-lg border-slate-200 shadow-none md:h-10"
+                  />
+                </div>
+                <label className="sm:col-span-2 flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-700 shadow-sm md:min-h-0 md:p-3 md:shadow-none">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-brand-accent md:mt-1"
+                    checked={form.financeiro}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, financeiro: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    <span className="block font-medium text-slate-800">
+                      Marcar como responsável financeiro
+                    </span>
+                    <span className="mt-0.5 block text-xs text-slate-500">
+                      Este será o padrão para cobranças familiares e futuras rematrículas.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:p-6">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full rounded-lg border-slate-200 shadow-none md:h-10 md:min-h-0 md:w-auto"
+                onClick={() => setDialogOpen(false)}
+                disabled={creating}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="h-11 min-h-11 w-full rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto"
+                onClick={handleCreate}
+                disabled={creating}
+              >
+                {creating ? 'Salvando...' : 'Salvar responsável'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </TableLayout>

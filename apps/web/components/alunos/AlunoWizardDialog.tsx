@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useForm, FormProvider } from 'react-hook-form';
@@ -357,23 +357,23 @@ export default function AlunoWizardDialog({
   return (
     <Dialog open={open} onOpenChange={requestClose}>
       <DialogContent
-        title="Cadastrar aluno"
-        className="max-w-5xl w-full overflow-hidden p-0 bg-slate-50"
+        fullScreenMobile
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
         data-testid="aluno-wizard"
       >
         <div
           className={
-            'relative border-b border-slate-200 bg-slate-50 p-4 md:p-6 transition-shadow duration-200 ' +
+            'relative border-b border-slate-200 bg-slate-50 p-4 transition-shadow duration-200 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:p-6 ' +
             (headerElevated ? 'shadow-sm' : '')
           }
         >
           <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-          <DialogTitle className="text-xl font-semibold text-slate-900 tracking-tight">
+          <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
             Cadastrar aluno
           </DialogTitle>
-          <p className="mt-1 text-sm text-slate-600 max-w-2xl">
+          <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600">
             Preencha os dados do aluno em etapas.
-          </p>
+          </DialogDescription>
           <div className="mt-4">
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
               <Progress
@@ -395,7 +395,7 @@ export default function AlunoWizardDialog({
           </div>
         </div>
         <FormProvider {...methods}>
-          <div className="flex max-h-[78vh] flex-col overflow-x-hidden">
+          <div className="flex max-h-[78vh] min-h-0 flex-col overflow-x-hidden max-md:max-h-none max-md:flex-1">
             <div
               ref={scrollRef}
               onScroll={(e) => {
@@ -403,7 +403,7 @@ export default function AlunoWizardDialog({
                 if (sc > 4 && !headerElevated) setHeaderElevated(true);
                 else if (sc <= 4 && headerElevated) setHeaderElevated(false);
               }}
-              className="flex-1 overflow-y-auto overflow-x-hidden p-4 md:p-6 bg-slate-50 scroll-smooth"
+              className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth bg-slate-50 p-4 max-md:min-h-0 md:p-6"
             >
               <div className="mx-auto w-full max-w-5xl">
                 <AnimatePresence mode="wait">
@@ -486,13 +486,13 @@ export default function AlunoWizardDialog({
                 </AnimatePresence>
               </div>
             </div>
-            <div className="border-t border-slate-200 bg-slate-50 p-4 md:p-6 flex items-center justify-end gap-3 sticky bottom-0">
+            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:p-6">
               <Button
                 type="button"
                 variant="outline"
                 onClick={goPrev}
                 disabled={!canGoPrev() || submitting}
-                className="h-10 px-4 min-w-[140px] border-slate-200 text-slate-600 bg-white hover:bg-slate-100 shadow-none focus-visible:ring-2 focus-visible:ring-brand-accent/50 focus-visible:outline-none"
+                className="h-11 min-h-11 min-w-0 border-slate-200 bg-white px-4 text-slate-600 shadow-none hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/50 md:h-10 md:min-h-0 md:min-w-[140px]"
                 data-testid="wizard-prev"
               >
                 Etapa Anterior
@@ -502,7 +502,7 @@ export default function AlunoWizardDialog({
                   type="button"
                   onClick={goNext}
                   disabled={submitting}
-                  className="h-10 px-5 min-w-[160px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-accent/60 disabled:opacity-60 disabled:pointer-events-none"
+                  className="h-11 min-h-11 min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-brand-accent/60 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 md:h-10 md:min-h-0 md:min-w-[160px]"
                   data-testid="wizard-next"
                 >
                   Próxima Etapa
@@ -512,7 +512,7 @@ export default function AlunoWizardDialog({
                   type="button"
                   onClick={submitAll}
                   disabled={submitting}
-                  className="h-10 px-5 min-w-[160px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-accent/60 disabled:opacity-60 disabled:pointer-events-none"
+                  className="h-11 min-h-11 min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-brand-accent/60 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 md:h-10 md:min-h-0 md:min-w-[160px]"
                   data-testid="aluno-concluir"
                 >
                   {submitting ? 'Salvando...' : 'Concluir'}
@@ -522,7 +522,7 @@ export default function AlunoWizardDialog({
           </div>
         </FormProvider>
         {confirmClose && (
-          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 backdrop-blur-sm">
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 p-4 backdrop-blur-sm max-md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] max-md:pt-[calc(1rem+env(safe-area-inset-top,0px))]">
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95">
               <h4 className="text-sm font-semibold text-slate-800">Descartar cadastro?</h4>
               <p className="mt-2 text-xs text-slate-600 leading-relaxed">

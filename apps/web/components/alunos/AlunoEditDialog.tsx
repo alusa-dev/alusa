@@ -1,7 +1,7 @@
 'use client';
 // Conteúdo migrado de components/aluno/AlunoEditDialog.tsx (original)
 import * as React from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -449,11 +449,11 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="edit-aluno-dialog"
-        className="w-[95vw] max-w-5xl gap-0 overflow-hidden p-0"
-        aria-describedby="aluno-edit-description"
+        fullScreenMobile
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
       >
         {aluno && (
-          <form onSubmit={onSubmit} className="flex h-full max-h-[85vh] flex-col">
+          <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
             <input
               ref={fileInputRef}
               type="file"
@@ -461,15 +461,16 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
               className="hidden"
               onChange={handleFileInputChange}
             />
-            <div className="border-b border-slate-200 px-8 py-6">
-              <DialogTitle className="text-xl font-semibold text-slate-900">
+            <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+              <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
                 Editar aluno
               </DialogTitle>
-              <p id="aluno-edit-description" className="mt-2 text-sm text-slate-600">
+              <DialogDescription className="mt-2 text-sm text-slate-600">
                 Atualize os dados cadastrais, endereços e informações de emergência do aluno.
-              </p>
+              </DialogDescription>
             </div>
-            <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
+            <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6 max-md:min-h-0 md:px-8 md:py-6">
               <div className={sectionClass}>
                 <span className="text-sm font-semibold text-slate-700">Foto</span>
                 <div className="flex flex-col gap-5 md:flex-row md:items-center">
@@ -872,11 +873,11 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
               </div>
               )}
             </div>
-            <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-8 py-4">
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
               <Button
                 type="button"
                 variant="outline"
-                className="min-w-[140px] border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
@@ -885,7 +886,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="min-w-[160px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+                className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[160px]"
               >
                 {submitting ? 'Salvando...' : 'Salvar'}
               </Button>

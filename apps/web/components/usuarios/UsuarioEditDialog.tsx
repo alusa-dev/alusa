@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/toast";
@@ -50,15 +50,50 @@ export default function UsuarioEditDialog({ open, onOpenChange, usuarioId, usuar
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Editar usuário" className="max-w-md">
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="nome" className="block text-xs text-gray-600 mb-1">Nome</label>
-            <Input id="nome" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome completo" />
+      <DialogContent
+        fullScreenMobile
+        className="max-w-md gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+      >
+        <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">Editar usuário</DialogTitle>
+          <DialogDescription className="mt-1 text-sm text-slate-600">
+            Atualize o nome exibido para este usuário na equipe.
+          </DialogDescription>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+          <div className="flex-1 space-y-4 px-4 py-5 md:px-6">
+            <div>
+              <label htmlFor="nome" className="mb-1 block text-xs text-gray-600">
+                Nome
+              </label>
+              <Input
+                id="nome"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Nome completo"
+                className="h-11 md:h-10"
+              />
+            </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="outline" className="bg-white text-slate-700 border border-slate-300 hover:bg-slate-50" onClick={() => onOpenChange(false)} disabled={submitting}>Cancelar</Button>
-            <Button type="button" onClick={onConfirm} disabled={submitting} className="bg-violet-600 hover:bg-violet-700 text-white">{submitting ? "Salvando..." : "Salvar"}</Button>
+          <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-h-11 w-full border border-slate-300 bg-white text-slate-700 shadow-none hover:bg-slate-50 md:h-10 md:min-h-0 md:w-auto"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={onConfirm}
+              disabled={submitting}
+              className="h-11 min-h-11 w-full bg-violet-600 text-white hover:bg-violet-700 md:h-10 md:min-h-0 md:w-auto"
+            >
+              {submitting ? 'Salvando...' : 'Salvar'}
+            </Button>
           </div>
         </div>
       </DialogContent>

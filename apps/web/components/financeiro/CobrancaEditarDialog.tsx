@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -198,12 +198,23 @@ export function CobrancaEditarDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
-        <DialogHeader>
-          <DialogTitle>Editar Cobrança</DialogTitle>
+      <DialogContent
+        fullScreenMobile
+        className="max-w-lg gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+      >
+        <DialogHeader className="relative shrink-0 space-y-0 border-b border-slate-200 bg-slate-50 px-4 py-4 text-left max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">Editar Cobrança</DialogTitle>
+          <DialogDescription className="mt-1.5 text-sm text-slate-600">
+            Ajuste valor, vencimento e descrição. Opções avançadas dependem da integração financeira.
+          </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0"
+        >
+          <div className="flex-1 space-y-6 overflow-y-auto px-4 py-5 max-md:min-h-0 md:px-6">
           {/* Valor */}
           <div className="space-y-2">
             <Label htmlFor="valor">
@@ -393,17 +404,23 @@ export function CobrancaEditarDialog({
             )}
           </div>
 
-          {/* Botões */}
-          <div className="flex justify-end gap-3">
+          </div>
+
+          <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
             <Button
               type="button"
               variant="outline"
               onClick={() => onOpenChange(false)}
               disabled={loading}
+              className="h-11 min-h-11 w-full min-w-0 md:h-10 md:min-h-0 md:w-auto"
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={loading}>
+            <Button
+              type="submit"
+              disabled={loading}
+              className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto"
+            >
               {loading && <ArrowPathIcon className="mr-2 h-4 w-4 animate-spin" />}
               {loading ? 'Salvando...' : 'Salvar alterações'}
             </Button>

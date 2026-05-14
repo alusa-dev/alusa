@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { MatriculaCreatedPayload } from '@/features/cadastro/matriculas/services/matriculas-service';
 import { MatriculaWizardFlow } from './MatriculaWizardFlow';
@@ -48,10 +48,14 @@ export default function MatriculaWizardDialog({
     <>
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent
-          className="w-full max-w-5xl overflow-visible rounded-2xl bg-slate-50 p-0 transition-all duration-300"
+          fullScreenMobile
+          className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl md:transition-all md:duration-300"
           data-testid="matricula-wizard"
         >
           <DialogTitle className="sr-only">Cadastrar matrícula</DialogTitle>
+          <DialogDescription className="sr-only">
+            Preencha os dados da matrícula em etapas.
+          </DialogDescription>
           <MatriculaWizardFlow
             contaId={contaId}
             open={open}

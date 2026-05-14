@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -72,7 +72,7 @@ type Props = {
 const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
 const labelClass = 'text-xs font-medium text-slate-600';
 const inputClass =
-  'h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
+  'h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10';
 const textareaClass =
   'min-h-[120px] rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
 
@@ -550,10 +550,14 @@ export default function ColaboradorEditDialog({
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="w-[95vw] max-w-4xl gap-0 overflow-hidden p-0 sm:rounded-2xl"
+        fullScreenMobile
+        className="max-w-4xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 sm:rounded-2xl"
         data-testid="colaborador-edit-dialog"
       >
-        <form onSubmit={handleSubmit} className="flex max-h-[88vh] flex-col">
+        <form
+          onSubmit={handleSubmit}
+          className="flex max-h-[88vh] min-h-0 flex-col max-md:max-h-none max-md:flex-1"
+        >
           <input
             ref={fileInputRef}
             type="file"
@@ -561,14 +565,17 @@ export default function ColaboradorEditDialog({
             className="hidden"
             onChange={handleFileInputChange}
           />
-          <div className="border-b border-slate-200 px-8 py-6">
-            <DialogTitle className="text-xl font-semibold text-slate-900">
+          <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-5 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
               {headerTitle}
             </DialogTitle>
-            <p className="mt-2 text-sm text-slate-600">{headerDescription}</p>
+            <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">
+              {headerDescription}
+            </DialogDescription>
           </div>
 
-          <div className="flex-1 space-y-6 overflow-y-auto px-8 py-6">
+          <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-slate-50 px-4 py-6 max-md:min-h-0 md:px-8">
             {loadingDetails && mode === 'edit' ? (
               <div className="flex min-h-[200px] items-center justify-center text-sm text-slate-500">
                 Carregando dados do colaborador...
@@ -687,7 +694,7 @@ export default function ColaboradorEditDialog({
                         mask="000.000.000-00"
                         value={cpf}
                         onAccept={(value) => setCpf(String(value))}
-                        className={`${inputClass} flex h-10 w-full`}
+                        className={`${inputClass} flex w-full`}
                         placeholder="000.000.000-00"
                       />
                     </div>
@@ -746,7 +753,7 @@ export default function ColaboradorEditDialog({
                         mask={['(00) 0000-0000', '(00) 00000-0000']}
                         value={telefone}
                         onAccept={(value) => setTelefone(String(value))}
-                        className={`${inputClass} flex h-10 w-full`}
+                        className={`${inputClass} flex w-full`}
                         placeholder="(00) 00000-0000"
                       />
                     </div>
@@ -756,7 +763,7 @@ export default function ColaboradorEditDialog({
                         mask={['(00) 0000-0000', '(00) 00000-0000']}
                         value={contatoEmergenciaTelefone}
                         onAccept={(value) => setContatoEmergenciaTelefone(String(value))}
-                        className={`${inputClass} flex h-10 w-full`}
+                        className={`${inputClass} flex w-full`}
                         placeholder="(00) 00000-0000"
                       />
                     </div>
@@ -772,7 +779,7 @@ export default function ColaboradorEditDialog({
                         mask="00000-000"
                         value={enderecoCep}
                         onAccept={(value) => setEnderecoCep(String(value))}
-                        className={`${inputClass} flex h-10 w-full`}
+                        className={`${inputClass} flex w-full`}
                         placeholder="00000-000"
                       />
                     </div>
@@ -959,11 +966,11 @@ export default function ColaboradorEditDialog({
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-8 py-4">
+          <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
             <Button
               type="button"
               variant="outline"
-              className="min-w-[130px] border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              className="h-11 min-h-11 w-full border-slate-200 bg-white text-slate-600 hover:bg-slate-100 md:h-10 md:min-h-0 md:min-w-[130px] md:w-auto"
               onClick={() => handleClose(false)}
               disabled={submitting}
             >
@@ -971,7 +978,7 @@ export default function ColaboradorEditDialog({
             </Button>
             <Button
               type="submit"
-              className="min-w-[140px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+              className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:min-w-[140px] md:w-auto"
               disabled={submitting || (mode === 'edit' && loadingDetails)}
             >
               {submitting ? 'Salvando...' : mode === 'create' ? 'Criar' : 'Salvar'}

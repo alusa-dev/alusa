@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
@@ -47,7 +47,7 @@ const formaPagamentoOptions: Array<{
 ];
 
 const controlClass =
-  'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
+  'flex h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0';
 const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
 const labelClass = 'text-xs font-medium text-slate-600';
 
@@ -454,18 +454,27 @@ export function RematriculaFamiliarDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[96vw] max-w-6xl gap-0 overflow-hidden p-0">
-        <form onSubmit={handleSubmit} className="flex h-full max-h-[88vh] flex-col">
-          <div className="border-b border-slate-200 px-8 py-6">
-            <DialogTitle className="text-xl font-semibold text-slate-900">
+      <DialogContent
+        fullScreenMobile
+        data-testid="rematricula-familiar-dialog"
+        className="max-w-6xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-w-6xl md:rounded-2xl"
+      >
+        <form
+          onSubmit={handleSubmit}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0"
+        >
+          <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
+            <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+            <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
               Rematrícula familiar
             </DialogTitle>
-            <p className="mt-2 text-sm text-slate-600">
-              Selecione quais alunos vinculados a {titular.nome} serão rematriculados. O financeiro será consolidado em um novo ciclo familiar.
-            </p>
+            <DialogDescription className="mt-2 text-sm text-slate-600">
+              Selecione quais alunos vinculados a {titular.nome} serão rematriculados. O financeiro
+              será consolidado em um novo ciclo familiar.
+            </DialogDescription>
           </div>
 
-          <div className="flex-1 space-y-6 overflow-y-auto px-8 py-6">
+          <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 md:px-8 md:py-6">
             {/* Seção 1 — Titular */}
             <div className={sectionClass}>
               <div className="flex items-center gap-3">
@@ -855,11 +864,21 @@ export function RematriculaFamiliarDialog({
             </p>
           </div>
 
-          <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-8 py-4">
-            <Button type="button" variant="outline" className="bg-white shadow-none" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto"
+              onClick={() => onOpenChange(false)}
+              disabled={submitting}
+            >
               Cancelar
             </Button>
-            <Button type="submit" disabled={disabled} className="min-w-[190px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90">
+            <Button
+              type="submit"
+              disabled={disabled}
+              className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[190px]"
+            >
               {submitting ? 'Processando...' : 'Confirmar rematrícula'}
             </Button>
           </div>

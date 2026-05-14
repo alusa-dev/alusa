@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -63,26 +63,58 @@ export default function ProfessorWizardDialog({ open, onOpenChange, contaId, onS
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Cadastro de Professor" className="max-w-3xl">
+      <DialogContent
+        fullScreenMobile
+        className="max-w-3xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+      >
+        <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">
+            Cadastro de professor
+          </DialogTitle>
+          <DialogDescription className="mt-1 text-sm text-slate-600">
+            Preencha os dados em {maxStep} etapas. Use Voltar e Próximo para navegar.
+          </DialogDescription>
+        </div>
         <FormProvider {...methods}>
-          <div className="space-y-4">
-            <Progress value={pct} />
-
-            {step === 1 && <StepPessoais />}
-            {step === 2 && <StepContatoEndereco onCepFilled={async () => { /* noop */ }} />}
-            {step === 3 && <StepProfissional />}
-            {step === 4 && <StepResumo />}
-
-            <div className="flex justify-between pt-2">
-              <Button type="button" variant="outline" onClick={() => setStep(s => Math.max(1, s - 1))} disabled={step === 1}>Voltar</Button>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+            <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 max-md:min-h-0 md:px-6 md:py-5">
+              <Progress value={pct} aria-label={`Etapa ${step} de ${maxStep}`} />
+              {step === 1 && <StepPessoais />}
+              {step === 2 && <StepContatoEndereco onCepFilled={async () => { /* noop */ }} />}
+              {step === 3 && <StepProfissional />}
+              {step === 4 && <StepResumo />}
+            </div>
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-3 md:px-6 md:py-4">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 min-h-11 w-full border-slate-200 shadow-none md:h-10 md:min-h-0 md:w-auto md:min-w-[120px]"
+                onClick={() => setStep(s => Math.max(1, s - 1))}
+                disabled={step === 1}
+              >
+                Voltar
+              </Button>
               {step < maxStep ? (
-                <Button type="button" onClick={async () => {
-                  const ok = await methods.trigger();
-                  if (!ok) { toast.error("Corrija os campos para avançar"); return; }
-                  setStep(s => Math.min(maxStep, s + 1));
-                }}>Próximo</Button>
+                <Button
+                  type="button"
+                  className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
+                  onClick={async () => {
+                    const ok = await methods.trigger();
+                    if (!ok) { toast.error("Corrija os campos para avançar"); return; }
+                    setStep(s => Math.min(maxStep, s + 1));
+                  }}
+                >
+                  Próximo
+                </Button>
               ) : (
-                <Button type="button" onClick={methods.handleSubmit(onSubmitAll)}>Concluir</Button>
+                <Button
+                  type="button"
+                  className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
+                  onClick={methods.handleSubmit(onSubmitAll)}
+                >
+                  Concluir
+                </Button>
               )}
             </div>
           </div>

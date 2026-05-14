@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTurmas } from '@/features/cadastro/turmas/hooks/use-turmas';
 import { usePlanos } from '@/features/cadastro/planos/hooks/use-planos';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -130,7 +130,9 @@ function formatTurmaCapacidade(capacidade: number, vagasOcupadas: number): strin
 
 // Classes de estilo consistentes com AlunoEditDialog
 const controlClass =
-  'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
+  'flex h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0';
+const fieldTriggerClass =
+  'h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0';
 const textAreaClass =
   'w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 resize-none';
 const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
@@ -441,24 +443,28 @@ export function RematriculaDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        fullScreenMobile
         data-testid="rematricula-dialog"
-        className="w-[95vw] max-w-5xl gap-0 overflow-hidden p-0"
-        aria-describedby="rematricula-description"
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-w-5xl md:rounded-2xl"
       >
         {item && (
-          <form onSubmit={handleSubmit} className="flex h-full max-h-[85vh] flex-col">
+          <form
+            onSubmit={handleSubmit}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0"
+          >
             {/* Header */}
-            <div className="border-b border-slate-200 px-8 py-6">
-              <DialogTitle className="text-xl font-semibold text-slate-900">
+            <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+              <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
                 Rematricular aluno
               </DialogTitle>
-              <p id="rematricula-description" className="mt-2 text-sm text-slate-600">
+              <DialogDescription className="mt-2 text-sm text-slate-600">
                 Configure o novo período e as condições de pagamento para a rematrícula.
-              </p>
+              </DialogDescription>
             </div>
 
             {/* Content */}
-            <div className="flex-1 space-y-6 overflow-y-auto px-8 py-6">
+            <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 md:px-8 md:py-6">
               {/* Dados do Aluno (Read-only) */}
               <div className={sectionClass}>
                 <span className="text-sm font-semibold text-slate-700">Dados do aluno</span>
@@ -468,7 +474,7 @@ export function RematriculaDialog({
                     <Input
                       value={item.aluno.nome || ''}
                       disabled
-                      className="h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm"
+                      className="h-11 min-h-11 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm md:h-10 md:min-h-0"
                     />
                   </div>
                   <div className="space-y-1">
@@ -476,7 +482,7 @@ export function RematriculaDialog({
                     <Input
                       value={formatCpf(item.aluno.cpf)}
                       disabled
-                      className="h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm"
+                      className="h-11 min-h-11 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm md:h-10 md:min-h-0"
                     />
                   </div>
                   <div className="space-y-1">
@@ -484,7 +490,7 @@ export function RematriculaDialog({
                     <Input
                       value={`${formatDate(item.dataInicio)} — ${formatDate(item.dataFimContrato)}`}
                       disabled
-                      className="h-10 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm"
+                      className="h-11 min-h-11 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm text-slate-900 shadow-sm md:h-10 md:min-h-0"
                     />
                   </div>
                 </div>
@@ -536,7 +542,7 @@ export function RematriculaDialog({
                       onValueChange={(v) => setPlanoId(v === 'null' ? null : v)}
                       disabled={planosLoading}
                     >
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30">
+                      <SelectTrigger className={fieldTriggerClass}>
                         <SelectValue placeholder="Selecione o plano" />
                       </SelectTrigger>
                       <SelectContent>
@@ -560,7 +566,7 @@ export function RematriculaDialog({
                       onValueChange={(v) => setTurmaId(v === 'null' ? null : v)}
                       disabled={turmasLoading}
                     >
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30">
+                      <SelectTrigger className={fieldTriggerClass}>
                         {turmaSelecionada ? (
                           <div className="flex min-w-0 items-baseline gap-1.5 text-left">
                             <span className="truncate font-medium text-slate-900">
@@ -627,7 +633,7 @@ export function RematriculaDialog({
                       type="date"
                       value={dataInicio}
                       onChange={(e) => setDataInicio(e.target.value)}
-                      className={`h-10 rounded-lg border px-3 text-sm text-slate-900 shadow-sm transition focus:outline-none focus:ring-2 ${
+                      className={`h-11 min-h-11 rounded-lg border px-3 text-sm text-slate-900 shadow-sm transition focus:outline-none focus:ring-2 md:h-10 md:min-h-0 ${
                         !validacaoDatas.valido
                           ? 'border-red-300 bg-red-50 focus:border-red-500 focus:ring-red-500/30'
                           : 'border-slate-200 bg-white focus:border-[#A94DFF] focus:ring-[#A94DFF]/30'
@@ -669,7 +675,7 @@ export function RematriculaDialog({
                   <div className="space-y-1">
                     <label className={labelClass}>Forma de pagamento</label>
                     <Select value={formaPagamento} onValueChange={setFormaPagamento}>
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30">
+                      <SelectTrigger className={fieldTriggerClass}>
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
@@ -767,7 +773,7 @@ export function RematriculaDialog({
                       onValueChange={setFormaPagamentoTaxa}
                       disabled={taxaIsenta}
                     >
-                      <SelectTrigger className="h-10 w-full rounded-lg border border-slate-200 bg-white text-sm text-slate-900 shadow-sm focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 disabled:bg-slate-100 disabled:opacity-60">
+                      <SelectTrigger className={`${fieldTriggerClass} disabled:bg-slate-100 disabled:opacity-60`}>
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
@@ -876,11 +882,11 @@ export function RematriculaDialog({
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-8 py-4">
+            <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">
               <Button
                 type="button"
                 variant="outline"
-                className="min-w-[140px] border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto md:min-w-[140px]"
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
@@ -889,7 +895,7 @@ export function RematriculaDialog({
               <Button
                 type="submit"
                 disabled={disabled}
-                className="min-w-[160px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+                className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[160px]"
               >
                 {submitting ? 'Salvando...' : 'Salvar'}
               </Button>

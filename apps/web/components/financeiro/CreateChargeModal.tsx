@@ -11,6 +11,7 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -237,7 +238,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
     setValue('payerName', payer.name);
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     reset({ chargeType: defaultChargeType ?? 'ONE_TIME' });
     setStep(1);
     setSelectedPayer(null);
@@ -248,7 +249,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
     setNotificationChannelsConfigured(false);
     setNotificationDefaultsError(null);
     onOpenChange(false);
-  };
+  }, [defaultChargeType, onOpenChange, reset]);
 
   const nextStep = () => setStep((s) => Math.min(s + 1, 6));
   const prevStep = () => setStep((s) => Math.max(s - 1, 1));
@@ -442,14 +443,27 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
   const today = new Date().toISOString().split('T')[0];
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-50 p-0">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) handleClose();
+      }}
+    >
+      <DialogContent
+        fullScreenMobile
+        className="max-w-4xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+      >
         <DialogTitle className="sr-only">{labels.title}</DialogTitle>
+        <DialogDescription className="sr-only">{labels.subtitle}</DialogDescription>
 
-        <div className="relative rounded-t-2xl border-b border-slate-200 bg-slate-50 p-4 md:p-6">
+        <div className="relative border-b border-slate-200 bg-slate-50 p-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:rounded-t-2xl md:p-6">
           <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">{labels.title}</h2>
-          <p className="mt-1 text-sm text-slate-600">{labels.subtitle}</p>
+          <h2 className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0" aria-hidden>
+            {labels.title}
+          </h2>
+          <p className="mt-1 text-sm text-slate-600" aria-hidden>
+            {labels.subtitle}
+          </p>
           <div className="mt-4">
             <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
               <Progress
@@ -467,9 +481,9 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
           </div>
         </div>
 
-        <div className="flex max-h-[78vh] flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
           <div
-            className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent"
+            className="flex-1 overflow-y-auto bg-slate-50 p-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent md:p-6 max-md:min-h-0"
             style={{ scrollbarWidth: 'thin', scrollbarGutter: 'stable', scrollbarColor: '#d1d5db transparent' }}
           >
             <div className="mx-auto w-full max-w-4xl space-y-6">
@@ -502,7 +516,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                   if (e.key === 'Escape') setSearchOpen(false);
                                 }}
                                 placeholder="Buscar aluno, responsável ou CPF..."
-                                className="flex h-10 w-full rounded-md border border-gray-300 bg-white pl-10 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0 focus:border-gray-300"
+                                className="flex h-11 w-full rounded-md border border-gray-300 bg-white pl-10 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-0 focus:border-gray-300 md:h-10"
                                 aria-autocomplete="list"
                                 aria-expanded={searchOpen}
                               />
@@ -644,7 +658,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               type="text"
                               inputMode="numeric"
                               placeholder={currencyFormatter.format(0)}
-                              className="h-10"
+                              className="h-11 min-h-11 md:h-10 md:min-h-0"
                               value={value ? currencyFormatter.format(value) : ''}
                               onChange={(e) => {
                                 const cents = parseCurrencyBRLToCents(e.target.value);
@@ -664,7 +678,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               value={String(installments)}
                               onValueChange={(v) => setInstallments(Number(v))}
                             >
-                              <SelectTrigger className="h-10">
+                              <SelectTrigger className="h-11 min-h-11 w-full md:h-10 md:min-h-0">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -689,7 +703,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                             <Input
                               type="date"
                               min={today}
-                              className="h-10"
+                              className="h-11 min-h-11 md:h-10 md:min-h-0"
                               onChange={(e) => setValue('dueDate', e.target.value)}
                             />
                           </div>
@@ -704,7 +718,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               type="text"
                               inputMode="numeric"
                               placeholder={currencyFormatter.format(0)}
-                              className="h-10"
+                              className="h-11 min-h-11 md:h-10 md:min-h-0"
                               value={value ? currencyFormatter.format(value) : ''}
                               onChange={(e) => {
                                 const cents = parseCurrencyBRLToCents(e.target.value);
@@ -719,7 +733,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                           <div className="space-y-1.5">
                             <FieldLabel required>Frequência da cobrança</FieldLabel>
                             <Select onValueChange={(v) => setValue('cycle', v as ChargeFormData['cycle'])}>
-                              <SelectTrigger className="h-10">
+                              <SelectTrigger className="h-11 min-h-11 w-full md:h-10 md:min-h-0">
                                 <SelectValue placeholder="Selecione..." />
                               </SelectTrigger>
                               <SelectContent>
@@ -738,7 +752,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                             <Input
                               type="date"
                               min={today}
-                              className="h-10"
+                              className="h-11 min-h-11 md:h-10 md:min-h-0"
                               onChange={(e) => setValue('nextDueDate', e.target.value)}
                             />
                           </div>
@@ -747,7 +761,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                             <Input
                               type="date"
                               min={today}
-                              className="h-10"
+                              className="h-11 min-h-11 md:h-10 md:min-h-0"
                               onChange={(e) => setValue('endDate', e.target.value)}
                             />
                           </div>
@@ -854,7 +868,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                 type="text"
                                 inputMode="decimal"
                                 placeholder="0,00"
-                                className="h-10 pl-8 bg-white"
+                                className="h-11 min-h-11 pl-8 bg-white md:h-10 md:min-h-0"
                                 value={formatDecimalDisplay(watch('interestValue'))}
                                 onChange={(e) => {
                                   const masked = formatPercentInput(e.target.value);
@@ -873,7 +887,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                 disabled
                                 readOnly
                                 value={((baseValue * (watch('interestValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                className="h-10 pl-10 bg-gray-100 text-gray-500 font-medium"
+                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">R$</span>
                             </div>
@@ -919,7 +933,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                 type="text"
                                 inputMode="decimal"
                                 placeholder="0,00"
-                                className="h-10 pl-8"
+                                className="h-11 min-h-11 pl-8 md:h-10 md:min-h-0"
                                 value={formatDecimalDisplay(watch('fineValue'))}
                                 onChange={(e) => {
                                   const masked =
@@ -949,7 +963,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                     ? (baseValue > 0 ? ((watch('fineValue') || 0) / baseValue * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00')
                                     : ((baseValue * (watch('fineValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                 }
-                                className="h-10 pl-10 bg-gray-100 text-gray-500 font-medium"
+                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">
                                 {watch('fineType') === 'FIXED' ? '%' : 'R$'}
@@ -997,7 +1011,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                 type="text"
                                 inputMode="decimal"
                                 placeholder="0,00"
-                                className="h-10 pl-8"
+                                className="h-11 min-h-11 pl-8 md:h-10 md:min-h-0"
                                 value={formatDecimalDisplay(watch('discountValue'))}
                                 onChange={(e) => {
                                   const masked =
@@ -1027,7 +1041,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                     ? (baseValue > 0 ? ((watch('discountValue') || 0) / baseValue * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00')
                                     : ((baseValue * (watch('discountValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                 }
-                                className="h-10 pl-10 bg-gray-100 text-gray-500 font-medium"
+                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">
                                 {watch('discountType') === 'FIXED' ? '%' : 'R$'}
@@ -1041,7 +1055,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               value={String(watch('discountDueDateLimitDays') ?? 0)}
                               onValueChange={(v) => setValue('discountDueDateLimitDays', Number(v))}
                             >
-                              <SelectTrigger className="h-10">
+                              <SelectTrigger className="h-11 min-h-11 w-full md:h-10 md:min-h-0">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -1146,58 +1160,54 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
               </form>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 p-4 md:p-6">
-            <div className="flex items-center gap-3">
+          <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between md:gap-3 md:rounded-b-2xl md:p-6">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={step === 1 ? handleClose : prevStep}
+              disabled={loading}
+              className="h-11 min-h-11 w-full min-w-0 border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:min-w-[140px] md:w-auto"
+            >
+              {step === 1 ? (
+                'Cancelar'
+              ) : (
+                <>
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Voltar
+                </>
+              )}
+            </Button>
+
+            {step < 6 ? (
               <Button
                 type="button"
-                variant="outline"
-                onClick={step === 1 ? handleClose : prevStep}
-                disabled={loading}
-                className="h-10 min-w-[140px] border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100"
+                onClick={nextStep}
+                disabled={!canProceed(step)}
+                className="h-11 min-h-11 w-full min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:min-w-[160px] md:w-auto"
               >
-                {step === 1 ? (
-                  'Cancelar'
+                Próximo
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleSubmit(onSubmit)}
+                disabled={loading}
+                className="h-11 min-h-11 w-full min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:min-w-[200px] md:w-auto"
+              >
+                {loading ? (
+                  <>
+                    <Refresh className="h-4 w-4 mr-2 animate-spin" />
+                    Gerando...
+                  </>
                 ) : (
                   <>
-                    <ChevronLeft className="h-4 w-4 mr-1" />
-                    Voltar
+                    <CheckCircle className="h-4 w-4 mr-1" />
+                    Confirmar cobrança
                   </>
                 )}
               </Button>
-            </div>
-
-            <div className="flex items-center gap-3">
-              {step < 6 ? (
-                <Button
-                  type="button"
-                  onClick={nextStep}
-                  disabled={!canProceed(step)}
-                  className="h-10 min-w-[160px] bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90"
-                >
-                  Próximo
-                  <ChevronRight className="h-4 w-4 ml-1" />
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  onClick={handleSubmit(onSubmit)}
-                  disabled={loading}
-                  className="h-10 min-w-[200px] bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90"
-                >
-                  {loading ? (
-                    <>
-                      <Refresh className="h-4 w-4 mr-2 animate-spin" />
-                      Gerando...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="h-4 w-4 mr-1" />
-                      Confirmar cobrança
-                    </>
-                  )}
-                </Button>
-              )}
-            </div>
+            )}
           </div>
         </div>
       </DialogContent>

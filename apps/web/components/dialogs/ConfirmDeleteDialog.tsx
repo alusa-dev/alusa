@@ -62,10 +62,10 @@ export function ConfirmDeleteDialog({
       }}
     >
       <DialogContent
-        className="relative w-full max-w-[430px] overflow-hidden border border-slate-200/90 bg-white p-0 shadow-2xl shadow-black/10 sm:rounded-[26px]"
+        className="relative w-[calc(100vw-2rem)] max-w-[430px] gap-0 overflow-hidden rounded-[26px] border border-slate-200/90 bg-white p-0 shadow-2xl shadow-black/10 sm:w-full"
         aria-describedby={description ? descriptionId : undefined}
       >
-        <div className="space-y-6 px-7 pb-7 pt-7">
+        <div className="space-y-6 px-6 pb-6 pt-6 sm:px-7 sm:pb-7 sm:pt-7">
           {centered ? (
             <div className="flex flex-col gap-4">
               <div className="space-y-3 text-left">
@@ -105,7 +105,7 @@ export function ConfirmDeleteDialog({
             </div>
           ) : null}
         </div>
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200/90 bg-slate-50/70 px-7 py-5">
+        <div className="flex items-center justify-end gap-3 border-t border-slate-200/90 bg-slate-50/70 px-6 py-5 sm:px-7">
           <Button
             type="button"
             variant="outline"

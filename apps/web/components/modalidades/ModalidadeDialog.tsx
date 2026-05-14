@@ -33,7 +33,7 @@ interface Props {
 }
 
 const inputClass =
-  'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
+  'h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10';
 const selectTriggerClass = cn(
   inputClass,
   'flex items-center justify-between gap-2 text-left data-[placeholder]:text-slate-400',
@@ -121,14 +121,21 @@ export default function ModalidadeDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !disable && onOpenChange(next)}>
-      <DialogContent className="w-full max-w-xl overflow-hidden p-0">
-        <div className="border-b border-slate-200 px-6 py-5">
-          <DialogTitle className="text-lg font-semibold text-slate-900">{title}</DialogTitle>
-          <DialogDescription className="mt-1 text-sm text-slate-600">
+      <DialogContent
+        fullScreenMobile
+        className="w-full max-w-xl gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
+      >
+        <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-5 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
+            {title}
+          </DialogTitle>
+          <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600">
             {description}
           </DialogDescription>
         </div>
-        <div className="flex flex-col gap-6 px-6 py-6 max-h-[70vh] overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-1 flex-col gap-6 overflow-y-auto scroll-smooth px-4 py-6 max-md:min-h-0 md:px-6">
           <section className={sectionClass}>
             <header className="flex flex-col gap-1">
               <h3 className="text-sm font-semibold text-slate-800">Informações básicas</h3>
@@ -194,13 +201,13 @@ export default function ModalidadeDialog({
             </div>
           </section>
         </div>
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
           <Button
             type="button"
             variant="outline"
             disabled={disable}
             onClick={() => onOpenChange(false)}
-            className="min-w-[120px] border-slate-200 text-slate-600 hover:bg-slate-100"
+            className="h-11 min-h-11 w-full border-slate-200 text-slate-600 hover:bg-slate-100 md:h-10 md:min-h-0 md:min-w-[120px] md:w-auto"
           >
             Cancelar
           </Button>
@@ -210,10 +217,11 @@ export default function ModalidadeDialog({
             onClick={() => {
               void handleSubmit();
             }}
-            className="min-w-[136px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+            className="h-11 min-h-11 w-full bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:min-w-[136px] md:w-auto"
           >
             {submitting ? (creating ? 'Criando...' : 'Salvando...') : creating ? 'Criar' : 'Salvar'}
           </Button>
+        </div>
         </div>
       </DialogContent>
     </Dialog>

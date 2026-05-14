@@ -6,12 +6,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ImageCropper } from './ImageCropper';
 import { generateCroppedImage } from '@/lib/image';
 import type { Area } from 'react-easy-crop';
+import { cn } from '@/lib/utils';
 
 export type ImageCropDialogProps = {
   open: boolean;
@@ -86,9 +88,18 @@ export function ImageCropDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={className} aria-labelledby="image-crop-title">
+      <DialogContent
+        className={cn(
+          'w-[calc(100vw-2rem)] max-w-lg gap-4 rounded-2xl sm:w-full',
+          className,
+        )}
+        aria-labelledby="image-crop-title"
+      >
         <DialogHeader>
           <DialogTitle id="image-crop-title">{title}</DialogTitle>
+          <DialogDescription className="text-xs text-slate-600">
+            Ajuste o zoom e posicione o recorte antes de aplicar.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="relative h-72 w-full">
@@ -132,7 +143,7 @@ export function ImageCropDialog({
             />
             <span className="w-12 text-right text-[11px] text-slate-500">{zoom.toFixed(2)}x</span>
           </div>
-          <p className="text-[11px] text-slate-500 leading-snug">
+          <p className="text-[11px] leading-snug text-slate-500">
             Use imagens quadradas e bem iluminadas; o recorte será ajustado depois.
           </p>
           {error && <p className="text-xs text-red-600">{error}</p>}
@@ -151,7 +162,7 @@ export function ImageCropDialog({
             type="button"
             onClick={handleApply}
             disabled={!croppedAreaPixels || loading}
-            className="bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="bg-violet-600 text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Aplicando...' : 'Aplicar'}
           </Button>

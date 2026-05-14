@@ -1,7 +1,7 @@
 /* eslint-disable */
 'use client';
 import * as React from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { FormProvider, useForm } from 'react-hook-form';
@@ -139,7 +139,6 @@ export default function ColaboradorWizardDialog({
       const name = String(n) as keyof ColaboradorInput & string;
       methods.register(name);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Foto local (preview)
@@ -387,135 +386,135 @@ export default function ColaboradorWizardDialog({
   return (
     <Dialog open={open} onOpenChange={requestClose}>
       <DialogContent
-        title="Cadastrar colaborador"
-        className="max-w-5xl w-full overflow-x-hidden"
+        fullScreenMobile
+        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0"
         data-testid="colaborador-wizard"
       >
-        {/* Cabeçalho do modal */}
-        <div className="mb-2">
-          <DialogTitle className="text-xl md:text-2xl font-medium tracking-tight">
+        <div className="relative border-b border-slate-200 bg-slate-50 p-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:p-6">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0">
             Cadastrar colaborador
           </DialogTitle>
+          <DialogDescription className="mt-1 max-w-2xl text-sm text-slate-600">
+            Preencha os dados do colaborador em etapas.
+          </DialogDescription>
+          <div className="mt-4 space-y-2">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
+              <Progress
+                value={((activeIndex + 1) / steps.length) * 100}
+                className="h-2 bg-transparent [&>div]:bg-gradient-to-r [&>div]:from-brand-accent [&>div]:to-brand-accent/70"
+                aria-label="Progresso do cadastro"
+              />
+            </div>
+            <div className="text-xs font-medium text-slate-600" aria-live="polite">
+              Etapa {activeIndex + 1} de {steps.length}
+            </div>
+          </div>
         </div>
         <FormProvider {...methods}>
-          <div className="flex max-h-[78vh] flex-col overflow-x-hidden">
-            {/* Top (progress + header) */}
-            <div className="space-y-4 pt-1 pb-3">
-              <div className="rounded-full bg-slate-200">
-                <Progress value={((activeIndex + 1) / steps.length) * 100} className="h-2" />
-              </div>
-              <div className="flex flex-wrap items-center justify-start gap-2 text-xs">
-                <span className="font-medium text-slate-600">
-                  Etapa {activeIndex + 1} de {steps.length}
-                </span>
-              </div>
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeStep}
-                  initial={{ opacity: 0, x: 12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -12 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="space-y-6 pb-8 w-full overflow-x-hidden"
-                >
-                  {activeStep === 'identificacao' && (
-                    <SectionCard>
-                      <StepHeader title="Identificação" />
-                      <IdentificacaoFields />
-                    </SectionCard>
-                  )}
-                  {activeStep === 'endereco' && (
-                    <SectionCard>
-                      <StepHeader title="Endereço" />
-                      <EnderecoFields />
-                    </SectionCard>
-                  )}
-                  {activeStep === 'vinculo' && (
-                    <SectionCard>
-                      <StepHeader
-                        title="Vínculo"
-                        hint="Informações de contratação e observações."
-                      />
-                      <VinculoFields />
-                    </SectionCard>
-                  )}
-                  {activeStep === 'foto' && (
-                    <SectionCard>
-                      <StepHeader
-                        title="Foto do colaborador"
-                        hint="Opcional — ajuda na rápida identificação em listas e acessos."
-                      />
-                      <FotoFields
-                        getRootProps={getRootProps}
-                        getInputProps={getInputProps}
-                        isDragActive={isDragActive}
-                        fotoPreview={fotoPreview}
-                        onRemove={() => setFotoFile(null)}
-                        onOpenCrop={() => setCropOpen(true)}
-                      />
-                    </SectionCard>
-                  )}
-                  {activeStep === 'confirmar' && (
-                    <SectionCard>
-                      <div data-testid="wizard-confirmar">
+          <div className="flex max-h-[78vh] min-h-0 flex-col overflow-x-hidden max-md:max-h-none max-md:flex-1">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth bg-slate-50 p-4 max-md:min-h-0 md:p-6">
+              <div className="mx-auto w-full max-w-5xl">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={activeStep}
+                    initial={{ opacity: 0, x: 12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -12 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    className="w-full space-y-6 overflow-x-hidden"
+                  >
+                    {activeStep === 'identificacao' && (
+                      <SectionCard>
+                        <StepHeader title="Identificação" />
+                        <IdentificacaoFields />
+                      </SectionCard>
+                    )}
+                    {activeStep === 'endereco' && (
+                      <SectionCard>
+                        <StepHeader title="Endereço" />
+                        <EnderecoFields />
+                      </SectionCard>
+                    )}
+                    {activeStep === 'vinculo' && (
+                      <SectionCard>
                         <StepHeader
-                          title="Confirmar dados"
-                          hint="Revise cuidadosamente antes de concluir."
+                          title="Vínculo"
+                          hint="Informações de contratação e observações."
                         />
-                        <ConfirmacaoSection />
-                      </div>
-                    </SectionCard>
-                  )}
-                </motion.div>
-              </AnimatePresence>
+                        <VinculoFields />
+                      </SectionCard>
+                    )}
+                    {activeStep === 'foto' && (
+                      <SectionCard>
+                        <StepHeader
+                          title="Foto do colaborador"
+                          hint="Opcional — ajuda na rápida identificação em listas e acessos."
+                        />
+                        <FotoFields
+                          getRootProps={getRootProps}
+                          getInputProps={getInputProps}
+                          isDragActive={isDragActive}
+                          fotoPreview={fotoPreview}
+                          onRemove={() => setFotoFile(null)}
+                          onOpenCrop={() => setCropOpen(true)}
+                        />
+                      </SectionCard>
+                    )}
+                    {activeStep === 'confirmar' && (
+                      <SectionCard>
+                        <div data-testid="wizard-confirmar">
+                          <StepHeader
+                            title="Confirmar dados"
+                            hint="Revise cuidadosamente antes de concluir."
+                          />
+                          <ConfirmacaoSection />
+                        </div>
+                      </SectionCard>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </div>
 
-            {/* Sticky footer */}
-            <div className="sticky bottom-0 mt-auto flex items-center justify-between gap-4 border-t bg-white/90 px-0 py-3 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-              <div className="px-6 flex w-full items-center justify-end gap-3">
+            <div className="sticky bottom-0 flex shrink-0 flex-col-reverse items-stretch gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-end md:gap-3 md:p-6">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={goPrev}
+                disabled={!canGoPrev() || submitting}
+                className="h-11 min-h-11 min-w-0 border-slate-200 bg-white px-4 text-slate-600 shadow-none hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/50 md:h-10 md:min-h-0 md:min-w-[140px]"
+                data-testid="wizard-prev"
+              >
+                Etapa Anterior
+              </Button>
+              {activeStep !== 'confirmar' ? (
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={goPrev}
-                  disabled={!canGoPrev() || submitting}
-                  className="h-10 px-4 border border-gray-300 text-slate-700 bg-white hover:bg-gray-50 shadow-none"
-                  data-testid="wizard-prev"
+                  onClick={goNext}
+                  disabled={submitting}
+                  className="h-11 min-h-11 min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-brand-accent/60 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 md:h-10 md:min-h-0 md:min-w-[160px]"
+                  data-testid="wizard-next"
                 >
-                  Etapa Anterior
+                  Próxima Etapa
                 </Button>
-                {activeStep !== 'confirmar' ? (
-                  <Button
-                    type="button"
-                    onClick={goNext}
-                    disabled={submitting}
-                    className="h-10 px-4 bg-violet-600 text-white hover:bg-violet-700 shadow-none"
-                    data-testid="wizard-next"
-                  >
-                    Próxima Etapa
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    onClick={submitAll}
-                    disabled={submitting}
-                    className="h-10 px-4 bg-violet-600 text-white hover:bg-violet-700 shadow-none"
-                    data-testid="wizard-submit"
-                  >
-                    {submitting ? 'Salvando...' : 'Concluir'}
-                  </Button>
-                )}
-              </div>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={submitAll}
+                  disabled={submitting}
+                  className="h-11 min-h-11 min-w-0 bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 focus-visible:ring-2 focus-visible:ring-brand-accent/60 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60 md:h-10 md:min-h-0 md:min-w-[160px]"
+                  data-testid="wizard-submit"
+                >
+                  {submitting ? 'Salvando...' : 'Concluir'}
+                </Button>
+              )}
             </div>
           </div>
         </FormProvider>
 
-        {/* Modal interno de confirmação */}
         {confirmClose && (
-          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 backdrop-blur-sm">
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/65 p-4 backdrop-blur-sm max-md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] max-md:pt-[calc(1rem+env(safe-area-inset-top,0px))]">
             <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl ring-1 ring-black/5 animate-in fade-in-0 zoom-in-95">
               <h4 className="text-sm font-semibold text-slate-800">Descartar cadastro?</h4>
               <p className="mt-2 text-xs text-slate-600 leading-relaxed">
@@ -527,14 +526,14 @@ export default function ColaboradorWizardDialog({
                   type="button"
                   variant="outline"
                   autoFocus
-                  className="border-slate-300 text-slate-700 hover:bg-slate-50"
+                  className="border-slate-300 text-slate-700 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-brand-accent/40"
                   onClick={() => setConfirmClose(false)}
                 >
                   Continuar preenchendo
                 </Button>
                 <Button
                   type="button"
-                  className="bg-red-600 text-white hover:bg-red-700"
+                  className="bg-red-600 text-white hover:bg-red-700 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-red-500/60"
                   onClick={() => {
                     setConfirmClose(false);
                     onOpenChange(false);

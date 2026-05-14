@@ -291,14 +291,30 @@ export function MatriculaWizardFlow({
       className={
         variant === 'page'
           ? 'flex w-full flex-col rounded-2xl border border-slate-200 bg-slate-50 shadow-sm'
-          : 'flex flex-col rounded-2xl bg-slate-50'
+          : 'flex min-h-0 flex-1 flex-col bg-slate-50'
       }
       data-testid="matricula-wizard-flow"
     >
-      <div className="relative rounded-t-2xl border-b border-slate-200 bg-slate-50 p-4 md:p-6">
+      <div
+        className={
+          variant === 'dialog'
+            ? 'relative border-b border-slate-200 bg-slate-50 p-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:rounded-t-2xl md:p-6'
+            : 'relative rounded-t-2xl border-b border-slate-200 bg-slate-50 p-4 md:p-6'
+        }
+      >
         <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">Cadastrar matrícula</h2>
-        <p className="mt-1 text-sm text-slate-600">Preencha os dados da matrícula em etapas.</p>
+        <h2
+          className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0"
+          aria-hidden={variant === 'dialog' ? true : undefined}
+        >
+          Cadastrar matrícula
+        </h2>
+        <p
+          className="mt-1 max-w-2xl text-sm text-slate-600"
+          aria-hidden={variant === 'dialog' ? true : undefined}
+        >
+          Preencha os dados da matrícula em etapas.
+        </p>
         <div className="mt-4">
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-inset ring-slate-200/50">
             <Progress
@@ -319,33 +335,44 @@ export function MatriculaWizardFlow({
       <div
         className={
           variant === 'dialog'
-            ? 'flex max-h-[78vh] flex-col'
+            ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
             : 'flex flex-col'
         }
       >
-        <div 
-          className="flex-1 overflow-y-auto bg-slate-50 p-4 md:p-6 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent" 
+        <div
+          className={`flex-1 overflow-y-auto bg-slate-50 p-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent md:p-6 max-md:min-h-0 ${variant === 'dialog' ? 'scroll-smooth' : ''}`}
           style={{ scrollbarWidth: 'thin', scrollbarGutter: 'stable', scrollbarColor: '#d1d5db transparent' }}
         >
           <div className="mx-auto w-full max-w-5xl space-y-6" id="wizard-step-content">
             {renderStep(wizard)}
           </div>
         </div>
-        <div className="flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 p-4 md:p-6">
-          {/* Área esquerda para botões extras (ex: Cadastrar aluno) */}
-          <div className="flex items-center gap-3" id="wizard-left-actions">
-            {/* Conteúdo injetado pelo step, se houver */}
-          </div>
-
-          {/* Área direita para navegação */}
-          <div className="flex items-center gap-3">
+        <div
+          className={
+            variant === 'dialog'
+              ? 'flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 p-4 md:flex-row md:items-center md:justify-between md:gap-3 md:p-6'
+              : 'flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 p-4 md:p-6'
+          }
+        >
+          <div className="flex max-md:w-full items-center gap-3 md:w-auto" id="wizard-left-actions" />
+          <div
+            className={
+              variant === 'dialog'
+                ? 'flex w-full flex-col-reverse gap-3 sm:flex-row sm:justify-end md:w-auto'
+                : 'flex items-center gap-3'
+            }
+          >
             {wizard.step !== 'modo' && (
               <Button
                 type="button"
                 variant="outline"
                 data-testid="wizard-back"
                 onClick={handleBack}
-                className="h-10 min-w-[140px] border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100"
+                className={
+                  variant === 'dialog'
+                    ? 'h-11 min-h-11 w-full border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100 sm:w-auto md:h-10 md:min-h-0'
+                    : 'h-10 min-w-[140px] border-slate-200 bg-white text-slate-600 shadow-none hover:bg-slate-100'
+                }
               >
                 Voltar
               </Button>
@@ -353,7 +380,11 @@ export function MatriculaWizardFlow({
             <Button
               type="button"
               data-testid="wizard-next"
-              className="h-10 min-w-[160px] bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90"
+              className={
+                variant === 'dialog'
+                  ? 'h-11 min-h-11 w-full bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90 sm:w-auto md:h-10 md:min-h-0 md:min-w-[160px]'
+                  : 'h-10 min-w-[160px] bg-brand-accent px-5 text-white shadow-none hover:bg-brand-accent/90'
+              }
               disabled={!canAdvance || isSubmitting}
               onClick={handleNext}
             >

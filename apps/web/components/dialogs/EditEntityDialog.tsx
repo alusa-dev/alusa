@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 
@@ -103,16 +103,25 @@ export function EditEntityDialog<TPayload = unknown>({
         if (!o && !saving) onOpenChange(false);
       }}
     >
-      <DialogContent className="w-full max-w-[520px] gap-0 overflow-hidden p-0">
-        <div className="border-b border-slate-200 px-6 py-5">
-          <DialogTitle className="text-lg font-semibold text-slate-900">{title}</DialogTitle>
-          {description && (
-            <p className="mt-1 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
+      <DialogContent
+        fullScreenMobile
+        className="w-full max-w-[520px] gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+      >
+        <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5">
+          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
+          <DialogTitle className="pr-2 text-lg font-semibold text-slate-900 md:pr-0">{title}</DialogTitle>
+          {description ? (
+            <DialogDescription className="mt-1 text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
               {description}
-            </p>
+            </DialogDescription>
+          ) : (
+            <DialogDescription className="sr-only">
+              Formulário de edição. Revise os campos e salve para aplicar as alterações.
+            </DialogDescription>
           )}
         </div>
-        <div className="px-6 py-6">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+          <div className="flex-1 overflow-y-auto px-4 py-6 max-md:min-h-0 md:px-6">
           <div className="grid gap-4 md:grid-cols-2">
             {fields.map((f) => (
               <div
@@ -147,7 +156,7 @@ export function EditEntityDialog<TPayload = unknown>({
                     onChange={(e) => updateField(f.name, e.target.value)}
                     disabled={f.disabled}
                     className={cn(
-                      'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30',
+                      'h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0',
                       f.disabled &&
                         'bg-slate-100 text-slate-500 cursor-not-allowed focus:border-slate-200 focus:ring-0',
                     )}
@@ -168,7 +177,7 @@ export function EditEntityDialog<TPayload = unknown>({
                     readOnly={f.readOnly}
                     disabled={f.disabled}
                     className={cn(
-                      'h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30',
+                      'h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0',
                       (f.readOnly || f.disabled) &&
                         'bg-slate-100 text-slate-500 cursor-not-allowed focus:border-slate-200 focus:ring-0',
                     )}
@@ -183,13 +192,13 @@ export function EditEntityDialog<TPayload = unknown>({
             ))}
           </div>
         </div>
-        <div className="flex items-center justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-6 md:py-4">
           <Button
             type="button"
             variant="outline"
             disabled={saving}
             onClick={() => !saving && onOpenChange(false)}
-            className="min-w-[120px] border-slate-200 text-slate-600 hover:bg-slate-100"
+            className="h-11 min-h-11 w-full min-w-0 border-slate-200 text-slate-600 shadow-none hover:bg-slate-100 md:h-10 md:min-h-0 md:w-auto md:min-w-[120px]"
           >
             {cancelLabel}
           </Button>
@@ -199,11 +208,12 @@ export function EditEntityDialog<TPayload = unknown>({
             onClick={() => {
               void handleSubmit();
             }}
-            className="min-w-[132px] bg-brand-accent text-white shadow-none hover:bg-brand-accent/90"
+            className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[132px]"
           >
             {saving ? savingLabel : confirmLabel}
           </Button>
         </div>
+      </div>
       </DialogContent>
     </Dialog>
   );
