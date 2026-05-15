@@ -1,5 +1,4 @@
 import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { NextResponse } from 'next/server';
 
 import {
@@ -20,6 +19,15 @@ export type GlobalAdminSession = {
     | 'SUPPORT_DEVELOPER'
     | 'SUPPORT_ADMIN'
     | 'BREAK_GLASS';
+};
+
+/** Sessão fixa para a central `/developer` sem login por palavra-passe (acesso ao URL = acesso à consola). */
+const SUPPORT_CONSOLE_OPEN_SESSION: GlobalAdminSession = {
+  username: 'central',
+  issuedAt: new Date(0).toISOString(),
+  expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toISOString(),
+  supportUserId: null,
+  role: 'SUPPORT_ADMIN',
 };
 
 function buildSessionFromPayload(payload: {
@@ -45,30 +53,12 @@ export async function getGlobalAdminSession(): Promise<GlobalAdminSession | null
   return buildSessionFromPayload(payload);
 }
 
-export async function requireGlobalAdminSessionForPage(callbackUrl: string) {
-  const session = await getGlobalAdminSession();
-  if (!session) {
-    const loginUrl = new URL('/developer/login', 'http://localhost');
-    loginUrl.searchParams.set('callbackUrl', callbackUrl);
-    redirect(loginUrl.pathname + loginUrl.search);
-  }
-  return session;
+export async function requireGlobalAdminSessionForPage(_callbackUrl: string) {
+  return SUPPORT_CONSOLE_OPEN_SESSION;
 }
 
 export async function requireGlobalAdminSessionForApi() {
-  const session = await getGlobalAdminSession();
-
-  if (!session) {
-    return {
-      ok: false as const,
-      response: NextResponse.json(
-        { success: false, error: 'Não autorizado' },
-        { status: 401, headers: { 'cache-control': 'no-store' } },
-      ),
-    };
-  }
-
-  return { ok: true as const, session };
+  return { ok: true as const, session: SUPPORT_CONSOLE_OPEN_SESSION };
 }
 
 export async function attachGlobalAdminSession(

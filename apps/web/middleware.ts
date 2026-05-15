@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
-import {
-  GLOBAL_ADMIN_SESSION_COOKIE,
-  verifyGlobalAdminSessionToken,
-} from '@/features/global-admin/auth/session';
 import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
@@ -72,25 +68,8 @@ export default async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (pathname === '/developer' || pathname.startsWith('/developer/')) {
-    const developerLoginUrl = new URL('/developer/login', req.nextUrl.origin);
-    const token = req.cookies.get(GLOBAL_ADMIN_SESSION_COOKIE)?.value ?? null;
-    const session = await verifyGlobalAdminSessionToken(token);
-    const isDeveloperLogin = pathname === '/developer/login';
-
-    if (isDeveloperLogin) {
-      if (session) {
-        return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
-      }
-
-      return NextResponse.next();
-    }
-
-    if (!session) {
-      developerLoginUrl.searchParams.set(
-        'callbackUrl',
-        `${req.nextUrl.pathname}${req.nextUrl.search}`,
-      );
-      return NextResponse.redirect(developerLoginUrl);
+    if (pathname === '/developer/login') {
+      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
     }
 
     if (

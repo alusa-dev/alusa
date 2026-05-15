@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 
 import { Icon, type IconName } from '@/components/icons/Icon';
 import type { GlobalAdminSession } from '@/features/global-admin/auth/session.server';
-import { SupportLogoutButton } from './SupportLogoutButton';
 
 const navigation: Array<{ href: string; label: string; icon: IconName }> = [
   { href: '/developer', label: 'Buscar', icon: 'Search' },
@@ -82,12 +81,9 @@ export function SupportShell({
                 Diagnóstico e atendimento interno
               </h1>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="hidden text-right sm:block">
-                <p className="text-sm font-medium">{session.username}</p>
-                <p className="text-xs text-slate-500">{session.role}</p>
-              </div>
-              <SupportLogoutButton />
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-medium">{session.username}</p>
+              <p className="text-xs text-slate-500">{session.role}</p>
             </div>
           </div>
           <nav className="flex gap-2 overflow-x-auto px-4 pb-3 sm:px-6 lg:hidden">
