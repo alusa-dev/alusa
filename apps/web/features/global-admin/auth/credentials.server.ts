@@ -10,6 +10,14 @@ function compareSensitiveText(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
+/** Mesmo comprimento em UTF-8 após normalização; comparação em tempo constante. */
+function compareUsernameInsensitive(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left.trim().toLowerCase(), 'utf8');
+  const rightBuffer = Buffer.from(right.trim().toLowerCase(), 'utf8');
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
 export function getGlobalAdminAuthConfig() {
   return globalAdminEnvSchema.parse({
     username: process.env.GLOBAL_ADMIN_USERNAME,
@@ -21,7 +29,7 @@ export function getGlobalAdminAuthConfig() {
 export function validateGlobalAdminCredentials(input: { username: string; password: string }): boolean {
   const config = getGlobalAdminAuthConfig();
   return (
-    compareSensitiveText(input.username, config.username) &&
+    compareUsernameInsensitive(input.username, config.username) &&
     compareSensitiveText(input.password, config.password)
   );
 }

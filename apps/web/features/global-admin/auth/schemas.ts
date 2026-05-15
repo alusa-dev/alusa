@@ -25,6 +25,10 @@ export const globalAdminSessionPayloadSchema = z.object({
 
 export const globalAdminEnvSchema = z.object({
   username: z.string().trim().min(1),
-  password: z.string().min(1),
+  /** Evita falhas de login quando o segredo foi colado na Vercel com newline ou espaços à volta. */
+  password: z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim() : value),
+    z.string().min(1),
+  ),
   sessionSecret: z.string().min(16),
 });
