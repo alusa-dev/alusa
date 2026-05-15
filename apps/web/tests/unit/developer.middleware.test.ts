@@ -24,14 +24,24 @@ describe('developer middleware', () => {
     expect(res.headers.get('location')).toContain('/developer/login');
   });
 
-  it('redireciona /developer para /developer/dashboard com sessão válida', async () => {
+  it('permite /developer com sessão válida', async () => {
     const token = await createGlobalAdminSessionToken('alusa');
     const req = new NextRequest('http://localhost:3000/developer', {
       headers: { cookie: `alusa.global_admin.session=${token}` },
     });
 
     const res = await middleware(req);
-    expect(res.headers.get('location')).toBe('http://localhost:3000/developer/dashboard');
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('redireciona rotas antigas do console para a nova central com sessão válida', async () => {
+    const token = await createGlobalAdminSessionToken('alusa');
+    const req = new NextRequest('http://localhost:3000/developer/dashboard', {
+      headers: { cookie: `alusa.global_admin.session=${token}` },
+    });
+
+    const res = await middleware(req);
+    expect(res.headers.get('location')).toBe('http://localhost:3000/developer');
   });
 
   it('permite /developer/login sem sessão', async () => {
@@ -39,5 +49,15 @@ describe('developer middleware', () => {
     const res = await middleware(req);
 
     expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('redireciona /developer/login para a central quando já existe sessão', async () => {
+    const token = await createGlobalAdminSessionToken('alusa');
+    const req = new NextRequest('http://localhost:3000/developer/login', {
+      headers: { cookie: `alusa.global_admin.session=${token}` },
+    });
+
+    const res = await middleware(req);
+    expect(res.headers.get('location')).toBe('http://localhost:3000/developer');
   });
 });

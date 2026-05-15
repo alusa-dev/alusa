@@ -11,6 +11,16 @@ type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
 
 const isTest = process.env.TEST_ROUTES_ENABLED === 'true';
+const legacyDeveloperPaths = [
+  '/developer/dashboard',
+  '/developer/search',
+  '/developer/requests',
+  '/developer/users',
+  '/developer/tenants',
+  '/developer/problems',
+  '/developer/actions',
+  '/developer/errors',
+];
 
 function clearAuthSessionCookies(response: NextResponse) {
   const cookieNames = [
@@ -27,7 +37,9 @@ function clearAuthSessionCookies(response: NextResponse) {
   }
 }
 
-async function verifyAccountAccess(req: NextRequest): Promise<{ blocked: false } | { blocked: true; reason?: string }> {
+async function verifyAccountAccess(
+  req: NextRequest,
+): Promise<{ blocked: false } | { blocked: true; reason?: string }> {
   try {
     const accessUrl = new URL('/api/auth/account-access', req.nextUrl.origin);
     const response = await fetch(accessUrl, {
@@ -61,22 +73,32 @@ export default async function middleware(req: NextRequest) {
 
   if (pathname === '/developer' || pathname.startsWith('/developer/')) {
     const developerLoginUrl = new URL('/developer/login', req.nextUrl.origin);
-    const developerDashboardUrl = new URL('/developer/dashboard', req.nextUrl.origin);
     const token = req.cookies.get(GLOBAL_ADMIN_SESSION_COOKIE)?.value ?? null;
     const session = await verifyGlobalAdminSessionToken(token);
     const isDeveloperLogin = pathname === '/developer/login';
 
-    if (!session && !isDeveloperLogin) {
-      developerLoginUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
+    if (isDeveloperLogin) {
+      if (session) {
+        return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
+      }
+
+      return NextResponse.next();
+    }
+
+    if (!session) {
+      developerLoginUrl.searchParams.set(
+        'callbackUrl',
+        `${req.nextUrl.pathname}${req.nextUrl.search}`,
+      );
       return NextResponse.redirect(developerLoginUrl);
     }
 
-    if (session && (pathname === '/developer' || isDeveloperLogin)) {
-      return NextResponse.redirect(developerDashboardUrl);
-    }
-
-    if (!session && isDeveloperLogin) {
-      return NextResponse.next();
+    if (
+      legacyDeveloperPaths.some(
+        (legacyPath) => pathname === legacyPath || pathname.startsWith(`${legacyPath}/`),
+      )
+    ) {
+      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
     }
 
     return NextResponse.next();
@@ -119,7 +141,8 @@ export default async function middleware(req: NextRequest) {
   }
 
   // Rotas do onboarding financeiro: não redirecionar para evitar loop
-  const financeIntegrationMode = (token as { financeIntegrationMode?: string } | null)?.financeIntegrationMode;
+  const financeIntegrationMode = (token as { financeIntegrationMode?: string } | null)
+    ?.financeIntegrationMode;
   const isExternalFinanceMode = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
   const externalOnboardingPath = '/finance/external-onboarding';
   const isWizardPath = pathname === '/finance/wizard' || pathname.startsWith('/finance/wizard/');
@@ -138,7 +161,7 @@ export default async function middleware(req: NextRequest) {
   // Apenas verificar onboarding para ADMIN
   const userRole = (token as { role?: string } | null)?.role;
   const isAdmin = typeof userRole === 'string' && userRole.toUpperCase() === 'ADMIN';
-  
+
   if (!isAdmin) {
     return NextResponse.next();
   }
@@ -178,7 +201,7 @@ export default async function middleware(req: NextRequest) {
   return NextResponse.next();
 }
 
-export const config = { 
+export const config = {
   matcher: [
     '/developer',
     '/developer/:path*',
@@ -190,7 +213,7 @@ export const config = {
     '/conta/:path*',
     '/modalidades/:path*',
     '/planos/:path*',
-    '/professores/:path*', 
+    '/professores/:path*',
     '/matriculas/:path*',
     '/antecipacoes/:path*',
     '/dashboard/:path*',
@@ -198,6 +221,6 @@ export const config = {
     '/vendas/:path*',
     '/finance/wizard/:path*',
     '/financeiro/:path*',
-    '/finance/:path*'
-  ] 
+    '/finance/:path*',
+  ],
 };

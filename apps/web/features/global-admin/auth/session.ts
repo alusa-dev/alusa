@@ -16,8 +16,15 @@ async function getSessionSecretKey() {
   return new TextEncoder().encode(secret);
 }
 
-export async function createGlobalAdminSessionToken(username: string) {
-  return new SignJWT({ scope: 'GLOBAL_ADMIN' })
+export async function createGlobalAdminSessionToken(
+  username: string,
+  input: { supportUserId?: string | null; role?: string | null } = {},
+) {
+  return new SignJWT({
+    scope: 'GLOBAL_ADMIN',
+    supportUserId: input.supportUserId ?? undefined,
+    role: input.role ?? undefined,
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(username)
     .setIssuedAt()

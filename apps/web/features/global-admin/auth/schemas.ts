@@ -8,6 +8,17 @@ export const globalAdminLoginRequestDTOSchema = z.object({
 export const globalAdminSessionPayloadSchema = z.object({
   sub: z.string().min(1),
   scope: z.literal('GLOBAL_ADMIN'),
+  supportUserId: z.string().optional(),
+  role: z
+    .enum([
+      'SUPPORT_VIEWER',
+      'SUPPORT_AGENT',
+      'SUPPORT_FINANCE',
+      'SUPPORT_DEVELOPER',
+      'SUPPORT_ADMIN',
+      'BREAK_GLASS',
+    ])
+    .optional(),
   iat: z.number().int().optional(),
   exp: z.number().int().optional(),
 });
@@ -16,13 +27,4 @@ export const globalAdminEnvSchema = z.object({
   username: z.string().trim().min(1),
   password: z.string().min(1),
   sessionSecret: z.string().min(16),
-});
-
-export const globalAdminAuditFilterSchema = z.object({
-  tenantId: z.string().trim().optional(),
-  action: z.string().trim().optional(),
-  status: z.enum(['SUCCESS', 'ERROR']).optional(),
-  actorIdentifier: z.string().trim().optional(),
-  search: z.string().trim().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
 });

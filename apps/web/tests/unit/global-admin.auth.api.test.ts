@@ -2,7 +2,24 @@
  * @vitest-environment node
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/features/support/auth/support-users.server', () => ({
+  authenticateSupportUser: vi.fn(async ({ username, password }: { username: string; password: string }) =>
+    username === 'test-admin' && password === 'test-password'
+      ? {
+          id: 'support-user-1',
+          username,
+          email: 'admin@alusa.test',
+          role: 'SUPPORT_ADMIN',
+        }
+      : null,
+  ),
+}));
+
+vi.mock('@/features/support/audit/support-audit.server', () => ({
+  recordSupportAudit: vi.fn(async () => ({ id: 'audit-1' })),
+}));
 
 import { POST as loginPost } from '@/app/api/global-admin/auth/login/route';
 import { POST as logoutPost } from '@/app/api/global-admin/auth/logout/route';

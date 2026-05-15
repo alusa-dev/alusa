@@ -5,7 +5,7 @@ import { getGlobalAdminSession } from '@/features/global-admin/auth/session.serv
 
 export default async function DeveloperLoginPage() {
   const session = await getGlobalAdminSession();
-  if (session) redirect('/developer/dashboard');
+  if (session) redirect('/developer');
 
   return <DeveloperLoginClient />;
 }

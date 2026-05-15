@@ -4,19 +4,22 @@ import { globalAdminLoginRequestDTOSchema } from './schemas';
 
 export { globalAdminLoginRequestDTOSchema };
 
-export type GlobalAdminLoginRequestDTO = z.infer<typeof globalAdminLoginRequestDTOSchema>;
-
 export const globalAdminSessionDTOSchema = z.object({
   username: z.string(),
   issuedAt: z.string(),
   expiresAt: z.string(),
+  supportUserId: z.string().nullable().optional(),
+  role: z.enum([
+    'SUPPORT_VIEWER',
+    'SUPPORT_AGENT',
+    'SUPPORT_FINANCE',
+    'SUPPORT_DEVELOPER',
+    'SUPPORT_ADMIN',
+    'BREAK_GLASS',
+  ]),
 });
-
-export type GlobalAdminSessionDTO = z.infer<typeof globalAdminSessionDTOSchema>;
 
 export const globalAdminLoginResponseDTOSchema = z.object({
   success: z.literal(true),
   user: globalAdminSessionDTOSchema,
 });
-
-export type GlobalAdminLoginResponseDTO = z.infer<typeof globalAdminLoginResponseDTOSchema>;

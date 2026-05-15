@@ -22,6 +22,35 @@ enum AuthActionTokenType {
   RESET_PASSWORD
 }
 
+enum SupportRole {
+  SUPPORT_VIEWER
+  SUPPORT_AGENT
+  SUPPORT_FINANCE
+  SUPPORT_DEVELOPER
+  SUPPORT_ADMIN
+  BREAK_GLASS
+}
+
+enum SupportUserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum SupportCaseStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  RESOLVED
+  CLOSED
+}
+
+enum SupportCasePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 // Formas de pagamento compatíveis com Asaas billingType
 // Referência: https://docs.asaas.com/reference/criar-nova-cobranca
 // Apenas 4 tipos suportados pelo Asaas em pagamentos básicos
@@ -2964,6 +2993,90 @@ model AuditLog {
   @@index([contaId, entityType, entityId], name: "idx_audit_log_entity")
   @@index([action])
   @@index([entityType, entityId])
+  @@index([correlationId])
+  @@index([createdAt])
+}
+
+model SupportUser {
+  id                  String            @id @default(cuid())
+  username            String            @unique
+  email               String?           @unique
+  passwordHash        String
+  role                SupportRole       @default(SUPPORT_VIEWER)
+  status              SupportUserStatus @default(ACTIVE)
+  breakGlassExpiresAt DateTime?
+  lastLoginAt         DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@index([role, status])
+  @@index([status])
+  @@index([breakGlassExpiresAt])
+}
+
+model SupportCase {
+  id             String              @id @default(cuid())
+  contaId        String
+  title          String
+  description    String?
+  status         SupportCaseStatus   @default(OPEN)
+  priority       SupportCasePriority @default(MEDIUM)
+  entityType     String?
+  entityId       String?
+  openedById     String?
+  openedByName   String?
+  assignedToId   String?
+  assignedToName String?
+  closedAt       DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([contaId, status, updatedAt])
+  @@index([contaId, entityType, entityId])
+  @@index([status, priority, updatedAt])
+  @@index([assignedToId, status])
+}
+
+model SupportNote {
+  id         String       @id @default(cuid())
+  contaId    String
+  caseId     String?
+  entityType String
+  entityId   String
+  body       String
+  authorId   String?
+  authorName String?
+  authorRole SupportRole?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([contaId, createdAt])
+  @@index([contaId, entityType, entityId, createdAt])
+  @@index([caseId, createdAt])
+}
+
+model SupportAuditLog {
+  id            String       @id @default(cuid())
+  actorId       String?
+  actorUsername String?
+  actorRole     SupportRole?
+  contaId       String?
+  entityType    String?
+  entityId      String?
+  action        String
+  reason        String?
+  ip            String?
+  userAgent     String?
+  correlationId String?
+  before        Json?
+  after         Json?
+  metadata      Json?
+  createdAt     DateTime     @default(now())
+
+  @@index([contaId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([entityType, entityId, createdAt])
   @@index([correlationId])
   @@index([createdAt])
 }

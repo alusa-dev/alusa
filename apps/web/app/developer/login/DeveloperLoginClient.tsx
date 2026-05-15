@@ -12,9 +12,10 @@ export default function DeveloperLoginClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl =
-    searchParams.get('callbackUrl')?.startsWith('/developer')
+    searchParams.get('callbackUrl')?.startsWith('/developer') &&
+    searchParams.get('callbackUrl') !== '/developer/login'
       ? (searchParams.get('callbackUrl') as string)
-      : '/developer/dashboard';
+      : '/developer';
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -33,9 +34,10 @@ export default function DeveloperLoginClient() {
         body: JSON.stringify({ username, password }),
       });
 
-      const json = (await response.json().catch(() => null)) as
-        | { success?: boolean; error?: string }
-        | null;
+      const json = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        error?: string;
+      } | null;
 
       if (!response.ok || !json?.success) {
         throw new Error(json?.error ?? 'Falha ao autenticar');
@@ -61,20 +63,27 @@ export default function DeveloperLoginClient() {
             </CardTitle>
           </div>
           <CardDescription>
-            Acesso separado do login do produto. Use a credencial restrita da central de suporte da Alusa.
+            Acesso separado do login do produto. Use a credencial restrita da central de suporte da
+            Alusa.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <Label htmlFor="username">Usuário</Label>
-              <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+              <Input
+                id="username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Senha</Label>
               <Input
                 id="password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />

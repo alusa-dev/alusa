@@ -12,13 +12,29 @@ export type GlobalAdminSession = {
   username: string;
   issuedAt: string;
   expiresAt: string;
+  supportUserId?: string | null;
+  role:
+    | 'SUPPORT_VIEWER'
+    | 'SUPPORT_AGENT'
+    | 'SUPPORT_FINANCE'
+    | 'SUPPORT_DEVELOPER'
+    | 'SUPPORT_ADMIN'
+    | 'BREAK_GLASS';
 };
 
-function buildSessionFromPayload(payload: { sub: string; iat?: number; exp?: number }): GlobalAdminSession {
+function buildSessionFromPayload(payload: {
+  sub: string;
+  supportUserId?: string;
+  role?: GlobalAdminSession['role'];
+  iat?: number;
+  exp?: number;
+}): GlobalAdminSession {
   return {
     username: payload.sub,
     issuedAt: new Date((payload.iat ?? 0) * 1000).toISOString(),
     expiresAt: new Date((payload.exp ?? 0) * 1000).toISOString(),
+    supportUserId: payload.supportUserId ?? null,
+    role: payload.role ?? 'SUPPORT_ADMIN',
   };
 }
 
@@ -55,8 +71,12 @@ export async function requireGlobalAdminSessionForApi() {
   return { ok: true as const, session };
 }
 
-export async function attachGlobalAdminSession(response: NextResponse, username: string) {
-  const token = await createGlobalAdminSessionToken(username);
+export async function attachGlobalAdminSession(
+  response: NextResponse,
+  username: string,
+  input: { supportUserId?: string | null; role?: GlobalAdminSession['role'] | null } = {},
+) {
+  const token = await createGlobalAdminSessionToken(username, input);
   const { name, options } = getGlobalAdminSessionCookieOptions();
   response.cookies.set(name, token, options);
 }
