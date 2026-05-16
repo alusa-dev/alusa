@@ -14,7 +14,6 @@ import {
   repairWebhookConfigDrift,
   type WebhookConfigDriftStatus,
 } from '../../webhooks/webhook-config-drift.service';
-import { recoverWhitelabelBaasViaParentAccount } from './recover-whitelabel-baas-via-parent';
 
 function sanitizeActor(actor: { type: AuditActorType; id?: string | null }) {
   const id = actor.id?.trim();
@@ -59,7 +58,7 @@ export type AsaasSupportRecommendedAction =
   | 'WAIT'
   | 'BOOTSTRAP_LOCAL'
   | 'ENQUEUE_PROVISION'
-  | 'RECOVER_INTEGRATION'
+  | 'SAVE_MANUAL_API_KEY'
   | 'REPAIR_WEBHOOK'
   | 'RECONCILE'
   | 'LINK_SUBACCOUNT'
@@ -84,10 +83,8 @@ export type AsaasSupportDiagnosis = {
 };
 
 export type AsaasSupportRepairExecuteAction =
-  | 'AUTO_NEXT'
   | 'BOOTSTRAP_LOCAL'
   | 'ENQUEUE_PROVISION'
-  | 'RECOVER_INTEGRATION'
   | 'REPAIR_WEBHOOK'
   | 'RECONCILE'
   | 'LINK_SUBACCOUNT';
@@ -159,7 +156,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       hasFinanceProfile: Boolean(conta.financeProfile),
       hasAsaasAccountRow: Boolean(conta.financeProfile?.asaasAccount),
       effectiveAsaasAccountId:
-        conta.financeProfile?.asaasAccount?.asaasAccountId ?? conta.financeProfile?.asaasAccountId ?? null,
+        conta.financeProfile?.asaasAccount?.asaasAccountId ??
+        conta.financeProfile?.asaasAccountId ??
+        null,
       canCreateSubaccount: false,
       missingWizardFields: [],
       provisionJob: null,
@@ -212,7 +211,8 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     : true;
 
   const recoveryStuckWithoutSubaccountId =
-    Boolean(asaasRow?.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX)) && !effectiveAsaasAccountId;
+    Boolean(asaasRow?.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX)) &&
+    !effectiveAsaasAccountId;
 
   let webhookDrift: boolean | null = null;
   if (integrationOperational) {
@@ -227,7 +227,8 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
   if (!profile || !asaasRow) {
     phase = 'LOCAL_BOOTSTRAP_NEEDED';
     recommendedAction = 'BOOTSTRAP_LOCAL';
-    hint = 'Criar perfil financeiro e registro local Asaas (placeholder) antes de provisionar ou vincular.';
+    hint =
+      'Criar perfil financeiro e registro local Asaas (placeholder) antes de provisionar ou vincular.';
   } else if (!canCreateSubaccount) {
     phase = 'WIZARD_INCOMPLETE';
     recommendedAction = 'COMPLETE_WIZARD';
@@ -238,7 +239,8 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
   } else if (provisionJob) {
     phase = 'PROVISION_JOB_IN_FLIGHT';
     recommendedAction = 'WAIT';
-    hint = 'Job de provisionamento de subconta em andamento ou na fila. Aguarde o worker ou execute o processador de jobs.';
+    hint =
+      'Job de provisionamento de subconta em andamento ou na fila. Aguarde o worker ou execute o processador de jobs.';
   } else if (integrationOperational && webhookJob) {
     phase = 'WEBHOOK_JOB_IN_FLIGHT';
     recommendedAction = webhookDrift === true ? 'REPAIR_WEBHOOK' : 'WAIT';
@@ -258,9 +260,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
         Boolean(asaasRow?.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX))))
   ) {
     phase = 'API_KEY_OR_SUBACCOUNT_RECOVERY';
-    recommendedAction = 'RECOVER_INTEGRATION';
+    recommendedAction = 'SAVE_MANUAL_API_KEY';
     hint =
-      'Gerar chave via conta master, reparar webhooks e reconciliar (requer gestão de chaves de subconta habilitada no Asaas).';
+      'Subconta Asaas existente, mas API Key ausente ou inválida. Gere uma nova chave com o script local e cole no painel para validação, armazenamento seguro, reparo de webhook e reconciliação.';
   } else if (!effectiveAsaasAccountId) {
     phase = 'READY_TO_ENQUEUE_PROVISION';
     recommendedAction = 'ENQUEUE_PROVISION';
@@ -302,7 +304,11 @@ async function linkWhitelabelSubaccountCore(input: {
 }): Promise<{ ok: true; summary: string } | { ok: false; summary: string; errorCode: string }> {
   const trimmedId = input.asaasAccountId.trim();
   if (!trimmedId) {
-    return { ok: false, summary: 'ID da subconta Asaas inválido.', errorCode: 'INVALID_SUBACCOUNT_ID' };
+    return {
+      ok: false,
+      summary: 'ID da subconta Asaas inválido.',
+      errorCode: 'INVALID_SUBACCOUNT_ID',
+    };
   }
 
   const conta = await prisma.conta.findUnique({
@@ -314,7 +320,11 @@ async function linkWhitelabelSubaccountCore(input: {
     return { ok: false, summary: 'Conta não encontrada.', errorCode: 'NO_CONTA' };
   }
   if (conta.financeIntegrationMode !== FinanceIntegrationMode.WHITELABEL_BAAS) {
-    return { ok: false, summary: 'Modo financeiro não é white-label BaaS.', errorCode: 'NOT_WHITELABEL_BAAS' };
+    return {
+      ok: false,
+      summary: 'Modo financeiro não é white-label BaaS.',
+      errorCode: 'NOT_WHITELABEL_BAAS',
+    };
   }
   const docDigits = conta.cpfCnpj ? normalizeCpfCnpjDigits(conta.cpfCnpj) : '';
   if (!docDigits) {
@@ -329,7 +339,11 @@ async function linkWhitelabelSubaccountCore(input: {
   try {
     masterKey = getMasterAsaasApiKey();
   } catch {
-    return { ok: false, summary: 'ASAAS_API_KEY (master) não configurada.', errorCode: 'MASTER_KEY_MISSING' };
+    return {
+      ok: false,
+      summary: 'ASAAS_API_KEY (master) não configurada.',
+      errorCode: 'MASTER_KEY_MISSING',
+    };
   }
 
   let remote;
@@ -338,7 +352,8 @@ async function linkWhitelabelSubaccountCore(input: {
   } catch {
     return {
       ok: false,
-      summary: 'Não foi possível ler a subconta no Asaas com a chave master (ID inexistente ou sem permissão).',
+      summary:
+        'Não foi possível ler a subconta no Asaas com a chave master (ID inexistente ou sem permissão).',
       errorCode: 'ASAAS_SUBACCOUNT_LOOKUP_FAILED',
     };
   }
@@ -352,14 +367,20 @@ async function linkWhitelabelSubaccountCore(input: {
     };
   }
 
-  await startFinancialOnboarding({ contaId: input.contaId, actor: input.actor }).catch(() => undefined);
+  await startFinancialOnboarding({ contaId: input.contaId, actor: input.actor }).catch(
+    () => undefined,
+  );
 
   const profile = await prisma.financeProfile.findUnique({
     where: { contaId: input.contaId },
     select: { id: true },
   });
   if (!profile) {
-    return { ok: false, summary: 'FinanceProfile não encontrado após bootstrap.', errorCode: 'NO_FINANCE_PROFILE' };
+    return {
+      ok: false,
+      summary: 'FinanceProfile não encontrado após bootstrap.',
+      errorCode: 'NO_FINANCE_PROFILE',
+    };
   }
 
   try {
@@ -389,7 +410,8 @@ async function linkWhitelabelSubaccountCore(input: {
       });
     });
   } catch (e) {
-    const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: string }).code) : '';
+    const code =
+      typeof e === 'object' && e && 'code' in e ? String((e as { code: string }).code) : '';
     if (code === 'P2002') {
       return {
         ok: false,
@@ -411,11 +433,9 @@ async function linkWhitelabelSubaccountCore(input: {
 
   return {
     ok: true,
-    summary: `Subconta ${trimmedId} vinculada à conta. Em seguida use recuperação de chave para credenciais e webhooks.`,
+    summary: `Subconta ${trimmedId} vinculada à conta. Em seguida gere uma nova API Key com o script local e cole no painel.`,
   };
 }
-
-const MAX_AUTO_STEPS = 10;
 
 export async function executeAsaasSupportRepair(input: {
   contaId: string;
@@ -426,13 +446,21 @@ export async function executeAsaasSupportRepair(input: {
 }): Promise<ExecuteAsaasSupportRepairOk | ExecuteAsaasSupportRepairFail> {
   const reason = input.reason.trim();
   if (reason.length < 8) {
-    return { ok: false, summary: 'Informe um motivo com pelo menos 8 caracteres.', errorCode: 'REASON_TOO_SHORT' };
+    return {
+      ok: false,
+      summary: 'Informe um motivo com pelo menos 8 caracteres.',
+      errorCode: 'REASON_TOO_SHORT',
+    };
   }
 
   if (input.action === 'LINK_SUBACCOUNT') {
     const linkId = input.linkAsaasAccountId?.trim();
     if (!linkId) {
-      return { ok: false, summary: 'Informe o ID da subconta para vincular.', errorCode: 'LINK_ID_REQUIRED' };
+      return {
+        ok: false,
+        summary: 'Informe o ID da subconta para vincular.',
+        errorCode: 'LINK_ID_REQUIRED',
+      };
     }
     const linked = await linkWhitelabelSubaccountCore({
       contaId: input.contaId,
@@ -454,7 +482,12 @@ export async function executeAsaasSupportRepair(input: {
     await startFinancialOnboarding({ contaId: input.contaId, actor: sanitizeActor(input.actor) });
     return {
       ok: true,
-      steps: [{ step: 'bootstrap', summary: 'Onboarding financeiro iniciado (perfil + placeholder Asaas).' }],
+      steps: [
+        {
+          step: 'bootstrap',
+          summary: 'Onboarding financeiro iniciado (perfil + placeholder Asaas).',
+        },
+      ],
       finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId),
     };
   }
@@ -469,7 +502,7 @@ export async function executeAsaasSupportRepair(input: {
       if (r.status === 'CONNECTED') {
         summary = 'Subconta já estava conectada.';
       } else if (r.status === 'RECOVERY_REQUIRED') {
-        summary = 'Provisionamento requer recuperação manual de chave (via conta master).';
+        summary = 'Provisionamento requer geração manual de API Key com o script local.';
       } else if (r.queued) {
         summary = 'Job de provisionamento enfileirado. Aguarde o processamento.';
       } else {
@@ -486,29 +519,11 @@ export async function executeAsaasSupportRepair(input: {
     }
   }
 
-  if (input.action === 'RECOVER_INTEGRATION') {
-    const result = await recoverWhitelabelBaasViaParentAccount({
+  if (input.action === 'REPAIR_WEBHOOK') {
+    const repair = await repairWebhookConfigDrift({
       contaId: input.contaId,
-      reason,
       actor: sanitizeActor(input.actor),
     });
-    if (!result.ok) {
-      return {
-        ok: false,
-        summary: result.summary,
-        errorCode: result.errorCode,
-        finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId).catch(() => undefined),
-      };
-    }
-    return {
-      ok: true,
-      steps: [{ step: 'recover', summary: result.summary }],
-      finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId),
-    };
-  }
-
-  if (input.action === 'REPAIR_WEBHOOK') {
-    const repair = await repairWebhookConfigDrift({ contaId: input.contaId, actor: sanitizeActor(input.actor) });
     const summary =
       repair.reason === 'REPAIRED'
         ? 'Webhook reparado ou criado conforme expectativa.'
@@ -538,118 +553,5 @@ export async function executeAsaasSupportRepair(input: {
     };
   }
 
-  // AUTO_NEXT
-  const steps: AsaasSupportRepairStep[] = [];
-  for (let i = 0; i < MAX_AUTO_STEPS; i++) {
-    const d = await diagnoseAsaasSupportRepair(input.contaId);
-
-    if (d.phase === 'NOT_WHITELABEL_BAAS' || d.phase === 'NO_CONTA') {
-      return {
-        ok: false,
-        summary: d.hint,
-        errorCode: d.phase === 'NO_CONTA' ? 'NO_CONTA' : 'NOT_WHITELABEL_BAAS',
-        finalDiagnosis: d,
-      };
-    }
-
-    switch (d.recommendedAction) {
-      case 'NONE':
-      case 'COMPLETE_WIZARD':
-      case 'WAIT':
-        return { ok: true, steps, finalDiagnosis: d };
-      case 'LINK_SUBACCOUNT': {
-        return {
-          ok: false,
-          summary: `${d.hint} Use a ação explícita de vínculo com o ID da subconta.`,
-          errorCode: 'LINK_SUBACCOUNT_REQUIRED',
-          finalDiagnosis: d,
-        };
-      }
-      case 'BOOTSTRAP_LOCAL': {
-        await startFinancialOnboarding({ contaId: input.contaId, actor: sanitizeActor(input.actor) });
-        steps.push({
-          step: 'bootstrap',
-          summary: 'Perfil financeiro e placeholder Asaas garantidos.',
-        });
-        break;
-      }
-      case 'ENQUEUE_PROVISION': {
-        try {
-          const r = await enqueueAsaasSubaccountProvisioning({
-            contaId: input.contaId,
-            actor: sanitizeActor(input.actor),
-          });
-          if (r.queued) {
-            steps.push({ step: 'enqueue_provision', summary: 'Provisionamento enfileirado.' });
-            return { ok: true, steps, finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId) };
-          }
-          steps.push({
-            step: 'enqueue_provision',
-            summary: `Provisionamento: ${r.status}.`,
-          });
-          if (r.status === 'CONNECTED') break;
-          if (r.status === 'RECOVERY_REQUIRED') break;
-          break;
-        } catch (e) {
-          return {
-            ok: false,
-            summary: e instanceof Error ? e.message : 'Falha ao enfileirar provisionamento.',
-            errorCode: 'ENQUEUE_FAILED',
-            finalDiagnosis: d,
-          };
-        }
-      }
-      case 'RECOVER_INTEGRATION': {
-        const result = await recoverWhitelabelBaasViaParentAccount({
-          contaId: input.contaId,
-          reason,
-          actor: sanitizeActor(input.actor),
-        });
-        if (!result.ok) {
-          return {
-            ok: false,
-            summary: result.summary,
-            errorCode: result.errorCode,
-            finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId),
-          };
-        }
-        steps.push({ step: 'recover', summary: result.summary });
-        break;
-      }
-      case 'REPAIR_WEBHOOK': {
-        const repair = await repairWebhookConfigDrift({ contaId: input.contaId, actor: sanitizeActor(input.actor) });
-        steps.push({
-          step: 'repair_webhook',
-          summary:
-            repair.reason === 'REPAIRED'
-              ? 'Webhook ajustado.'
-              : repair.reason === 'NO_DRIFT'
-                ? 'Webhook já alinhado.'
-                : `Webhook: ${repair.reason}.`,
-        });
-        break;
-      }
-      case 'RECONCILE': {
-        const rec = await reconcileAsaasAccount({
-          contaId: input.contaId,
-          actor: sanitizeActor(input.actor),
-          reason,
-        });
-        steps.push({
-          step: 'reconcile',
-          summary: rec.reconciled ? 'Estado reconciliado com o Asaas.' : 'Reconciliação sem alterações.',
-        });
-        return { ok: true, steps, finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId) };
-      }
-      default:
-        return { ok: true, steps, finalDiagnosis: d };
-    }
-  }
-
-  return {
-    ok: false,
-    summary: 'Limite de etapas automáticas excedido; continue com ações manuais.',
-    errorCode: 'AUTO_NEXT_LIMIT',
-    finalDiagnosis: await diagnoseAsaasSupportRepair(input.contaId),
-  };
+  return { ok: false, summary: 'Ação de reparo não suportada.', errorCode: 'UNSUPPORTED_ACTION' };
 }

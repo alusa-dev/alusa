@@ -46,16 +46,9 @@ export const supportWebhookActionSchema = z.object({
   reason: supportReasonSchema,
 });
 
-export const supportAsaasRecoverSchema = z.object({
-  contaId: z.string().min(1),
-  reason: supportReasonSchema,
-});
-
 export const supportAsaasRepairActionSchema = z.enum([
-  'AUTO_NEXT',
   'BOOTSTRAP_LOCAL',
   'ENQUEUE_PROVISION',
-  'RECOVER_INTEGRATION',
   'REPAIR_WEBHOOK',
   'RECONCILE',
   'LINK_SUBACCOUNT',
@@ -70,4 +63,15 @@ export const supportAsaasRepairSchema = z.object({
   reason: supportReasonSchema,
   action: supportAsaasRepairActionSchema,
   linkAsaasAccountId: z.string().trim().min(1).optional().nullable(),
+});
+
+export const supportAsaasSaveManualApiKeySchema = z.object({
+  contaId: z.string().min(1),
+  reason: supportReasonSchema,
+  apiKey: z.string().trim().min(10),
+  confirmations: z.object({
+    generatedWithLocalScript: z.literal(true),
+    belongsToExistingSubaccount: z.literal(true),
+    understandsEncryptedStorage: z.literal(true),
+  }),
 });

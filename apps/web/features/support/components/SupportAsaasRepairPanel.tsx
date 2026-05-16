@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -20,7 +21,10 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
   const [loadingDiag, setLoadingDiag] = useState(true);
   const [reason, setReason] = useState('');
   const [linkId, setLinkId] = useState('');
-  const [confirmedTutorial, setConfirmedTutorial] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState('');
+  const [confirmGeneratedWithScript, setConfirmGeneratedWithScript] = useState(false);
+  const [confirmExistingSubaccount, setConfirmExistingSubaccount] = useState(false);
+  const [confirmEncryptedStorage, setConfirmEncryptedStorage] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
   const [lastSteps, setLastSteps] = useState<{ step: string; summary: string }[] | null>(null);
@@ -36,9 +40,11 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ contaId }),
       });
-      const json = (await res.json().catch(() => null)) as
-        | { success?: boolean; data?: AsaasSupportDiagnosis; error?: string }
-        | null;
+      const json = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        data?: AsaasSupportDiagnosis;
+        error?: string;
+      } | null;
       if (!res.ok || !json?.success || !json.data) {
         setLoadError(json?.error ?? 'Não foi possível carregar o diagnóstico.');
         setDiagnosis(null);
@@ -57,13 +63,16 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
     void loadDiagnosis();
   }, [loadDiagnosis]);
 
-  const needsTutorialConfirm =
-    diagnosis?.recommendedAction === 'RECOVER_INTEGRATION' ||
-    diagnosis?.phase === 'API_KEY_OR_SUBACCOUNT_RECOVERY';
+  const manualApiKeyReady =
+    Boolean(diagnosis?.effectiveAsaasAccountId) &&
+    reasonValid &&
+    manualApiKey.trim().length >= 10 &&
+    confirmGeneratedWithScript &&
+    confirmExistingSubaccount &&
+    confirmEncryptedStorage;
 
   async function runRepair(action: AsaasSupportRepairExecuteAction) {
     if (!reasonValid || actionLoading) return;
-    if (action === 'AUTO_NEXT' && needsTutorialConfirm && !confirmedTutorial) return;
     if (action === 'LINK_SUBACCOUNT' && !linkId.trim()) return;
 
     setActionLoading(true);
@@ -104,7 +113,6 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
         tone: 'ok',
         text: steps.length ? steps.map((s) => `• ${s.summary}`).join('\n') : 'Concluído.',
       });
-      setConfirmedTutorial(false);
       router.refresh();
       await loadDiagnosis();
     } catch {
@@ -112,6 +120,75 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
     } finally {
       setActionLoading(false);
     }
+  }
+
+  async function saveManualApiKey() {
+    if (!manualApiKeyReady || actionLoading) return;
+
+    setActionLoading(true);
+    setFeedback(null);
+    setLastSteps(null);
+    try {
+      const res = await fetch('/api/developer/actions/asaas-save-manual-api-key', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          contaId,
+          apiKey: manualApiKey.trim(),
+          reason: reason.trim(),
+          confirmations: {
+            generatedWithLocalScript: true,
+            belongsToExistingSubaccount: true,
+            understandsEncryptedStorage: true,
+          },
+        }),
+      });
+      const json = (await res.json().catch(() => null)) as {
+        success?: boolean;
+        data?: {
+          summary?: string;
+          webhook?: { reason: string };
+          reconcile?: { reconciled: boolean };
+          warnings?: { summary: string }[];
+        };
+        error?: string;
+      } | null;
+
+      if (!res.ok || !json?.success) {
+        setFeedback({ tone: 'err', text: json?.error ?? 'Chave não salva.' });
+        void loadDiagnosis();
+        return;
+      }
+
+      const warnings = json.data?.warnings ?? [];
+      const lines = [
+        'Chave validada e salva com segurança.',
+        json.data?.webhook?.reason === 'REPAIRED'
+          ? 'Webhook reparado/alinhado.'
+          : 'Webhook verificado.',
+        json.data?.reconcile?.reconciled ? 'Reconciliação concluída.' : 'Reconciliação verificada.',
+        warnings.length ? `Avisos: ${warnings.map((w) => w.summary).join(' | ')}` : null,
+      ].filter(Boolean);
+
+      setManualApiKey('');
+      setConfirmGeneratedWithScript(false);
+      setConfirmExistingSubaccount(false);
+      setConfirmEncryptedStorage(false);
+      setFeedback({ tone: 'ok', text: lines.join('\n') });
+      router.refresh();
+      await loadDiagnosis();
+    } catch {
+      setFeedback({ tone: 'err', text: 'Falha de rede.' });
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
+  async function copySubaccountId() {
+    const id = diagnosis?.effectiveAsaasAccountId;
+    if (!id) return;
+    await navigator.clipboard?.writeText(id).catch(() => undefined);
+    setFeedback({ tone: 'ok', text: 'ID da subconta copiado.' });
   }
 
   if (loadingDiag && !diagnosis) {
@@ -125,8 +202,16 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
   if (loadError) {
     return (
       <div className="mt-4 space-y-2">
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-950">{loadError}</div>
-        <Button type="button" variant="outline" size="sm" onClick={() => void loadDiagnosis()} className="border-slate-200">
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-950">
+          {loadError}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void loadDiagnosis()}
+          className="border-slate-200"
+        >
           Tentar novamente
         </Button>
       </div>
@@ -136,16 +221,16 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
   if (!diagnosis) return null;
 
   if (diagnosis.phase === 'NOT_WHITELABEL_BAAS') {
-    return (
-      <p className="mt-4 text-sm text-slate-600">{diagnosis.hint}</p>
-    );
+    return <p className="mt-4 text-sm text-slate-600">{diagnosis.hint}</p>;
   }
 
   return (
     <div className="mt-4 space-y-4 text-sm">
       <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3 text-slate-800">
         <p className="font-medium text-slate-900">Diagnóstico</p>
-        <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">Fase: {diagnosis.phase}</p>
+        <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+          Fase: {diagnosis.phase}
+        </p>
         <p className="mt-2 text-slate-700">{diagnosis.hint}</p>
         <dl className="mt-3 grid gap-1 text-xs text-slate-600">
           <div>
@@ -155,6 +240,14 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
           <div>
             <span className="font-medium text-slate-700">Subconta (ID):</span>{' '}
             {diagnosis.effectiveAsaasAccountId ?? '—'}
+          </div>
+          <div>
+            <span className="font-medium text-slate-700">API Key:</span>{' '}
+            {diagnosis.needsApiKeyRecovery
+              ? diagnosis.integrationOperational
+                ? 'inválida'
+                : 'ausente'
+              : 'CONNECTED'}
           </div>
           <div>
             <span className="font-medium text-slate-700">Webhook:</span>{' '}
@@ -189,27 +282,6 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
         </Button>
       </div>
 
-      <div className="rounded-md border border-slate-200 bg-white px-3 py-3">
-        <p className="font-medium text-slate-900">Conta master Asaas (recuperação de chave)</p>
-        <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-slate-700">
-          <li>Entre no Asaas com a conta master da Alusa (não é o login da escola).</li>
-          <li>Integrações → Chaves de API → Gestão de chaves de API de subcontas → Habilitar acesso.</li>
-          <li>Confirme IPs permitidos para os servidores que executam esta ação.</li>
-        </ol>
-      </div>
-
-      {needsTutorialConfirm ? (
-        <label className="flex cursor-pointer items-start gap-2 text-slate-700">
-          <Checkbox
-            checked={confirmedTutorial}
-            onCheckedChange={(v) => setConfirmedTutorial(v === true)}
-            disabled={actionLoading}
-            className="mt-0.5"
-          />
-          <span>Confirmo os passos da conta master para geração de chave de subconta.</span>
-        </label>
-      ) : null}
-
       <div>
         <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
           Motivo (mínimo 8 caracteres)
@@ -224,18 +296,91 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
         />
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+      <div className="rounded-md border border-slate-200 bg-white px-3 py-3">
+        <p className="font-medium text-slate-900">Recuperar API Key da subconta</p>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            value={diagnosis.effectiveAsaasAccountId ?? ''}
+            readOnly
+            aria-label="ID da subconta Asaas"
+            className="border-slate-200 sm:max-w-sm"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!diagnosis.effectiveAsaasAccountId || actionLoading}
+            className="border-slate-200"
+            onClick={() => void copySubaccountId()}
+          >
+            Copiar ID da subconta
+          </Button>
+        </div>
+        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-slate-700">
+          <li>
+            Rode `node scripts/support/create-asaas-subaccount-api-key.mjs` na sua máquina local.
+          </li>
+          <li>Cole a chave PAI/master do Asaas apenas no terminal.</li>
+          <li>Informe o ID da subconta exibido acima.</li>
+          <li>Cole abaixo a nova API Key gerada para a subconta.</li>
+        </ol>
+        <div className="mt-3">
+          <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+            Nova API Key da subconta
+          </label>
+          <Input
+            value={manualApiKey}
+            onChange={(e) => setManualApiKey(e.target.value)}
+            placeholder="Cole a API Key recém-gerada"
+            disabled={actionLoading}
+            type="password"
+            autoComplete="off"
+            className="border-slate-200"
+          />
+        </div>
+        <div className="mt-3 space-y-2">
+          <label className="flex cursor-pointer items-start gap-2 text-slate-700">
+            <Checkbox
+              checked={confirmGeneratedWithScript}
+              onCheckedChange={(v) => setConfirmGeneratedWithScript(v === true)}
+              disabled={actionLoading}
+              className="mt-0.5"
+            />
+            <span>A chave foi gerada pelo script local oficial.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-slate-700">
+            <Checkbox
+              checked={confirmExistingSubaccount}
+              onCheckedChange={(v) => setConfirmExistingSubaccount(v === true)}
+              disabled={actionLoading}
+              className="mt-0.5"
+            />
+            <span>A chave pertence à subconta exibida acima.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-slate-700">
+            <Checkbox
+              checked={confirmEncryptedStorage}
+              onCheckedChange={(v) => setConfirmEncryptedStorage(v === true)}
+              disabled={actionLoading}
+              className="mt-0.5"
+            />
+            <span>Entendo que a Alusa validará e salvará a chave criptografada.</span>
+          </label>
+        </div>
         <Button
           type="button"
-          disabled={!reasonValid || actionLoading || (needsTutorialConfirm && !confirmedTutorial)}
-          onClick={() => void runRepair('AUTO_NEXT')}
+          className="mt-3"
+          disabled={!manualApiKeyReady || actionLoading}
+          onClick={() => void saveManualApiKey()}
         >
-          {actionLoading ? 'A processar…' : 'Diagnosticar e reparar (automático)'}
+          {actionLoading ? 'A processar…' : 'Validar e salvar nova API Key'}
         </Button>
       </div>
 
       <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Ações explícitas</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          Ações avançadas
+        </p>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           <Button
             type="button"
@@ -254,15 +399,6 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
             onClick={() => void runRepair('ENQUEUE_PROVISION')}
           >
             Enfileirar provisionamento
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={!reasonValid || actionLoading || (needsTutorialConfirm && !confirmedTutorial)}
-            onClick={() => void runRepair('RECOVER_INTEGRATION')}
-          >
-            Recuperar chave / webhooks
           </Button>
           <Button
             type="button"
@@ -288,8 +424,8 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
       <div className="rounded-md border border-slate-200 bg-slate-50/50 px-3 py-3">
         <p className="font-medium text-slate-900">Vincular subconta existente</p>
         <p className="mt-1 text-xs text-slate-600">
-          Confere CPF/CNPJ da subconta no Asaas com o documento da conta. Use quando o provisionamento falhou
-          mas a subconta já existe.
+          Confere CPF/CNPJ da subconta no Asaas com o documento da conta. Use quando o
+          provisionamento falhou mas a subconta já existe.
         </p>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
           <Input

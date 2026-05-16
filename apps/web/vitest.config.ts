@@ -23,6 +23,8 @@ export default defineConfig({
       'src/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/**/*password-policy.test.ts',
+      'features/**/__tests__/*.{test,spec}.?(c|m)[jt]s?(x)',
+      'app/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'app/**/__tests__/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],

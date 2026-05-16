@@ -241,7 +241,10 @@ export type {
 export type { ChargeListItemDTO, UnifiedChargeStatus } from './dtos/charge-list-item.dto';
 
 // Fila operacional (FASE 1)
-export { getOperationalChargesSummary, listOperationalCharges } from './use-cases/list-operational-charges';
+export {
+  getOperationalChargesSummary,
+  listOperationalCharges,
+} from './use-cases/list-operational-charges';
 export type {
   ListOperationalChargesInput,
   ListOperationalChargesOutput,
@@ -259,9 +262,7 @@ export {
   connectExternalAsaasAccount,
   getExternalAsaasOnboardingState,
 } from './use-cases/external-asaas';
-export type {
-  ConnectExternalAsaasAccountResult,
-} from './use-cases/external-asaas/connect-external-asaas-account';
+export type { ConnectExternalAsaasAccountResult } from './use-cases/external-asaas/connect-external-asaas-account';
 export type { ExternalAsaasOnboardingState } from './use-cases/external-asaas/get-external-asaas-onboarding-state';
 
 // Cobranças avulsas (FASE 2)
@@ -676,8 +677,11 @@ export type {
 } from './use-cases/admin/test-asaas-connection';
 export { reconnectAsaasAccount } from './use-cases/admin/reconnect-asaas-account';
 export type { ReconnectAsaasResult } from './use-cases/admin/reconnect-asaas-account';
-export { recoverWhitelabelBaasViaParentAccount } from './use-cases/admin/recover-whitelabel-baas-via-parent';
-export type { RecoverWhitelabelBaasResult } from './use-cases/admin/recover-whitelabel-baas-via-parent';
+export { saveManualSubaccountApiKey } from './use-cases/admin/save-manual-subaccount-api-key';
+export type {
+  SaveManualSubaccountApiKeyResult,
+  SaveManualSubaccountApiKeyWarningCode,
+} from './use-cases/admin/save-manual-subaccount-api-key';
 export {
   diagnoseAsaasSupportRepair,
   executeAsaasSupportRepair,
