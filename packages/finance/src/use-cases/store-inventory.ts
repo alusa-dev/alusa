@@ -415,6 +415,10 @@ function formatBalanceRecord(record: InventoryBalanceRecord): InventoryBalanceDT
   };
 }
 
+function isSellableInventoryBalance(item: InventoryBalanceDTO): boolean {
+  return Boolean(item.variantId) || !item.hasVariants;
+}
+
 function formatMovementRecord(record: InventoryMovementRecord): InventoryMovementDTO {
   return {
     id: record.id,
@@ -853,7 +857,7 @@ export async function listInventoryBalances(
     orderBy: [{ product: { name: 'asc' } }, { variant: { title: 'asc' } }],
   });
 
-  let data = records.map(formatBalanceRecord);
+  let data = records.map(formatBalanceRecord).filter(isSellableInventoryBalance);
 
   if (!input.includeInactive) {
     data = data.filter((item) => item.isActive);
