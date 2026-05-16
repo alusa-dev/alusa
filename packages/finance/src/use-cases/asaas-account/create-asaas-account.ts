@@ -2,7 +2,6 @@ import {
   createSubaccount,
   createSubaccountAccessToken,
   createWebhook,
-  listSubaccountAccessTokens,
   listSubaccounts,
   listWebhooks,
   updateWebhook,
@@ -28,6 +27,7 @@ import {
   RECOMMENDED_WEBHOOK_NAME,
   RECOMMENDED_WEBHOOK_SEND_TYPE,
 } from './expected-webhook-config.server';
+import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
 import { buildWebhookAuthTokenRotationData } from '../../webhooks/asaas-webhook-auth';
 import {
   deriveLegacyAliasedSubaccountEmail,
@@ -90,6 +90,8 @@ function extractErrorInfo(error: unknown): { message: string; code?: string; sta
 // ============================================================================
 const CONNECTED_STATUSES: FinancialOnboardingStatus[] = ['CREATED', 'UNDER_REVIEW', 'APPROVED'];
 const ACTIVE_STATUSES: FinancialOnboardingStatus[] = ['IN_PROGRESS', ...CONNECTED_STATUSES];
+const API_KEY_RECOVERY_REQUIRED_MESSAGE =
+  'RECOVERY_REQUIRED: subconta remota existe, mas a API key local nao foi persistida. Gere uma nova chave da subconta e reconecte pelo painel admin.';
 
 /**
  * Verifica se já existe uma subconta válida e conectada para o contaId.
@@ -234,16 +236,9 @@ async function createProvisioningAccessToken(params: {
   accountId: string;
 }): Promise<{
   accessToken: Awaited<ReturnType<typeof createSubaccountAccessToken>>;
-  existingAccessTokenCount: number;
+  existingAccessTokenCount: number | null;
 }> {
   const apiKey = getMasterAsaasApiKey();
-  const existingTokens = await listSubaccountAccessTokens({
-    apiKey,
-    accountId: params.accountId,
-    limit: 100,
-    offset: 0,
-  });
-
   const accessToken = await createSubaccountAccessToken({
     apiKey,
     accountId: params.accountId,
@@ -252,7 +247,87 @@ async function createProvisioningAccessToken(params: {
 
   return {
     accessToken,
-    existingAccessTokenCount: existingTokens.data.length,
+    existingAccessTokenCount: null,
+  };
+}
+
+function isAutomaticAccessTokenRecoveryEnabled(): boolean {
+  return process.env.ASAAS_ACCESS_TOKEN_RECOVERY_ENABLED === 'true';
+}
+
+async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
+  contaId: string;
+  financeProfileId: string;
+  recoveredAccount: RemoteSubaccount | { id: string; email?: string | null };
+  externalReference: string;
+  webhookAuthTokenHash: string;
+  actor?: { type: AuditActorType; id?: string };
+  auditAction: string;
+  auditMetadata?: Record<string, unknown>;
+  created: boolean;
+  idempotent?: boolean;
+}): Promise<CreateAsaasAccountResult> {
+  const now = new Date();
+
+  const account = await prisma.$transaction(async (tx) => {
+    const asaasAccount = await tx.asaasAccount.upsert({
+      where: { financeProfileId: params.financeProfileId },
+      create: {
+        financeProfileId: params.financeProfileId,
+        asaasAccountId: params.recoveredAccount.id,
+        asaasAccountEmail: params.recoveredAccount.email ?? null,
+        externalReference: params.externalReference,
+        status: 'PROVISIONING_FAILED',
+        statusUpdatedAt: now,
+        provisionedAt: null,
+        apiKeyEncrypted: null,
+        apiKeyStatus: 'MISSING',
+        webhookAuthTokenHash: params.webhookAuthTokenHash,
+        provisionLastError: API_KEY_RECOVERY_REQUIRED_MESSAGE,
+      },
+      update: {
+        asaasAccountId: params.recoveredAccount.id,
+        asaasAccountEmail: params.recoveredAccount.email ?? null,
+        externalReference: params.externalReference,
+        status: 'PROVISIONING_FAILED',
+        statusUpdatedAt: now,
+        provisionedAt: null,
+        apiKeyEncrypted: null,
+        apiKeyStatus: 'MISSING',
+        webhookAuthTokenHash: params.webhookAuthTokenHash,
+        provisionLastError: API_KEY_RECOVERY_REQUIRED_MESSAGE,
+      },
+    });
+
+    await tx.financeProfile.update({
+      where: { id: params.financeProfileId },
+      data: { asaasAccountId: params.recoveredAccount.id },
+      select: { id: true },
+    });
+
+    await auditLogService.record({
+      contaId: params.contaId,
+      action: params.auditAction,
+      entity: { type: 'AsaasAccount', id: asaasAccount.id },
+      metadata: {
+        asaasAccountId: params.recoveredAccount.id,
+        externalReference: params.externalReference,
+        requiresManualApiKeyRecovery: true,
+        ...params.auditMetadata,
+      },
+      actor: params.actor,
+    });
+
+    return asaasAccount;
+  });
+
+  return {
+    financeProfileId: params.financeProfileId,
+    asaasAccountId: params.recoveredAccount.id,
+    status: account.status,
+    created: params.created,
+    requiresManualApiKeyRecovery: true,
+    ...(params.idempotent ? { idempotent: true } : {}),
   };
 }
 
@@ -268,6 +343,25 @@ async function persistRecoveredSubaccount(params: {
   created: boolean;
   idempotent?: boolean;
 }): Promise<CreateAsaasAccountResult> {
+  if (!isAutomaticAccessTokenRecoveryEnabled()) {
+    return markRemoteSubaccountRequiresApiKeyRecovery({
+      contaId: params.contaId,
+      financeProfileId: params.financeProfileId,
+      recoveredAccount: params.recoveredAccount,
+      externalReference: params.externalReference,
+      webhookAuthTokenHash: params.webhookAuthTokenHash,
+      actor: params.actor,
+      auditAction: params.auditAction,
+      auditMetadata: {
+        automaticAccessTokenRecoveryEnabled: false,
+        recoveryMode: 'manual_api_key_required',
+        ...params.auditMetadata,
+      },
+      created: params.created,
+      idempotent: params.idempotent,
+    });
+  }
+
   const { accessToken, existingAccessTokenCount } = await createProvisioningAccessToken({
     contaId: params.contaId,
     accountId: params.recoveredAccount.id,
@@ -339,18 +433,6 @@ async function persistRecoveredSubaccount(params: {
 
     return asaasAccount;
   });
-
-  try {
-    await ensureExistingWebhookConfig({
-      contaId: params.contaId,
-      financeProfileId: params.financeProfileId,
-      asaasAccountId: params.recoveredAccount.id,
-      webhookAuthTokenHash: params.webhookAuthTokenHash,
-      actor: params.actor,
-    });
-  } catch (error) {
-    if (isWebhookConfigurationError(error)) throw error;
-  }
 
   return {
     financeProfileId: params.financeProfileId,
@@ -542,17 +624,6 @@ async function ensureExistingWebhookConfig(params: {
   });
 }
 
-function isWebhookConfigurationError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-
-  return (
-    error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET') ||
-    error.message.includes('ASAAS_WEBHOOK_PUBLIC_BASE_URL') ||
-    error.message.includes('NEXT_PUBLIC_APP_URL') ||
-    error.message.includes('Webhook financeiro do Asaas não encontrado na subconta')
-  );
-}
-
 function normalizeMobilePhone(value: string): string {
   const digits = value.replace(/\D/g, '');
   if (!digits) throw new Error('mobilePhone inválido');
@@ -726,6 +797,8 @@ export type CreateAsaasAccountResult = {
   created: boolean;
   /** Indica se o resultado veio de uma conta já existente (idempotência) */
   idempotent?: boolean;
+  /** Indica que existe subconta remota, mas falta API key local persistida. */
+  requiresManualApiKeyRecovery?: boolean;
 };
 
 /**
@@ -755,8 +828,11 @@ export async function createAsaasAccount(params: {
         actor: params.actor,
       });
     } catch (error) {
-      if (isWebhookConfigurationError(error)) throw error;
-      // Não bloquear retorno idempotente por falha de reparo do webhook.
+      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
+        contaId: params.contaId,
+        financeProfileId: financeProfile.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     console.info('[finance.createAsaasAccount] Subconta já conectada (idempotente)', {
@@ -795,8 +871,11 @@ export async function createAsaasAccount(params: {
             actor: params.actor,
           });
         } catch (error) {
-          if (isWebhookConfigurationError(error)) throw error;
-          // Não bloquear retorno idempotente por falha de reparo do webhook.
+          console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
+            contaId: params.contaId,
+            financeProfileId: financeProfile.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
 
         return {
@@ -875,8 +954,11 @@ async function createAsaasAccountInternal(params: {
         actor: params.actor,
       });
     } catch (error) {
-      if (isWebhookConfigurationError(error)) throw error;
-      // Não falhar onboarding por reparo best-effort do webhook.
+      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reparar webhook', {
+        contaId: params.contaId,
+        financeProfileId: financeProfile.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     const canUseStoredApiKey = (() => {
@@ -915,7 +997,26 @@ async function createAsaasAccountInternal(params: {
           });
         }
       } catch {
-        // Falha na validação do token antigo - prossegue para criação de um novo.
+        // Falha na validação do token antigo; recovery automatizado é opt-in por exigir whitelist no Asaas.
+      }
+
+      if (!isAutomaticAccessTokenRecoveryEnabled()) {
+        return markRemoteSubaccountRequiresApiKeyRecovery({
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          recoveredAccount: { id: existing.asaasAccountId, email: existing.asaasAccountEmail },
+          externalReference: existing.externalReference ?? financeProfileExternalReference(financeProfile.id),
+          webhookAuthTokenHash:
+            existing.webhookAuthTokenHash ?? hashWebhookAuthToken(resolveWebhookAuthToken(financeProfile.id)),
+          actor: params.actor,
+          auditAction: 'finance.onboarding.requires_manual_subaccount_api_key',
+          auditMetadata: {
+            reason: 'existing_remote_account_without_connected_api_key',
+            automaticAccessTokenRecoveryEnabled: false,
+          },
+          created: false,
+          idempotent: true,
+        });
       }
 
       const { accessToken, existingAccessTokenCount } = await createProvisioningAccessToken({
@@ -1074,16 +1175,7 @@ async function createAsaasAccountInternal(params: {
   }
 
   const externalReference = financeProfileExternalReference(financeProfile.id);
-  const webhookUrl = resolveWebhookUrlOrNull();
-  if (!webhookUrl) {
-    throw new Error(
-      'ASAAS_WEBHOOK_PUBLIC_BASE_URL ou NEXT_PUBLIC_APP_URL deve apontar para uma URL pública https para configurar o webhook do Asaas.',
-    );
-  }
-
-  const expectedWebhookConfig = buildExpectedWebhookConfig(financeProfile.id, webhookUrl);
-  const webhookAuthToken = expectedWebhookConfig.authToken;
-  const webhookAuthTokenHash = expectedWebhookConfig.authTokenHash;
+  const webhookAuthTokenHash = hashWebhookAuthToken(resolveWebhookAuthToken(financeProfile.id));
 
   const cpfCnpj = normalizeCpfCnpj(identity.cpfCnpj);
   const personType = detectPersonType(cpfCnpj);
@@ -1134,19 +1226,6 @@ async function createAsaasAccountInternal(params: {
     postalCode: createAccountPayload.postalCode,
     complement: createAccountPayload.complement,
     externalReference,
-    webhooks: [
-      {
-        name: RECOMMENDED_WEBHOOK_NAME,
-        url: webhookUrl,
-        email: identity.email,
-        sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
-        interrupted: false,
-        enabled: true,
-        apiVersion: 3,
-        authToken: webhookAuthToken,
-        events: expectedWebhookConfig.events,
-      },
-    ],
   };
 
   const recoveredBeforeCreate = await tryRecoverExistingRemoteSubaccount({
@@ -1252,6 +1331,22 @@ async function createAsaasAccountInternal(params: {
     }
 
     throw error;
+  }
+
+  if (!subaccount.apiKey) {
+    return markRemoteSubaccountRequiresApiKeyRecovery({
+      contaId: params.contaId,
+      financeProfileId: financeProfile.id,
+      recoveredAccount: { id: subaccount.id, email: subaccount.email ?? identity.email },
+      externalReference,
+      webhookAuthTokenHash,
+      actor: params.actor,
+      auditAction: 'finance.onboarding.subaccount_created_without_api_key',
+      auditMetadata: {
+        reason: 'asaas_create_response_missing_api_key',
+      },
+      created: true,
+    });
   }
 
   const encryptedApiKey = credentialVault.encrypt(subaccount.apiKey);

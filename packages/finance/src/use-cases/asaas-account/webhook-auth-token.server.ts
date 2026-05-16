@@ -14,11 +14,11 @@ export function getExplicitWebhookAuthToken(): string | null {
 }
 
 export function resolveWebhookAuthToken(financeProfileId: string): string {
-  return getExplicitWebhookAuthToken() ?? deriveWebhookAuthToken(financeProfileId);
+  return deriveWebhookAuthToken(financeProfileId);
 }
 
 export function hasWebhookAuthTokenConfig(): boolean {
-  return Boolean(getExplicitWebhookAuthToken() ?? toTrimmed(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET));
+  return Boolean(toTrimmed(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET));
 }
 
 function getWebhookAuthTokenSecretOrThrow(): string {
@@ -26,11 +26,10 @@ function getWebhookAuthTokenSecretOrThrow(): string {
   if (!secret) {
     throw new Error(
       [
-        'ASAAS_WEBHOOK_AUTH_TOKEN ou ASAAS_WEBHOOK_AUTH_TOKEN_SECRET não configurada.',
+        'ASAAS_WEBHOOK_AUTH_TOKEN_SECRET não configurada.',
         '',
         'Esta variável é BACKEND-ONLY (não use NEXT_PUBLIC_*) e precisa estar disponível no runtime do Next.js.',
         'Em dev, defina em: apps/web/.env.local',
-        'Ex.: ASAAS_WEBHOOK_AUTH_TOKEN=whsec_...',
         'Ex.: ASAAS_WEBHOOK_AUTH_TOKEN_SECRET=seu_secret_aqui',
       ].join('\n'),
     );

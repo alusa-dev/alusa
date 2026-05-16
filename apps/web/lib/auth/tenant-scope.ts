@@ -50,7 +50,14 @@ export async function resolveTenantScope(
   const requestedContaId = normalizeContaId(options.requestedContaId);
 
   const cronToken = options.allowCron ? req.headers.get('x-cron-token') : null;
-  const isCron = Boolean(options.allowCron && cronToken === process.env.CRON_SECRET_TOKEN);
+  const authorization = options.allowCron ? req.headers.get('authorization') : null;
+  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
+  const configuredCronToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
+  const isCron = Boolean(
+    options.allowCron &&
+    configuredCronToken &&
+    (cronToken === configuredCronToken || bearerToken === configuredCronToken),
+  );
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
 
   if (isCron) {

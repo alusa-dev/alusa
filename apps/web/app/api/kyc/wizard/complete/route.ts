@@ -40,7 +40,7 @@ export async function POST() {
       });
     }
 
-    return json(200, { data: result });
+    return json(result.success && result.provisioningStatus === 'QUEUED' ? 202 : 200, { data: result });
   } catch (error) {
     console.error('[Finance Wizard][Complete][POST]', error);
     return json(500, {

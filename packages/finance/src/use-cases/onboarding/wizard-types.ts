@@ -280,6 +280,8 @@ export type CompleteWizardResult = {
   missingFields: string[];
   /** ID da subconta Asaas criada (se success=true) */
   asaasAccountId?: string;
+  /** Estado local do provisionamento assíncrono da subconta. */
+  provisioningStatus?: 'CONNECTED' | 'QUEUED' | 'RECOVERY_REQUIRED';
   /** Erro detalhado (se success=false) */
   error?: {
     code: string;

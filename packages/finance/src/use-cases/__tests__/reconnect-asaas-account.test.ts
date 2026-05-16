@@ -20,6 +20,7 @@ vi.mock('@alusa/asaas', async () => {
   return {
     AsaasHttpError,
     getMyAccount: vi.fn(async () => ({ id: 'my_account' })),
+    getMyAccountStatus: vi.fn(async () => ({ general: 'PENDING' })),
   };
 });
 
@@ -67,8 +68,8 @@ describe('reconnectAsaasAccount', () => {
   });
 
   it('retorna erro quando apiKey é inválida', async () => {
-    const { getMyAccount } = await import('@alusa/asaas');
-    vi.mocked(getMyAccount).mockRejectedValueOnce(new (await import('@alusa/asaas')).AsaasHttpError('Unauthorized', 401));
+    const { getMyAccountStatus } = await import('@alusa/asaas');
+    vi.mocked(getMyAccountStatus).mockRejectedValueOnce(new (await import('@alusa/asaas')).AsaasHttpError('Unauthorized', 401));
 
     const contaId = `conta-${randomUUID()}`;
     const conta = await prisma.conta.create({ data: { id: contaId, nome: 'Conta Teste' } });
@@ -82,6 +83,35 @@ describe('reconnectAsaasAccount', () => {
     });
 
     expect(result.success).toBe(false);
+
+    const creds = await prisma.asaasCredential.findUnique({ where: { financeProfileId: profile.id } });
+    expect(creds).toBeNull();
+
+    await cleanup(contaId);
+  });
+
+  it('rejeita apiKey de outra subconta quando há asaasAccountId esperado', async () => {
+    const { getMyAccount } = await import('@alusa/asaas');
+    vi.mocked(getMyAccount).mockResolvedValueOnce({ id: 'outra_subconta' });
+
+    const contaId = `conta-${randomUUID()}`;
+    const conta = await prisma.conta.create({ data: { id: contaId, nome: 'Conta Teste' } });
+    const profile = await prisma.financeProfile.create({ data: { contaId: conta.id } });
+    await prisma.asaasAccount.create({
+      data: {
+        financeProfileId: profile.id,
+        asaasAccountId: 'subconta_esperada',
+      },
+    });
+
+    const result = await reconnectAsaasAccount({
+      contaId,
+      apiKey: 'sandbox_valid_key',
+      actor: { type: 'ADMIN' },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.success === false ? result.errorCode : null).toBe('ACCOUNT_MISMATCH');
 
     const creds = await prisma.asaasCredential.findUnique({ where: { financeProfileId: profile.id } });
     expect(creds).toBeNull();

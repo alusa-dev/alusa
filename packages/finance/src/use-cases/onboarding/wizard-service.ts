@@ -3,7 +3,7 @@ import type { AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { financeProfileService } from '../../foundation/finance-profile.service';
-import { ensureAsaasSubaccount } from '../asaas-account/ensure-asaas-subaccount';
+import { enqueueAsaasSubaccountProvisioning } from '../../jobs/provision-asaas-subaccounts';
 
 import {
   type GetWizardStateResult,
@@ -367,17 +367,17 @@ export async function saveWizardStep5(params: {
 }
 
 /**
- * Finaliza o wizard (step 6) e cria a subconta no Asaas.
+ * Finaliza o wizard (step 6) e enfileira o provisionamento da subconta no Asaas.
  *
  * Fluxo corrigido:
  * 1. Valida elegibilidade pelos DADOS (não por wizardStep)
- * 2. Se elegível, delega criação ao ensureAsaasSubaccount
- * 3. Marca wizard como concluído somente após sucesso
+ * 2. Se elegível, enfileira provisionamento assíncrono
+ * 3. Marca wizard como concluído sem depender da chamada remota ao Asaas
  *
  * Garantias:
  * - NÃO manipula wizardStep artificialmente antes da criação
  * - Usa isEligibleForAsaasProvisioning como fonte de verdade
- * - Idempotente: múltiplas chamadas não criam subcontas duplicadas
+ * - Idempotente: múltiplas chamadas reaproveitam o mesmo job de provisionamento
  */
 export async function completeWizard(params: {
   contaId: string;
@@ -461,22 +461,19 @@ export async function completeWizard(params: {
     };
   }
 
-  // 3. Criar subconta no Asaas (idempotente)
-  // ensureAsaasSubaccount agora não depende de wizardStep
-  const subaccountResult = await ensureAsaasSubaccount({
+  const provisioning = await enqueueAsaasSubaccountProvisioning({
     contaId: params.contaId,
     actor: params.actor,
   });
 
-  if (!subaccountResult.ok) {
+  if (provisioning.status === 'RECOVERY_REQUIRED') {
     await auditLogService.record({
       contaId: params.contaId,
       action: 'finance.wizard.complete_failed',
       entity: { type: 'FinanceProfile', id: profile.id },
       metadata: {
-        reason: 'subaccount_creation_failed',
-        code: subaccountResult.code,
-        message: subaccountResult.message,
+        reason: 'subaccount_api_key_recovery_required',
+        asaasAccountId: provisioning.asaasAccountId,
       },
       actor: params.actor,
     });
@@ -487,24 +484,31 @@ export async function completeWizard(params: {
       success: false,
       wizard: updatedWizard,
       canCreateSubaccount: false,
-      missingFields: subaccountResult.missingFields ?? [],
+      missingFields: [],
       error: {
-        code: subaccountResult.code,
-        message: subaccountResult.message,
+        code: 'RECOVERY_REQUIRED',
+        message:
+          'A subconta existe no Asaas, mas a chave de API não está salva na Alusa. Reconecte a chave pelo painel administrativo.',
       },
     };
   }
 
-  // 4. Sucesso: marcar wizard como concluído
+  // 4. Sucesso local: marcar wizard como concluído e liberar processamento assíncrono
   const now = new Date();
 
-  await prisma.financeProfile.update({
-    where: { id: profile.id },
-    data: {
-      wizardStep: 6,
-      wizardCompletedAt: now,
-    },
-  });
+  await prisma.$transaction([
+    prisma.financeProfile.update({
+      where: { id: profile.id },
+      data: {
+        wizardStep: 6,
+        wizardCompletedAt: now,
+      },
+    }),
+    prisma.conta.update({
+      where: { id: params.contaId },
+      data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+    }),
+  ]);
 
   await auditLogService.record({
     contaId: params.contaId,
@@ -512,8 +516,9 @@ export async function completeWizard(params: {
     entity: { type: 'FinanceProfile', id: profile.id },
     metadata: {
       completedAt: now.toISOString(),
-      asaasAccountId: subaccountResult.asaasAccountId,
-      created: subaccountResult.created,
+      provisioningStatus: provisioning.status,
+      provisioningQueued: provisioning.queued,
+      asaasAccountId: provisioning.asaasAccountId,
     },
     actor: params.actor,
   });
@@ -525,7 +530,8 @@ export async function completeWizard(params: {
     wizard: finalWizard,
     canCreateSubaccount: true,
     missingFields: [],
-    asaasAccountId: subaccountResult.asaasAccountId,
+    asaasAccountId: provisioning.asaasAccountId ?? undefined,
+    provisioningStatus: provisioning.status,
   };
 }
 

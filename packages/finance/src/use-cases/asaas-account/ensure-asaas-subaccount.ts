@@ -300,12 +300,20 @@ export async function ensureAsaasSubaccount(params: {
   // 1. Verificar se subconta já existe (idempotência)
   const existingAccount = await prisma.asaasAccount.findUnique({
     where: { financeProfileId: profile.id },
-    select: { asaasAccountId: true, status: true },
+    select: {
+      asaasAccountId: true,
+      status: true,
+      apiKeyEncrypted: true,
+      apiKeyStatus: true,
+      provisionLastError: true,
+    },
   });
 
   if (
     existingAccount?.asaasAccountId &&
-    ALREADY_PROVISIONED_STATUSES.includes(existingAccount.status)
+    ALREADY_PROVISIONED_STATUSES.includes(existingAccount.status) &&
+    existingAccount.apiKeyEncrypted &&
+    existingAccount.apiKeyStatus === 'CONNECTED'
   ) {
     return {
       ok: true,
@@ -475,6 +483,15 @@ export async function ensureAsaasSubaccount(params: {
     };
   }
 
+  if (createResult.requiresManualApiKeyRecovery) {
+    return {
+      ok: false,
+      code: 'PROVISIONING_FAILED',
+      message:
+        'A subconta foi encontrada no Asaas, mas a chave de API não está salva na Alusa. Gere uma nova chave da subconta e reconecte pelo painel administrativo.',
+    };
+  }
+
   await auditLogService.record({
     contaId: params.contaId,
     action: 'finance.ensure_subaccount.success',
@@ -587,10 +604,15 @@ export async function canCreateSubaccount(contaId: string): Promise<CanCreateSub
 
   const existing = await prisma.asaasAccount.findUnique({
     where: { financeProfileId: profile.id },
-    select: { asaasAccountId: true, status: true },
+    select: { asaasAccountId: true, status: true, apiKeyEncrypted: true, apiKeyStatus: true },
   });
 
-  if (existing?.asaasAccountId && ALREADY_PROVISIONED_STATUSES.includes(existing.status)) {
+  if (
+    existing?.asaasAccountId &&
+    existing.apiKeyEncrypted &&
+    existing.apiKeyStatus === 'CONNECTED' &&
+    ALREADY_PROVISIONED_STATUSES.includes(existing.status)
+  ) {
     return {
       canCreate: true,
       hasExistingSubaccount: true,

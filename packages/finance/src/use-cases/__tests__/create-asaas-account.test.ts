@@ -16,7 +16,19 @@ const VALID_CNPJ = '11222333000181';
 const subaccountId = `asaas-account-${randomUUID()}`;
 
 vi.mock('@alusa/asaas', async () => {
+  class AsaasHttpError extends Error {
+    constructor(
+      message: string,
+      public status: number,
+      public response?: unknown,
+    ) {
+      super(message);
+      this.name = 'AsaasHttpError';
+    }
+  }
+
   return {
+    AsaasHttpError,
     createSubaccount: vi.fn(async () => ({
       object: 'account',
       id: subaccountId,
@@ -26,6 +38,7 @@ vi.mock('@alusa/asaas', async () => {
       apiKey: '$aact_sub_123',
       walletId: 'wallet-1',
     })),
+    getMyAccountStatus: vi.fn(async () => ({ general: 'PENDING' })),
     createSubaccountAccessToken: vi.fn(async () => ({
       object: 'accessToken',
       id: 'access-token-1',
@@ -50,6 +63,16 @@ vi.mock('@alusa/asaas', async () => {
       offset: 0,
       object: 'list',
     })),
+    listWebhooks: vi.fn(async () => ({
+      data: [],
+      hasMore: false,
+      totalCount: 0,
+      limit: 100,
+      offset: 0,
+      object: 'list',
+    })),
+    createWebhook: vi.fn(async () => ({ id: 'webhook-1' })),
+    updateWebhook: vi.fn(async () => ({ id: 'webhook-1' })),
     updateSubaccount: vi.fn(async () => ({
       object: 'account',
       id: subaccountId,
@@ -160,7 +183,7 @@ describe('createAsaasAccount', () => {
     }
   });
 
-  it('deve provisionar API key quando subconta já existe sem chave salva', async () => {
+  it('deve exigir recuperação manual quando subconta já existe sem chave salva', async () => {
     const unique = randomUUID();
     const conta = await prisma.conta.create({
       data: {
@@ -196,19 +219,20 @@ describe('createAsaasAccount', () => {
 
       const result = await createAsaasAccount({ contaId: conta.id, actor: { type: 'USER', id: unique } });
       expect(result.asaasAccountId).toEqual(subaccountId);
+      expect(result.requiresManualApiKeyRecovery).toBe(true);
+      expect(result.status).toBe('PROVISIONING_FAILED');
 
       const { createSubaccountAccessToken, createSubaccount } = await import('@alusa/asaas');
-      expect(vi.mocked(createSubaccountAccessToken)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(createSubaccountAccessToken)).not.toHaveBeenCalled();
       expect(vi.mocked(createSubaccount)).not.toHaveBeenCalled();
 
       const stored = await prisma.asaasAccount.findUnique({ where: { financeProfileId: profile.id } });
-      expect(stored?.apiKeyEncrypted).toBeTruthy();
-      expect(stored?.apiKeyStatus).toBe('CONNECTED');
+      expect(stored?.apiKeyEncrypted).toBeNull();
+      expect(stored?.apiKeyStatus).toBe('MISSING');
+      expect(stored?.provisionLastError).toContain('RECOVERY_REQUIRED');
 
       const credential = await prisma.asaasCredential.findUnique({ where: { financeProfileId: profile.id } });
-      expect(credential).not.toBeNull();
-      const decrypted = credentialVault.decrypt(credential!.apiKeyEncrypted);
-      expect(decrypted).toEqual('$aact_sub_generated');
+      expect(credential).toBeNull();
     } finally {
       await cleanup(conta.id);
     }

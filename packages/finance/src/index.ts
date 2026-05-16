@@ -906,6 +906,14 @@ export type {
 // Jobs
 export { reconcileAsaasAccountsJob, shouldReconcileNow } from './jobs/reconcile-asaas-accounts';
 export type { ReconcileJobResult } from './jobs/reconcile-asaas-accounts';
+export {
+  enqueueAsaasSubaccountProvisioning,
+  processAsaasProvisioningJobs,
+} from './jobs/provision-asaas-subaccounts';
+export type {
+  ProvisioningEnqueueResult,
+  ProvisioningJobResult,
+} from './jobs/provision-asaas-subaccounts';
 
 // Webhook Scheduler
 export {
