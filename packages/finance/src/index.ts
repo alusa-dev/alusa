@@ -678,6 +678,19 @@ export { reconnectAsaasAccount } from './use-cases/admin/reconnect-asaas-account
 export type { ReconnectAsaasResult } from './use-cases/admin/reconnect-asaas-account';
 export { recoverWhitelabelBaasViaParentAccount } from './use-cases/admin/recover-whitelabel-baas-via-parent';
 export type { RecoverWhitelabelBaasResult } from './use-cases/admin/recover-whitelabel-baas-via-parent';
+export {
+  diagnoseAsaasSupportRepair,
+  executeAsaasSupportRepair,
+} from './use-cases/admin/asaas-support-repair';
+export type {
+  AsaasSupportDiagnosis,
+  AsaasSupportRecommendedAction,
+  AsaasSupportRepairExecuteAction,
+  AsaasSupportRepairPhase,
+  AsaasSupportRepairStep,
+  ExecuteAsaasSupportRepairFail,
+  ExecuteAsaasSupportRepairOk,
+} from './use-cases/admin/asaas-support-repair';
 export { excluirContaAlusaEAsaas } from './use-cases/admin/delete-asaas-account';
 export type {
   DeleteAsaasAccountResult,
@@ -863,6 +876,7 @@ export { ProviderPortalRequiredError } from './errors/provider-portal-required-e
 // Wizard Onboarding
 export {
   getWizardState,
+  readWizardReadiness,
   saveWizardStep1,
   saveWizardStep2,
   saveWizardStep3,
@@ -870,6 +884,7 @@ export {
   saveWizardStep5,
   completeWizard,
 } from './use-cases/onboarding/wizard-service';
+export type { WizardReadinessSnapshot } from './use-cases/onboarding/wizard-service';
 export {
   wizardStep1Schema,
   wizardStep2Schema,

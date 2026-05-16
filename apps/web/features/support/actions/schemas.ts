@@ -50,3 +50,24 @@ export const supportAsaasRecoverSchema = z.object({
   contaId: z.string().min(1),
   reason: supportReasonSchema,
 });
+
+export const supportAsaasRepairActionSchema = z.enum([
+  'AUTO_NEXT',
+  'BOOTSTRAP_LOCAL',
+  'ENQUEUE_PROVISION',
+  'RECOVER_INTEGRATION',
+  'REPAIR_WEBHOOK',
+  'RECONCILE',
+  'LINK_SUBACCOUNT',
+]);
+
+export const supportAsaasDiagnoseSchema = z.object({
+  contaId: z.string().min(1),
+});
+
+export const supportAsaasRepairSchema = z.object({
+  contaId: z.string().min(1),
+  reason: supportReasonSchema,
+  action: supportAsaasRepairActionSchema,
+  linkAsaasAccountId: z.string().trim().min(1).optional().nullable(),
+});

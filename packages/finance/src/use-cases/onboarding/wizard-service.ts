@@ -536,6 +536,33 @@ export async function completeWizard(params: {
 }
 
 // ================================================================================
+// Leitura de prontidão (sem mutar perfil — uso em diagnóstico suporte)
+// ================================================================================
+
+export type WizardReadinessSnapshot = {
+  wizard: WizardState;
+  missingFields: string[];
+  canCreateSubaccount: boolean;
+  eligibilityReason: ReturnType<typeof isEligibleForAsaasProvisioning>;
+};
+
+/**
+ * Carrega estado do wizard e requisitos da subconta sem efeitos colaterais.
+ */
+export async function readWizardReadiness(contaId: string): Promise<WizardReadinessSnapshot | null> {
+  const wizard = await loadWizardState(contaId);
+  if (!wizard) return null;
+  const missingFields = getMissingFieldsForSubaccount(wizard);
+  const eligibilityReason = isEligibleForAsaasProvisioning(wizard);
+  return {
+    wizard,
+    missingFields,
+    canCreateSubaccount: eligibilityReason.eligible,
+    eligibilityReason,
+  };
+}
+
+// ================================================================================
 // Helpers
 // ================================================================================
 
