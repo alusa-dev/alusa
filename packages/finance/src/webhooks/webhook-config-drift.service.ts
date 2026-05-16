@@ -102,7 +102,9 @@ function computeDrift(params: {
     sendTypeMismatch: webhook ? webhook.sendType !== expected.sendType : false,
     eventsMismatch: webhook ? !hasSameWebhookEvents(webhook.events, expected.events) : false,
     localHashMismatch: account.webhookAuthTokenHash !== expected.authTokenHash,
-    penalized: webhook ? (webhook.penalizedRequestsCount ?? 0) > 0 : false,
+    // O contador pode permanecer histórico após reativar a fila. Só é acionável
+    // quando a fila também está interrompida.
+    penalized: webhook ? webhook.interrupted === true && (webhook.penalizedRequestsCount ?? 0) > 0 : false,
     missingEvents,
     extraEvents,
   };

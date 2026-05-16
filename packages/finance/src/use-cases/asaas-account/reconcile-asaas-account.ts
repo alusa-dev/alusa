@@ -82,36 +82,40 @@ export async function reconcileAsaasAccount(params: {
     };
   }
 
-  // 1) Fonte de verdade mínima: a subconta existe no Asaas (GET /accounts/{id})
-  try {
-    await getSubaccount({
-      apiKey: getMasterAsaasApiKey(),
-      accountId: asaasAccount.asaasAccountId,
-    });
-  } catch (error) {
-    const failure = classifyAsaasOperationalError(error, 'master');
+  const creds = await loadAsaasCredentials(params.contaId);
 
+  // 1) Fonte de verdade mínima: com credencial da subconta, /myAccount/status
+  // prova que a chave ainda opera. Sem credencial, caímos no lookup via master.
+  if (!creds?.apiKey) {
     try {
-      console.warn('[finance.reconcileAsaasAccount] Falha ao consultar subconta no Asaas', {
-        category: failure.category,
-        status: failure.status,
-        contaId: params.contaId,
-        financeProfileId: profile.id,
-        asaasAccountId: asaasAccount.asaasAccountId,
-        reason: params.reason,
-        error: failure.message,
-        retryable: failure.retryable,
-        details: failure.details,
+      await getSubaccount({
+        apiKey: getMasterAsaasApiKey(),
+        accountId: asaasAccount.asaasAccountId,
       });
-    } catch {
-      // noop
-    }
+    } catch (error) {
+      const failure = classifyAsaasOperationalError(error, 'master');
 
-    throw error;
+      try {
+        console.warn('[finance.reconcileAsaasAccount] Falha ao consultar subconta no Asaas', {
+          category: failure.category,
+          status: failure.status,
+          contaId: params.contaId,
+          financeProfileId: profile.id,
+          asaasAccountId: asaasAccount.asaasAccountId,
+          reason: params.reason,
+          error: failure.message,
+          retryable: failure.retryable,
+          details: failure.details,
+        });
+      } catch {
+        // noop
+      }
+
+      throw error;
+    }
   }
 
   // 2) Quando temos credenciais da subconta, usamos /myAccount/status para saber se está aprovado.
-  const creds = await loadAsaasCredentials(params.contaId);
   if (creds?.apiKey) {
     try {
       await ensureSubaccountEmailSynced({

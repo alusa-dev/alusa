@@ -4,6 +4,7 @@ vi.mock('@alusa/asaas', async () => {
   return {
     getSubaccount: vi.fn(async () => ({ object: 'account', id: 'acc_1', name: 'X', email: 'x@x.com', cpfCnpj: '1' })),
     getMyAccountStatus: vi.fn(async () => ({ general: 'APPROVED' })),
+    parseAsaasEnvironmentFromEnv: vi.fn(() => 'sandbox'),
   };
 });
 
@@ -32,10 +33,12 @@ vi.mock('../asaas-account/ensure-subaccount-email-synced', async () => ({
   ensureSubaccountEmailSynced: (...args: unknown[]) => mockEnsureSubaccountEmailSynced(...args),
 }));
 
+import { getSubaccount } from '@alusa/asaas';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
 
 describe('reconcileAsaasAccount', () => {
   beforeEach(async () => {
+    vi.clearAllMocks();
     process.env.ASAAS_API_KEY = 'master_x';
     process.env.ASAAS_BASE_URL = 'https://api-sandbox.asaas.com/v3';
 
@@ -64,6 +67,15 @@ describe('reconcileAsaasAccount', () => {
     expect(vi.mocked(prisma.asaasAccount.update)).toHaveBeenCalled();
     expect(vi.mocked(prisma.conta.update)).toHaveBeenCalled();
     expect(vi.mocked(prisma.asaasAccountStatusHistory.create)).toHaveBeenCalled();
+  });
+
+  it('não exige chave master quando já existe credencial de subconta', async () => {
+    delete process.env.ASAAS_API_KEY;
+
+    const result = await reconcileAsaasAccount({ contaId: 'c1', reason: 'subaccount-creds' });
+
+    expect(result.updatedStatus).toBe('APPROVED');
+    expect(getSubaccount).not.toHaveBeenCalled();
   });
 
   it('mantém CREATED (e FINANCE_PROFILE_COMPLETED) quando não há credenciais da subconta', async () => {

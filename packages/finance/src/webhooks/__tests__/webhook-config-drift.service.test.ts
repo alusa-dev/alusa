@@ -122,6 +122,35 @@ describe('webhook-config-drift.service', () => {
     });
   });
 
+  it('ignora contador histórico de penalização quando a fila não está interrompida', async () => {
+    mockFindFirst.mockResolvedValue({
+      id: 'acc_1',
+      asaasAccountId: 'asaas_acc_1',
+      financeProfileId: 'fp_1',
+      webhookAuthTokenHash: 'hash-1',
+      financeProfile: { contaId: 'conta-1' },
+    });
+    mockListWebhooks.mockResolvedValue({
+      data: [
+        {
+          id: 'wh_1',
+          name: 'Alusa - Webhook financeiro',
+          url: 'https://app.alusa.test/api/webhooks/asaas',
+          enabled: true,
+          interrupted: false,
+          hasAuthToken: true,
+          sendType: 'SEQUENTIALLY',
+          penalizedRequestsCount: 1,
+          events: ['PAYMENT_CONFIRMED', 'PAYMENT_PARTIALLY_REFUNDED'],
+        },
+      ],
+    });
+
+    const result = await getWebhookConfigDriftStatus('conta-1');
+
+    expect(result?.drift.penalized).toBe(false);
+  });
+
   it('repara webhook remoto existente e persiste hash local', async () => {
     mockListWebhooks
       .mockResolvedValueOnce({
