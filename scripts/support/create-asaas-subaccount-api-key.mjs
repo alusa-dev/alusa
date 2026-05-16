@@ -53,6 +53,79 @@ function tokenLabel(token, index) {
   return `${index + 1}. id=${id} | ${name} | ${enabled} | expiração=${expires} | criada=${created}`;
 }
 
+function getRemoteAccountId(remoteAccount) {
+  return (
+    remoteAccount?.id ??
+    remoteAccount?.accountId ??
+    remoteAccount?.asaasAccountId ??
+    remoteAccount?.walletId ??
+    null
+  );
+}
+
+function normalizeDigits(value) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+function getAccountDocument(account) {
+  return normalizeDigits(account?.cpfCnpj ?? account?.cpf ?? account?.cnpj);
+}
+
+function safeObjectKeys(value) {
+  if (!value || typeof value !== 'object') return [];
+  return Object.keys(value).sort();
+}
+
+function validateGeneratedKeyBelongsToSubaccount({
+  remoteAccount,
+  expectedSubaccount,
+  subaccountId,
+}) {
+  const remoteAccountId = getRemoteAccountId(remoteAccount);
+  if (remoteAccountId) {
+    return {
+      ok: remoteAccountId === subaccountId,
+      method: 'id',
+      detail: remoteAccountId,
+    };
+  }
+
+  const expectedDocument = getAccountDocument(expectedSubaccount);
+  const remoteDocument = getAccountDocument(remoteAccount);
+  if (expectedDocument && remoteDocument) {
+    return {
+      ok: expectedDocument === remoteDocument,
+      method: 'cpfCnpj',
+      detail: expectedDocument === remoteDocument ? 'documento confere' : 'documento diverge',
+    };
+  }
+
+  const expectedEmail = String(expectedSubaccount?.email ?? '')
+    .trim()
+    .toLowerCase();
+  const remoteEmail = String(remoteAccount?.email ?? '')
+    .trim()
+    .toLowerCase();
+  if (expectedEmail && remoteEmail) {
+    return {
+      ok: expectedEmail === remoteEmail,
+      method: 'email',
+      detail: expectedEmail === remoteEmail ? 'email confere' : 'email diverge',
+    };
+  }
+
+  return {
+    ok: false,
+    method: 'unavailable',
+    detail: remoteAccountId ?? 'desconhecida',
+  };
+}
+
+function isYes(value) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'y' || normalized === 'yes' || normalized === 's' || normalized === 'sim';
+}
+
 const rl = createInterface({ input, output });
 
 try {
@@ -64,6 +137,13 @@ try {
 
   const baseUrl = baseUrlForApiKey(masterKey);
   const tokenName = `Alusa suporte manual ${new Date().toISOString()}`;
+
+  output.write('\nLendo dados da subconta esperada...\n');
+  const expectedSubaccount = await asaasFetch({
+    baseUrl,
+    apiKey: masterKey,
+    path: `/accounts/${encodeURIComponent(subaccountId)}`,
+  });
 
   output.write('\nListando chaves de API existentes da subconta...\n');
   const listed = await asaasFetch({
@@ -78,37 +158,17 @@ try {
     output.write('\nChaves encontradas (a API do Asaas não retorna o segredo antigo):\n');
     existingTokens.forEach((token, index) => output.write(`${tokenLabel(token, index)}\n`));
 
-    const choice = (
+    const confirmation = (
       await rl.question(
-        '\nInforme o id da chave a excluir, TODOS para excluir todas, ou ENTER para cancelar: ',
+        `\nRevogar ${existingTokens.length} chave(s) existente(s) e gerar uma nova? Digite Y para confirmar ou N para cancelar: `,
       )
     ).trim();
 
-    if (!choice) {
+    if (!isYes(confirmation)) {
       throw new Error('Operação cancelada. Nenhuma chave foi criada ou excluída.');
     }
 
-    const selectedTokens =
-      choice.toUpperCase() === 'TODOS'
-        ? existingTokens
-        : existingTokens.filter((token) => String(token.id) === choice);
-
-    if (selectedTokens.length === 0) {
-      throw new Error(`Nenhuma chave encontrada para a seleção "${choice}".`);
-    }
-
-    output.write('\nChaves selecionadas para exclusão:\n');
-    selectedTokens.forEach((token, index) => output.write(`${tokenLabel(token, index)}\n`));
-
-    const confirmation = (
-      await rl.question('\nDigite REVOGAR para excluir as chaves selecionadas e gerar uma nova: ')
-    ).trim();
-
-    if (confirmation !== 'REVOGAR') {
-      throw new Error('Confirmação inválida. Nenhuma chave foi criada ou excluída.');
-    }
-
-    for (const token of selectedTokens) {
+    for (const token of existingTokens) {
       await asaasFetch({
         baseUrl,
         apiKey: masterKey,
@@ -154,12 +214,22 @@ try {
     path: '/myAccount',
   });
 
-  if (remoteAccount?.id !== subaccountId) {
+  const validation = validateGeneratedKeyBelongsToSubaccount({
+    remoteAccount,
+    expectedSubaccount,
+    subaccountId,
+  });
+
+  if (!validation.ok) {
+    output.write('\n/myAccount não retornou o identificador esperado.\n');
+    output.write(`Campos recebidos: ${safeObjectKeys(remoteAccount).join(', ') || 'nenhum'}\n`);
+    output.write(`Método de validação tentado: ${validation.method} (${validation.detail}).\n`);
     throw new Error(
-      `API Key gerada pertence à subconta ${remoteAccount?.id ?? 'desconhecida'}, não ${subaccountId}.`,
+      `Não foi possível confirmar que a API Key gerada pertence à subconta ${subaccountId}.`,
     );
   }
 
+  output.write(`Validação concluída por ${validation.method}: ${validation.detail}.\n`);
   output.write('\nAPI Key da subconta gerada, rotacionada e validada:\n');
   output.write(`${apiKey}\n`);
 } catch (error) {

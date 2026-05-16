@@ -4,10 +4,6 @@ vi.mock('@alusa/asaas', () => ({
   getMyAccount: vi.fn(),
 }));
 
-vi.mock('../../../foundation/asaas-api-key', () => ({
-  validateSubaccountApiKey: vi.fn(),
-}));
-
 vi.mock('../../../foundation/credential-vault', () => ({
   credentialVault: { encrypt: vi.fn(() => 'encrypted:manual-key') },
 }));
@@ -41,7 +37,6 @@ import { getMyAccount } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
 import { FinanceIntegrationMode } from '@prisma/client';
 import { auditLogService } from '../../../foundation/audit-log.service';
-import { validateSubaccountApiKey } from '../../../foundation/asaas-api-key';
 import { repairWebhookConfigDrift } from '../../../webhooks/webhook-config-drift.service';
 import { reconcileAsaasAccount } from '../../asaas-account/reconcile-asaas-account';
 import { saveManualSubaccountApiKey } from '../save-manual-subaccount-api-key';
@@ -57,6 +52,7 @@ function mockConta(mode = FinanceIntegrationMode.WHITELABEL_BAAS) {
   vi.mocked(prisma.conta.findUnique).mockResolvedValue({
     id: 'conta-1',
     financeIntegrationMode: mode,
+    cpfCnpj: '698.959.532-91',
   } as never);
 }
 
@@ -82,7 +78,6 @@ describe('saveManualSubaccountApiKey', () => {
     vi.mocked(prisma.$transaction).mockImplementation(
       async (fn: (txArg: typeof tx) => Promise<unknown>) => fn(tx),
     );
-    vi.mocked(validateSubaccountApiKey).mockResolvedValue('CONNECTED');
     vi.mocked(getMyAccount).mockResolvedValue({ id: 'asaas-sub-1' } as never);
     vi.mocked(repairWebhookConfigDrift).mockResolvedValue({
       repaired: true,
@@ -144,12 +139,25 @@ describe('saveManualSubaccountApiKey', () => {
   it('falha se API Key é inválida', async () => {
     mockConta();
     mockProfile();
-    vi.mocked(validateSubaccountApiKey).mockResolvedValue('REVOKED');
+    vi.mocked(getMyAccount).mockRejectedValue(new Error('unauthorized'));
 
     const result = await saveManualSubaccountApiKey(validInput);
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errorCode).toBe('INVALID_API_KEY');
+  });
+
+  it('aceita chave quando myAccount não retorna id mas CPF/CNPJ confere', async () => {
+    mockConta();
+    mockProfile();
+    vi.mocked(getMyAccount).mockResolvedValue({
+      cpfCnpj: '698.959.532-91',
+      name: 'Subconta Teste',
+    } as never);
+
+    const result = await saveManualSubaccountApiKey(validInput);
+
+    expect(result.ok).toBe(true);
   });
 
   it('falha se getMyAccount retorna conta diferente', async () => {

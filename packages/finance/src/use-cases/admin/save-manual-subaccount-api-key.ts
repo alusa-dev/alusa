@@ -7,7 +7,6 @@ import {
 } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
-import { validateSubaccountApiKey } from '../../foundation/asaas-api-key';
 import { credentialVault } from '../../foundation/credential-vault';
 import { repairWebhookConfigDrift } from '../../webhooks/webhook-config-drift.service';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
@@ -43,6 +42,30 @@ function sanitizeActor(actor: { type: AuditActorType; id?: string | null }) {
   return id ? { type: actor.type, id } : { type: actor.type };
 }
 
+function getRemoteAccountId(remoteAccount: { id?: string | null }) {
+  return remoteAccount.id?.trim() || null;
+}
+
+function normalizeDigits(value: string) {
+  return value.replace(/\D/g, '');
+}
+
+function accountMatchesExpectedSubaccount(input: {
+  remoteAccount: { id?: string | null; cpfCnpj?: string | null };
+  expectedAsaasAccountId: string;
+  contaCpfCnpj?: string | null;
+}) {
+  const remoteAccountId = getRemoteAccountId(input.remoteAccount);
+  if (remoteAccountId) return remoteAccountId === input.expectedAsaasAccountId;
+
+  const expectedDocument = input.contaCpfCnpj ? normalizeDigits(input.contaCpfCnpj) : '';
+  const remoteDocument = input.remoteAccount.cpfCnpj
+    ? normalizeDigits(input.remoteAccount.cpfCnpj)
+    : '';
+
+  return Boolean(expectedDocument && remoteDocument && expectedDocument === remoteDocument);
+}
+
 export async function saveManualSubaccountApiKey(input: {
   contaId: string;
   apiKey: string;
@@ -59,7 +82,7 @@ export async function saveManualSubaccountApiKey(input: {
 
   const conta = await prisma.conta.findUnique({
     where: { id: input.contaId },
-    select: { id: true, financeIntegrationMode: true },
+    select: { id: true, financeIntegrationMode: true, cpfCnpj: true },
   });
 
   if (!conta) {
@@ -115,15 +138,6 @@ export async function saveManualSubaccountApiKey(input: {
     };
   }
 
-  const apiKeyStatus = await validateSubaccountApiKey(apiKey);
-  if (apiKeyStatus !== 'CONNECTED') {
-    return {
-      ok: false,
-      summary: 'API key inválida ou sem permissão.',
-      errorCode: 'INVALID_API_KEY',
-    };
-  }
-
   let remoteAccount;
   try {
     remoteAccount = await getMyAccount({ apiKey });
@@ -135,7 +149,13 @@ export async function saveManualSubaccountApiKey(input: {
     };
   }
 
-  if (remoteAccount.id !== expectedAsaasAccountId) {
+  if (
+    !accountMatchesExpectedSubaccount({
+      remoteAccount,
+      expectedAsaasAccountId,
+      contaCpfCnpj: conta.cpfCnpj,
+    })
+  ) {
     return {
       ok: false,
       summary: 'A API key informada pertence a outra subconta Asaas.',
