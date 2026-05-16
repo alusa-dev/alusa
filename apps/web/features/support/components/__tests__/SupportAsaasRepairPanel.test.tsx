@@ -49,15 +49,15 @@ describe('SupportAsaasRepairPanel', () => {
   it('mostra CTA manual quando recommendedAction = SAVE_MANUAL_API_KEY', async () => {
     render(<SupportAsaasRepairPanel contaId="conta-1" />);
 
-    expect(await screen.findByText('Validar e salvar nova API Key')).toBeTruthy();
-    expect(screen.getByText('Recuperar API Key da subconta')).toBeTruthy();
+    expect(await screen.findByText('Validar e salvar API Key rotacionada')).toBeTruthy();
+    expect(screen.getByText('Rotacionar e salvar API Key da subconta')).toBeTruthy();
     expect(screen.getByDisplayValue('78e18307-38cf-4ba6-ba36-ad1aee1f1342')).toBeTruthy();
   });
 
   it('não mostra botões automáticos antigos', async () => {
     render(<SupportAsaasRepairPanel contaId="conta-1" />);
 
-    await screen.findByText('Validar e salvar nova API Key');
+    await screen.findByText('Validar e salvar API Key rotacionada');
     expect(screen.queryByText('Diagnosticar e reparar (automático)')).toBeNull();
     expect(screen.queryByText('Recuperar chave / webhooks')).toBeNull();
   });
@@ -65,7 +65,7 @@ describe('SupportAsaasRepairPanel', () => {
   it('exige motivo e checkboxes antes de salvar', async () => {
     render(<SupportAsaasRepairPanel contaId="conta-1" />);
 
-    const button = await screen.findByText('Validar e salvar nova API Key');
+    const button = await screen.findByText('Validar e salvar API Key rotacionada');
     const apiKey = screen.getByPlaceholderText('Cole a API Key recém-gerada');
 
     fireEvent.change(apiKey, { target: { value: '$aact_hmlg_manual_key' } });
@@ -76,8 +76,11 @@ describe('SupportAsaasRepairPanel', () => {
     });
     expect((button as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByText('A chave foi gerada pelo script local oficial.'));
+    fireEvent.click(screen.getByText('A chave foi gerada pelo script local oficial de rotação.'));
     fireEvent.click(screen.getByText('A chave pertence à subconta exibida acima.'));
+    fireEvent.click(
+      screen.getByText('Se já existia chave, ela foi revogada/rotacionada pelo script.'),
+    );
     fireEvent.click(
       screen.getByText('Entendo que a Alusa validará e salvará a chave criptografada.'),
     );
@@ -108,12 +111,15 @@ describe('SupportAsaasRepairPanel', () => {
     fireEvent.change(screen.getByPlaceholderText('Ex.: Reparo suporte — sync Asaas.'), {
       target: { value: 'motivo operacional válido' },
     });
-    fireEvent.click(screen.getByText('A chave foi gerada pelo script local oficial.'));
+    fireEvent.click(screen.getByText('A chave foi gerada pelo script local oficial de rotação.'));
     fireEvent.click(screen.getByText('A chave pertence à subconta exibida acima.'));
+    fireEvent.click(
+      screen.getByText('Se já existia chave, ela foi revogada/rotacionada pelo script.'),
+    );
     fireEvent.click(
       screen.getByText('Entendo que a Alusa validará e salvará a chave criptografada.'),
     );
-    fireEvent.click(screen.getByText('Validar e salvar nova API Key'));
+    fireEvent.click(screen.getByText('Validar e salvar API Key rotacionada'));
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
     expect((apiKey as HTMLInputElement).value).toBe('');

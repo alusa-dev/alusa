@@ -72,6 +72,7 @@ export const supportAsaasSaveManualApiKeySchema = z.object({
   confirmations: z.object({
     generatedWithLocalScript: z.literal(true),
     belongsToExistingSubaccount: z.literal(true),
+    rotatedExistingKeyWhenPresent: z.literal(true),
     understandsEncryptedStorage: z.literal(true),
   }),
 });

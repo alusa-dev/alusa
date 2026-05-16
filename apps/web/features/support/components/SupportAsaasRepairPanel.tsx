@@ -24,6 +24,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
   const [manualApiKey, setManualApiKey] = useState('');
   const [confirmGeneratedWithScript, setConfirmGeneratedWithScript] = useState(false);
   const [confirmExistingSubaccount, setConfirmExistingSubaccount] = useState(false);
+  const [confirmRotatedExistingKey, setConfirmRotatedExistingKey] = useState(false);
   const [confirmEncryptedStorage, setConfirmEncryptedStorage] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null);
@@ -69,6 +70,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
     manualApiKey.trim().length >= 10 &&
     confirmGeneratedWithScript &&
     confirmExistingSubaccount &&
+    confirmRotatedExistingKey &&
     confirmEncryptedStorage;
 
   async function runRepair(action: AsaasSupportRepairExecuteAction) {
@@ -139,6 +141,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
           confirmations: {
             generatedWithLocalScript: true,
             belongsToExistingSubaccount: true,
+            rotatedExistingKeyWhenPresent: true,
             understandsEncryptedStorage: true,
           },
         }),
@@ -173,6 +176,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
       setManualApiKey('');
       setConfirmGeneratedWithScript(false);
       setConfirmExistingSubaccount(false);
+      setConfirmRotatedExistingKey(false);
       setConfirmEncryptedStorage(false);
       setFeedback({ tone: 'ok', text: lines.join('\n') });
       router.refresh();
@@ -297,7 +301,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
       </div>
 
       <div className="rounded-md border border-slate-200 bg-white px-3 py-3">
-        <p className="font-medium text-slate-900">Recuperar API Key da subconta</p>
+        <p className="font-medium text-slate-900">Rotacionar e salvar API Key da subconta</p>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             value={diagnosis.effectiveAsaasAccountId ?? ''}
@@ -322,7 +326,8 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
           </li>
           <li>Cole a chave PAI/master do Asaas apenas no terminal.</li>
           <li>Informe o ID da subconta exibido acima.</li>
-          <li>Cole abaixo a nova API Key gerada para a subconta.</li>
+          <li>O script listará chaves existentes e pedirá confirmação antes de revogar.</li>
+          <li>Cole abaixo apenas a nova API Key gerada e validada para a subconta.</li>
         </ol>
         <div className="mt-3">
           <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
@@ -346,7 +351,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
               disabled={actionLoading}
               className="mt-0.5"
             />
-            <span>A chave foi gerada pelo script local oficial.</span>
+            <span>A chave foi gerada pelo script local oficial de rotação.</span>
           </label>
           <label className="flex cursor-pointer items-start gap-2 text-slate-700">
             <Checkbox
@@ -356,6 +361,15 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
               className="mt-0.5"
             />
             <span>A chave pertence à subconta exibida acima.</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-slate-700">
+            <Checkbox
+              checked={confirmRotatedExistingKey}
+              onCheckedChange={(v) => setConfirmRotatedExistingKey(v === true)}
+              disabled={actionLoading}
+              className="mt-0.5"
+            />
+            <span>Se já existia chave, ela foi revogada/rotacionada pelo script.</span>
           </label>
           <label className="flex cursor-pointer items-start gap-2 text-slate-700">
             <Checkbox
@@ -373,7 +387,7 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
           disabled={!manualApiKeyReady || actionLoading}
           onClick={() => void saveManualApiKey()}
         >
-          {actionLoading ? 'A processar…' : 'Validar e salvar nova API Key'}
+          {actionLoading ? 'A processar…' : 'Validar e salvar API Key rotacionada'}
         </Button>
       </div>
 

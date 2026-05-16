@@ -39,6 +39,7 @@ const validBody = {
   confirmations: {
     generatedWithLocalScript: true,
     belongsToExistingSubaccount: true,
+    rotatedExistingKeyWhenPresent: true,
     understandsEncryptedStorage: true,
   },
 };
