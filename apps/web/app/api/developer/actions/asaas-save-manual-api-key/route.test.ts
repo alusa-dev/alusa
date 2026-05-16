@@ -115,6 +115,7 @@ describe('asaas-save-manual-api-key route', () => {
       contaId: 'conta-1',
       apiKey: validBody.apiKey,
       reason: validBody.reason,
+      allowLocalValidationFallback: true,
       actor: { type: 'ADMIN', id: 'ops' },
     });
     expect(recordSupportAudit).toHaveBeenCalledWith(

@@ -160,6 +160,27 @@ describe('saveManualSubaccountApiKey', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('salva com warning quando validação server-side falha mas script local confirmou', async () => {
+    mockConta();
+    mockProfile();
+    vi.mocked(getMyAccount).mockRejectedValue(new Error('ip não autorizado'));
+
+    const result = await saveManualSubaccountApiKey({
+      ...validInput,
+      allowLocalValidationFallback: true,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warnings.map((w) => w.code)).toContain('SERVER_VALIDATION_SKIPPED');
+    }
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ serverValidation: 'LOCAL_SCRIPT_FALLBACK' }),
+      }),
+    );
+  });
+
   it('falha se getMyAccount retorna conta diferente', async () => {
     mockConta();
     mockProfile();

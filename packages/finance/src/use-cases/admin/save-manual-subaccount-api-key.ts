@@ -11,7 +11,10 @@ import { credentialVault } from '../../foundation/credential-vault';
 import { repairWebhookConfigDrift } from '../../webhooks/webhook-config-drift.service';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
 
-export type SaveManualSubaccountApiKeyWarningCode = 'WEBHOOK_REPAIR_FAILED' | 'RECONCILE_FAILED';
+export type SaveManualSubaccountApiKeyWarningCode =
+  | 'SERVER_VALIDATION_SKIPPED'
+  | 'WEBHOOK_REPAIR_FAILED'
+  | 'RECONCILE_FAILED';
 
 export type SaveManualSubaccountApiKeyResult =
   | {
@@ -70,6 +73,7 @@ export async function saveManualSubaccountApiKey(input: {
   contaId: string;
   apiKey: string;
   reason: string;
+  allowLocalValidationFallback?: boolean;
   actor: { type: AuditActorType; id?: string | null };
 }): Promise<SaveManualSubaccountApiKeyResult> {
   const apiKey = input.apiKey.trim();
@@ -139,17 +143,29 @@ export async function saveManualSubaccountApiKey(input: {
   }
 
   let remoteAccount;
+  let serverValidation: 'REMOTE_ASAAS' | 'LOCAL_SCRIPT_FALLBACK' = 'REMOTE_ASAAS';
+  const warnings: { code: SaveManualSubaccountApiKeyWarningCode; summary: string }[] = [];
   try {
     remoteAccount = await getMyAccount({ apiKey });
   } catch {
-    return {
-      ok: false,
-      summary: 'API key inválida ou sem permissão.',
-      errorCode: 'INVALID_API_KEY',
-    };
+    if (!input.allowLocalValidationFallback) {
+      return {
+        ok: false,
+        summary: 'API key inválida ou sem permissão.',
+        errorCode: 'INVALID_API_KEY',
+      };
+    }
+
+    serverValidation = 'LOCAL_SCRIPT_FALLBACK';
+    warnings.push({
+      code: 'SERVER_VALIDATION_SKIPPED',
+      summary:
+        'Validação server-side no Asaas não concluída; chave aceita com base na validação local do script oficial.',
+    });
   }
 
   if (
+    remoteAccount &&
     !accountMatchesExpectedSubaccount({
       remoteAccount,
       expectedAsaasAccountId,
@@ -193,11 +209,15 @@ export async function saveManualSubaccountApiKey(input: {
     contaId: input.contaId,
     action: 'finance.asaas.save_manual_subaccount_api_key',
     entity: { type: 'AsaasAccount', id: asaasAccount.id },
-    metadata: { apiKeyStatus: 'CONNECTED', asaasAccountId: expectedAsaasAccountId, reason },
+    metadata: {
+      apiKeyStatus: 'CONNECTED',
+      asaasAccountId: expectedAsaasAccountId,
+      reason,
+      serverValidation,
+    },
     actor,
   });
 
-  const warnings: { code: SaveManualSubaccountApiKeyWarningCode; summary: string }[] = [];
   let webhook = { repaired: false, reason: 'NO_DRIFT' };
   try {
     const repair = await repairWebhookConfigDrift({ contaId: input.contaId, actor });

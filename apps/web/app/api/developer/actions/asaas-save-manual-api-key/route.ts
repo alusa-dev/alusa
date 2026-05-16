@@ -26,6 +26,7 @@ export async function POST(req: Request) {
       contaId: body.contaId,
       apiKey: body.apiKey,
       reason: body.reason,
+      allowLocalValidationFallback: body.confirmations.generatedWithLocalScript,
       actor: { type: 'ADMIN', id: auth.session.username },
     });
 
