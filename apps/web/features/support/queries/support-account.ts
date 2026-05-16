@@ -26,6 +26,7 @@ export async function getSupportAccount(contaId: string) {
               select: {
                 asaasAccountId: true,
                 status: true,
+                apiKeyEncrypted: true,
                 apiKeyStatus: true,
                 webhookAuthTokenHash: true,
                 documentsCacheUpdatedAt: true,

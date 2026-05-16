@@ -676,6 +676,8 @@ export type {
 } from './use-cases/admin/test-asaas-connection';
 export { reconnectAsaasAccount } from './use-cases/admin/reconnect-asaas-account';
 export type { ReconnectAsaasResult } from './use-cases/admin/reconnect-asaas-account';
+export { recoverWhitelabelBaasViaParentAccount } from './use-cases/admin/recover-whitelabel-baas-via-parent';
+export type { RecoverWhitelabelBaasResult } from './use-cases/admin/recover-whitelabel-baas-via-parent';
 export { excluirContaAlusaEAsaas } from './use-cases/admin/delete-asaas-account';
 export type {
   DeleteAsaasAccountResult,

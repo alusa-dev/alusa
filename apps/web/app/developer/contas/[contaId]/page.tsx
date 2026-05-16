@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { requireGlobalAdminSessionForPage } from '@/features/global-admin/auth/session.server';
+import { SupportWhitelabelBaasRecoverDialog } from '@/features/support/components/SupportWhitelabelBaasRecoverDialog';
 import { getSupportAccount } from '@/features/support/queries/support-account';
 import { compactId, formatDateTime, maskDocument } from '@/features/support/shared/format';
 import { SupportShell } from '@/features/support/shared/SupportShell';
@@ -22,6 +23,27 @@ export default async function SupportAccountPage({ params }: { params: { contaId
   const { conta, counts } = data;
   const asaasAccount = conta.financeProfile?.asaasAccount;
   const kyc = asaasAccount?.kycProcess;
+  const subaccountAsaasId = asaasAccount?.asaasAccountId ?? conta.financeProfile?.asaasAccountId ?? null;
+  const isWhitelabelBaas = conta.financeIntegrationMode === 'WHITELABEL_BAAS';
+  const integrationOperational = Boolean(
+    asaasAccount?.apiKeyEncrypted && asaasAccount.apiKeyStatus === 'CONNECTED',
+  );
+
+  let recoverVariant: 'blocked' | 'recover' | 'sync' | null = null;
+  let recoverBlockedMessage: string | undefined;
+
+  if (isWhitelabelBaas) {
+    if (!asaasAccount || !subaccountAsaasId) {
+      recoverVariant = 'blocked';
+      recoverBlockedMessage = !asaasAccount
+        ? 'Crie ou vincule a conta Asaas desta escola antes de usar a recuperação automática.'
+        : 'A subconta ainda não está vinculada no Asaas. Conclua o provisionamento primeiro.';
+    } else if (integrationOperational) {
+      recoverVariant = 'sync';
+    } else {
+      recoverVariant = 'recover';
+    }
+  }
 
   return (
     <SupportShell session={session}>
@@ -75,7 +97,7 @@ export default async function SupportAccountPage({ params }: { params: { contaId
 
         <SupportPanel
           title="Asaas / KYC"
-          description="Diagnóstico somente leitura da subconta e onboarding."
+          description="Diagnóstico da subconta, onboarding e recuperação segura da integração (white-label)."
         >
           <dl>
             <KeyValue
@@ -109,6 +131,14 @@ export default async function SupportAccountPage({ params }: { params: { contaId
               value={formatDateTime(conta.financeProfile?.lastAsaasSyncAt)}
             />
           </dl>
+
+          {recoverVariant ? (
+            <SupportWhitelabelBaasRecoverDialog
+              contaId={conta.id}
+              variant={recoverVariant}
+              blockedMessage={recoverBlockedMessage}
+            />
+          ) : null}
         </SupportPanel>
       </div>
 

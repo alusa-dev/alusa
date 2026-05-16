@@ -45,3 +45,8 @@ export const supportWebhookActionSchema = z.object({
   webhookId: z.string().min(1),
   reason: supportReasonSchema,
 });
+
+export const supportAsaasRecoverSchema = z.object({
+  contaId: z.string().min(1),
+  reason: supportReasonSchema,
+});
