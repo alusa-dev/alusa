@@ -579,6 +579,7 @@ model Conta {
   customers                     Customer[]
   charges                       Charge[]
   chargeReadModels              ChargeReadModel[]
+  financeSummaryReadModels      FinanceSummaryReadModel[]
   invoices                      Invoice[]
   subscriptions                 Subscription[]
   installmentPlans              InstallmentPlan[]
@@ -2672,6 +2673,31 @@ model ChargeReadModel {
   @@index([contaId, linkStatus], name: "idx_charge_read_model_conta_link_status")
   @@index([contaId, projectedAt], name: "idx_charge_read_model_conta_projected")
   @@index([asaasPaymentId], name: "idx_charge_read_model_asaas_payment")
+}
+
+model FinanceSummaryReadModel {
+  id      String @id @default(cuid())
+  contaId String
+
+  pendingAmountCurrentWindow Decimal @default(0) @db.Decimal(12, 2)
+  pendingCountCurrentWindow  Int     @default(0)
+  overdueAmount              Decimal @default(0) @db.Decimal(12, 2)
+  overdueCount               Int     @default(0)
+  paidAmountMonth            Decimal @default(0) @db.Decimal(12, 2)
+  paidCountMonth             Int     @default(0)
+
+  windowStart  DateTime
+  windowEnd    DateTime
+  calculatedAt DateTime @default(now())
+  projectedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, windowStart, windowEnd], name: "uq_finance_summary_conta_window")
+  @@index([contaId, projectedAt], name: "idx_finance_summary_conta_projected")
+  @@index([contaId, windowEnd], name: "idx_finance_summary_conta_window_end")
 }
 
 model StandaloneInstallmentPlan {

@@ -6,7 +6,18 @@ function shouldLog(duration: number) {
 
 function sanitizeMetadata(metadata?: PerfMetadata) {
   if (!metadata) return undefined;
-  const redactedKeys = new Set(['email', 'cpf', 'password', 'senha', 'token', 'session', 'cookie']);
+  const redactedKeys = new Set([
+    'authorization',
+    'cookie',
+    'cpf',
+    'email',
+    'password',
+    'senha',
+    'session',
+    'token',
+    'access_token',
+    'api_key',
+  ]);
   return Object.fromEntries(
     Object.entries(metadata).map(([key, value]) => [
       key,
@@ -56,4 +67,28 @@ export async function withPerfTimer<T>(
     timer.end(operation, { status: 'error', error: String(error), ...metadata });
     throw error;
   }
+}
+
+export function getVercelRegion() {
+  return process.env.VERCEL_REGION ?? process.env.VERCEL_REGION_ID ?? 'local';
+}
+
+export function logRoutePerformance(metadata: {
+  route: string;
+  method: string;
+  contaId?: string | null;
+  durationMs: number;
+  dbDurationMs?: number;
+  asaasDurationMs?: number;
+  cacheState?: string;
+  statusCode: number;
+}) {
+  logPerfMetric(metadata.route, `${metadata.method} route`, metadata.durationMs, {
+    contaId: metadata.contaId,
+    dbDurationMs: metadata.dbDurationMs,
+    asaasDurationMs: metadata.asaasDurationMs,
+    cacheState: metadata.cacheState,
+    vercelRegion: getVercelRegion(),
+    statusCode: metadata.statusCode,
+  });
 }

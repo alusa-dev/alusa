@@ -6,9 +6,18 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./wizard-client": "./dist/wizard-client.js",
-    "./*": "./dist/*.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./wizard-client": {
+      "types": "./dist/wizard-client.d.ts",
+      "default": "./dist/wizard-client.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
   },
   "scripts": {
     "prebuild": "pnpm -C ../asaas build && pnpm -C ../asaas-gateway build && pnpm -C ../shared build",

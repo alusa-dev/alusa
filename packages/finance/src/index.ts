@@ -267,6 +267,21 @@ export type { ExternalAsaasOnboardingState } from './use-cases/external-asaas/ge
 
 // Cobranças avulsas (FASE 2)
 export { listStandaloneCharges } from './use-cases/list-standalone-charges';
+export {
+  financeSummaryReadModelService,
+  getFinanceSummaryReadModel,
+  refreshFinanceSummaryReadModel,
+  getFinanceSummaryLag,
+} from './read-model/finance-summary-read-model.service';
+export {
+  getChargeReadModelLag,
+  chargeReadModelService,
+  backfillChargeReadModel,
+} from './read-model/charge-read-model.service';
+export type {
+  FinanceSummarySnapshot,
+  FinanceSummaryWindow,
+} from './read-model/finance-summary-read-model.service';
 export type {
   ListStandaloneChargesInput,
   ListStandaloneChargesOutput,

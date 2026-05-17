@@ -12,6 +12,7 @@ import { buildPaymentExternalReference, mapAsaasToChargeStatus } from '../core';
 import { auditLogService } from '../foundation/audit-log.service';
 import { findStandaloneSubscription } from '../foundation/standalone-subscription-store';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
+import { financeSummaryReadModelService } from '../read-model/finance-summary-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
@@ -274,18 +275,46 @@ function resolveMatriculaFinanceStatusForCharge(params: {
 async function refreshReadModel(params: {
   chargeId?: string | null;
   cobrancaId?: string | null;
+  contaId?: string | null;
 }): Promise<void> {
   try {
+    let contaId = params.contaId ?? null;
     if (params.chargeId) {
       await chargeReadModelService.projectChargeReadModelByChargeId(params.chargeId);
+      if (!contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
+        const charge = await prisma.charge.findUnique({
+          where: { id: params.chargeId },
+          select: { contaId: true },
+        });
+        contaId = charge?.contaId ?? null;
+      }
     }
     if (params.cobrancaId) {
       await chargeReadModelService.projectChargeReadModelByCobrancaId(params.cobrancaId);
+      if (!contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
+        const cobranca = await prisma.cobranca.findUnique({
+          where: { id: params.cobrancaId },
+          select: { contaId: true },
+        });
+        contaId = cobranca?.contaId ?? null;
+      }
+    }
+    if (contaId && process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true') {
+      const now = new Date();
+      await financeSummaryReadModelService.refreshFinanceSummaryReadModel({
+        contaId,
+        window: {
+          start: new Date(now.getFullYear(), now.getMonth(), 1),
+          end: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999),
+        },
+        now,
+      });
     }
   } catch (error) {
     console.warn('[payment-webhook] falha ao atualizar read model', {
       chargeId: params.chargeId ?? null,
       cobrancaId: params.cobrancaId ?? null,
+      contaId: params.contaId ?? null,
       error: error instanceof Error ? error.message : String(error),
     });
   }

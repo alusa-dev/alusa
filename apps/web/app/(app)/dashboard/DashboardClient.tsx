@@ -17,6 +17,69 @@ import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { DashboardSecondaryChunkSkeleton } from './dashboard-secondary-skeletons';
 
+const DASHBOARD_BLOCKS_ENABLED = process.env.NEXT_PUBLIC_DASHBOARD_BLOCKS_ENABLED === 'true';
+const DASHBOARD_BLOCK_ENDPOINTS = [
+  '/api/dashboard/summary-cards',
+  '/api/dashboard/lesson-summary',
+  '/api/dashboard/recent-activity',
+  '/api/dashboard/birthdays',
+  '/api/dashboard/experimental-classes',
+] as const;
+
+type DashboardBlockResult = {
+  success: true;
+  data: Partial<DashboardMetricsDataDTO>;
+};
+
+function emptyDashboardMetrics(): DashboardMetricsDataDTO {
+  return {
+    totalAlunos: 0,
+    alunosAtivos: 0,
+    turmasAtivas: 0,
+    aulasHoje: 0,
+    pendencias: 0,
+    aniversariantesDoMesAtivos: 0,
+    totalMatriculas: 0,
+    matriculasAtivas: 0,
+    cobrancasPendentes: 0,
+    cobrancasVencidas: 0,
+    receitaMes: 0,
+    taxaMatriculaRecebidaAno: 0,
+    receitaTotal: 0,
+    proximosVencimentos: 0,
+    taxaInadimplencia: 0,
+    receitaSemanal: [],
+    matriculasNovasSemanal: [],
+    matriculasCanceladasSemanal: [],
+    ultimasCobrancas: [],
+    alunosRecentes: [],
+    aniversariantesDoMes: [],
+    aulasExperimentais: [],
+  };
+}
+
+async function fetchDashboardBlock(endpoint: string): Promise<Partial<DashboardMetricsDataDTO>> {
+  const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+  if (!response.ok) {
+    throw new Error(`Dashboard block failed: ${endpoint} ${response.status}`);
+  }
+
+  const raw = (await response.json()) as DashboardBlockResult | { success: false; error?: string };
+  if (!raw.success) {
+    throw new Error(raw.error ?? `Dashboard block failed: ${endpoint}`);
+  }
+
+  return raw.data;
+}
+
+async function fetchLegacyMetrics(contaId: string): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ contaId });
+  const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  return (await response.json()) as Record<string, unknown>;
+}
+
 const KycDashboardCard = dynamic(
   () =>
     import('@/features/kyc/components/KycDashboardCard').then((m) => ({
@@ -94,11 +157,15 @@ export default function DashboardClient() {
 
     if (!silent) setLoading(true);
     try {
-      const params = new URLSearchParams({ contaId: user.contaId ?? '' });
-      const response = await fetch(`/api/dashboard/metrics?${params.toString()}`, {
-        headers: { Accept: 'application/json' },
-      });
-      const raw = (await response.json()) as Record<string, unknown>;
+      const raw = DASHBOARD_BLOCKS_ENABLED
+        ? {
+            success: true,
+            data: Object.assign(
+              emptyDashboardMetrics(),
+              ...(await Promise.all(DASHBOARD_BLOCK_ENDPOINTS.map(fetchDashboardBlock))),
+            ),
+          }
+        : await fetchLegacyMetrics(user.contaId);
       const data = mapDashboardMetricsResultToDTO(raw);
 
       if (data.success) {
@@ -107,6 +174,19 @@ export default function DashboardClient() {
         console.error('[DashboardClient] Erro na resposta:', data);
       }
     } catch (error) {
+      if (DASHBOARD_BLOCKS_ENABLED) {
+        try {
+          const fallbackRaw = await fetchLegacyMetrics(user.contaId);
+          const fallbackData = mapDashboardMetricsResultToDTO(fallbackRaw);
+          if (fallbackData.success) {
+            setMetrics(fallbackData.data);
+            return;
+          }
+        } catch (fallbackError) {
+          console.error('[DashboardClient] Erro ao buscar métricas pelo endpoint legado:', fallbackError);
+        }
+      }
+
       console.error('[DashboardClient] Erro ao buscar métricas:', error);
     } finally {
       if (!silent) setLoading(false);

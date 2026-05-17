@@ -5,13 +5,21 @@ import { prisma } from '@/lib/prisma';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
-import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
+import { createPerfTimer, logRoutePerformance, withPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
+import {
+  buildTenantCacheKey,
+  isCacheLayerEnabled,
+} from '@/lib/cache/tenant-cache';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
 
 const dashboardMetricsCache = new PrivateMemoryCache<unknown>({
   maxAgeSeconds: 15,
   staleWhileRevalidateSeconds: 60,
 });
+const CACHE_MAX_AGE_SECONDS = 15;
+const CACHE_STALE_SECONDS = 60;
 
 type DashboardLessonEvent = {
   turmaId: string | null;
@@ -95,20 +103,28 @@ function publicImageUrl(value: string | null | undefined) {
 
 function jsonWithShortPrivateCache(body: unknown) {
   return privateJson(body, {
-    maxAgeSeconds: 15,
-    staleWhileRevalidateSeconds: 60,
+    maxAgeSeconds: CACHE_MAX_AGE_SECONDS,
+    staleWhileRevalidateSeconds: CACHE_STALE_SECONDS,
     cacheState: 'MISS',
   });
 }
 
 export async function GET(_request: NextRequest) {
+  const startedAt = Date.now();
   const timer = createPerfTimer('api/dashboard/metrics');
+  let contaIdForLog: string | null = null;
+  let cacheStateForLog = 'BYPASS';
+  let statusCodeForLog = 200;
+
   try {
+    logRuntimeEnvironmentOnce('api/dashboard/metrics');
     const session = await getServerSession(authOptions);
     const contaIdFromSession = (session?.user as { contaId?: string | null } | undefined)?.contaId;
+    contaIdForLog = contaIdFromSession ?? null;
 
     // MULTI-TENANT: sempre usar contaId da sessão
     if (!contaIdFromSession) {
+      statusCodeForLog = 401;
       return NextResponse.json(
         { success: false, error: 'Não autenticado' },
         { status: 401 },
@@ -116,16 +132,41 @@ export async function GET(_request: NextRequest) {
     }
 
     const contaId = contaIdFromSession;
-    const cached = dashboardMetricsCache.get(contaId);
-    if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
-      timer.end('GET /dashboard/metrics (cache hit)', { cacheState: cached.state });
-      return privateJson(cached.body, {
-        maxAgeSeconds: 15,
-        staleWhileRevalidateSeconds: 60,
-        cacheState: cached.state,
-      });
+    const cacheLayerEnabled = isCacheLayerEnabled();
+    const tenantCacheKey = cacheLayerEnabled
+      ? buildTenantCacheKey({
+          contaId,
+          area: 'dashboard',
+          resource: 'metrics',
+          version: 1,
+        })
+      : null;
+
+    if (tenantCacheKey) {
+      const cached = await getTenantCacheAdapter().get<unknown>(tenantCacheKey);
+      if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
+        cacheStateForLog = cached.state;
+        timer.end('GET /dashboard/metrics (tenant cache hit)', { contaId, cacheState: cached.state });
+        return privateJson(cached.body, {
+          maxAgeSeconds: CACHE_MAX_AGE_SECONDS,
+          staleWhileRevalidateSeconds: CACHE_STALE_SECONDS,
+          cacheState: cached.state,
+        });
+      }
+    } else {
+      const cached = dashboardMetricsCache.get(contaId);
+      if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
+        cacheStateForLog = cached.state;
+        timer.end('GET /dashboard/metrics (cache hit)', { contaId, cacheState: cached.state });
+        return privateJson(cached.body, {
+          maxAgeSeconds: CACHE_MAX_AGE_SECONDS,
+          staleWhileRevalidateSeconds: CACHE_STALE_SECONDS,
+          cacheState: cached.state,
+        });
+      }
     }
 
+    cacheStateForLog = 'MISS';
     const alunoFilter = { contaId };
     const matriculaFilter = { aluno: { contaId } };
     const cobrancaFilter = { matricula: { aluno: { contaId } } };
@@ -470,11 +511,18 @@ export async function GET(_request: NextRequest) {
         data: metrics,
       }),
     );
+    if (tenantCacheKey) {
+      await getTenantCacheAdapter().set(tenantCacheKey, body, {
+        ttlSeconds: CACHE_MAX_AGE_SECONDS,
+        staleWhileRevalidateSeconds: CACHE_STALE_SECONDS,
+      });
+    }
     dashboardMetricsCache.set(contaId, body);
 
-    timer.end('GET /dashboard/metrics (success)');
+    timer.end('GET /dashboard/metrics (success)', { contaId, cacheState: cacheStateForLog });
     return jsonWithShortPrivateCache(body);
   } catch (error) {
+    statusCodeForLog = 500;
     console.error('[GET /api/dashboard/metrics] Erro:', error);
     return NextResponse.json(
       {
@@ -483,6 +531,14 @@ export async function GET(_request: NextRequest) {
       },
       { status: 500 },
     );
+  } finally {
+    logRoutePerformance({
+      route: 'api/dashboard/metrics',
+      method: 'GET',
+      contaId: contaIdForLog,
+      durationMs: Date.now() - startedAt,
+      cacheState: cacheStateForLog,
+      statusCode: statusCodeForLog,
+    });
   }
 }
-

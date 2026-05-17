@@ -26,6 +26,9 @@ const prismaMock = vi.hoisted(() => ({
   calendarEvent: {
     findMany: vi.fn(),
   },
+  aulaExperimental: {
+    findMany: vi.fn(),
+  },
 }));
 
 vi.mock('next-auth', () => ({
@@ -74,6 +77,7 @@ describe('GET /api/dashboard/metrics', () => {
       .mockResolvedValueOnce([]);
     prismaMock.pagamento.aggregate.mockResolvedValue({ _sum: { valorPago: 0 } });
     prismaMock.pagamento.findMany.mockResolvedValue([]);
+    prismaMock.aulaExperimental.findMany.mockResolvedValue([]);
     prismaMock.calendarEvent.findMany.mockResolvedValue([
       {
         turmaId: 'turma-1',

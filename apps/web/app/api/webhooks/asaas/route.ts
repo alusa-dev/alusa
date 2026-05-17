@@ -15,6 +15,7 @@ import {
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
 import { emitBillingNotificationCandidate, emitBillingNotifications } from '@/lib/notifications/emit-billing-notifications';
+import { invalidateChargesCache } from '@/lib/cache/invalidation';
 
 const MAX_BODY_BYTES = 512 * 1024;
 
@@ -109,10 +110,12 @@ export async function POST(req: NextRequest) {
     const processingRuntime = inspectWebhookProcessingRuntimeStatus();
     const useAsyncQueue = processingRuntime.useAsyncQueue;
     let result: Awaited<ReturnType<typeof handleAsaasWebhookEvent>>;
+    let processedContaId: string | null = null;
 
     if (useAsyncQueue) {
       const queued = await enqueueAsaasWebhookEvent({ rawBody, accessToken });
       result = queued;
+      processedContaId = queued.success ? queued.contaId ?? null : null;
 
       // Em produção, inline drain desabilitado por padrão (worker externo processa a fila).
       // Em dev, habilitado por padrão para facilitar testes locais.
@@ -135,6 +138,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       result = await handleAsaasWebhookEvent({ rawBody, accessToken });
+      processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
       const payload = parseWebhookPayload(rawBody);
       if (result.success && payload?.payment?.id) {
@@ -160,6 +164,14 @@ export async function POST(req: NextRequest) {
           }));
         }
       }
+    }
+    if (result.success && processedContaId) {
+      void invalidateChargesCache(processedContaId, 'asaas-webhook').catch((cacheError) => {
+        console.warn('[Asaas Webhook][cache-invalidate] Falha não bloqueante', redactWebhookLogObject({
+          contaId: processedContaId,
+          error: cacheError instanceof Error ? cacheError.message : String(cacheError),
+        }));
+      });
     }
     // Sempre retornar 200 após processamento.
     // Erros de lógica ficam em WebhookAsaas.status='ERRO' com reprocessamento interno.

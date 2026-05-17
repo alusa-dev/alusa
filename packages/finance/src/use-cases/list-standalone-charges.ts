@@ -44,6 +44,78 @@ export type ListStandaloneChargesOutput = {
   totalPages: number;
 };
 
+function buildStandaloneChargeWhere(input: {
+  contaId: string;
+  search?: string;
+  statusView: NonNullable<ListStandaloneChargesInput['statusView']>;
+}) {
+  const where: Record<string, unknown> = {
+    contaId: input.contaId,
+    cobrancaId: null,
+    standaloneInstallmentPlanId: null,
+    NOT: [
+      { externalReference: { startsWith: 'alusa:standalone-subscription:' } },
+      { externalReference: { startsWith: 'alusa:installment:' } },
+      { externalReference: { startsWith: 'installmentPlan:' } },
+    ],
+  };
+
+  if (input.statusView === 'open') {
+    where.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
+  } else if (input.statusView === 'paid') {
+    where.status = 'PAID';
+  }
+
+  if (input.search) {
+    where.OR = [
+      { payerName: { contains: input.search, mode: 'insensitive' } },
+      { description: { contains: input.search, mode: 'insensitive' } },
+    ];
+  }
+
+  return where;
+}
+
+async function shadowCompareStandaloneReadModelWithDatabase(
+  input: ListStandaloneChargesInput,
+  db: typeof prisma,
+  readModelResult: ListStandaloneChargesOutput,
+) {
+  const page = Math.max(1, input.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
+  const statusView = input.statusView ?? 'open';
+  const where = buildStandaloneChargeWhere({
+    contaId: input.contaId,
+    search: input.search,
+    statusView,
+  });
+
+  const [legacyIds, total] = await Promise.all([
+    db.charge.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: { id: true },
+    }),
+    db.charge.count({ where }),
+  ]);
+  const readModelIds = new Set(readModelResult.items.map((item) => item.id));
+  const onlyLegacy = legacyIds
+    .filter((item) => !readModelIds.has(item.id))
+    .slice(0, 10)
+    .map((item) => item.id);
+
+  if (total !== readModelResult.total || onlyLegacy.length) {
+    console.warn('[finance][read-model][shadow][standalone]', {
+      contaId: input.contaId,
+      legacyTotal: total,
+      readModelTotal: readModelResult.total,
+      onlyLegacy,
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Use-case
 // ---------------------------------------------------------------------------
@@ -67,33 +139,24 @@ export async function listStandaloneCharges(
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, search, statusView = 'open' } = input;
 
-  // Apenas charges sem vínculo acadêmico
-  const where: Record<string, unknown> = {
+  if (readModelEnabled) {
+    const readModelResult = await chargeReadModelService.listStandaloneChargesFromReadModel(input);
+    if (process.env.FIN_READMODEL_SHADOW_COMPARE === 'true') {
+      void shadowCompareStandaloneReadModelWithDatabase(input, _db, readModelResult).catch((shadowError) => {
+        console.warn('[finance][read-model][shadow][standalone] compare failed', {
+          contaId,
+          error: shadowError instanceof Error ? shadowError.message : String(shadowError),
+        });
+      });
+    }
+    return readModelResult;
+  }
+
+  const where = buildStandaloneChargeWhere({
     contaId,
-    cobrancaId: null,
-    standaloneInstallmentPlanId: null,
-    NOT: [
-      { externalReference: { startsWith: 'alusa:standalone-subscription:' } },
-      { externalReference: { startsWith: 'alusa:installment:' } },
-      { externalReference: { startsWith: 'installmentPlan:' } },
-    ],
-  };
-
-  // Filtro de status
-  if (statusView === 'open') {
-    where.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
-  } else if (statusView === 'paid') {
-    where.status = 'PAID';
-  }
-  // 'all' = sem filtro de status
-
-  // Busca textual
-  if (search) {
-    where.OR = [
-      { payerName: { contains: search, mode: 'insensitive' } },
-      { description: { contains: search, mode: 'insensitive' } },
-    ];
-  }
+    search,
+    statusView,
+  });
 
   const [initialCharges, total] = await Promise.all([
     _db.charge.findMany({
@@ -125,10 +188,6 @@ export async function listStandaloneCharges(
       status: charge.status,
     })),
   });
-
-  if (readModelEnabled) {
-    return chargeReadModelService.listStandaloneChargesFromReadModel(input);
-  }
 
   const charges = converged
     ? await _db.charge.findMany({

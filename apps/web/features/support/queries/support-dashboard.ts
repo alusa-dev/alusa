@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 
 import prisma from '@/lib/prisma';
+import { buildGlobalCacheKey, withTenantCache } from '@/lib/cache/tenant-cache';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { withPerfTimer } from '@/lib/perf-logger';
 import { normalizeSearch } from '../shared/format';
 
 const SEARCH_LIMIT = 8;
@@ -26,6 +29,21 @@ export type SupportSearchResult = {
 };
 
 export async function getSupportOverview() {
+  if (process.env.SUPPORT_CACHE_ENABLED === 'true') {
+    return withTenantCache({
+      adapter: getTenantCacheAdapter(),
+      key: buildGlobalCacheKey({ area: 'support', resource: 'overview', version: 1 }),
+      ttlSeconds: 60,
+      staleWhileRevalidateSeconds: 60,
+      lockTtlSeconds: 10,
+      load: getSupportOverviewUncached,
+    }).then((result) => result.body);
+  }
+
+  return getSupportOverviewUncached();
+}
+
+async function getSupportOverviewUncached() {
   const [
     contasAtivas,
     usuariosAtivos,
@@ -60,6 +78,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
 
   const contains = { contains: q, mode: Prisma.QueryMode.insensitive };
   const digits = q.replace(/\D/g, '');
+  const looksExactId = /^(c[klmnpqrstuvwxyz0-9]{8,}|pay_|sub_|ins_|tr_|evt_|asaas_|acc_|cus_)/i.test(q);
 
   const [
     contas,
@@ -76,6 +95,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
     rematriculas,
     webhooks,
   ] = await Promise.all([
+      withPerfTimer('support.search', 'contas', () =>
       prisma.conta.findMany({
         where: {
           deletedAt: null,
@@ -88,18 +108,24 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         select: { id: true, nome: true, status: true, financeStatus: true },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'usuarios', () =>
       prisma.usuario.findMany({
         where: {
-          OR: [{ id: q }, { nome: contains }, { email: contains }],
+          OR: looksExactId ? [{ id: q }] : [{ id: q }, { nome: contains }, { email: contains }],
         },
         select: { id: true, contaId: true, nome: true, email: true, role: true, status: true },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'alunos', () =>
       prisma.aluno.findMany({
         where: {
-          OR: [
+          OR: looksExactId ? [
+            { id: q },
+            { asaasCustomerId: q },
+            { asaasCustomerExternalReference: q },
+          ] : [
             { id: q },
             { nome: contains },
             { email: contains },
@@ -112,10 +138,15 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         select: { id: true, contaId: true, nome: true, email: true, status: true },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'responsaveis', () =>
       prisma.responsavel.findMany({
         where: {
-          OR: [
+          OR: looksExactId ? [
+            { id: q },
+            { asaasCustomerId: q },
+            { asaasCustomerExternalReference: q },
+          ] : [
             { id: q },
             { nome: contains },
             { email: contains },
@@ -126,7 +157,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         select: { id: true, contaId: true, nome: true, email: true, financeiro: true },
         take: SEARCH_LIMIT,
-      }),
+      })),
+      withPerfTimer('support.search', 'matriculas', () =>
       prisma.matricula.findMany({
         where: {
           OR: [{ id: q }, { asaasId: q }, { asaasSubscriptionId: q }],
@@ -140,10 +172,17 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'cobrancas', () =>
       prisma.chargeReadModel.findMany({
         where: {
-          OR: [
+          OR: looksExactId ? [
+            { id: q },
+            { sourceId: q },
+            { asaasPaymentId: q },
+            { matriculaId: q },
+            { groupId: q },
+          ] : [
             { id: q },
             { sourceId: q },
             { payerName: contains },
@@ -162,7 +201,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'subscriptions', () =>
       prisma.subscription.findMany({
         where: {
           OR: [{ id: q }, { externalReference: q }, { asaasSubscriptionId: q }, { matriculaId: q }],
@@ -177,7 +217,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'standaloneSubscriptions', () =>
       prisma.standaloneSubscription.findMany({
         where: {
           OR: [{ id: q }, { externalReference: q }, { asaasSubscriptionId: q }, { idempotencyKey: q }],
@@ -192,7 +233,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'installmentPlans', () =>
       prisma.installmentPlan.findMany({
         where: {
           OR: [{ id: q }, { externalReference: q }, { asaasInstallmentId: q }, { matriculaId: q }],
@@ -207,7 +249,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'standaloneInstallments', () =>
       prisma.standaloneInstallmentPlan.findMany({
         where: {
           OR: [{ id: q }, { externalReference: q }, { asaasInstallmentId: q }, { idempotencyKey: q }],
@@ -222,7 +265,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'transfers', () =>
       prisma.transferRequest.findMany({
         where: {
           OR: [{ id: q }, { externalReference: q }, { asaasTransferId: q }, { idempotencyKey: q }],
@@ -237,7 +281,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'rematriculas', () =>
       prisma.rematriculaOperacao.findMany({
         where: {
           OR: [
@@ -261,7 +306,8 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
-      }),
+      })),
+      withPerfTimer('support.search', 'webhooks', () =>
       prisma.webhookAsaas.findMany({
         where: {
           OR: [
@@ -276,7 +322,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         select: { id: true, contaId: true, evento: true, status: true, eventId: true },
         take: SEARCH_LIMIT,
         orderBy: { recebidoEm: 'desc' },
-      }),
+      })),
     ]);
 
   return [

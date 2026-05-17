@@ -269,22 +269,91 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
 export async function backfillChargeReadModel(params?: {
   contaId?: string;
   limit?: number;
-}): Promise<{ projected: number }> {
-  if (!readModelEnabled()) return { projected: 0 };
+}): Promise<{ projected: number; chargesProjected: number; cobrancasProjected: number; durationMs: number }> {
+  const startedAt = Date.now();
+  if (!readModelEnabled()) {
+    return {
+      projected: 0,
+      chargesProjected: 0,
+      cobrancasProjected: 0,
+      durationMs: Date.now() - startedAt,
+    };
+  }
 
   const limit = Math.min(Math.max(params?.limit ?? 1000, 1), 10000);
-  const charges = await prisma.charge.findMany({
-    where: params?.contaId ? { contaId: params.contaId } : undefined,
-    orderBy: { updatedAt: 'desc' },
-    take: limit,
-    select: { id: true },
-  });
+  const [charges, cobrancas] = await Promise.all([
+    prisma.charge.findMany({
+      where: params?.contaId ? { contaId: params.contaId } : undefined,
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+      select: { id: true },
+    }),
+    prisma.cobranca.findMany({
+      where: params?.contaId ? { contaId: params.contaId } : undefined,
+      orderBy: { updatedAt: 'desc' },
+      take: limit,
+      select: { id: true },
+    }),
+  ]);
 
   for (const charge of charges) {
     await projectChargeReadModelByChargeId(charge.id);
   }
+  for (const cobranca of cobrancas) {
+    await projectChargeReadModelByCobrancaId(cobranca.id);
+  }
 
-  return { projected: charges.length };
+  const result = {
+    projected: charges.length + cobrancas.length,
+    chargesProjected: charges.length,
+    cobrancasProjected: cobrancas.length,
+    durationMs: Date.now() - startedAt,
+  };
+
+  if (process.env.PERF_LOGS === '1') {
+    console.log('[finance][read-model][backfill]', {
+      contaId: params?.contaId ?? null,
+      ...result,
+    });
+  }
+
+  return result;
+}
+
+export async function getChargeReadModelLag(params: { contaId: string }) {
+  const [chargesBehind, cobrancasBehind, lastProjection] = await Promise.all([
+    prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*)::bigint AS count
+      FROM "Charge" c
+      LEFT JOIN "ChargeReadModel" crm
+        ON crm."contaId" = c."contaId"
+       AND crm."sourceKind" = 'CHARGE'
+       AND crm."sourceId" = c."id"
+      WHERE c."contaId" = ${params.contaId}
+        AND (crm."id" IS NULL OR crm."projectedAt" < c."updatedAt")
+    `.then((rows) => Number(rows[0]?.count ?? 0)),
+    prisma.$queryRaw<[{ count: bigint }]>`
+      SELECT COUNT(*)::bigint AS count
+      FROM "Cobranca" c
+      LEFT JOIN "ChargeReadModel" crm
+        ON crm."contaId" = c."contaId"
+       AND crm."sourceKind" = 'COBRANCA'
+       AND crm."sourceId" = c."id"
+      WHERE c."contaId" = ${params.contaId}
+        AND (crm."id" IS NULL OR crm."projectedAt" < c."updatedAt")
+    `.then((rows) => Number(rows[0]?.count ?? 0)),
+    prisma.chargeReadModel.findFirst({
+      where: { contaId: params.contaId },
+      orderBy: { projectedAt: 'desc' },
+      select: { projectedAt: true },
+    }),
+  ]);
+
+  return {
+    chargesBehind,
+    cobrancasBehind,
+    lastProjectedAt: lastProjection?.projectedAt?.toISOString() ?? null,
+  };
 }
 
 export async function listStandaloneChargesFromReadModel(
@@ -356,5 +425,6 @@ export const chargeReadModelService = {
   projectChargeReadModelByChargeId,
   projectChargeReadModelByCobrancaId,
   backfillChargeReadModel,
+  getChargeReadModelLag,
   listStandaloneChargesFromReadModel,
 };

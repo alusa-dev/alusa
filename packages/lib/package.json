@@ -6,11 +6,26 @@
   "main": "dist/packages/lib/src/index.js",
   "types": "dist/packages/lib/src/index.d.ts",
   "exports": {
-    ".": "./dist/packages/lib/src/index.js",
-    "./client": "./dist/packages/lib/src/client.js",
-    "./cpf-cnpj": "./dist/packages/lib/src/utils/cpf-cnpj.js",
-    "./prisma": "./dist/packages/lib/src/prisma.js",
-    "./server": "./dist/packages/lib/src/server.js"
+    ".": {
+      "types": "./dist/packages/lib/src/index.d.ts",
+      "default": "./dist/packages/lib/src/index.js"
+    },
+    "./client": {
+      "types": "./dist/packages/lib/src/client.d.ts",
+      "default": "./dist/packages/lib/src/client.js"
+    },
+    "./cpf-cnpj": {
+      "types": "./dist/packages/lib/src/utils/cpf-cnpj.d.ts",
+      "default": "./dist/packages/lib/src/utils/cpf-cnpj.js"
+    },
+    "./prisma": {
+      "types": "./dist/packages/lib/src/prisma.d.ts",
+      "default": "./dist/packages/lib/src/prisma.js"
+    },
+    "./server": {
+      "types": "./dist/packages/lib/src/server.d.ts",
+      "default": "./dist/packages/lib/src/server.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

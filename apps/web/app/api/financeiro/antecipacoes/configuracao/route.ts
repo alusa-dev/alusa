@@ -10,6 +10,13 @@ import { anticipationErrorResponse, json, requireFinanceUser } from '../_shared'
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateCacheControl } from '@/lib/private-cache';
+import {
+  buildTenantCacheKey,
+  isCacheLayerEnabled,
+} from '@/lib/cache/tenant-cache';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { invalidateFinanceCache } from '@/lib/cache/invalidation';
+import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -26,10 +33,21 @@ const configurationCacheControl = privateCacheControl({
 export async function GET() {
   const timer = createPerfTimer('api/financeiro/antecipacoes/configuracao');
   try {
+    logRuntimeEnvironmentOnce('api/financeiro/antecipacoes/configuracao');
     const auth = await requireFinanceUser({ checkAccountGate: false });
     if (!auth.ok) return auth.response;
 
-    const cached = configurationCache.get(auth.user.contaId);
+    const tenantCacheKey = isCacheLayerEnabled()
+      ? buildTenantCacheKey({
+          contaId: auth.user.contaId,
+          area: 'finance',
+          resource: 'anticipation-configuration',
+          version: 1,
+        })
+      : null;
+    const cached = tenantCacheKey
+      ? await getTenantCacheAdapter().get(tenantCacheKey)
+      : configurationCache.get(auth.user.contaId);
     if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
       timer.end('GET /antecipacoes/configuracao (cache hit)', { cacheState: cached.state });
       return json(200, cached.body, {
@@ -55,6 +73,12 @@ export async function GET() {
     if (!result.success) return anticipationErrorResponse(result.error);
 
     const body = { data: result.data, fetchedAt: new Date().toISOString() };
+    if (tenantCacheKey) {
+      await getTenantCacheAdapter().set(tenantCacheKey, body, {
+        ttlSeconds: 30,
+        staleWhileRevalidateSeconds: 120,
+      });
+    }
     configurationCache.set(auth.user.contaId, body);
 
     timer.end('GET /antecipacoes/configuracao (cache miss)');
@@ -81,6 +105,15 @@ export async function PUT(req: NextRequest) {
     });
 
     if (!result.success) return anticipationErrorResponse(result.error);
+    if (isCacheLayerEnabled()) {
+      await getTenantCacheAdapter().delete(buildTenantCacheKey({
+        contaId: auth.user.contaId,
+        area: 'finance',
+        resource: 'anticipation-configuration',
+        version: 1,
+      }));
+    }
+    await invalidateFinanceCache(auth.user.contaId, 'anticipation-configuration-updated');
     configurationCache.delete(auth.user.contaId);
     return json(200, { data: result.data });
   } catch (error) {
