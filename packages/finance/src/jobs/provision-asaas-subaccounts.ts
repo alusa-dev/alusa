@@ -254,6 +254,22 @@ export async function processAsaasProvisioningJobs(params?: {
           throw new Error('Provisionamento nao retornou asaasAccountId.');
         }
 
+        const financeSnap = await prisma.conta.findUnique({
+          where: { id: job.contaId },
+          select: { financeStatus: true },
+        });
+        if (
+          financeSnap &&
+          financeSnap.financeStatus !== 'FINANCE_APPROVED' &&
+          financeSnap.financeStatus !== 'FINANCE_REJECTED'
+        ) {
+          await prisma.conta.update({
+            where: { id: job.contaId },
+            data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+            select: { id: true },
+          });
+        }
+
         await enqueueWebhookConfigurationJob(job.contaId, createResult.financeProfileId);
         result.webhookJobsQueued++;
       } else {

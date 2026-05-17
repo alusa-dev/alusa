@@ -18,7 +18,42 @@ import {
   statusBadge,
   verificationStatusBadge,
   type VerificationAction,
+  type SubaccountProvisioningHint,
 } from '@/features/kyc';
+
+function provisioningCopy(hint: SubaccountProvisioningHint): { title: string; description: string } {
+  switch (hint.state) {
+    case 'QUEUED':
+      return {
+        title: 'Criando sua conta de pagamentos',
+        description:
+          'Seus dados foram recebidos. Estamos provisionando a subconta no Asaas — em geral leva poucos minutos. Esta página atualiza automaticamente.',
+      };
+    case 'PROCESSING':
+      return {
+        title: 'Provisionamento em andamento',
+        description: 'Aguarde enquanto concluímos a criação da subconta.',
+      };
+    case 'FAILED':
+      return {
+        title: 'Não foi possível criar a subconta automaticamente',
+        description:
+          hint.lastError?.replace(/^RECOVERY_REQUIRED:/, '') ??
+          'Tente novamente mais tarde ou fale com o suporte. O erro foi registrado para análise.',
+      };
+    case 'RECOVERY_REQUIRED':
+      return {
+        title: 'Reconexão necessária',
+        description:
+          'A subconta pode existir no Asaas, mas precisamos reconectar a chave de API no painel administrativo.',
+      };
+    default:
+      return {
+        title: 'Aguardando integração financeira',
+        description: 'Atualizando status…',
+      };
+  }
+}
 
 export default function VerificacaoPage() {
   const sessionResult = useSession();
@@ -29,7 +64,7 @@ export default function VerificacaoPage() {
   const role = (session?.user as { role?: string } | undefined)?.role;
   const isAdmin = typeof role === 'string' && role.toUpperCase() === 'ADMIN';
 
-  const { verification, loading, error, refresh } = useAccountVerification({
+  const { verification, loading, error, refresh, provisioningHint } = useAccountVerification({
     enabled: isAuthenticated && isAdmin,
     poll: true,
   });
@@ -41,6 +76,7 @@ export default function VerificacaoPage() {
 
   const pendingActions = verification?.actions ?? [];
   const hasWaitingProvider = pendingActions.some((a) => a.mode === 'WAITING_PROVIDER');
+  const provisioningBanner = provisioningHint ? provisioningCopy(provisioningHint) : null;
 
   const handleSandboxApprove = async () => {
     setSandboxApproving(true);
@@ -117,7 +153,16 @@ export default function VerificacaoPage() {
   const globalBadge = verification ? verificationStatusBadge(verification.status) : null;
 
   return (
-    <div className="space-y-6 pr-3 md:pr-5">
+      <div className="space-y-6 pr-3 md:pr-5">
+      {provisioningBanner ? (
+        <div
+          className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-950/30"
+          role="status"
+        >
+          <p className="font-medium text-amber-950 dark:text-amber-100">{provisioningBanner.title}</p>
+          <p className="mt-1 text-amber-900/90 dark:text-amber-200/90">{provisioningBanner.description}</p>
+        </div>
+      ) : null}
       {/* Cabeçalho com status global */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

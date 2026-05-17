@@ -855,6 +855,8 @@ export type {
 } from './dtos/asaas-connection.dto';
 export { getKycViewModel, getKycViewModelFresh } from './use-cases/kyc/get-kyc-view-model';
 export { getAccountVerificationStatus } from './use-cases/kyc/get-account-verification-status';
+export type { GetAccountVerificationStatusResult } from './use-cases/kyc/get-account-verification-status';
+export type { SubaccountProvisioningHint } from './use-cases/kyc/subaccount-provisioning-hint';
 export type {
   KycViewModel,
   KycGateStatus,

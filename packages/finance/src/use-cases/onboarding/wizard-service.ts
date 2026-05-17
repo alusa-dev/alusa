@@ -3,7 +3,10 @@ import type { AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { financeProfileService } from '../../foundation/finance-profile.service';
-import { enqueueAsaasSubaccountProvisioning } from '../../jobs/provision-asaas-subaccounts';
+import {
+  enqueueAsaasSubaccountProvisioning,
+  processAsaasProvisioningJobs,
+} from '../../jobs/provision-asaas-subaccounts';
 
 import {
   type GetWizardStateResult,
@@ -493,7 +496,35 @@ export async function completeWizard(params: {
     };
   }
 
-  // 4. Sucesso local: marcar wizard como concluído e liberar processamento assíncrono
+  if (provisioning.status === 'QUEUED') {
+    try {
+      await processAsaasProvisioningJobs({ contaId: params.contaId, limit: 1 });
+    } catch (error) {
+      try {
+        console.warn('[finance.completeWizard] Tentativa imediata de provisionamento falhou; cron processará', {
+          contaId: params.contaId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // noop
+      }
+    }
+  }
+
+  // Sucesso local do wizard: só promove financeStatus a "perfil completo" quando subconta já existe e está conectada.
+  let financeStatusAfterComplete: 'FINANCE_PROFILE_COMPLETED' | 'FINANCE_ONBOARDING_STARTED' =
+    provisioning.status === 'CONNECTED' ? 'FINANCE_PROFILE_COMPLETED' : 'FINANCE_ONBOARDING_STARTED';
+
+  if (financeStatusAfterComplete === 'FINANCE_ONBOARDING_STARTED') {
+    const postAccount = await prisma.asaasAccount.findUnique({
+      where: { financeProfileId: profile.id },
+      select: { asaasAccountId: true, apiKeyStatus: true },
+    });
+    if (postAccount?.asaasAccountId && postAccount.apiKeyStatus === 'CONNECTED') {
+      financeStatusAfterComplete = 'FINANCE_PROFILE_COMPLETED';
+    }
+  }
+
   const now = new Date();
 
   await prisma.$transaction([
@@ -506,7 +537,7 @@ export async function completeWizard(params: {
     }),
     prisma.conta.update({
       where: { id: params.contaId },
-      data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+      data: { financeStatus: financeStatusAfterComplete },
     }),
   ]);
 

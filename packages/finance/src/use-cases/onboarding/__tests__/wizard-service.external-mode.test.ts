@@ -9,6 +9,7 @@ const financeProfileFindUniqueMock = vi.fn();
 const financeProfileUpdateMock = vi.fn();
 const contaUpdateMock = vi.fn();
 const transactionMock = vi.fn();
+const asaasAccountFindUniqueMock = vi.fn();
 
 vi.mock('@alusa/database', () => ({
   prisma: {
@@ -19,6 +20,9 @@ vi.mock('@alusa/database', () => ({
     financeProfile: {
       findUnique: financeProfileFindUniqueMock,
       update: financeProfileUpdateMock,
+    },
+    asaasAccount: {
+      findUnique: asaasAccountFindUniqueMock,
     },
     $transaction: transactionMock,
   },
@@ -38,6 +42,14 @@ vi.mock('../../../foundation/audit-log.service', () => ({
 
 vi.mock('../../../jobs/provision-asaas-subaccounts', () => ({
   enqueueAsaasSubaccountProvisioning: enqueueAsaasSubaccountProvisioningMock,
+  processAsaasProvisioningJobs: vi.fn().mockResolvedValue({
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    recoveryRequired: 0,
+    webhookJobsQueued: 0,
+    errors: [],
+  }),
 }));
 
 describe('completeWizard em modo externo', () => {
@@ -98,6 +110,7 @@ describe('completeWizard em modo externo', () => {
     financeProfileUpdateMock.mockReturnValue({ kind: 'financeProfile.update' });
     contaUpdateMock.mockReturnValue({ kind: 'conta.update' });
     transactionMock.mockResolvedValue(undefined);
+    asaasAccountFindUniqueMock.mockResolvedValue(null);
   });
 
   it('conclui o wizard localmente sem provisionar subconta', async () => {
@@ -137,6 +150,7 @@ describe('completeWizard em modo externo', () => {
     transactionMock.mockReset();
     auditLogRecordMock.mockReset();
     enqueueAsaasSubaccountProvisioningMock.mockReset();
+    asaasAccountFindUniqueMock.mockReset();
     getOrCreateByTenantMock.mockResolvedValue({ id: 'profile_2' });
     contaFindUniqueMock
       .mockResolvedValueOnce({ financeIntegrationMode: 'WHITELABEL_BAAS' })
@@ -196,6 +210,7 @@ describe('completeWizard em modo externo', () => {
     financeProfileUpdateMock.mockReturnValue({ kind: 'financeProfile.update' });
     contaUpdateMock.mockReturnValue({ kind: 'conta.update' });
     transactionMock.mockResolvedValue(undefined);
+    asaasAccountFindUniqueMock.mockResolvedValue(null);
 
     const result = await completeWizard({
       contaId: 'conta_whitelabel_1',
@@ -210,7 +225,7 @@ describe('completeWizard em modo externo', () => {
     expect(contaUpdateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'conta_whitelabel_1' },
-        data: { financeStatus: 'FINANCE_PROFILE_COMPLETED' },
+        data: { financeStatus: 'FINANCE_ONBOARDING_STARTED' },
       }),
     );
     expect(result.success).toBe(true);

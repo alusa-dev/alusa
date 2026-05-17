@@ -67,7 +67,15 @@ export async function GET(req: Request) {
 
     if (!result.ready) {
       timer.end('GET /verification-status (not ready)', { fresh });
-      return json(202, { data: null, reason: 'NOT_READY' }, { 'Retry-After': '2' });
+      return json(
+        202,
+        {
+          data: null,
+          reason: 'NOT_READY',
+          subaccountProvisioning: result.subaccountProvisioning,
+        },
+        { 'Retry-After': '2' },
+      );
     }
 
     const body = { data: result.data };

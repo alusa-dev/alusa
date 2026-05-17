@@ -17,8 +17,8 @@ async function resolveAuth(): Promise<SessionUser | null> {
 
 /**
  * POST /api/kyc/wizard/complete
- * Finaliza o wizard de onboarding (marca como step 4).
- * Nenhuma chamada Asaas é feita aqui - apenas persiste dados localmente.
+ * Finaliza o wizard de onboarding e enfileira (ou reaproveita) provisionamento da subconta Asaas no white-label.
+ * Com `QUEUED`, a conta segue em FINANCE_ONBOARDING_STARTED até o job criar subconta + chave; ver `apps/web/vercel.json` crons.
  */
 export async function POST() {
   try {

@@ -1,4 +1,9 @@
 import type { BadgeVariant } from '@/components/ui/badge';
+import type {
+  AccountVerificationResponse,
+  KycAreaStatus,
+  SubaccountProvisioningHint,
+} from '@alusa/finance';
 
 // Re-exportar tipos canônicos de @alusa/finance (fonte única de verdade)
 export type {
@@ -13,13 +18,13 @@ export type {
   VerificationActionStatus,
   VerificationSlotInfo,
   VerificationAreaInfo,
+  SubaccountProvisioningHint,
 } from '@alusa/finance';
-
-import type { KycAreaStatus, AccountVerificationResponse } from '@alusa/finance';
 
 export type SnapshotResponse = {
   data: AccountVerificationResponse | null;
   reason?: string;
+  subaccountProvisioning?: SubaccountProvisioningHint;
 };
 
 export const UPLOAD_MAX_SIZE_MB = 10;

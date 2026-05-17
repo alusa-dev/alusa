@@ -25,6 +25,10 @@ import {
 } from '../../dtos/kyc/kyc-snapshot.dto';
 import { deriveGroupLabel } from './kyc-label-utils';
 import { ensureSubaccountEmailSynced } from '../asaas-account/ensure-subaccount-email-synced';
+import {
+  resolveSubaccountProvisioningHint,
+  type SubaccountProvisioningHint,
+} from './subaccount-provisioning-hint';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -179,7 +183,15 @@ function assertActionsInvariants(actions: VerificationAction[]): void {
 
 export type GetAccountVerificationStatusResult =
   | { ready: true; data: AccountVerificationResponse }
-  | { ready: false; reason: 'NOT_READY' };
+  | { ready: false; reason: 'NOT_READY'; subaccountProvisioning?: SubaccountProvisioningHint };
+
+async function withProvisioningHint(
+  contaId: string,
+  result: { ready: false; reason: 'NOT_READY' },
+): Promise<GetAccountVerificationStatusResult> {
+  const subaccountProvisioning = await resolveSubaccountProvisioningHint(contaId);
+  return subaccountProvisioning ? { ...result, subaccountProvisioning } : result;
+}
 
 export async function getAccountVerificationStatus(
   contaId: string,
@@ -203,7 +215,7 @@ export async function getAccountVerificationStatus(
   const snapshot = await getKycSnapshotByContaId(contaId, opts);
 
   if (!snapshot) {
-    return { ready: false, reason: 'NOT_READY' };
+    return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });
   }
 
   const status: AccountVerificationStatus = mapProcessToAccountStatus(snapshot.processStatus);
@@ -235,7 +247,7 @@ export async function getAccountVerificationStatus(
     : snapshot;
 
   if (!snapshotForActions) {
-    return { ready: false, reason: 'NOT_READY' };
+    return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });
   }
 
   const actions = buildActions(snapshotForActions.nextActions);
@@ -244,7 +256,7 @@ export async function getAccountVerificationStatus(
   // Se ainda houver REDIRECT sem URL mesmo após fresh, consideramos NOT_READY.
   const invalidRedirect = actions.some((a) => a.mode === 'REDIRECT' && !a.redirectUrl);
   if (invalidRedirect) {
-    return { ready: false, reason: 'NOT_READY' };
+    return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });
   }
 
   assertActionsInvariants(actions);

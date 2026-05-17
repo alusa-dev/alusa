@@ -174,4 +174,24 @@ describe('useAccountVerification', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/account/verification-status?fresh=1');
   });
+
+  it('expõe provisioningHint quando o endpoint 202 inclui subaccountProvisioning', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: null,
+          reason: 'NOT_READY',
+          subaccountProvisioning: { state: 'QUEUED', jobStatus: 'PENDING' },
+        }),
+        { status: 202, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    const { result } = renderHook(() => useAccountVerification({ enabled: true, poll: false }));
+
+    await flushAsyncWork();
+
+    expect(result.current.provisioningHint?.state).toBe('QUEUED');
+  });
 });

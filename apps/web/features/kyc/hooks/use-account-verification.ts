@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AccountVerificationResponse } from '../constants';
+import type { AccountVerificationResponse, SubaccountProvisioningHint } from '../constants';
 import { SNAPSHOT_POLL_INTERVAL_MS } from '../constants';
 
 const NOT_READY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
@@ -15,7 +15,12 @@ function parseRetryAfterMs(retryAfterHeader: string | null): number | null {
 
 async function fetchVerification(
   fresh = false,
-): Promise<{ data: AccountVerificationResponse | null; reason?: string; retryAfterMs?: number }> {
+): Promise<{
+  data: AccountVerificationResponse | null;
+  reason?: string;
+  retryAfterMs?: number;
+  subaccountProvisioning?: SubaccountProvisioningHint;
+}> {
   const url = fresh ? '/api/account/verification-status?fresh=1' : '/api/account/verification-status';
   const res = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -23,11 +28,20 @@ async function fetchVerification(
   });
   const json = await res.json().catch(() => null);
   const retryAfterMs = parseRetryAfterMs(res.headers.get('Retry-After'));
+  const subaccountProvisioning = (json as { subaccountProvisioning?: SubaccountProvisioningHint } | null)
+    ?.subaccountProvisioning;
 
   // 202 = NOT_READY
-  if (res.status === 202) return { data: null, reason: 'NOT_READY', retryAfterMs: retryAfterMs ?? undefined };
-  if (!res.ok) throw new Error(json?.error ?? 'Erro ao carregar status');
-  return json;
+  if (res.status === 202) {
+    return {
+      data: null,
+      reason: 'NOT_READY',
+      retryAfterMs: retryAfterMs ?? undefined,
+      subaccountProvisioning,
+    };
+  }
+  if (!res.ok) throw new Error((json as { error?: string } | null)?.error ?? 'Erro ao carregar status');
+  return json as { data: AccountVerificationResponse };
 }
 
 function shouldAutoPoll(verification: AccountVerificationResponse | null): boolean {
@@ -60,6 +74,8 @@ export type UseAccountVerificationResult = {
   isApproved: boolean;
   refresh: (_fresh?: boolean) => Promise<void>;
   fetchFresh: () => Promise<{ data: AccountVerificationResponse | null; reason?: string }>;
+  /** Preenchido quando o snapshot KYC ainda não está pronto mas há contexto de provisionamento de subconta. */
+  provisioningHint: SubaccountProvisioningHint | null;
 };
 
 export function useAccountVerification(opts?: {
@@ -70,6 +86,7 @@ export function useAccountVerification(opts?: {
 
   const [loading, setLoading] = useState(true);
   const [verification, setVerification] = useState<AccountVerificationResponse | null>(null);
+  const [provisioningHint, setProvisioningHint] = useState<SubaccountProvisioningHint | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const inFlightRef = useRef<{ fresh: boolean; promise: Promise<void> } | null>(null);
@@ -92,7 +109,10 @@ export function useAccountVerification(opts?: {
         if (!silent) setLoading(true);
         setError(null);
         const res = await fetchVerification(fresh);
-        if (mountedRef.current) setVerification(res.data);
+        if (mountedRef.current) {
+          setVerification(res.data);
+          setProvisioningHint(res.subaccountProvisioning ?? null);
+        }
 
         if (mountedRef.current && res.data === null && res.reason === 'NOT_READY') {
           const attempt = notReadyRetryRef.current.attempt;
@@ -174,5 +194,6 @@ export function useAccountVerification(opts?: {
     isApproved,
     refresh,
     fetchFresh: () => fetchVerification(true),
+    provisioningHint,
   };
 }

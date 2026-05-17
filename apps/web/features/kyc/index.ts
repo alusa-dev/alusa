@@ -38,4 +38,5 @@ export type {
   VerificationActionStatus,
   VerificationSlotInfo,
   VerificationAreaInfo,
+  SubaccountProvisioningHint,
 } from './constants';

@@ -150,6 +150,11 @@ export function FinanceWizard() {
       setCurrentStep(6);
 
       if (result.success) {
+        if (result.provisioningStatus === 'QUEUED') {
+          toast.info(
+            'Estamos criando sua conta de pagamentos. Em geral leva poucos minutos — você pode continuar usando o app.',
+          );
+        }
         await updateSession().catch((error) => {
           console.warn('[FinanceWizard] Falha ao atualizar sessão após conclusão', error);
         });

@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { getAccountVerificationStatus } from '../get-account-verification-status';
 
+const resolveProvisioningHintMock = vi.fn();
+
+vi.mock('../subaccount-provisioning-hint', () => ({
+  resolveSubaccountProvisioningHint: (contaId: string) => resolveProvisioningHintMock(contaId),
+}));
+
 const mockGetKycSnapshotByContaId = vi.fn();
 const mockEnsureSubaccountEmailSynced = vi.fn();
 
@@ -35,6 +41,7 @@ describe('getAccountVerificationStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockEnsureSubaccountEmailSynced.mockResolvedValue({ synced: false, canonicalEmail: null });
+    resolveProvisioningHintMock.mockResolvedValue(null);
   });
 
   it('mapeia group com onboardingUrl para action REDIRECT com redirectUrl (sem uploadGroupId)', async () => {
@@ -200,5 +207,23 @@ describe('getAccountVerificationStatus', () => {
       isExpired: false,
       scheduledDate: '2026-12-31',
     });
+  });
+
+  it('quando snapshot é null, anexa subaccountProvisioning quando o resolver retorna hint', async () => {
+    mockGetKycSnapshotByContaId.mockResolvedValueOnce(null);
+    resolveProvisioningHintMock.mockResolvedValueOnce({
+      state: 'QUEUED',
+      jobStatus: 'PENDING',
+      asaasAccountStatus: 'READY_FOR_PROVISIONING',
+      lastError: null,
+      attempts: 0,
+    });
+
+    const result = await getAccountVerificationStatus('conta_1', { fresh: false });
+
+    expect(result.ready).toBe(false);
+    if (result.ready) return;
+    expect(result.subaccountProvisioning?.state).toBe('QUEUED');
+    expect(resolveProvisioningHintMock).toHaveBeenCalledWith('conta_1');
   });
 });
