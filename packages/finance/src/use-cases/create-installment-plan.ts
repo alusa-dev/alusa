@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { isPastDate } from '../foundation/date-guard';
 import { ensureCustomer } from './ensure-customer';
 import { buildInstallmentExternalReference, buildPaymentExternalReference, deriveDeterministicId, toFormaPagamento } from '../core';
@@ -74,6 +75,12 @@ export async function createInstallmentPlan(
 
     const kyc = await requireKycApproved(input.contaId);
     if (!kyc.success) return err(kyc.error === 'KYC_NAO_APROVADO' ? 'KYC_NAO_APROVADO' : 'ERRO_INTERNO');
+
+    try {
+      await assertAsaasTenantOperational(input.contaId);
+    } catch {
+      return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    }
 
     const matricula = await prisma.matricula.findFirst({
       where: { id: input.matriculaId, aluno: { contaId: input.contaId } },

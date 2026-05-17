@@ -7,6 +7,7 @@ import { err, ok } from '@alusa/shared';
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { isPastDate } from '../foundation/date-guard';
 import {
   buildInstallmentExternalReference,
@@ -83,6 +84,12 @@ export async function createStandaloneInstallmentPlan(
 
     const kyc = await requireKycApproved(input.contaId);
     if (!kyc.success) return err('KYC_NAO_APROVADO');
+
+    try {
+      await assertAsaasTenantOperational(input.contaId);
+    } catch {
+      return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    }
 
     if (input.installmentCount < 2) return err('PARCELAS_INVALIDAS');
     if (!input.value || input.value <= 0) return err('VALOR_INVALIDO');

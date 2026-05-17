@@ -365,6 +365,12 @@ enum AsaasIntegrationJobType {
   CREATE_SUBSCRIPTION
   PROVISION_SUBACCOUNT
   CONFIGURE_WEBHOOK
+  RECONCILE_ACCOUNT
+  PROCESS_WEBHOOK
+  REPROCESS_WEBHOOK
+  SYNC_KYC_STATUS
+  HEALTH_CHECK_SUBACCOUNT
+  ROTATE_OR_VALIDATE_API_KEY
 }
 
 enum TransferStatus {
@@ -2287,6 +2293,32 @@ enum AsaasApiKeyStatus {
   CONNECTED
   MISSING
   REVOKED
+  INVALID
+  EXPIRED
+  DISABLED
+  DELETED
+}
+
+enum AsaasWebhookStatus {
+  NOT_CONFIGURED
+  PENDING
+  ACTIVE
+  DRIFT
+  INTERRUPTED
+  INVALID_URL
+  AUTH_TOKEN_MISMATCH
+}
+
+enum AsaasOperationalStatus {
+  NOT_READY
+  PROVISIONING
+  API_KEY_REQUIRED
+  WEBHOOK_REQUIRED
+  KYC_PENDING
+  UNDER_REVIEW
+  OPERATIONAL
+  BLOCKED
+  REJECTED
 }
 
 enum FinanceProfileRegulatoryStatus {
@@ -2404,6 +2436,17 @@ model AsaasAccount {
   apiKeyEncrypted String?
   apiKeyStatus    AsaasApiKeyStatus @default(MISSING)
 
+  // Estado operacional local. CREATED significa apenas "subconta remota existe";
+  // operationalStatus=OPERATIONAL é o que libera mutações financeiras externas.
+  webhookStatus      AsaasWebhookStatus     @default(NOT_CONFIGURED)
+  operationalStatus  AsaasOperationalStatus @default(NOT_READY)
+  lastHealthCheckAt  DateTime?
+  lastWebhookCheckAt DateTime?
+  lastApiKeyCheckAt  DateTime?
+  lastAsaasSyncAt    DateTime?
+  provisionLockKey   String?
+  provisionLastStage String?
+
   // Email principal da subconta no Asaas (usado como fallback em atualizações anuais).
   asaasAccountEmail String?
 
@@ -2412,7 +2455,7 @@ model AsaasAccount {
   documentsCacheUpdatedAt DateTime?
 
   // Webhook (Fase 2): authToken configurado no Asaas (persistido como hash)
-  webhookAuthTokenHash String? @unique
+  webhookAuthTokenHash              String?   @unique
   previousWebhookAuthTokenHash      String?   @unique
   previousWebhookAuthTokenExpiresAt DateTime?
 
@@ -2439,6 +2482,9 @@ model AsaasAccount {
   @@index([financeProfileId])
   @@index([asaasAccountId])
   @@index([status])
+  @@index([apiKeyStatus])
+  @@index([webhookStatus])
+  @@index([operationalStatus])
   @@index([deletionState])
   @@index([previousWebhookAuthTokenExpiresAt], name: "idx_asaas_account_prev_webhook_token_expires")
 }
@@ -2976,18 +3022,23 @@ model TenantFeatureFlags {
   id      String @id @default(cuid())
   contaId String @unique
 
-  enableExternalAsaasOnboarding Boolean @default(false)
-  enableSubscriptions           Boolean @default(false)
-  enableInstallments            Boolean @default(false)
-  enableManualWithdraw          Boolean @default(false)
-  enablePixTransfer             Boolean @default(false)
-  enableBankTransfer            Boolean @default(false)
-  enableSplitPayments           Boolean @default(false)
-  enableEscrow                  Boolean @default(false)
-  enableInvoices                Boolean @default(false)
-  enablePaymentLinks            Boolean @default(false)
-  enableChargebackHandling      Boolean @default(false)
-  enableDunning                 Boolean @default(false)
+  enableExternalAsaasOnboarding     Boolean @default(false)
+  enableSubscriptions               Boolean @default(false)
+  enableInstallments                Boolean @default(false)
+  enableManualWithdraw              Boolean @default(false)
+  enablePixTransfer                 Boolean @default(false)
+  enableBankTransfer                Boolean @default(false)
+  enableSplitPayments               Boolean @default(false)
+  enableEscrow                      Boolean @default(false)
+  enableInvoices                    Boolean @default(false)
+  enablePaymentLinks                Boolean @default(false)
+  enableChargebackHandling          Boolean @default(false)
+  enableDunning                     Boolean @default(false)
+  enableAsaasProvisioningHardening  Boolean @default(false)
+  enableWebhookRequiredBeforeCharge Boolean @default(false)
+  enableApiKeyEventBlocking         Boolean @default(false)
+  enableRegulatoryStatusBlocking    Boolean @default(false)
+  enableAsaasHealthPanel            Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

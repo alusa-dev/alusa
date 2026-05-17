@@ -19,7 +19,7 @@ function jsonError(status: number, code: string, message: string) {
  * - limit (opcional): número máximo de webhooks por execução (default 100).
  * - onlyErrored (opcional): se "true", processa apenas status ERRO.
  */
-export async function POST(req: Request) {
+async function run(req: Request) {
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -59,4 +59,12 @@ export async function POST(req: Request) {
     console.error('[Job Process Finance Webhooks] Erro:', error);
     return jsonError(500, 'ERRO_JOB', (error as Error).message);
   }
+}
+
+export async function GET(req: Request) {
+  return run(req);
+}
+
+export async function POST(req: Request) {
+  return run(req);
 }

@@ -12,7 +12,7 @@ export const maxDuration = 60;
  * Job de baixa frequência separado do drain da fila.
  * Executa health check remoto, drift check e auto-repair seguro.
  */
-export async function POST(req: Request) {
+async function run(req: Request) {
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -38,4 +38,12 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(req: Request) {
+  return run(req);
+}
+
+export async function POST(req: Request) {
+  return run(req);
 }

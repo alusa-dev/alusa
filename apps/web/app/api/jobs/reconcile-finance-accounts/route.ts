@@ -23,7 +23,7 @@ function jsonError(status: number, code: string, message: string) {
  * - dryRun (opcional, mode=webhooks): se true, não persiste mudanças
  * - includeGaps (opcional, mode=webhooks): inclui detecção de gaps locais
  */
-export async function POST(req: Request) {
+async function run(req: Request) {
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -83,4 +83,12 @@ export async function POST(req: Request) {
     console.error('[Job Reconcile Finance Accounts] Erro:', error);
     return jsonError(500, 'ERRO_JOB', (error as Error).message);
   }
+}
+
+export async function GET(req: Request) {
+  return run(req);
+}
+
+export async function POST(req: Request) {
+  return run(req);
 }

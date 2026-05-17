@@ -103,8 +103,20 @@ export default async function SupportAccountPage({ params }: { params: { contaId
             />
             <KeyValue label="API key" value={<StatusBadge value={asaasAccount?.apiKeyStatus} />} />
             <KeyValue
-              label="Webhook configurado"
-              value={asaasAccount?.webhookAuthTokenHash ? 'Sim' : 'Não'}
+              label="Webhook"
+              value={<StatusBadge value={asaasAccount?.webhookStatus} />}
+            />
+            <KeyValue
+              label="Operacional"
+              value={<StatusBadge value={asaasAccount?.operationalStatus} />}
+            />
+            <KeyValue
+              label="Health check"
+              value={formatDateTime(asaasAccount?.lastHealthCheckAt)}
+            />
+            <KeyValue
+              label="Webhook check"
+              value={formatDateTime(asaasAccount?.lastWebhookCheckAt)}
             />
             <KeyValue label="KYC" value={<StatusBadge value={kyc?.status} />} />
             <KeyValue

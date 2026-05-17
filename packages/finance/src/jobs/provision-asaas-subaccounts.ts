@@ -100,10 +100,13 @@ export async function enqueueAsaasSubaccountProvisioning(params: {
         status: 'READY_FOR_PROVISIONING',
         statusUpdatedAt: new Date(),
         apiKeyStatus: 'MISSING',
+        webhookStatus: 'NOT_CONFIGURED',
+        operationalStatus: 'NOT_READY',
       },
       update: {
         status: 'READY_FOR_PROVISIONING',
         statusUpdatedAt: new Date(),
+        operationalStatus: 'NOT_READY',
       },
       select: { id: true },
     });

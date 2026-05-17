@@ -661,6 +661,13 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
 
       const record = await prisma.webhookAsaas.findFirst({ where: { contaId: conta.id, eventId } });
       expect(record?.status).toBe('PROCESSADO');
+
+      const account = await prisma.asaasAccount.findUnique({
+        where: { financeProfileId: profile.id },
+        select: { apiKeyStatus: true, operationalStatus: true },
+      });
+      expect(account?.apiKeyStatus).toBe('EXPIRED');
+      expect(account?.operationalStatus).toBe('API_KEY_REQUIRED');
     } finally {
       await cleanup(conta.id);
     }

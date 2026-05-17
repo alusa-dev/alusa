@@ -8,7 +8,7 @@ import {
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { credentialVault } from '../../foundation/credential-vault';
-import { repairWebhookConfigDrift } from '../../webhooks/webhook-config-drift.service';
+import { ensureWebhookReady, syncAsaasOperationalStatus } from '../../foundation/asaas-operational-guard';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
 
 export type SaveManualSubaccountApiKeyWarningCode =
@@ -189,6 +189,7 @@ export async function saveManualSubaccountApiKey(input: {
           apiKeyEncrypted: encryptedApiKey,
           apiKeyStatus: 'CONNECTED',
           status: 'CREATED',
+          operationalStatus: 'WEBHOOK_REQUIRED',
           provisionLastError: null,
         },
         select: { id: true },
@@ -220,14 +221,16 @@ export async function saveManualSubaccountApiKey(input: {
 
   let webhook = { repaired: false, reason: 'NO_DRIFT' };
   try {
-    const repair = await repairWebhookConfigDrift({ contaId: input.contaId, actor });
-    webhook = { repaired: repair.repaired, reason: repair.reason };
+    await ensureWebhookReady(input.contaId);
+    webhook = { repaired: false, reason: 'ACTIVE' };
   } catch (error) {
     const summary =
       error instanceof Error ? error.message : 'Falha ao verificar ou reparar webhook.';
     warnings.push({ code: 'WEBHOOK_REPAIR_FAILED', summary });
     webhook = { repaired: false, reason: 'ERROR' };
   }
+
+  await syncAsaasOperationalStatus(input.contaId);
 
   let reconcile = { reconciled: false, error: null as string | null };
   try {

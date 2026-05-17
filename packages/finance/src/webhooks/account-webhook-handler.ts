@@ -4,6 +4,7 @@ import type { AsaasCommercialInfoStatus, FinanceStatus, FinancialOnboardingStatu
 import { loadAsaasCredentials } from '@alusa/database';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { financeProfileService } from '../foundation/finance-profile.service';
 import { buildWebhookCacheV2, resolveCommercialInfoState } from '../use-cases/kyc/kyc-cache-utils';
 import { getMyAccountDocumentsCached, getMyAccountStatusCached } from '../use-cases/kyc/kyc-asaas-read-cache';
@@ -279,6 +280,8 @@ export async function handleAccountWebhook(
       webhookEventId: params.payloadId ?? undefined,
     }).catch(() => {});
   }
+
+  await syncAsaasOperationalStatus(contaId);
 
   return { success: true };
 }

@@ -7,6 +7,7 @@ import { AsaasHttpError, getCustomer } from '@alusa/asaas';
 
 import { createAsaasCustomer, syncAsaasCustomerContact } from './create-customer';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 
 export type EnsureCustomerPayerRef =
   | { type: 'RESPONSAVEL'; id: string }
@@ -273,6 +274,12 @@ export async function ensureCustomer(
     }
 
     return ok({ customerId: mockId, localCustomerId: internalCustomer.id, externalReference });
+  }
+
+  try {
+    await assertAsaasTenantOperational(input.contaId);
+  } catch {
+    return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
   }
 
   const creds = await loadAsaasCredentials(input.contaId);

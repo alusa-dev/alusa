@@ -28,6 +28,12 @@ export async function getSupportAccount(contaId: string) {
                 status: true,
                 apiKeyEncrypted: true,
                 apiKeyStatus: true,
+                webhookStatus: true,
+                operationalStatus: true,
+                lastHealthCheckAt: true,
+                lastWebhookCheckAt: true,
+                lastApiKeyCheckAt: true,
+                lastAsaasSyncAt: true,
                 webhookAuthTokenHash: true,
                 documentsCacheUpdatedAt: true,
                 kycProcess: {

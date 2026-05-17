@@ -4,6 +4,7 @@ import type { AuditActorType, FinanceStatus, FinancialOnboardingStatus } from '@
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { classifyAsaasOperationalError } from '../../foundation/asaas-operational-error';
+import { syncAsaasOperationalStatus } from '../../foundation/asaas-operational-guard';
 import { financeProfileService } from '../../foundation/finance-profile.service';
 import { resolveCommercialInfoState } from '../kyc/kyc-cache-utils';
 import { getMasterAsaasApiKey } from './asaas-env';
@@ -194,6 +195,13 @@ export async function reconcileAsaasAccount(params: {
     (asaasAccount.commercialInfoScheduledDate ?? null) !== commercialInfoState.commercialInfoScheduledDate;
 
   if (!shouldUpdateStatus && !shouldUpdateFinanceStatus && !shouldUpdateCommercialInfo) {
+    await prisma.asaasAccount.update({
+      where: { id: asaasAccount.id },
+      data: { lastAsaasSyncAt: new Date() },
+      select: { id: true },
+    });
+    await syncAsaasOperationalStatus(params.contaId);
+
     return {
       financeProfileId: profile.id,
       asaasAccountId: asaasAccount.asaasAccountId,
@@ -237,7 +245,14 @@ export async function reconcileAsaasAccount(params: {
         data: {
           commercialInfoStatus: commercialInfoState.commercialInfoStatus,
           commercialInfoScheduledDate: commercialInfoState.commercialInfoScheduledDate,
+          lastAsaasSyncAt: now,
         },
+        select: { id: true },
+      });
+    } else {
+      await tx.asaasAccount.update({
+        where: { id: asaasAccount.id },
+        data: { lastAsaasSyncAt: now },
         select: { id: true },
       });
     }
@@ -268,6 +283,8 @@ export async function reconcileAsaasAccount(params: {
     },
     actor: params.actor,
   });
+
+  await syncAsaasOperationalStatus(params.contaId);
 
   return {
     financeProfileId: profile.id,

@@ -25,6 +25,7 @@ import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 
 import { auditLogService } from '../foundation/audit-log.service';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 
 export type AnticipationError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
@@ -564,6 +565,12 @@ export async function requestReceivableAnticipation(params: {
   document?: Blob;
   documentFilename?: string;
 }): Promise<Result<AsaasAnticipation, AnticipationError>> {
+  try {
+    await assertAsaasTenantOperational(params.contaId);
+  } catch {
+    return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+  }
+
   const credentials = await loadAsaasCredentials(params.contaId);
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
@@ -597,6 +604,12 @@ export async function cancelReceivableAnticipation(params: {
   userId: string;
   anticipationId: string;
 }): Promise<Result<AsaasAnticipation, AnticipationError>> {
+  try {
+    await assertAsaasTenantOperational(params.contaId);
+  } catch {
+    return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+  }
+
   const credentials = await loadAsaasCredentials(params.contaId);
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
@@ -659,6 +672,12 @@ export async function updateReceivableAnticipationConfiguration(params: {
   userId: string;
   creditCardAutomaticEnabled: boolean;
 }): Promise<Result<ReceivableAnticipationConfiguration, AnticipationError>> {
+  try {
+    await assertAsaasTenantOperational(params.contaId);
+  } catch {
+    return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+  }
+
   const credentials = await loadAsaasCredentials(params.contaId);
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 

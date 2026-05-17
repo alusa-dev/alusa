@@ -22,6 +22,7 @@ import {
   logWebhookProcessing,
   createWebhookLogEntry,
 } from './webhook-observability.service';
+import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -373,17 +374,51 @@ async function processWebhookReplay(params: {
 
       const isExpired = event === 'ASAAS_TOKEN_EXPIRED' || event === 'ACCESS_TOKEN_EXPIRED';
       const isExpiringSoon = event === 'ACCESS_TOKEN_EXPIRING_SOON';
+      const nextApiKeyStatus =
+        event === 'ACCESS_TOKEN_ENABLED'
+          ? 'CONNECTED'
+          : event === 'ACCESS_TOKEN_EXPIRED' || event === 'ASAAS_TOKEN_EXPIRED'
+            ? 'EXPIRED'
+            : event === 'ACCESS_TOKEN_DISABLED'
+              ? 'DISABLED'
+              : event === 'ACCESS_TOKEN_DELETED'
+                ? 'DELETED'
+                : null;
 
-      if (isExpired || isExpiringSoon) {
+      if (nextApiKeyStatus) {
+        await prisma.asaasAccount.updateMany({
+          where: { financeProfile: { contaId } },
+          data: {
+            apiKeyStatus: nextApiKeyStatus as never,
+            operationalStatus: nextApiKeyStatus === 'CONNECTED' ? 'NOT_READY' : 'API_KEY_REQUIRED',
+            lastApiKeyCheckAt: new Date(),
+          },
+        });
+        await syncAsaasOperationalStatus(contaId);
+      }
+
+      if (isExpired || isExpiringSoon || event === 'ACCESS_TOKEN_DISABLED' || event === 'ACCESS_TOKEN_DELETED') {
         await createNotification({
           contaId,
           type: NotificationType.ACCESS_TOKEN_ALERT,
           category: NotificationCategory.SYSTEM,
-          severity: isExpired ? NotificationSeverity.CRITICAL : NotificationSeverity.WARNING,
-          title: isExpired ? 'Token de API expirado' : 'Token de API próximo do vencimento',
+          severity: isExpired || event === 'ACCESS_TOKEN_DISABLED' || event === 'ACCESS_TOKEN_DELETED'
+            ? NotificationSeverity.CRITICAL
+            : NotificationSeverity.WARNING,
+          title: isExpired
+            ? 'Token de API expirado'
+            : event === 'ACCESS_TOKEN_DISABLED'
+              ? 'Token de API desabilitado'
+              : event === 'ACCESS_TOKEN_DELETED'
+                ? 'Token de API excluído'
+                : 'Token de API próximo do vencimento',
           message: isExpired
             ? 'O token de API do Asaas desta conta expirou. Todas as operações financeiras estão bloqueadas. Renove imediatamente no painel do Asaas.'
-            : 'O token de API do Asaas desta conta está próximo do vencimento. Renove antes que expire para evitar interrupção das operações financeiras.',
+            : event === 'ACCESS_TOKEN_DISABLED'
+              ? 'O token de API do Asaas desta conta foi desabilitado. Todas as operações financeiras estão bloqueadas até a reconexão.'
+              : event === 'ACCESS_TOKEN_DELETED'
+                ? 'O token de API do Asaas desta conta foi excluído. Todas as operações financeiras estão bloqueadas até salvar uma nova chave.'
+                : 'O token de API do Asaas desta conta está próximo do vencimento. Renove antes que expire para evitar interrupção das operações financeiras.',
           dedupeKey: `access_token:${event}:${contaId}`,
           sourceType: 'WEBHOOK',
           sourceId: payload.id ?? null,

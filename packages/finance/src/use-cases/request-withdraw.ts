@@ -7,10 +7,10 @@ import type { TransferStatus } from '@prisma/client';
 import { auditLogService } from '../foundation/audit-log.service';
 import { buildSafeAsaasIdempotencyKey } from '../core/idempotency.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { financeProfileService } from '../foundation/finance-profile.service';
 import { isPendingDocumentsBlockBypassedForTesting } from '../foundation/kyc-test-bypass';
-import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { getBalance } from './get-balance';
 import { mapAsaasTransferStatus } from './transfers/transfer-status';
 import {
@@ -238,10 +238,14 @@ export async function requestWithdraw(
             select: { id: true, externalReference: true, asaasTransferId: true },
           });
 
+    try {
+      await assertAsaasTenantOperational(input.contaId);
+    } catch {
+      return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    }
+
     const credentials = await loadAsaasCredentials(input.contaId);
     if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
-
-    await ensureWebhookConfigOperational(input.contaId);
 
     await auditLogService.record({
       contaId: input.contaId,

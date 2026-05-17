@@ -10,7 +10,7 @@ export async function validateSubaccountApiKey(apiKey: string): Promise<AsaasApi
   } catch (error) {
     const failure = classifyAsaasOperationalError(error, 'subaccount');
     if (failure.category === 'invalid_subaccount_credentials') {
-      return 'REVOKED';
+      return 'INVALID';
     }
     return 'MISSING';
   }

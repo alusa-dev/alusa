@@ -161,6 +161,12 @@ describe('createAsaasAccount', () => {
       const call = vi.mocked(createSubaccount).mock.calls[0]?.[0];
       expect(call?.data?.email).toBe(`owner+${unique}@teste.com`);
       expect(call?.data).not.toHaveProperty('loginEmail');
+      expect(call?.data?.webhooks).toHaveLength(1);
+      expect(call?.data?.webhooks?.[0]).toMatchObject({
+        name: 'Alusa - Webhook financeiro',
+        enabled: true,
+        sendType: 'SEQUENTIALLY',
+      });
 
       const profile = await prisma.financeProfile.findUnique({ where: { contaId: conta.id } });
       expect(profile).not.toBeNull();
@@ -169,6 +175,16 @@ describe('createAsaasAccount', () => {
         where: { financeProfileId: profile!.id },
       });
       expect(asaasAccountCount).toBe(1);
+
+      const storedAccount = await prisma.asaasAccount.findUnique({
+        where: { financeProfileId: profile!.id },
+        select: { webhookStatus: true, operationalStatus: true, apiKeyStatus: true },
+      });
+      expect(storedAccount).toMatchObject({
+        apiKeyStatus: 'CONNECTED',
+        webhookStatus: 'ACTIVE',
+        operationalStatus: 'OPERATIONAL',
+      });
 
       const credential = await prisma.asaasCredential.findUnique({ where: { financeProfileId: profile!.id } });
       expect(credential).not.toBeNull();

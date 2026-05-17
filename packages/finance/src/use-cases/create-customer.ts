@@ -11,6 +11,7 @@ import type { Result } from '@alusa/shared';
 import { ok, err } from '@alusa/shared';
 
 import { buildSafeAsaasIdempotencyKey } from '../core';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 
 export type CreateCustomerInput = {
   contaId: string;
@@ -62,6 +63,8 @@ export async function syncAsaasCustomerContact(
   input: SyncAsaasCustomerContactInput,
 ): Promise<Result<void, string>> {
   try {
+    await assertAsaasTenantOperational(input.contaId);
+
     const creds = await loadAsaasCredentials(input.contaId);
     if (!creds) {
       return err('Credenciais Asaas não configuradas');
@@ -90,6 +93,8 @@ export async function createAsaasCustomer(
   input: CreateCustomerInput,
 ): Promise<Result<{ id: string; externalReference: string }, string>> {
   try {
+    await assertAsaasTenantOperational(input.contaId);
+
     const creds = await loadAsaasCredentials(input.contaId);
     if (!creds) {
       return err('Credenciais Asaas não configuradas');

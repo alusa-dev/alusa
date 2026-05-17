@@ -3,8 +3,24 @@
   "regions": ["gru1"],
   "crons": [
     {
-      "path": "/api/jobs/provision-asaas-subaccounts",
+      "path": "/api/jobs/process-finance-webhooks",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/jobs/provision-asaas-subaccounts",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/jobs/asaas-health-check",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/jobs/reconcile-finance-accounts",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/jobs/webhook-maintenance",
+      "schedule": "0 3 * * *"
     }
   ]
 }

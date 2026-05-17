@@ -5,7 +5,7 @@ import type { Result } from '@alusa/shared';
 import { ok, err } from '@alusa/shared';
 
 import { requireKycApproved } from '../foundation/kyc-guard';
-import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { buildSafeAsaasIdempotencyKey } from '../core';
 
 export type CreatePaymentInput = {
@@ -38,7 +38,7 @@ export async function createAsaasPayment(
     const kyc = await requireKycApproved(input.contaId);
     if (!kyc.success) return err(kyc.error);
 
-    await ensureWebhookConfigOperational(input.contaId);
+    await assertAsaasTenantOperational(input.contaId);
 
     const creds = await loadAsaasCredentials(input.contaId);
     if (!creds) {

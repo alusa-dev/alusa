@@ -13,11 +13,22 @@
 import { getMyAccountStatus } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { alertService } from '../foundation/alert-channel';
+import { validateSubaccountApiKey } from './asaas-api-key';
+import {
+  ensureWebhookReady,
+  FinanceBlockedError,
+  syncAsaasOperationalStatus,
+} from './asaas-operational-guard';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 export interface AccountHealthCheckResult {
   checkedAccounts: number;
+  apiKeysChecked: number;
+  apiKeysInvalid: number;
+  webhooksChecked: number;
+  webhooksNotReady: number;
+  operationalAccounts: number;
   alerts: AccountHealthAlert[];
   errors: Array<{ contaId: string; error: string }>;
   executedAt: Date;
@@ -58,6 +69,11 @@ export async function checkAccountHealth(opts?: {
 }): Promise<AccountHealthCheckResult> {
   const result: AccountHealthCheckResult = {
     checkedAccounts: 0,
+    apiKeysChecked: 0,
+    apiKeysInvalid: 0,
+    webhooksChecked: 0,
+    webhooksNotReady: 0,
+    operationalAccounts: 0,
     alerts: [],
     errors: [],
     executedAt: new Date(),
@@ -74,6 +90,7 @@ export async function checkAccountHealth(opts?: {
       id: true,
       asaasAccountId: true,
       status: true,
+      apiKeyStatus: true,
       financeProfile: { select: { contaId: true } },
     },
   });
@@ -85,7 +102,48 @@ export async function checkAccountHealth(opts?: {
 
     try {
       const creds = await loadAsaasCredentials(contaId);
-      if (!creds) continue;
+      if (!creds) {
+        await prisma.asaasAccount.update({
+          where: { id: account.id },
+          data: {
+            apiKeyStatus: 'MISSING',
+            operationalStatus: 'API_KEY_REQUIRED',
+            lastHealthCheckAt: new Date(),
+            lastApiKeyCheckAt: new Date(),
+          },
+          select: { id: true },
+        });
+        await syncAsaasOperationalStatus(contaId);
+        continue;
+      }
+
+      result.apiKeysChecked++;
+      const apiKeyStatus = await validateSubaccountApiKey(creds.apiKey);
+      await prisma.asaasAccount.update({
+        where: { id: account.id },
+        data: {
+          apiKeyStatus,
+          lastHealthCheckAt: new Date(),
+          lastApiKeyCheckAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      if (apiKeyStatus !== 'CONNECTED') {
+        result.apiKeysInvalid++;
+        await syncAsaasOperationalStatus(contaId);
+        continue;
+      }
+
+      result.webhooksChecked++;
+      try {
+        await ensureWebhookReady(contaId);
+      } catch (error) {
+        result.webhooksNotReady++;
+        if (!(error instanceof FinanceBlockedError)) {
+          throw error;
+        }
+      }
 
       const status = await getMyAccountStatus({ apiKey: creds.apiKey });
 
@@ -122,6 +180,11 @@ export async function checkAccountHealth(opts?: {
         }
 
         result.alerts.push(alert);
+      }
+
+      const health = await syncAsaasOperationalStatus(contaId);
+      if (health.operationalStatus === 'OPERATIONAL') {
+        result.operationalAccounts++;
       }
     } catch (err) {
       result.errors.push({

@@ -215,7 +215,33 @@ export const financeProfileOnboardingDataSchema = z.object({
 
 export type FinanceOnboardingInputDTO = z.infer<typeof financeProfileOnboardingDataSchema>;
 
-export const createAsaasAccountSchema = z.object({
+export const financeOnboardingInputDto = financeProfileOnboardingDataSchema;
+
+export const provisionAsaasSubaccountDto = z.object({
+  contaId: z.string().min(1),
+  financeProfileId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  actor: z
+    .object({
+      type: z.enum(['USER', 'ADMIN', 'SYSTEM']),
+      id: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const createWebhookPayloadDto = z.object({
+  name: z.string().min(1),
+  url: z.string().url(),
+  email: z.string().email(),
+  enabled: z.boolean().default(true),
+  interrupted: z.boolean().optional(),
+  apiVersion: z.number().int().optional(),
+  authToken: z.string().min(8),
+  sendType: z.enum(['SEQUENTIALLY', 'NON_SEQUENTIALLY']).optional(),
+  events: z.array(z.string().min(1)).min(1),
+});
+
+const createAsaasSubaccountPayloadBase = z.object({
   name: z.string().min(2),
   cpfCnpj: z.string().min(11),
   email: z.string().email(),
@@ -238,7 +264,14 @@ export const createAsaasAccountSchema = z.object({
   complement: z.string().optional(),
   province: z.string().min(2),
   postalCode: z.string().min(8),
-}).superRefine((data, ctx) => {
+  externalReference: z.string().min(1).optional(),
+  webhooks: z.array(createWebhookPayloadDto).min(1),
+});
+
+function validateAsaasAccountPayload(
+  data: { cpfCnpj: string; birthDate?: string; companyType?: string },
+  ctx: z.RefinementCtx,
+) {
   const digits = onlyDigits(data.cpfCnpj);
   const isPf = digits.length === 11;
   if (isPf && !data.birthDate) {
@@ -257,7 +290,15 @@ export const createAsaasAccountSchema = z.object({
       path: ['companyType'],
     });
   }
-});
+}
+
+export const createAsaasSubaccountPayloadDto =
+  createAsaasSubaccountPayloadBase.superRefine(validateAsaasAccountPayload);
+
+export const createAsaasAccountSchema = createAsaasSubaccountPayloadBase.omit({
+  externalReference: true,
+  webhooks: true,
+}).superRefine(validateAsaasAccountPayload);
 
 export type CreateAsaasAccountDTO = z.infer<typeof createAsaasAccountSchema>;
 

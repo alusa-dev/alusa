@@ -427,7 +427,12 @@ export async function ensureAsaasSubaccount(params: {
   if (existingAccount) {
     await prisma.asaasAccount.update({
       where: { financeProfileId: profile.id },
-      data: { status: 'PROVISIONING' },
+      data: {
+        status: 'PROVISIONING',
+        webhookStatus: 'PENDING',
+        operationalStatus: 'PROVISIONING',
+        provisionLastStage: 'ENSURE_ASAAS_SUBACCOUNT',
+      },
       select: { id: true },
     });
   }
@@ -451,7 +456,7 @@ export async function ensureAsaasSubaccount(params: {
     // Marcar como PROVISIONING_FAILED
     await prisma.asaasAccount.updateMany({
       where: { financeProfileId: profile.id },
-      data: { status: 'PROVISIONING_FAILED' },
+      data: { status: 'PROVISIONING_FAILED', operationalStatus: 'NOT_READY' },
     });
 
     await auditLogService.record({
@@ -473,7 +478,7 @@ export async function ensureAsaasSubaccount(params: {
   if (!createResult.asaasAccountId) {
     await prisma.asaasAccount.updateMany({
       where: { financeProfileId: profile.id },
-      data: { status: 'PROVISIONING_FAILED' },
+      data: { status: 'PROVISIONING_FAILED', operationalStatus: 'NOT_READY' },
     });
 
     return {

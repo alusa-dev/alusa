@@ -933,8 +933,8 @@ export interface AsaasSubaccount {
   name: string;
   email: string;
   cpfCnpj: string;
-  apiKey: string;
-  walletId: string;
+  apiKey?: string | null;
+  walletId?: string | null;
 }
 
 export interface AsaasErrorResponse {

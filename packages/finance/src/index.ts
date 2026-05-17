@@ -24,6 +24,15 @@ export {
   type AsaasReadIntent,
   type AsaasReadIntentStats,
 } from './foundation/asaas-read-intent';
+export {
+  assertAsaasTenantOperational,
+  ensureWebhookReady,
+  getAsaasTenantHealth,
+  syncAsaasOperationalStatus,
+  FinanceBlockedError,
+  type AsaasTenantHealth,
+  type FinanceBlockedCode,
+} from './foundation/asaas-operational-guard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Charge Status Mapper (FONTE ÚNICA DE VERDADE)

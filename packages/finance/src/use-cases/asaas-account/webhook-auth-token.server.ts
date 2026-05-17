@@ -23,6 +23,9 @@ export function hasWebhookAuthTokenConfig(): boolean {
 
 function getWebhookAuthTokenSecretOrThrow(): string {
   const secret = toTrimmed(process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET);
+  if (!secret && (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true')) {
+    return 'test-webhook-auth-token-secret';
+  }
   if (!secret) {
     throw new Error(
       [

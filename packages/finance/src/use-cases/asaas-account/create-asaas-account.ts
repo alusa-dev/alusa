@@ -12,9 +12,10 @@ import { detectPersonType } from '@alusa/shared';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { validateSubaccountApiKey } from '../../foundation/asaas-api-key';
+import { ensureWebhookReady, syncAsaasOperationalStatus } from '../../foundation/asaas-operational-guard';
 import { credentialVault } from '../../foundation/credential-vault';
 import { financeProfileService } from '../../foundation/finance-profile.service';
-import { createAsaasAccountSchema } from '../../foundation/schemas';
+import { createAsaasAccountSchema, createAsaasSubaccountPayloadDto } from '../../foundation/schemas';
 import { withAdvisoryLock } from '../../foundation/advisory-lock';
 import { MissingBirthDateError } from '../../errors/missing-birth-date-error';
 import { MissingCompanyTypeError } from '../../errors/missing-company-type-error';
@@ -92,6 +93,43 @@ const CONNECTED_STATUSES: FinancialOnboardingStatus[] = ['CREATED', 'UNDER_REVIE
 const ACTIVE_STATUSES: FinancialOnboardingStatus[] = ['IN_PROGRESS', ...CONNECTED_STATUSES];
 const API_KEY_RECOVERY_REQUIRED_MESSAGE =
   'RECOVERY_REQUIRED: subconta remota existe, mas a API key local nao foi persistida. Gere uma nova chave da subconta e reconecte pelo painel admin.';
+
+async function markProvisioningPlaceholder(params: {
+  financeProfileId: string;
+  externalReference?: string;
+  webhookAuthTokenHash?: string;
+  stage: string;
+}) {
+  const now = new Date();
+  return prisma.asaasAccount.upsert({
+    where: { financeProfileId: params.financeProfileId },
+    create: {
+      financeProfileId: params.financeProfileId,
+      externalReference: params.externalReference,
+      status: 'PROVISIONING',
+      statusUpdatedAt: now,
+      apiKeyStatus: 'MISSING',
+      webhookStatus: 'PENDING',
+      operationalStatus: 'PROVISIONING',
+      webhookAuthTokenHash: params.webhookAuthTokenHash,
+      provisionAttempts: 1,
+      provisionLastAttemptAt: now,
+      provisionLastStage: params.stage,
+      provisionLastError: null,
+    },
+    update: {
+      externalReference: params.externalReference,
+      status: 'PROVISIONING',
+      statusUpdatedAt: now,
+      webhookStatus: 'PENDING',
+      operationalStatus: 'PROVISIONING',
+      provisionAttempts: { increment: 1 },
+      provisionLastAttemptAt: now,
+      provisionLastStage: params.stage,
+      provisionLastError: null,
+    },
+  });
+}
 
 /**
  * Verifica se já existe uma subconta válida e conectada para o contaId.
@@ -282,6 +320,8 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
         provisionedAt: null,
         apiKeyEncrypted: null,
         apiKeyStatus: 'MISSING',
+        webhookStatus: 'PENDING',
+        operationalStatus: 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
         provisionLastError: API_KEY_RECOVERY_REQUIRED_MESSAGE,
       },
@@ -294,6 +334,8 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
         provisionedAt: null,
         apiKeyEncrypted: null,
         apiKeyStatus: 'MISSING',
+        webhookStatus: 'PENDING',
+        operationalStatus: 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
         provisionLastError: API_KEY_RECOVERY_REQUIRED_MESSAGE,
       },
@@ -384,6 +426,8 @@ async function persistRecoveredSubaccount(params: {
         provisionedAt: now,
         apiKeyEncrypted: encryptedApiKey,
         apiKeyStatus,
+        webhookStatus: 'PENDING',
+        operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
         provisionLastError: null,
       },
@@ -395,6 +439,8 @@ async function persistRecoveredSubaccount(params: {
         provisionedAt: { set: now },
         apiKeyEncrypted: encryptedApiKey,
         apiKeyStatus,
+        webhookStatus: 'PENDING',
+        operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
         provisionLastError: null,
       },
@@ -942,7 +988,7 @@ async function createAsaasAccountInternal(params: {
 }): Promise<CreateAsaasAccountResult> {
   const financeProfile = params.financeProfile;
 
-  const existing = await prisma.asaasAccount.findUnique({ where: { financeProfileId: financeProfile.id } });
+  let existing = await prisma.asaasAccount.findUnique({ where: { financeProfileId: financeProfile.id } });
 
   if (existing?.asaasAccountId) {
     try {
@@ -1026,10 +1072,12 @@ async function createAsaasAccountInternal(params: {
 
       const encryptedApiKey = credentialVault.encrypt(accessToken.apiKey);
       const apiKeyStatus = await validateSubaccountApiKey(accessToken.apiKey);
+      const existingId = existing.id;
+      const existingAsaasAccountId = existing.asaasAccountId;
 
       await prisma.$transaction(async (tx) => {
         await tx.asaasAccount.update({
-          where: { id: existing.id },
+          where: { id: existingId },
           data: {
             apiKeyEncrypted: encryptedApiKey,
             apiKeyStatus,
@@ -1051,9 +1099,9 @@ async function createAsaasAccountInternal(params: {
         await auditLogService.record({
           contaId: params.contaId,
           action: 'finance.onboarding.create_subaccount_api_key',
-          entity: { type: 'AsaasAccount', id: existing.id },
+          entity: { type: 'AsaasAccount', id: existingId },
           metadata: {
-            asaasAccountId: existing.asaasAccountId,
+            asaasAccountId: existingAsaasAccountId,
             accessTokenId: accessToken.id,
             existingAccessTokenCount,
           },
@@ -1211,7 +1259,23 @@ async function createAsaasAccountInternal(params: {
     complement: required.complement,
   });
 
-  const createSubaccountPayload = {
+  const webhookUrl = resolveWebhookUrlOrNull();
+  if (!webhookUrl) {
+    throw new Error(
+      'ASAAS_WEBHOOK_PUBLIC_BASE_URL ou NEXT_PUBLIC_APP_URL deve apontar para uma URL pública https para configurar o webhook do Asaas.',
+    );
+  }
+
+  const expectedWebhook = buildExpectedWebhookConfig(financeProfile.id, webhookUrl);
+  const webhookNotificationEmail = await resolveWebhookNotificationEmail({
+    contaId: params.contaId,
+    financeProfileId: financeProfile.id,
+  });
+  if (!webhookNotificationEmail) {
+    throw new Error('Não foi possível resolver o email do webhook do Asaas.');
+  }
+
+  const createSubaccountPayload = createAsaasSubaccountPayloadDto.parse({
     name: createAccountPayload.name,
     email: createAccountPayload.email,
     cpfCnpj: createAccountPayload.cpfCnpj,
@@ -1226,7 +1290,28 @@ async function createAsaasAccountInternal(params: {
     postalCode: createAccountPayload.postalCode,
     complement: createAccountPayload.complement,
     externalReference,
-  };
+    webhooks: [
+      {
+        name: RECOMMENDED_WEBHOOK_NAME,
+        url: webhookUrl,
+        email: webhookNotificationEmail,
+        enabled: true,
+        interrupted: false,
+        apiVersion: 3,
+        authToken: expectedWebhook.authToken,
+        sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
+        events: expectedWebhook.events,
+      },
+    ],
+  });
+
+  const placeholder = await markProvisioningPlaceholder({
+    financeProfileId: financeProfile.id,
+    externalReference,
+    webhookAuthTokenHash,
+    stage: 'READY_TO_CALL_ASAAS_ACCOUNTS',
+  });
+  existing = placeholder;
 
   const recoveredBeforeCreate = await tryRecoverExistingRemoteSubaccount({
     contaId: params.contaId,
@@ -1244,20 +1329,14 @@ async function createAsaasAccountInternal(params: {
     return recoveredBeforeCreate;
   }
 
-  // Atualizar contagem de tentativas
-  if (existing) {
-    await prisma.asaasAccount.update({
-      where: { financeProfileId: financeProfile.id },
-      data: {
-        provisionAttempts: { increment: 1 },
-        provisionLastAttemptAt: new Date(),
-      },
-      select: { id: true },
-    });
-  }
-
   let subaccount: Awaited<ReturnType<typeof createSubaccount>>;
   try {
+    await prisma.asaasAccount.update({
+      where: { financeProfileId: financeProfile.id },
+      data: { provisionLastStage: 'POST_ASAAS_ACCOUNTS' },
+      select: { id: true },
+    });
+
     subaccount = await createSubaccount({
       apiKey: getMasterAsaasApiKey(),
       idempotencyKey: externalReference,
@@ -1367,6 +1446,8 @@ async function createAsaasAccountInternal(params: {
           provisionedAt: now,
           apiKeyEncrypted: encryptedApiKey,
           apiKeyStatus,
+          webhookStatus: 'PENDING',
+          operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
           documentsCache: Prisma.DbNull,
           documentsCacheUpdatedAt: null,
           webhookAuthTokenHash,
@@ -1381,6 +1462,8 @@ async function createAsaasAccountInternal(params: {
           provisionedAt: { set: now },
           apiKeyEncrypted: encryptedApiKey,
           apiKeyStatus,
+          webhookStatus: 'PENDING',
+          operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
           documentsCache: Prisma.DbNull,
           documentsCacheUpdatedAt: null,
           webhookAuthTokenHash,
@@ -1394,9 +1477,15 @@ async function createAsaasAccountInternal(params: {
         select: { id: true },
       });
 
-      await tx.asaasCredential.createMany({
-        data: [{ financeProfileId: financeProfile.id, apiKeyEncrypted: encryptedApiKey }],
-        skipDuplicates: true,
+      await tx.asaasCredential.upsert({
+        where: { financeProfileId: financeProfile.id },
+        create: {
+          financeProfileId: financeProfile.id,
+          apiKeyEncrypted: encryptedApiKey,
+        },
+        update: {
+          apiKeyEncrypted: encryptedApiKey,
+        },
       });
 
       await auditLogService.record({
@@ -1409,6 +1498,17 @@ async function createAsaasAccountInternal(params: {
 
       return asaasAccount;
     });
+
+    try {
+      await ensureWebhookReady(params.contaId);
+    } catch (webhookError) {
+      console.warn('[finance.createAsaasAccount] Webhook ainda nao operacional apos criacao da subconta', {
+        contaId: params.contaId,
+        financeProfileId: financeProfile.id,
+        error: webhookError instanceof Error ? webhookError.message : String(webhookError),
+      });
+      await syncAsaasOperationalStatus(params.contaId);
+    }
 
     return {
       financeProfileId: financeProfile.id,

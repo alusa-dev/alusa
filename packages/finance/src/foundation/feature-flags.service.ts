@@ -18,6 +18,11 @@ export type FinancialFeatureFlag = keyof Pick<
   | 'enablePaymentLinks'
   | 'enableChargebackHandling'
   | 'enableDunning'
+  | 'enableAsaasProvisioningHardening'
+  | 'enableWebhookRequiredBeforeCharge'
+  | 'enableApiKeyEventBlocking'
+  | 'enableRegulatoryStatusBlocking'
+  | 'enableAsaasHealthPanel'
 >;
 
 // Flags que são habilitadas automaticamente quando a conta tem credenciais Asaas

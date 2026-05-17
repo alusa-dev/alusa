@@ -12,6 +12,7 @@ import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
 import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
+import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { isPastDate } from '../foundation/date-guard';
 import {
   createStandaloneSubscriptionRecord,
@@ -666,6 +667,12 @@ export async function createStandaloneCharge(
           expectedWebhooks: [],
           notificationSync,
         });
+      }
+
+      try {
+        await assertAsaasTenantOperational(input.contaId);
+      } catch {
+        return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       }
 
       const creds = await loadAsaasCredentials(input.contaId);
