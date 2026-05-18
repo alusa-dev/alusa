@@ -1,13 +1,15 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 
-const { getPaymentMock, isAsaasEnabledMock } = vi.hoisted(() => ({
+const { getPaymentMock, isAsaasEnabledMock, listPaymentsMock } = vi.hoisted(() => ({
   getPaymentMock: vi.fn(),
   isAsaasEnabledMock: vi.fn(() => false),
+  listPaymentsMock: vi.fn(),
 }));
 
 vi.mock('../asaas-ops', () => ({
   getPayment: getPaymentMock,
   isAsaasEnabled: isAsaasEnabledMock,
+  listPayments: listPaymentsMock,
 }));
 
 import { getOperationalChargesSummary, listOperationalCharges } from '../list-operational-charges';
@@ -101,7 +103,15 @@ describe('listOperationalCharges', () => {
   beforeEach(() => {
     getPaymentMock.mockReset();
     isAsaasEnabledMock.mockReset();
+    listPaymentsMock.mockReset();
     isAsaasEnabledMock.mockReturnValue(false);
+    listPaymentsMock.mockResolvedValue({
+      data: [],
+      hasMore: false,
+      totalCount: 0,
+      limit: 100,
+      offset: 0,
+    });
   });
 
   // ===== Regra: apenas PENDING/OVERDUE =====
@@ -618,6 +628,92 @@ describe('listOperationalCharges', () => {
       total: 3,
       valorBruto: 260,
     });
+  });
+
+  it('complementa cobranças do Asaas quando payment vigente não foi materializado localmente', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    isAsaasEnabledMock.mockReturnValue(true);
+    listPaymentsMock
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'pay_remote_pending',
+            status: 'PENDING',
+            value: 75,
+            dueDate: '2025-06-20',
+            dateCreated: '2025-06-01',
+            billingType: 'PIX',
+            description: 'Mensalidade junho',
+            subscription: 'sub_1',
+            deleted: false,
+          },
+        ],
+        hasMore: false,
+        totalCount: 1,
+        limit: 100,
+        offset: 0,
+      })
+      .mockResolvedValue({ data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 });
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(listPaymentsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'PENDING',
+        'dueDate[le]': '2025-06-30',
+      }),
+      { contaId: 'ct_1' },
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'asaas:pay_remote_pending',
+      asaasPaymentId: 'pay_remote_pending',
+      tipo: 'RECORRENTE',
+      status: 'PENDING',
+    });
+    expect(result.items[0].value).toBe(75);
+  });
+
+  it('não duplica payment do Asaas quando já existe cobrança local vinculada', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([
+      makeCobranca({
+        id: 'cob_local',
+        asaasPaymentId: 'pay_same',
+        valor: 75,
+        vencimento: new Date('2025-06-20'),
+      }),
+    ]);
+    isAsaasEnabledMock.mockReturnValue(true);
+    listPaymentsMock
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: 'pay_same',
+            status: 'PENDING',
+            value: 75,
+            dueDate: '2025-06-20',
+            dateCreated: '2025-06-01',
+            billingType: 'PIX',
+            description: 'Mensalidade junho',
+            subscription: 'sub_1',
+            deleted: false,
+          },
+        ],
+        hasMore: false,
+        totalCount: 1,
+        limit: 100,
+        offset: 0,
+      })
+      .mockResolvedValue({ data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 });
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe('cob_local');
+    expect(result.items[0].value).toBe(75);
   });
 
   // ===== Search =====
