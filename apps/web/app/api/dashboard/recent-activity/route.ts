@@ -1,4 +1,4 @@
-import { prisma } from '@/lib/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
@@ -6,26 +6,28 @@ export async function GET() {
   if (!auth.ok) return auth.response;
 
   return cachedDashboardBlock(auth.contaId, 'recent-activity', async () => {
-    const [ultimasCobrancasData, alunosRecentesData] = await Promise.all([
-      prisma.cobranca.findMany({
-        take: 5,
-        where: { matricula: { aluno: { contaId: auth.contaId } } },
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          valor: true,
-          vencimento: true,
-          status: true,
-          matricula: { select: { aluno: { select: { id: true, nome: true, foto: true } } } },
-        },
-      }),
-      prisma.aluno.findMany({
-        take: 8,
-        where: { contaId: auth.contaId },
-        orderBy: { createdAt: 'desc' },
-        select: { id: true, nome: true, foto: true },
-      }),
-    ]);
+    const [ultimasCobrancasData, alunosRecentesData] = await runWithTenant(auth.contaId, (tx) =>
+      Promise.all([
+        tx.cobranca.findMany({
+          take: 5,
+          where: { matricula: { aluno: { contaId: auth.contaId } } },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            valor: true,
+            vencimento: true,
+            status: true,
+            matricula: { select: { aluno: { select: { id: true, nome: true, foto: true } } } },
+          },
+        }),
+        tx.aluno.findMany({
+          take: 8,
+          where: { contaId: auth.contaId },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, nome: true, foto: true },
+        }),
+      ]),
+    );
 
     return {
       success: true,

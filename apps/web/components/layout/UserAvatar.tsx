@@ -30,10 +30,7 @@ export function UserAvatar({
   sizes = '40px',
 }: UserAvatarProps) {
   if (requiresSessionCookieImage(src)) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- /api/files exige sessão; otimizador do Next não envia cookies
-      <img src={src} alt={alt} className={`absolute inset-0 h-full w-full ${className}`} />
-    );
+    return <img src={src} alt={alt} className={`absolute inset-0 h-full w-full ${className}`} />;
   }
 
   return <Image src={src} alt={alt} fill sizes={sizes} className={className} />;
