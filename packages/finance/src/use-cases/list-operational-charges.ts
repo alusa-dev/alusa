@@ -1,4 +1,7 @@
 import { prisma } from '@alusa/database';
+import type { Prisma, PrismaClient } from '@prisma/client';
+
+type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
 import type { UnifiedChargeItem } from '../dtos/unified-billing';
 import {
   normalizeCobrancaStatus,
@@ -154,7 +157,7 @@ function compareOperationalItems(a: Pick<UnifiedChargeItem, 'status' | 'dueDate'
  */
 async function buildOperationalChargesCollection(
   input: ListOperationalChargesInput,
-  db?: typeof prisma,
+  db?: FinanceDbClient,
 ): Promise<UnifiedChargeItem[]> {
   const _db = db ?? prisma;
   const { contaId, search, tipoFilter } = input;
@@ -485,7 +488,7 @@ async function buildOperationalChargesCollection(
 
 export async function getOperationalChargesSummary(
   input: ListOperationalChargesInput,
-  db?: typeof prisma,
+  db?: FinanceDbClient,
 ): Promise<OperationalChargesSummaryOutput> {
   const items = await buildOperationalChargesCollection(input, db);
 
@@ -497,7 +500,7 @@ export async function getOperationalChargesSummary(
 
 export async function listOperationalCharges(
   input: ListOperationalChargesInput,
-  db?: typeof prisma,
+  db?: FinanceDbClient,
 ): Promise<ListOperationalChargesOutput> {
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));

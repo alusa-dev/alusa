@@ -1,18 +1,15 @@
-import { runWithTenant } from '@/lib/prisma-tenant';
-import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlockWithTenant, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
   if (!auth.ok) return auth.response;
 
-  return cachedDashboardBlock(auth.contaId, 'birthdays', async () => {
+  return cachedDashboardBlockWithTenant(auth.contaId, 'birthdays', async (tx) => {
     const now = new Date();
-    const rows = await runWithTenant(auth.contaId, (tx) =>
-      tx.aluno.findMany({
-        where: { contaId: auth.contaId, status: 'ATIVO' },
-        select: { id: true, nome: true, foto: true, dataNasc: true },
-      }),
-    );
+    const rows = await tx.aluno.findMany({
+      where: { contaId: auth.contaId, status: 'ATIVO' },
+      select: { id: true, nome: true, foto: true, dataNasc: true },
+    });
 
     const aniversariantesDoMes = rows
       .sort((a, b) => {

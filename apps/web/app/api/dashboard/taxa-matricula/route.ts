@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
 import { dashboardPeriodoDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardSerieResultToDTO } from '@/features/dashboard/mappers';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
 
 const taxaMatriculaCache = new PrivateMemoryCache<unknown>({
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     const body = await withPerfTimer(
       'dashboard',
       'getTaxaMatriculaMetrics',
-      async () => {
+      () => runWithTenant(contaId, async (tx) => {
         const cobrancaFilter = { matricula: { aluno: { contaId } } };
         const now = new Date();
 
@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
         dataInicioAnterior.setDate(dataInicioAnterior.getDate() - dias);
 
         // Busca uma vez o período atual + anterior e agrega em memória.
-        const taxasPagasRange = await prisma.cobranca.findMany({
+        const taxasPagasRange = await tx.cobranca.findMany({
           where: {
             ...cobrancaFilter,
             tipo: 'TAXA_MATRICULA',
@@ -160,8 +160,8 @@ export async function GET(request: NextRequest) {
             periodo,
           },
         });
-      },
-      { contaId }
+      }),
+      { contaId },
     );
 
     taxaMatriculaCache.set(cacheKey, body);

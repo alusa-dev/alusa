@@ -1,3 +1,7 @@
+import type { Prisma, PrismaClient } from '@prisma/client';
+
+type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
+
 import { getEndOfCurrentMonth } from '../dtos/unified-billing';
 import { financeSummaryReadModelService } from '../read-model/finance-summary-read-model.service';
 import { getOperationalChargesSummary } from './list-operational-charges';
@@ -25,6 +29,7 @@ export type DashboardFinanceKpisLocalSnapshot = {
 export type GetDashboardFinanceKpisLocalInput = {
   contaId: string;
   now?: Date;
+  db?: FinanceDbClient;
 };
 
 function buildWindow(now: Date) {
@@ -40,7 +45,7 @@ export async function getDashboardFinanceKpisLocal(
   const { startOfMonth, endOfMonth } = buildWindow(now);
   const calculadoEm = now.toISOString();
 
-  const summary = await getOperationalChargesSummary({ contaId: input.contaId, now });
+  const summary = await getOperationalChargesSummary({ contaId: input.contaId, now }, input.db);
 
   if (
     process.env.FIN_SUMMARY_READMODEL_ENABLED === 'true' &&

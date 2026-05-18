@@ -1,4 +1,6 @@
 import type { CalendarEventStatus, CalendarEventType, Prisma, PrismaClient } from '@prisma/client';
+
+type AgendaPrismaClient = PrismaClient | Prisma.TransactionClient;
 import { addBusinessDays, endOfDay, startOfDay } from 'date-fns';
 
 import { countEligibleStudentsForEvent } from '@/src/server/aulas/calendar/calendar-core.service';
@@ -93,7 +95,7 @@ export function evaluateAgendaEventAutoClose(params: {
 async function syncLinkedMakeupStatusesForAutoClosedEvent(
   contaId: string,
   eventId: string,
-  prismaClient: PrismaClient,
+  prismaClient: AgendaPrismaClient,
 ) {
   await prismaClient.makeupClass.updateMany({
     where: {
@@ -109,7 +111,7 @@ async function syncLinkedMakeupStatusesForAutoClosedEvent(
 
 async function processAutoCloseCandidate(
   event: AutoCloseCandidate,
-  prismaClient: PrismaClient,
+  prismaClient: AgendaPrismaClient,
   referenceDate: Date,
 ) {
   const baseDecision = evaluateAgendaEventAutoClose({
@@ -199,7 +201,7 @@ async function listAutoCloseCandidates(params: {
   end?: Date;
   eventId?: string;
   referenceDate: Date;
-  prismaClient: PrismaClient;
+  prismaClient: AgendaPrismaClient;
 }) {
   return params.prismaClient.calendarEvent.findMany({
     where: {
@@ -241,7 +243,7 @@ export async function autoCloseAgendaEventsInRange(params: {
   start: Date;
   end: Date;
   referenceDate?: Date;
-  prismaClient?: PrismaClient;
+  prismaClient?: AgendaPrismaClient;
 }) {
   const prismaClient = params.prismaClient ?? prisma;
   const referenceDate = params.referenceDate ?? new Date();
@@ -268,7 +270,7 @@ export async function autoCloseAgendaEventIfDue(params: {
   contaId: string;
   eventId: string;
   referenceDate?: Date;
-  prismaClient?: PrismaClient;
+  prismaClient?: AgendaPrismaClient;
 }) {
   const prismaClient = params.prismaClient ?? prisma;
   const referenceDate = params.referenceDate ?? new Date();

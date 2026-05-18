@@ -1,11 +1,10 @@
-import { runWithTenant } from '@/lib/prisma-tenant';
-import { cachedDashboardBlock, requireDashboardBlockContaId, toNumber } from '../_blocks';
+import { cachedDashboardBlockWithTenant, requireDashboardBlockContaId, toNumber } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
   if (!auth.ok) return auth.response;
 
-  return cachedDashboardBlock(auth.contaId, 'summary-cards', async () => {
+  return cachedDashboardBlockWithTenant(auth.contaId, 'summary-cards', async (tx) => {
     const contaId = auth.contaId;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -25,30 +24,28 @@ export async function GET() {
       receitaMesAggregate,
       receitaTotalAggregate,
       totalCobrancas,
-    ] = await runWithTenant(contaId, (tx) =>
-      Promise.all([
-        tx.aluno.count({ where: alunoFilter }),
-        tx.aluno.count({ where: { ...alunoFilter, matriculas: { some: { status: 'ATIVA' } } } }),
-        tx.turma.count({ where: { contaId, status: 'ATIVO' } }),
-        tx.matricula.count({ where: matriculaFilter }),
-        tx.matricula.count({ where: { ...matriculaFilter, status: 'ATIVA' } }),
-        tx.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE' } }),
-        tx.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE', vencimento: { lt: now } } }),
-        tx.pagamento.aggregate({
-          where: {
-            status: { in: ['CONFIRMADO', 'PAGO'] },
-            dataPagamento: { gte: startOfMonth, lte: endOfMonth },
-            cobranca: cobrancaFilter,
-          },
-          _sum: { valorPago: true },
-        }),
-        tx.pagamento.aggregate({
-          where: { status: { in: ['CONFIRMADO', 'PAGO'] }, cobranca: cobrancaFilter },
-          _sum: { valorPago: true },
-        }),
-        tx.cobranca.count({ where: cobrancaFilter }),
-      ]),
-    );
+    ] = await Promise.all([
+      tx.aluno.count({ where: alunoFilter }),
+      tx.aluno.count({ where: { ...alunoFilter, matriculas: { some: { status: 'ATIVA' } } } }),
+      tx.turma.count({ where: { contaId, status: 'ATIVO' } }),
+      tx.matricula.count({ where: matriculaFilter }),
+      tx.matricula.count({ where: { ...matriculaFilter, status: 'ATIVA' } }),
+      tx.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE' } }),
+      tx.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE', vencimento: { lt: now } } }),
+      tx.pagamento.aggregate({
+        where: {
+          status: { in: ['CONFIRMADO', 'PAGO'] },
+          dataPagamento: { gte: startOfMonth, lte: endOfMonth },
+          cobranca: cobrancaFilter,
+        },
+        _sum: { valorPago: true },
+      }),
+      tx.pagamento.aggregate({
+        where: { status: { in: ['CONFIRMADO', 'PAGO'] }, cobranca: cobrancaFilter },
+        _sum: { valorPago: true },
+      }),
+      tx.cobranca.count({ where: cobrancaFilter }),
+    ]);
 
     return {
       success: true,

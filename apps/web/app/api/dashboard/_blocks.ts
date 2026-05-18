@@ -12,6 +12,7 @@ import {
 } from '@/lib/media/avatar-url';
 import { logRoutePerformance } from '@/lib/perf-logger';
 import { privateJson } from '@/lib/private-cache';
+import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 
 export const DASHBOARD_BLOCK_CACHE_SECONDS = 15;
 export const DASHBOARD_BLOCK_STALE_SECONDS = 60;
@@ -40,6 +41,14 @@ export async function requireDashboardBlockContaId() {
   }
 
   return { ok: true as const, contaId };
+}
+
+export async function cachedDashboardBlockWithTenant<T>(
+  contaId: string,
+  resource: string,
+  load: (tx: TenantTransactionClient) => Promise<T>,
+) {
+  return cachedDashboardBlock(contaId, resource, () => runWithTenant(contaId, load));
 }
 
 export async function cachedDashboardBlock<T>(

@@ -1,18 +1,17 @@
-import { prisma } from '@/lib/prisma';
-import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlockWithTenant, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
   if (!auth.ok) return auth.response;
 
-  return cachedDashboardBlock(auth.contaId, 'experimental-classes', async () => {
+  return cachedDashboardBlockWithTenant(auth.contaId, 'experimental-classes', async (tx) => {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     start.setDate(start.getDate() - 1);
     const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     end.setDate(end.getDate() + 90);
 
-    const rows = await prisma.aulaExperimental.findMany({
+    const rows = await tx.aulaExperimental.findMany({
       where: {
         contaId: auth.contaId,
         status: { in: ['AGENDADA', 'REAGENDADA', 'REALIZADA'] },

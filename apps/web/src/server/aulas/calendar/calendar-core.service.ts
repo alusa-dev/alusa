@@ -311,7 +311,7 @@ export function buildEligibleMatriculaWhere(
 
 export async function countEligibleStudentsForEvent(
   event: { id: string; contaId: string; turmaId: string | null; startAt: Date },
-  prismaClient: PrismaClient = prisma,
+  prismaClient: PrismaClient | Prisma.TransactionClient = prisma,
 ) {
   const [matriculas, makeupStudents] = await Promise.all([
     event.turmaId

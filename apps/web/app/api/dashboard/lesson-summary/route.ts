@@ -1,6 +1,5 @@
-import { prisma } from '@/lib/prisma';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
-import { cachedDashboardBlock, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlockWithTenant, requireDashboardBlockContaId } from '../_blocks';
 
 type LessonEvent = { turmaId: string | null; status: string; startAt: Date; endAt: Date };
 
@@ -16,7 +15,7 @@ export async function GET() {
   const auth = await requireDashboardBlockContaId();
   if (!auth.ok) return auth.response;
 
-  return cachedDashboardBlock(auth.contaId, 'lesson-summary', async () => {
+  return cachedDashboardBlockWithTenant(auth.contaId, 'lesson-summary', async (tx) => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
@@ -25,10 +24,10 @@ export async function GET() {
       contaId: auth.contaId,
       start: startOfToday,
       end: endOfToday,
-      prismaClient: prisma,
+      prismaClient: tx,
     });
 
-    const events = await prisma.calendarEvent.findMany({
+    const events = await tx.calendarEvent.findMany({
       where: {
         contaId: auth.contaId,
         startAt: { lt: endOfToday },

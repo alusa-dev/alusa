@@ -2,7 +2,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { prisma } from '@/lib/prisma';
 
-type TenantTransactionClient = Prisma.TransactionClient;
+export type TenantTransactionClient = Prisma.TransactionClient;
 
 const globalForTenantPrisma = globalThis as unknown as {
   alusaRlsPrisma?: PrismaClient;

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
@@ -184,15 +184,6 @@ export async function GET(_request: NextRequest) {
     const endOfExperimentalWindow = new Date(endOfToday);
     endOfExperimentalWindow.setDate(endOfExperimentalWindow.getDate() + 90);
 
-    await withPerfTimer('api/dashboard/metrics', 'autoCloseAgendaEvents', () => 
-      autoCloseAgendaEventsInRange({
-        contaId,
-        start: startOfToday,
-        end: endOfToday,
-        prismaClient: prisma,
-      })
-    );
-
     const weeklyWindows = Array.from({ length: 7 }, (_, index) => {
       const i = 6 - index;
       const dia = new Date(now);
@@ -223,16 +214,25 @@ export async function GET(_request: NextRequest) {
       matriculasSemanaData,
       ultimasCobrancasData,
       alunosRecentesData,
-    ] = await withPerfTimer('api/dashboard/metrics', 'prisma Promise.all', () => Promise.all([
-      prisma.aluno.count({ where: alunoFilter }),
-      prisma.aluno.count({
+    ] = await withPerfTimer('api/dashboard/metrics', 'prisma Promise.all', () =>
+      runWithTenant(contaId, async (tx) => {
+        await autoCloseAgendaEventsInRange({
+          contaId,
+          start: startOfToday,
+          end: endOfToday,
+          prismaClient: tx,
+        });
+
+        return Promise.all([
+      tx.aluno.count({ where: alunoFilter }),
+      tx.aluno.count({
         where: {
           ...alunoFilter,
           matriculas: { some: { status: 'ATIVA' } },
         },
       }),
-      prisma.turma.count({ where: { contaId, status: 'ATIVO' } }),
-      prisma.calendarEvent.findMany({
+      tx.turma.count({ where: { contaId, status: 'ATIVO' } }),
+      tx.calendarEvent.findMany({
         where: {
           contaId,
           startAt: { lt: endOfToday },
@@ -246,7 +246,7 @@ export async function GET(_request: NextRequest) {
           endAt: true,
         },
       }),
-      prisma.aluno.findMany({
+      tx.aluno.findMany({
         where: {
           ...alunoFilter,
           status: 'ATIVO',
@@ -258,7 +258,7 @@ export async function GET(_request: NextRequest) {
           dataNasc: true,
         },
       }),
-      prisma.aulaExperimental.findMany({
+      tx.aulaExperimental.findMany({
         where: {
           contaId,
           status: {
@@ -300,17 +300,17 @@ export async function GET(_request: NextRequest) {
           },
         },
       }),
-      prisma.matricula.count({ where: matriculaFilter }),
-      prisma.matricula.count({ where: { ...matriculaFilter, status: 'ATIVA' } }),
-      prisma.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE' } }),
-      prisma.cobranca.count({
+      tx.matricula.count({ where: matriculaFilter }),
+      tx.matricula.count({ where: { ...matriculaFilter, status: 'ATIVA' } }),
+      tx.cobranca.count({ where: { ...cobrancaFilter, status: 'PENDENTE' } }),
+      tx.cobranca.count({
         where: {
           ...cobrancaFilter,
           status: 'PENDENTE',
           vencimento: { lt: now },
         },
       }),
-      prisma.pagamento.aggregate({
+      tx.pagamento.aggregate({
         where: {
           status: { in: ['CONFIRMADO', 'PAGO'] },
           dataPagamento: { gte: startOfMonth, lte: endOfMonth },
@@ -318,7 +318,7 @@ export async function GET(_request: NextRequest) {
         },
         _sum: { valorPago: true },
       }),
-      prisma.cobranca.findMany({
+      tx.cobranca.findMany({
         where: {
           ...cobrancaFilter,
           tipo: 'TAXA_MATRICULA',
@@ -330,22 +330,22 @@ export async function GET(_request: NextRequest) {
         },
         select: { valor: true, valorFinal: true },
       }),
-      prisma.pagamento.aggregate({
+      tx.pagamento.aggregate({
         where: {
           status: { in: ['CONFIRMADO', 'PAGO'] },
           cobranca: cobrancaFilter,
         },
         _sum: { valorPago: true },
       }),
-      prisma.cobranca.count({
+      tx.cobranca.count({
         where: {
           ...cobrancaFilter,
           status: 'PENDENTE',
           vencimento: { gte: now, lte: next7Days },
         },
       }),
-      prisma.cobranca.count({ where: cobrancaFilter }),
-      prisma.pagamento.findMany({
+      tx.cobranca.count({ where: cobrancaFilter }),
+      tx.pagamento.findMany({
         where: {
           status: { in: ['CONFIRMADO', 'PAGO'] },
           dataPagamento: { gte: startOfWeeklyWindow, lte: endOfToday },
@@ -356,7 +356,7 @@ export async function GET(_request: NextRequest) {
           valorPago: true,
         },
       }),
-      prisma.matricula.findMany({
+      tx.matricula.findMany({
         where: {
           ...matriculaFilter,
           OR: [
@@ -370,7 +370,7 @@ export async function GET(_request: NextRequest) {
           updatedAt: true,
         },
       }),
-      prisma.cobranca.findMany({
+      tx.cobranca.findMany({
         take: 5,
         where: cobrancaFilter,
         orderBy: { createdAt: 'desc' },
@@ -386,7 +386,7 @@ export async function GET(_request: NextRequest) {
           },
         },
       }),
-      prisma.aluno.findMany({
+      tx.aluno.findMany({
         take: 8,
         where: alunoFilter,
         orderBy: { createdAt: 'desc' },
@@ -397,7 +397,9 @@ export async function GET(_request: NextRequest) {
           createdAt: true,
         },
       }),
-    ]));
+        ]);
+      }),
+    );
 
     const { aulasHoje, pendencias } = buildTodayLessonSummary(lessonEvents);
 

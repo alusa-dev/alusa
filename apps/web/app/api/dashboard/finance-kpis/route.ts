@@ -5,10 +5,11 @@ import { getDashboardFinanceKpisLocal } from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import { dashboardFinanceKpisResultDTOSchema } from '@/features/dashboard/dtos';
 import { createPerfTimer, logRoutePerformance } from '@/lib/perf-logger';
+import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
 
-async function buildFinanceKpisBody(contaId: string) {
-  const snapshot = await getDashboardFinanceKpisLocal({ contaId });
+async function buildFinanceKpisBody(contaId: string, tx: TenantTransactionClient) {
+  const snapshot = await getDashboardFinanceKpisLocal({ contaId, db: tx });
   return dashboardFinanceKpisResultDTOSchema.parse({
     success: true,
     data: snapshot,
@@ -36,7 +37,7 @@ export async function GET() {
       );
     }
 
-    const body = await buildFinanceKpisBody(contaId);
+    const body = await runWithTenant(contaId, (tx) => buildFinanceKpisBody(contaId, tx));
 
     cacheStateForLog = 'BYPASS';
     timer.end('GET /dashboard/finance-kpis', { contaId, cacheState: cacheStateForLog });
