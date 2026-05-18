@@ -227,6 +227,8 @@ export const config = {
     '/colaboradores/:path*',
     '/configuracoes/:path*',
     '/conta/:path*',
+    '/ajuda',
+    '/ajuda/:path*',
     '/modalidades/:path*',
     '/planos/:path*',
     '/professores/:path*',

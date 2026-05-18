@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
+import { UserAvatar } from '@/components/layout/UserAvatar';
 import { useMemo, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { Menu } from '@/components/icons/icons';
@@ -68,7 +68,7 @@ export function MobileAppHeader() {
             aria-expanded={userMenuOpen}
           >
             {avatarUrl ? (
-              <Image src={avatarUrl} alt="" fill sizes="40px" className="object-cover" />
+              <UserAvatar src={avatarUrl} sizes="40px" />
             ) : (
               <span className={`text-[12px] font-semibold ${isDark ? 'text-[color:var(--color-brand-300)]' : 'text-[#2A004A]'}`}>
                 {storeUser?.name ? `${storeUser.name[0]}` : initials}

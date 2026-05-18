@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Image from 'next/image';
+import { UserAvatar } from '@/components/layout/UserAvatar';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
 // Heroicons
@@ -128,7 +128,7 @@ export default function UserMenu({ name, email, initials, foto }: Props) {
       >
         <span className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-black/5 bg-white alusa-dark:ring-[rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
           {avatarUrl ? (
-            <Image src={avatarUrl} alt="" fill sizes="40px" className="object-cover" />
+            <UserAvatar src={avatarUrl} sizes="40px" />
           ) : (
             <span className="text-[12px] font-semibold text-[#2A004A] alusa-dark:text-[color:var(--color-brand-300)]">
               {storeUser?.name ? `${storeUser.name[0]}` : initials}

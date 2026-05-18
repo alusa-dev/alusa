@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import Image from 'next/image';
+import { UserAvatar } from '@/components/layout/UserAvatar';
 import { useSession } from 'next-auth/react';
 import { X } from '@/components/icons/icons';
 import { UserMenuPanel } from '@/components/layout/UserMenu';
@@ -59,7 +59,7 @@ export function MobileUserMenuDrawer({ open, onOpenChange }: MobileUserMenuDrawe
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <span className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white ring-1 ring-black/5">
               {avatarUrl ? (
-                <Image src={avatarUrl} alt="" fill sizes="44px" className="object-cover" />
+                <UserAvatar src={avatarUrl} sizes="44px" />
               ) : (
                 <span className="text-[12px] font-semibold text-[#2A004A]">
                   {storeUser?.name ? `${storeUser.name[0]}` : initials}
