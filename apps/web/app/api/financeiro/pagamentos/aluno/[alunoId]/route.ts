@@ -25,7 +25,7 @@ type HistoricoPagamento = {
 
 type HistoricoCobranca = {
   id: string;
-  sourceKind: 'cobranca';
+  sourceKind: 'cobranca' | 'charge' | 'sale';
   sourceId: string;
   chargeType: string;
   origin: string;
@@ -45,6 +45,27 @@ type HistoricoCobranca = {
   createdAt: string;
   pagamento: HistoricoPagamento | null;
 };
+
+function resolveStandaloneChargeType(charge: {
+  standaloneInstallmentPlanId: string | null;
+  standaloneSubscriptionId: string | null;
+  externalReference: string;
+}) {
+  if (charge.standaloneInstallmentPlanId || charge.externalReference.includes(':installment:')) {
+    return 'INSTALLMENT';
+  }
+  if (charge.standaloneSubscriptionId || charge.externalReference.includes(':subscription:')) {
+    return 'SUBSCRIPTION';
+  }
+  return 'ONE_TIME';
+}
+
+function resolveStandaloneTipo(chargeType: string, hasSale: boolean) {
+  if (hasSale) return 'LOJA';
+  if (chargeType === 'INSTALLMENT') return 'PARCELADA';
+  if (chargeType === 'SUBSCRIPTION') return 'RECORRENTE';
+  return 'AVULSA';
+}
 
 /**
  * GET /api/financeiro/pagamentos/aluno/[alunoId]
@@ -142,6 +163,11 @@ export async function GET(
               createdAt: true,
             },
           },
+          matricula: {
+            select: {
+              responsavelFinanceiro: { select: { nome: true } },
+            },
+          },
         },
         orderBy: [{ vencimento: 'desc' }, { createdAt: 'desc' }],
       });
@@ -172,7 +198,7 @@ export async function GET(
         origin: 'ACADEMICO',
         tipo: cobranca.tipo,
         description: cobranca.descricao,
-        payerName: aluno.nome,
+        payerName: cobranca.matricula?.responsavelFinanceiro?.nome ?? aluno.nome,
         valor: Number(cobranca.valor),
         vencimento: cobranca.vencimento.toISOString(),
         billingType:
@@ -198,6 +224,149 @@ export async function GET(
           comprovante: pagamentoHistorico.comprovante,
           asaasPaymentId: pagamentoHistorico.asaasPaymentId,
           createdAt: pagamentoHistorico.createdAt,
+        },
+      });
+    }
+
+    const standaloneCharges = await prisma.charge.findMany({
+      where: {
+        contaId,
+        cobrancaId: null,
+        status: 'PAID',
+        OR: [
+          { customer: { payerType: 'ALUNO', payerId: alunoId } },
+          { sale: { alunoId } },
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        externalReference: true,
+        asaasPaymentId: true,
+        value: true,
+        dueDate: true,
+        billingType: true,
+        payerName: true,
+        description: true,
+        standaloneInstallmentPlanId: true,
+        standaloneSubscriptionId: true,
+        invoiceUrl: true,
+        statusUpdatedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        sale: {
+          select: {
+            id: true,
+            saleNumber: true,
+            total: true,
+            paymentMethod: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+      orderBy: [{ dueDate: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    for (const charge of standaloneCharges) {
+      const chargeType = resolveStandaloneChargeType(charge);
+      const tipo = resolveStandaloneTipo(chargeType, Boolean(charge.sale));
+      const value = Number(charge.value ?? charge.sale?.total ?? 0);
+      const paidAt = (charge.statusUpdatedAt ?? charge.updatedAt ?? charge.createdAt).toISOString();
+      const sourceDescription = charge.sale
+        ? `Loja #${String(charge.sale.saleNumber).padStart(4, '0')}`
+        : charge.description;
+
+      cobrancas.push({
+        id: charge.id,
+        sourceKind: 'charge',
+        sourceId: charge.id,
+        chargeType,
+        origin: charge.sale ? 'LOJA' : 'STANDALONE',
+        tipo,
+        description:
+          sourceDescription ??
+          (chargeType === 'SUBSCRIPTION'
+            ? 'Assinatura recorrente'
+            : chargeType === 'INSTALLMENT'
+              ? 'Parcela'
+              : 'Cobrança avulsa'),
+        payerName: charge.payerName ?? aluno.nome,
+        valor: value,
+        vencimento: charge.dueDate?.toISOString() ?? charge.createdAt.toISOString(),
+        billingType: charge.sale?.paymentMethod ?? charge.billingType,
+        status: 'PAGO',
+        asaasPaymentId: charge.asaasPaymentId,
+        matriculaId: null,
+        groupId: charge.standaloneInstallmentPlanId ?? charge.standaloneSubscriptionId,
+        isGroup: false,
+        installmentCount: null,
+        installmentsPaid: null,
+        createdAt: charge.createdAt.toISOString(),
+        pagamento: {
+          id: charge.id,
+          status: 'PAID',
+          valorPago: value,
+          dataPagamento: paidAt,
+          formaPagamento: charge.sale?.paymentMethod ?? charge.billingType ?? 'INDEFINIDO',
+          comprovante: charge.invoiceUrl,
+          asaasPaymentId: charge.asaasPaymentId,
+          createdAt: paidAt,
+        },
+      });
+    }
+
+    const directStoreSales = await prisma.sale.findMany({
+      where: {
+        contaId,
+        alunoId,
+        status: 'CONCLUIDA',
+        finalizationType: 'RECEBIMENTO_PRESENCIAL',
+        chargeId: null,
+      },
+      select: {
+        id: true,
+        saleNumber: true,
+        total: true,
+        paymentMethod: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    for (const sale of directStoreSales) {
+      const paidAt = sale.updatedAt?.toISOString() ?? sale.createdAt.toISOString();
+      const value = Number(sale.total);
+      cobrancas.push({
+        id: sale.id,
+        sourceKind: 'sale',
+        sourceId: sale.id,
+        chargeType: 'ONE_TIME',
+        origin: 'LOJA',
+        tipo: 'LOJA',
+        description: `Loja #${String(sale.saleNumber).padStart(4, '0')}`,
+        payerName: aluno.nome,
+        valor: value,
+        vencimento: sale.createdAt.toISOString(),
+        billingType: sale.paymentMethod,
+        status: 'PAGO',
+        asaasPaymentId: null,
+        matriculaId: null,
+        groupId: null,
+        isGroup: false,
+        installmentCount: null,
+        installmentsPaid: null,
+        createdAt: sale.createdAt.toISOString(),
+        pagamento: {
+          id: sale.id,
+          status: 'PAGO',
+          valorPago: value,
+          dataPagamento: paidAt,
+          formaPagamento: sale.paymentMethod ?? 'INDEFINIDO',
+          comprovante: null,
+          asaasPaymentId: null,
+          createdAt: paidAt,
         },
       });
     }

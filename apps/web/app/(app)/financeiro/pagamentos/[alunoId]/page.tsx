@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Download,
   Filter,
+  Receipt,
   Search,
   X,
 } from '@/components/icons/icons';
@@ -26,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DatePicker } from '@/components/ui/date-picker';
 import { cn } from '@/lib/cn';
+import { ExportPaidReceiptsDialog } from '@/features/financeiro/pagamentos/ExportPaidReceiptsDialog';
 
 // ─── Tipos ───────────────────────────────────────────────────────────────────
 
@@ -126,6 +128,7 @@ const TIPO_LABELS: Record<string, string> = {
   ONE_TIME: 'Avulsa',
   INSTALLMENT: 'Parcelamento',
   SUBSCRIPTION: 'Recorrente',
+  LOJA: 'Loja',
 };
 
 const GRUPO_LABELS: Record<string, string> = {
@@ -138,6 +141,7 @@ const GRUPO_LABELS: Record<string, string> = {
   AVULSA: 'Avulsas',
   ONE_TIME: 'Avulsas',
   EXTRA: 'Avulsas',
+  LOJA: 'Loja',
 };
 
 // Ordem de exibição dos grupos
@@ -151,6 +155,7 @@ const GRUPO_ORDER = [
   'AVULSA',
   'ONE_TIME',
   'EXTRA',
+  'LOJA',
 ];
 
 const STATUS_OPTIONS = [
@@ -174,6 +179,7 @@ const TIPO_OPTIONS = [
   { value: 'SUBSCRIPTION', label: 'Assinatura avulsa' },
   { value: 'AVULSA', label: 'Avulsa' },
   { value: 'ONE_TIME', label: 'Avulsa standalone' },
+  { value: 'LOJA', label: 'Loja' },
 ];
 
 const FORMA_OPTIONS = [
@@ -182,6 +188,10 @@ const FORMA_OPTIONS = [
   { value: 'BOLETO', label: 'Boleto' },
   { value: 'CARTAO_CREDITO', label: 'Cartão de crédito' },
   { value: 'CREDIT_CARD', label: 'Cartão de crédito' },
+  { value: 'CARTAO_DEBITO', label: 'Cartão de débito' },
+  { value: 'DEBIT_CARD', label: 'Cartão de débito' },
+  { value: 'DINHEIRO', label: 'Dinheiro' },
+  { value: 'PIX_PRESENCIAL', label: 'Pix presencial' },
   { value: 'INDEFINIDO', label: 'Não definido' },
 ];
 
@@ -268,6 +278,7 @@ export default function PagamentoAlunoDetalhesPage({
   const [searchTerm, setSearchTerm] = useState('');
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
+  const [exportReceiptsOpen, setExportReceiptsOpen] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -657,6 +668,16 @@ export default function PagamentoAlunoDetalhesPage({
                 <Download className="mr-2 h-4 w-4" />
                 Exportar CSV
               </Button>
+
+              <Button
+                type="button"
+                title="Exportar comprovantes pagos"
+                className="h-10 rounded-md bg-[#5c2f91] px-4 text-[13px] text-white shadow-none hover:bg-[#4b2478]"
+                onClick={() => setExportReceiptsOpen(true)}
+              >
+                <Receipt className="mr-2 h-4 w-4" />
+                Comprovantes
+              </Button>
           </div>
         </div>
 
@@ -699,37 +720,18 @@ export default function PagamentoAlunoDetalhesPage({
           ))}
         </div>
       )}
+
+      <ExportPaidReceiptsDialog
+        open={exportReceiptsOpen}
+        onOpenChange={setExportReceiptsOpen}
+        aluno={aluno}
+        items={cobrancas}
+      />
     </div>
   );
 }
 
 // ─── Sub-componentes ─────────────────────────────────────────────────────────
-
-function StatCard({
-  label,
-  value,
-  muted = false,
-}: {
-  label: string;
-  value: string;
-  muted?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        'flex flex-col justify-center rounded-2xl px-6 py-4 min-w-[160px]',
-        muted ? 'bg-gray-50 border border-gray-200' : 'bg-[#f2eeff]',
-      )}
-    >
-      <p className={cn('text-[12px] font-normal mb-1', muted ? 'text-gray-500' : 'text-[#4a1c7a]')}>
-        {label}
-      </p>
-      <p className={cn('text-2xl font-semibold leading-none', muted ? 'text-gray-700' : 'text-[#2D004A]')}>
-        {value}
-      </p>
-    </div>
-  );
-}
 
 function GrupoCobrancas({
   label,

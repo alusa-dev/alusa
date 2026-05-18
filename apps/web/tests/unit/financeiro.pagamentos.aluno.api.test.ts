@@ -4,6 +4,8 @@ import { NextRequest } from 'next/server';
 const mockSafeGetServerSession = vi.hoisted(() => vi.fn());
 const mockAlunoFindFirst = vi.hoisted(() => vi.fn());
 const mockCobrancaFindMany = vi.hoisted(() => vi.fn());
+const mockChargeFindMany = vi.hoisted(() => vi.fn());
+const mockSaleFindMany = vi.hoisted(() => vi.fn());
 const mockSyncPaymentStateFromAsaas = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/safe-server-session', () => ({
@@ -37,6 +39,12 @@ vi.mock('@/lib/prisma', () => ({
     cobranca: {
       findMany: mockCobrancaFindMany,
     },
+    charge: {
+      findMany: mockChargeFindMany,
+    },
+    sale: {
+      findMany: mockSaleFindMany,
+    },
   },
 }));
 
@@ -57,6 +65,8 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
       foto: null,
     });
     mockSyncPaymentStateFromAsaas.mockResolvedValue({ success: true });
+    mockChargeFindMany.mockResolvedValue([]);
+    mockSaleFindMany.mockResolvedValue([]);
     mockCobrancaFindMany.mockResolvedValue([
       {
         id: 'cb1',
@@ -77,6 +87,9 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
         matriculaId: 'mat-1',
         createdAt: new Date('2026-04-01T00:00:00.000Z'),
         pagamentos: [],
+        matricula: {
+          responsavelFinanceiro: { nome: 'Responsável Financeiro' },
+        },
       },
     ]);
   });
@@ -104,6 +117,7 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
     expect(json.data.aluno.nome).toBe('Aluno Financeiro');
     expect(json.data.cobrancas).toHaveLength(1);
     expect(json.data.cobrancas[0].status).toBe('PAGO');
+    expect(json.data.cobrancas[0].payerName).toBe('Responsável Financeiro');
     expect(json.data.cobrancas[0].pagamento.status).toBe('CONFIRMED');
     expect(json.data.cobrancas[0].pagamento.valorPago).toBe(150);
     expect(json.data.resumo.totalPago).toBe(150);
@@ -112,5 +126,64 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
       asaasPaymentId: 'pay_1',
     });
     expect(mockCobrancaFindMany).toHaveBeenCalledTimes(2);
+    expect(mockChargeFindMany).toHaveBeenCalledTimes(1);
+    expect(mockSaleFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('inclui cobranças standalone e vendas de loja pagas do aluno', async () => {
+    mockCobrancaFindMany.mockResolvedValue([]);
+    mockChargeFindMany.mockResolvedValue([
+      {
+        id: 'ch_1',
+        status: 'PAID',
+        externalReference: 'alusa:standalone:ch_1',
+        asaasPaymentId: 'pay_charge',
+        value: 90,
+        dueDate: new Date('2026-05-10T00:00:00.000Z'),
+        billingType: 'PIX',
+        payerName: 'Aluno Financeiro',
+        description: 'Cobrança avulsa',
+        standaloneInstallmentPlanId: null,
+        standaloneSubscriptionId: null,
+        invoiceUrl: 'https://invoice.test',
+        statusUpdatedAt: new Date('2026-05-11T00:00:00.000Z'),
+        createdAt: new Date('2026-05-09T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-11T00:00:00.000Z'),
+        sale: null,
+      },
+    ]);
+    mockSaleFindMany.mockResolvedValue([
+      {
+        id: 'sale_1',
+        saleNumber: 8,
+        total: 150,
+        paymentMethod: 'DINHEIRO',
+        createdAt: new Date('2026-05-12T00:00:00.000Z'),
+        updatedAt: new Date('2026-05-12T00:00:00.000Z'),
+      },
+    ]);
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/financeiro/pagamentos/aluno/aluno-1'),
+      { params: { alunoId: 'aluno-1' } },
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data.cobrancas).toHaveLength(2);
+    expect(json.data.cobrancas.map((item: { sourceKind: string }) => item.sourceKind)).toEqual([
+      'sale',
+      'charge',
+    ]);
+    expect(json.data.cobrancas[0]).toMatchObject({
+      tipo: 'LOJA',
+      description: 'Loja #0008',
+      pagamento: { status: 'PAGO', valorPago: 150 },
+    });
+    expect(json.data.cobrancas[1]).toMatchObject({
+      tipo: 'AVULSA',
+      pagamento: { status: 'PAID', valorPago: 90, comprovante: 'https://invoice.test' },
+    });
+    expect(json.data.resumo.totalPago).toBe(240);
   });
 });
