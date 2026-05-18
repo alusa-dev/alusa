@@ -3,28 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/packages/lib/src/index.js",
-  "types": "dist/packages/lib/src/index.d.ts",
+  "main": "dist/lib/src/index.js",
+  "types": "dist/lib/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/packages/lib/src/index.d.ts",
-      "default": "./dist/packages/lib/src/index.js"
+      "types": "./dist/lib/src/index.d.ts",
+      "default": "./dist/lib/src/index.js"
     },
     "./client": {
-      "types": "./dist/packages/lib/src/client.d.ts",
-      "default": "./dist/packages/lib/src/client.js"
+      "types": "./dist/lib/src/client.d.ts",
+      "default": "./dist/lib/src/client.js"
     },
     "./cpf-cnpj": {
-      "types": "./dist/packages/lib/src/utils/cpf-cnpj.d.ts",
-      "default": "./dist/packages/lib/src/utils/cpf-cnpj.js"
+      "types": "./dist/lib/src/utils/cpf-cnpj.d.ts",
+      "default": "./dist/lib/src/utils/cpf-cnpj.js"
     },
     "./prisma": {
-      "types": "./dist/packages/lib/src/prisma.d.ts",
-      "default": "./dist/packages/lib/src/prisma.js"
+      "types": "./dist/lib/src/prisma.d.ts",
+      "default": "./dist/lib/src/prisma.js"
     },
     "./server": {
-      "types": "./dist/packages/lib/src/server.d.ts",
-      "default": "./dist/packages/lib/src/server.js"
+      "types": "./dist/lib/src/server.d.ts",
+      "default": "./dist/lib/src/server.js"
     }
   },
   "scripts": {

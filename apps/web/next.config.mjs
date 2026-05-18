@@ -51,12 +51,12 @@ const nextConfig = {
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
-    config.resolve.alias['@alusa/lib/cpf-cnpj'] = resolvePath(
-      __dirname,
-      '../../packages/lib/dist/packages/lib/src/utils/cpf-cnpj.js'
-    );
-    config.resolve.alias['@alusa/lib/client'] = resolvePath(__dirname, '../../packages/lib/dist/client.js');
-    config.resolve.alias['@alusa/lib'] = resolvePath(__dirname, '../../packages/lib/dist');
+    const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist/lib/src');
+    config.resolve.alias['@alusa/lib/cpf-cnpj'] = resolvePath(libDistSrc, 'utils/cpf-cnpj.js');
+    config.resolve.alias['@alusa/lib/client'] = resolvePath(libDistSrc, 'client.js');
+    config.resolve.alias['@alusa/lib/prisma'] = resolvePath(libDistSrc, 'prisma.js');
+    config.resolve.alias['@alusa/lib/server'] = resolvePath(libDistSrc, 'server.js');
+    config.resolve.alias['@alusa/lib'] = resolvePath(libDistSrc, 'index.js');
     return config;
   },
 };
