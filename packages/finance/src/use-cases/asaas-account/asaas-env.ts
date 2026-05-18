@@ -2,6 +2,27 @@ import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-erro
 
 export type WebhookBaseUrlSource = 'ASAAS_WEBHOOK_PUBLIC_BASE_URL' | 'NEXT_PUBLIC_APP_URL';
 
+const PUBLIC_HOST_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
+  'alusa.app': 'www.alusa.app',
+};
+
+export function canonicalizePublicHostname(hostname: string): string {
+  return PUBLIC_HOST_CANONICAL_ALIASES[hostname.toLowerCase()] ?? hostname;
+}
+
+export function canonicalizePublicBaseUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, '');
+  if (!trimmed) return trimmed;
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hostname = canonicalizePublicHostname(parsed.hostname);
+    return parsed.origin;
+  } catch {
+    return trimmed;
+  }
+}
+
 export function getMasterAsaasApiKey(): string {
   const apiKey = process.env.ASAAS_API_KEY;
   if (!apiKey) {
@@ -40,12 +61,18 @@ export function assertValidPublicBaseUrl(value: string, source: WebhookBaseUrlSo
 export function resolveConfiguredWebhookBaseUrl(): { value: string; source: WebhookBaseUrlSource } | null {
   const explicitWebhookBaseUrl = process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL?.trim();
   if (explicitWebhookBaseUrl) {
-    return { value: explicitWebhookBaseUrl, source: 'ASAAS_WEBHOOK_PUBLIC_BASE_URL' };
+    return {
+      value: canonicalizePublicBaseUrl(explicitWebhookBaseUrl),
+      source: 'ASAAS_WEBHOOK_PUBLIC_BASE_URL',
+    };
   }
 
   const publicAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
   if (publicAppUrl) {
-    return { value: publicAppUrl, source: 'NEXT_PUBLIC_APP_URL' };
+    return {
+      value: canonicalizePublicBaseUrl(publicAppUrl),
+      source: 'NEXT_PUBLIC_APP_URL',
+    };
   }
 
   return null;

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { resolveWebhookUrl, resolveWebhookUrlOrNull } from '../asaas-env';
+import {
+  canonicalizePublicBaseUrl,
+  resolveWebhookUrl,
+  resolveWebhookUrlOrNull,
+} from '../asaas-env';
 
 const originalNodeEnv = process.env.NODE_ENV;
 const originalNextPublicAppUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -49,5 +53,18 @@ describe('asaas-env webhook url', () => {
 
     expect(resolveWebhookUrlOrNull()).toBe('https://public.example.com/api/webhooks/asaas');
     expect(resolveWebhookUrl()).toBe('https://public.example.com/api/webhooks/asaas');
+  });
+
+  it('canonicaliza o apex alusa.app para www.alusa.app', () => {
+    expect(canonicalizePublicBaseUrl('https://alusa.app')).toBe('https://www.alusa.app');
+    expect(canonicalizePublicBaseUrl('https://alusa.app/')).toBe('https://www.alusa.app');
+
+    process.env.NODE_ENV = 'production';
+    delete process.env.VITEST;
+    delete process.env.VITEST_WORKER_ID;
+    delete process.env.VITEST_POOL_ID;
+    process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL = 'https://alusa.app';
+
+    expect(resolveWebhookUrl()).toBe('https://www.alusa.app/api/webhooks/asaas');
   });
 });

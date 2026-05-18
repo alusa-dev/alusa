@@ -1,12 +1,19 @@
 import { PROVISIONED_WEBHOOK_EVENTS } from '../../webhooks/webhook-provisioning-events';
-import { resolveWebhookUrl } from './asaas-env';
+import { canonicalizePublicHostname, resolveWebhookUrl } from './asaas-env';
 import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
 
 export const RECOMMENDED_WEBHOOK_SEND_TYPE = 'SEQUENTIALLY' as const;
 export const RECOMMENDED_WEBHOOK_NAME = 'Alusa - Webhook financeiro';
 
 export function normalizeWebhookUrlBase(url: string): string {
-  return url.trim().replace(/\/+$/, '');
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hostname = canonicalizePublicHostname(parsed.hostname);
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
 }
 
 export function hasSameWebhookEvents(current: string[] | undefined, expected: string[]): boolean {
