@@ -50,9 +50,10 @@ const PAID_STATUSES = new Set([
   'PAID',
 ]);
 
-const CHARGE_TYPE_OPTIONS = PAYMENT_HISTORY_CATEGORY_FILTER_OPTIONS.filter(
-  (option) => option.value !== 'OUTROS',
-).concat([{ value: 'OUTROS', label: PAYMENT_HISTORY_CATEGORY_LABELS.OUTROS }]);
+const CHARGE_TYPE_OPTIONS: Option[] = [
+  ...PAYMENT_HISTORY_CATEGORY_FILTER_OPTIONS,
+  { value: 'OUTROS', label: PAYMENT_HISTORY_CATEGORY_LABELS.OUTROS },
+];
 
 const PAYMENT_METHOD_OPTIONS: Option[] = [
   { value: 'PIX', label: 'Pix' },

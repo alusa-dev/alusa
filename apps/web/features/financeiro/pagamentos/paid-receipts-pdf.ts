@@ -9,8 +9,8 @@ type PaidReceiptPagamento = {
   valorPago: number;
   dataPagamento: string | null;
   formaPagamento: string;
-  comprovante: string | null;
-  asaasPaymentId: string | null;
+  comprovante?: string | null;
+  asaasPaymentId?: string | null;
   createdAt: string;
 };
 
