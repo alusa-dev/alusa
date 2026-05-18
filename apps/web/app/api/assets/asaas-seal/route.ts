@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     headers: {
       'Content-Type': 'image/svg+xml; charset=utf-8',
       'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
-      'Access-Control-Allow-Origin': '*',
+      'X-Content-Type-Options': 'nosniff',
     },
   });
 }

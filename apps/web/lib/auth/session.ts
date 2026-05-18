@@ -69,7 +69,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const session = (await getServerSession(authOptions)) as unknown as { user?: { id?: string; role?: string; contaId?: string } };
   const user = session?.user;
   if (!user?.id || !user?.role) {
-    if (process.env.TEST_ROUTES_ENABLED === 'true') {
+    if (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true') {
       return ensureTestSessionUser();
     }
     return null;

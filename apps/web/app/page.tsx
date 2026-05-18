@@ -1,20 +1,19 @@
 import prisma from '@/lib/prisma';
 import { redirect } from 'next/navigation';
-import { isRedirectError } from 'next/dist/client/components/redirect';
 import Link from 'next/link';
 
 export default async function HomePage() {
+  let userCount: number | null = null;
   try {
-    const userCount = await prisma.usuario.count();
-    if (userCount > 0) {
-      redirect('/auth/login');
-    }
-
-    redirect('/auth/register');
+    userCount = await prisma.usuario.count();
   } catch (error) {
-    if (isRedirectError(error)) throw error;
     console.error('HomePage prisma error', error);
   }
+
+  if (userCount !== null) {
+    redirect(userCount > 0 ? '/auth/login' : '/auth/register');
+  }
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-[#3e1f63]">
       <div className="mx-auto w-[480px] max-w-[92vw] rounded-[40px] bg-white px-12 py-10 shadow-[0_6px_24px_rgba(0,0,0,0.12)] flex flex-col items-center">

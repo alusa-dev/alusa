@@ -54,7 +54,9 @@ export async function POST(req: Request) {
       }
     }
 
-    const isTest = process.env.NODE_ENV === 'test' || process.env.TEST_ROUTES_ENABLED === 'true';
+    const isTest =
+      process.env.NODE_ENV === 'test' ||
+      (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true');
     const session = await getServerSession(authOptions);
     if (!session?.user && !isTest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

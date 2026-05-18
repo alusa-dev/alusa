@@ -15,7 +15,9 @@ export async function DELETE(_req: Request, ctx: unknown) {
     }
     const id = parsed.data.params.id;
 
-    const isTest = process.env.NODE_ENV === 'test' || process.env.TEST_ROUTES_ENABLED === 'true';
+    const isTest =
+      process.env.NODE_ENV === 'test' ||
+      (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true');
     const session = await getServerSession(authOptions);
     if (!session?.user && !isTest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

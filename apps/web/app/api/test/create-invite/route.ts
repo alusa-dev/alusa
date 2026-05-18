@@ -9,7 +9,7 @@ import { mapTestCreateInviteResultToDTO } from '@/features/system/mappers';
 
 export async function POST(req: Request) {
   try {
-    if (process.env.TEST_ROUTES_ENABLED !== 'true') {
+    if (process.env.NODE_ENV === 'production' || process.env.TEST_ROUTES_ENABLED !== 'true') {
       return NextResponse.json({ error: 'Not Found' }, { status: 404 });
     }
     const body = await req.json().catch(() => ({}));

@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { NextResponse } from 'next/server';
 
 import {
@@ -21,15 +22,6 @@ export type GlobalAdminSession = {
     | 'BREAK_GLASS';
 };
 
-/** Sessão fixa para a central `/developer` sem login por palavra-passe (acesso ao URL = acesso à consola). */
-const SUPPORT_CONSOLE_OPEN_SESSION: GlobalAdminSession = {
-  username: 'central',
-  issuedAt: new Date(0).toISOString(),
-  expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365 * 10).toISOString(),
-  supportUserId: null,
-  role: 'SUPPORT_ADMIN',
-};
-
 function buildSessionFromPayload(payload: {
   sub: string;
   supportUserId?: string;
@@ -47,18 +39,34 @@ function buildSessionFromPayload(payload: {
 }
 
 export async function getGlobalAdminSession(): Promise<GlobalAdminSession | null> {
-  const token = cookies().get(getGlobalAdminSessionCookieOptions().name)?.value ?? null;
+  const token = (await cookies()).get(getGlobalAdminSessionCookieOptions().name)?.value ?? null;
   const payload = await verifyGlobalAdminSessionToken(token);
   if (!payload) return null;
   return buildSessionFromPayload(payload);
 }
 
 export async function requireGlobalAdminSessionForPage(_callbackUrl: string) {
-  return SUPPORT_CONSOLE_OPEN_SESSION;
+  const session = await getGlobalAdminSession();
+  if (!session) {
+    const loginUrl = new URL('/developer/login', 'http://localhost');
+    loginUrl.searchParams.set('callbackUrl', _callbackUrl);
+    redirect(`${loginUrl.pathname}${loginUrl.search}`);
+  }
+  return session;
 }
 
 export async function requireGlobalAdminSessionForApi() {
-  return { ok: true as const, session: SUPPORT_CONSOLE_OPEN_SESSION };
+  const session = await getGlobalAdminSession();
+  if (!session) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        { success: false, error: 'Sessão de suporte expirada ou ausente.' },
+        { status: 401, headers: { 'cache-control': 'no-store' } },
+      ),
+    };
+  }
+  return { ok: true as const, session };
 }
 
 export async function attachGlobalAdminSession(

@@ -10,7 +10,9 @@ import { isRemovedUserEmail } from '@/features/users/managed-user-access';
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    const isTest = process.env.NODE_ENV === 'test' || process.env.TEST_ROUTES_ENABLED === 'true';
+    const isTest =
+      process.env.NODE_ENV === 'test' ||
+      (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true');
     const sessionUser = session?.user as { id?: string; role?: string; contaId?: string | null } | undefined;
     const sessionRole = String(sessionUser?.role ?? '').toUpperCase();
 

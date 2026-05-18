@@ -248,7 +248,7 @@ export default function CobrancasTodasPage() {
   );
 
   const orderedCobrancas = useMemo(() => {
-    let items = [...cobrancas];
+    const items = [...cobrancas];
     items.sort((a, b) => {
       const ta = new Date(a.vencimento ?? '').getTime() || 0;
       const tb = new Date(b.vencimento ?? '').getTime() || 0;

@@ -158,7 +158,7 @@ async function ensureTestUserId() {
 
 export async function resolveUserId(sessionUserId: string | undefined) {
   if (sessionUserId) return sessionUserId;
-  if (process.env.TEST_ROUTES_ENABLED === 'true') {
+  if (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true') {
     return ensureTestUserId();
   }
   return null;

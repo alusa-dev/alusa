@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } from '@alusa/finance';
+import { validateUploadBuffer } from '@/lib/upload-security';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -121,6 +122,19 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const bytes = new Uint8Array(await documentFile.arrayBuffer());
+    const binaryValidation = validateUploadBuffer({
+      buffer: bytes,
+      fileName: documentFile.name,
+      declaredMimeType: documentFile.type,
+      fileSize: documentFile.size,
+      maxSizeBytes: MAX_SIZE,
+      allowedMimeTypes: [...ALLOWED_TYPES],
+      allowedExtensions: ALLOWED_EXTENSIONS,
+    });
+
+    if (!binaryValidation.ok) {
+      return json(422, { error: 'CONTEUDO_ARQUIVO_INVALIDO', message: binaryValidation.error });
+    }
 
     const data = await updateKycDocumentFile({
       contaId: user.contaId,
@@ -128,7 +142,7 @@ export async function POST(req: Request, context: RouteContext) {
       file: {
         bytes,
         filename: documentFile.name,
-        mimeType: documentFile.type,
+        mimeType: binaryValidation.detectedMimeType,
       },
       actor: { type: 'USER', id: user.id },
     });

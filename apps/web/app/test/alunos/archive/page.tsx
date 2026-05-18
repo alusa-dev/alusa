@@ -6,7 +6,7 @@ type PageProps = {
 };
 
 export default function Page({ searchParams }: PageProps) {
-  if (process.env.TEST_ROUTES_ENABLED !== 'true') {
+  if (process.env.NODE_ENV === 'production' || process.env.TEST_ROUTES_ENABLED !== 'true') {
     notFound();
   }
 

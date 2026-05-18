@@ -6,7 +6,7 @@ type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
 
-const isTest = process.env.TEST_ROUTES_ENABLED === 'true';
+const isTest = process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true';
 const legacyDeveloperPaths = [
   '/developer/dashboard',
   '/developer/search',
@@ -16,6 +16,14 @@ const legacyDeveloperPaths = [
   '/developer/problems',
   '/developer/actions',
   '/developer/errors',
+];
+const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const originCheckExemptApiPrefixes = [
+  '/api/auth/',
+  '/api/developer/auth/',
+  '/api/global-admin/auth/',
+  '/api/webhooks/',
+  '/api/jobs/',
 ];
 
 function clearAuthSessionCookies(response: NextResponse) {
@@ -58,6 +66,24 @@ async function verifyAccountAccess(
   }
 }
 
+function isSameOriginUrl(value: string | null, origin: string): boolean {
+  if (!value) return true;
+
+  try {
+    return new URL(value).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
+function shouldValidateApiOrigin(pathname: string, method: string): boolean {
+  if (!pathname.startsWith('/api/') || !unsafeMethods.has(method.toUpperCase())) {
+    return false;
+  }
+
+  return !originCheckExemptApiPrefixes.some((prefix) => pathname.startsWith(prefix));
+}
+
 /** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
 export default async function middleware(req: NextRequest) {
   if (isTest) {
@@ -67,9 +93,20 @@ export default async function middleware(req: NextRequest) {
 
   const pathname = req.nextUrl.pathname;
 
+  if (shouldValidateApiOrigin(pathname, req.method)) {
+    const origin = req.headers.get('origin');
+    const referer = req.headers.get('referer');
+    if (!isSameOriginUrl(origin, req.nextUrl.origin) || !isSameOriginUrl(referer, req.nextUrl.origin)) {
+      return NextResponse.json(
+        { error: 'Origem da requisição não permitida.' },
+        { status: 403, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+  }
+
   if (pathname === '/developer' || pathname.startsWith('/developer/')) {
     if (pathname === '/developer/login') {
-      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
+      return NextResponse.next();
     }
 
     if (
@@ -201,5 +238,6 @@ export const config = {
     '/finance/wizard/:path*',
     '/financeiro/:path*',
     '/finance/:path*',
+    '/api/:path*',
   ],
 };

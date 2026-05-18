@@ -10,6 +10,7 @@ import { updateKycDocumentFile } from '@alusa/finance/use-cases/kyc/update-kyc-d
 import { InvalidKycGroupIdError } from '@alusa/finance/errors/invalid-kyc-group-id-error';
 import { OnboardingUrlRequiredError } from '@alusa/finance/errors/onboarding-url-required-error';
 import { ProviderPortalRequiredError } from '@alusa/finance/errors/provider-portal-required-error';
+import { validateUploadBuffer } from '@/lib/upload-security';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -149,6 +150,19 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const bytes = new Uint8Array(await documentFile.arrayBuffer());
+    const binaryValidation = validateUploadBuffer({
+      buffer: bytes,
+      fileName: documentFile.name,
+      declaredMimeType: documentFile.type,
+      fileSize: documentFile.size,
+      maxSizeBytes: MAX_SIZE,
+      allowedMimeTypes: [...ALLOWED_TYPES],
+      allowedExtensions: ALLOWED_EXTENSIONS,
+    });
+
+    if (!binaryValidation.ok) {
+      return json(422, { error: 'CONTEUDO_ARQUIVO_INVALIDO', message: binaryValidation.error });
+    }
 
     if (normalizedSlotId) {
       await updateKycDocumentFile({
@@ -157,7 +171,7 @@ export async function POST(req: Request, context: RouteContext) {
         file: {
           bytes,
           filename: documentFile.name,
-          mimeType: documentFile.type,
+          mimeType: binaryValidation.detectedMimeType,
         },
         actor: { type: 'USER', id: user.id },
       });
@@ -169,7 +183,7 @@ export async function POST(req: Request, context: RouteContext) {
         file: {
           bytes,
           filename: documentFile.name,
-          mimeType: documentFile.type,
+          mimeType: binaryValidation.detectedMimeType,
         },
         actor: { type: 'USER', id: user.id },
       });

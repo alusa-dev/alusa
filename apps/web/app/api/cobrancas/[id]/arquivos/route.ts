@@ -3,8 +3,9 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
 import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { extname, join } from 'path';
 import { existsSync } from 'fs';
+import { randomUUID } from 'crypto';
 import {
   cobrancaArquivoIdQueryDTOSchema,
   cobrancaRouteParamsDTOSchema,
@@ -20,6 +21,7 @@ import {
   storageKeyFromUrl,
   storageUrlForKey,
 } from '@/lib/r2-storage';
+import { validateUploadBuffer } from '@/lib/upload-security';
 
 // Configuração de upload
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -35,6 +37,35 @@ const ALLOWED_TYPES = [
 ];
 
 const UPLOAD_DIR = join(process.cwd(), 'public', 'uploads', 'cobrancas');
+
+function hasPrefix(buffer: Uint8Array, prefix: readonly number[]) {
+  return prefix.every((value, index) => buffer[index] === value);
+}
+
+function validateOfficeBuffer(buffer: Uint8Array, extension: string, declaredMimeType: string) {
+  const normalized = declaredMimeType.toLowerCase();
+  const isZipOffice = extension === '.docx' || extension === '.xlsx';
+  const isLegacyOffice = extension === '.doc' || extension === '.xls';
+
+  if (isZipOffice && !hasPrefix(buffer, [0x50, 0x4b, 0x03, 0x04])) {
+    return false;
+  }
+
+  if (isLegacyOffice && !hasPrefix(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
+    return false;
+  }
+
+  if (extension === '.docx') {
+    return normalized === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (extension === '.xlsx') {
+    return normalized === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (extension === '.doc') return normalized === 'application/msword';
+  if (extension === '.xls') return normalized === 'application/vnd.ms-excel';
+
+  return false;
+}
 
 /**
  * GET /api/cobrancas/[id]/arquivos
@@ -175,21 +206,38 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       );
     }
 
-    // Gerar nome único para o arquivo
-    const timestamp = Date.now();
-    const randomString = Math.random().toString(36).substring(2, 15);
-    const ext = file.name.split('.').pop();
-    const nomeArquivo = `${timestamp}_${randomString}.${ext}`;
-
     const buffer = Buffer.from(await file.arrayBuffer());
+    const bytes = new Uint8Array(buffer);
+    const extension = extname(file.name).toLowerCase();
+    const binaryValidation =
+      extension === '.pdf' || extension === '.jpg' || extension === '.jpeg' || extension === '.png'
+        ? validateUploadBuffer({
+            buffer: bytes,
+            fileName: file.name,
+            declaredMimeType: file.type,
+            fileSize: file.size,
+            maxSizeBytes: MAX_FILE_SIZE,
+            allowedMimeTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'],
+            allowedExtensions: ['.pdf', '.jpg', '.jpeg', '.png'],
+          })
+        : validateOfficeBuffer(bytes, extension, file.type)
+          ? { ok: true as const, extension, detectedMimeType: file.type }
+          : { ok: false as const, error: 'Conteúdo do arquivo não permitido.' };
+
+    if (!binaryValidation.ok) {
+      return NextResponse.json({ error: binaryValidation.error }, { status: 400 });
+    }
+
+    // Gerar nome único para o arquivo
+    const nomeArquivo = `${session.user.contaId}-${randomUUID()}${binaryValidation.extension}`;
     const storageKey = `uploads/cobrancas/${nomeArquivo}`;
     const storageUrl = storageUrlForKey(storageKey);
 
     if (isR2Configured()) {
       await putStorageObject({
         key: storageKey,
-        body: buffer,
-        contentType: file.type,
+        body: bytes,
+        contentType: binaryValidation.detectedMimeType,
         contentLength: file.size,
       });
     } else {
@@ -200,7 +248,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       // Salvar arquivo
       const filePath = join(UPLOAD_DIR, nomeArquivo);
-      await writeFile(filePath, new Uint8Array(buffer));
+      await writeFile(filePath, bytes);
     }
 
     // Criar registro no banco
@@ -221,7 +269,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             cobrancaId: id,
             nomeOriginal: file.name,
             nomeArquivo,
-            mimetype: file.type,
+            mimetype: binaryValidation.detectedMimeType,
             tamanho: file.size,
             url: isR2Configured() ? storageUrl : `/uploads/cobrancas/${nomeArquivo}`,
             uploadPor: session.user.id,
@@ -232,7 +280,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             chargeId: id,
             nomeOriginal: file.name,
             nomeArquivo,
-            mimetype: file.type,
+            mimetype: binaryValidation.detectedMimeType,
             tamanho: file.size,
             url: isR2Configured() ? storageUrl : `/uploads/cobrancas/${nomeArquivo}`,
             uploadPor: session.user.id,

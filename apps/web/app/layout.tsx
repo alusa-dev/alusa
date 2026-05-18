@@ -46,8 +46,8 @@ export const viewport: Viewport = {
   themeColor: "#ffffff",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = cookies();
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const cookieStore = await cookies();
   const themeCookie = (cookieStore.get('alusa.theme')?.value as 'light' | 'dark' | undefined) ?? undefined;
   const themeInitPrefixes = JSON.stringify([...AUTH_LIGHT_THEME_PATH_PREFIXES]);
   const themeInitRoots = JSON.stringify([...AUTH_LIGHT_THEME_ROOT_PATHS]);
