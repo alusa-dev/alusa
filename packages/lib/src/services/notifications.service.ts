@@ -1,4 +1,5 @@
 import { prisma, type Prisma } from '../prisma';
+import { logInboxMetric } from '../notifications/inbox-metrics';
 import {
   NotificationCategory,
   NotificationSeverity,
@@ -822,7 +823,7 @@ function buildBillingMessage(params: {
   return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''} foi confirmado${description ? ` para ${description}` : ''}.`;
 }
 
-function resolveBillingNotificationContent(params: {
+export function resolveBillingNotificationContent(params: {
   eventName: WebhookNotificationEvent;
   billingType?: string | null;
   formaPagamento?: string | null;
@@ -1058,10 +1059,17 @@ export async function createBillingWebhookNotification(params: {
   });
 
   if (!charge) {
-    console.info('[Notifications] Evento financeiro reconciliado sem entidade local para inbox.', {
+    logInboxMetric('inbox.skipped.no_entity', {
       eventName: normalizedEvent,
-      originalEventName: params.eventName,
       asaasPaymentId: params.asaasPaymentId,
+      sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
+    });
+    const pendingInbox = await import('../notifications/pending-inbox-notifications');
+    await pendingInbox.enqueuePendingBillingWebhookNotification({
+      eventId: params.eventId ?? null,
+      eventName: normalizedEvent,
+      asaasPaymentId: params.asaasPaymentId,
+      occurredAt: params.occurredAt?.toISOString() ?? null,
       sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
     });
     return { notificationId: null, created: false, recipientCount: 0 };

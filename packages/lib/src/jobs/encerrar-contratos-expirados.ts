@@ -1,4 +1,5 @@
-import { prisma } from '@/prisma/client';
+import { prisma } from '../prisma';
+import { createContractExpiredNotification } from '../notifications/domain-notifications';
 import { StatusContrato, StatusMatricula } from '@prisma/client';
 
 export interface EncerrarContratosResult {
@@ -79,6 +80,13 @@ export async function encerrarContratosExpirados(
       });
 
       result.atualizados++;
+
+      void createContractExpiredNotification({
+        contaId,
+        matriculaId: matricula.id,
+        alunoNome: matricula.aluno.nome ?? 'Aluno',
+        dataFimContrato: matricula.dataFimContrato,
+      });
     } catch (error) {
       result.erros.push({
         matriculaId: matricula.id,

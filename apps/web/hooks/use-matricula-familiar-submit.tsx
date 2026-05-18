@@ -57,7 +57,7 @@ function buildPayload(state: WizardState, uiRequestId: string): Record<string, u
     formaPagamentoTaxa: normalizePayment(state.formaPagamentoTaxa),
     modeloId: state.modeloId,
     notificationChannels: Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
-    notificationChannelsConfigured: state.notificationChannelsConfigured === true,
+    notificationChannelsConfigured: state.notificationChannelsTouched === true,
     multaPercentual: state.multaPercentual,
     jurosMensal: state.jurosMensal,
     descontoAntecipado: state.descontoAntecipado,

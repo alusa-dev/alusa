@@ -6,6 +6,7 @@ import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
 import { decryptSecret } from '../../security/encryption';
 import { PrismaClient } from '@prisma/client';
 import { prisma as sharedPrisma } from '../../prisma';
+import { loadTenantNotificationEventPreferences } from '../../notifications/tenant-notification-preferences';
 
 const prisma: PrismaClient = sharedPrisma as unknown as PrismaClient;
 
@@ -578,7 +579,22 @@ export async function applyAsaasNotificationPreferencesToCustomer(
   contaId: string,
   asaasCustomerId: string,
 ): Promise<{ updated: boolean; total?: number }> {
-  const prefs = await getAsaasNotificationPreferences(contaId);
+  const tenantPrefs = await loadTenantNotificationEventPreferences(contaId);
+  const prefs =
+    tenantPrefs.length > 0
+      ? tenantPrefs
+      : (await getAsaasNotificationPreferences(contaId)).map((pref) => ({
+          event: pref.event,
+          scheduleOffset: pref.scheduleOffset,
+          enabled: pref.enabled,
+          emailEnabledForProvider: pref.emailEnabledForProvider,
+          smsEnabledForProvider: pref.smsEnabledForProvider,
+          emailEnabledForCustomer: pref.emailEnabledForCustomer,
+          smsEnabledForCustomer: pref.smsEnabledForCustomer,
+          whatsappEnabledForCustomer: pref.whatsappEnabledForCustomer,
+          phoneCallEnabledForCustomer: pref.phoneCallEnabledForCustomer,
+        }));
+
   const { data, credentials, baseUrl } = await fetchCustomerNotifications(contaId, asaasCustomerId);
 
   if (!credentials.apiKey) {

@@ -14,6 +14,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
 import { ManualSyncError, syncMatriculaStatus } from '@/src/server/matriculas/matricula-sync.service';
+import { notifyMatriculaAction } from '@alusa/lib';
 import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaStatusSyncResultToDTO } from '@/features/cadastro/matriculas/mappers';
 
@@ -68,6 +69,14 @@ export async function PATCH(
     const message = wasLocalOnly
       ? `Status atualizado para ${result.newStatus} (apenas localmente - assinatura financeira não encontrada)`
       : `Status atualizado para ${result.newStatus}`;
+
+    void notifyMatriculaAction({
+      matriculaId,
+      contaId: user.contaId,
+      action: 'CANCELADA',
+      motivo: motivo || undefined,
+      actorUserId: user.id,
+    });
 
     const payload = mapMatriculaStatusSyncResultToDTO(
       result as unknown as Record<string, unknown>,

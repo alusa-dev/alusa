@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import {
-  emitBillingNotificationCandidate,
-  emitBillingNotifications,
-} from '@/lib/notifications/emit-billing-notifications';
-import { processAsaasWebhookQueue, syncPaymentStateFromAsaas } from '@alusa/finance';
+import { processAsaasWebhookQueueWithInbox, syncPaymentStateFromAsaas } from '@alusa/finance';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -44,40 +40,15 @@ export async function POST(req: NextRequest) {
         return json(422, { ok: false, error: result.error });
       }
 
-      try {
-        await emitBillingNotificationCandidate(
-          {
-            event: result.appliedEvent,
-            asaasPaymentId: body.asaasPaymentId,
-          },
-          'ASAAS_SYNC',
-        );
-      } catch (error) {
-        console.warn('[Admin Financial Webhooks Reprocess][POST] Falha não crítica ao emitir notificação', {
-          contaId: user.contaId,
-          asaasPaymentId: body.asaasPaymentId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
       return json(200, { ok: true, mode: 'payment', result });
     }
 
-    const result = await processAsaasWebhookQueue({
+    const result = await processAsaasWebhookQueueWithInbox({
       contaId: user.contaId,
       limit: body.limit ?? 50,
       statuses: ['ERRO'],
       source: 'REPROCESS',
     });
-
-    try {
-      await emitBillingNotifications(result.processedPayments, 'ASAAS_WEBHOOK');
-    } catch (error) {
-      console.warn('[Admin Financial Webhooks Reprocess][POST] Falha não crítica ao emitir notificações', {
-        contaId: user.contaId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
 
     return json(200, { ok: true, mode: 'queue', result });
   } catch (error) {

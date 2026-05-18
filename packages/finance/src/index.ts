@@ -424,9 +424,14 @@ export {
   getCustomerNotificationChannels,
   syncCustomerNotificationChannels,
 } from './services/customer-notification.service';
+export {
+  syncCustomerNotificationsForUserSelection,
+  channelPreferencesFromWizardSelection,
+} from './services/sync-customer-notifications-at-charge';
 export type {
   CustomerNotificationChannelsSnapshot,
   NotificationChannelPreferences,
+  NotificationEventPreference,
   NotificationWarning,
   SyncNotificationResult,
 } from './services/customer-notification.service';
@@ -734,6 +739,7 @@ export {
   enqueueAsaasWebhookEvent,
   processAsaasWebhookQueue,
 } from './webhooks/asaas-webhook-handler';
+export { processAsaasWebhookQueueWithInbox } from './webhooks/process-webhook-queue-with-inbox';
 export { reprocessErroredAsaasWebhooks } from './webhooks/asaas-webhook-handler';
 export {
   ASAAS_WEBHOOK_TOKEN_HEADERS,

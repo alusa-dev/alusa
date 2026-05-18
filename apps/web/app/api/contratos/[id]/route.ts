@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createContractCancelledNotification } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { deleteContratoResultDTOSchema } from '@/features/contratos/dtos';
@@ -89,6 +90,7 @@ export async function DELETE(
           select: {
             contratoAtualId: true,
             id: true,
+            aluno: { select: { nome: true } },
           },
         },
       },
@@ -119,6 +121,13 @@ export async function DELETE(
         data: { statusContrato: 'CANCELADO', contratoAtualId: null },
       });
     }
+
+    void createContractCancelledNotification({
+      contaId: user.contaId,
+      contratoId: contrato.id,
+      matriculaId: contrato.matricula.id,
+      alunoNome: contrato.matricula.aluno.nome ?? 'Aluno',
+    });
 
     return NextResponse.json(
       deleteContratoResultDTOSchema.parse({

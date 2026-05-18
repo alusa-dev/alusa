@@ -421,7 +421,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
           </div>
         )}
 
-        {state.notificationChannelsConfigured && (
+        {(state.notificationChannelsTouched || state.notificationChannels.length > 0) && (
           <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-2">Notificações</h3>
             <p className="text-sm text-gray-600">

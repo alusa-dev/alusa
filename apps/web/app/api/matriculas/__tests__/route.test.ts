@@ -34,10 +34,15 @@ vi.mock('@alusa/finance', () => ({
     success: true,
     data: { customerId: 'cust_1', localCustomerId: 'local_1', externalReference: 'customer:r1' },
   })),
-  syncCustomerNotificationChannels: vi.fn(async () => ({
+  syncCustomerNotificationsForUserSelection: vi.fn(async () => ({
     success: true,
     applied: { email: true, sms: true, whatsapp: false },
     warnings: [],
+  })),
+  channelPreferencesFromWizardSelection: vi.fn((selected: string[]) => ({
+    email: selected.includes('EMAIL'),
+    sms: selected.includes('SMS'),
+    whatsapp: selected.includes('WHATSAPP'),
   })),
 }));
 
@@ -57,7 +62,8 @@ describe('POST /api/matriculas', () => {
   it('sincroniza os canais escolhidos no wizard com o customer financeiro', async () => {
     const { getServerSession } = await import('next-auth');
     const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
-    const { ensureCustomer, syncCustomerNotificationChannels } = await import('@alusa/finance');
+    const { ensureCustomer, syncCustomerNotificationsForUserSelection } =
+      await import('@alusa/finance');
 
     vi.mocked(getServerSession).mockResolvedValue({
       user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' },
@@ -121,7 +127,7 @@ describe('POST /api/matriculas', () => {
       contaId: 'conta-1',
       payer: { type: 'RESPONSAVEL', id: 'resp-1' },
     });
-    expect(syncCustomerNotificationChannels).toHaveBeenCalledWith('conta-1', 'cust_1', {
+    expect(syncCustomerNotificationsForUserSelection).toHaveBeenCalledWith('conta-1', 'cust_1', {
       email: true,
       sms: true,
       whatsapp: false,
@@ -131,7 +137,7 @@ describe('POST /api/matriculas', () => {
   it('permite desabilitar todos os canais quando o wizard confirmou a configuração', async () => {
     const { getServerSession } = await import('next-auth');
     const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
-    const { syncCustomerNotificationChannels } = await import('@alusa/finance');
+    const { syncCustomerNotificationsForUserSelection } = await import('@alusa/finance');
 
     vi.mocked(getServerSession).mockResolvedValue({
       user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' },
@@ -191,7 +197,7 @@ describe('POST /api/matriculas', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(syncCustomerNotificationChannels).toHaveBeenCalledWith('conta-1', 'cust_1', {
+    expect(syncCustomerNotificationsForUserSelection).toHaveBeenCalledWith('conta-1', 'cust_1', {
       email: false,
       sms: false,
       whatsapp: false,

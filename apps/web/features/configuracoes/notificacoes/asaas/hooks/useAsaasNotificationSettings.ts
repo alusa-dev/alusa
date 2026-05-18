@@ -117,10 +117,10 @@ export function useAsaasNotificationSettings() {
           const normalized = (json.preferences ?? []).map(normalizePreference);
           setOriginalPrefs(normalized);
           setPreferences(normalized);
-          setSuccess('Salvo');
+          setSuccess('Salvo — novos pagadores herdam esta régua. Sincronize existentes se necessário.');
           setTimeout(() => {
             if (isMountedRef.current) setSuccess(null);
-          }, 2000);
+          }, 4000);
         }
       } catch (err) {
         if (isMountedRef.current) {

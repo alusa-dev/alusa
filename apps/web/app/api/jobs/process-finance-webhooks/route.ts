@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { emitBillingNotifications } from '@/lib/notifications/emit-billing-notifications';
-import { processAsaasWebhookQueue } from '@alusa/finance';
+import { processAsaasWebhookQueueWithInbox } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,21 +34,12 @@ async function run(req: Request) {
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, limitRaw)) : 100;
     const onlyErrored = url.searchParams.get('onlyErrored') === 'true';
 
-    const result = await processAsaasWebhookQueue({
+    const result = await processAsaasWebhookQueueWithInbox({
       contaId,
       limit,
       statuses: onlyErrored ? ['ERRO'] : ['PENDENTE', 'ERRO'],
       source: tenantScope.isCron ? 'WEBHOOK' : 'REPROCESS',
     });
-
-    try {
-      await emitBillingNotifications(result.processedPayments, 'ASAAS_WEBHOOK');
-    } catch (error) {
-      console.warn('[Job Process Finance Webhooks] Falha não crítica ao emitir notificações', {
-        contaId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
 
     return NextResponse.json({
       success: true,

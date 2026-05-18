@@ -422,6 +422,8 @@ enum NotificationCategory {
   BILLING
   PAYMENT
   SYSTEM
+  CONTRACT
+  EXPERIMENTAL
 }
 
 enum NotificationSeverity {
@@ -433,11 +435,23 @@ enum NotificationSeverity {
 
 enum NotificationType {
   ENROLLMENT_CREATED
+  ENROLLMENT_RENEWED
+  ENROLLMENT_PAUSED
+  ENROLLMENT_RESUMED
+  ENROLLMENT_CANCELLED
   BILLING_CREATED
   BILLING_OVERDUE
   BILLING_CANCELLED
   PAYMENT_CONFIRMED
   PAYMENT_REFUNDED
+  CONTRACT_SIGNED
+  CONTRACT_EXPIRING
+  CONTRACT_EXPIRED
+  CONTRACT_CANCELLED
+  EXPERIMENTAL_SCHEDULED
+  EXPERIMENTAL_RESCHEDULED
+  EXPERIMENTAL_COMPLETED
+  EXPERIMENTAL_CANCELLED
   SYSTEM_ATTENTION
   TRANSFER_DONE
   TRANSFER_FAILED
@@ -446,6 +460,12 @@ enum NotificationType {
   ACCESS_TOKEN_ALERT
   WEBHOOK_INTERRUPTED
   WEBHOOK_DLQ
+}
+
+enum PendingInboxNotificationStatus {
+  PENDING
+  DONE
+  FAILED
 }
 
 enum PeriodicidadePlano {
@@ -3215,6 +3235,25 @@ model NotificationRecipient {
   @@index([contaId, userId, archivedAt, createdAt], name: "idx_notification_recipient_feed")
   @@index([contaId, userId, readAt], name: "idx_notification_recipient_read")
   @@index([userId, createdAt])
+}
+
+/// Fila de retry para notificações internas quando a entidade local ainda não existe.
+model PendingInboxNotification {
+  id          String                         @id @default(cuid())
+  contaId     String?
+  kind        String
+  payload     Json
+  dedupeKey   String                         @unique
+  status      PendingInboxNotificationStatus @default(PENDING)
+  attempts    Int                            @default(0)
+  maxAttempts Int                            @default(5)
+  nextRetryAt DateTime                       @default(now())
+  lastError   String?
+  createdAt   DateTime                       @default(now())
+  processedAt DateTime?
+
+  @@index([status, nextRetryAt])
+  @@index([contaId, status, nextRetryAt])
 }
 
 // ==================== Rematrícula ====================

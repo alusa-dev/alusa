@@ -22,6 +22,11 @@ export {
 } from './customer-notification.service';
 export type {
   NotificationChannelPreferences,
+  NotificationEventPreference,
   NotificationWarning,
   SyncNotificationResult,
 } from './customer-notification.service';
+export {
+  syncCustomerNotificationsForUserSelection,
+  channelPreferencesFromWizardSelection,
+} from './sync-customer-notifications-at-charge';

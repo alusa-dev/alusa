@@ -15,7 +15,7 @@
 
 import { prisma } from '@alusa/database';
 
-import { processAsaasWebhookQueue } from './asaas-webhook-handler.server';
+import { processAsaasWebhookQueueWithInbox } from './process-webhook-queue-with-inbox';
 import { checkWebhookHealth } from './webhook-health.service';
 import { getWebhookConfigDriftStatus, repairWebhookConfigDrift } from './webhook-config-drift.service';
 import {
@@ -130,7 +130,7 @@ export async function runWebhookScheduler(
 
   // ── Step 2: Processar fila (drain) ─────────────────────────────────────
   const { step: drainStep } = await timed('drain_queue', () =>
-    processAsaasWebhookQueue({
+    processAsaasWebhookQueueWithInbox({
       contaId: options.contaId,
       limit: drainLimit,
       statuses: ['PENDENTE', 'ERRO'],

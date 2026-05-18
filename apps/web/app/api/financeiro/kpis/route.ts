@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { emitBillingNotifications } from '@/lib/notifications/emit-billing-notifications';
 import {
   getFinanceiroKpisFromAsaas,
-  processAsaasWebhookQueue,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
 import {
@@ -16,7 +14,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-const KPI_WEBHOOK_DRAIN_LIMIT = 25;
 const KPI_RECONCILIATION_LIMIT = 25;
 
 function err(status: number, code: string, message: string) {
@@ -24,23 +21,6 @@ function err(status: number, code: string, message: string) {
     { error: { code, message } },
     { status, headers: { 'cache-control': 'no-store' } },
   );
-}
-
-async function drainWebhookQueue(contaId: string): Promise<void> {
-  try {
-    const drainResult = await processAsaasWebhookQueue({
-      contaId,
-      limit: KPI_WEBHOOK_DRAIN_LIMIT,
-      statuses: ['PENDENTE', 'ERRO'],
-      source: 'WEBHOOK',
-    });
-    await emitBillingNotifications(drainResult.processedPayments, 'ASAAS_WEBHOOK');
-  } catch (error) {
-    console.warn('[API Financeiro KPIs] Falha ao drenar fila de webhooks antes do cálculo', {
-      contaId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 async function reconcileFinanceiroKpisSnapshot(params: {
@@ -94,8 +74,6 @@ export async function GET(request: Request) {
       ? new Date(`${mesParam}-01T00:00:00Z`) 
       : new Date(agora.getFullYear(), agora.getMonth(), 1);
     const proximoMes = new Date(mesAtual.getFullYear(), mesAtual.getMonth() + 1, 1);
-    await drainWebhookQueue(user.contaId);
-
     const officialSnapshot = await getFinanceiroKpisFromAsaas({
       contaId: user.contaId,
       mesAtual,

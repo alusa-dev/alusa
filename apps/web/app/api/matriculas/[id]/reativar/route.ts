@@ -7,6 +7,7 @@ import {
   reativarMatricula,
   PausaBusinessError,
 } from '@/src/server/matriculas/matricula-pausa.service';
+import { notifyMatriculaAction } from '@alusa/lib';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,6 +45,14 @@ export async function POST(
       contaId: user.contaId,
       actorId: user.id,
       ...parsed.data,
+    });
+
+    void notifyMatriculaAction({
+      matriculaId: params.id,
+      contaId: user.contaId,
+      action: 'RETOMADA',
+      motivo: parsed.data.observacao,
+      actorUserId: user.id,
     });
 
     return NextResponse.json(result);

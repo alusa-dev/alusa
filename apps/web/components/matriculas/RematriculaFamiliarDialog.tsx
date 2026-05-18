@@ -36,6 +36,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { InformationCircleIcon } from '@heroicons/react/24/outline';
+import { asaasNotificationPreferencesResultDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
+import { type CustomerNotificationChannel } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+import { cn } from '@/lib/utils';
 
 const formaPagamentoOptions: Array<{
   value: Exclude<FormaPagamentoValue, 'INDEFINIDO'>;
@@ -176,6 +179,10 @@ export function RematriculaFamiliarDialog({
   const [prazoDesconto, setPrazoDesconto] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
   const [configs, setConfigs] = useState<Record<string, ItemConfig>>({});
+  const [notificationChannels, setNotificationChannels] = useState<CustomerNotificationChannel[]>(
+    [],
+  );
+  const [notificationChannelsTouched, setNotificationChannelsTouched] = useState(false);
 
   // Produto financeiro: plano global (modo turmas) ou combo por aluno (modo combo).
   const [modoTurmas, setModoTurmas] = useState<RematriculaFamiliarModoTurmas>('TURMAS');
@@ -204,6 +211,36 @@ export function RematriculaFamiliarDialog({
       ),
     [itens],
   );
+
+  useEffect(() => {
+    if (!open || !contaId) return;
+    let cancelled = false;
+
+    const loadNotificationDefaults = async () => {
+      try {
+        const response = await fetch('/api/configuracoes/notificacoes/asaas', {
+          cache: 'no-store',
+        });
+        if (!response.ok) return;
+        const raw = await response.json();
+        const parsed = asaasNotificationPreferencesResultDTOSchema.parse(raw);
+        if (cancelled) return;
+        setNotificationChannels(parsed.customerChannelDefaults as CustomerNotificationChannel[]);
+        setNotificationChannelsTouched(false);
+      } catch {
+        if (!cancelled) {
+          setNotificationChannels([]);
+          setNotificationChannelsTouched(false);
+        }
+      }
+    };
+
+    void loadNotificationDefaults();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, contaId]);
 
   useEffect(() => {
     if (!open) return;
@@ -394,7 +431,8 @@ export function RematriculaFamiliarDialog({
       vencimentoDia,
       taxaIsenta,
       descontos: descontosHerdados.map((desconto) => ({ id: desconto.id })),
-      notificationChannelsConfigured: false,
+      notificationChannels: notificationChannelsTouched ? notificationChannels : [],
+      notificationChannelsConfigured: notificationChannelsTouched,
       uiRequestId: `${titular.id}:${Date.now()}`,
     };
 
@@ -821,6 +859,47 @@ export function RematriculaFamiliarDialog({
                   <label className={labelClass}>Justificativa da taxa</label>
                   <Input value={taxaJustificativa} onChange={(event) => setTaxaJustificativa(event.target.value)} className={controlClass} />
                 </div>
+              </div>
+            </div>
+
+            <div className={sectionClass}>
+              <span className="text-sm font-semibold text-slate-700">Notificações</span>
+              <p className="text-xs text-slate-600">
+                Canais para o responsável no Asaas (cobranças futuras). Toque para confirmar a
+                sugestão da régua global.
+              </p>
+              <div className="flex flex-wrap gap-3 pt-2">
+                {(
+                  [
+                    { value: 'WHATSAPP' as const, label: 'WhatsApp' },
+                    { value: 'EMAIL' as const, label: 'E-mail' },
+                    { value: 'SMS' as const, label: 'SMS' },
+                  ] as const
+                ).map((option) => {
+                  const active = notificationChannels.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        setNotificationChannelsTouched(true);
+                        setNotificationChannels((prev) =>
+                          active
+                            ? prev.filter((item) => item !== option.value)
+                            : [...prev, option.value],
+                        );
+                      }}
+                      className={cn(
+                        'inline-flex items-center justify-center rounded-full border px-4 py-2 text-sm font-medium transition',
+                        active
+                          ? 'border-brand-accent bg-brand-accent text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

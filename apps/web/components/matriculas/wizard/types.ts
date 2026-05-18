@@ -99,7 +99,10 @@ export interface WizardState {
   prazoDesconto?: number; // discount.dueDateLimitDays - dias antes do vencimento
   notificationChannels: WizardNotificationChannel[];
   notificationChannelsInitialized?: boolean;
+  /** @deprecated Prefer notificationChannelsTouched — mantido para compatibilidade de payload */
   notificationChannelsConfigured?: boolean;
+  /** True quando o usuário alterou os toggles de canal (dispara sync no Asaas). */
+  notificationChannelsTouched?: boolean;
   confirmacaoRevisao: boolean;
 }
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import {
   getCustomerNotificationChannels,
-  syncCustomerNotificationChannels,
+  syncCustomerNotificationsForUserSelection,
 } from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
@@ -177,7 +177,7 @@ export async function PUT(req: Request, ctx: { params: { id: string } }) {
       );
     }
 
-    const result = await syncCustomerNotificationChannels(
+    const result = await syncCustomerNotificationsForUserSelection(
       contaCtx.contaId,
       financialCustomer.customerId,
       requested,

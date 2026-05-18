@@ -18,6 +18,12 @@ export * from './schemas/sala.schema';
 export * from './services/modalidade.service';
 export * from './services/sala.service';
 export * from './services/notifications.service';
+export * from './notifications/emit-billing-notifications';
+export * from './notifications/pending-inbox-notifications';
+export * from './notifications/process-overdue-billing';
+export * from './notifications/domain-notifications';
+export * from './notifications/inbox-metrics';
+export * from './notifications/tenant-notification-preferences';
 export * from './prisma';
 // Planos
 export * from './planos/planos-schema';
@@ -81,3 +87,10 @@ export {
   listarContratosProximosDeExpirar,
   type EncerrarContratosResult,
 } from './jobs/encerrar-contratos-expirados';
+export { notifyContractsExpiring } from './jobs/notify-contracts-expiring';
+export { processPendingInboxNotifications } from './notifications/pending-inbox-notifications';
+export {
+  notifyMatriculaAction,
+  type NotifyMatriculaActionInput,
+  type NotificationResult as MatriculaNotificationResult,
+} from './notifications/matricula-notifications';

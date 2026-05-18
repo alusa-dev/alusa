@@ -41,6 +41,7 @@ export const resumoMatriculaSchema = z
     modeloId: z.string().min(1, 'Modelo de contrato é obrigatório'),
     notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).default([]),
     notificationChannelsConfigured: z.boolean().default(false),
+    notificationChannelsTouched: z.boolean().default(false),
 
     // Confirmação
     confirmacaoRevisao: z.boolean().refine((val) => val === true, {
@@ -404,7 +405,7 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     formaPagamento: normalizePayment(state.formaPagamento),
     modeloId: state.modeloId,
     notificationChannels: Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
-    notificationChannelsConfigured: state.notificationChannelsConfigured === true,
+    notificationChannelsConfigured: state.notificationChannelsTouched === true,
 
     // Juros, Multa e Desconto (conforme Asaas API)
     multaPercentual: state.multaPercentual,

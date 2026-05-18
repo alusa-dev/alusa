@@ -456,14 +456,19 @@ export async function createStandaloneCharge(
 
     if (input.notificationChannelsConfigured) {
       try {
-        const { syncCustomerNotificationChannels } =
-          await import('../services/customer-notification.service');
-        const configuredChannels = input.notificationChannels ?? [];
-        const syncResult = await syncCustomerNotificationChannels(input.contaId, asaasCustomerId, {
-          email: configuredChannels.includes('EMAIL'),
-          sms: configuredChannels.includes('SMS'),
-          whatsapp: configuredChannels.includes('WHATSAPP'),
-        });
+        const { syncCustomerNotificationsForUserSelection, channelPreferencesFromWizardSelection } =
+          await import('../services/sync-customer-notifications-at-charge');
+        const channelPrefs = channelPreferencesFromWizardSelection(
+          (input.notificationChannels ?? []).filter(
+            (c): c is 'EMAIL' | 'SMS' | 'WHATSAPP' =>
+              c === 'EMAIL' || c === 'SMS' || c === 'WHATSAPP',
+          ),
+        );
+        const syncResult = await syncCustomerNotificationsForUserSelection(
+          input.contaId,
+          asaasCustomerId,
+          channelPrefs,
+        );
 
         notificationSync = {
           applied: syncResult.applied,

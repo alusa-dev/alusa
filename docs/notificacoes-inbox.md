@@ -17,10 +17,12 @@ A inbox interna é o canal operacional da equipe administrativa para acompanhar 
 
 ## Produtores atuais
 
-- Matrícula criada: rota de criação de matrícula chama `createEnrollmentCreatedNotification`.
-- Eventos financeiros reconciliados:
-  - webhook Asaas processado com sucesso no worker
-  - sincronização manual via `syncPaymentStateFromAsaas`
+Ver catálogo completo: [notificacoes-catalogo.md](./notificacoes-catalogo.md).
+
+- Matrícula, rematrícula, pausa, retomada, cancelamento.
+- Financeiro: fila de webhooks (`processAsaasWebhookQueueWithInbox`), **todo** `syncPaymentStateFromAsaas`, cron de atrasados.
+- Contratos: assinatura, cancelamento, expiração, alertas 7/3/1 dias.
+- Aulas experimentais: agendar, reagendar, realizar, cancelar.
 
 ## Regras principais
 

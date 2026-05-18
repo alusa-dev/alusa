@@ -532,6 +532,13 @@ export const createMatriculaResultDTOSchema = z.object({
     .optional(),
   responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable(),
   primeiroVencimento: dateStringDTOSchema,
+  notificationSync: z
+    .object({
+      applied: matriculaNotificationChannelsDTOSchema,
+      warnings: z.array(matriculaNotificationWarningDTOSchema).default([]),
+    })
+    .nullable()
+    .optional(),
 });
 export type CreateMatriculaResultDTO = z.infer<typeof createMatriculaResultDTOSchema>;
 

@@ -14,7 +14,8 @@ import {
   ensureCustomer,
   getAsaasPaymentDetails,
   syncPaymentStateFromAsaas,
-  syncCustomerNotificationChannels,
+  syncCustomerNotificationsForUserSelection,
+  channelPreferencesFromWizardSelection,
 } from '@alusa/finance';
 import { createEnrollmentCreatedNotification } from '@alusa/lib';
 import {
@@ -278,6 +279,17 @@ export async function POST(req: Request) {
       });
     });
 
+    let notificationSync: {
+      applied: { email: boolean; sms: boolean; whatsapp: boolean };
+      warnings: Array<{
+        notificationId: string;
+        event: string;
+        channel: string;
+        code: string;
+        message: string;
+      }>;
+    } | null = null;
+
     if (parsedBody.data.notificationChannelsConfigured) {
       try {
         const payer = payload.responsavelFinanceiroId
@@ -290,15 +302,19 @@ export async function POST(req: Request) {
         });
 
         if (ensuredCustomer.success) {
-          const syncResult = await syncCustomerNotificationChannels(
+          const channelPrefs = channelPreferencesFromWizardSelection(
+            parsedBody.data.notificationChannels,
+          );
+          const syncResult = await syncCustomerNotificationsForUserSelection(
             auth.contaId,
             ensuredCustomer.data.customerId,
-            {
-              email: parsedBody.data.notificationChannels.includes('EMAIL'),
-              sms: parsedBody.data.notificationChannels.includes('SMS'),
-              whatsapp: parsedBody.data.notificationChannels.includes('WHATSAPP'),
-            },
+            channelPrefs,
           );
+
+          notificationSync = {
+            applied: syncResult.applied,
+            warnings: syncResult.warnings,
+          };
 
           if (syncResult.warnings.length > 0) {
             console.warn('[API Matrícula] Avisos ao sincronizar notificações do customer', {
@@ -564,6 +580,7 @@ export async function POST(req: Request) {
         result,
         taxaSync,
         subscriptionSync,
+        notificationSync,
       }),
     );
   } catch (error) {

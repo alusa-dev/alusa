@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { detectWebhookGaps, reconcileWithAsaas, syncPaymentStateFromAsaas } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
@@ -52,22 +51,6 @@ export async function POST(req: Request) {
 
       if (!result.success) {
         return jsonError(422, 'PAGAMENTO_NAO_RECONCILIADO', result.error);
-      }
-
-      try {
-        await emitBillingNotificationCandidate(
-          {
-            event: result.appliedEvent,
-            asaasPaymentId,
-          },
-          'ASAAS_SYNC',
-        );
-      } catch (error) {
-        console.warn('[Job Reconcile Finance Webhooks] Falha não crítica ao emitir notificação', {
-          contaId,
-          asaasPaymentId,
-          error: error instanceof Error ? error.message : String(error),
-        });
       }
 
       return NextResponse.json({

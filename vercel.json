@@ -21,6 +21,22 @@
     {
       "path": "/api/jobs/webhook-maintenance",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/jobs/process-pending-inbox-notifications",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/jobs/process-overdue-billing-notifications",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/jobs/notify-contracts-expiring",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/jobs/encerrar-contratos",
+      "schedule": "30 4 * * *"
     }
   ]
 }

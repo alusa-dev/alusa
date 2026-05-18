@@ -10,6 +10,7 @@ import {
 } from '@/features/contratos/dtos';
 import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { createContractSignedNotification } from '@alusa/lib';
 
 export function isMaiorDeIdade(dataNasc: Date, referencia = new Date()): boolean {
   const yearDiff = referencia.getFullYear() - dataNasc.getFullYear();
@@ -78,7 +79,10 @@ export async function POST(
       include: {
         matricula: {
           select: {
-            aluno: { select: { nome: true, cpf: true, dataNasc: true } },
+            id: true,
+            aluno: {
+              select: { nome: true, cpf: true, dataNasc: true, contaId: true },
+            },
             responsavelFinanceiro: { select: { nome: true, cpf: true } },
           },
         },
@@ -190,6 +194,14 @@ export async function POST(
           contratoAtualId: contrato.id,
         },
       });
+    });
+
+    void createContractSignedNotification({
+      contaId: contrato.matricula.aluno.contaId,
+      contratoId: contrato.id,
+      matriculaId: contrato.matricula.id,
+      alunoNome: contrato.matricula.aluno.nome ?? 'Aluno',
+      assinadoPor: canonicalSignerName,
     });
 
     return jsonSensitive(publicAssinarContratoResultDTOSchema.parse({ success: true, hash }));

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
-const mockProcessAsaasWebhookQueue = vi.hoisted(() => vi.fn());
 const mockSyncPaymentStateFromAsaas = vi.hoisted(() => vi.fn());
 const mockGetFinanceiroKpisFromAsaas = vi.hoisted(() => vi.fn());
 
@@ -14,7 +13,6 @@ vi.mock('@/lib/auth-options', () => ({
 }));
 
 vi.mock('@alusa/finance', () => ({
-  processAsaasWebhookQueue: mockProcessAsaasWebhookQueue,
   syncPaymentStateFromAsaas: mockSyncPaymentStateFromAsaas,
   getFinanceiroKpisFromAsaas: mockGetFinanceiroKpisFromAsaas,
 }));
@@ -31,7 +29,6 @@ describe('GET /api/financeiro/kpis', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetServerSession.mockResolvedValue({ user: mockUser });
-    mockProcessAsaasWebhookQueue.mockResolvedValue({ processedPayments: [] });
     mockSyncPaymentStateFromAsaas.mockResolvedValue({ success: true });
     mockGetFinanceiroKpisFromAsaas.mockResolvedValue({
       data: {
@@ -97,18 +94,11 @@ describe('GET /api/financeiro/kpis', () => {
     expect(json.data.resumo.taxaInadimplencia).toBe(50);
   });
 
-  it('deve drenar webhooks antes de calcular e reconciliar pagamentos oficiais retornados', async () => {
+  it('deve reconciliar pagamentos oficiais retornados sem drenar fila de webhooks', async () => {
     const request = new Request('http://localhost/api/financeiro/kpis');
     const response = await GET(request);
 
     expect(response.status).toBe(200);
-    expect(mockProcessAsaasWebhookQueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contaId: 'conta-1',
-        statuses: ['PENDENTE', 'ERRO'],
-        source: 'WEBHOOK',
-      }),
-    );
     expect(mockGetFinanceiroKpisFromAsaas).toHaveBeenCalledWith(
       expect.objectContaining({
         contaId: 'conta-1',

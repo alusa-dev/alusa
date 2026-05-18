@@ -20,7 +20,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-options';
 import { StatusCobranca } from '@prisma/client';
@@ -306,16 +305,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         asaasPaymentId,
       });
 
-      if (syncResult.success) {
-        await emitBillingNotificationCandidate(
-          {
-            event: syncResult.appliedEvent,
-            asaasPaymentId,
-            occurredAt: dataPagamentoDate,
-          },
-          'ASAAS_SYNC',
-        );
-      }
+      void syncResult;
     } catch (syncError) {
       console.warn('[Confirmar Recebimento] Falha ao sincronizar estado pós-comando', {
         cobrancaId,

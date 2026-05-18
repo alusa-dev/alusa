@@ -258,6 +258,7 @@ export async function POST(req: NextRequest) {
         externalReference: result.data.externalReference,
         status: result.data.status,
         expectedWebhooks: result.data.expectedWebhooks ?? [],
+        notificationSync: result.data.notificationSync ?? null,
       },
     });
   } catch (error) {

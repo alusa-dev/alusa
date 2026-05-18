@@ -18,8 +18,9 @@ export default async function ConfiguracoesNotificacoesAsaasPage() {
       <header className="space-y-1">
         <h2 className="text-xl md:text-2xl font-medium tracking-tight text-gray-900">Notificações</h2>
         <p className="mt-1 text-sm text-gray-600">
-          Configure os canais de comunicação automática para lembretes de cobrança. As opções abaixo
-          passam a valer para novas cobranças geradas a partir desta régua global.
+          Configure os canais de comunicação automática para lembretes de cobrança. Esta régua vale
+          automaticamente para novos pagadores no Asaas. Para clientes já cadastrados, use
+          &quot;Sincronizar existentes&quot; ou ajuste no detalhe do aluno ou responsável.
         </p>
       </header>
       <div className="mt-4">

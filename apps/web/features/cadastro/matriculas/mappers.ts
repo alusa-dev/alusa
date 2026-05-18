@@ -391,8 +391,18 @@ export function mapCreateMatriculaResultToDTO(input: {
     message?: string;
     expectedWebhooks?: string[];
   } | null;
+  notificationSync?: {
+    applied: { email: boolean; sms: boolean; whatsapp: boolean };
+    warnings: Array<{
+      notificationId: string;
+      event: string;
+      channel: string;
+      code: string;
+      message: string;
+    }>;
+  } | null;
 }) {
-  const { result, taxaSync, subscriptionSync } = input;
+  const { result, taxaSync, subscriptionSync, notificationSync } = input;
   return createMatriculaResultDTOSchema.parse({
     matricula: mapMatriculaRecordToCoreDTO(result.matricula),
     cobrancas: {
@@ -438,6 +448,12 @@ export function mapCreateMatriculaResultToDTO(input: {
         }
       : null,
     primeiroVencimento: result.primeiroVencimento.toISOString(),
+    notificationSync: notificationSync
+      ? {
+          applied: notificationSync.applied,
+          warnings: notificationSync.warnings,
+        }
+      : null,
   });
 }
 

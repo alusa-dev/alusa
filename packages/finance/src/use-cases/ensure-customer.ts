@@ -6,6 +6,9 @@ import type { CustomerPayerType, Prisma } from '@prisma/client';
 import { AsaasHttpError, getCustomer } from '@alusa/asaas';
 
 import { createAsaasCustomer, syncAsaasCustomerContact } from './create-customer';
+import {
+  loadTenantNotificationEventPreferences,
+} from '@alusa/lib';
 import { syncCustomerNotificationChannels } from '../services/customer-notification.service';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 
@@ -430,28 +433,12 @@ async function syncCustomerNotificationChannelsFromTenant(
   asaasCustomerId: string,
 ): Promise<void> {
   try {
-    // Buscar preferências do tenant
-    const preferences = await prisma.asaasNotificationPreference.findMany({
-      where: { contaId },
-      select: {
-        event: true,
-        scheduleOffset: true,
-        enabled: true,
-        emailEnabledForProvider: true,
-        smsEnabledForProvider: true,
-        emailEnabledForCustomer: true,
-        smsEnabledForCustomer: true,
-        whatsappEnabledForCustomer: true,
-        phoneCallEnabledForCustomer: true,
-      },
-    });
+    const preferences = await loadTenantNotificationEventPreferences(contaId);
 
     if (preferences.length === 0) {
-      // Sem preferências configuradas, usar defaults
       return;
     }
 
-    // Agregar preferências (qualquer evento habilitado = canal habilitado)
     const channelPrefs = {
       email: preferences.some((p) => p.emailEnabledForCustomer),
       sms: preferences.some((p) => p.smsEnabledForCustomer),

@@ -9,6 +9,7 @@ import {
 import { AulasError } from '@/src/server/aulas/aulas-error';
 import { createAulasOperationLog } from '@/src/server/aulas/calendar/operation-log.service';
 import { prisma } from '@/src/prisma';
+import { createExperimentalClassNotification } from '@alusa/lib';
 
 async function resolveTurmaDefaults(contaId: string, turmaId: string) {
   return prisma.turma.findFirst({
@@ -196,10 +197,19 @@ export async function createExperimentalClass(
       prismaClient: tx,
     });
 
-    return experimental.id;
+    return { id: experimental.id, startAt };
   });
 
-  return getExperimentalClassDetails(contaId, created);
+  void createExperimentalClassNotification({
+    contaId,
+    experimentalId: created.id,
+    alunoNome: aluno.nome ?? 'Aluno',
+    startAt: created.startAt,
+    variant: 'SCHEDULED',
+    actorUserId: userId,
+  });
+
+  return getExperimentalClassDetails(contaId, created.id);
 }
 
 export async function updateExperimentalClass(
@@ -325,6 +335,25 @@ export async function updateExperimentalClass(
       prismaClient: tx,
     });
   });
+
+  const variant =
+    nextStatus === 'CANCELADA'
+      ? 'CANCELLED'
+      : nextStatus === 'REALIZADA'
+        ? 'COMPLETED'
+        : wasRescheduled
+          ? 'RESCHEDULED'
+          : null;
+
+  if (variant) {
+    void createExperimentalClassNotification({
+      contaId,
+      experimentalId: id,
+      alunoNome: aluno.nome ?? 'Aluno',
+      startAt,
+      variant,
+    });
+  }
 
   return getExperimentalClassDetails(contaId, id);
 }

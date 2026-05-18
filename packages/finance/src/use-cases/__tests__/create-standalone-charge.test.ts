@@ -59,8 +59,13 @@ vi.mock('../create-payment', () => ({
   createAsaasPayment: vi.fn(),
 }));
 
-vi.mock('../../services/customer-notification.service', () => ({
-  syncCustomerNotificationChannels: vi.fn(),
+vi.mock('../../services/sync-customer-notifications-at-charge', () => ({
+  syncCustomerNotificationsForUserSelection: vi.fn(),
+  channelPreferencesFromWizardSelection: vi.fn((selected: string[]) => ({
+    email: selected.includes('EMAIL'),
+    sms: selected.includes('SMS'),
+    whatsapp: selected.includes('WHATSAPP'),
+  })),
 }));
 
 // Mock foundation
@@ -349,7 +354,9 @@ describe('createStandaloneCharge', () => {
       const { prisma } = await import('@alusa/database');
       const { ensureCustomer } = await import('../ensure-customer');
       const { createAsaasPayment } = await import('../create-payment');
-      const { syncCustomerNotificationChannels } = await import('../../services/customer-notification.service');
+      const { syncCustomerNotificationsForUserSelection } = await import(
+        '../../services/sync-customer-notifications-at-charge'
+      );
 
       vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null);
       vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
@@ -364,7 +371,7 @@ describe('createStandaloneCharge', () => {
         data: { customerId: 'cust_asaas_123', localCustomerId: 'cust_local_4', externalReference: 'ref' },
       } as never);
 
-      vi.mocked(syncCustomerNotificationChannels).mockResolvedValueOnce({
+      vi.mocked(syncCustomerNotificationsForUserSelection).mockResolvedValueOnce({
         success: false,
         applied: { email: true, sms: true, whatsapp: false },
         warnings: [
@@ -398,7 +405,7 @@ describe('createStandaloneCharge', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(syncCustomerNotificationChannels).toHaveBeenCalled();
+      expect(syncCustomerNotificationsForUserSelection).toHaveBeenCalled();
       if (result.success) {
         expect(result.data.notificationSync?.applied.whatsapp).toBe(false);
         expect(result.data.notificationSync?.warnings.length).toBeGreaterThan(0);
@@ -409,7 +416,9 @@ describe('createStandaloneCharge', () => {
       const { prisma } = await import('@alusa/database');
       const { ensureCustomer } = await import('../ensure-customer');
       const { createAsaasPayment } = await import('../create-payment');
-      const { syncCustomerNotificationChannels } = await import('../../services/customer-notification.service');
+      const { syncCustomerNotificationsForUserSelection } = await import(
+        '../../services/sync-customer-notifications-at-charge'
+      );
 
       vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null);
       vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
@@ -424,7 +433,7 @@ describe('createStandaloneCharge', () => {
         data: { customerId: 'cust_asaas_123', localCustomerId: 'cust_local_5', externalReference: 'ref' },
       } as never);
 
-      vi.mocked(syncCustomerNotificationChannels).mockResolvedValueOnce({
+      vi.mocked(syncCustomerNotificationsForUserSelection).mockResolvedValueOnce({
         success: true,
         applied: { email: false, sms: false, whatsapp: false },
         warnings: [],
@@ -450,11 +459,15 @@ describe('createStandaloneCharge', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(syncCustomerNotificationChannels).toHaveBeenCalledWith('conta-1', 'cust_asaas_123', {
-        email: false,
-        sms: false,
-        whatsapp: false,
-      });
+      expect(syncCustomerNotificationsForUserSelection).toHaveBeenCalledWith(
+        'conta-1',
+        'cust_asaas_123',
+        {
+          email: false,
+          sms: false,
+          whatsapp: false,
+        },
+      );
     });
   });
 

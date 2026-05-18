@@ -33,6 +33,7 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
+import { createEnrollmentRenewedNotification } from '@alusa/lib';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -477,6 +478,19 @@ export async function POST(req: Request) {
     if (!result.success) {
       return mapRematriculaErrorToResponse(result.error);
     }
+
+    const alunoRematricula = await prisma.matricula.findFirst({
+      where: { id: matriculaId, aluno: { contaId: auth.contaId } },
+      select: { aluno: { select: { nome: true } } },
+    });
+
+    void createEnrollmentRenewedNotification({
+      contaId: auth.contaId,
+      matriculaId: result.data.matriculaIdNova,
+      matriculaOrigemId: matriculaId,
+      alunoNome: alunoRematricula?.aluno.nome ?? 'Aluno',
+      actorUserId: auth.user?.id ?? null,
+    });
 
     // Resposta neutra (sem referências ao provedor de pagamentos)
     const novaMatricula = await prisma.matricula.findFirst({

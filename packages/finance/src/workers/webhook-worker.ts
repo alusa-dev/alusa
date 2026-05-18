@@ -18,7 +18,7 @@
  *   DATABASE_URL — obrigatório para Prisma
  */
 
-import { processAsaasWebhookQueue } from '../webhooks/asaas-webhook-handler.server';
+import { processAsaasWebhookQueueWithInbox } from '../webhooks/process-webhook-queue-with-inbox';
 import { runWebhookScheduler } from '../webhooks/webhook-scheduler.service';
 
 // ── Config ───────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ async function runCycle(config: WorkerConfig): Promise<WorkerCycleResult> {
 
   try {
     // Drain queue
-    const result = await processAsaasWebhookQueue({
+    const result = await processAsaasWebhookQueueWithInbox({
       contaId: config.contaId,
       limit: config.drainLimit,
       statuses: ['PENDENTE', 'ERRO'],

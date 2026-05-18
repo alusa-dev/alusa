@@ -288,7 +288,7 @@ export function CreateSaleFeature() {
     {
       id: 'produto',
       header: 'Produto',
-      width: 'min-w-0 w-[46%]',
+      width: 'min-w-0 w-[40%]',
       noWrap: false,
       render: (product) => (
         <div className="min-w-0 space-y-1">
@@ -303,36 +303,47 @@ export function CreateSaleFeature() {
     {
       id: 'preco',
       header: 'Preço',
-      width: 'w-[14%]',
+      width: 'w-[16%]',
+      align: 'right',
+      headerClassName: 'text-right',
+      cellClassName: 'text-right tabular-nums',
       render: (product) => formatCurrencyBRL(product.price),
     },
     {
       id: 'estoque',
       header: 'Disponível',
-      width: 'w-[12%]',
+      width: 'w-[14%]',
       align: 'center',
+      headerClassName: 'text-center',
+      cellClassName: 'text-center tabular-nums',
       render: (product) => String(product.totalAvailable),
     },
     {
       id: 'acoes',
       header: '',
-      width: 'w-[18%]',
+      width: 'w-[30%] min-w-[9.5rem]',
       align: 'right',
+      headerClassName: 'pr-4 text-right md:pr-6',
+      cellClassName: 'pr-4 text-right md:pr-6',
+      noWrap: false,
       render: (product) => {
         const availableStock = product.totalAvailable;
 
         return (
-          <Button
-            size="sm"
-            disabled={availableStock <= 0}
-            onClick={(event) => {
-              event.stopPropagation();
-              addProductToCart(product);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            {product.hasVariants ? 'Variante' : 'Adicionar'}
-          </Button>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              className="max-w-full shrink-0"
+              disabled={availableStock <= 0}
+              onClick={(event) => {
+                event.stopPropagation();
+                addProductToCart(product);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4 shrink-0" />
+              {product.hasVariants ? 'Variante' : 'Adicionar'}
+            </Button>
+          </div>
         );
       },
     },
@@ -953,7 +964,7 @@ export function CreateSaleFeature() {
                     )}
                   </div>
 
-                  <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white md:block">
+                  <div className="hidden rounded-xl border border-slate-200 bg-white md:block [&_.alusa-session-panel]:rounded-none [&_.alusa-session-panel]:border-0">
                     <DataTable
                       columns={productColumns}
                       data={activeProducts}

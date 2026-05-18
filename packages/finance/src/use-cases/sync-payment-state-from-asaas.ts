@@ -1,4 +1,5 @@
 import type { AsaasPaymentStatus } from '@alusa/asaas-gateway';
+import { emitBillingNotificationCandidate } from '@alusa/lib';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { handlePaymentWebhook } from '../webhooks/payment-webhook-handler';
@@ -96,6 +97,21 @@ export async function syncPaymentStateFromAsaas(
       error: webhookResult.error ?? 'SYNC_FAILED',
     };
   }
+  void emitBillingNotificationCandidate(
+    {
+      event: appliedEvent,
+      asaasPaymentId: payment.id,
+    },
+    'ASAAS_SYNC',
+  ).catch((error: unknown) => {
+    console.warn('[syncPaymentStateFromAsaas] Falha não crítica ao emitir inbox', {
+      contaId: input.contaId,
+      asaasPaymentId: payment.id,
+      appliedEvent,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  });
+
   return {
     success: true,
     asaasPaymentId: payment.id,

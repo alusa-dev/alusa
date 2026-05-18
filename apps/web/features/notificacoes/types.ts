@@ -1,13 +1,39 @@
 export type NotificationSeverity = 'INFO' | 'SUCCESS' | 'WARNING' | 'CRITICAL';
-export type NotificationCategory = 'ENROLLMENT' | 'BILLING' | 'PAYMENT' | 'SYSTEM';
+export type NotificationCategory =
+  | 'ENROLLMENT'
+  | 'BILLING'
+  | 'PAYMENT'
+  | 'SYSTEM'
+  | 'CONTRACT'
+  | 'EXPERIMENTAL';
+
 export type NotificationType =
   | 'ENROLLMENT_CREATED'
+  | 'ENROLLMENT_RENEWED'
+  | 'ENROLLMENT_PAUSED'
+  | 'ENROLLMENT_RESUMED'
+  | 'ENROLLMENT_CANCELLED'
   | 'BILLING_CREATED'
   | 'BILLING_OVERDUE'
   | 'BILLING_CANCELLED'
   | 'PAYMENT_CONFIRMED'
   | 'PAYMENT_REFUNDED'
-  | 'SYSTEM_ATTENTION';
+  | 'CONTRACT_SIGNED'
+  | 'CONTRACT_EXPIRING'
+  | 'CONTRACT_EXPIRED'
+  | 'CONTRACT_CANCELLED'
+  | 'EXPERIMENTAL_SCHEDULED'
+  | 'EXPERIMENTAL_RESCHEDULED'
+  | 'EXPERIMENTAL_COMPLETED'
+  | 'EXPERIMENTAL_CANCELLED'
+  | 'SYSTEM_ATTENTION'
+  | 'TRANSFER_DONE'
+  | 'TRANSFER_FAILED'
+  | 'TRANSFER_CANCELLED'
+  | 'BALANCE_BLOCKED'
+  | 'ACCESS_TOKEN_ALERT'
+  | 'WEBHOOK_INTERRUPTED'
+  | 'WEBHOOK_DLQ';
 
 export type NotificationView = 'active' | 'archived' | 'all';
 export type NotificationAction = 'read' | 'unread' | 'archive' | 'unarchive';

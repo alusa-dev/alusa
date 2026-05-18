@@ -7,6 +7,7 @@ import {
   pausarMatricula,
   PausaBusinessError,
 } from '@/src/server/matriculas/matricula-pausa.service';
+import { notifyMatriculaAction } from '@alusa/lib';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,14 @@ export async function POST(
       contaId: user.contaId,
       actorId: user.id,
       ...parsed.data,
+    });
+
+    void notifyMatriculaAction({
+      matriculaId: params.id,
+      contaId: user.contaId,
+      action: 'PAUSADA',
+      motivo: parsed.data.motivoPausa,
+      actorUserId: user.id,
     });
 
     return NextResponse.json(result);

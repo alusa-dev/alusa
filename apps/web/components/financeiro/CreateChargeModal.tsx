@@ -32,6 +32,7 @@ import { StepHeader, SectionCard, FieldLabel } from '@/components/alunos/wizard/
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
 import { asaasNotificationPreferencesResultDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { type CustomerNotificationChannel } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
 
 // =============================================================================
 // Types & Schema
@@ -113,6 +114,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
   const [installments, setInstallments] = useState(1);
   const [notificationChannels, setNotificationChannels] = useState<CustomerNotificationChannel[]>([]);
   const [notificationChannelsConfigured, setNotificationChannelsConfigured] = useState(false);
+  const [notificationChannelsTouched, setNotificationChannelsTouched] = useState(false);
   const [loadingNotificationDefaults, setLoadingNotificationDefaults] = useState(false);
   const [notificationDefaultsError, setNotificationDefaultsError] = useState<string | null>(null);
 
@@ -169,12 +171,14 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
 
       const parsed = asaasNotificationPreferencesResultDTOSchema.parse(raw);
       setNotificationChannels(parsed.customerChannelDefaults as CustomerNotificationChannel[]);
-      setNotificationChannelsConfigured(true);
+      setNotificationChannelsConfigured(false);
+      setNotificationChannelsTouched(false);
       setNotificationDefaultsError(null);
     } catch (error) {
       console.warn('[CreateChargeModal] Falha ao carregar defaults de notificação', error);
       setNotificationChannels([]);
       setNotificationChannelsConfigured(false);
+      setNotificationChannelsTouched(false);
       setNotificationDefaultsError(
         'Não foi possível carregar o padrão da conta. Se você continuar sem marcar canais, a configuração atual do cliente será preservada.',
       );
@@ -247,6 +251,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
     setInstallments(1);
     setNotificationChannels([]);
     setNotificationChannelsConfigured(false);
+    setNotificationChannelsTouched(false);
     setNotificationDefaultsError(null);
     onOpenChange(false);
   }, [defaultChargeType, onOpenChange, reset]);
@@ -366,8 +371,8 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
         chargeType: normalizedChargeType,
         billingType: data.billingType,
         description: data.description,
-        notificationChannels: notificationChannels, // Canais de notificação selecionados
-        notificationChannelsConfigured,
+        notificationChannels,
+        notificationChannelsConfigured: notificationChannelsTouched,
         uiRequestId,
       };
 
@@ -413,6 +418,12 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
 
       if (!res.ok) {
         throw new Error(result.message || result.error || 'Erro ao criar cobrança');
+      }
+
+      if (result.data?.notificationSync?.warnings?.length) {
+        showNotificationSyncWarnings(result.data.notificationSync.warnings, {
+          title: 'Cobrança criada — aviso sobre notificações',
+        });
       }
 
       pushToast({
@@ -810,11 +821,21 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                 {step === 4 && (
                   <SectionCard>
                     <StepHeader title="Notificações" hint="Selecione como a cobrança será enviada ao cliente." />
+                    <p className="text-xs text-slate-500 leading-relaxed mb-3">
+                      Canais valem para o pagador no Asaas e afetam cobranças futuras. Assinaturas não
+                      disparam aviso de criação de cobrança (regra do Asaas).
+                    </p>
                     {loadingNotificationDefaults ? (
                       <p className="text-sm text-slate-500">Carregando configuração atual...</p>
                     ) : null}
                     {notificationDefaultsError ? (
                       <p className="text-sm text-amber-700">{notificationDefaultsError}</p>
+                    ) : null}
+                    {!notificationChannelsTouched && !notificationDefaultsError && !loadingNotificationDefaults ? (
+                      <p className="text-sm text-slate-500 mb-3">
+                        Sugestão da régua global. Toque nos canais para confirmar; sem alteração,
+                        mantemos a configuração atual do pagador.
+                      </p>
                     ) : null}
                     <div className="flex flex-wrap gap-3">
                       {[
@@ -828,6 +849,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                             key={option.value}
                             type="button"
                             onClick={() => {
+                              setNotificationChannelsTouched(true);
                               setNotificationChannelsConfigured(true);
                               setNotificationChannels((prev) =>
                                 prev.includes(option.value)
@@ -1134,7 +1156,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                     : 'Cliente escolhe'}
                             </span>
                           </p>
-                          {notificationChannelsConfigured && (
+                          {notificationChannelsTouched && (
                             <p className="text-gray-600">
                               Notificações:{' '}
                               <span className="font-medium text-gray-900">

@@ -51,6 +51,7 @@ const initialState: WizardState = {
   notificationChannels: [],
   notificationChannelsInitialized: false,
   notificationChannelsConfigured: false,
+  notificationChannelsTouched: false,
   modoBeneficio: 'SEM',
   beneficioSelecionado: null,
 };

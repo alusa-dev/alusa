@@ -5,6 +5,7 @@ import { CustomToast } from '@/components/ui/toast';
 import type { WizardState } from '@/components/matriculas/wizard/types';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import { createContrato } from '@/features/contratos/services/contratos-service';
+import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
 
 export interface MatriculaResponse {
   matricula: {
@@ -61,6 +62,16 @@ export interface MatriculaResponse {
       expectedWebhooks?: string[];
     } | null;
   };
+  notificationSync?: {
+    applied: { email: boolean; sms: boolean; whatsapp: boolean };
+    warnings: Array<{
+      notificationId: string;
+      event: string;
+      channel: string;
+      code: string;
+      message: string;
+    }>;
+  } | null;
 }
 
 interface UseMatriculaSubmitOptions {
@@ -128,6 +139,12 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
       const result: MatriculaResponse = await response.json();
       setData(result);
+
+      if (result.notificationSync?.warnings?.length) {
+        showNotificationSyncWarnings(result.notificationSync.warnings, {
+          title: 'Matrícula criada — aviso sobre notificações',
+        });
+      }
 
       // Gera contrato automaticamente usando o modelo escolhido
       let contratoResult: unknown = null;

@@ -3,7 +3,7 @@ import {
   enqueueAsaasWebhookEvent,
   handleAsaasWebhookEvent,
   inspectWebhookProcessingRuntimeStatus,
-  processAsaasWebhookQueue,
+  processAsaasWebhookQueueWithInbox,
   resolveAsaasWebhookAccessToken,
   extractClientIps,
   isAsaasWebhookIpAllowed,
@@ -14,7 +14,7 @@ import {
   redactWebhookLogObject,
 } from '@alusa/finance';
 import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
-import { emitBillingNotificationCandidate, emitBillingNotifications } from '@/lib/notifications/emit-billing-notifications';
+import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 
 const MAX_BODY_BYTES = 512 * 1024;
@@ -122,13 +122,12 @@ export async function POST(req: NextRequest) {
       const shouldInlineDrain = processingRuntime.inlineDrain;
       if (shouldInlineDrain && queued.success && queued.contaId) {
         try {
-          const drainResult = await processAsaasWebhookQueue({
+          await processAsaasWebhookQueueWithInbox({
             contaId: queued.contaId,
             limit: 5,
             statuses: ['PENDENTE', 'ERRO'],
             source: 'WEBHOOK',
           });
-          await emitBillingNotifications(drainResult.processedPayments, 'ASAAS_WEBHOOK');
         } catch (drainError) {
           console.warn('[Asaas Webhook][inline-drain] Falha no processamento imediato da fila', redactWebhookLogObject({
             contaId: queued.contaId,
