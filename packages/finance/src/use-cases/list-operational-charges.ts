@@ -6,10 +6,6 @@ import {
   getEndOfCurrentMonth,
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
-import { mapAsaasPaymentStatusToCharge } from '../mappers';
-import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
-import { getPayment, isAsaasEnabled, listPayments } from './asaas-ops';
-import { reconcileAcademicChargesWithAsaas } from './reconcile-academic-charges';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -117,27 +113,6 @@ function inferStandaloneChargeType(params: {
   return 'ONE_TIME';
 }
 
-function parseAsaasDueDate(value: string | null | undefined): Date | null {
-  if (!value) return null;
-  return new Date(`${value}T12:00:00.000Z`);
-}
-
-function formatAsaasDate(input: Date): string {
-  const year = input.getFullYear();
-  const month = String(input.getMonth() + 1).padStart(2, '0');
-  const day = String(input.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function getAsaasErrorStatus(error: unknown): number | null {
-  if (!error || typeof error !== 'object') return null;
-  const candidate = error as { status?: unknown };
-  return typeof candidate.status === 'number' ? candidate.status : null;
-}
-
-const STANDALONE_REMOTE_RECONCILE_WINDOW_MS = 5 * 60_000;
-const REMOTE_PAYMENT_PAGE_SIZE = 100;
-const REMOTE_PAYMENT_MAX_PAGES_PER_STATUS = 20;
 function shouldExposeInOperationalQueue(params: {
   status: 'PENDING' | 'OVERDUE' | 'PAID' | 'PROCESSING' | 'CANCELED' | 'REFUNDED';
   dueDate: Date | null;
@@ -159,158 +134,6 @@ function compareOperationalItems(a: Pick<UnifiedChargeItem, 'status' | 'dueDate'
   const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
   const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
   return aDate - bDate;
-}
-
-function shouldReconcileStandaloneCharge(params: {
-  asaasPaymentId: string | null;
-  dueDate: Date | null;
-  status: string;
-  updatedAt?: Date | null;
-  statusUpdatedAt?: Date | null;
-  createdAt?: Date | null;
-  now: Date;
-}): boolean {
-  if (!params.asaasPaymentId) return false;
-  if (!params.dueDate) return true;
-  if (params.status === 'CREATED' || params.status === 'PAID') return true;
-
-  const freshnessAnchor = params.updatedAt ?? params.statusUpdatedAt ?? params.createdAt ?? null;
-  if (!freshnessAnchor) return true;
-
-  return params.now.getTime() - freshnessAnchor.getTime() < STANDALONE_REMOTE_RECONCILE_WINDOW_MS;
-}
-
-function inferRemotePaymentType(payment: {
-  subscription?: string | null;
-  installment?: string | null;
-  externalReference?: string | null;
-}): 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION' {
-  if (payment.installment || extractInstallmentPlanId(payment.externalReference ?? null)) {
-    return 'INSTALLMENT';
-  }
-  if (
-    payment.subscription ||
-    payment.externalReference?.startsWith('subscription:') ||
-    payment.externalReference?.startsWith('alusa:subscription:') ||
-    payment.externalReference?.startsWith('alusa:standalone-subscription:')
-  ) {
-    return 'SUBSCRIPTION';
-  }
-  return 'ONE_TIME';
-}
-
-function mapRemoteStatusToUnified(status: string): UnifiedChargeItem['status'] | null {
-  switch (status) {
-    case 'PENDING':
-      return 'PENDING';
-    case 'AWAITING_RISK_ANALYSIS':
-      return 'PROCESSING';
-    case 'OVERDUE':
-    case 'DUNNING_REQUESTED':
-      return 'OVERDUE';
-    default:
-      return null;
-  }
-}
-
-async function listRemoteOperationalPaymentItems(params: {
-  contaId: string;
-  endOfMonth: Date;
-  tipoFilter?: string[];
-  search?: string;
-}): Promise<UnifiedChargeItem[]> {
-  if (!isAsaasEnabled()) return [];
-
-  const statuses = ['PENDING', 'AWAITING_RISK_ANALYSIS', 'OVERDUE', 'DUNNING_REQUESTED'] as const;
-  const endDate = formatAsaasDate(params.endOfMonth);
-  const responses = await Promise.allSettled(
-    statuses.map(async (status) => {
-      const data: Awaited<ReturnType<typeof listPayments>>['data'] = [];
-      let offset = 0;
-      let hasMore = true;
-      let pageCount = 0;
-
-      while (hasMore && pageCount < REMOTE_PAYMENT_MAX_PAGES_PER_STATUS) {
-        const page = await listPayments(
-          {
-            status,
-            'dueDate[le]': endDate,
-            limit: REMOTE_PAYMENT_PAGE_SIZE,
-            offset,
-          },
-          { contaId: params.contaId },
-        );
-        data.push(...(page.data ?? []));
-        hasMore = Boolean(page.hasMore);
-        offset += REMOTE_PAYMENT_PAGE_SIZE;
-        pageCount += 1;
-      }
-
-      return data;
-    }),
-  );
-
-  const items: UnifiedChargeItem[] = [];
-  for (const response of responses) {
-    if (response.status !== 'fulfilled') {
-      if (process.env.NODE_ENV !== 'test') {
-        console.warn('[finance][listOperationalCharges] Falha ao listar payments Asaas', {
-          contaId: params.contaId,
-          error: response.reason instanceof Error ? response.reason.message : String(response.reason),
-        });
-      }
-      continue;
-    }
-
-    for (const payment of response.value) {
-      const status = mapRemoteStatusToUnified(payment.status);
-      if (!status) continue;
-
-      const chargeType = inferRemotePaymentType(payment);
-      const tipo = resolveStandaloneTipo(chargeType);
-      if (params.tipoFilter?.length && !params.tipoFilter.includes(tipo)) continue;
-
-      const description =
-        payment.description ??
-        (chargeType === 'SUBSCRIPTION'
-          ? 'Assinatura recorrente'
-          : chargeType === 'INSTALLMENT'
-            ? 'Parcela'
-            : 'Cobrança avulsa');
-      if (params.search) {
-        const q = params.search.toLowerCase();
-        const haystack = `${description} ${payment.id} ${payment.externalReference ?? ''}`.toLowerCase();
-        if (!haystack.includes(q)) continue;
-      }
-
-      items.push({
-        id: `asaas:${payment.id}`,
-        origin: 'STANDALONE',
-        description,
-        payerName: 'Cliente',
-        value: Number(payment.value ?? 0),
-        dueDate: parseAsaasDueDate(payment.dueDate)?.toISOString() ?? null,
-        billingType: payment.billingType ?? null,
-        status,
-        chargeType,
-        linkStatus: 'NEEDS_REVIEW',
-        asaasPaymentId: payment.id,
-        invoiceUrl: payment.invoiceUrl ?? null,
-        bankSlipUrl: payment.bankSlipUrl ?? null,
-        tipo,
-        createdAt: parseAsaasDueDate(payment.dateCreated)?.toISOString() ?? new Date().toISOString(),
-        matriculaId: null,
-        alunoId: null,
-        isGroup: false,
-        groupType: null,
-        groupId: null,
-        installmentCount: null,
-        installmentsPaid: null,
-      });
-    }
-  }
-
-  return items;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +166,7 @@ async function buildOperationalChargesCollection(
   // =================================================================
   const academicWhere: Record<string, unknown> = {
     AND: [
-      { matricula: { aluno: { contaId } } },
+      { contaId },
       { status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] } },
       {
         OR: [
@@ -374,7 +197,7 @@ async function buildOperationalChargesCollection(
     AND: [
       { contaId },
       { cobrancaId: null },
-      { status: { in: ['CREATED', 'OPEN', 'OVERDUE', 'PAID', 'PENDING_SYNC'] } },
+      { status: { in: ['CREATED', 'OPEN', 'OVERDUE', 'PENDING_SYNC'] } },
       {
         NOT: [
           { externalReference: { contains: ':needs-review:' } },
@@ -423,7 +246,7 @@ async function buildOperationalChargesCollection(
       orderBy: { dueDate: 'asc' },
       select: {
         id: true, contaId: true, externalReference: true, status: true,
-        asaasPaymentId: true, createdAt: true, updatedAt: true, statusUpdatedAt: true, payerName: true,
+        asaasPaymentId: true, createdAt: true, payerName: true,
         description: true, value: true, dueDate: true, billingType: true,
         standaloneInstallmentPlanId: true, standaloneSubscriptionId: true, familyGroupId: true, invoiceUrl: true,
         customer: {
@@ -446,35 +269,11 @@ async function buildOperationalChargesCollection(
           { externalReference: { startsWith: 'alusa:subscription:' } },
         ],
       },
-      select: { cobrancaId: true, externalReference: true, status: true },
+      select: { cobrancaId: true, externalReference: true },
     }),
   ]);
 
-  const academicReconciliation =
-    isAsaasEnabled() && academicResultRaw.length
-      ? await reconcileAcademicChargesWithAsaas({
-          contaId,
-          cobrancaIds: academicResultRaw.map((c) => c.id),
-          limit: academicResultRaw.length,
-        })
-      : null;
-
-  const academicResult = academicResultRaw.map((c) => {
-    const reconciled = academicReconciliation?.items.get(c.id);
-    return reconciled
-      ? {
-          ...c,
-          status: reconciled.status,
-          asaasPaymentId: reconciled.asaasPaymentId,
-          asaasStatus: reconciled.asaasStatus,
-          vencimento: reconciled.vencimento,
-          dataPagamento: reconciled.dataPagamento,
-          pagoEm: reconciled.pagoEm,
-          liquidacaoStatus: reconciled.liquidacaoStatus,
-          liquidadoEm: reconciled.liquidadoEm,
-        }
-      : c;
-  });
+  const academicResult = academicResultRaw;
 
   // Mapa cobrancaId → installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
@@ -488,65 +287,7 @@ async function buildOperationalChargesCollection(
     }
   }
 
-  const reconciledStandaloneResult = isAsaasEnabled()
-    ? await Promise.all(
-        standaloneResult.map(async (charge) => {
-          if (!shouldReconcileStandaloneCharge({ ...charge, now })) return charge;
-          if (!charge.asaasPaymentId) return charge;
-
-          try {
-            recordAsaasReadIntent('RECONCILIATION');
-            const payment = await getPayment(charge.asaasPaymentId, { contaId });
-            const nextStatus = mapAsaasPaymentStatusToCharge(payment.status);
-            const nextDueDate = parseAsaasDueDate(payment.dueDate) ?? charge.dueDate;
-            const dueDateChanged =
-              (charge.dueDate?.getTime() ?? null) !== (nextDueDate?.getTime() ?? null);
-
-            if (charge.status !== nextStatus || dueDateChanged) {
-              await _db.charge.updateMany({
-                where: { id: charge.id },
-                data: {
-                  status: nextStatus,
-                  dueDate: nextDueDate,
-                  ...(charge.status !== nextStatus ? { statusUpdatedAt: new Date() } : {}),
-                },
-              });
-            }
-
-            return {
-              ...charge,
-              status: nextStatus,
-              dueDate: nextDueDate,
-            };
-          } catch (error) {
-            if (getAsaasErrorStatus(error) === 404) {
-              await _db.charge.updateMany({
-                where: { id: charge.id },
-                data: {
-                  asaasPaymentId: null,
-                },
-              });
-
-              return {
-                ...charge,
-                asaasPaymentId: null,
-              };
-            }
-
-            if (process.env.NODE_ENV !== 'test') {
-              console.warn('[finance][listOperationalCharges] Falha ao reconciliar standalone com Asaas', {
-                chargeId: charge.id,
-                asaasPaymentId: charge.asaasPaymentId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-            return charge;
-          }
-        }),
-      )
-    : standaloneResult;
-
-  const effectiveStandaloneResult = reconciledStandaloneResult.filter((charge) => {
+  const effectiveStandaloneResult = standaloneResult.filter((charge) => {
     if (!['CREATED', 'OPEN', 'OVERDUE', 'PENDING_SYNC'].includes(charge.status)) return false;
     if (!tipoFilter?.length) return true;
     const chargeType = inferStandaloneChargeType({
@@ -683,22 +424,7 @@ async function buildOperationalChargesCollection(
   // =================================================================
   // 5. Expor apenas itens operacionais relevantes
   // =================================================================
-  const remoteItems = await listRemoteOperationalPaymentItems({
-    contaId,
-    endOfMonth,
-    tipoFilter,
-    search,
-  });
-
   const allItemsWithMeta = [...academicItems, ...standaloneItems];
-  const localAsaasPaymentIds = new Set(
-    allItemsWithMeta
-      .map((item) => item.asaasPaymentId)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const remoteItemsWithoutLocalDuplicate = remoteItems.filter(
-    (item) => !item.asaasPaymentId || !localAsaasPaymentIds.has(item.asaasPaymentId),
-  );
   const selectedIds = new Set<string>();
 
   const allOverdue = allItemsWithMeta.filter((item) => item.status === 'OVERDUE');
@@ -749,8 +475,7 @@ async function buildOperationalChargesCollection(
     .map((item) => {
       const { _planId, _subscriptionKey, ...clean } = item;
       return clean;
-    })
-    .concat(remoteItemsWithoutLocalDuplicate);
+    });
 
   // Ordenar: overdue primeiro (urgência), depois por vencimento ASC
   allItems.sort(compareOperationalItems);
