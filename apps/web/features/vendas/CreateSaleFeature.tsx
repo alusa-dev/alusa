@@ -288,10 +288,12 @@ export function CreateSaleFeature() {
     {
       id: 'produto',
       header: 'Produto',
+      width: 'min-w-0 w-[46%]',
+      noWrap: false,
       render: (product) => (
-        <div className="space-y-1">
-          <p className="font-medium text-slate-900">{product.name}</p>
-          <p className="text-xs text-slate-500">
+        <div className="min-w-0 space-y-1">
+          <p className="truncate font-medium text-slate-900">{product.name}</p>
+          <p className="truncate text-xs text-slate-500">
             {product.category?.name ?? 'Sem categoria'}
             {product.sku ? ` · SKU ${product.sku}` : ''}
           </p>
@@ -301,19 +303,20 @@ export function CreateSaleFeature() {
     {
       id: 'preco',
       header: 'Preço',
-      width: 'w-[140px]',
+      width: 'w-[14%]',
       render: (product) => formatCurrencyBRL(product.price),
     },
     {
       id: 'estoque',
       header: 'Disponível',
-      width: 'w-[120px]',
+      width: 'w-[12%]',
+      align: 'center',
       render: (product) => String(product.totalAvailable),
     },
     {
       id: 'acoes',
       header: '',
-      width: 'w-[130px]',
+      width: 'w-[18%]',
       align: 'right',
       render: (product) => {
         const availableStock = product.totalAvailable;
