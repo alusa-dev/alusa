@@ -124,6 +124,7 @@ export const financeiroPagamentoSummaryItemDTOSchema = z.object({
   nome: z.string(),
   cpf: z.string().nullable(),
   foto: z.string().nullable(),
+  avatarUrl: z.string().nullable().optional(),
   totalPagamentos: z.number(),
   valorTotal: z.number(),
   ultimoPagamento: z.string().nullable(),
@@ -150,6 +151,7 @@ export const financeiroPagamentoAlunoResumoDTOSchema = z.object({
   telefone: z.string().nullable(),
   cpf: z.string().nullable(),
   foto: z.string().nullable(),
+  avatarUrl: z.string().nullable().optional(),
 });
 
 export type FinanceiroPagamentoAlunoResumoDTO = z.infer<
@@ -190,6 +192,94 @@ export const financeiroPagamentoAlunoHistoricoResultDTOSchema = z.object({
 
 export type FinanceiroPagamentoAlunoHistoricoResultDTO = z.infer<
   typeof financeiroPagamentoAlunoHistoricoResultDTOSchema
+>;
+
+export const paymentHistoryCategorySchema = z.enum([
+  'TAXA_MATRICULA',
+  'MENSALIDADE',
+  'PARCELAMENTO',
+  'ASSINATURA',
+  'LOJA',
+  'OUTROS',
+]);
+
+export type PaymentHistoryCategoryDTO = z.infer<typeof paymentHistoryCategorySchema>;
+
+export const financeiroPagamentoHistoricoPagamentoDTOSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  valorPago: z.number(),
+  dataPagamento: z.string().nullable(),
+  formaPagamento: z.string(),
+  comprovante: z.string().nullable().optional(),
+  asaasPaymentId: z.string().nullable().optional(),
+  createdAt: z.string(),
+});
+
+export type FinanceiroPagamentoHistoricoPagamentoDTO = z.infer<
+  typeof financeiroPagamentoHistoricoPagamentoDTOSchema
+>;
+
+export const financeiroPagamentoHistoricoCobrancaDTOSchema = z.object({
+  id: z.string(),
+  sourceKind: z.enum(['cobranca', 'charge', 'sale']),
+  sourceId: z.string(),
+  chargeType: z.string(),
+  origin: z.string(),
+  tipo: z.string().nullable(),
+  category: paymentHistoryCategorySchema,
+  description: z.string().nullable(),
+  payerName: z.string(),
+  payerRole: z.enum(['ALUNO', 'RESPONSAVEL']),
+  valor: z.number(),
+  vencimento: z.string().nullable(),
+  billingType: z.string().nullable(),
+  status: z.string(),
+  asaasPaymentId: z.string().nullable(),
+  matriculaId: z.string().nullable(),
+  groupId: z.string().nullable(),
+  isGroup: z.boolean(),
+  installmentCount: z.number().nullable(),
+  installmentsPaid: z.number().nullable(),
+  installmentLabel: z.string().nullable().optional(),
+  planName: z.string().nullable().optional(),
+  detailHref: z.string(),
+  createdAt: z.string(),
+  pagamento: financeiroPagamentoHistoricoPagamentoDTOSchema.nullable(),
+});
+
+export type FinanceiroPagamentoHistoricoCobrancaDTO = z.infer<
+  typeof financeiroPagamentoHistoricoCobrancaDTOSchema
+>;
+
+export const financeiroPagamentoHistoricoResumoDTOSchema = z.object({
+  total: z.number().int().nonnegative(),
+  totalPago: z.number(),
+  totalValor: z.number(),
+  porCategoria: z.record(
+    paymentHistoryCategorySchema,
+    z.object({
+      count: z.number().int().nonnegative(),
+      totalPago: z.number(),
+    }),
+  ),
+});
+
+export type FinanceiroPagamentoHistoricoResumoDTO = z.infer<
+  typeof financeiroPagamentoHistoricoResumoDTOSchema
+>;
+
+export const financeiroPagamentoAlunoCobrancasResultDTOSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    aluno: financeiroPagamentoAlunoResumoDTOSchema,
+    cobrancas: z.array(financeiroPagamentoHistoricoCobrancaDTOSchema),
+    resumo: financeiroPagamentoHistoricoResumoDTOSchema,
+  }),
+});
+
+export type FinanceiroPagamentoAlunoCobrancasResultDTO = z.infer<
+  typeof financeiroPagamentoAlunoCobrancasResultDTOSchema
 >;
 
 const formaPagamentoList = [

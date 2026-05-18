@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { cachedDashboardBlock, publicImageUrl, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
@@ -20,14 +20,18 @@ export async function GET() {
         if (dayDiff !== 0) return dayDiff;
         return a.nome.localeCompare(b.nome, 'pt-BR');
       })
-      .map((aluno) => ({
-        id: aluno.id,
-        nome: aluno.nome,
-        foto: publicImageUrl(aluno.foto),
-        dia: aluno.dataNasc.getDate(),
-        mes: aluno.dataNasc.getMonth() + 1,
-        dataNascimento: aluno.dataNasc.toISOString(),
-      }));
+      .map((aluno) => {
+        const avatarUrl = resolveAlunoPublicAvatar(aluno);
+        return {
+          id: aluno.id,
+          nome: aluno.nome,
+          foto: avatarUrl,
+          avatarUrl,
+          dia: aluno.dataNasc.getDate(),
+          mes: aluno.dataNasc.getMonth() + 1,
+          dataNascimento: aluno.dataNasc.toISOString(),
+        };
+      });
 
     return {
       success: true,

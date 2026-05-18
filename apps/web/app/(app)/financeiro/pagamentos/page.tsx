@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -22,6 +22,7 @@ interface AlunoComPagamentos {
   nome: string;
   cpf: string | null;
   foto: string | null;
+  avatarUrl?: string | null;
   totalPagamentos: number;
   valorTotal: number;
   ultimoPagamento: string | null;
@@ -47,12 +48,7 @@ const STATUS_OPTIONS = [
   { value: 'ESTORNADO', label: 'Estornado' },
 ];
 
-const getInitials = (nome: string) => {
-  const parts = nome.split(' ').filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-};
+const getAvatarSrc = (aluno: AlunoComPagamentos) => aluno.avatarUrl ?? aluno.foto;
 
 export default function FinanceiroPagamentosPage() {
   const router = useRouter();
@@ -266,12 +262,11 @@ export default function FinanceiroPagamentosPage() {
                         className="group flex w-full gap-3 px-4 py-4 text-left transition-colors active:bg-gray-50"
                         onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
                       >
-                        <Avatar className="h-11 w-11 shrink-0">
-                          <AvatarImage src={aluno.foto || undefined} alt={aluno.nome} />
-                          <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
-                            {getInitials(aluno.nome)}
-                          </AvatarFallback>
-                        </Avatar>
+                        <PersonAvatar
+                          name={aluno.nome}
+                          src={getAvatarSrc(aluno)}
+                          size="lg"
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <span className="line-clamp-2 text-[14px] font-medium leading-snug text-gray-900">
@@ -313,12 +308,11 @@ export default function FinanceiroPagamentosPage() {
                       >
                         <div className="grid grid-cols-12 items-center gap-4">
                           <div className="col-span-4 flex items-center gap-3">
-                            <Avatar className="h-10 w-10">
-                              <AvatarImage src={aluno.foto || undefined} alt={aluno.nome} />
-                              <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
-                                {getInitials(aluno.nome)}
-                              </AvatarFallback>
-                            </Avatar>
+                            <PersonAvatar
+                              name={aluno.nome}
+                              src={getAvatarSrc(aluno)}
+                              size="md"
+                            />
                             <div className="min-w-0">
                               <div className="truncate text-[13px] font-normal text-gray-900">{aluno.nome}</div>
                               {aluno.cpf ? (

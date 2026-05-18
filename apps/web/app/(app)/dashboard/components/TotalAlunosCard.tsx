@@ -1,6 +1,8 @@
 "use client";
 
+import React from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AvatarGroup } from '@/components/shared/AvatarGroup';
 
 import { DASHBOARD_KPI_TILE_CLASSNAME } from './utils';
 
@@ -12,13 +14,6 @@ type RecentStudentInput = {
   avatarUrl?: string | null;
 };
 
-type RecentStudent = {
-  id: string;
-  name: string;
-  avatarUrl: string | null;
-  initials: string;
-};
-
 type TotalAlunosCardProps = {
   total: number;
   ativos?: number;
@@ -28,13 +23,6 @@ type TotalAlunosCardProps = {
   disableAddAluno?: boolean;
   loading?: boolean;
 };
-
-function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0) return 'AL';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-}
 
 const cardSurface = `${DASHBOARD_KPI_TILE_CLASSNAME} flex flex-col min-h-[220px] rounded-2xl bg-[#e6d6fb] px-5 py-4 text-[#2b2634] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]`;
 
@@ -74,24 +62,15 @@ export function TotalAlunosCard({
     );
   }
 
-  const normalizedRecent: RecentStudent[] = (recentes ?? recentStudents ?? []).map((student) => {
+  const normalizedRecent = (recentes ?? recentStudents ?? []).map((student) => {
     const name = student.name ?? student.nome ?? 'Aluno recente';
-    const avatarUrl = student.avatarUrl ?? student.foto ?? null;
-
     return {
       id: student.id,
       name,
-      avatarUrl,
-      initials: getInitials(name),
+      src: student.avatarUrl ?? student.foto ?? null,
     };
   });
 
-  const avatarSlots: Array<RecentStudent | null> = [...normalizedRecent.slice(0, 3)];
-  while (avatarSlots.length < 3) {
-    avatarSlots.push(null);
-  }
-
-  const gradientFallback = 'bg-gradient-to-br from-purple-500 to-pink-500';
   const hasRecentStudents = normalizedRecent.length > 0;
 
   return (
@@ -119,39 +98,12 @@ export function TotalAlunosCard({
       <div className="mt-4 flex items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           {hasRecentStudents ? (
-            <div className="flex items-center -space-x-2">
-              {avatarSlots.map((student, index) => {
-                const avatarUrl = student?.avatarUrl?.trim() ?? null;
-                const hasAvatar = Boolean(avatarUrl);
-                const displayName = student?.name ?? 'Aluno recente';
-                const displayInitials = student?.initials ?? 'AL';
-
-                return (
-                  <div
-                    key={student?.id ?? `placeholder-${index}`}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full outline outline-4 outline-[#e6d6fb] alusa-dark:outline-[color:var(--color-bg-card-soft)] ${hasAvatar ? 'bg-transparent' : gradientFallback} pointer-events-none select-none overflow-hidden text-xs font-semibold text-white`}
-                    title={displayName}
-                    data-testid="student-avatar"
-                  >
-                    {hasAvatar ? (
-                      <img
-                        src={avatarUrl!}
-                        alt={displayName}
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none';
-                          const parent = e.currentTarget.parentElement;
-                          if (parent) {
-                            parent.classList.add('bg-gradient-to-br', 'from-purple-500', 'to-pink-500');
-                          }
-                        }}
-                      />
-                    ) : null}
-                    {!hasAvatar ? <span>{displayInitials}</span> : null}
-                  </div>
-                );
-              })}
-            </div>
+            <AvatarGroup
+              items={normalizedRecent}
+              max={3}
+              size="sm"
+              fallbackClassName="bg-gradient-to-br from-purple-500 to-pink-500 text-white alusa-dark:from-purple-600 alusa-dark:to-pink-600 alusa-dark:text-white"
+            />
           ) : (
             <span className="text-xs text-[#2b2634]/80 alusa-dark:text-[color:var(--color-text-muted)]">
               Sem cadastros recentes

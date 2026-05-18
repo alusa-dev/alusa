@@ -5,7 +5,9 @@ export type DashboardPeriodoDTO = z.infer<typeof dashboardPeriodoDTOSchema>;
 
 export const dashboardUltimaCobrancaDTOSchema = z.object({
   id: z.string(),
+  alunoId: z.string().optional(),
   aluno: z.string(),
+  alunoAvatarUrl: z.string().nullable().optional(),
   valor: z.number(),
   vencimento: z.string(),
   status: z.string(),
@@ -17,6 +19,7 @@ export const dashboardAlunoRecenteDTOSchema = z.object({
   id: z.string(),
   nome: z.string(),
   foto: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   tipo: z.string(),
 });
 
@@ -26,6 +29,7 @@ export const dashboardAniversarianteDTOSchema = z.object({
   id: z.string(),
   nome: z.string(),
   foto: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   dia: z.number().int().min(1).max(31),
   mes: z.number().int().min(1).max(12),
   dataNascimento: z.string(),
@@ -45,6 +49,7 @@ export const dashboardAulaExperimentalDTOSchema = z.object({
   alunoId: z.string(),
   alunoNome: z.string(),
   alunoFoto: z.string().nullable().optional(),
+  alunoAvatarUrl: z.string().nullable().optional(),
   status: dashboardAulaExperimentalStatusDTOSchema,
   turmaNome: z.string(),
   startAt: z.string(),

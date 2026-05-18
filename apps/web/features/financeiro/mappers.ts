@@ -4,12 +4,14 @@ import {
   financeiroLancamentoCategoriaDTOSchema,
   financeiroLancamentoDTOSchema,
   financeiroLancamentoReciboResultDTOSchema,
+  financeiroPagamentoAlunoCobrancasResultDTOSchema,
   financeiroPagamentoAlunoHistoricoResultDTOSchema,
   financeiroPagamentoDTOSchema,
   financeiroPagamentoSummaryItemDTOSchema,
   financeiroSaldoResultDTOSchema,
   listFinanceiroLancamentoCategoriasResultDTOSchema,
 } from './dtos';
+import { withResolvedAvatarFields } from '@/lib/media/avatar-url';
 
 function toIsoString(value: Date | string | null | undefined) {
   if (!value) return null;
@@ -35,7 +37,16 @@ export function mapFinanceiroPagamentoRecordToDTO(record: Record<string, unknown
 }
 
 export function mapFinanceiroPagamentoSummaryItemToDTO(record: Record<string, unknown>) {
-  return financeiroPagamentoSummaryItemDTOSchema.parse(record);
+  const id = String(record.id);
+  const resolved = withResolvedAvatarFields('aluno', {
+    id,
+    foto: (record.foto as string | null | undefined) ?? null,
+  });
+
+  return financeiroPagamentoSummaryItemDTOSchema.parse({
+    ...record,
+    ...resolved,
+  });
 }
 
 export function mapFinanceiroLancamentoRecordToDTO(record: Record<string, unknown>) {
@@ -63,6 +74,31 @@ export function mapListFinanceiroLancamentoCategoriasResultToDTO(record: Record<
 
 export function mapFinanceiroPagamentoAlunoHistoricoResultToDTO(record: Record<string, unknown>) {
   return financeiroPagamentoAlunoHistoricoResultDTOSchema.parse(record);
+}
+
+export function mapFinanceiroPagamentoAlunoCobrancasResultToDTO(record: Record<string, unknown>) {
+  const data = record.data as Record<string, unknown> | undefined;
+  const aluno = data?.aluno as Record<string, unknown> | undefined;
+  const resolvedAluno =
+    aluno && typeof aluno.id === 'string'
+      ? {
+          ...aluno,
+          ...withResolvedAvatarFields('aluno', {
+            id: aluno.id,
+            foto: (aluno.foto as string | null | undefined) ?? null,
+          }),
+        }
+      : aluno;
+
+  return financeiroPagamentoAlunoCobrancasResultDTOSchema.parse({
+    ...record,
+    data: data
+      ? {
+          ...data,
+          aluno: resolvedAluno,
+        }
+      : data,
+  });
 }
 
 export function mapFinanceiroLancamentoReciboResultToDTO(record: Record<string, unknown>) {

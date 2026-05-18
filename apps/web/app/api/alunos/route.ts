@@ -2,20 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
-import { createAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
+import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
 import {
   createAlunoInputDTOSchema,
   alunoDetailDTOSchema,
   listAlunosResultDTOSchema,
 } from '@/features/cadastro/alunos/dtos';
 import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
+import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 
 // Util simples para limpar dígitos
 const digits = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
-const publicImageUrl = (value: string | null | undefined) => {
-  if (!value) return null;
-  return value.startsWith('data:image/') ? null : value;
-};
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -55,6 +52,7 @@ export async function GET(request: NextRequest) {
         telefone: true,
         status: true,
         foto: true,
+        updatedAt: true,
         cpf: true,
         consentimentoImagem: true,
         dataConsentimentoImagem: true,
@@ -77,7 +75,8 @@ export async function GET(request: NextRequest) {
           email: aluno.email ?? null,
           telefone: aluno.telefone ?? null,
           status: aluno.status ?? 'ATIVO',
-          foto: publicImageUrl(aluno.foto),
+          foto: aluno.foto ?? null,
+          updatedAt: aluno.updatedAt,
           cpf: aluno.cpf ?? null,
           consentimentoImagem: aluno.consentimentoImagem ?? null,
           dataConsentimentoImagem: aluno.dataConsentimentoImagem
@@ -219,7 +218,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Payload inválido' }, { status: 400 });
     }
 
-    const aluno = await createAluno(parsed);
+    let aluno = await createAluno(parsed);
+
+    if (parsed.foto?.startsWith('data:image/')) {
+      const normalizedFoto = await normalizeAvatarUpload({
+        entity: 'aluno',
+        entityId: aluno.id,
+        contaId,
+        foto: parsed.foto,
+        previousFoto: null,
+      });
+
+      if (normalizedFoto && normalizedFoto !== parsed.foto) {
+        aluno = await updateAluno({ id: aluno.id, contaId, foto: normalizedFoto });
+      }
+    }
 
     // NOTA: syncAlunoWithAsaas já é chamado dentro de createAluno()
     // Não é necessário chamar createAsaasCustomerForAluno aqui para evitar duplicação

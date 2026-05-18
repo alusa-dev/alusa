@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { DashboardSecondarySkeleton } from './dashboard-secondary-skeletons';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from './components/utils';
 
@@ -63,15 +64,6 @@ export default function DashboardSecondarySection({
       day: '2-digit',
       month: 'short',
     });
-  };
-
-  const getInitials = (name: string) => {
-    return name
-      .split(' ')
-      .map((n) => n[0])
-      .join('')
-      .toUpperCase()
-      .slice(0, 2);
   };
 
   function cobrancaStatusVariant(raw: string): BadgeVariant {
@@ -298,9 +290,17 @@ export default function DashboardSecondarySection({
                             className="transition-colors hover:bg-gray-50/50 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                           >
                             <td className="whitespace-nowrap px-6 py-4">
-                              <p className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                                {cobranca.aluno}
-                              </p>
+                              <div className="flex items-center gap-3">
+                                <PersonAvatar
+                                  name={cobranca.aluno}
+                                  src={cobranca.alunoAvatarUrl}
+                                  size="sm"
+                                  fallbackClassName="bg-[#383242]/10 text-[#383242] alusa-dark:bg-[color:var(--color-brand-950)] alusa-dark:text-[color:var(--color-brand-300)]"
+                                />
+                                <p className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                                  {cobranca.aluno}
+                                </p>
+                              </div>
                             </td>
                             <td className="whitespace-nowrap px-6 py-4">
                               <p className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
@@ -356,17 +356,12 @@ export default function DashboardSecondarySection({
                         onClick={() => router.push(`/alunos/${aluno.id}`)}
                         className="group flex w-full items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                       >
-                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#383242]/10 text-sm font-bold text-[#383242] alusa-dark:bg-[color:var(--color-brand-950)] alusa-dark:text-[color:var(--color-brand-300)]">
-                          {aluno.foto ? (
-                            <img
-                              src={aluno.foto}
-                              alt={aluno.nome}
-                              className="h-10 w-10 rounded-full object-cover"
-                            />
-                          ) : (
-                            getInitials(aluno.nome)
-                          )}
-                        </div>
+                        <PersonAvatar
+                          name={aluno.nome}
+                          src={aluno.avatarUrl ?? aluno.foto}
+                          size="md"
+                          fallbackClassName="bg-[#383242]/10 text-[#383242] alusa-dark:bg-[color:var(--color-brand-950)] alusa-dark:text-[color:var(--color-brand-300)]"
+                        />
                         <div className="min-w-0 flex-1 text-left">
                           <p className="truncate text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                             {aluno.nome}

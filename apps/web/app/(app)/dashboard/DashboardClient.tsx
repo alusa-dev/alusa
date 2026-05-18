@@ -318,8 +318,7 @@ export default function DashboardClient() {
               recentStudents={(metrics?.alunosRecentes || []).map((aluno) => ({
                 id: aluno.id,
                 name: aluno.nome,
-                avatarUrl: aluno.foto,
-                initials: getInitials(aluno.nome),
+                avatarUrl: aluno.avatarUrl ?? aluno.foto,
               }))}
               onAddAluno={handleGoToCadastro}
               disableAddAluno={!verificationLoading && Boolean(verification) && !isApproved}

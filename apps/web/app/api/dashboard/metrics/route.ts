@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
 import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
+import { resolveAlunoPublicAvatar } from '@/lib/media/avatar-url';
 import { createPerfTimer, logRoutePerformance, withPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
 import {
@@ -94,11 +95,6 @@ function buildTodayLessonSummary(events: DashboardLessonEvent[]) {
 function toNumber(value: unknown): number {
   if (value === null || value === undefined) return 0;
   return Number(value);
-}
-
-function publicImageUrl(value: string | null | undefined) {
-  if (!value) return null;
-  return value.startsWith('data:image/') ? null : value;
 }
 
 function jsonWithShortPrivateCache(body: unknown) {
@@ -385,7 +381,7 @@ export async function GET(_request: NextRequest) {
           status: true,
           matricula: {
             select: {
-              aluno: { select: { nome: true } },
+              aluno: { select: { id: true, nome: true, foto: true } },
             },
           },
         },
@@ -415,29 +411,37 @@ export async function GET(_request: NextRequest) {
         if (diaA !== diaB) return diaA - diaB;
         return a.nome.localeCompare(b.nome, 'pt-BR');
       })
-      .map((aluno) => ({
-        id: aluno.id,
-        nome: aluno.nome,
-        foto: publicImageUrl(aluno.foto),
-        dia: aluno.dataNasc.getDate(),
-        mes: aluno.dataNasc.getMonth() + 1,
-        dataNascimento: aluno.dataNasc.toISOString(),
-      }));
+      .map((aluno) => {
+        const avatarUrl = resolveAlunoPublicAvatar(aluno);
+        return {
+          id: aluno.id,
+          nome: aluno.nome,
+          foto: avatarUrl,
+          avatarUrl,
+          dia: aluno.dataNasc.getDate(),
+          mes: aluno.dataNasc.getMonth() + 1,
+          dataNascimento: aluno.dataNasc.toISOString(),
+        };
+      });
 
     const aniversariantesDoMesAtivos = aniversariantesDoMes.filter(
       (a) => a.mes === now.getMonth() + 1,
     ).length;
 
-    const aulasExperimentais = aulasExperimentaisData.map((aula) => ({
-      id: aula.id,
-      alunoId: aula.alunoId,
-      alunoNome: aula.aluno.nome,
-      alunoFoto: publicImageUrl(aula.aluno.foto),
-      status: aula.status,
-      turmaNome: aula.calendarEvent.turma?.nome ?? aula.calendarEvent.titulo,
-      startAt: aula.calendarEvent.startAt.toISOString(),
-      endAt: aula.calendarEvent.endAt.toISOString(),
-    }));
+    const aulasExperimentais = aulasExperimentaisData.map((aula) => {
+      const avatarUrl = resolveAlunoPublicAvatar({ id: aula.alunoId, foto: aula.aluno.foto });
+      return {
+        id: aula.id,
+        alunoId: aula.alunoId,
+        alunoNome: aula.aluno.nome,
+        alunoFoto: avatarUrl,
+        alunoAvatarUrl: avatarUrl,
+        status: aula.status,
+        turmaNome: aula.calendarEvent.turma?.nome ?? aula.calendarEvent.titulo,
+        startAt: aula.calendarEvent.startAt.toISOString(),
+        endAt: aula.calendarEvent.endAt.toISOString(),
+      };
+    });
 
     const receitaMes = toNumber(receitaMesAggregate._sum.valorPago);
     const taxaMatriculaRecebidaAno = taxasMatriculaRecebidasAno.reduce((sum, cobranca) => {
@@ -465,20 +469,30 @@ export async function GET(_request: NextRequest) {
       )).length,
     );
 
-    const ultimasCobrancas = ultimasCobrancasData.map((cobranca) => ({
-      id: cobranca.id,
-      aluno: cobranca.matricula.aluno.nome,
-      valor: Number(cobranca.valor),
-      vencimento: cobranca.vencimento.toISOString(),
-      status: cobranca.status,
-    }));
+    const ultimasCobrancas = ultimasCobrancasData.map((cobranca) => {
+      const aluno = cobranca.matricula.aluno;
+      const avatarUrl = resolveAlunoPublicAvatar(aluno);
+      return {
+        id: cobranca.id,
+        alunoId: aluno.id,
+        aluno: aluno.nome,
+        alunoAvatarUrl: avatarUrl,
+        valor: Number(cobranca.valor),
+        vencimento: cobranca.vencimento.toISOString(),
+        status: cobranca.status,
+      };
+    });
 
-    const alunosRecentes = alunosRecentesData.map((aluno) => ({
-      id: aluno.id,
-      nome: aluno.nome,
-      foto: publicImageUrl(aluno.foto),
-      tipo: 'Novo cadastro',
-    }));
+    const alunosRecentes = alunosRecentesData.map((aluno) => {
+      const avatarUrl = resolveAlunoPublicAvatar(aluno);
+      return {
+        id: aluno.id,
+        nome: aluno.nome,
+        foto: avatarUrl,
+        avatarUrl,
+        tipo: 'Novo cadastro',
+      };
+    });
 
     const metrics = {
       totalAlunos,

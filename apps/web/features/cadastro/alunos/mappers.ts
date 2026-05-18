@@ -4,6 +4,7 @@ import {
   alunoListItemDTOSchema,
   listAlunosForResponsavelItemDTOSchema,
 } from './dtos';
+import { withResolvedAvatarFields } from '@/lib/media/avatar-url';
 
 function toIsoString(value: Date | string | null | undefined) {
   if (!value) return null;
@@ -13,8 +14,16 @@ function toIsoString(value: Date | string | null | undefined) {
 }
 
 export function mapAlunoListItemToDTO(record: Record<string, unknown>) {
+  const id = String(record.id);
+  const resolved = withResolvedAvatarFields('aluno', {
+    id,
+    foto: (record.foto as string | null | undefined) ?? null,
+    updatedAt: record.updatedAt as Date | string | undefined,
+  });
+
   return alunoListItemDTOSchema.parse({
     ...record,
+    ...resolved,
     dataConsentimentoImagem: toIsoString(
       record.dataConsentimentoImagem as Date | string | undefined,
     ),
@@ -27,7 +36,17 @@ export function mapAlunoListItemToDTO(record: Record<string, unknown>) {
 }
 
 export function mapAlunoDetailToDTO(record: Record<string, unknown>) {
-  return alunoDetailDTOSchema.parse(record);
+  const id = String(record.id);
+  const resolved = withResolvedAvatarFields('aluno', {
+    id,
+    foto: (record.foto as string | null | undefined) ?? null,
+    updatedAt: record.updatedAt as Date | string | undefined,
+  });
+
+  return alunoDetailDTOSchema.parse({
+    ...record,
+    ...resolved,
+  });
 }
 
 export function mapAlunoForResponsavelToDTO(record: Record<string, unknown>) {

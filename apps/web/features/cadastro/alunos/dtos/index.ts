@@ -16,6 +16,7 @@ export const alunoListItemDTOSchema = z.object({
   telefone: z.string().nullable().optional(),
   status: z.string(),
   foto: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   cpf: z.string().nullable().optional(),
   consentimentoImagem: z.boolean().nullable().optional(),
   dataConsentimentoImagem: dateLikeDTOSchema.nullable().optional(),
@@ -65,6 +66,7 @@ export const alunoDetailDTOSchema = z
     email: z.string().nullable().optional(),
     telefone: z.string().nullable().optional(),
     foto: z.string().nullable().optional(),
+    avatarUrl: z.string().nullable().optional(),
     status: z.string().optional(),
     responsavel: alunoResponsavelResumoDTOSchema.nullable().optional(),
   })

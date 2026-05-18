@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { cachedDashboardBlock, publicImageUrl, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
@@ -38,16 +38,20 @@ export async function GET() {
     return {
       success: true,
       data: {
-        aulasExperimentais: rows.map((aula) => ({
-          id: aula.id,
-          alunoId: aula.alunoId,
-          alunoNome: aula.aluno.nome,
-          alunoFoto: publicImageUrl(aula.aluno.foto),
-          status: aula.status,
-          turmaNome: aula.calendarEvent.turma?.nome ?? aula.calendarEvent.titulo,
-          startAt: aula.calendarEvent.startAt.toISOString(),
-          endAt: aula.calendarEvent.endAt.toISOString(),
-        })),
+        aulasExperimentais: rows.map((aula) => {
+          const avatarUrl = resolveAlunoPublicAvatar({ id: aula.alunoId, foto: aula.aluno.foto });
+          return {
+            id: aula.id,
+            alunoId: aula.alunoId,
+            alunoNome: aula.aluno.nome,
+            alunoFoto: avatarUrl,
+            alunoAvatarUrl: avatarUrl,
+            status: aula.status,
+            turmaNome: aula.calendarEvent.turma?.nome ?? aula.calendarEvent.titulo,
+            startAt: aula.calendarEvent.startAt.toISOString(),
+            endAt: aula.calendarEvent.endAt.toISOString(),
+          };
+        }),
       },
     };
   });

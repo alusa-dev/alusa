@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { cachedDashboardBlock, publicImageUrl, requireDashboardBlockContaId } from '../_blocks';
+import { cachedDashboardBlock, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
@@ -16,7 +16,7 @@ export async function GET() {
           valor: true,
           vencimento: true,
           status: true,
-          matricula: { select: { aluno: { select: { nome: true } } } },
+          matricula: { select: { aluno: { select: { id: true, nome: true, foto: true } } } },
         },
       }),
       prisma.aluno.findMany({
@@ -30,19 +30,29 @@ export async function GET() {
     return {
       success: true,
       data: {
-        ultimasCobrancas: ultimasCobrancasData.map((cobranca) => ({
-          id: cobranca.id,
-          aluno: cobranca.matricula.aluno.nome,
-          valor: Number(cobranca.valor),
-          vencimento: cobranca.vencimento.toISOString(),
-          status: cobranca.status,
-        })),
-        alunosRecentes: alunosRecentesData.map((aluno) => ({
-          id: aluno.id,
-          nome: aluno.nome,
-          foto: publicImageUrl(aluno.foto),
-          tipo: 'Novo cadastro',
-        })),
+        ultimasCobrancas: ultimasCobrancasData.map((cobranca) => {
+          const aluno = cobranca.matricula.aluno;
+          const avatarUrl = resolveAlunoPublicAvatar(aluno);
+          return {
+            id: cobranca.id,
+            alunoId: aluno.id,
+            aluno: aluno.nome,
+            alunoAvatarUrl: avatarUrl,
+            valor: Number(cobranca.valor),
+            vencimento: cobranca.vencimento.toISOString(),
+            status: cobranca.status,
+          };
+        }),
+        alunosRecentes: alunosRecentesData.map((aluno) => {
+          const avatarUrl = resolveAlunoPublicAvatar(aluno);
+          return {
+            id: aluno.id,
+            nome: aluno.nome,
+            foto: avatarUrl,
+            avatarUrl,
+            tipo: 'Novo cadastro',
+          };
+        }),
       },
     };
   });

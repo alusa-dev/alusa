@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 // (Busca agora controlada pelo EntityFiltersBar; Input removido)
 // Removido select custom inline (usaremos EntityFiltersBar)
 import { Badge } from '@/components/ui/badge';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { PersonAvatar } from '@/components/shared/PersonAvatar';
 // Skeleton manual substituído pelos skeletons do DataTable
 import { Plus } from '@/components/icons/icons';
 // Dropdown de ordenação substituído pelo EntityFiltersBar
@@ -22,7 +22,7 @@ import EntityFiltersBar, {
   type SortOrder as SortOrderEF,
 } from '@/components/layout/EntityFiltersBar';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
-import { formatFirstLast, formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
+import { formatFirstLast, maskCpf, maskPhone } from '@alusa/lib/client';
 import { useDeleteDialog } from '@/hooks/use-delete-dialog';
 import { useEditDialog } from '@/hooks/use-edit-dialog';
 import useCurrentUser from '@/hooks/use-current-user';
@@ -284,15 +284,14 @@ function AlunosTable({
         </div>
       ),
       render: (aluno) => {
-        const initials = formatInitials(aluno.nome ?? '');
         return (
           <div className="flex min-w-0 items-center gap-2 lg:gap-3">
-            <Avatar className="h-9 w-9 shrink-0 lg:h-10 lg:w-10">
-              {aluno.foto ? <AvatarImage src={aluno.foto} alt={aluno.nome ?? ''} /> : null}
-              <AvatarFallback className="bg-purple-100 font-medium text-purple-700">
-                {initials}
-              </AvatarFallback>
-            </Avatar>
+            <PersonAvatar
+              name={aluno.nome ?? ''}
+              src={aluno.avatarUrl ?? aluno.foto}
+              size="md"
+              className="h-9 w-9 lg:h-10 lg:w-10"
+            />
             <div className="min-w-0 flex-1">
               <div
                 className="truncate text-[13px] font-normal text-gray-900"

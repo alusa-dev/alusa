@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import type { DashboardAniversarianteDTO } from '@/features/dashboard/dtos';
+import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { cn } from '@/lib/cn';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from './utils';
 
@@ -35,13 +36,6 @@ const MONTH_NAMES = [
 type AniversariantesMesCardProps = {
   aniversariantes: DashboardAniversarianteDTO[];
 };
-
-function getInitials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return 'AL';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-}
 
 function startOfMonth(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -127,13 +121,12 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
             ) : (
               visibleStudents.map((student) => (
                 <div key={student.id} className="flex items-center gap-2.5">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f4ecfd] text-[11px] font-semibold text-[#383242] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)]">
-                    {student.foto ? (
-                      <img src={student.foto} alt={student.nome} className="h-full w-full object-cover" />
-                    ) : (
-                      <span>{getInitials(student.nome)}</span>
-                    )}
-                  </div>
+                  <PersonAvatar
+                    name={student.nome}
+                    src={student.avatarUrl ?? student.foto}
+                    size="sm"
+                    fallbackClassName="bg-[#f4ecfd] text-[#383242] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)]"
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{student.nome}</p>
                   </div>
@@ -244,13 +237,12 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
                         className="alusa-dialog-list-row-slot flex items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] max-md:flex-col max-md:items-stretch max-md:gap-2 alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-none"
                       >
                         <div className="flex min-w-0 flex-1 items-start gap-3 md:items-center">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#f4ecfd] text-xs font-semibold text-[#4c1d95] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]">
-                            {student.foto ? (
-                              <img src={student.foto} alt={student.nome} className="h-full w-full object-cover" />
-                            ) : (
-                              <span>{getInitials(student.nome)}</span>
-                            )}
-                          </div>
+                          <PersonAvatar
+                            name={student.nome}
+                            src={student.avatarUrl ?? student.foto}
+                            size="md"
+                            fallbackClassName="bg-[#f4ecfd] text-[#4c1d95] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]"
+                          />
 
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{student.nome}</p>

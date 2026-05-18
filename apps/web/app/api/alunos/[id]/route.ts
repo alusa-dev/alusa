@@ -24,6 +24,7 @@ import {
   mapAlunoDeleteResultToDTO,
   mapAlunoDetailToDTO,
 } from '@/features/cadastro/alunos/mappers';
+import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -189,7 +190,25 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
     const body = await req.json();
     const parsed = updateAlunoInputDTOSchema.parse({ ...body, id: params.id });
-    const aluno = await updateAluno({ ...parsed, contaId });
+
+    const existing = await prisma.aluno.findFirst({
+      where: { id: params.id, contaId },
+      select: { foto: true },
+    });
+
+    const normalizedFoto = await normalizeAvatarUpload({
+      entity: 'aluno',
+      entityId: params.id,
+      contaId,
+      foto: parsed.foto,
+      previousFoto: existing?.foto,
+    });
+
+    const aluno = await updateAluno({
+      ...parsed,
+      contaId,
+      ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}),
+    });
     return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)));
   } catch (e: unknown) {
     const err = e as Partial<{
