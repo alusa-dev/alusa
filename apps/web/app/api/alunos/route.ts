@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { prisma } from '@/lib/prisma';
+import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
 import {
   createAlunoInputDTOSchema,
@@ -19,52 +19,46 @@ export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
-    // MULTI-TENANT: validar sessão e usar contaId da sessão
-    const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
-    if (!contaId) {
-      return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
-    }
-
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
 
-    const alunos = await prisma.aluno.findMany({
-      where: {
-        contaId,
-        ...(q
-          ? {
-              OR: [
-                { nome: { contains: q, mode: 'insensitive' as const } },
-                ...(q.replace(/\D/g, '')
-                  ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
-                  : []),
-              ],
-            }
-          : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-      select: {
-        id: true,
-        nome: true,
-        email: true,
-        telefone: true,
-        status: true,
-        foto: true,
-        updatedAt: true,
-        cpf: true,
-        consentimentoImagem: true,
-        dataConsentimentoImagem: true,
-        isentoTaxaMatricula: true,
-        bolsaDescontoPercent: true,
-        tags: true,
-        dataInativacao: true,
-        motivoInativacao: true,
-      },
-    });
+    const result = await withTenantSession(async ({ contaId, tx }) => {
+      const alunos = await tx.aluno.findMany({
+        where: {
+          contaId,
+          ...(q
+            ? {
+                OR: [
+                  { nome: { contains: q, mode: 'insensitive' as const } },
+                  ...(q.replace(/\D/g, '')
+                    ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
+                    : []),
+                ],
+              }
+            : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          nome: true,
+          email: true,
+          telefone: true,
+          status: true,
+          foto: true,
+          updatedAt: true,
+          cpf: true,
+          consentimentoImagem: true,
+          dataConsentimentoImagem: true,
+          isentoTaxaMatricula: true,
+          bolsaDescontoPercent: true,
+          tags: true,
+          dataInativacao: true,
+          motivoInativacao: true,
+        },
+      });
 
-    const items = alunos.map((aluno) => {
+      return alunos.map((aluno) => {
         const bolsaRaw = aluno.bolsaDescontoPercent;
         const bolsaDescontoPercent =
           bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
@@ -87,9 +81,15 @@ export async function GET(request: NextRequest) {
           tags: Array.isArray(aluno.tags) ? aluno.tags : null,
         };
       });
+    });
+
+    if (result instanceof NextResponse) {
+      return result;
+    }
+
     return NextResponse.json(
       listAlunosResultDTOSchema.parse({
-        items: items.map((item) => mapAlunoListItemToDTO(item)),
+        items: result.map((item) => mapAlunoListItemToDTO(item)),
       }),
       {
         headers: {

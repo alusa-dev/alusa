@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
+
 import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
+import { isPublicApiPath } from '@/lib/middleware/public-api-paths';
+
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
@@ -84,13 +87,27 @@ function shouldValidateApiOrigin(pathname: string, method: string): boolean {
   return !originCheckExemptApiPrefixes.some((prefix) => pathname.startsWith(prefix));
 }
 
-/** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
-export default async function middleware(req: NextRequest) {
-  if (isTest) {
-    // Em testes E2E, não forçar login
-    return NextResponse.next();
+function logMiddlewareRedirect(pathname: string, reason: string, status: number) {
+  if (process.env.NODE_ENV === 'production' && process.env.PERF_LOGS !== 'true') {
+    return;
   }
 
+  console.info('[middleware:redirect]', { pathname, reason, status });
+}
+
+function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
+  const signInUrl = new URL('/auth/login', req.nextUrl.origin);
+  signInUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
+
+  for (const [key, value] of Object.entries(params)) {
+    signInUrl.searchParams.set(key, value);
+  }
+
+  logMiddlewareRedirect(req.nextUrl.pathname, 'unauthenticated_page', 307);
+  return NextResponse.redirect(signInUrl);
+}
+
+function handleApiRequest(req: NextRequest): NextResponse | null {
   const pathname = req.nextUrl.pathname;
 
   if (shouldValidateApiOrigin(pathname, req.method)) {
@@ -104,46 +121,33 @@ export default async function middleware(req: NextRequest) {
     }
   }
 
-  if (pathname === '/developer' || pathname.startsWith('/developer/')) {
-    if (pathname === '/developer/login') {
-      return NextResponse.next();
-    }
-
-    if (
-      legacyDeveloperPaths.some(
-        (legacyPath) => pathname === legacyPath || pathname.startsWith(`${legacyPath}/`),
-      )
-    ) {
-      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
-    }
-
+  if (isPublicApiPath(pathname)) {
     return NextResponse.next();
   }
 
+  return null;
+}
+
+async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
+  const pathname = req.nextUrl.pathname;
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+
   if (!token) {
-    const url = req.nextUrl.clone();
-    const signInUrl = new URL('/auth/login', url.origin);
-    signInUrl.searchParams.set('expired', 'true');
-    // Preservar a rota original (inclui querystring), para retornar após login.
-    signInUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
-    return NextResponse.redirect(signInUrl);
+    return redirectToSignIn(req, { expired: 'true' });
   }
 
   const accessState = await verifyAccountAccess(req);
   if (accessState.blocked) {
-    const signInUrl = new URL('/auth/login', req.nextUrl.origin);
-    signInUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
-
+    const params: Record<string, string> = {};
     if (accessState.reason === 'ACCOUNT_DEACTIVATED') {
-      signInUrl.searchParams.set('account', 'deactivated');
+      params.account = 'deactivated';
     } else if (accessState.reason === 'USER_INACTIVE') {
-      signInUrl.searchParams.set('account', 'inactive-user');
+      params.account = 'inactive-user';
     } else {
-      signInUrl.searchParams.set('expired', 'true');
+      params.expired = 'true';
     }
 
-    const response = NextResponse.redirect(signInUrl);
+    const response = redirectToSignIn(req, params);
     clearAuthSessionCookies(response);
     return response;
   }
@@ -153,10 +157,10 @@ export default async function middleware(req: NextRequest) {
   if (!isEmailVerified) {
     const confirmEmailUrl = new URL('/auth/confirm-email', req.nextUrl.origin);
     confirmEmailUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
+    logMiddlewareRedirect(pathname, 'email_unverified', 307);
     return NextResponse.redirect(confirmEmailUrl);
   }
 
-  // Rotas do onboarding financeiro: não redirecionar para evitar loop
   const financeIntegrationMode = (token as { financeIntegrationMode?: string } | null)
     ?.financeIntegrationMode;
   const isExternalFinanceMode = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
@@ -168,13 +172,13 @@ export default async function middleware(req: NextRequest) {
 
   if (isOnboardingPath) {
     if (!isExternalFinanceMode && isExternalOnboardingPath) {
+      logMiddlewareRedirect(pathname, 'external_onboarding_mismatch', 307);
       return NextResponse.redirect(new URL('/finance/wizard', req.nextUrl.origin));
     }
 
     return NextResponse.next();
   }
 
-  // Apenas verificar onboarding para ADMIN
   const userRole = (token as { role?: string } | null)?.role;
   const isAdmin = typeof userRole === 'string' && userRole.toUpperCase() === 'ADMIN';
 
@@ -184,6 +188,7 @@ export default async function middleware(req: NextRequest) {
 
   if (isExternalFinanceMode) {
     if (isWhitelabelTreasuryPath(pathname)) {
+      logMiddlewareRedirect(pathname, 'external_finance_treasury_block', 307);
       return NextResponse.redirect(new URL('/dashboard', req.nextUrl.origin));
     }
 
@@ -207,6 +212,7 @@ export default async function middleware(req: NextRequest) {
       const step = typeof wizard?.step === 'number' ? wizard.step : null;
       const isCompleted = Boolean(wizard?.completedAt) || step === 6;
       if (!isCompleted) {
+        logMiddlewareRedirect(pathname, 'finance_wizard_incomplete', 307);
         return NextResponse.redirect(new URL('/finance/wizard', req.nextUrl.origin));
       }
     }
@@ -215,6 +221,42 @@ export default async function middleware(req: NextRequest) {
   }
 
   return NextResponse.next();
+}
+
+/** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
+export default async function middleware(req: NextRequest) {
+  if (isTest) {
+    return NextResponse.next();
+  }
+
+  const pathname = req.nextUrl.pathname;
+
+  if (pathname.startsWith('/api/')) {
+    const apiResponse = handleApiRequest(req);
+    if (apiResponse) {
+      return apiResponse;
+    }
+
+    return NextResponse.next();
+  }
+
+  if (pathname === '/developer' || pathname.startsWith('/developer/')) {
+    if (pathname === '/developer/login') {
+      return NextResponse.next();
+    }
+
+    if (
+      legacyDeveloperPaths.some(
+        (legacyPath) => pathname === legacyPath || pathname.startsWith(`${legacyPath}/`),
+      )
+    ) {
+      return NextResponse.redirect(new URL('/developer', req.nextUrl.origin));
+    }
+
+    return NextResponse.next();
+  }
+
+  return handleProtectedPage(req);
 }
 
 export const config = {

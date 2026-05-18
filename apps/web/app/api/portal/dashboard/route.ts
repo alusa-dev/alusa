@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { requirePortalUser, resolvePortalScopedAlunoIds } from '@/features/portal/api-helpers';
 import {
   portalDashboardQueryDTOSchema,
@@ -35,33 +35,35 @@ export async function GET(req: NextRequest) {
         return { matriculas: [], cobrancas: [], standaloneCharges: [] };
       }
 
-      const [matriculas, cobrancas, standaloneCharges] = await Promise.all([
-        prisma.matricula.findMany({
-          where: {
-            alunoId: { in: alunoIds },
-            status: 'ATIVA',
-          },
-          select: { id: true },
-        }),
-        prisma.cobranca.findMany({
-          where: {
-            matricula: {
+      return runWithTenant(portalUser.contaId, async (tx) => {
+        const [matriculas, cobrancas, standaloneCharges] = await Promise.all([
+          tx.matricula.findMany({
+            where: {
               alunoId: { in: alunoIds },
+              status: 'ATIVA',
             },
-          },
-          select: {
-            id: true,
-            status: true,
-            valor: true,
-            vencimento: true,
-            asaasPaymentId: true,
-            asaasStatus: true,
-          },
-        }),
-        listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds }),
-      ]);
+            select: { id: true },
+          }),
+          tx.cobranca.findMany({
+            where: {
+              matricula: {
+                alunoId: { in: alunoIds },
+              },
+            },
+            select: {
+              id: true,
+              status: true,
+              valor: true,
+              vencimento: true,
+              asaasPaymentId: true,
+              asaasStatus: true,
+            },
+          }),
+          listPortalStandaloneCharges({ contaId: portalUser.contaId, alunoIds }),
+        ]);
 
-      return { matriculas, cobrancas, standaloneCharges };
+        return { matriculas, cobrancas, standaloneCharges };
+      });
     }
 
     let { matriculas, cobrancas, standaloneCharges } = await loadDashboardData();

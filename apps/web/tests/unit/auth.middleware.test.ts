@@ -73,6 +73,43 @@ describe('auth middleware', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('não redireciona POST /api/auth/login/validate sem sessão', async () => {
+    const response = await middleware(
+      new NextRequest('http://localhost:3000/api/auth/login/validate', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://localhost:3000',
+          referer: 'http://localhost:3000/auth/login',
+        },
+      }),
+    );
+
+    expect(response.status).not.toBe(307);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('permite webhooks sem sessão', async () => {
+    const response = await middleware(
+      new NextRequest('http://localhost:3000/api/webhooks/asaas', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    expect(response.status).not.toBe(307);
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('redireciona páginas protegidas sem sessão para login', async () => {
+    getTokenMock.mockResolvedValueOnce(null);
+
+    const response = await middleware(new NextRequest('http://localhost:3000/dashboard'));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/auth/login');
+  });
+
   it('permite dashboard para conta externa pendente e deixa a coleta da API key para o modal persistente', async () => {
     getTokenMock.mockResolvedValueOnce({
       id: 'user_1',
