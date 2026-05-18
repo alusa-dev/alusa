@@ -67,6 +67,13 @@ export const userProfileWithSchoolDTOSchema = userProfileDTOSchema.extend({
 
 export type UserProfileWithSchoolDTO = z.infer<typeof userProfileWithSchoolDTOSchema>;
 
+export const welcomeWizardStatusDTOSchema = z.object({
+  shouldShow: z.boolean(),
+  seenAt: dateLikeDTOSchema.nullable(),
+});
+
+export type WelcomeWizardStatusDTO = z.infer<typeof welcomeWizardStatusDTOSchema>;
+
 export const updateCurrentProfileInputDTOSchema = z
   .object({
     name: z.string().trim().min(2, 'Nome muito curto').max(120, 'Nome muito longo').optional(),

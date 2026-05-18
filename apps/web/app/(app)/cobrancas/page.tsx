@@ -99,6 +99,7 @@ export default function CobrancasTodasPage() {
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(12);
+  const [totalItems, setTotalItems] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [tipoFilter, setTipoFilter] = useState<string>('TODOS');
   const searchParams = useSearchParams();
@@ -128,9 +129,17 @@ export default function CobrancasTodasPage() {
       // "open" → fila operacional (PENDING/OVERDUE, vencimento ≤ fim do mês)
       // "paid"/"all" → rota legada que aceita statusView
       const isOperational = statusView === 'open';
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const trimmedSearch = searchQuery.trim();
+      if (trimmedSearch) params.set('q', trimmedSearch);
+      if (tipoFilter !== 'TODOS') params.append('tipo', tipoFilter);
+
       const url = isOperational
-        ? `/api/finance/charges/operational?page=1&pageSize=50`
-        : `/api/financeiro/cobrancas?statusView=${statusView}`;
+        ? `/api/finance/charges/operational?${params.toString()}`
+        : `/api/financeiro/cobrancas?statusView=${statusView}&${params.toString()}`;
 
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) {
@@ -145,10 +154,12 @@ export default function CobrancasTodasPage() {
           variant: 'error',
         });
         setCobrancas([]);
+        setTotalItems(0);
         return;
       }
       const payload = await res.json().catch(() => null);
       const raw: unknown[] = (payload && payload.data) || payload || [];
+      setTotalItems(typeof payload?.total === 'number' ? payload.total : raw.length);
 
       // Normaliza o shape conforme a origem
       const normalized: Cobranca[] = (raw as Record<string, unknown>[]).map((item) => {
@@ -203,14 +214,19 @@ export default function CobrancasTodasPage() {
       const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setCobrancas([]);
+      setTotalItems(0);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [statusView]);
+  }, [page, pageSize, searchQuery, statusView, tipoFilter]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusView, tipoFilter]);
 
   useLiveRefresh(
     () => load(true),
@@ -233,15 +249,6 @@ export default function CobrancasTodasPage() {
 
   const orderedCobrancas = useMemo(() => {
     let items = [...cobrancas];
-    if (tipoFilter && tipoFilter !== 'TODOS') items = items.filter((c) => c.tipo === tipoFilter);
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      items = items.filter((c) => {
-        const name = (c.payerName ?? '').toLowerCase();
-        const description = (c.description ?? '').toLowerCase();
-        return name.includes(q) || description.includes(q) || c.id.toLowerCase().includes(q);
-      });
-    }
     items.sort((a, b) => {
       const ta = new Date(a.vencimento ?? '').getTime() || 0;
       const tb = new Date(b.vencimento ?? '').getTime() || 0;
@@ -249,7 +256,7 @@ export default function CobrancasTodasPage() {
     });
     if (sortOrder === 'DESC') items.reverse();
     return items;
-  }, [cobrancas, tipoFilter, searchQuery, sortOrder]);
+  }, [cobrancas, sortOrder]);
 
   const statusMap: Record<string, StatusType> = {
     // UnifiedChargeStatus (rota operacional)
@@ -342,7 +349,7 @@ export default function CobrancasTodasPage() {
         <>
           {orderedCobrancas.length > 0 ? (
             <Pagination
-              totalItems={orderedCobrancas.length}
+              totalItems={totalItems}
               pageSize={pageSize}
               page={page}
               onChange={setPage}
@@ -406,7 +413,7 @@ export default function CobrancasTodasPage() {
               {orderedCobrancas.length === 0 ? (
                 <div className="px-6 py-12 text-center text-gray-500">Nenhuma cobrança encontrada</div>
               ) : (
-                orderedCobrancas.slice((page - 1) * pageSize, page * pageSize).map((cobranca) => {
+                orderedCobrancas.map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
                   const mappedStatus = (statusMap[cobranca.status ?? 'PENDING'] ?? 'PENDING') as StatusType;

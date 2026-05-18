@@ -786,6 +786,7 @@ model Usuario {
   notifyEmailMarketing Boolean   @default(false)
   notifyWhatsapp       Boolean   @default(true)
   notifySms            Boolean   @default(false)
+  welcomeWizardSeenAt  DateTime?
   senhaHash            String
   emailVerifiedAt      DateTime?
   role                 Role      @default(RESPONSAVEL)

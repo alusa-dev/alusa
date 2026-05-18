@@ -208,6 +208,11 @@ async function assertKycApprovedOrThrow(contaId: string): Promise<void> {
   throw new Error('Falha ao validar KYC');
 }
 
+async function ensureFinancialMutationOperational(contaId: string): Promise<void> {
+  await assertKycApprovedOrThrow(contaId);
+  await ensureWebhookConfigOperational(contaId);
+}
+
 export async function getPayment(
   paymentId: string,
   opts: { contaId: string },
@@ -288,6 +293,7 @@ export async function reenviarCobranca(input: {
   tipo: AsaasNotificationType;
   contaId: string;
 }): Promise<{ success: boolean; message: string }> {
+  await ensureFinancialMutationOperational(input.contaId);
   const { apiKey } = await getCredentialsOrThrow(input.contaId);
   const result = await asaasNotifyPayment({ apiKey, paymentId: input.paymentId, tipo: input.tipo });
 
@@ -490,7 +496,7 @@ export async function undoCashPayment(
   paymentId: string,
   opts: { contaId: string },
 ): Promise<AsaasPayment> {
-  await assertKycApprovedOrThrow(opts.contaId);
+  await ensureFinancialMutationOperational(opts.contaId);
   const { apiKey } = await getCredentialsOrThrow(opts.contaId);
   const response = await asaasUndoReceivedInCash({ apiKey, paymentId });
   invalidateReadCache([paymentCachePrefix(opts.contaId, paymentId)]);
@@ -519,7 +525,7 @@ export async function reativarAssinatura(input: {
   externalReference?: string;
   contaId: string;
 }): Promise<{ success: boolean; message: string; data?: { id: string } }> {
-  await assertKycApprovedOrThrow(input.contaId);
+  await ensureFinancialMutationOperational(input.contaId);
   const { apiKey } = await getCredentialsOrThrow(input.contaId);
   const billingTypeSentToAsaas: BillingType = input.billingType;
   const safeIdempotencyKey = input.externalReference

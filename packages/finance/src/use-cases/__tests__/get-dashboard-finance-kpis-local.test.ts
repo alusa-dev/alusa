@@ -46,8 +46,13 @@ describe('getDashboardFinanceKpisLocal', () => {
     });
   });
 
-  it('usa snapshot financeiro quando FIN_SUMMARY_READMODEL_ENABLED=true', async () => {
+  it('mantém fila operacional como fonte principal mesmo quando read model está habilitado', async () => {
     process.env.FIN_SUMMARY_READMODEL_ENABLED = 'true';
+    process.env.FIN_SUMMARY_SHADOW_COMPARE = 'true';
+    getOperationalChargesSummaryMock.mockResolvedValue({
+      valorBruto: 485,
+      total: 5,
+    });
     getFinanceSummaryReadModelMock.mockResolvedValue({
       pendingAmountCurrentWindow: 300,
       pendingCountCurrentWindow: 3,
@@ -59,13 +64,16 @@ describe('getDashboardFinanceKpisLocal', () => {
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
 
-    expect(getOperationalChargesSummaryMock).not.toHaveBeenCalled();
+    expect(getOperationalChargesSummaryMock).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      now: new Date('2026-05-10T12:00:00.000Z'),
+    });
     expect(result.aguardandoPagamentoProximos30Dias).toMatchObject({
-      valorBruto: 300,
-      quantidadeDeCobrancas: 3,
-      origemDados: 'charge_read_model',
-      escopo: 'unified',
-      projectedAt: '2026-05-10T12:00:00.000Z',
+      valorBruto: 485,
+      quantidadeDeCobrancas: 5,
+      origemDados: 'operational_queue',
+      escopo: 'operational_queue',
+      projectedAt: null,
     });
   });
 });

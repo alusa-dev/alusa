@@ -20,6 +20,7 @@ export type ListOperationalChargesInput = {
   page?: number;
   pageSize?: number;
   search?: string;
+  tipoFilter?: string[];
   /** "Agora" para testes (injeção de data). Default = new Date() */
   now?: Date;
 };
@@ -128,39 +129,18 @@ function getAsaasErrorStatus(error: unknown): number | null {
 }
 
 const STANDALONE_REMOTE_RECONCILE_WINDOW_MS = 5 * 60_000;
-const RECENT_GENERATION_WINDOW_DAYS = 10;
-
-function getRecentGenerationThreshold(now: Date): Date {
-  const threshold = new Date(now);
-  threshold.setDate(threshold.getDate() - RECENT_GENERATION_WINDOW_DAYS);
-  return threshold;
-}
-
-function getEndOfNextMonth(now: Date): Date {
-  return new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
-}
-
-function isRecentlyGenerated(createdAt: Date | null | undefined, now: Date): boolean {
-  if (!createdAt) return false;
-  return createdAt.getTime() >= getRecentGenerationThreshold(now).getTime();
-}
-
 function shouldExposeInOperationalQueue(params: {
   status: 'PENDING' | 'OVERDUE' | 'PAID' | 'PROCESSING' | 'CANCELED' | 'REFUNDED';
   dueDate: Date | null;
-  createdAt: Date | null;
   isInstallment: boolean;
   now: Date;
 }): boolean {
-  if (!['PENDING', 'OVERDUE'].includes(params.status)) return false;
+  if (!['PENDING', 'OVERDUE', 'PROCESSING'].includes(params.status)) return false;
   if (!params.dueDate) return true;
 
   const endOfMonth = getEndOfCurrentMonth(params.now);
   if (params.dueDate <= endOfMonth) return true;
-  if (params.isInstallment) return false;
-  if (!isRecentlyGenerated(params.createdAt, params.now)) return false;
-
-  return params.dueDate <= getEndOfNextMonth(params.now);
+  return false;
 }
 
 function compareOperationalItems(a: Pick<UnifiedChargeItem, 'status' | 'dueDate'>, b: Pick<UnifiedChargeItem, 'status' | 'dueDate'>): number {
@@ -212,10 +192,9 @@ async function buildOperationalChargesCollection(
   db?: typeof prisma,
 ): Promise<UnifiedChargeItem[]> {
   const _db = db ?? prisma;
-  const { contaId, search } = input;
+  const { contaId, search, tipoFilter } = input;
   const now = input.now ?? new Date();
   const endOfMonth = getEndOfCurrentMonth(now);
-  const recentGenerationThreshold = getRecentGenerationThreshold(now);
 
   // =================================================================
   // 1. Cobranças acadêmicas operacionais
@@ -223,16 +202,18 @@ async function buildOperationalChargesCollection(
   const academicWhere: Record<string, unknown> = {
     AND: [
       { matricula: { aluno: { contaId } } },
-      { status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] } },
+      { status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] } },
       {
         OR: [
           { vencimento: { lte: endOfMonth } },
-          { tipo: 'MENSALIDADE' },
-          { createdAt: { gte: recentGenerationThreshold } },
         ],
       },
     ],
   };
+
+  if (tipoFilter?.length) {
+    (academicWhere.AND as unknown[]).push({ tipo: { in: tipoFilter } });
+  }
 
   if (search) {
     const searchCondition = {
@@ -251,7 +232,7 @@ async function buildOperationalChargesCollection(
     AND: [
       { contaId },
       { cobrancaId: null },
-      { status: { in: ['CREATED', 'OPEN', 'OVERDUE', 'PAID'] } },
+      { status: { in: ['CREATED', 'OPEN', 'OVERDUE', 'PAID', 'PENDING_SYNC'] } },
       {
         NOT: [
           { externalReference: { contains: ':needs-review:' } },
@@ -262,8 +243,6 @@ async function buildOperationalChargesCollection(
         OR: [
           { dueDate: { lte: endOfMonth } },
           { dueDate: null },
-          { externalReference: { startsWith: 'alusa:standalone-subscription:' } },
-          { createdAt: { gte: recentGenerationThreshold } },
         ],
       },
     ],
@@ -425,9 +404,15 @@ async function buildOperationalChargesCollection(
       )
     : standaloneResult;
 
-  const effectiveStandaloneResult = reconciledStandaloneResult.filter((charge) =>
-    ['CREATED', 'OPEN', 'OVERDUE'].includes(charge.status),
-  );
+  const effectiveStandaloneResult = reconciledStandaloneResult.filter((charge) => {
+    if (!['CREATED', 'OPEN', 'OVERDUE', 'PENDING_SYNC'].includes(charge.status)) return false;
+    if (!tipoFilter?.length) return true;
+    const chargeType = inferStandaloneChargeType({
+      standaloneInstallmentPlanId: charge.standaloneInstallmentPlanId,
+      externalReference: charge.externalReference,
+    });
+    return tipoFilter.includes(resolveStandaloneTipo(chargeType));
+  });
 
   const standaloneAlunoIds = Array.from(
     new Set(
@@ -564,7 +549,9 @@ async function buildOperationalChargesCollection(
 
   const subscriptionGroups = new Map<string, (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[]>();
   for (const item of allItemsWithMeta) {
-    if (!item._subscriptionKey || item.status !== 'PENDING') continue;
+    if (!item._subscriptionKey || !['PENDING', 'PROCESSING'].includes(item.status)) continue;
+    const itemDueDate = item.dueDate ? new Date(item.dueDate) : null;
+    if (itemDueDate && itemDueDate > endOfMonth) continue;
     const bucket = subscriptionGroups.get(item._subscriptionKey) ?? [];
     bucket.push(item);
     subscriptionGroups.set(item._subscriptionKey, bucket);
@@ -582,7 +569,7 @@ async function buildOperationalChargesCollection(
     const itemDueDate = item.dueDate ? new Date(item.dueDate) : null;
 
     if (item._planId) {
-      if (item.status === 'PENDING' && (!itemDueDate || itemDueDate <= endOfMonth)) {
+      if (['PENDING', 'PROCESSING'].includes(item.status) && (!itemDueDate || itemDueDate <= endOfMonth)) {
         selectedIds.add(item.id);
       }
       continue;
@@ -590,10 +577,9 @@ async function buildOperationalChargesCollection(
 
     if (item._subscriptionKey) continue;
 
-    if (item.status === 'PENDING' && shouldExposeInOperationalQueue({
+    if (shouldExposeInOperationalQueue({
       status: item.status,
       dueDate: itemDueDate,
-      createdAt: item.createdAt ? new Date(item.createdAt) : null,
       isInstallment: false,
       now,
     })) {

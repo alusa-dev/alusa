@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrCreateByTenantMock = vi.fn();
 const enqueueAsaasSubaccountProvisioningMock = vi.fn();
+const processAsaasProvisioningJobsMock = vi.fn();
 const auditLogRecordMock = vi.fn();
 
 const contaFindUniqueMock = vi.fn();
@@ -42,14 +43,7 @@ vi.mock('../../../foundation/audit-log.service', () => ({
 
 vi.mock('../../../jobs/provision-asaas-subaccounts', () => ({
   enqueueAsaasSubaccountProvisioning: enqueueAsaasSubaccountProvisioningMock,
-  processAsaasProvisioningJobs: vi.fn().mockResolvedValue({
-    processed: 0,
-    succeeded: 0,
-    failed: 0,
-    recoveryRequired: 0,
-    webhookJobsQueued: 0,
-    errors: [],
-  }),
+  processAsaasProvisioningJobs: processAsaasProvisioningJobsMock,
 }));
 
 describe('completeWizard em modo externo', () => {
@@ -111,6 +105,14 @@ describe('completeWizard em modo externo', () => {
     contaUpdateMock.mockReturnValue({ kind: 'conta.update' });
     transactionMock.mockResolvedValue(undefined);
     asaasAccountFindUniqueMock.mockResolvedValue(null);
+    processAsaasProvisioningJobsMock.mockResolvedValue({
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      recoveryRequired: 0,
+      webhookJobsQueued: 0,
+      errors: [],
+    });
   });
 
   it('conclui o wizard localmente sem provisionar subconta', async () => {
@@ -231,5 +233,112 @@ describe('completeWizard em modo externo', () => {
     expect(result.success).toBe(true);
     expect(result.provisioningStatus).toBe('QUEUED');
     expect(result.wizard.step).toBe(6);
+  });
+
+  it('não conclui como sucesso quando a tentativa imediata entra em falha terminal', async () => {
+    const { completeWizard } = await import('../wizard-service');
+
+    getOrCreateByTenantMock.mockReset();
+    contaFindUniqueMock.mockReset();
+    financeProfileFindUniqueMock.mockReset();
+    financeProfileUpdateMock.mockReset();
+    contaUpdateMock.mockReset();
+    transactionMock.mockReset();
+    auditLogRecordMock.mockReset();
+    enqueueAsaasSubaccountProvisioningMock.mockReset();
+    processAsaasProvisioningJobsMock.mockReset();
+    asaasAccountFindUniqueMock.mockReset();
+
+    getOrCreateByTenantMock.mockResolvedValue({ id: 'profile_terminal' });
+    contaFindUniqueMock
+      .mockResolvedValueOnce({ financeIntegrationMode: 'WHITELABEL_BAAS' })
+      .mockResolvedValue({
+        nome: 'Escola Alusa',
+        cpfCnpj: '11144477735',
+      });
+    financeProfileFindUniqueMock
+      .mockResolvedValueOnce({
+        wizardStep: 5,
+        wizardCompletedAt: null,
+        draftPersonType: 'PF',
+        draftCpfCnpj: '11144477735',
+        draftBirthDate: '1990-01-01',
+        asaasOwnerName: 'Maria Silva',
+        asaasCompanyName: null,
+        companyType: null,
+        mobilePhone: '11999999999',
+        landlinePhone: null,
+        incomeValue: { toNumber: () => 5000 },
+        address: 'Rua Teste',
+        addressNumber: '123',
+        province: 'Centro',
+        addressCity: 'Manaus',
+        addressState: 'AM',
+        postalCode: '69000000',
+        complement: null,
+        asaasLoginEmail: null,
+      })
+      .mockResolvedValueOnce({
+        wizardStep: 5,
+        wizardCompletedAt: null,
+        draftPersonType: 'PF',
+        draftCpfCnpj: '11144477735',
+        draftBirthDate: '1990-01-01',
+        asaasOwnerName: 'Maria Silva',
+        asaasCompanyName: null,
+        companyType: null,
+        mobilePhone: '11999999999',
+        landlinePhone: null,
+        incomeValue: { toNumber: () => 5000 },
+        address: 'Rua Teste',
+        addressNumber: '123',
+        province: 'Centro',
+        addressCity: 'Manaus',
+        addressState: 'AM',
+        postalCode: '69000000',
+        complement: null,
+        asaasLoginEmail: null,
+      });
+    enqueueAsaasSubaccountProvisioningMock.mockResolvedValue({
+      financeProfileId: 'profile_terminal',
+      queued: true,
+      status: 'QUEUED',
+      asaasAccountId: null,
+    });
+    processAsaasProvisioningJobsMock.mockResolvedValue({
+      processed: 1,
+      succeeded: 0,
+      failed: 1,
+      recoveryRequired: 0,
+      webhookJobsQueued: 0,
+      errors: [{ jobId: 'job_1', contaId: 'conta_whitelabel_terminal', error: 'CPF/CNPJ inválido' }],
+    });
+    asaasAccountFindUniqueMock.mockResolvedValueOnce({
+      asaasAccountId: null,
+      status: 'PROVISIONING',
+      operationalStatus: 'NOT_READY',
+      provisionLastError: 'CPF/CNPJ inválido',
+    });
+
+    const result = await completeWizard({
+      contaId: 'conta_whitelabel_terminal',
+      actor: { type: 'USER', id: 'user_1' },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toEqual({
+      code: 'PROVISIONING_FAILED',
+      message: 'CPF/CNPJ inválido',
+    });
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(auditLogRecordMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'finance.wizard.complete_failed',
+        metadata: expect.objectContaining({
+          reason: 'PROVISIONING_FAILED',
+          provisioningFailedImmediately: true,
+        }),
+      }),
+    );
   });
 });

@@ -3,6 +3,7 @@ import "@/lib/zod-error-map";
 import { AppProviders } from "./providers";
 import React from "react";
 import Script from "next/script";
+import { Inter } from "next/font/google";
 import { cookies } from "next/headers";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
@@ -10,6 +11,12 @@ import {
   AUTH_LIGHT_THEME_PATH_PREFIXES,
   AUTH_LIGHT_THEME_ROOT_PATHS,
 } from "@/lib/auth-light-theme-paths";
+
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -45,7 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const themeInitPrefixes = JSON.stringify([...AUTH_LIGHT_THEME_PATH_PREFIXES]);
   const themeInitRoots = JSON.stringify([...AUTH_LIGHT_THEME_ROOT_PATHS]);
   return (
-    <html lang="pt-BR" className="min-h-full bg-white" data-theme={themeCookie}>
+    <html lang="pt-BR" className={`${inter.variable} min-h-full bg-white`} data-theme={themeCookie}>
       <head>
         {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar); auth/onboarding financeiro forçam claro antes do React. */}
         <Script id="theme-init" strategy="beforeInteractive">

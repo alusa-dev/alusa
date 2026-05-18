@@ -137,13 +137,11 @@ describe('listOperationalCharges', () => {
     expect(academicCall.where.AND).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO'] },
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] },
         }),
         expect.objectContaining({
           OR: expect.arrayContaining([
             { vencimento: { lte: expect.any(Date) } },
-            { tipo: 'MENSALIDADE' },
-            { createdAt: { gte: expect.any(Date) } },
           ]),
         }),
       ]),
@@ -220,7 +218,7 @@ describe('listOperationalCharges', () => {
     });
   });
 
-  it('inclui fatura acadêmica recém-gerada mesmo com vencimento no próximo mês', async () => {
+  it('não inclui fatura acadêmica recém-gerada com vencimento fora do mês vigente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -235,12 +233,10 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].id).toBe('cob_recent_subscription');
-    expect(result.items[0].status).toBe('PENDING');
+    expect(result.items).toHaveLength(0);
   });
 
-  it('expõe a próxima cobrança aberta de assinatura mesmo fora do mês corrente', async () => {
+  it('não expõe assinatura futura fora do mês vigente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -264,12 +260,10 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges({ ...BASE_INPUT, now: new Date('2025-03-31T12:00:00.000Z') }, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].id).toBe('cob_sub_next');
-    expect(result.items[0].chargeType).toBe('SUBSCRIPTION');
+    expect(result.items).toHaveLength(0);
   });
 
-  it('expõe apenas a próxima cobrança aberta por assinatura', async () => {
+  it('expõe apenas a próxima cobrança aberta por assinatura dentro da janela vigente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -304,13 +298,13 @@ describe('listOperationalCharges', () => {
         },
       ]);
 
-    const result = await listOperationalCharges({ ...BASE_INPUT, now: new Date('2025-03-31T12:00:00.000Z') }, db);
+    const result = await listOperationalCharges({ ...BASE_INPUT, now: new Date('2025-04-01T12:00:00.000Z') }, db);
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].id).toBe('cob_sub_apr');
   });
 
-  it('inclui cobrança avulsa recém-gerada mesmo com vencimento no próximo mês', async () => {
+  it('não inclui cobrança avulsa recém-gerada com vencimento fora do mês vigente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     db.charge.findMany
@@ -327,9 +321,7 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].id).toBe('ch_recent_future');
-    expect(result.items[0].tipo).toBe('AVULSA');
+    expect(result.items).toHaveLength(0);
   });
 
   it('expõe a parcela standalone do mês vigente como parcelamento', async () => {
@@ -366,7 +358,7 @@ describe('listOperationalCharges', () => {
           externalReference: 'alusa:standalone-subscription:sub_123:payment:pay_123',
           payerName: 'Cliente',
           customer: { payerType: 'ALUNO', payerId: 'alu_123' },
-          dueDate: new Date('2025-07-05T12:00:00.000Z'),
+          dueDate: new Date('2025-06-25T12:00:00.000Z'),
           createdAt: new Date('2025-06-14T09:00:00.000Z'),
         }),
       ])
@@ -586,6 +578,26 @@ describe('listOperationalCharges', () => {
     expect(result.total).toBe(3);
     expect(result.totalPages).toBe(2);
     expect(result.page).toBe(1);
+  });
+
+  it('filtra por tipo antes de paginar e resumir a mesma coleção', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany
+      .mockResolvedValueOnce([
+        makeCharge({ id: 'ch_avulsa', value: 30, dueDate: new Date('2025-06-12') }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    const result = await listOperationalCharges({ ...BASE_INPUT, tipoFilter: ['AVULSA'] }, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ id: 'ch_avulsa', tipo: 'AVULSA' });
+
+    const academicCall = db.cobranca.findMany.mock.calls[0][0];
+    expect(academicCall.where.AND).toEqual(
+      expect.arrayContaining([{ tipo: { in: ['AVULSA'] } }]),
+    );
   });
 
   it('resume o mesmo conjunto da fila operacional para uso em KPI', async () => {

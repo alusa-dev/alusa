@@ -73,7 +73,10 @@ export async function refreshFinanceSummaryReadModel(params: {
       where: {
         contaId: params.contaId,
         status: { in: ['PENDING', 'OVERDUE'] },
-        dueDate: { gte: params.window.start, lte: params.window.end },
+        OR: [
+          { dueDate: { lte: params.window.end } },
+          { dueDate: null },
+        ],
       },
       select: { value: true },
     }),

@@ -89,12 +89,36 @@ export async function GET(req: NextRequest) {
         page,
         pageSize,
         search: search || undefined,
+        tipoFilter: tipo.length ? tipo : undefined,
+      });
+      const now = Date.now();
+      const items = opResult.items.map((c) => {
+        const venc = c.dueDate ? new Date(c.dueDate).getTime() : 0;
+        return {
+          id: c.id,
+          tipo: c.tipo ?? 'AVULSA',
+          formaPagamento: c.billingType ?? undefined,
+          status: mapToLegacyStatus(c.status),
+          liquidacaoStatus: null,
+          valor: c.value,
+          vencimento: c.dueDate,
+          aluno: { id: c.alunoId ?? c.id, nome: c.payerName },
+          matriculaId: c.matriculaId,
+          asaasPaymentId: c.asaasPaymentId,
+          atrasado: c.status === 'OVERDUE' || (c.status === 'PENDING' && venc < now && venc > 0),
+          origin: c.origin,
+          description: c.description,
+          isGroup: c.isGroup ?? false,
+          groupType: c.groupType ?? null,
+          installmentPlanId: c.groupId ?? null,
+          installmentCount: c.installmentCount ?? null,
+          installmentsPaid: c.installmentsPaid ?? null,
+          installments: null,
+        };
       });
       return NextResponse.json(
         listFinanceiroCobrancasResultDTOSchema.parse({
-          data: opResult.items.map((item) =>
-            mapFinanceiroCobrancaListItemToDTO(item as unknown as Record<string, unknown>),
-          ),
+          data: items.map((item) => mapFinanceiroCobrancaListItemToDTO(item)),
           total: opResult.total,
           page: opResult.page,
           pageSize: opResult.pageSize,

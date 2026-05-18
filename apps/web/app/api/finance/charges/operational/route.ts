@@ -30,6 +30,7 @@ function err(status: number, code: string, message: string) {
  *   - page (default: 1)
  *   - pageSize (default: 20, max: 100)
  *   - q (busca por nome do pagador ou descrição)
+ *   - tipo (repetível: MENSALIDADE, TAXA_MATRICULA, PARCELADA, RECORRENTE, AVULSA...)
  */
 export async function GET(req: NextRequest) {
   try {
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
     const page = Math.max(1, Number(url.searchParams.get('page') || '1'));
     const pageSize = Math.min(100, Math.max(1, Number(url.searchParams.get('pageSize') || '20')));
     const search = url.searchParams.get('q')?.trim() || undefined;
+    const tipoFilter = url.searchParams.getAll('tipo').filter(Boolean);
 
     const result = await withPerfTimer(
       'finance',
@@ -53,6 +55,7 @@ export async function GET(req: NextRequest) {
         page,
         pageSize,
         search,
+        tipoFilter: tipoFilter.length ? tipoFilter : undefined,
       }),
       { contaId: user.contaId }
     );

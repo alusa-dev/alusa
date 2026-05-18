@@ -30,6 +30,77 @@ import {
   wizardStep5Schema,
 } from './wizard-types';
 
+const RECOVERY_REQUIRED_PREFIX = 'RECOVERY_REQUIRED:';
+
+function isRetryableProvisioningErrorMessage(message: string | null | undefined): boolean {
+  const normalized = message?.trim().toLowerCase() ?? '';
+  if (!normalized) return false;
+
+  return (
+    normalized.includes('timeout') ||
+    normalized.includes('network') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('econnrefused') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('temporar') ||
+    normalized.includes('429') ||
+    normalized.includes('500') ||
+    normalized.includes('502') ||
+    normalized.includes('503') ||
+    normalized.includes('504')
+  );
+}
+
+async function resolveImmediateProvisioningTerminalFailure(params: {
+  financeProfileId: string;
+  failedJobs: number;
+  recoveryRequired: number;
+}): Promise<{ code: string; message: string } | null> {
+  if (params.failedJobs === 0 && params.recoveryRequired === 0) {
+    return null;
+  }
+
+  const account = await prisma.asaasAccount.findUnique({
+    where: { financeProfileId: params.financeProfileId },
+    select: {
+      asaasAccountId: true,
+      status: true,
+      operationalStatus: true,
+      provisionLastError: true,
+    },
+  });
+
+  if (!account) {
+    return null;
+  }
+
+  if (account.provisionLastError?.startsWith(RECOVERY_REQUIRED_PREFIX) || params.recoveryRequired > 0) {
+    return {
+      code: 'RECOVERY_REQUIRED',
+      message:
+        'A subconta existe no Asaas, mas a chave de API não está salva na Alusa. Reconecte a chave pelo painel administrativo.',
+    };
+  }
+
+  if (account.status === 'PROVISIONING_FAILED' || account.operationalStatus === 'API_KEY_REQUIRED') {
+    return {
+      code: 'PROVISIONING_FAILED',
+      message:
+        account.provisionLastError ??
+        'Não foi possível concluir o cadastro financeiro. Revise os dados e tente novamente.',
+    };
+  }
+
+  if (!account.asaasAccountId && account.provisionLastError && !isRetryableProvisioningErrorMessage(account.provisionLastError)) {
+    return {
+      code: 'PROVISIONING_FAILED',
+      message: account.provisionLastError,
+    };
+  }
+
+  return null;
+}
+
 function toWizardStep(value: number | null | undefined): WizardStep {
   if (value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6)
     return value;
@@ -497,8 +568,12 @@ export async function completeWizard(params: {
   }
 
   if (provisioning.status === 'QUEUED') {
+    let immediateProcessingResult:
+      | Awaited<ReturnType<typeof processAsaasProvisioningJobs>>
+      | null = null;
+
     try {
-      await processAsaasProvisioningJobs({ contaId: params.contaId, limit: 1 });
+      immediateProcessingResult = await processAsaasProvisioningJobs({ contaId: params.contaId, limit: 1 });
     } catch (error) {
       try {
         console.warn('[finance.completeWizard] Tentativa imediata de provisionamento falhou; cron processará', {
@@ -508,6 +583,35 @@ export async function completeWizard(params: {
       } catch {
         // noop
       }
+    }
+
+    const terminalFailure = await resolveImmediateProvisioningTerminalFailure({
+      financeProfileId: profile.id,
+      failedJobs: immediateProcessingResult?.failed ?? 0,
+      recoveryRequired: immediateProcessingResult?.recoveryRequired ?? 0,
+    });
+
+    if (terminalFailure) {
+      const updatedWizard = await loadWizardState(params.contaId);
+
+      await auditLogService.record({
+        contaId: params.contaId,
+        action: 'finance.wizard.complete_failed',
+        entity: { type: 'FinanceProfile', id: profile.id },
+        metadata: {
+          reason: terminalFailure.code,
+          provisioningFailedImmediately: true,
+        },
+        actor: params.actor,
+      });
+
+      return {
+        success: false,
+        wizard: updatedWizard,
+        canCreateSubaccount: false,
+        missingFields: [],
+        error: terminalFailure,
+      };
     }
   }
 

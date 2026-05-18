@@ -147,7 +147,7 @@ export function FinanceWizard() {
       const result = await completeWizard();
       setDirection(1);
       setWizardState(result.wizard);
-      setCurrentStep(6);
+      setCurrentStep(result.success ? 6 : ((result.wizard.step && result.wizard.step > 0 ? result.wizard.step : 5) as WizardStep));
 
       if (result.success) {
         if (result.provisioningStatus === 'QUEUED') {
