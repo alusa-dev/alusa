@@ -492,7 +492,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+        <div className="flex max-h-[78vh] min-h-0 flex-1 flex-col overflow-hidden max-md:max-h-none max-md:flex-1 max-md:min-h-0">
           <div
             className="flex-1 overflow-y-auto bg-slate-50 p-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent md:p-6 max-md:min-h-0"
             style={{ scrollbarWidth: 'thin', scrollbarGutter: 'stable', scrollbarColor: '#d1d5db transparent' }}
@@ -821,10 +821,6 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                 {step === 4 && (
                   <SectionCard>
                     <StepHeader title="Notificações" hint="Selecione como a cobrança será enviada ao cliente." />
-                    <p className="text-xs text-slate-500 leading-relaxed mb-3">
-                      Canais valem para o pagador no Asaas e afetam cobranças futuras. Assinaturas não
-                      disparam aviso de criação de cobrança (regra do Asaas).
-                    </p>
                     {loadingNotificationDefaults ? (
                       <p className="text-sm text-slate-500">Carregando configuração atual...</p>
                     ) : null}
