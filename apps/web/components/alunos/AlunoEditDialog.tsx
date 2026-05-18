@@ -452,10 +452,10 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
       <DialogContent
         data-testid="edit-aluno-dialog"
         fullScreenMobile
-        className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
+        className="max-w-4xl w-full gap-0 overflow-hidden bg-slate-50 p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl"
       >
         {aluno && (
-          <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col overflow-hidden max-md:min-h-0">
+          <form onSubmit={onSubmit} className="flex max-h-[88vh] min-h-0 flex-col max-md:max-h-none max-md:flex-1">
             <input
               ref={fileInputRef}
               type="file"
@@ -465,14 +465,14 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
             />
             <div className="relative shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] md:px-8 md:py-6">
               <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-              <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
+              <DialogTitle className="pr-2 text-xl font-semibold tracking-tight text-slate-900 md:pr-0 alusa-dark:text-[color:var(--color-text-primary)]">
                 Editar aluno
               </DialogTitle>
-              <DialogDescription className="mt-2 text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+              <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                 Atualize os dados cadastrais, endereços e informações de emergência do aluno.
               </DialogDescription>
             </div>
-            <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 alusa-dark:bg-transparent md:px-8 md:py-6">
+            <div className="flex-1 space-y-6 overflow-y-auto scroll-smooth bg-slate-50 px-4 py-6 max-md:min-h-0 alusa-dark:bg-transparent md:px-8">
               <div className={sectionClass}>
                 <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Foto</span>
                 <div className="flex flex-col gap-5 md:flex-row md:items-center">

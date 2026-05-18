@@ -237,7 +237,7 @@ export default function DashboardSecondarySection({
       {isMetricsLoading ? (
         <DashboardSecondarySkeleton />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <div className="grid grid-cols-1 items-stretch gap-6 mb-6 md:grid-cols-2 lg:grid-cols-4">
             <div className="md:col-span-2 lg:col-span-3">
               <div
                 className={`${DASHBOARD_SECTION_CARD_CLASSNAME} h-fit overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
@@ -343,9 +343,9 @@ export default function DashboardSecondarySection({
                   </p>
                 </div>
 
-                <div className="flex flex-1 space-y-1 p-3">
+                <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3">
                   {(metrics?.alunosRecentes || []).length === 0 ? (
-                    <p className="py-10 text-center text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                    <p className="flex flex-1 items-center justify-center py-10 text-center text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                       Nenhum aluno recente
                     </p>
                   ) : (
@@ -354,7 +354,7 @@ export default function DashboardSecondarySection({
                         key={aluno.id}
                         type="button"
                         onClick={() => router.push(`/alunos/${aluno.id}`)}
-                        className="group flex w-full items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                        className="group flex w-full shrink-0 items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                       >
                         <PersonAvatar
                           name={aluno.nome}

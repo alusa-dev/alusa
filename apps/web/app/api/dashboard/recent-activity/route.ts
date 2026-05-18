@@ -20,7 +20,7 @@ export async function GET() {
         },
       }),
       prisma.aluno.findMany({
-        take: 3,
+        take: 8,
         where: { contaId: auth.contaId },
         orderBy: { createdAt: 'desc' },
         select: { id: true, nome: true, foto: true },

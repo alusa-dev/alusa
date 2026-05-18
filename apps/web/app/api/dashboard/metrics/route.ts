@@ -387,7 +387,7 @@ export async function GET(_request: NextRequest) {
         },
       }),
       prisma.aluno.findMany({
-        take: 3,
+        take: 8,
         where: alunoFilter,
         orderBy: { createdAt: 'desc' },
         select: {
