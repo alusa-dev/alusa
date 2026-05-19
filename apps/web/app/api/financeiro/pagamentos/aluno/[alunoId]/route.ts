@@ -13,9 +13,10 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
  */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { alunoId: string } },
+  { params }: { params: Promise<{ alunoId: string }> },
 ) {
   try {
+    const rawParams = await params;
     const session = await safeGetServerSession();
     const user = (
       session as { user?: { id?: string; contaId?: string; role?: string } } | null
@@ -33,7 +34,7 @@ export async function GET(
       );
     }
 
-    const parsedParams = financeiroPagamentoAlunoParamsDTOSchema.safeParse(params);
+    const parsedParams = financeiroPagamentoAlunoParamsDTOSchema.safeParse(rawParams);
     if (!parsedParams.success) {
       return NextResponse.json(
         { success: false, error: { message: 'ID do aluno é obrigatório' } },
