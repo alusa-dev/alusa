@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,11 +52,14 @@ const TIPO_OPTIONS = [{ value: 'TODOS', label: 'Todas categorias' }, ...PAYMENT_
 
 export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [aluno, setAluno] = useState<FinanceiroPagamentoAlunoResumoDTO | null>(null);
   const [cobrancas, setCobrancas] = useState<HistoricoCobranca[]>([]);
   const [resumo, setResumo] = useState<FinanceiroPagamentoHistoricoResumoDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef<AbortController | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   const [statusFilter, setStatusFilter] = useState('TODOS');
   const [categoryFilter, setCategoryFilter] = useState('TODOS');
@@ -68,41 +71,79 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
 
   const load = useCallback(
     async (silent = false) => {
-      if (!silent) setLoading(true);
-      setError(null);
+      inFlightRef.current?.abort();
+      const controller = new AbortController();
+      inFlightRef.current = controller;
+
+      if (!silent && hasLoadedOnceRef.current) {
+        setIsRefreshing(true);
+      }
+      if (!silent || !hasLoadedOnceRef.current) {
+        setError(null);
+      }
+
       try {
         const res = await fetch(`/api/financeiro/pagamentos/aluno/${alunoId}`, {
           cache: 'no-store',
+          signal: controller.signal,
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data?.error?.message || 'Erro ao carregar dados');
         }
         const payload = await res.json();
+        if (!payload?.success || !payload?.data?.aluno) {
+          throw new Error('Resposta inválida do servidor');
+        }
+        if (controller.signal.aborted) return;
+
         setAluno(payload.data.aluno);
         setCobrancas(payload.data.cobrancas || []);
-        setResumo(payload.data.resumo);
+        setResumo(payload.data.resumo ?? null);
+        hasLoadedOnceRef.current = true;
+        setHasLoadedOnce(true);
+        setError(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Erro desconhecido');
+        if (controller.signal.aborted) return;
+        const message = err instanceof Error ? err.message : 'Erro desconhecido';
+        if (!hasLoadedOnceRef.current) {
+          setError(message);
+        }
       } finally {
-        if (!silent) setLoading(false);
+        if (inFlightRef.current === controller) {
+          inFlightRef.current = null;
+        }
+        if (!controller.signal.aborted) {
+          setIsRefreshing(false);
+        }
       }
     },
     [alunoId],
   );
 
   useEffect(() => {
+    hasLoadedOnceRef.current = false;
+    setHasLoadedOnce(false);
+    setAluno(null);
+    setCobrancas([]);
+    setResumo(null);
+    setError(null);
     void load();
-  }, [load]);
+    return () => {
+      inFlightRef.current?.abort();
+    };
+  }, [alunoId, load]);
 
   useFinanceLiveRefresh(() => load(true), {
-    enabled: Boolean(aluno) && !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: true, portal: false },
+    enabled: hasLoadedOnce && !isRefreshing,
+    intervalMs: 60_000,
+    minIntervalMs: 15_000,
+    realtime: false,
   });
 
-  if (loading) {
+  const showInitialSkeleton = !hasLoadedOnce && !error;
+
+  if (showInitialSkeleton) {
     return (
       <div className="mx-auto max-w-6xl space-y-8 px-4 py-8">
         <Skeleton className="h-5 w-24" />

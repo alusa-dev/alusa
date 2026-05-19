@@ -12,11 +12,12 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
  * Retorna o histórico consolidado de pagamentos do aluno e entidade responsável.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ alunoId: string }> },
 ) {
   try {
     const rawParams = await params;
+    const reconcile = req.nextUrl.searchParams.get('reconcile') === '1';
     const session = await safeGetServerSession();
     const user = (
       session as { user?: { id?: string; contaId?: string; role?: string } } | null
@@ -56,7 +57,9 @@ export async function GET(
       );
     }
 
-    const historico = await getStudentPaymentHistory(contaId, alunoId, aluno.nome);
+    const historico = await getStudentPaymentHistory(contaId, alunoId, aluno.nome, {
+      reconcile,
+    });
 
     const payload = mapFinanceiroPagamentoAlunoCobrancasResultToDTO({
       success: true,

@@ -262,7 +262,11 @@ function chargeBelongsToStudent(params: {
   return false;
 }
 
-async function loadAcademicCobrancas(contaId: string, alunoId: string) {
+async function loadAcademicCobrancas(
+  contaId: string,
+  alunoId: string,
+  options?: { reconcile?: boolean },
+) {
   async function query() {
     return prisma.cobranca.findMany({
       where: {
@@ -332,13 +336,15 @@ async function loadAcademicCobrancas(contaId: string, alunoId: string) {
   }
 
   let cobrancas = await query();
-  const reconciliation = await reconcileAcademicCharges({
-    contaId,
-    cobrancas,
-    limit: 100,
-  });
-  if (reconciliation.attempted > 0) {
-    cobrancas = await query();
+  if (options?.reconcile !== false) {
+    const reconciliation = await reconcileAcademicCharges({
+      contaId,
+      cobrancas,
+      limit: 100,
+    });
+    if (reconciliation.attempted > 0) {
+      cobrancas = await query();
+    }
   }
 
   return cobrancas;
@@ -454,10 +460,20 @@ async function enrichInstallmentMetadata(items: HistoricoCobrancaItem[]) {
   });
 }
 
-export async function getStudentPaymentHistory(contaId: string, alunoId: string, alunoNome: string) {
+export type GetStudentPaymentHistoryOptions = {
+  /** Leitura de histórico na UI — evita N chamadas ao Asaas por request. */
+  reconcile?: boolean;
+};
+
+export async function getStudentPaymentHistory(
+  contaId: string,
+  alunoId: string,
+  alunoNome: string,
+  options?: GetStudentPaymentHistoryOptions,
+) {
   const scope = await resolveStudentPaymentScope(contaId, alunoId);
   const responsavelNameSet = new Set(scope.responsavelNames.values());
-  const cobrancasAcademicas = await loadAcademicCobrancas(contaId, alunoId);
+  const cobrancasAcademicas = await loadAcademicCobrancas(contaId, alunoId, options);
 
   const items: HistoricoCobrancaItem[] = [];
   const seen = new Set<string>();
