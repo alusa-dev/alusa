@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getStatusLabel } from '@alusa/finance/client';
 import { cn } from '@/lib/cn';
 
 export type BadgeVariant =
@@ -21,13 +22,25 @@ const VARIANT_STYLES: Record<BadgeVariant, string> = {
 };
 
 const statusConfig = {
-  CONFIRMED: { text: 'confirmado', className: 'alusa-badge alusa-badge-tone-success' },
-  RECEIVED: { text: 'Pagamento Recebido', className: 'alusa-badge alusa-badge-tone-success' },
+  CONFIRMED: { text: 'Confirmado', className: 'alusa-badge alusa-badge-tone-success' },
+  CONFIRMADO: { text: 'Confirmado', className: 'alusa-badge alusa-badge-tone-success' },
+  RECEIVED: { text: 'Recebido', className: 'alusa-badge alusa-badge-tone-success' },
+  RECEBIDO: { text: 'Recebido', className: 'alusa-badge alusa-badge-tone-success' },
   PAGO: { text: 'Pago', className: 'alusa-badge alusa-badge-tone-success' },
-  PENDING: { text: 'aguardando', className: 'alusa-badge alusa-badge-tone-warning' },
+  PAID: { text: 'Paga', className: 'alusa-badge alusa-badge-tone-success' },
+  PENDING: { text: 'Pendente', className: 'alusa-badge alusa-badge-tone-warning' },
   PENDENTE: { text: 'Pendente', className: 'alusa-badge alusa-badge-tone-warning' },
+  A_VENCER: { text: 'A vencer', className: 'alusa-badge alusa-badge-tone-info' },
+  OPEN: { text: 'Aberta', className: 'alusa-badge alusa-badge-tone-warning' },
+  CREATED: { text: 'Criada', className: 'alusa-badge alusa-badge-tone-info' },
   OVERDUE: { text: 'Atrasado', className: 'alusa-badge alusa-badge-tone-danger' },
   ATRASADO: { text: 'Atrasado', className: 'alusa-badge alusa-badge-tone-danger' },
+  CANCELAMENTO_PENDENTE: {
+    text: 'Cancelamento pendente',
+    className: 'alusa-badge alusa-badge-tone-warning',
+  },
+  ESTORNADO_PARCIAL: { text: 'Estorno parcial', className: 'alusa-badge alusa-badge-tone-neutral' },
+  PENDING_SYNC: { text: 'Sincronizando', className: 'alusa-badge alusa-badge-tone-info' },
   FAILED: { text: 'Falha no Pagamento', className: 'alusa-badge alusa-badge-tone-danger' },
   REFUNDED: { text: 'Reembolsado', className: 'alusa-badge alusa-badge-tone-warning' },
   REFUND_REQUESTED: { text: 'Reembolso Solicitado', className: 'alusa-badge alusa-badge-tone-warning' },
@@ -110,7 +123,10 @@ export const Badge: React.FC<BadgeProps> = ({
   };
 
   if (status) {
-    const config = statusConfig[status] ?? { text: status, className: 'alusa-badge alusa-badge-fallback' };
+    const config = statusConfig[status] ?? {
+      text: getStatusLabel(status),
+      className: 'alusa-badge alusa-badge-fallback',
+    };
     return (
       <span
         className={cn(base, sizeClasses[size], config.className, className)}
@@ -131,6 +147,11 @@ export const Badge: React.FC<BadgeProps> = ({
 
 export function useStatusConfig(status: StatusType) {
   return statusConfig[status] ?? statusConfig.PENDING;
+}
+
+/** Rótulo legível para status (cobrança, pagamento, etc.). */
+export function formatStatusLabel(status: string): string {
+  return getStatusLabel(status);
 }
 
 export function isStatusPaid(status: StatusType): boolean {

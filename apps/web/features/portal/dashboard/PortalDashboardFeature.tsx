@@ -6,7 +6,7 @@ import { useSession } from 'next-auth/react';
 import { CreditCard, Calendar, User, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalDashboardResultDTO } from '@/features/portal/dtos';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { AlunoSelector } from './components/AlunoSelector';
 
 export function PortalDashboardFeature() {
@@ -64,14 +64,12 @@ export function PortalDashboardFeature() {
     }
   }, [session?.user, loadData]);
 
-  useLiveRefresh(
-    () => loadData(true),
-    {
-      enabled: Boolean(session?.user) && !loading,
-      intervalMs: 60_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => loadData(true), {
+    enabled: Boolean(session?.user) && !loading,
+    intervalMs: 60_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: false, financeiro: false },
+  });
 
   const userName = session?.user?.name || 'Aluno';
   const greeting = getGreeting();

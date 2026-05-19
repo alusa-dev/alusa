@@ -2,7 +2,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { Badge, type StatusType } from '@/components/ui/badge';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 // Helper para formatar tipo de cobrança
 function formatarTipo(tipo: string): string {
@@ -111,14 +112,11 @@ export default function ChargesTable() {
     void fetchData().catch(() => undefined);
   }, [fetchData]);
 
-  useLiveRefresh(
-    () => fetchData(true),
-    {
-      enabled: !loading,
-      intervalMs: 45_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => fetchData(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+  });
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -239,29 +237,7 @@ export default function ChargesTable() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase"
-                      style={{
-                        backgroundColor:
-                          r.status === 'PAGO'
-                            ? '#CFF2DA'
-                            : r.status === 'PENDENTE'
-                              ? '#F3F9B3'
-                              : r.status === 'ATRASADO'
-                                ? '#FFD9B3'
-                                : '#E6E4EA',
-                        color:
-                          r.status === 'PAGO'
-                            ? '#144E22'
-                            : r.status === 'PENDENTE'
-                              ? '#5A630F'
-                              : r.status === 'ATRASADO'
-                                ? '#5C2A00'
-                                : '#383242',
-                      }}
-                    >
-                      {r.status === 'PAGO' ? '✓ Pago' : r.status}
-                    </span>
+                    <Badge status={r.status as StatusType} size="sm" />
                   </td>
                   <td className="px-4 py-3 text-center">
                     <CobrancaActionsMenu

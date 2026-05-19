@@ -1,16 +1,15 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import type { ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { ChevronLeft as ArrowLeft, Edit } from '@/components/icons/icons';
 import { EllipsisVerticalIcon as MoreVertical } from '@heroicons/react/24/outline';
-import { InformationCircleIcon } from '@heroicons/react/24/solid';
 import { Button } from '@/components/ui/button';
+import { InfoCallout, InfoCalloutLink } from '@/components/ui/info-callout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { Badge, formatStatusLabel, type StatusType } from '@/components/ui/badge';
 import { StatusCobranca } from '@prisma/client';
 import { useChargeActions } from '@/hooks/use-charge-actions';
 import {
@@ -38,7 +37,6 @@ import {
 } from '@/components/ui/select';
 import { CobrancaCompartilharButton } from '@/components/financeiro/CobrancaCompartilharButton';
 import { CobrancaArquivos } from '@/components/financeiro/CobrancaArquivos';
-import { CobrancaNotificacoes } from '@/components/financeiro/CobrancaNotificacoes';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -53,6 +51,20 @@ import {
   maskPercentInput,
   parseDecimal,
 } from '@/lib/utils/decimal-format';
+import { cn } from '@/lib/utils';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import {
+  isCobrancaDetailTerminal,
+  useCobrancaDetailQuery,
+} from '@/hooks/use-cobranca-detail-query';
+
+const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
+
+const sectionClass = cn(
+  'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4',
+  DETAIL_SECTION_MAX,
+);
+const labelClass = 'text-xs font-medium text-slate-600';
 
 // Funções para formatação de moeda BRL
 function formatBRL(value: number): string {
@@ -91,15 +103,15 @@ function formatDate(value: string): string {
 
 // Mapeamento de StatusCobranca para StatusType
 const statusMap: Record<StatusCobranca, StatusType> = {
-  PENDENTE: 'PENDING',
-  PROCESSANDO: 'RECEIVED',
-  PAGO: 'CONFIRMED',
-  ATRASADO: 'OVERDUE',
-  CANCELADO: 'CANCELED',
-  CANCELAMENTO_PENDENTE: 'PENDING', // Status intermediário enquanto aguarda confirmação do Asaas
-  ESTORNADO: 'REFUNDED',
-  A_VENCER: 'PENDING',
-  ESTORNADO_PARCIAL: 'REFUNDED',
+  PENDENTE: 'PENDENTE',
+  A_VENCER: 'A_VENCER',
+  PROCESSANDO: 'PROCESSANDO',
+  PAGO: 'PAGO',
+  ATRASADO: 'ATRASADO',
+  CANCELADO: 'CANCELADO',
+  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
+  ESTORNADO: 'ESTORNADO',
+  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
 };
 
 type CobrancaDetalhes = {
@@ -121,6 +133,7 @@ type CobrancaDetalhes = {
   valorLiquido?: number | null;
   taxaAsaas?: number | null;
   liquidacaoStatus?: 'NAO_APLICAVEL' | 'PENDENTE' | 'DISPONIVEL' | null;
+  displayStatus?: { label: string; hint: string | null };
 
   // Juros
   jurosPercentual?: number;
@@ -177,24 +190,7 @@ type CobrancaDetalhes = {
     comprovante?: string | null;
     createdAt: string;
   }>;
-  logsFinanceiros: Array<{
-    id: string;
-    acao: string;
-    detalhes?: Record<string, unknown>;
-    createdAt: string;
-    usuario?: {
-      id: string;
-      nome: string;
-      email: string;
-    };
-  }>;
   asaasData?: Record<string, unknown>;
-};
-
-type LiquidacaoInfo = {
-  title: string;
-  description: string;
-  tone: 'warning' | 'success';
 };
 
 type OfficialChargeLinks = {
@@ -227,32 +223,6 @@ function openOfficialChargeLink(links: OfficialChargeLinks): boolean {
   return true;
 }
 
-function getCreditDateFromSnapshot(asaasData?: Record<string, unknown>): string | null {
-  return typeof asaasData?.creditDate === 'string' ? asaasData.creditDate : null;
-}
-
-function getLiquidacaoInfo(cobranca: CobrancaDetalhes): LiquidacaoInfo | null {
-  if (cobranca.status !== 'PAGO') return null;
-
-  if (cobranca.liquidacaoStatus === 'DISPONIVEL') {
-    return {
-      title: 'Valor liquidado no extrato',
-      description: 'A movimentação já foi conciliada no saldo oficial da conta.',
-      tone: 'success',
-    };
-  }
-
-  const creditDate = getCreditDateFromSnapshot(cobranca.asaasData);
-  const creditDateLabel = creditDate ? ` Previsão de crédito: ${formatDate(creditDate)}.` : '';
-
-  return {
-    title: 'Pagamento confirmado',
-    description:
-      `O valor ainda pode não aparecer no extrato. O extrato só mostra lançamentos registrados no saldo oficial da conta.${creditDateLabel}`,
-    tone: 'warning',
-  };
-}
-
 export function CobrancaDetalhesClient({ id }: { id: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -265,11 +235,13 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   const [isEditingAjustes, setIsEditingAjustes] = useState(false);
   const [isSavingAjustes, setIsSavingAjustes] = useState(false);
   const [isResendingAsaas, setIsResendingAsaas] = useState(false);
-  const [isNotifyingAsaas, setIsNotifyingAsaas] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isRefunding, setIsRefunding] = useState(false);
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
   const [showRefundDialog, setShowRefundDialog] = useState(false);
+  const [awaitingWebhook, setAwaitingWebhook] = useState(false);
+
+  const detailQuery = useCobrancaDetailQuery(id, { awaitingWebhookBurst: awaitingWebhook });
 
   // Estados para campos editáveis da cobrança
   const [editValor, setEditValor] = useState(0);
@@ -303,86 +275,98 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   const wasReceivedInCash = cobranca?.asaasData?.status === 'RECEIVED_IN_CASH';
   const chargeActions = useChargeActions(chargeStatus, { wasReceivedInCash });
 
-  const loadCobranca = async () => {
-    setLoading(true);
+  const applyCobrancaPayload = useCallback((data: CobrancaDetalhes) => {
+    setCobranca(data);
+
+    const asaasDataRec = data.asaasData as Record<string, unknown> | null;
+    const asaasOriginalValue =
+      typeof asaasDataRec?.originalValue === 'number' ? asaasDataRec.originalValue : null;
+
+    const valorBase =
+      data.status === 'PAGO' && asaasOriginalValue != null
+        ? asaasOriginalValue
+        : Number(data.valor ?? 0);
+
+    setEditValor(valorBase);
+    setEditValorDisplay(formatBRL(valorBase));
+
+    const isoVencimento = data.vencimento.split('T')[0];
+    setEditVencimento(isoVencimento);
+    setEditVencimentoDisplay(isoToDate(isoVencimento));
+    setEditDescricao(data.descricao || '');
+    setEditFormaPagamento(data.formaPagamento || '');
+
+    setEditJurosPercentual(formatAdjustNumber(data.jurosPercentual));
+    setEditMultaTipo(data.multaTipo || 'VALOR_FIXO');
+    setEditMultaPercentual(formatAdjustNumber(data.multaPercentual));
+    setEditDescontoTipo(data.descontoTipo || 'VALOR_FIXO');
+    setEditDescontoPercentual(formatAdjustNumber(data.descontoPercentual));
+
+    const descontoValorInicial = Number(data.descontoValorFixo ?? 0);
+    setEditDescontoValorFixo(descontoValorInicial);
+    setEditDescontoValorFixoDisplay(formatBRL(descontoValorInicial));
+
+    if (data.descontoPrazoMaximo === 'ATE_VENCIMENTO') {
+      setEditDescontoDias(0);
+    } else if (data.descontoPrazoMaximo) {
+      const match = data.descontoPrazoMaximo.match(/(\d+)_DIAS/);
+      setEditDescontoDias(match ? parseInt(match[1], 10) : 0);
+    } else {
+      setEditDescontoDias(0);
+    }
+  }, []);
+
+  const loadCobranca = useCallback(async () => {
     setError(null);
-
-    try {
-      const res = await fetch(`/api/cobrancas/${id}`, {
-        cache: 'no-store',
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Erro ao carregar cobrança');
-      }
-
-      const data = await res.json();
-      setCobranca(data.data);
-
-      // Inicializar campos editáveis
-      // Se status for PAGO e houver originalValue no Asaas, usar ele para exibição.
-      // Caso contrário, usar o valor do banco.
-      // Assegurar tipagem correta acessando prop dinamicamente
-      const asaasDataRec = data.data.asaasData as Record<string, unknown> | null;
-      const asaasOriginalValue = typeof asaasDataRec?.originalValue === 'number' ? asaasDataRec.originalValue : null;
-      
-      // Se PAGO e temos originalValue, mostramos 150.00
-      // Se não, mostramos data.data.valor (142.50)
-      const valorBase = (data.data.status === 'PAGO' && asaasOriginalValue) 
-        ? asaasOriginalValue 
-        : Number(data.data.valor ?? 0);
-
-      setEditValor(valorBase);
-      setEditValorDisplay(formatBRL(valorBase));
-      
-      const isoVencimento = data.data.vencimento.split('T')[0];
-      setEditVencimento(isoVencimento);
-      setEditVencimentoDisplay(isoToDate(isoVencimento));
-      setEditDescricao(data.data.descricao || '');
-      setEditFormaPagamento(data.data.formaPagamento || '');
-
-      // Inicializar campos de juros
-      setEditJurosPercentual(formatAdjustNumber(data.data.jurosPercentual));
-
-      // Inicializar campos de multa
-      setEditMultaTipo(data.data.multaTipo || 'VALOR_FIXO');
-      setEditMultaPercentual(formatAdjustNumber(data.data.multaPercentual));
-
-      // Inicializar campos de desconto
-      setEditDescontoTipo(data.data.descontoTipo || 'VALOR_FIXO');
-      setEditDescontoPercentual(formatAdjustNumber(data.data.descontoPercentual));
-      const descontoValorInicial = Number(data.data.descontoValorFixo ?? 0);
-      setEditDescontoValorFixo(descontoValorInicial);
-      setEditDescontoValorFixoDisplay(formatBRL(descontoValorInicial));
-      
-      // Inicializar prazo do desconto
-      if (data.data.descontoPrazoMaximo === 'ATE_VENCIMENTO') {
-        setEditDescontoDias(0);
-      } else if (data.data.descontoPrazoMaximo) {
-        // Extrair número de dias se formato for "X_DIAS"
-        const match = data.data.descontoPrazoMaximo.match(/(\d+)_DIAS/);
-        setEditDescontoDias(match ? parseInt(match[1]) : 0);
-      } else {
-        setEditDescontoDias(0);
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
+    const result = await detailQuery.refetch();
+    if (result.error) {
+      const errorMessage =
+        result.error instanceof Error ? result.error.message : 'Erro ao carregar cobrança';
       setError(errorMessage);
       pushToast({
         title: 'Erro',
         description: errorMessage,
         variant: 'error',
       });
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [detailQuery]);
 
   useEffect(() => {
-    loadCobranca();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+    if (detailQuery.data) {
+      applyCobrancaPayload(detailQuery.data as CobrancaDetalhes);
+      setError(null);
+    }
+  }, [detailQuery.data, applyCobrancaPayload]);
+
+  useEffect(() => {
+    setLoading(detailQuery.isLoading && !detailQuery.data);
+  }, [detailQuery.isLoading, detailQuery.data]);
+
+  useEffect(() => {
+    if (!detailQuery.error) return;
+    const errorMessage =
+      detailQuery.error instanceof Error ? detailQuery.error.message : 'Erro ao carregar cobrança';
+    setError(errorMessage);
+  }, [detailQuery.error]);
+
+  useFinanceLiveRefresh(() => loadCobranca(), {
+    enabled: Boolean(cobranca) && !isEditing && !isEditingAjustes,
+    cobrancaId: id,
+    realtime: { cobrancaQueries: false },
+    intervalMs: awaitingWebhook ? 5_000 : 20_000,
+    minIntervalMs: 4_000,
+  });
+
+  useEffect(() => {
+    if (!awaitingWebhook || !cobranca?.status) return;
+    if (isCobrancaDetailTerminal(cobranca.status)) {
+      setAwaitingWebhook(false);
+    }
+  }, [awaitingWebhook, cobranca?.status]);
+
+  const markAwaitingWebhook = useCallback(() => {
+    setAwaitingWebhook(true);
+  }, []);
 
   const handleEdit = () => {
     if (isEditing) {
@@ -772,7 +756,8 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         variant: 'success',
       });
 
-      loadCobranca(); // Recarregar dados
+      markAwaitingWebhook();
+      await loadCobranca();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({
@@ -817,6 +802,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         variant: 'success',
       });
 
+      markAwaitingWebhook();
       await loadCobranca();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
@@ -918,54 +904,6 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     }
   };
 
-  // Enviar notificação ao responsável financeiro
-  const handleNotificar = async (tipo: 'EMAIL' | 'SMS' | 'WHATSAPP') => {
-    if (!cobranca) return;
-    if (!cobranca.asaasPaymentId) {
-      pushToast({
-        title: 'Indisponível',
-        description: 'Esta cobrança ainda não está pronta para envio de notificações.',
-        variant: 'warning',
-      });
-      return;
-    }
-
-    setIsNotifyingAsaas(true);
-
-    try {
-      const res = await fetch(`/api/cobrancas/${cobranca.id}/asaas-notify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tipo,
-          paymentId: cobranca.asaasPaymentId,
-        }),
-      });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.success) {
-        throw new Error(result.error || 'Erro ao enviar notificação');
-      }
-
-      const tipoLabel = tipo === 'EMAIL' ? 'E-mail' : tipo === 'SMS' ? 'SMS' : 'WhatsApp';
-      pushToast({
-        title: 'Notificação enviada',
-        description: `${tipoLabel} enviado com sucesso.`,
-        variant: 'success',
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
-      pushToast({
-        title: 'Erro ao notificar',
-        description: errorMessage,
-        variant: 'error',
-      });
-    } finally {
-      setIsNotifyingAsaas(false);
-    }
-  };
-
   const handleRemoverCobranca = async () => {
     if (!cobranca) return;
 
@@ -1054,43 +992,27 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   // Loading state
   if (loading) {
     return (
-      <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
-        <div className="mb-8">
-          <Skeleton className="h-10 w-32 mb-5" />
-          <div className="flex items-start justify-between gap-6">
-            <div className="flex-1">
-              <Skeleton className="h-9 w-96 mb-3" />
-              <Skeleton className="h-5 w-80" />
-            </div>
+      <div className="h-full overflow-y-auto">
+        <div className="w-full min-w-0 px-4 py-6 pb-8">
+          <div className={cn(DETAIL_SECTION_MAX, 'mb-8 space-y-4')}>
+            <Skeleton className="h-10 w-32" />
+            <Skeleton className="h-9 w-96 max-w-full" />
+            <Skeleton className="h-5 w-80" />
           </div>
-        </div>
-
-        <div className="space-y-8">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-100">
-              <Skeleton className="h-6 w-64 mb-2" />
-              <Skeleton className="h-4 w-96" />
-            </div>
-            <div className="px-6 py-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <div key={i}>
-                    <Skeleton className="h-4 w-24 mb-3" />
-                    <Skeleton className="h-7 w-40" />
-                  </div>
-                ))}
+          <div className="space-y-8">
+            {[1, 2].map((i) => (
+              <div key={i} className={sectionClass}>
+                <Skeleton className="h-5 w-64 mb-4" />
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {[1, 2, 3, 4].map((j) => (
+                    <div key={j}>
+                      <Skeleton className="h-4 w-24 mb-2" />
+                      <Skeleton className="h-10 w-full" />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-            <div className="px-6 py-5 border-b border-gray-100">
-              <Skeleton className="h-6 w-48 mb-2" />
-              <Skeleton className="h-4 w-72" />
-            </div>
-            <div className="px-6 py-6">
-              <Skeleton className="h-64 w-full" />
-            </div>
+            ))}
           </div>
         </div>
       </div>
@@ -1100,39 +1022,31 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   // Error state
   if (error || !cobranca) {
     return (
-      <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
-        <button
-          type="button"
-          onClick={() => router.back()}
-          className="mb-6 flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 sm:mb-8"
-        >
-          <ArrowLeft className="h-4 w-4 shrink-0" />
-          Voltar
-        </button>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
-          <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-            <div className="flex items-center justify-center w-20 h-20 mb-6 bg-red-100 rounded-full">
-              <span className="text-4xl">⚠️</span>
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Erro ao carregar cobrança</h2>
-            <p className="text-base text-gray-600 mb-8 max-w-md">
-              {error || 'A cobrança solicitada não foi encontrada ou não está acessível no momento'}
-            </p>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="outline"
-                onClick={() => router.back()}
-                className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50"
-              >
-                Voltar
-              </Button>
-              <Button
-                onClick={loadCobranca}
-                className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white"
-              >
-                Tentar novamente
-              </Button>
+      <div className="h-full overflow-y-auto">
+        <div className="w-full min-w-0 px-4 py-6 pb-8">
+          <div className={DETAIL_SECTION_MAX}>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="mb-6 flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+            >
+              <ArrowLeft className="h-4 w-4 shrink-0" />
+              Voltar
+            </button>
+            <div className={sectionClass}>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="flex items-center justify-center w-20 h-20 mb-6 bg-red-100 rounded-full">
+                  <span className="text-4xl">⚠️</span>
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Erro ao carregar cobrança</h2>
+                <p className="text-base text-gray-600 mb-8 max-w-md">
+                  {error || 'A cobrança solicitada não foi encontrada ou não está acessível no momento'}
+                </p>
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" onClick={() => router.back()} className="h-10 px-4 border-gray-300 text-gray-700 hover:bg-gray-50">Voltar</Button>
+                  <Button onClick={loadCobranca} className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white">Tentar novamente</Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1142,15 +1056,15 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
   const isPago = cobranca.status === 'PAGO';
   const isPendente = cobranca.status === 'PENDENTE' || cobranca.status === 'A_VENCER';
-  const liquidacaoInfo = getLiquidacaoInfo(cobranca);
   
   // URL de fatura é usado para compartilhamento
   const invoiceUrl = cobranca.asaasData?.invoiceUrl as string | undefined;
 
   return (
-    <div className="w-full min-w-0 overflow-x-hidden px-3 py-4 pb-8 sm:px-4 sm:py-6">
+    <div className="h-full overflow-y-auto">
+      <div className="w-full min-w-0 px-4 py-6 pb-8">
         {/* Header com espaçamento consistente */}
-        <div className="mb-6 sm:mb-8">
+        <div className={cn(DETAIL_SECTION_MAX, 'mb-8')}>
         <button
           type="button"
           onClick={() => router.back()}
@@ -1162,39 +1076,30 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
         {/* Banner: Faz parte de um parcelamento */}
         {cobranca.tipo === 'PARCELADA' && cobranca.installmentPlanId && (
-          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-3 sm:mb-5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
-            <InformationCircleIcon className="h-5 w-5 text-blue-600 flex-shrink-0" />
-            <p className="text-sm text-blue-800">
-              Esta cobrança faz parte de um parcelamento.{' '}
-              <Link
-                href={`/cobrancas/parcelamentos/${cobranca.installmentPlanId}`}
-                className="font-medium text-blue-600 hover:text-blue-700 underline underline-offset-2"
-              >
-                Ver parcelamento completo
-              </Link>
-            </p>
-          </div>
+          <InfoCallout showIcon className="mb-4 sm:mb-5">
+            Esta cobrança faz parte de um parcelamento.{' '}
+            <InfoCalloutLink href={`/cobrancas/parcelamentos/${cobranca.installmentPlanId}`}>
+              Ver parcelamento completo
+            </InfoCalloutLink>
+          </InfoCallout>
         )}
 
         {/* Banner: Gerada por uma assinatura */}
         {(cobranca.tipo === 'MENSALIDADE' || cobranca.tipo === 'RECORRENTE') && cobranca.subscriptionId && (
-          <div className="mb-4 flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50 px-3 py-3 sm:mb-5 sm:flex-row sm:items-center sm:gap-3 sm:px-4">
-            <InformationCircleIcon className="h-5 w-5 text-purple-600 flex-shrink-0" />
-            <p className="text-sm text-purple-800">
-              Esta cobrança foi gerada por uma assinatura.{' '}
-              <Link
-                href={`/cobrancas/assinaturas/${cobranca.subscriptionId}`}
-                className="font-medium text-purple-600 hover:text-purple-700 underline underline-offset-2"
-              >
-                Ver assinatura
-              </Link>
-            </p>
-          </div>
+          <InfoCallout variant="brand" showIcon className="mb-4 sm:mb-5">
+            Esta cobrança foi gerada por uma assinatura.{' '}
+            <InfoCalloutLink
+              calloutVariant="brand"
+              href={`/cobrancas/assinaturas/${cobranca.subscriptionId}`}
+            >
+              Ver assinatura
+            </InfoCalloutLink>
+          </InfoCallout>
         )}
 
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
           <div className="min-w-0 flex-1">
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-gray-900 md:text-3xl md:font-bold">
+            <h1 className="mb-2 text-3xl font-bold leading-tight text-gray-900">
               Detalhes da Cobrança
             </h1>
             <p className="mt-2 break-all font-mono text-xs text-gray-600 sm:text-sm">ID: {cobranca.id}</p>
@@ -1299,30 +1204,6 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                     </DropdownMenuItem>
                   )}
 
-                  {/* Notificações - apenas se tem asaasPaymentId e pode reenviar */}
-                  {chargeActions.canResend && cobranca.asaasPaymentId && (
-                    <>
-                      <DropdownMenuItem
-                        onClick={() => handleNotificar('EMAIL')}
-                        disabled={isNotifyingAsaas}
-                      >
-                        Notificar por E-mail
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => handleNotificar('SMS')}
-                        disabled={isNotifyingAsaas}
-                      >
-                        Notificar por SMS
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => handleNotificar('WHATSAPP')}
-                        disabled={isNotifyingAsaas}
-                      >
-                        Notificar por WhatsApp
-                      </DropdownMenuItem>
-                    </>
-                  )}
-
                   {/* Confirmar recebimento em dinheiro */}
                   {chargeActions.canConfirmPayment && (
                     <DropdownMenuItem onClick={handleConfirmarRecebimento}>
@@ -1369,37 +1250,28 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Dados da Cobrança */}
-      <div
-        className={`bg-white rounded-xl border shadow-sm transition-all duration-200 ${
-          isEditing
-            ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-            : 'border-gray-200'
-        }`}
+        <div className="space-y-8">
+      <section
+        className={cn(
+          sectionClass,
+          isEditing && 'border-indigo-300 ring-2 ring-indigo-100',
+        )}
       >
-        <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Informações da Cobrança</h2>
-              <p className="mt-1 text-sm text-gray-600">
-                Detalhes financeiros e situação do pagamento
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              {isEditing && (
-                <div className="flex w-full items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700 sm:w-auto">
-                  <Edit className="h-4 w-4 shrink-0" />
-                  <span className="text-sm font-medium">Modo de edição</span>
-                </div>
-              )}
-            </div>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <span className="text-sm font-semibold text-slate-700">Informações da Cobrança</span>
+            <p className="mt-1 text-sm text-slate-600">
+              Detalhes financeiros e situação do pagamento
+            </p>
           </div>
-        </div>
-
-        <div className="px-4 py-5 sm:px-6 sm:py-6">
-          <div className="grid grid-cols-1 gap-x-6 gap-y-5 md:grid-cols-2 md:gap-y-6 lg:grid-cols-3 lg:gap-x-8">
-            <div>
-              <p className="text-sm font-medium text-gray-500 mb-2">Situação</p>
+          <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+            {isEditing && (
+              <div className="flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700">
+                <Edit className="h-4 w-4 shrink-0" />
+                <span className="text-sm font-medium">Modo de edição</span>
+              </div>
+            )}
+            <div className="flex flex-col items-end gap-1">
               <Badge
                 status={
                   cobranca.status === 'PAGO' && cobranca.liquidacaoStatus === 'DISPONIVEL'
@@ -1407,213 +1279,160 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                     : statusMap[cobranca.status]
                 }
               />
+              {awaitingWebhook && !isCobrancaDetailTerminal(cobranca.status) ? (
+                <p className="text-right text-xs text-indigo-600">Atualizando status…</p>
+              ) : null}
             </div>
+          </div>
+        </div>
 
-            <div>
-              <label htmlFor="vencimento" className="block text-xs text-gray-600 mb-1.5">
-                Vencimento
-              </label>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-1">
+            <label htmlFor="valor" className={labelClass}>
+              Valor
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                R$
+              </span>
               <input
-                id="vencimento"
+                id="valor"
                 type="text"
-                value={editVencimentoDisplay}
-                onChange={handleVencimentoChange}
+                inputMode="decimal"
+                value={editValorDisplay}
+                onChange={(e) => {
+                  valorTypingRef.current = true;
+                  const nextDisplay = formatBRLInput(e.target.value);
+                  setEditValorDisplay(nextDisplay);
+                  setEditValor(parseBRL(nextDisplay));
+                }}
+                onBlur={() => {
+                  valorTypingRef.current = false;
+                  if (editValorDisplay) {
+                    setEditValorDisplay(formatBRL(editValor));
+                  }
+                }}
                 disabled={!isEditing}
-                placeholder="DD/MM/AAAA"
-                maxLength={10}
-                className={`w-full px-3 py-2 text-sm border rounded-md ${
+                placeholder="0,00"
+                className={`w-full pl-10 pr-3 py-2 text-sm border rounded-md text-right ${
                   isEditing
                     ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900'
                     : 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
                 }`}
               />
-              {cobranca.atrasado && !isEditing && (
-                <p className="mt-1 text-xs font-medium text-red-600">Atrasado</p>
-              )}
             </div>
+          </div>
 
-            <div>
-              <label htmlFor="tipo" className="block text-xs text-gray-600 mb-1.5">
-                Tipo
-              </label>
+          <div className="space-y-1">
+            <label htmlFor="tipo" className={labelClass}>
+              Tipo
+            </label>
+            <input
+              id="tipo"
+              type="text"
+              value={getTipoLabel(cobranca.tipo)}
+              disabled
+              className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="vencimento" className={labelClass}>
+              Vencimento
+            </label>
+            <input
+              id="vencimento"
+              type="text"
+              value={editVencimentoDisplay}
+              onChange={handleVencimentoChange}
+              disabled={!isEditing}
+              placeholder="DD/MM/AAAA"
+              maxLength={10}
+              className={`w-full px-3 py-2 text-sm border rounded-md ${
+                isEditing
+                  ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900'
+                  : 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
+              }`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label htmlFor="formaPagamento" className={labelClass}>
+              Forma de Pagamento
+            </label>
+            {isEditing ? (
+              <Select value={editFormaPagamento} onValueChange={setEditFormaPagamento}>
+                <SelectTrigger className="w-full h-[38px] px-3 text-sm border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900">
+                  <SelectValue placeholder="Selecione a forma de pagamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="BOLETO">Boleto Bancário / Pix</SelectItem>
+                  <SelectItem value="PIX">Pix</SelectItem>
+                  <SelectItem value="INDEFINIDO">Pergunte ao cliente</SelectItem>
+                  <SelectItem value="CARTAO_CREDITO">Cartão de Crédito</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
               <input
-                id="tipo"
                 type="text"
-                value={getTipoLabel(cobranca.tipo)}
+                value={FORMA_PAGAMENTO_LABELS[editFormaPagamento] || editFormaPagamento}
+                disabled
+                className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
+              />
+            )}
+          </div>
+
+          {cobranca.dataPagamento && (
+            <div className="space-y-1">
+              <label className={labelClass}>Data de Pagamento</label>
+              <input
+                type="text"
+                value={formatDate(cobranca.dataPagamento)}
                 disabled
                 className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
               />
             </div>
+          )}
 
-            <div>
-              <label htmlFor="formaPagamento" className="block text-xs text-gray-600 mb-1.5">
-                Forma de Pagamento
-              </label>
-              {isEditing ? (
-                <div className="space-y-2">
-                  <Select value={editFormaPagamento} onValueChange={setEditFormaPagamento}>
-                    <SelectTrigger className="w-full h-[38px] px-3 text-sm border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900">
-                      <SelectValue placeholder="Selecione a forma de pagamento" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {/* Placeholder é definido via SelectValue, não como item com value vazio */}
-                      <SelectItem value="BOLETO">Boleto Bancário / Pix</SelectItem>
-                      <SelectItem value="PIX">Pix</SelectItem>
-                      <SelectItem value="INDEFINIDO">Pergunte ao cliente</SelectItem>
-                      <SelectItem value="CARTAO_CREDITO">Cartão de Crédito</SelectItem>
-                    </SelectContent>
-                  </Select>
+          {isPago && cobranca.valorLiquido != null && (
+            <>
+              <div className="space-y-1">
+                <label className={labelClass}>Valor Líquido</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                    R$
+                  </span>
+                  <input
+                    type="text"
+                    value={formatBRL(cobranca.valorLiquido)}
+                    disabled
+                    className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right"
+                  />
                 </div>
-              ) : (
-                <input
-                  type="text"
-                  value={FORMA_PAGAMENTO_LABELS[editFormaPagamento] || editFormaPagamento}
-                  disabled
-                  className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
-                />
+                <p className="text-xs text-slate-500">Após taxas</p>
+              </div>
+
+              {cobranca.taxaAsaas != null && cobranca.taxaAsaas > 0 && (
+                <div className="space-y-1">
+                  <label className={labelClass}>Taxa da plataforma financeira</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                      R$
+                    </span>
+                    <input
+                      type="text"
+                      value={`-${formatBRL(cobranca.taxaAsaas)}`}
+                      disabled
+                      className="w-full pl-10 pr-3 py-2 text-sm border border-red-200 bg-red-50 text-red-600 cursor-not-allowed rounded-md text-right"
+                    />
+                  </div>
+                </div>
               )}
-            </div>
+            </>
+          )}
 
-            {cobranca.dataPagamento && (
-              <div>
-                <label className="block text-xs text-gray-600 mb-1.5">Data de Pagamento</label>
-                <input
-                  type="text"
-                  value={formatDate(cobranca.dataPagamento)}
-                  disabled
-                  className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
-                />
-              </div>
-            )}
-
-            {liquidacaoInfo && (
-              <div className="md:col-span-2 lg:col-span-1">
-                <p className="text-sm font-medium text-gray-500 mb-2">Situação no extrato</p>
-                <div
-                  className={`rounded-md border px-3 py-3 ${
-                    liquidacaoInfo.tone === 'success'
-                      ? 'border-emerald-200 bg-emerald-50'
-                      : 'border-amber-200 bg-amber-50'
-                  }`}
-                >
-                  <p
-                    className={`text-sm font-semibold ${
-                      liquidacaoInfo.tone === 'success' ? 'text-emerald-800' : 'text-amber-800'
-                    }`}
-                  >
-                    {liquidacaoInfo.title}
-                  </p>
-                  <p
-                    className={`mt-1 text-xs ${
-                      liquidacaoInfo.tone === 'success' ? 'text-emerald-700' : 'text-amber-700'
-                    }`}
-                  >
-                    {liquidacaoInfo.description}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="valor" className="block text-xs text-gray-600 mb-1.5">
-                Valor
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                  R$
-                </span>
-                <input
-                  id="valor"
-                  type="text"
-                  inputMode="decimal"
-                  value={editValorDisplay}
-                  onChange={(e) => {
-                    valorTypingRef.current = true;
-                    const nextDisplay = formatBRLInput(e.target.value);
-                    setEditValorDisplay(nextDisplay);
-                    setEditValor(parseBRL(nextDisplay));
-                  }}
-                  onBlur={() => {
-                    valorTypingRef.current = false;
-                    if (editValorDisplay) {
-                      setEditValorDisplay(formatBRL(editValor));
-                    }
-                  }}
-                  disabled={!isEditing}
-                  placeholder="0,00"
-                  className={`w-full pl-10 pr-3 py-2 text-sm border rounded-md text-right ${
-                    isEditing
-                      ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900'
-                      : 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
-                  }`}
-                />
-              </div>
-            </div>
-
-            {/* Campos de valores Asaas - exibidos apenas quando pagamento confirmado */}
-            {isPago && cobranca.valorLiquido != null && (
-              <>
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1.5">
-                    Valor Pago
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                      R$
-                    </span>
-                    <input
-                      type="text"
-                      // Se houver valorBruto, ele é o valor pago real. Se não, fallback para valor.
-                      value={formatBRL(cobranca.valorBruto ?? cobranca.valor)}
-                      disabled
-                      className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1.5">
-                    Valor Líquido
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                      R$
-                    </span>
-                    <input
-                      type="text"
-                      value={formatBRL(cobranca.valorLiquido)}
-                      disabled
-                      className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 mt-0.5">Após taxas</p>
-                </div>
-
-
-                {cobranca.taxaAsaas != null && cobranca.taxaAsaas > 0 && (
-                  <div>
-                    <label className="block text-xs text-gray-600 mb-1.5">
-                      Taxa da plataforma financeira
-                    </label>
-                    <div className="relative">
-                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                        R$
-                      </span>
-                      <input
-                        type="text"
-                        value={`-${formatBRL(cobranca.taxaAsaas)}`}
-                        disabled
-                        className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right border-red-200 bg-red-50 text-red-600"
-                      />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="mt-8 pt-6 border-t border-gray-100">
-            <label htmlFor="descricao" className="block text-xs text-gray-600 mb-1.5">
+          <div className="md:col-span-2 space-y-1">
+            <label htmlFor="descricao" className={labelClass}>
               Descrição
             </label>
             <textarea
@@ -1635,7 +1454,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             />
           </div>
         </div>
-      </div>
+      </section>
 
       {/* Informações do Pagamento (quando pago) */}
       {isPago && cobranca.pagamentos && cobranca.pagamentos.length > 0 && (() => {
@@ -1643,7 +1462,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         if (!pagamentoConfirmado) return null;
         
         return (
-          <div className="mt-8 bg-green-50 border border-green-200 rounded-xl shadow-sm overflow-hidden">
+          <div className={cn(DETAIL_SECTION_MAX, 'bg-green-50 border border-green-200 rounded-xl shadow-sm overflow-hidden')}>
             <div className="px-6 py-4 bg-green-100 border-b border-green-200">
               <h3 className="text-base font-semibold text-green-900 flex items-center gap-2">
                 <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1664,15 +1483,6 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs font-medium text-green-700">Valor Pago:</dt>
-                  <dd className="text-sm text-green-900 font-semibold mt-0.5">
-                    {new Intl.NumberFormat('pt-BR', {
-                      style: 'currency',
-                      currency: 'BRL',
-                    }).format(Number(pagamentoConfirmado.valorPago) || 0)}
-                  </dd>
-                </div>
-                <div>
                   <dt className="text-xs font-medium text-green-700">Forma de Pagamento:</dt>
                   <dd className="text-sm text-green-900 font-semibold mt-0.5">
                     {FORMA_PAGAMENTO_LABELS[pagamentoConfirmado.formaPagamento] || pagamentoConfirmado.formaPagamento}
@@ -1681,7 +1491,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                 <div>
                   <dt className="text-xs font-medium text-green-700">Status:</dt>
                   <dd className="text-sm text-green-900 font-semibold mt-0.5">
-                    {pagamentoConfirmado.status}
+                    {formatStatusLabel(pagamentoConfirmado.status)}
                   </dd>
                 </div>
               </dl>
@@ -1710,11 +1520,13 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
       {/* Juros, Multa e Desconto */}
       <div
-        className={`mt-6 bg-white rounded-xl border shadow-sm transition-all duration-200 sm:mt-8 ${
+        className={cn(
+          DETAIL_SECTION_MAX,
+          'bg-white rounded-xl border shadow-sm transition-all duration-200',
           isEditingAjustes
             ? 'border-indigo-400 shadow-indigo-100 ring-2 ring-indigo-100'
-            : 'border-gray-200'
-        }`}
+            : 'border-gray-200',
+        )}
       >
         <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1981,7 +1793,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       </div>
 
       {/* Dados do Aluno */}
-      <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm sm:mt-8">
+      <div className={cn(DETAIL_SECTION_MAX, 'bg-white rounded-xl border border-gray-200 shadow-sm')}>
         <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
           <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Dados do Aluno</h2>
           <p className="mt-1 text-sm text-gray-600">Informações de contato e matrícula</p>
@@ -2077,16 +1889,12 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       </div>
 
       {/* Arquivos e Documentos */}
-      <CobrancaArquivos cobrancaId={cobranca.id} />
+      <CobrancaArquivos cobrancaId={cobranca.id} sectionClassName={sectionClass} />
 
-      {/* Histórico de Notificações Automáticas */}
-      <CobrancaNotificacoes
-        cobrancaId={cobranca.id}
-        logs={cobranca.logsFinanceiros}
-      />
-
-      <div className="flex justify-center px-2 pt-6 pb-4">
+      <div className={cn('flex justify-center pt-2', DETAIL_SECTION_MAX)}>
         <AsaasSeal variant="negativo-preto" />
+      </div>
+        </div>
       </div>
 
       <ConfirmDialog

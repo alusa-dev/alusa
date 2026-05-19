@@ -60,6 +60,10 @@ export type {
 
 // Legacy mappers (manter compatibilidade - preferir charge-status)
 export { mapAsaasStatusToInternal, getStatusBadgeConfig } from './mappers/status-mapper';
+export { resolveLiquidacaoFromAsaasPayment } from './mappers/liquidacao-from-asaas';
+export type { ResolveLiquidacaoFromAsaasInput } from './mappers/liquidacao-from-asaas';
+export { resolveCobrancaDisplayStatus, isCobrancaStatusTerminal } from './mappers/cobranca-display-status';
+export type { CobrancaDisplayStatus } from './mappers/cobranca-display-status';
 
 export {
   mapRequestWithdrawDTOToInput,
@@ -733,6 +737,8 @@ export type {
 
 // Webhooks
 export { handlePaymentWebhook } from './webhooks/payment-webhook-handler';
+export { publishFinanceEvent, listFinanceRealtimeEvents } from './realtime/finance-realtime-publisher';
+export type { FinanceRealtimeEvent, FinanceRealtimeEventRecord } from './realtime/finance-realtime-types';
 export type { PaymentWebhookPayload } from './webhooks/payment-webhook-handler';
 export { handleAsaasWebhookEvent } from './webhooks/asaas-webhook-handler';
 export {

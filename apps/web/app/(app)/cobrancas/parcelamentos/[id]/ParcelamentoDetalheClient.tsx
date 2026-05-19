@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -48,14 +49,15 @@ const statusColors: Record<StatusParcelamento, string> = {
 
 // Mapeamento de status de cobrança para StatusType
 const cobrancaStatusMap: Record<string, StatusType> = {
-  PENDENTE: 'PENDING',
-  PROCESSANDO: 'RECEIVED',
-  PAGO: 'CONFIRMED',
-  ATRASADO: 'OVERDUE',
-  CANCELADO: 'CANCELED',
-  ESTORNADO: 'REFUNDED',
-  A_VENCER: 'PENDING',
-  ESTORNADO_PARCIAL: 'REFUNDED',
+  PENDENTE: 'PENDENTE',
+  A_VENCER: 'A_VENCER',
+  PROCESSANDO: 'PROCESSANDO',
+  PAGO: 'PAGO',
+  ATRASADO: 'ATRASADO',
+  CANCELADO: 'CANCELADO',
+  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
+  ESTORNADO: 'ESTORNADO',
+  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
 };
 
 type Parcela = {
@@ -91,8 +93,8 @@ export function ParcelamentoDetalheClient({ id }: { id: string }) {
   const [parcelamento, setParcelamento] = useState<ParcelamentoDetalhes | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/finance/installments/${id}`, {
@@ -115,13 +117,20 @@ export function ParcelamentoDetalheClient({ id }: { id: string }) {
         variant: 'error',
       });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: Boolean(parcelamento) && !loading,
+    intervalMs: 20_000,
+    minIntervalMs: 5_000,
+    realtime: { dashboard: true, cobrancaQueries: true },
+  });
 
   if (loading) {
     return (

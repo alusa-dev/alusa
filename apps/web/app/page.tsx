@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 export default async function HomePage() {
   let userCount: number | null = null;
@@ -44,11 +45,9 @@ export default async function HomePage() {
           </Link>
         </div>
 
-        <div className="mt-6 p-4 bg-blue-50 rounded-2xl">
-          <p className="text-[12px] text-blue-700 text-center">
-            💡 Após criar a primeira conta, novos usuários só poderão se cadastrar através de convites.
-          </p>
-        </div>
+        <InfoCallout size="sm" className="mt-6 rounded-2xl text-center">
+          💡 Após criar a primeira conta, novos usuários só poderão se cadastrar através de convites.
+        </InfoCallout>
       </div>
     </div>
   );

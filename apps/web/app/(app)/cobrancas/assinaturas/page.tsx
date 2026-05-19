@@ -26,6 +26,7 @@ import { SubscriptionActionsMenu } from '@/components/financeiro/SubscriptionAct
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import type { FinanceSubscriptionEnrichedItemDTO } from '@/features/finance/dtos';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -71,8 +72,8 @@ export default function AssinaturasPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       params.set('page', String(page));
@@ -105,13 +106,20 @@ export default function AssinaturasPage() {
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setAssinaturas([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, pageSize, searchQuery, statusFilter]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: true, cobrancaQueries: false },
+  });
 
   const handleStatusFilterChange = useCallback(
     (value: string) => {

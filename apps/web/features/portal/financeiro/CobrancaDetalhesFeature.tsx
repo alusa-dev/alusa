@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -14,13 +15,15 @@ const PAYMENT_NOTICE =
   'Pagamentos e mudanças na forma de cobrança são realizados pela secretaria. Entre em contato para receber sua fatura.';
 
 const statusBadgeMap: Record<string, StatusType> = {
-  PENDENTE: 'PENDING',
-  A_VENCER: 'PENDING',
-  ATRASADO: 'OVERDUE',
-  PROCESSANDO: 'RECEIVED',
-  PAGO: 'CONFIRMED',
-  CANCELADO: 'CANCELED',
-  ESTORNADO: 'REFUNDED',
+  PENDENTE: 'PENDENTE',
+  A_VENCER: 'A_VENCER',
+  ATRASADO: 'ATRASADO',
+  PROCESSANDO: 'PROCESSANDO',
+  PAGO: 'PAGO',
+  CANCELADO: 'CANCELADO',
+  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
+  ESTORNADO: 'ESTORNADO',
+  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
 };
 
 const formaPagamentoLabel: Record<string, string> = {
@@ -119,11 +122,13 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
   const [cobranca, setCobranca] = useState<CobrancaDetalhes | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    async function loadCobranca() {
+  const loadCobranca = useCallback(
+    async (silent = false) => {
       try {
-        setLoading(true);
-        const response = await fetch(`/api/portal/financeiro/${cobrancaId}`);
+        if (!silent) setLoading(true);
+        const response = await fetch(`/api/portal/financeiro/${cobrancaId}`, {
+          cache: 'no-store',
+        });
         if (!response.ok) {
           if (response.status === 404) {
             throw new Error('Cobrança não encontrada');
@@ -132,15 +137,27 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
         }
         const data = await response.json();
         setCobranca(data);
+        setError(null);
       } catch (err) {
         setError((err as Error).message);
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    }
+    },
+    [cobrancaId],
+  );
 
-    loadCobranca();
-  }, [cobrancaId]);
+  useEffect(() => {
+    void loadCobranca();
+  }, [loadCobranca]);
+
+  useFinanceLiveRefresh(() => loadCobranca(true), {
+    cobrancaId,
+    enabled: Boolean(cobranca) && !loading,
+    intervalMs: 20_000,
+    minIntervalMs: 5_000,
+    realtime: { dashboard: false, financeiro: false, cobrancaQueries: false },
+  });
 
   if (loading) {
     return (

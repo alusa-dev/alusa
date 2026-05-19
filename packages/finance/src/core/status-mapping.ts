@@ -11,6 +11,7 @@
  */
 
 import type { StatusCobranca, ChargeStatus, LiquidacaoStatus } from '@prisma/client';
+import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -269,29 +270,13 @@ export function computeNextChargeStatus(
 export function computeLiquidacaoStatus(params: {
   asaasStatus: string | null | undefined;
   creditDate: string | null | undefined;
+  billingType?: string | null;
 }): LiquidacaoStatus {
-  const { asaasStatus, creditDate } = params;
-  const internal = mapAsaasToInternalStatus(asaasStatus);
-
-  // Status que não geram liquidação
-  if (['PENDING', 'OVERDUE', 'CANCELLED', 'REFUNDED', 'CHARGEBACK'].includes(internal)) {
-    return 'NAO_APLICAVEL';
-  }
-
-  // Recebido em mãos: disponível imediatamente
-  if (internal === 'RECEIVED_IN_CASH') {
-    return 'DISPONIVEL';
-  }
-
-  // CONFIRMED: verificar creditDate
-  if (internal === 'CONFIRMED') {
-    if (!creditDate) return 'PENDENTE';
-    
-    const today = new Date().toISOString().split('T')[0];
-    return creditDate <= today ? 'DISPONIVEL' : 'PENDENTE';
-  }
-
-  return 'NAO_APLICAVEL';
+  return resolveLiquidacaoFromAsaasPayment({
+    asaasStatus: params.asaasStatus,
+    creditDate: params.creditDate,
+    billingType: params.billingType,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

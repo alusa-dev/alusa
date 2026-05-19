@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search as SearchIcon, Trash2, Users } from '@/components/icons/icons';
 import { cn } from '@/lib/utils';
 import type { WizardAlunoFamiliar, WizardContextValue } from '../types';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 interface TurmaOption {
   id: string;
@@ -309,12 +310,19 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
 
         {/* Aviso mínimo de 2 alunos */}
         {state.alunosFamiliares.length < 2 && (
-          <div data-testid="alunos-aviso-minimo" className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            <Users className="h-3.5 w-3.5 shrink-0" />
-            {state.alunosFamiliares.length === 0
-              ? 'Adicione pelo menos 2 alunos para a matrícula familiar.'
-              : 'Adicione mais 1 aluno para continuar.'}
-          </div>
+          <InfoCallout
+            data-testid="alunos-aviso-minimo"
+            variant="warning"
+            size="sm"
+            showIcon={false}
+          >
+            <span className="flex items-center gap-2">
+              <Users className="h-3.5 w-3.5 shrink-0 text-amber-700" />
+              {state.alunosFamiliares.length === 0
+                ? 'Adicione pelo menos 2 alunos para a matrícula familiar.'
+                : 'Adicione mais 1 aluno para continuar.'}
+            </span>
+          </InfoCallout>
         )}
 
         {/* Busca de alunos */}

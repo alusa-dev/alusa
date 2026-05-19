@@ -308,9 +308,7 @@ function AlunosTable({
               </div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {aluno.isentoTaxaMatricula && (
-                  <Badge variant="info" className="text-[10px] font-bold tracking-widest uppercase">
-                    Isento
-                  </Badge>
+                  <Badge status="ISENTO" size="sm" />
                 )}
                 {aluno.bolsaDescontoPercent && Number(aluno.bolsaDescontoPercent) > 0 && (
                   <Badge

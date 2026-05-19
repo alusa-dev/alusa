@@ -29,6 +29,7 @@ import {
 import type { StatusCobranca } from '@prisma/client';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -38,15 +39,15 @@ const formatDate = (dateStr: string | null) =>
 
 // Mapear status de Cobrança para StatusType
 const cobrancaStatusMap: Record<StatusCobranca, StatusType> = {
-  PENDENTE: 'PENDING',
-  PROCESSANDO: 'RECEIVED',
-  PAGO: 'CONFIRMED',
-  ATRASADO: 'OVERDUE',
-  CANCELADO: 'CANCELED',
-  CANCELAMENTO_PENDENTE: 'PENDING',
-  ESTORNADO: 'REFUNDED',
-  A_VENCER: 'PENDING',
-  ESTORNADO_PARCIAL: 'REFUNDED',
+  PENDENTE: 'PENDENTE',
+  A_VENCER: 'A_VENCER',
+  PROCESSANDO: 'PROCESSANDO',
+  PAGO: 'PAGO',
+  ATRASADO: 'ATRASADO',
+  CANCELADO: 'CANCELADO',
+  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
+  ESTORNADO: 'ESTORNADO',
+  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
 };
 
 type CobrancaFilha = {
@@ -96,8 +97,8 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [studentsDialogOpen, setStudentsDialogOpen] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/finance/subscriptions/${id}`, {
@@ -114,13 +115,20 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
       setError(errMsg);
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: Boolean(assinatura) && !loading,
+    intervalMs: 20_000,
+    minIntervalMs: 5_000,
+    realtime: { dashboard: true, cobrancaQueries: true },
+  });
 
   // Loading state
   if (loading) {
@@ -172,7 +180,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => router.back()}>
               Voltar
             </Button>
-            <Button className="w-full sm:w-auto" onClick={load}>
+            <Button className="w-full sm:w-auto" onClick={() => void load()}>
               Tentar novamente
             </Button>
           </div>

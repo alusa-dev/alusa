@@ -25,6 +25,7 @@ import {
 import { createContrato, getContratos } from '@/features/contratos/services/contratos-service';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 const HERDAR_FORMA_VALUE = 'HERDAR';
 
@@ -501,7 +502,7 @@ export function RematriculaDialog({
               blockedByPolicy ? (
                 <div className={sectionClass}>
                   <span className="text-sm font-semibold text-slate-700">Validação financeira</span>
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <InfoCallout variant="warning" size="md" showIcon={false}>
                     <p className="font-medium">
                       {blockedByPolicy
                         ? 'A política da escola bloqueia esta rematrícula.'
@@ -509,12 +510,12 @@ export function RematriculaDialog({
                           ? 'Esta rematrícula exige autorização da gestão.'
                           : 'A rematrícula está liberada com aviso financeiro.'}
                     </p>
-                    <p className="mt-1 text-xs text-amber-800">{item.financeiro.actionMessage}</p>
-                    <p className="mt-2 text-xs text-amber-800">
+                    <p className="mt-1 text-xs opacity-90">{item.financeiro.actionMessage}</p>
+                    <p className="mt-2 text-xs opacity-90">
                       Em aberto: {item.financeiro.cobrancasEmAberto} • Atrasadas:{' '}
                       {item.financeiro.cobrancasAtrasadas}
                     </p>
-                  </div>
+                  </InfoCallout>
 
                   {needsOverride ? (
                     <div className="space-y-1">

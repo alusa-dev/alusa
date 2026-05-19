@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import type { WizardState, WizardStep, WizardStep5Data } from '@alusa/finance/wizard-client';
 import { wizardStep5Schema } from '@alusa/finance/wizard-client';
 import { saveWizardStep5, WizardApiError } from './wizard-service';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 function parseCurrencyBRLToCents(value: string) {
   const digits = value.replace(/\D/g, '');
@@ -101,10 +102,9 @@ export function WizardStep5FinancialForm({ wizardState, onComplete, onBack }: Pr
         {errors.incomeValue && <p className="text-xs text-red-600">{errors.incomeValue.message}</p>}
       </div>
 
-      <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4 text-sm text-blue-800">
-        <span className="font-semibold block mb-1">Informativo</span>
+      <InfoCallout title="Informativo" size="md" showIcon={false}>
         Esse dado é utilizado apenas para calibração de limites e não representa validação bancária.
-      </div>
+      </InfoCallout>
 
       <div className="absolute bottom-0 left-0 w-full px-8 pb-8 pt-6 flex justify-between bg-white z-10 rounded-b-2xl">
         <Button 

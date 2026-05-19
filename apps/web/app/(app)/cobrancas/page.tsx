@@ -25,7 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@/components/icons/icons';
 import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
-import { Badge, type BadgeVariant, type StatusType } from '@/components/ui/badge';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -36,7 +36,7 @@ const CreateChargeModal = dynamic(
   { ssr: false },
 );
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -54,29 +54,6 @@ const getTipoLabel = (tipo: string) => {
   };
   return labels[tipo] || tipo;
 };
-
-/** Rótulos curtos para listagens (evita badge largo tipo "Aguardando Pagamento"). */
-function getChargeBadgePresentation(mapped: StatusType): { variant: BadgeVariant; label: string } {
-  if (['CONFIRMED', 'RECEIVED', 'PAGO', 'MANUAL', 'RECEIVED_IN_CASH', 'CONCLUIDO'].includes(mapped)) {
-    return { variant: 'success', label: 'Pago' };
-  }
-  if (mapped === 'FAILED') {
-    return { variant: 'destructive', label: 'Falha' };
-  }
-  if (['OVERDUE', 'ATRASADO'].includes(mapped)) {
-    return { variant: 'destructive', label: 'Atrasado' };
-  }
-  if (['CANCELED', 'CANCELADO', 'EXPIRADO', 'CANCELADA'].includes(mapped)) {
-    return { variant: 'neutral', label: 'Cancelado' };
-  }
-  if (['REFUNDED', 'ESTORNADO', 'REFUND_REQUESTED', 'ESTORNADO_PARCIAL'].includes(mapped)) {
-    return { variant: 'neutral', label: 'Estorno' };
-  }
-  if (mapped === 'PROCESSANDO') {
-    return { variant: 'info', label: 'Processando' };
-  }
-  return { variant: 'warning', label: 'Pendente' };
-}
 
 type Cobranca = {
   id: string;
@@ -233,14 +210,11 @@ export default function CobrancasTodasPage() {
     setPage(1);
   }, [searchQuery, statusView, tipoFilter]);
 
-  useLiveRefresh(
-    () => load(true),
-    {
-      enabled: !loading,
-      intervalMs: 45_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+  });
 
   const handleStatusViewChange = useCallback(
     (value: string) => {
@@ -262,24 +236,6 @@ export default function CobrancasTodasPage() {
     if (sortOrder === 'DESC') items.reverse();
     return items;
   }, [cobrancas, sortOrder]);
-
-  const statusMap: Record<string, StatusType> = {
-    // UnifiedChargeStatus (rota operacional)
-    PENDING: 'PENDING',
-    OVERDUE: 'OVERDUE',
-    PAID: 'CONFIRMED',
-    CANCELED: 'CANCELED',
-    REFUNDED: 'REFUNDED',
-    // StatusCobranca legado (rota fallback)
-    PENDENTE: 'PENDING',
-    PROCESSANDO: 'RECEIVED',
-    PAGO: 'CONFIRMED',
-    ATRASADO: 'OVERDUE',
-    CANCELADO: 'CANCELED',
-    ESTORNADO: 'REFUNDED',
-    A_VENCER: 'PENDING',
-    ESTORNADO_PARCIAL: 'REFUNDED',
-  };
 
   const handlePrint = (cobranca: Cobranca) => {
     if (!cobranca?.id) return;
@@ -421,8 +377,7 @@ export default function CobrancasTodasPage() {
                 orderedCobrancas.map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
-                  const mappedStatus = (statusMap[cobranca.status ?? 'PENDING'] ?? 'PENDING') as StatusType;
-                  const badge = getChargeBadgePresentation(mappedStatus);
+                  const badgeStatus = (cobranca.status ?? 'PENDENTE') as StatusType;
 
                   const handleRowClick = () => {
                     if (isInstallmentGroup && cobranca.groupId) {
@@ -510,12 +465,10 @@ export default function CobrancasTodasPage() {
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
                               <Badge
-                                variant={badge.variant}
+                                status={badgeStatus}
                                 size="sm"
                                 className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
-                              >
-                                {badge.label}
-                              </Badge>
+                              />
                             </div>
                           </div>
                         </div>
@@ -554,9 +507,7 @@ export default function CobrancasTodasPage() {
                               </div>
                             </div>
                             <div className="col-span-1 flex justify-center">
-                              <Badge variant={badge.variant} size="sm">
-                                {badge.label}
-                              </Badge>
+                              <Badge status={badgeStatus} size="sm" />
                             </div>
                             <div
                               className="col-span-1 flex justify-center"

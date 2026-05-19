@@ -27,6 +27,7 @@ import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -105,8 +106,8 @@ export default function CobrancasAvulsasPage() {
     action?: () => Promise<void> | void;
   }>({ open: false, title: '', description: '', variant: 'default', action: async () => {} });
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       params.set('statusView', statusView);
@@ -133,13 +134,19 @@ export default function CobrancasAvulsasPage() {
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setCobrancas([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [statusView]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+  });
 
   const handleStatusViewChange = useCallback(
     (value: string) => {
@@ -171,14 +178,15 @@ export default function CobrancasAvulsasPage() {
   }, [cobrancas, searchQuery, sortOrder]);
 
   const statusMap: Record<string, StatusType> = {
-    PENDENTE: 'PENDING',
-    PROCESSANDO: 'RECEIVED',
-    PAGO: 'CONFIRMED',
-    ATRASADO: 'OVERDUE',
-    CANCELADO: 'CANCELED',
-    ESTORNADO: 'REFUNDED',
-    A_VENCER: 'PENDING',
-    ESTORNADO_PARCIAL: 'REFUNDED',
+    PENDENTE: 'PENDENTE',
+    A_VENCER: 'A_VENCER',
+    PROCESSANDO: 'PROCESSANDO',
+    PAGO: 'PAGO',
+    ATRASADO: 'ATRASADO',
+    CANCELADO: 'CANCELADO',
+    CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
+    ESTORNADO: 'ESTORNADO',
+    ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
   };
 
   const handlePrint = (cobranca: Cobranca) => {

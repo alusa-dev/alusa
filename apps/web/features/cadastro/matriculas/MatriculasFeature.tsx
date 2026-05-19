@@ -581,11 +581,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           const taxaCobranca = m.cobrancas.find((c) => c.tipo === 'TAXA_MATRICULA');
 
           if (m.taxaIsenta) {
-            return (
-              <Badge variant="outline" className="text-xs">
-                Isento
-              </Badge>
-            );
+            return <Badge status="ISENTO" size="sm" />;
           }
 
           if (!taxaCobranca) {

@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 
 interface PaymentRow {
   id: string;
@@ -92,14 +92,11 @@ export default function PaymentsTable() {
     void load();
   }, [load]);
 
-  useLiveRefresh(
-    () => load(true),
-    {
-      enabled: !loading,
-      intervalMs: 45_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+  });
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 

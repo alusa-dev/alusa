@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 
 interface ActionDialogProps {
   open: boolean;
@@ -112,11 +113,12 @@ export function ActionDialog({
             )}
           </div>
 
-          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3">
-            <p className="text-xs text-blue-800">
-              <strong>ℹ️ Importante:</strong> Este motivo será registrado no histórico da matrícula para fins de auditoria e análise de desistências.
-            </p>
-          </div>
+          <InfoCallout size="sm">
+            <InfoCalloutItem label="Importante" labelTone="default">
+              Este motivo será registrado no histórico da matrícula para fins de auditoria e análise de
+              desistências.
+            </InfoCalloutItem>
+          </InfoCallout>
         </div>
 
         <DialogFooter className="gap-2">

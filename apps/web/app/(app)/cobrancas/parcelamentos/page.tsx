@@ -22,6 +22,7 @@ import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
 import { pushToast } from '@/components/ui/toast';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { InstallmentActionsMenu } from '@/components/financeiro/InstallmentActionsMenu';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import type { FinanceInstallmentAggregatedItemDTO } from '@/features/finance/dtos';
@@ -64,8 +65,8 @@ export default function ParcelamentosPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') {
@@ -98,13 +99,20 @@ export default function ParcelamentosPage() {
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setParcelamentos([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [statusFilter, searchQuery]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: true, cobrancaQueries: false },
+  });
 
   const handleStatusFilterChange = useCallback(
     (value: string) => {

@@ -1686,6 +1686,7 @@ select:focus {
 .alusa-badge-variant-neutral {
 	background-color: #e6e4ea;
 	color: #383242;
+	border-width: 0;
 }
 
 .alusa-badge-tone-success {
@@ -1706,6 +1707,7 @@ select:focus {
 .alusa-badge-tone-neutral {
 	background-color: #e6e4ea;
 	color: #383242;
+	border-width: 0;
 }
 
 .alusa-badge-tone-brand {

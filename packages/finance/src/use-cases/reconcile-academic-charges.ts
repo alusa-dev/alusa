@@ -11,6 +11,7 @@ import {
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
+import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 
 type ReconciledCobranca = Pick<
   Cobranca,
@@ -50,18 +51,6 @@ function parseAsaasDateTime(value: string | null | undefined): Date | null {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? parseAsaasDate(value) : parsed;
-}
-
-function resolveLiquidacaoStatus(payment: {
-  status: string;
-  creditDate?: string | null;
-  estimatedCreditDate?: string | null;
-}) {
-  if (payment.status === 'RECEIVED_IN_CASH') return 'DISPONIVEL' as const;
-  if (payment.status === 'RECEIVED' || payment.status === 'CONFIRMED') {
-    return payment.creditDate ? ('DISPONIVEL' as const) : ('PENDENTE' as const);
-  }
-  return 'NAO_APLICAVEL' as const;
 }
 
 function resolveFinanceStatus(params: {
@@ -138,7 +127,11 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         parseAsaasDateTime(payment.paymentDate) ??
         parseAsaasDateTime(payment.clientPaymentDate) ??
         parseAsaasDateTime(payment.confirmedDate);
-      const liquidacaoStatus = resolveLiquidacaoStatus(payment);
+      const liquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
+        asaasStatus: payment.status,
+        creditDate: payment.creditDate,
+        billingType: payment.billingType,
+      });
       const liquidadoEm =
         liquidacaoStatus === 'DISPONIVEL'
           ? parseAsaasDateTime(payment.creditDate) ?? paymentDate

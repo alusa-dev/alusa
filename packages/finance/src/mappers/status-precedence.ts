@@ -185,6 +185,18 @@ export function computeNextCobrancaStatus(params: {
 
   const parsedDueDate = dueDate ? new Date(dueDate) : null;
   const hasAsaasStatus = typeof asaasPaymentStatus === 'string';
+
+  if (asaasPaymentStatus === 'AWAITING_RISK_ANALYSIS') {
+    const candidate: StatusCobranca = 'PROCESSANDO';
+    if (canProgressCobrancaStatus(currentStatus, candidate)) {
+      if (candidate === currentStatus) {
+        return { nextStatus: currentStatus, decisionReason: 'STATUS_ALREADY_APPLIED' };
+      }
+      return { nextStatus: candidate, decisionReason: 'ASAAS_STATUS_APPLIED' };
+    }
+    return { nextStatus: currentStatus, decisionReason: 'REGRESSION_BLOCKED' };
+  }
+
   let internalStatus = hasAsaasStatus ? mapAsaasStatusToInternal(asaasPaymentStatus as AsaasPaymentStatus) : null;
   const normalizedBillingType = typeof billingType === 'string' ? billingType.trim().toUpperCase() : '';
   const isCashBilling = normalizedBillingType === 'RECEIVED_IN_CASH';

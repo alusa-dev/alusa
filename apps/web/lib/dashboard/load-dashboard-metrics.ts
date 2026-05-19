@@ -301,7 +301,7 @@ export async function loadDashboardMetricsBody(contaId: string) {
           },
         }),
         tx.aluno.findMany({
-          take: 8,
+          take: 4,
           where: alunoFilter,
           orderBy: { createdAt: 'desc' },
           select: {

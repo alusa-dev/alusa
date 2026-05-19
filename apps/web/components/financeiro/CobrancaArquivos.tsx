@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { ArrowUpTrayIcon, DocumentIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 
 interface ArquivoCobranca {
   id: string;
@@ -17,9 +18,10 @@ interface ArquivoCobranca {
 
 interface CobrancaArquivosProps {
   cobrancaId: string;
+  sectionClassName?: string;
 }
 
-export function CobrancaArquivos({ cobrancaId }: CobrancaArquivosProps) {
+export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArquivosProps) {
   const [arquivos, setArquivos] = useState<ArquivoCobranca[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -204,34 +206,37 @@ export function CobrancaArquivos({ cobrancaId }: CobrancaArquivosProps) {
     });
   };
 
+  const sectionClass =
+    sectionClassName ??
+    cn(
+      'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4',
+      'mx-auto w-full max-w-4xl',
+    );
+
   if (loading) {
     return (
-      <div className="mt-8 bg-white rounded-xl border border-gray-200 shadow-sm">
-        <div className="px-6 py-5 border-b border-gray-100">
-          <h3 className="text-xl font-semibold text-gray-900">Arquivos e Documentos</h3>
-          <p className="mt-1 text-sm text-gray-600">Carregando arquivos anexados...</p>
+      <section className={sectionClass}>
+        <div className="mb-4">
+          <span className="text-sm font-semibold text-slate-700">Arquivos e Documentos</span>
+          <p className="mt-1 text-sm text-slate-600">Carregando arquivos anexados...</p>
         </div>
         <div className="flex items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
         </div>
-      </div>
+      </section>
     );
   }
 
   return (
-    <div className="mt-8 bg-white rounded-xl border border-gray-200 shadow-sm">
-      {/* Header */}
-      <div className="px-6 py-5 border-b border-gray-100">
-        <div>
-          <h3 className="text-xl font-semibold text-gray-900">Arquivos e Documentos</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            Adicione recibos, comprovantes ou documentos relacionados à cobrança
-          </p>
-        </div>
+    <section className={sectionClass}>
+      <div className="mb-4">
+        <span className="text-sm font-semibold text-slate-700">Arquivos e Documentos</span>
+        <p className="mt-1 text-sm text-slate-600">
+          Adicione recibos, comprovantes ou documentos relacionados à cobrança
+        </p>
       </div>
 
-      {/* Conteúdo */}
-      <div className="px-6 py-5 space-y-6">
+      <div className="space-y-6">
         {/* Área de upload drag-and-drop */}
         <div
           className={`
@@ -354,6 +359,6 @@ export function CobrancaArquivos({ cobrancaId }: CobrancaArquivosProps) {
           </div>
         )}
       </div>
-    </div>
+    </section>
   );
 }

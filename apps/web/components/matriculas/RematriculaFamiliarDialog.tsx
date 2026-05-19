@@ -29,6 +29,7 @@ import {
   type RematriculaFamiliarModoTurmas,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import { toast, CustomToast } from '@/components/ui/toast';
+import { InfoCallout } from '@/components/ui/info-callout';
 import {
   Tooltip,
   TooltipContent,
@@ -612,9 +613,9 @@ export function RematriculaFamiliarDialog({
                           </div>
 
                           {blocked ? (
-                            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            <InfoCallout variant="warning" size="sm" showIcon={false}>
                               {item.financeiro.actionMessage || 'Este aluno não está elegível para rematrícula.'}
-                            </p>
+                            </InfoCallout>
                           ) : null}
 
                           {modoTurmas === 'COMBO' ? (

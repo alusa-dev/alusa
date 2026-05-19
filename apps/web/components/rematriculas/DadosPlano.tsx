@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import useCurrentUser from '@/hooks/use-current-user';
 import { usePlanos } from '@/features/cadastro/planos/hooks/use-planos';
 import { useTurmas } from '@/features/cadastro/turmas/hooks/use-turmas';
@@ -196,9 +197,12 @@ export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano,
       </div>
 
       {asaasSubscriptionId ? (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
-          <strong>Sincronização financeira:</strong> ao trocar o plano, a régua financeira da Alusa atualiza o valor recorrente para manter coerência entre matrícula, plano e cobrança.
-        </div>
+        <InfoCallout size="sm">
+          <InfoCalloutItem label="Sincronização financeira" labelTone="default">
+            ao trocar o plano, a régua financeira da Alusa atualiza o valor recorrente para manter coerência
+            entre matrícula, plano e cobrança.
+          </InfoCalloutItem>
+        </InfoCallout>
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

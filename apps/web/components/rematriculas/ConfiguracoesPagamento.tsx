@@ -23,6 +23,7 @@ import {
   InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { pushToast } from '@/components/ui/toast';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import useCurrentUser from '@/hooks/use-current-user';
 
 interface ConfiguracoesPagamentoProps {
@@ -614,9 +615,12 @@ export function ConfiguracoesPagamento({
             </div>
           </div>
           {assinaturaSnapshot?.syncError ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-              <strong>Leitura parcial:</strong> não foi possível consultar o estado financeiro atual. Você ainda pode tentar salvar, mas a confirmação final depende da sincronização da Alusa.
-            </div>
+            <InfoCallout variant="warning" size="sm">
+              <InfoCalloutItem label="Leitura parcial" labelTone="warning">
+                não foi possível consultar o estado financeiro atual. Você ainda pode tentar salvar, mas a
+                confirmação final depende da sincronização da Alusa.
+              </InfoCalloutItem>
+            </InfoCallout>
           ) : null}
         </div>
 
@@ -685,13 +689,14 @@ export function ConfiguracoesPagamento({
             </Select>
           </div>
 
-          {editandoFormaPagamento && (
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-xs text-blue-800">
-                <strong>Importante:</strong> esta alteração afeta apenas os próximos ciclos. Cobranças já geradas podem exigir uma nova sincronização para refletir a mudança.
-              </p>
-            </div>
-          )}
+          {editandoFormaPagamento ? (
+            <InfoCallout size="sm">
+              <InfoCalloutItem label="Importante" labelTone="default">
+                esta alteração afeta apenas os próximos ciclos. Cobranças já geradas podem exigir uma nova
+                sincronização para refletir a mudança.
+              </InfoCalloutItem>
+            </InfoCallout>
+          ) : null}
         </div>
 
         <div className="space-y-3 pt-4 border-t border-slate-200">
@@ -722,9 +727,11 @@ export function ConfiguracoesPagamento({
           </div>
 
           {erroNotificacoes ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-              <strong>Comunicação automática:</strong> {erroNotificacoes}
-            </div>
+            <InfoCallout variant="warning" size="sm">
+              <InfoCalloutItem label="Comunicação automática" labelTone="warning">
+                {erroNotificacoes}
+              </InfoCalloutItem>
+            </InfoCallout>
           ) : null}
 
           <div className="flex flex-wrap gap-3">
@@ -749,9 +756,9 @@ export function ConfiguracoesPagamento({
                     unavailable
                       ? 'border-slate-200 bg-slate-100 text-slate-400'
                       : enabled
-                        ? 'border-[#1D4ED8] bg-[#1D4ED8] text-white shadow-sm'
-                        : 'border-[#1D4ED8] bg-white text-[#1D4ED8] hover:bg-[#EFF6FF]'
-                  } ${disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                        ? 'border-brand-accent bg-brand-accent text-white shadow-sm hover:bg-brand-accent/90'
+                        : 'border-brand-accent bg-white text-brand-accent hover:bg-brand-accent/10'
+                  } ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
                 >
                   <Icon className="h-5 w-5 shrink-0" />
                   {item.label}

@@ -5,7 +5,7 @@ import { DASHBOARD_SECTION_CARD_CLASSNAME } from './components/utils';
 /** Skeleton da área inferior (tabelas) — mesmo grid da versão carregada. */
 export function DashboardSecondarySkeleton() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+    <div className="mb-6 grid grid-cols-1 items-stretch gap-6 md:grid-cols-2 lg:grid-cols-4">
       <div
         className={`${DASHBOARD_SECTION_CARD_CLASSNAME} md:col-span-2 lg:col-span-3 rounded-2xl bg-white p-6 alusa-dark:bg-[color:var(--color-bg-card)]`}
       >

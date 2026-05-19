@@ -12,6 +12,7 @@ import { toast } from '@/components/ui/toast';
 import { uploadContratoArquivo, createContratoModelo } from './services/modelos-service';
 import { PDFViewer } from './components/PDFViewer';
 import { cn } from '@/lib/utils';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 export function ImportarContratoFeature() {
   const router = useRouter();
@@ -358,12 +359,10 @@ export function ImportarContratoFeature() {
                  </div>
               </div>
               
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
-                  <h4 className="text-blue-800 text-sm font-medium mb-1">Dica Importante</h4>
-                  <p className="text-blue-600 text-xs leading-relaxed">
-                    Certifique-se de que o PDF contém todos os campos necessários preenchidos ou placeholders claros. O sistema não preenche campos automaticamente dentro do PDF.
-                  </p>
-              </div>
+              <InfoCallout title="Dica Importante" size="sm" showIcon={false}>
+                Certifique-se de que o PDF contém todos os campos necessários preenchidos ou placeholders
+                claros. O sistema não preenche campos automaticamente dentro do PDF.
+              </InfoCallout>
              </div>
           </div>
 

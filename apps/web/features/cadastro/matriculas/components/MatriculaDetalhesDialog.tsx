@@ -326,9 +326,7 @@ export function MatriculaDetalhesDialog({
                     <div>
                       <label className="text-xs text-gray-500 font-medium block mb-1.5">Status da Taxa</label>
                       {matricula.taxaIsenta ? (
-                        <Badge variant="info">
-                          Isenta
-                        </Badge>
+                        <Badge status="ISENTO" />
                       ) : (
                         <div className="flex items-center gap-2">
                           <Badge status="PENDING">

@@ -10,10 +10,11 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import type { TransferDetailResultDTO } from '@alusa/finance';
 
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 function sanitizeErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -211,14 +212,12 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
 
   const isTransferFinal = data?.status === 'DONE' || data?.status === 'FAILED' || data?.status === 'CANCELED';
 
-  useLiveRefresh(
-    () => loadTransfer(true),
-    {
-      enabled: Boolean(data) && !loading && !canceling && !isTransferFinal,
-      intervalMs: 30_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => loadTransfer(true), {
+    enabled: Boolean(data) && !loading && !canceling && !isTransferFinal,
+    intervalMs: 30_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: false, portal: false },
+  });
 
   async function handleCancelTransfer() {
     if (!data) return;
@@ -317,10 +316,10 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
       </div>
 
       {data.failReason ? (
-        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <InfoCallout variant="warning" size="md" showIcon={false} className="mb-5">
           <p className="font-semibold">Motivo da falha</p>
           <p className="mt-1">{data.failReason}</p>
-        </div>
+        </InfoCallout>
       ) : null}
 
       <div className="space-y-6">

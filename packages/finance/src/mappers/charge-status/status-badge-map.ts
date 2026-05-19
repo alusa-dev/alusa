@@ -77,7 +77,7 @@ const COBRANCA_STATUS_BADGE: Record<StatusCobranca, StatusBadgeConfig> = {
   },
   CANCELAMENTO_PENDENTE: {
     badgeType: 'PROCESSANDO',
-    label: 'Cancelando...',
+    label: 'Cancelamento pendente',
     variant: 'warning',
     icon: '🔄',
     description: 'Aguardando confirmação de cancelamento',
@@ -202,4 +202,105 @@ export function getUnifiedBadgeStatus(status: StatusCobranca | ChargeStatus | st
   };
 
   return legacyMap[status] ?? 'PENDING';
+}
+
+const LEGACY_STATUS_LABELS: Record<string, string> = {
+  CONFIRMED: 'Confirmado',
+  CONFIRMADO: 'Confirmado',
+  RECEIVED: 'Recebido',
+  RECEBIDO: 'Recebido',
+  PENDING: 'Pendente',
+  OVERDUE: 'Atrasado',
+  CANCELED: 'Cancelado',
+  CANCELLED: 'Cancelado',
+  REFUNDED: 'Estornado',
+  REFUND_REQUESTED: 'Reembolso solicitado',
+  FAILED: 'Falha no pagamento',
+  EXPIRED: 'Expirado',
+  EXPIRADO: 'Expirado',
+  CREATED: 'Criada',
+  OPEN: 'Aberta',
+  PAID: 'Paga',
+  MANUAL: 'Pago manualmente',
+  RECEIVED_IN_CASH: 'Pago em dinheiro',
+  CONCLUIDO: 'Concluído',
+  AGUARDANDO: 'Aguardando',
+};
+
+function humanizeStatusToken(status: string): string {
+  return status
+    .trim()
+    .toLowerCase()
+    .split('_')
+    .map((word, index) => {
+      if (index > 0 && ['a', 'de', 'da', 'do', 'em', 'no', 'na', 'e'].includes(word)) {
+        return word;
+      }
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
+/**
+ * Rótulo legível em português para qualquer status de cobrança/pagamento conhecido.
+ * Preferir este helper em listagens em vez de exibir o enum bruto (ex.: A_VENCER).
+ */
+export function getStatusLabel(status: string): string {
+  const normalized = status?.trim().toUpperCase() ?? '';
+  if (!normalized) return '';
+
+  const cobrancaConfig = COBRANCA_STATUS_BADGE[normalized as StatusCobranca];
+  if (cobrancaConfig) return cobrancaConfig.label;
+
+  const chargeConfig = CHARGE_STATUS_BADGE[normalized as ChargeStatus];
+  if (chargeConfig) return chargeConfig.label;
+
+  if (LEGACY_STATUS_LABELS[normalized]) return LEGACY_STATUS_LABELS[normalized];
+
+  return humanizeStatusToken(normalized);
+}
+
+export type StatusBadgeUiVariant = 'success' | 'warning' | 'destructive' | 'info' | 'neutral';
+
+/**
+ * Label + variante de cor para o componente Badge da UI.
+ */
+export function getStatusBadgePresentation(status: string): {
+  label: string;
+  variant: StatusBadgeUiVariant;
+} {
+  const normalized = status?.trim().toUpperCase() ?? '';
+  const variantMap: Record<StatusBadgeConfig['variant'], StatusBadgeUiVariant> = {
+    success: 'success',
+    warning: 'warning',
+    danger: 'destructive',
+    info: 'info',
+    neutral: 'neutral',
+  };
+
+  const cobrancaConfig = COBRANCA_STATUS_BADGE[normalized as StatusCobranca];
+  if (cobrancaConfig) {
+    return { label: cobrancaConfig.label, variant: variantMap[cobrancaConfig.variant] };
+  }
+
+  const chargeConfig = CHARGE_STATUS_BADGE[normalized as ChargeStatus];
+  if (chargeConfig) {
+    return { label: chargeConfig.label, variant: variantMap[chargeConfig.variant] };
+  }
+
+  const unified = getUnifiedBadgeStatus(normalized);
+  const unifiedVariant: Record<BadgeStatusType, StatusBadgeUiVariant> = {
+    CONFIRMED: 'success',
+    PENDING: 'warning',
+    OVERDUE: 'destructive',
+    CANCELED: 'neutral',
+    CANCELADO: 'neutral',
+    REFUNDED: 'neutral',
+    PROCESSANDO: 'info',
+  };
+
+  return {
+    label: getStatusLabel(normalized),
+    variant: unifiedVariant[unified] ?? 'neutral',
+  };
 }

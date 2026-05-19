@@ -1,8 +1,8 @@
+import plugin from 'tailwindcss/plugin.js';
+
 /** @type {import('tailwindcss').Config} */
 // por quê: variante compatível com `data-theme` no `<html>` (não usar `prefers-color-scheme`)
-const plugin = require('tailwindcss/plugin')
-
-module.exports = {
+export default {
   content: [
     './app/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',
@@ -80,5 +80,5 @@ module.exports = {
     plugin(function ({ addVariant }) {
       addVariant('alusa-dark', 'html[data-theme="dark"] &')
     }),
-  ]
+  ],
 };

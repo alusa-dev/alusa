@@ -12,10 +12,13 @@ import {
   mapAsaasPaymentStatusToCobranca,
   reconcileAcademicChargesWithAsaas,
   readPaymentFullPreflight,
+  resolveCobrancaDisplayStatus,
+  resolveLiquidacaoFromAsaasPayment,
   syncPaymentStateFromAsaas,
   updatePayment,
   auditLogService,
 } from '@alusa/finance';
+import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import type { CreatePaymentInput } from '@alusa/asaas';
 import {
   cobrancaDetailResultDTOSchema,
@@ -126,21 +129,17 @@ function resolveStandaloneLiquidacaoStatus(params: {
   displayedStatus: string;
   remotePaymentStatus?: string | null;
   creditDate?: string | null;
-}): 'PENDENTE' | 'DISPONIVEL' | null {
+  billingType?: string | null;
+}): 'PENDENTE' | 'DISPONIVEL' | 'NAO_APLICAVEL' | null {
   if (params.displayedStatus !== 'PAGO') {
     return null;
   }
 
-  if (params.remotePaymentStatus === 'RECEIVED_IN_CASH') {
-    return 'DISPONIVEL';
-  }
-
-  // creditDate futura indica confirmação sem liquidação ainda refletida no saldo.
-  if (isFutureDate(params.creditDate)) {
-    return 'PENDENTE';
-  }
-
-  return null;
+  return resolveLiquidacaoFromAsaasPayment({
+    asaasStatus: params.remotePaymentStatus,
+    creditDate: params.creditDate,
+    billingType: params.billingType,
+  });
 }
 
 function resolveStandaloneChargeTipo(params: {
@@ -346,19 +345,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         pagamentos: {
           orderBy: { createdAt: 'desc' },
         },
-        logsFinanceiros: {
-          include: {
-            usuario: {
-              select: {
-                id: true,
-                nome: true,
-                email: true,
-              },
-            },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 50, // Últimos 50 logs
-        },
         charge: {
           select: {
             invoiceUrl: true,
@@ -415,6 +401,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           displayedStatus: effectiveStatus,
           remotePaymentStatus: remoteAsaasData?.status ?? null,
           creditDate: remoteAsaasData?.creditDate ?? null,
+          billingType: remoteAsaasData?.billingType ?? charge.billingType ?? null,
+        });
+        const standaloneDisplayStatus = resolveCobrancaDisplayStatus({
+          status: effectiveStatus as StatusCobranca,
+          liquidacaoStatus: effectiveLiquidacaoStatus,
+          asaasStatus: remoteAsaasData?.status ?? null,
         });
         const effectiveFormaPagamento =
           mapBillingTypeToFormaPagamento(
@@ -456,6 +448,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                     ? Number(remoteAsaasData.value) - Number(remoteAsaasData.netValue)
                     : null,
                 liquidacaoStatus: effectiveLiquidacaoStatus,
+                displayStatus: standaloneDisplayStatus,
                 invoiceUrl:
                   typeof charge.invoiceUrl === 'string'
                     ? charge.invoiceUrl
@@ -479,7 +472,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
                   combo: null,
                 },
                 pagamentos: [],
-                logsFinanceiros: [],
                 asaasData,
                 origin: 'STANDALONE',
               },
@@ -593,6 +585,22 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       dueDate: effectiveCobranca.vencimento,
     });
 
+    const storedLiquidacao = (effectiveCobranca as unknown as { liquidacaoStatus?: LiquidacaoStatus | null })
+      .liquidacaoStatus;
+    const effectiveLiquidacaoStatus: LiquidacaoStatus =
+      storedLiquidacao ??
+      resolveLiquidacaoFromAsaasPayment({
+        asaasStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? null,
+        creditDate: remoteAsaasData?.creditDate ?? null,
+        billingType: remoteAsaasData?.billingType ?? null,
+      });
+
+    const displayStatus = resolveCobrancaDisplayStatus({
+      status: effectiveStatus as StatusCobranca,
+      liquidacaoStatus: effectiveLiquidacaoStatus,
+      asaasStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? asaasData?.status ?? null,
+    });
+
     const { charge: _academicCharge, ...cobrancaDetail } = effectiveCobranca;
 
     return NextResponse.json(
@@ -615,7 +623,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
             taxaAsaas: toNullableNumber(
               (effectiveCobranca as unknown as { asaasFeeValue?: unknown }).asaasFeeValue,
             ),
-            liquidacaoStatus: (effectiveCobranca as unknown as { liquidacaoStatus?: string | null }).liquidacaoStatus ?? null,
+            liquidacaoStatus: effectiveLiquidacaoStatus,
+            displayStatus,
           },
         }),
       ),

@@ -12,6 +12,7 @@ import { RecebidasKpiCard } from './components/RecebidasKpiCard';
 import type { PeriodoTaxaMatricula } from './components/TaxaMatriculaCard';
 import { useKycEnforcement } from '@/features/kyc/KycEnforcementProvider';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceRealtimeSync } from '@/hooks/use-finance-realtime-sync';
 import { DashboardSecondaryChunkSkeleton } from './dashboard-secondary-skeletons';
 import WelcomeWizardDialog from './WelcomeWizardDialog';
 import type { SerializableDashboardPrefetch } from '@/lib/dashboard/prefetch-dashboard-data-serializable';
@@ -99,6 +100,11 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
       minIntervalMs: 10_000,
     },
   );
+
+  useFinanceRealtimeSync({
+    enabled: Boolean(user?.contaId) && !loading && !financeLoading,
+    scope: { dashboard: true, cobrancaQueries: false },
+  });
 
   useEffect(() => {
     if (verificationLoading) return;

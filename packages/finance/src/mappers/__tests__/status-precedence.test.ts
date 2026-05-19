@@ -230,6 +230,26 @@ describe('status-precedence', () => {
       expect(result.nextStatus).toBe('ESTORNADO_PARCIAL');
       expect(result.decisionReason).toBe('EVENT_FALLBACK_APPLIED');
     });
+
+    it('AWAITING_RISK_ANALYSIS avança cobrança para PROCESSANDO', () => {
+      const result = computeNextCobrancaStatus({
+        currentStatus: 'PENDENTE',
+        asaasPaymentStatus: 'AWAITING_RISK_ANALYSIS',
+      });
+
+      expect(result.nextStatus).toBe('PROCESSANDO');
+      expect(result.decisionReason).toBe('ASAAS_STATUS_APPLIED');
+    });
+
+    it('AWAITING_RISK_ANALYSIS não rebaixa PAGO', () => {
+      const result = computeNextCobrancaStatus({
+        currentStatus: 'PAGO',
+        asaasPaymentStatus: 'AWAITING_RISK_ANALYSIS',
+      });
+
+      expect(result.nextStatus).toBe('PAGO');
+      expect(result.decisionReason).toBe('REGRESSION_BLOCKED');
+    });
   });
 
   describe('computeNextChargeStatus', () => {

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
@@ -65,9 +66,9 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
   const [dataFim, setDataFim] = useState('');
   const [exportReceiptsOpen, setExportReceiptsOpen] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
       setError(null);
       try {
         const res = await fetch(`/api/financeiro/pagamentos/aluno/${alunoId}`, {
@@ -84,11 +85,22 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Erro desconhecido');
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    };
-    load();
-  }, [alunoId]);
+    },
+    [alunoId],
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: Boolean(aluno) && !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: true, portal: false },
+  });
 
   if (loading) {
     return (

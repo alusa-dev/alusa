@@ -1,7 +1,8 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import {
@@ -14,8 +15,7 @@ import {
   Eye,
 } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { getUnifiedBadgeStatus } from '@alusa/finance/client';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import type { PortalFinanceiroListItemDTO } from '@/features/portal/dtos';
 
 const PAYMENT_NOTICE =
@@ -46,27 +46,37 @@ export function PortalFinanceiroTable() {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
-  useEffect(() => {
-    async function loadCobrancas() {
+  const loadCobrancas = useCallback(
+    async (silent = false) => {
+      if (!session?.user) return;
       try {
-        setLoading(true);
-        const response = await fetch('/api/portal/financeiro');
+        if (!silent) setLoading(true);
+        const response = await fetch('/api/portal/financeiro', { cache: 'no-store' });
         if (!response.ok) {
           throw new Error('Erro ao carregar cobranças');
         }
         const result = await response.json();
         setCobrancas(result.cobrancas || []);
+        setError(null);
       } catch (err) {
         setError((err as Error).message);
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
-    }
+    },
+    [session?.user],
+  );
 
-    if (session?.user) {
-      loadCobrancas();
-    }
-  }, [session]);
+  useEffect(() => {
+    void loadCobrancas();
+  }, [loadCobrancas]);
+
+  useFinanceLiveRefresh(() => loadCobrancas(true), {
+    enabled: Boolean(session?.user) && !loading,
+    intervalMs: 45_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: false, financeiro: false },
+  });
 
   // Filtrar e buscar
   const cobrancasFiltradas = useMemo(() => {
@@ -304,7 +314,7 @@ export function PortalFinanceiroTable() {
 
                     {/* Status */}
                     <div className="col-span-2 flex justify-center">
-                      <Badge status={getUnifiedBadgeStatus(cobranca.status)} size="sm" />
+                      <Badge status={cobranca.status as StatusType} size="sm" />
                     </div>
 
                     {/* Ações */}

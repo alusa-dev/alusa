@@ -13,7 +13,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { ClipboardDocumentCheck as Receipt, Eye } from '@/components/icons/icons';
-import { getUnifiedBadgeStatus } from '@alusa/finance/client';
 
 interface Pagamento {
   id: string;
@@ -235,7 +234,7 @@ export function PagamentoDetalhesDialog({
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-3 mb-3">
-                            <Badge status={getUnifiedBadgeStatus(pag.status)} size="sm" />
+                            <Badge status={pag.status as StatusType} size="sm" />
                             <span className="text-sm font-medium text-gray-900">
                               {getFormaPagamentoLabel(pag.formaPagamento)}
                             </span>
@@ -266,7 +265,7 @@ export function PagamentoDetalhesDialog({
                             <div>
                               <p className="text-xs text-gray-500 font-medium">Status Cobrança</p>
                               <p className="mt-1">
-                                <Badge status={getUnifiedBadgeStatus(pag.cobranca.status)} size="sm" />
+                                <Badge status={pag.cobranca.status as StatusType} size="sm" />
                               </p>
                             </div>
                           </div>

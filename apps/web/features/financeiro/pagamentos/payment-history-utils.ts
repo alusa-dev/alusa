@@ -71,24 +71,27 @@ export function getInitials(nome: string) {
 export function resolveStatus(c: HistoricoCobranca): StatusType {
   const raw = c.pagamento ? c.pagamento.status : c.status;
   const map: Record<string, StatusType> = {
-    CONFIRMADO: 'CONFIRMED',
+    CONFIRMADO: 'CONFIRMADO',
     PAGO: 'PAGO',
     PENDENTE: 'PENDENTE',
-    A_VENCER: 'PENDING',
+    A_VENCER: 'A_VENCER',
     ATRASADO: 'ATRASADO',
     ESTORNADO: 'ESTORNADO',
+    ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
     CANCELADO: 'CANCELADO',
-    CANCELAMENTO_PENDENTE: 'PROCESSANDO',
+    CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
     PROCESSANDO: 'PROCESSANDO',
     CONFIRMED: 'CONFIRMED',
     RECEIVED: 'RECEIVED',
-    OVERDUE: 'ATRASADO',
-    REFUNDED: 'ESTORNADO',
-    CANCELED: 'CANCELADO',
+    OVERDUE: 'OVERDUE',
+    REFUNDED: 'REFUNDED',
+    CANCELED: 'CANCELED',
     PENDING: 'PENDING',
-    PAID: 'PAGO',
+    PAID: 'PAID',
+    OPEN: 'OPEN',
+    CREATED: 'CREATED',
   };
-  return map[raw] ?? 'PENDING';
+  return map[raw] ?? 'PENDENTE';
 }
 
 export function resolveValorExibido(c: HistoricoCobranca) {

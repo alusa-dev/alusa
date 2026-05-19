@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   getCobrancaStatusBadge,
   getChargeStatusBadge,
+  getStatusBadgePresentation,
+  getStatusLabel,
   getUnifiedBadgeStatus,
 } from '../status-badge-map';
 import type { StatusCobranca, ChargeStatus } from '@prisma/client';
@@ -60,6 +62,24 @@ describe('getChargeStatusBadge', () => {
   it('CANCELED → variant neutral', () => {
     const badge = getChargeStatusBadge('CANCELED');
     expect(badge.variant).toBe('neutral');
+  });
+});
+
+describe('getStatusLabel', () => {
+  it('retorna rótulos em português com capitalização correta', () => {
+    expect(getStatusLabel('PAGO')).toBe('Pago');
+    expect(getStatusLabel('A_VENCER')).toBe('A vencer');
+    expect(getStatusLabel('ATRASADO')).toBe('Atrasado');
+    expect(getStatusLabel('RECEIVED')).toBe('Recebido');
+    expect(getStatusLabel('CANCELAMENTO_PENDENTE')).toBe('Cancelamento pendente');
+  });
+});
+
+describe('getStatusBadgePresentation', () => {
+  it('combina label e variante para A_VENCER', () => {
+    const badge = getStatusBadgePresentation('A_VENCER');
+    expect(badge.label).toBe('A vencer');
+    expect(badge.variant).toBe('info');
   });
 });
 

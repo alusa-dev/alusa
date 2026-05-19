@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
-import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { DashboardSecondarySkeleton } from './dashboard-secondary-skeletons';
 import { DASHBOARD_SECTION_CARD_CLASSNAME } from './components/utils';
@@ -65,13 +65,6 @@ export default function DashboardSecondarySection({
       month: 'short',
     });
   };
-
-  function cobrancaStatusVariant(raw: string): BadgeVariant {
-    const s = raw.toUpperCase();
-    if (s === 'PAGO') return 'success';
-    if (s === 'PENDENTE') return 'warning';
-    return 'destructive';
-  }
 
   return (
     <>
@@ -238,11 +231,11 @@ export default function DashboardSecondarySection({
         <DashboardSecondarySkeleton />
       ) : (
         <div className="grid grid-cols-1 items-stretch gap-6 mb-6 md:grid-cols-2 lg:grid-cols-4">
-            <div className="md:col-span-2 lg:col-span-3">
+            <div className="flex md:col-span-2 lg:col-span-3">
               <div
-                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} h-fit overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full w-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
               >
-                <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
+                <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
                   <h2 className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                     Últimas Cobranças
                   </h2>
@@ -255,7 +248,7 @@ export default function DashboardSecondarySection({
                   </button>
                 </div>
 
-                <div className="max-h-[400px] overflow-x-auto overflow-y-auto">
+                <div className="min-h-0 flex-1 overflow-x-auto">
                   <table className="w-full">
                     <thead className="sticky top-0 z-10 bg-gray-50/50 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
                       <tr>
@@ -308,13 +301,7 @@ export default function DashboardSecondarySection({
                               </p>
                             </td>
                             <td className="whitespace-nowrap px-6 py-4">
-                              <Badge
-                                variant={cobrancaStatusVariant(cobranca.status)}
-                                size="sm"
-                                className="tracking-widest uppercase"
-                              >
-                                {cobranca.status}
-                              </Badge>
+                              <Badge status={cobranca.status as StatusType} size="sm" />
                             </td>
                             <td className="whitespace-nowrap px-6 py-4 text-right">
                               <p className="text-sm font-bold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
@@ -330,59 +317,56 @@ export default function DashboardSecondarySection({
               </div>
             </div>
 
-            <div className="md:col-span-2 lg:col-span-1">
+            <div className="flex md:col-span-2 lg:col-span-1">
               <div
-                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
+                className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full w-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
               >
-                <div className="border-b border-gray-100 px-5 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
-                  <h2 className="text-base font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                <div className="shrink-0 border-b border-gray-100 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)]">
+                  <h2 className="text-base font-semibold leading-tight text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                     Alunos Recentes
                   </h2>
-                  <p className="mt-0.5 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                  <p className="mt-0.5 text-xs leading-tight text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                     Últimos cadastros realizados
                   </p>
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3">
+                <div className="flex min-h-0 flex-1 flex-col divide-y divide-gray-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
                   {(metrics?.alunosRecentes || []).length === 0 ? (
-                    <p className="flex flex-1 items-center justify-center py-10 text-center text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                    <p className="flex flex-1 items-center justify-center px-6 py-12 text-center text-sm text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                       Nenhum aluno recente
                     </p>
                   ) : (
-                    (metrics?.alunosRecentes || []).map((aluno) => (
+                    (metrics?.alunosRecentes || []).slice(0, 4).map((aluno) => (
                       <button
                         key={aluno.id}
                         type="button"
                         onClick={() => router.push(`/alunos/${aluno.id}`)}
-                        className="group flex w-full shrink-0 items-center gap-3 rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/30 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
+                        className="group flex w-full items-center gap-3 px-6 py-4 text-left transition-colors hover:bg-gray-50/50 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
                       >
                         <PersonAvatar
                           name={aluno.nome}
                           src={aluno.avatarUrl ?? aluno.foto}
-                          size="md"
+                          size="sm"
                           fallbackClassName="bg-[#383242]/10 text-[#383242] alusa-dark:bg-[color:var(--color-brand-950)] alusa-dark:text-[color:var(--color-brand-300)]"
                         />
-                        <div className="min-w-0 flex-1 text-left">
-                          <p className="truncate text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
                             {aluno.nome}
                           </p>
                           <p className="truncate text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
                             {aluno.tipo}
                           </p>
                         </div>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full border border-transparent bg-gray-50 opacity-0 transition-all group-hover:border-gray-200 group-hover:bg-white group-hover:opacity-100 alusa-dark:border-transparent alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:group-hover:border-[color:var(--color-border-default)]">
-                          <span className="text-lg">→</span>
-                        </div>
                       </button>
                     ))
                   )}
                 </div>
 
-                <div className="border-t border-gray-100 bg-gray-50/30 p-4 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+                <div className="mt-auto shrink-0 border-t border-gray-100 bg-gray-50/30 px-6 py-4 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
                   <button
                     type="button"
                     onClick={() => router.push('/alunos')}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-bold text-[#383242] shadow-sm transition-all hover:border-[#383242]/20 hover:shadow-md focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-[#383242] shadow-sm transition-all hover:border-[#383242]/20 hover:shadow-md focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-button-secondary-bg)] alusa-dark:text-[color:var(--color-button-secondary-text)] alusa-dark:hover:bg-[color:var(--color-button-secondary-hover)]"
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

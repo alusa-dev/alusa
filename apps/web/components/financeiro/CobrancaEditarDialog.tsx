@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { pushToast } from '@/components/ui/toast';
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { ChevronDown, ChevronUp } from '@/components/icons/icons';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import {
   formatDecimalFromNumber,
   maskDecimalInput,
@@ -394,12 +395,12 @@ export function CobrancaEditarDialog({
                   </p>
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded p-3">
-                  <p className="text-xs text-blue-800">
-                    <strong>Nota:</strong> Juros, multa e desconto são aplicados apenas se a
-                    cobrança estiver integrada com a plataforma financeira da Alusa.
-                  </p>
-                </div>
+                <InfoCallout size="sm" className="rounded-lg">
+                  <InfoCalloutItem label="Nota" labelTone="default">
+                    Juros, multa e desconto são aplicados apenas se a cobrança estiver integrada com a
+                    plataforma financeira da Alusa.
+                  </InfoCalloutItem>
+                </InfoCallout>
               </div>
             )}
           </div>

@@ -11,8 +11,9 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
 import { ChevronRight, CreditCard, DollarSign, Search } from '@/components/icons/icons';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import { cn } from '@/lib/utils';
+import { InfoCallout } from '@/components/ui/info-callout';
 import { Eye } from 'lucide-react';
 import type {
   AnticipationCandidate,
@@ -348,9 +349,9 @@ function SummaryPanel({
       ) : null}
 
       {singleSelection && simulation?.isDocumentationRequired ? (
-        <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-sm font-medium text-amber-900">Documento obrigatório</p>
-          <p className="mt-1 text-xs leading-5 text-amber-800">
+        <InfoCallout variant="warning" showIcon={false} className="mt-5">
+          <p className="text-sm font-medium">Documento obrigatório</p>
+          <p className="mt-1 text-xs leading-5 opacity-90">
             O Asaas exige nota fiscal ou contrato para analisar esta solicitação.
           </p>
           <Input
@@ -358,8 +359,8 @@ function SummaryPanel({
             className="mt-3 h-10 rounded-lg bg-white"
             onChange={(event) => onDocumentFile(event.target.files?.[0] ?? null)}
           />
-          {documentFile ? <p className="mt-2 text-xs text-amber-800">{documentFile.name}</p> : null}
-        </div>
+          {documentFile ? <p className="mt-2 text-xs opacity-90">{documentFile.name}</p> : null}
+        </InfoCallout>
       ) : null}
 
       <Button
@@ -423,14 +424,12 @@ export function AnteciparRecebimentoPage() {
     void load();
   }, [load]);
 
-  useLiveRefresh(
-    () => load(true),
-    {
-      enabled: !loading && !submitting && !simulating,
-      intervalMs: 60_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading && !submitting && !simulating,
+    intervalMs: 60_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: true, portal: false },
+  });
 
   const candidateItems = candidates?.items ?? [];
 

@@ -87,7 +87,6 @@ describe('GET /api/cobrancas/[id]', () => {
         aluno: { contaId: 'conta-1' },
       },
       pagamentos: [],
-      logsFinanceiros: [],
     } as never);
 
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);
@@ -146,7 +145,6 @@ describe('GET /api/cobrancas/[id]', () => {
         billingType: 'BOLETO',
       },
       pagamentos: [],
-      logsFinanceiros: [],
     } as never);
 
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);
@@ -211,7 +209,6 @@ describe('GET /api/cobrancas/[id]', () => {
         billingType: null,
       },
       pagamentos: [],
-      logsFinanceiros: [],
     } as never);
 
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);

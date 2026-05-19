@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { pushToast } from '@/components/ui/toast';
 import { CheckCircle, Warning } from '@/components/icons/icons';
-import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import type { AnticipationConfiguration, AnticipationLimits } from './types';
 import { formatCurrency } from './utils';
 
@@ -70,14 +70,12 @@ export function AntecipacaoAutomaticaPage() {
     void load();
   }, [load]);
 
-  useLiveRefresh(
-    () => load(true),
-    {
-      enabled: !loading && !saving,
-      intervalMs: 60_000,
-      minIntervalMs: 10_000,
-    },
-  );
+  useFinanceLiveRefresh(() => load(true), {
+    enabled: !loading && !saving,
+    intervalMs: 60_000,
+    minIntervalMs: 10_000,
+    realtime: { dashboard: true, portal: false },
+  });
 
   async function updateConfiguration(nextEnabled: boolean) {
     if (nextEnabled && !automaticEligible) {

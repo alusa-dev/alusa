@@ -5,9 +5,9 @@
 export const ASAAS_PAYMENT_STATUS = {
   /** Aguardando pagamento */
   PENDING: 'PENDING',
-  /** Recebido (ainda não confirmado/liquidado) */
+  /** Recebido (saldo já creditado na conta) */
   RECEIVED: 'RECEIVED',
-  /** Confirmado (liquidado/creditado) */
+  /** Pagamento confirmado (aguardando crédito na conta) */
   CONFIRMED: 'CONFIRMED',
   /** Vencido */
   OVERDUE: 'OVERDUE',

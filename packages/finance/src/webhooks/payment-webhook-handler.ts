@@ -8,6 +8,8 @@ import {
   computeNextChargeStatus,
   resolveInternalPaymentStatus,
 } from '../mappers/status-precedence';
+import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
+import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { buildPaymentExternalReference, mapAsaasToChargeStatus } from '../core';
 import { auditLogService } from '../foundation/audit-log.service';
 import { findStandaloneSubscription } from '../foundation/standalone-subscription-store';
@@ -321,53 +323,12 @@ async function refreshReadModel(params: {
   }
 }
 
-/**
- * Calcula o status de liquidação baseado no status do Asaas e datas de crédito
- */
 function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): LiquidacaoStatus {
-  const { status, creditDate } = payload.payment;
-  const billingType = typeof payload.payment.billingType === 'string' ? payload.payment.billingType.trim().toUpperCase() : '';
-  const normalizedCreditDate = creditDate
-    ? (() => {
-        const parsed = new Date(creditDate);
-        if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-        return creditDate.slice(0, 10);
-      })()
-    : null;
-
-  const nonPaymentStatuses: AsaasPaymentStatus[] = [
-    'PENDING',
-    'OVERDUE',
-    'REFUNDED',
-    'REFUND_REQUESTED',
-    'REFUND_IN_PROGRESS',
-    'CHARGEBACK_REQUESTED',
-    'CHARGEBACK_DISPUTE',
-    'AWAITING_CHARGEBACK_REVERSAL',
-    'DUNNING_REQUESTED',
-    'DUNNING_RECEIVED',
-    'AWAITING_RISK_ANALYSIS',
-    'DELETED',
-  ];
-
-  if (nonPaymentStatuses.includes(status)) {
-    return 'NAO_APLICAVEL';
-  }
-
-  if (status === 'RECEIVED' || status === 'CONFIRMED') {
-    if (!normalizedCreditDate) return 'PENDENTE';
-    
-    // Comparar data de crédito com hoje
-    // Asaas pode enviar YYYY-MM-DD ou ISO completo
-    const today = new Date().toISOString().split('T')[0];
-    return normalizedCreditDate <= today ? 'DISPONIVEL' : 'PENDENTE';
-  }
-
-  if (status === 'RECEIVED_IN_CASH' || billingType === 'RECEIVED_IN_CASH') {
-    return 'DISPONIVEL';
-  }
-
-  return 'NAO_APLICAVEL';
+  return resolveLiquidacaoFromAsaasPayment({
+    asaasStatus: payload.payment.status,
+    creditDate: payload.payment.creditDate,
+    billingType: payload.payment.billingType,
+  });
 }
 
 type CobrancaSelect = {
@@ -2137,6 +2098,17 @@ async function handlePaymentWebhookCore(
     await refreshReadModel({
       chargeId: charge?.id ?? null,
       cobrancaId: cobranca.id,
+    });
+
+    await publishFinanceEvent({
+      contaId,
+      type: 'cobranca.updated',
+      entityId: cobranca.id,
+      asaasPaymentId: payload.payment.id,
+      status: nextStatusCobranca,
+      liquidacaoStatus,
+      asaasStatus: payload.payment.status,
+      revision: Date.now(),
     });
 
     return { success: true };

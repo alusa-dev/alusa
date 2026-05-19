@@ -22,8 +22,11 @@ export {
   getCobrancaStatusBadge,
   getChargeStatusBadge,
   getUnifiedBadgeStatus,
+  getStatusLabel,
+  getStatusBadgePresentation,
   type BadgeStatusType,
   type StatusBadgeConfig,
+  type StatusBadgeUiVariant,
 } from './status-badge-map';
 
 export {

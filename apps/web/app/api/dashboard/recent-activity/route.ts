@@ -19,7 +19,7 @@ export async function GET() {
         },
       }),
       tx.aluno.findMany({
-        take: 8,
+        take: 4,
         where: { contaId: auth.contaId },
         orderBy: { createdAt: 'desc' },
         select: { id: true, nome: true, foto: true },

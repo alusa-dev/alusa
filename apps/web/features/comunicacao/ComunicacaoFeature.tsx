@@ -16,6 +16,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ArrowPathIcon } from '@heroicons/react/24/solid';
 import { useTwilioSend } from './hooks/use-twilio-send';
+import { InfoCallout } from '@/components/ui/info-callout';
 
 /**
  * Feature de Comunicação - Teste Sandbox WhatsApp via Twilio
@@ -306,38 +307,31 @@ export default function ComunicacaoFeature() {
             </Alert>
           )}
 
-          {/* Instruções */}
-          <Alert className="border-blue-200 bg-blue-50">
-            <InformationCircleIcon className="h-4 w-4 text-blue-600" />
-            <AlertDescription>
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-blue-900">📱 Como usar:</p>
-                <ol className="ml-4 list-decimal space-y-1.5 text-xs text-blue-700">
-                  <li>
-                    <strong>Ative seu número</strong> no{' '}
-                    <a
-                      href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium underline hover:text-blue-900"
-                    >
-                      Sandbox Twilio
-                    </a>{' '}
-                    (escaneie QR Code uma vez)
-                  </li>
-                  <li>
-                    <strong>Digite o número</strong> com DDD: <code>(11) 99999-9999</code>
-                  </li>
-                  <li>
-                    <strong>Escreva sua mensagem</strong> personalizada (até 1000 caracteres)
-                  </li>
-                  <li>
-                    <strong>Clique em &quot;Enviar WhatsApp&quot;</strong> e aguarde ~10 segundos
-                  </li>
-                </ol>
-              </div>
-            </AlertDescription>
-          </Alert>
+          <InfoCallout showIcon title="📱 Como usar:">
+            <ol className="ml-4 list-decimal space-y-1.5 text-xs text-slate-600">
+              <li>
+                <strong>Ative seu número</strong> no{' '}
+                <a
+                  href="https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-[#1f6b75] underline underline-offset-2 hover:text-[#174f57]"
+                >
+                  Sandbox Twilio
+                </a>{' '}
+                (escaneie QR Code uma vez)
+              </li>
+              <li>
+                <strong>Digite o número</strong> com DDD: <code>(11) 99999-9999</code>
+              </li>
+              <li>
+                <strong>Escreva sua mensagem</strong> personalizada (até 1000 caracteres)
+              </li>
+              <li>
+                <strong>Clique em &quot;Enviar WhatsApp&quot;</strong> e aguarde ~10 segundos
+              </li>
+            </ol>
+          </InfoCallout>
 
           {/* Info adicional */}
           <Alert className="border-slate-200 bg-slate-50">

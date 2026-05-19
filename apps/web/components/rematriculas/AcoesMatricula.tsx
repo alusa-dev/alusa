@@ -9,6 +9,7 @@ import { PausarMatriculaDialog, type PausarMatriculaPayload } from './PausarMatr
 import { ReativarMatriculaDialog, type ReativarMatriculaPayload } from './ReativarMatriculaDialog';
 import { StatusMatricula } from '@prisma/client';
 import { PlayIcon, PauseIcon, XMarkIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 
 interface AcoesMatriculaProps {
   matricula: {
@@ -365,23 +366,21 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
         </p>
 
         {/* Card informativo simplificado */}
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <p className="text-xs font-semibold text-blue-900 mb-2">Importante:</p>
-          <div className="text-xs text-blue-800 space-y-1.5">
-            <p>
-              <span className="font-semibold text-amber-700">Pausar:</span> Suspende novas cobranças. Cobranças existentes permanecem ativas. Pode ser retomada.
-            </p>
-            <p>
-              <span className="font-semibold text-orange-700">Cancelar:</span> Encerra a matrícula e cancela a cobrança recorrente. Mantém histórico. <strong>Irreversível.</strong>
-            </p>
-            <p>
-              <span className="font-semibold text-red-700">Excluir:</span> Remove completamente do sistema. Use apenas para erros ou duplicatas. <strong>Requer cobranças finalizadas.</strong>
-            </p>
-            <p>
-              <span className="font-semibold text-slate-700">Controle:</span> Sempre informe o motivo ao cancelar para análises e melhorias.
-            </p>
-          </div>
-        </div>
+        <InfoCallout title="Importante:" size="sm" showIcon={false}>
+          <InfoCalloutItem label="Pausar" labelTone="warning">
+            Suspende novas cobranças. Cobranças existentes permanecem ativas. Pode ser retomada.
+          </InfoCalloutItem>
+          <InfoCalloutItem label="Cancelar" labelTone="caution">
+            Encerra a matrícula e cancela a cobrança recorrente. Mantém histórico. <strong>Irreversível.</strong>
+          </InfoCalloutItem>
+          <InfoCalloutItem label="Excluir" labelTone="danger">
+            Remove completamente do sistema. Use apenas para erros ou duplicatas.{' '}
+            <strong>Requer cobranças finalizadas.</strong>
+          </InfoCalloutItem>
+          <InfoCalloutItem label="Controle" labelTone="muted">
+            Sempre informe o motivo ao cancelar para análises e melhorias.
+          </InfoCalloutItem>
+        </InfoCallout>
       </div>
 
       {/* Dialog de pausar */}
