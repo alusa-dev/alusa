@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { toast, Toaster } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { KycEnforcementProvider } from '@/features/kyc/KycEnforcementProvider';
+import { QueryProvider } from '@/components/providers/query-provider';
 
 export function AppProviders({ children }: { children: ReactNode }) {
   // Listeners globais para eventos de toast disparados por componentes isolados (ex.: Wizard)
@@ -45,12 +46,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
   }, []);
   return (
     <SessionProvider>
-      <ThemeProvider>
-        <KycEnforcementProvider>
-          {children}
-          <Toaster />
-        </KycEnforcementProvider>
-      </ThemeProvider>
+      <QueryProvider>
+        <ThemeProvider>
+          <KycEnforcementProvider>
+            {children}
+            <Toaster />
+          </KycEnforcementProvider>
+        </ThemeProvider>
+      </QueryProvider>
     </SessionProvider>
   );
 }

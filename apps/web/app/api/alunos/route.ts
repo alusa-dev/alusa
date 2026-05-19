@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import type { Status } from '@prisma/client';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
 import {
@@ -21,24 +22,38 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
+    const status = (searchParams.get('status') || '').trim().toUpperCase();
+    const pageParam = searchParams.get('page');
+    const page = pageParam ? Math.max(1, Number(pageParam) || 1) : 1;
+    const pageSize = Math.min(
+      100,
+      Math.max(1, Number(searchParams.get('pageSize') || (pageParam ? '6' : '100')) || 6),
+    );
+    const sortOrder = searchParams.get('sortOrder') === 'DESC' ? 'desc' : 'asc';
 
     const result = await withTenantSession(async ({ contaId, tx }) => {
-      const alunos = await tx.aluno.findMany({
-        where: {
-          contaId,
-          ...(q
-            ? {
-                OR: [
-                  { nome: { contains: q, mode: 'insensitive' as const } },
-                  ...(q.replace(/\D/g, '')
-                    ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
-                    : []),
-                ],
-              }
-            : {}),
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
+      const where = {
+        contaId,
+        ...(status && status !== 'TODOS' ? { status: status as Status } : {}),
+        ...(q
+          ? {
+              OR: [
+                { nome: { contains: q, mode: 'insensitive' as const } },
+                ...(q.replace(/\D/g, '')
+                  ? [{ cpf: { contains: q.replace(/\D/g, '') } }]
+                  : []),
+              ],
+            }
+          : {}),
+      };
+
+      const [total, alunos] = await Promise.all([
+        tx.aluno.count({ where }),
+        tx.aluno.findMany({
+        where,
+        orderBy: { nome: sortOrder },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
         select: {
           id: true,
           nome: true,
@@ -56,9 +71,14 @@ export async function GET(request: NextRequest) {
           dataInativacao: true,
           motivoInativacao: true,
         },
-      });
+      }),
+      ]);
 
-      return alunos.map((aluno) => {
+      return {
+        total,
+        page,
+        pageSize,
+        items: alunos.map((aluno) => {
         const bolsaRaw = aluno.bolsaDescontoPercent;
         const bolsaDescontoPercent =
           bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
@@ -80,7 +100,8 @@ export async function GET(request: NextRequest) {
           bolsaDescontoPercent,
           tags: Array.isArray(aluno.tags) ? aluno.tags : null,
         };
-      });
+      }),
+      };
     });
 
     if (result instanceof NextResponse) {
@@ -89,7 +110,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       listAlunosResultDTOSchema.parse({
-        items: result.map((item) => mapAlunoListItemToDTO(item)),
+        items: result.items.map((item) => mapAlunoListItemToDTO(item)),
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
       }),
       {
         headers: {

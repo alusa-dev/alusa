@@ -12,6 +12,7 @@ import { prisma } from '@alusa/lib/prisma';
 import { calculateDynamicStatus } from '@/lib/asaas-status-mapper';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { invalidateChargesCache } from '@/lib/cache/invalidation';
 import {
   createLegacyCobrancaInputDTOSchema,
   createLegacyCobrancaResultDTOSchema,
@@ -293,6 +294,10 @@ export async function POST(req: NextRequest) {
           criadoPor: session.user.name,
         },
       },
+    });
+
+    void invalidateChargesCache(contaId, 'cobranca-created').catch((cacheError) => {
+      console.warn('[cache][invalidate] cobranca-created failed', cacheError);
     });
 
     return NextResponse.json(

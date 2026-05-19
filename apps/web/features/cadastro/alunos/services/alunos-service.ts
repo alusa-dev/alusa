@@ -2,20 +2,36 @@ import { listAlunosResultDTOSchema, type AlunoListItemDTO } from '../dtos';
 
 export type AlunoListItem = AlunoListItemDTO;
 
-function extractList(data: unknown): AlunoListItem[] {
-  const parsed = listAlunosResultDTOSchema.safeParse(data);
-  if (!parsed.success) return [];
-  return parsed.data.items;
-}
+export type ListAlunosParams = {
+  contaId: string;
+  signal?: AbortSignal;
+  q?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+  sortOrder?: 'ASC' | 'DESC';
+};
+
+export type ListAlunosResult = {
+  items: AlunoListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
 
 export async function listAlunos({
   contaId,
   signal,
-}: {
-  contaId: string;
-  signal?: AbortSignal;
-}): Promise<AlunoListItem[]> {
-  const params = new URLSearchParams({ contaId });
+  q,
+  status,
+  page = 1,
+  pageSize = 6,
+  sortOrder = 'ASC',
+}: ListAlunosParams): Promise<ListAlunosResult> {
+  const params = new URLSearchParams({ contaId, page: String(page), pageSize: String(pageSize), sortOrder });
+  if (q?.trim()) params.set('q', q.trim());
+  if (status?.trim() && status !== 'TODOS') params.set('status', status.trim());
+
   const res = await fetch(`/api/alunos?${params.toString()}`, {
     cache: 'no-store',
     signal,
@@ -25,7 +41,16 @@ export async function listAlunos({
     throw new Error(error?.error?.message ?? 'Falha ao carregar alunos');
   }
   const json = await res.json();
-  return extractList(json);
+  const parsed = listAlunosResultDTOSchema.safeParse(json);
+  if (!parsed.success) {
+    return { items: [], total: 0, page, pageSize };
+  }
+  return {
+    items: parsed.data.items,
+    total: parsed.data.total ?? parsed.data.items.length,
+    page: parsed.data.page ?? page,
+    pageSize: parsed.data.pageSize ?? pageSize,
+  };
 }
 
 export async function deleteAluno({ id, reason }: { id: string; reason?: string }) {

@@ -48,7 +48,11 @@ import {
   type PausarMatriculaInput,
   type ReativarMatriculaInput,
 } from './services/matriculas-service';
-import MatriculaWizardDialog from '@/components/matriculas/MatriculaWizardDialog';
+import dynamic from 'next/dynamic';
+
+const MatriculaWizardDialog = dynamic(() => import('@/components/matriculas/MatriculaWizardDialog'), {
+  ssr: false,
+});
 import { MatriculaDetalhesDialog } from './components/MatriculaDetalhesDialog';
 import { PausarMatriculaDialog } from '@/components/rematriculas/PausarMatriculaDialog';
 import { ReativarMatriculaDialog } from '@/components/rematriculas/ReativarMatriculaDialog';

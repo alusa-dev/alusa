@@ -29,7 +29,12 @@ import { Badge, type BadgeVariant, type StatusType } from '@/components/ui/badge
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
+import dynamic from 'next/dynamic';
+
+const CreateChargeModal = dynamic(
+  () => import('@/components/financeiro/CreateChargeModal').then((m) => ({ default: m.CreateChargeModal })),
+  { ssr: false },
+);
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 

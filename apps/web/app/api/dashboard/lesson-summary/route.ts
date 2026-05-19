@@ -1,4 +1,3 @@
-import { autoCloseAgendaEventsInRange } from '@/src/server/aulas/agenda/agenda-event-auto-close.service';
 import { cachedDashboardBlockWithTenant, requireDashboardBlockContaId } from '../_blocks';
 
 type LessonEvent = { turmaId: string | null; status: string; startAt: Date; endAt: Date };
@@ -19,13 +18,6 @@ export async function GET() {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    await autoCloseAgendaEventsInRange({
-      contaId: auth.contaId,
-      start: startOfToday,
-      end: endOfToday,
-      prismaClient: tx,
-    });
 
     const events = await tx.calendarEvent.findMany({
       where: {

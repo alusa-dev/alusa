@@ -21,7 +21,14 @@ import type { AgendaViewModeDTO, CalendarEventDetailsDTO } from '@/features/aula
 import { useAgenda } from '@/features/aulas/agenda/hooks/use-agenda';
 import { AgendaFilters } from '@/features/aulas/agenda/components/AgendaFilters';
 import { listAgendaResources, type AgendaResourcesResult } from '@/features/aulas/agenda/services/agenda-resources-service';
-import { CalendarScheduler } from '@/features/aulas/calendar/components/CalendarScheduler';
+
+const CalendarScheduler = dynamic(
+  () =>
+    import('@/features/aulas/calendar/components/CalendarScheduler').then((m) => ({
+      default: m.CalendarScheduler,
+    })),
+  { ssr: false, loading: () => <div className="min-h-[480px] animate-pulse rounded-xl bg-muted/40" /> },
+);
 import { ChevronDown, Plus } from '@/components/icons/icons';
 import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agenda';
 import {

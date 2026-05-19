@@ -62,6 +62,18 @@ const nextConfig = {
     '@sentry/browser',
   ],
   transpilePackages: ['@alusa/lib', '@alusa/ui'],
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      '@heroicons/react',
+      '@radix-ui/react-icons',
+      '@fullcalendar/react',
+      '@fullcalendar/daygrid',
+      '@fullcalendar/timegrid',
+      '@fullcalendar/interaction',
+      'date-fns',
+    ],
+  },
   async rewrites() {
     return [
       { source: '/auth/login', destination: '/login' },

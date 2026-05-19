@@ -46,13 +46,8 @@ describe('getDashboardFinanceKpisLocal', () => {
     });
   });
 
-  it('mantém fila operacional como fonte principal mesmo quando read model está habilitado', async () => {
+  it('usa read model como fonte principal quando habilitado', async () => {
     process.env.FIN_SUMMARY_READMODEL_ENABLED = 'true';
-    process.env.FIN_SUMMARY_SHADOW_COMPARE = 'true';
-    getOperationalChargesSummaryMock.mockResolvedValue({
-      valorBruto: 485,
-      total: 5,
-    });
     getFinanceSummaryReadModelMock.mockResolvedValue({
       pendingAmountCurrentWindow: 300,
       pendingCountCurrentWindow: 3,
@@ -64,16 +59,30 @@ describe('getDashboardFinanceKpisLocal', () => {
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
 
-    expect(getOperationalChargesSummaryMock).toHaveBeenCalledWith({
+    expect(getFinanceSummaryReadModelMock).toHaveBeenCalled();
+    expect(getOperationalChargesSummaryMock).not.toHaveBeenCalled();
+    expect(result.aguardandoPagamentoProximos30Dias).toMatchObject({
+      valorBruto: 300,
+      quantidadeDeCobrancas: 3,
+      origemDados: 'charge_read_model',
+      escopo: 'unified',
+    });
+  });
+
+  it('faz fallback para fila operacional quando read model não retorna snapshot', async () => {
+    process.env.FIN_SUMMARY_READMODEL_ENABLED = 'true';
+    getFinanceSummaryReadModelMock.mockResolvedValue(null);
+    getOperationalChargesSummaryMock.mockResolvedValue({
+      valorBruto: 485,
+      total: 5,
+    });
+
+    const result = await getDashboardFinanceKpisLocal({
       contaId: 'conta-1',
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
-    expect(result.aguardandoPagamentoProximos30Dias).toMatchObject({
-      valorBruto: 485,
-      quantidadeDeCobrancas: 5,
-      origemDados: 'operational_queue',
-      escopo: 'operational_queue',
-      projectedAt: null,
-    });
+
+    expect(getOperationalChargesSummaryMock).toHaveBeenCalled();
+    expect(result.aguardandoPagamentoProximos30Dias.valorBruto).toBe(485);
   });
 });

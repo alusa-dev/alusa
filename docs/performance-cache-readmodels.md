@@ -2,6 +2,8 @@
 
 ## Flags
 
+- `CACHE_LAYER_ENABLED=true` em produção: cache tenant Redis (Upstash) + fallback memória.
+- `FIN_SUMMARY_READMODEL_ENABLED=true` em produção: KPIs financeiros do dashboard usam snapshot local antes da fila operacional completa.
 - `CACHE_LAYER_ENABLED=false`: mantém o comportamento legado das rotas.
 - `REDIS_CACHE_ENABLED=false`: usa cache em memória mesmo com a nova camada ligada.
 - `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN`: habilitam adapter Redis REST quando `REDIS_CACHE_ENABLED=true`.

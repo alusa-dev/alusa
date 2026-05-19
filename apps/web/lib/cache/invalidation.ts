@@ -23,6 +23,7 @@ function keysForArea(contaId: string, area: TenantCacheArea) {
     case 'charges':
       return [
         buildTenantCacheKey({ contaId, area: 'charges', resource: 'standalone', version: 1, filterHash: 'default' }),
+        buildTenantCacheKey({ contaId, area: 'charges', resource: 'operational-list', version: 1, filterHash: 'default' }),
       ];
     case 'support':
       return [

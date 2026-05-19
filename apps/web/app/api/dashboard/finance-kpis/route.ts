@@ -1,12 +1,11 @@
-import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { getDashboardFinanceKpisLocal } from '@alusa/finance';
 
 import { authOptions } from '@/lib/auth-options';
 import { dashboardFinanceKpisResultDTOSchema } from '@/features/dashboard/dtos';
-import { createPerfTimer, logRoutePerformance } from '@/lib/perf-logger';
 import { runWithTenant, type TenantTransactionClient } from '@/lib/prisma-tenant';
 import { logRuntimeEnvironmentOnce } from '@/lib/runtime-environment';
+import { cachedDashboardBlockWithTenant } from '../_blocks';
 
 async function buildFinanceKpisBody(contaId: string, tx: TenantTransactionClient) {
   const snapshot = await getDashboardFinanceKpisLocal({ contaId, db: tx });
@@ -17,55 +16,18 @@ async function buildFinanceKpisBody(contaId: string, tx: TenantTransactionClient
 }
 
 export async function GET() {
-  const startedAt = Date.now();
-  const timer = createPerfTimer('api/dashboard/finance-kpis');
-  let contaIdForLog: string | null = null;
-  let cacheStateForLog = 'BYPASS';
-  let statusCodeForLog = 200;
+  logRuntimeEnvironmentOnce('api/dashboard/finance-kpis');
+  const session = await getServerSession(authOptions);
+  const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
 
-  try {
-    logRuntimeEnvironmentOnce('api/dashboard/finance-kpis');
-    const session = await getServerSession(authOptions);
-    const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
-    contaIdForLog = contaId ?? null;
-
-    if (!contaId) {
-      statusCodeForLog = 401;
-      return NextResponse.json(
-        { success: false, error: 'Não autenticado' },
-        { status: 401 },
-      );
-    }
-
-    const body = await runWithTenant(contaId, (tx) => buildFinanceKpisBody(contaId, tx));
-
-    cacheStateForLog = 'BYPASS';
-    timer.end('GET /dashboard/finance-kpis', { contaId, cacheState: cacheStateForLog });
-
-    return NextResponse.json(body, {
-      headers: {
-        'cache-control': 'no-store',
-        'x-alusa-cache': 'BYPASS',
-      },
-    });
-  } catch (error) {
-    statusCodeForLog = 500;
-    console.error('[GET /api/dashboard/finance-kpis] Erro:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        error: (error as Error).message,
-      },
-      { status: 500 },
+  if (!contaId) {
+    return Response.json(
+      { success: false, error: 'Não autenticado' },
+      { status: 401, headers: { 'cache-control': 'no-store' } },
     );
-  } finally {
-    logRoutePerformance({
-      route: 'api/dashboard/finance-kpis',
-      method: 'GET',
-      contaId: contaIdForLog,
-      durationMs: Date.now() - startedAt,
-      cacheState: cacheStateForLog,
-      statusCode: statusCodeForLog,
-    });
   }
+
+  return cachedDashboardBlockWithTenant(contaId, 'finance-kpis', (tx) =>
+    buildFinanceKpisBody(contaId, tx),
+  );
 }

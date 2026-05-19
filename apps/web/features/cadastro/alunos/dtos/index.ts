@@ -31,6 +31,9 @@ export type AlunoListItemDTO = z.infer<typeof alunoListItemDTOSchema>;
 
 export const listAlunosResultDTOSchema = z.object({
   items: z.array(alunoListItemDTOSchema),
+  total: z.number().int().nonnegative().optional(),
+  page: z.number().int().positive().optional(),
+  pageSize: z.number().int().positive().optional(),
 });
 
 export type ListAlunosResultDTO = z.infer<typeof listAlunosResultDTOSchema>;

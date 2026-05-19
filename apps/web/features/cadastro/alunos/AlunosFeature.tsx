@@ -11,7 +11,11 @@ import { PersonAvatar } from '@/components/shared/PersonAvatar';
 // Skeleton manual substituído pelos skeletons do DataTable
 import { Plus } from '@/components/icons/icons';
 // Dropdown de ordenação substituído pelo EntityFiltersBar
-import AlunoWizardDialog from '@/components/alunos/AlunoWizardDialog';
+import dynamic from 'next/dynamic';
+
+const AlunoWizardDialog = dynamic(() => import('@/components/alunos/AlunoWizardDialog'), {
+  ssr: false,
+});
 import { AlunoEditDialog, type EditAluno } from '@/components/alunos/AlunoEditDialog';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import ReasonField from '@/components/shared/ReasonField';
@@ -52,7 +56,33 @@ export function AlunosFeature() {
   const { user, loading: userLoading } = useCurrentUser();
   const contaId = user?.contaId ?? null;
 
-  const { items, loading, reload, remove } = useAlunos({ contaId });
+  const {
+    search: searchTerm,
+    setSearch: setSearchTerm,
+    status: statusFilter,
+    setStatus: setStatusFilter,
+    sort,
+    setSort,
+    page,
+    setPage,
+    setPageSize,
+    resetFilters,
+  } = useEntityListFiltering({
+    items: [],
+    nameAccessor: (a: AlunoListItem) => a.nome ?? '',
+    statusAccessor: (a: AlunoListItem) => (a.status as StatusFilter) ?? 'ATIVO',
+    searchPredicate: () => true,
+    initialSort: 'ASC',
+  });
+
+  const { items, total, loading, reload, remove } = useAlunos({
+    contaId,
+    q: searchTerm,
+    status: statusFilter,
+    page,
+    pageSize: PAGE_SIZE,
+    sortOrder: sort as SortOrder,
+  });
   const editDialog = useEditDialog<EditAluno>();
   const deleteDialog = useDeleteDialog<AlunoListItem>({
     onDelete: async (aluno, reason) => {
@@ -77,42 +107,16 @@ export function AlunosFeature() {
     void reload();
   }, [reload]);
 
-  const [sortOrder, setSortOrder] = useState<SortOrder>('ASC'); // manter para interface com EntityFiltersBar
-  // Hook reutilizável para filtragem, busca, status, paginação e ordenação
-  const {
-    search: searchTerm,
-    setSearch: setSearchTerm,
-    status: statusFilter,
-    setStatus: setStatusFilter,
-    sort,
-    setSort,
-    page,
-    setPage,
-    setPageSize,
-    ordered,
-    paginated,
-    resetFilters,
-  } = useEntityListFiltering({
-    items,
-    nameAccessor: (a: AlunoListItem) => a.nome ?? '',
-    statusAccessor: (a: AlunoListItem) => (a.status as StatusFilter) ?? 'ATIVO',
-    searchPredicate: (a: AlunoListItem, term, digits) => {
-      const nome = (a.nome || '').toLowerCase();
-      const email = (a.email || '').toLowerCase();
-      const cpfDigits = (a.cpf || '').replace(/\D/g, '');
-      const matchNome = nome.includes(term);
-      const matchEmail = email.includes(term);
-      const matchCpf = Boolean(digits && cpfDigits.includes(digits));
-      return matchNome || matchEmail || matchCpf;
-    },
-    initialSort: 'ASC',
-  });
+  const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
   const [wizardOpen, setWizardOpen] = useState(false);
 
-  // Definir PAGE_SIZE no hook
   useEffect(() => {
     setPageSize(PAGE_SIZE);
   }, [setPageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter, setPage]);
 
   useEffect(() => {
     const handler = () => {
@@ -165,12 +169,12 @@ export function AlunosFeature() {
         />
       }
       footer={
-        <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+        <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
       }
     >
       <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:rounded-xl">
         <AlunosTable
-          alunos={paginated}
+          alunos={items}
           onEdit={(aluno) => {
             editDialog.openDialog(mapToEditAluno(aluno));
             void loadAlunoDetails(aluno.id, editDialog.setEntity);
