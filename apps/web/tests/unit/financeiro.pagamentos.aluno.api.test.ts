@@ -92,21 +92,46 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
     });
   });
 
+  it('retorna 200 quando params vem como Promise com alunoId valido', async () => {
+    const response = await GET(
+      new NextRequest('http://localhost/api/financeiro/pagamentos/aluno/aluno-1'),
+      { params: Promise.resolve({ alunoId: 'aluno-1' }) },
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data.aluno.nome).toBe('Aluno Financeiro');
+  });
+
+  it('retorna 400 com mensagem quando alunoId vem vazio', async () => {
+    const response = await GET(
+      new NextRequest('http://localhost/api/financeiro/pagamentos/aluno/'),
+      { params: Promise.resolve({ alunoId: '' }) },
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.error.message).toBe('ID do aluno é obrigatório');
+  });
+
   it('retorna 404 quando aluno nao existe no escopo', async () => {
     mockAlunoFindFirst.mockResolvedValue(null);
 
     const response = await GET(
       new NextRequest('http://localhost/api/financeiro/pagamentos/aluno/aluno-1'),
-      { params: { alunoId: 'aluno-1' } },
+      { params: Promise.resolve({ alunoId: 'aluno-1' }) },
     );
 
     expect(response.status).toBe(404);
+    const json = await response.json();
+    expect(json.error.message).toBe('Aluno não encontrado');
   });
 
   it('retorna historico consolidado com categorias e resumo', async () => {
     const response = await GET(
       new NextRequest('http://localhost/api/financeiro/pagamentos/aluno/aluno-1'),
-      { params: { alunoId: 'aluno-1' } },
+      { params: Promise.resolve({ alunoId: 'aluno-1' }) },
     );
     const json = await response.json();
 
