@@ -22,7 +22,7 @@ import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
 import { pushToast } from '@/components/ui/toast';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { InstallmentActionsMenu } from '@/components/financeiro/InstallmentActionsMenu';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import type { FinanceInstallmentAggregatedItemDTO } from '@/features/finance/dtos';
@@ -55,7 +55,6 @@ type Parcelamento = FinanceInstallmentAggregatedItemDTO;
 
 export default function ParcelamentosPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState<boolean>(true);
   const [parcelamentos, setParcelamentos] = useState<Parcelamento[]>([]);
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(12);
@@ -65,9 +64,8 @@ export default function ParcelamentosPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const params = new URLSearchParams();
       if (statusFilter !== 'all') {
         params.set('status', statusFilter);
@@ -77,6 +75,7 @@ export default function ParcelamentosPage() {
       }
       const res = await fetch(`/api/finance/installments/aggregated?${params.toString()}`, {
         cache: 'no-store',
+        signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -94,25 +93,9 @@ export default function ParcelamentosPage() {
       }
       const payload = await res.json().catch(() => null);
       setParcelamentos((payload && payload.data) || []);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
-      pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-      setParcelamentos([]);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [statusFilter, searchQuery]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: true, cobrancaQueries: false },
-  });
+    },
+    { deps: [statusFilter, searchQuery] },
+  );
 
   const handleStatusFilterChange = useCallback(
     (value: string) => {
@@ -204,7 +187,7 @@ export default function ParcelamentosPage() {
       }
     >
       <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
-        {loading ? (
+        {isInitialLoading ? (
           <>
             <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
@@ -307,7 +290,7 @@ export default function ParcelamentosPage() {
                                 statusConsolidado={p.statusConsolidado}
                                 matriculaId={p.matriculaId}
                                 contratoId={p.contratoId}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                               />
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
@@ -355,7 +338,7 @@ export default function ParcelamentosPage() {
                                 statusConsolidado={p.statusConsolidado}
                                 matriculaId={p.matriculaId}
                                 contratoId={p.contratoId}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                               />
                             </div>
                           </div>
@@ -375,7 +358,7 @@ export default function ParcelamentosPage() {
         onOpenChange={setCreateModalOpen}
         onSuccess={() => {
           setPage(1);
-          void load();
+          void refresh();
         }}
         defaultChargeType="INSTALLMENT"
       />

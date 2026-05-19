@@ -1,8 +1,8 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { useCallback, useEffect, useState, useMemo } from 'react';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useEffect, useState, useMemo } from 'react';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import {
@@ -40,43 +40,30 @@ export function PortalFinanceiroTable() {
   const router = useRouter();
   const { data: session } = useSession();
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'todas' | 'pendentes' | 'pagas'>('todas');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
-  const loadCobrancas = useCallback(
-    async (silent = false) => {
+  const { isInitialLoading } = useFinanceListLoad(
+    async ({ signal }) => {
       if (!session?.user) return;
-      try {
-        if (!silent) setLoading(true);
-        const response = await fetch('/api/portal/financeiro', { cache: 'no-store' });
-        if (!response.ok) {
-          throw new Error('Erro ao carregar cobranças');
-        }
-        const result = await response.json();
-        setCobrancas(result.cobrancas || []);
-        setError(null);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        if (!silent) setLoading(false);
+      const response = await fetch('/api/portal/financeiro', { cache: 'no-store', signal });
+      if (!response.ok) {
+        throw new Error('Erro ao carregar cobranças');
       }
+      const result = await response.json();
+      setCobrancas(result.cobrancas || []);
+      setError(null);
     },
-    [session?.user],
+    {
+      deps: [session?.user],
+      liveRefreshEnabled: Boolean(session?.user),
+      liveRefresh: { dashboard: false, financeiro: false },
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
   );
-
-  useEffect(() => {
-    void loadCobrancas();
-  }, [loadCobrancas]);
-
-  useFinanceLiveRefresh(() => loadCobrancas(true), {
-    enabled: Boolean(session?.user) && !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: false, financeiro: false },
-  });
 
   // Filtrar e buscar
   const cobrancasFiltradas = useMemo(() => {
@@ -135,7 +122,7 @@ export function PortalFinanceiroTable() {
     return new Date(dateString).toLocaleDateString('pt-BR');
   };
 
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-96" />

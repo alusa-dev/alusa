@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useState } from 'react';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -120,46 +120,34 @@ type CobrancaDetalhes = PortalFinanceiroDetailDTO;
 export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) {
   const router = useRouter();
   const [cobranca, setCobranca] = useState<CobrancaDetalhes | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const loadCobranca = useCallback(
-    async (silent = false) => {
-      try {
-        if (!silent) setLoading(true);
-        const response = await fetch(`/api/portal/financeiro/${cobrancaId}`, {
-          cache: 'no-store',
-        });
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error('Cobrança não encontrada');
-          }
-          throw new Error('Erro ao carregar cobrança');
+
+  const { isInitialLoading } = useFinanceListLoad(
+    async ({ signal }) => {
+      const response = await fetch(`/api/portal/financeiro/${cobrancaId}`, {
+        cache: 'no-store',
+        signal,
+      });
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('Cobrança não encontrada');
         }
-        const data = await response.json();
-        setCobranca(data);
-        setError(null);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        if (!silent) setLoading(false);
+        throw new Error('Erro ao carregar cobrança');
       }
+      const data = await response.json();
+      setCobranca(data);
+      setError(null);
     },
-    [cobrancaId],
+    {
+      resetKey: cobrancaId,
+      cobrancaId,
+      liveRefresh: { dashboard: false, financeiro: false, cobrancaQueries: false, localRefresh: true },
+      intervalMs: 20_000,
+      minIntervalMs: 5_000,
+    },
   );
 
-  useEffect(() => {
-    void loadCobranca();
-  }, [loadCobranca]);
-
-  useFinanceLiveRefresh(() => loadCobranca(true), {
-    cobrancaId,
-    enabled: Boolean(cobranca) && !loading,
-    intervalMs: 20_000,
-    minIntervalMs: 5_000,
-    realtime: { dashboard: false, financeiro: false, cobrancaQueries: false },
-  });
-
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-64" />

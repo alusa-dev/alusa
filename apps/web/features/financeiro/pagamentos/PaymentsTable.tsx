@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 interface PaymentRow {
   id: string;
@@ -35,7 +35,6 @@ const FORMA_PAGAMENTO = ['PIX', 'BOLETO', 'CARTAO', 'DINHEIRO'];
 
 export default function PaymentsTable() {
   const [rows, setRows] = useState<PaymentRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -44,59 +43,32 @@ export default function PaymentsTable() {
   const [debounced, setDebounced] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [formaFilters, setFormaFilters] = useState<string[]>([]);
-  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
-
   useEffect(() => {
     const t = setTimeout(() => setDebounced(search), 400);
     return () => clearTimeout(t);
   }, [search]);
 
-  const load = useCallback(async (silent = false) => {
-    const requestKey = JSON.stringify({ page, pageSize, debounced, statusFilters, formaFilters });
-    const inFlight = inFlightRef.current;
-    if (inFlight?.key === requestKey) {
-      return inFlight.promise;
-    }
-
-    const trackedPromise = (async () => {
-      if (!silent) setLoading(true);
+  const { isInitialLoading, isRefreshing } = useFinanceListLoad(
+    async ({ signal }) => {
       setError(null);
-      try {
-        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-        if (debounced) params.set('q', debounced);
-        statusFilters.forEach((s) => params.append('status', s));
-        formaFilters.forEach((f) => params.append('formaPagamento', f));
-        const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`Erro ${res.status}`);
-        const json: ApiResponse = await res.json();
-        setRows(json.data);
-        setTotal(json.total);
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    })();
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      if (debounced) params.set('q', debounced);
+      statusFilters.forEach((s) => params.append('status', s));
+      formaFilters.forEach((f) => params.append('formaPagamento', f));
+      const res = await fetch(`/api/financeiro/pagamentos?${params.toString()}`, {
+        cache: 'no-store',
+        signal,
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const json: ApiResponse = await res.json();
+      setRows(json.data);
+      setTotal(json.total);
+    },
+    { deps: [page, pageSize, debounced, statusFilters, formaFilters] },
+  );
 
-    inFlightRef.current = { key: requestKey, promise: trackedPromise };
-    trackedPromise.finally(() => {
-      if (inFlightRef.current?.promise === trackedPromise) {
-        inFlightRef.current = null;
-      }
-      if (!silent) setLoading(false);
-    });
-    return trackedPromise;
-  }, [page, pageSize, debounced, statusFilters, formaFilters]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-  });
+  const loading = isInitialLoading;
+  const tableBusy = isInitialLoading || isRefreshing;
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -232,7 +204,7 @@ export default function PaymentsTable() {
       <div className="flex items-center gap-4 text-sm">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page === 1 || loading}
+          disabled={page === 1 || tableBusy}
           className="px-3 py-1 rounded border disabled:opacity-40"
         >
           Anterior
@@ -242,7 +214,7 @@ export default function PaymentsTable() {
         </span>
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={page === totalPages || loading}
+          disabled={page === totalPages || tableBusy}
           className="px-3 py-1 rounded border disabled:opacity-40"
         >
           Próxima

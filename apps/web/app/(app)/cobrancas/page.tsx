@@ -36,7 +36,7 @@ const CreateChargeModal = dynamic(
   { ssr: false },
 );
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -77,7 +77,6 @@ type Cobranca = {
 
 export default function CobrancasTodasPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState<boolean>(true);
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(12);
@@ -105,11 +104,8 @@ export default function CobrancasTodasPage() {
     }
   }, [shouldOpenCreateModal]);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
-      // "open" → fila operacional (PENDING/OVERDUE, vencimento ≤ fim do mês)
-      // "paid"/"all" → rota legada que aceita statusView
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const isOperational = statusView === 'open';
       const params = new URLSearchParams({
         page: String(page),
@@ -123,7 +119,7 @@ export default function CobrancasTodasPage() {
         ? `/api/finance/charges/operational?${params.toString()}`
         : `/api/financeiro/cobrancas?statusView=${statusView}&${params.toString()}`;
 
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const res = await fetch(url, { headers: { Accept: 'application/json' }, signal });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         const errorMsg =
@@ -143,10 +139,8 @@ export default function CobrancasTodasPage() {
       const raw: unknown[] = (payload && payload.data) || payload || [];
       setTotalItems(typeof payload?.total === 'number' ? payload.total : raw.length);
 
-      // Normaliza o shape conforme a origem
       const normalized: Cobranca[] = (raw as Record<string, unknown>[]).map((item) => {
         if (isOperational) {
-          // UnifiedChargeItem → Cobranca
           return {
             id: item.id as string,
             description: (item.description as string | null | undefined) ?? null,
@@ -167,7 +161,6 @@ export default function CobrancasTodasPage() {
             installmentsPaid: item.installmentsPaid as number | null,
           };
         }
-        // Rota legada → manter shape antigo mas normalizar campos
         return {
           id: item.id as string,
           description: (item.description as string | null | undefined) ?? null,
@@ -192,29 +185,13 @@ export default function CobrancasTodasPage() {
       });
 
       setCobrancas(normalized);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
-      pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-      setCobrancas([]);
-      setTotalItems(0);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [page, pageSize, searchQuery, statusView, tipoFilter]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+    },
+    { deps: [page, pageSize, searchQuery, statusView, tipoFilter] },
+  );
 
   useEffect(() => {
     setPage(1);
   }, [searchQuery, statusView, tipoFilter]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-  });
 
   const handleStatusViewChange = useCallback(
     (value: string) => {
@@ -323,7 +300,7 @@ export default function CobrancasTodasPage() {
       }
     >
       <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
-        {loading ? (
+        {isInitialLoading ? (
           <>
             <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
@@ -458,7 +435,7 @@ export default function CobrancasTodasPage() {
                                     atrasado: isOverdue,
                                   }}
                                   onPrint={() => handlePrint(cobranca)}
-                                  onActionComplete={() => load()}
+                                  onActionComplete={() => refresh()}
                                   variant="icon"
                                 />
                               ) : null}
@@ -526,7 +503,7 @@ export default function CobrancasTodasPage() {
                                     atrasado: isOverdue,
                                   }}
                                   onPrint={() => handlePrint(cobranca)}
-                                  onActionComplete={() => load()}
+                                  onActionComplete={() => refresh()}
                                   variant="icon"
                                 />
                               )}
@@ -557,7 +534,7 @@ export default function CobrancasTodasPage() {
       <CreateChargeModal
         open={createModalOpen}
         onOpenChange={setCreateModalOpen}
-        onSuccess={load}
+        onSuccess={() => void refresh()}
       />
     </TableLayout>
   );

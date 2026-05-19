@@ -1,80 +1,51 @@
 'use client';
 
 import type { ComponentType } from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { CreditCard, Calendar, User, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { PortalDashboardResultDTO } from '@/features/portal/dtos';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { AlunoSelector } from './components/AlunoSelector';
 
 export function PortalDashboardFeature() {
   const { data: session } = useSession();
   const [data, setData] = useState<PortalDashboardResultDTO | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedAlunoId, setSelectedAlunoId] = useState<string | null>(null);
-  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
 
   const user = session?.user as { role?: string } | undefined;
   const isResponsavel = user?.role === 'RESPONSAVEL';
 
-  const loadData = useCallback(async (silent = false) => {
-    const requestKey = selectedAlunoId ?? '__default__';
-    const inFlight = inFlightRef.current;
-    if (inFlight?.key === requestKey) {
-      return inFlight.promise;
-    }
-
-    const trackedPromise = (async () => {
-      try {
-        if (!silent) setLoading(true);
-        let url = '/api/portal/dashboard';
-
-        if (selectedAlunoId) {
-          url += `?alunoId=${selectedAlunoId}`;
-        }
-
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error('Erro ao carregar dados');
-        }
-        const result = await response.json();
-        setData(result);
-        setError(null);
-      } catch (err) {
-        setError((err as Error).message);
+  const { isInitialLoading } = useFinanceListLoad(
+    async ({ signal }) => {
+      if (!session?.user) return;
+      let url = '/api/portal/dashboard';
+      if (selectedAlunoId) {
+        url += `?alunoId=${selectedAlunoId}`;
       }
-    })();
-
-    inFlightRef.current = { key: requestKey, promise: trackedPromise };
-    trackedPromise.finally(() => {
-      if (inFlightRef.current?.promise === trackedPromise) {
-        inFlightRef.current = null;
+      const response = await fetch(url, { signal });
+      if (!response.ok) {
+        throw new Error('Erro ao carregar dados');
       }
-      if (!silent) setLoading(false);
-    });
-    return trackedPromise;
-  }, [selectedAlunoId]);
-
-  useEffect(() => {
-    if (session?.user) {
-      void loadData();
-    }
-  }, [session?.user, loadData]);
-
-  useFinanceLiveRefresh(() => loadData(true), {
-    enabled: Boolean(session?.user) && !loading,
-    intervalMs: 60_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: false, financeiro: false },
-  });
+      const result = await response.json();
+      setData(result);
+      setError(null);
+    },
+    {
+      deps: [session?.user, selectedAlunoId],
+      liveRefreshEnabled: Boolean(session?.user),
+      liveRefresh: { dashboard: false, financeiro: false },
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const userName = session?.user?.name || 'Aluno';
   const greeting = getGreeting();
 
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-12 w-96" />

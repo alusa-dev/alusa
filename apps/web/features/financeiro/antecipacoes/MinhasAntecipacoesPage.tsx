@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { cn } from '@/lib/cn';
 import { ChevronRight, DollarSign, Filter, Search } from '@/components/icons/icons';
 import { Eye } from 'lucide-react';
 import type { AnticipationItem, AnticipationStatus, ListAnticipationsResponse } from './types';
-import { useFinanceLiveRefresh } from '../hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import {
   formatAnticipationStatus,
   formatBillingType,
@@ -276,60 +276,28 @@ function AnticipationsTable({
 
 export function MinhasAntecipacoesPage() {
   const [data, setData] = useState<ListAnticipationsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [status, setStatus] = useState<string>(ALL_STATUS);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<AnticipationItem | null>(null);
-  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    const requestKey = `${page}:${status}`;
-    const inFlight = inFlightRef.current;
-    if (inFlight?.key === requestKey) {
-      return inFlight.promise;
-    }
-
-    const trackedPromise = (async () => {
-      if (!silent) setLoading(true);
-      try {
-        const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
-        if (status !== ALL_STATUS) params.set('status', status);
-        const response = await fetch(`/api/financeiro/antecipacoes?${params.toString()}`, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Falha ao carregar antecipações');
-        setData(await response.json());
-        setLastSyncedAt(new Date());
-      } catch (error) {
-        if (!silent) {
-          pushToast({
-            title: 'Não foi possível carregar antecipações',
-            description: error instanceof Error ? error.message : 'Tente novamente.',
-            variant: 'error',
-          });
-        }
-      }
-    })();
-
-    inFlightRef.current = { key: requestKey, promise: trackedPromise };
-    trackedPromise.finally(() => {
-      if (inFlightRef.current?.promise === trackedPromise) {
-        inFlightRef.current = null;
-      }
-      if (!silent) setLoading(false);
-    });
-    return trackedPromise;
-  }, [page, status]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(
-    () => load(true),
-    { intervalMs: 30_000, minIntervalMs: 8_000 },
+  const { isInitialLoading, isRefreshing, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
+      const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) });
+      if (status !== ALL_STATUS) params.set('status', status);
+      const response = await fetch(`/api/financeiro/antecipacoes?${params.toString()}`, {
+        cache: 'no-store',
+        signal,
+      });
+      if (!response.ok) throw new Error('Falha ao carregar antecipações');
+      setData(await response.json());
+      setLastSyncedAt(new Date());
+    },
+    { deps: [page, status], intervalMs: 30_000, minIntervalMs: 8_000 },
   );
+
+  const tableBusy = isInitialLoading || isRefreshing;
 
   const visibleItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('pt-BR');
@@ -356,7 +324,7 @@ export function MinhasAntecipacoesPage() {
       const response = await fetch(`/api/financeiro/antecipacoes/${item.id}/cancelar`, { method: 'POST' });
       if (!response.ok) throw new Error('Cancelamento rejeitado pelo Asaas');
       pushToast({ title: 'Antecipação cancelada', variant: 'success' });
-      await load();
+      await refresh();
     } catch (error) {
       pushToast({
         title: 'Não foi possível cancelar',
@@ -443,8 +411,8 @@ export function MinhasAntecipacoesPage() {
               <Button
                 variant="outline"
                 className="h-10 w-full rounded-lg lg:w-auto"
-                disabled={loading}
-                onClick={() => void load()}
+                disabled={tableBusy}
+                onClick={() => void refresh()}
               >
                 Atualizar
               </Button>
@@ -454,7 +422,7 @@ export function MinhasAntecipacoesPage() {
 
         <AnticipationsTable
           items={visibleItems}
-          loading={loading}
+          loading={tableBusy}
           onCancel={handleCancel}
           cancelingId={cancelingId}
           onPreview={setPreviewItem}
@@ -463,10 +431,10 @@ export function MinhasAntecipacoesPage() {
         <div className="flex flex-col gap-3 border-t border-slate-100 px-4 py-3 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-muted)]">
           <span>Página {page}</span>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="rounded-lg" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            <Button variant="outline" size="sm" className="rounded-lg" disabled={page <= 1 || tableBusy} onClick={() => setPage((value) => Math.max(1, value - 1))}>
               Anterior
             </Button>
-            <Button variant="outline" size="sm" className="rounded-lg" disabled={!data?.hasMore || loading} onClick={() => setPage((value) => value + 1)}>
+            <Button variant="outline" size="sm" className="rounded-lg" disabled={!data?.hasMore || tableBusy} onClick={() => setPage((value) => value + 1)}>
               Próxima
             </Button>
           </div>

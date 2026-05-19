@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { formatCurrency } from './utils';
 
 interface SaldoData {
@@ -15,18 +15,12 @@ interface SaldoData {
 function useSaldoAsaas() {
   const { user } = useCurrentUser();
   const [data, setData] = useState<SaldoData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSaldo = useCallback(async (silent = false) => {
-    if (!user?.contaId) return;
-
-    if (!silent) setLoading(true);
-    // Não limpa o erro anterior imediatamente para evitar flicker se for revalidação
-    // Mas como é first load na maioria das vezes, ok.
-
-    try {
-      const response = await fetch('/api/financeiro/saldo');
+  const { isInitialLoading } = useFinanceListLoad(
+    async ({ signal }) => {
+      if (!user?.contaId) return;
+      const response = await fetch('/api/financeiro/saldo', { signal });
       const result = await response.json();
 
       if (result.data) {
@@ -35,23 +29,16 @@ function useSaldoAsaas() {
       } else if (result.error) {
         setError(result.error.message);
       }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [user?.contaId]);
-
-  useEffect(() => {
-    void fetchSaldo();
-  }, [fetchSaldo]);
-
-  useFinanceLiveRefresh(
-    () => fetchSaldo(true),
-    { enabled: Boolean(user?.contaId), intervalMs: 60_000, minIntervalMs: 10_000 },
+    },
+    {
+      deps: [user?.contaId],
+      liveRefreshEnabled: Boolean(user?.contaId),
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
   );
 
-  return { data, loading, error };
+  return { data, loading: isInitialLoading, error };
 }
 
 export function SaldoCard() {

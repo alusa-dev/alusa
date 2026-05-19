@@ -26,7 +26,7 @@ import { SubscriptionActionsMenu } from '@/components/financeiro/SubscriptionAct
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import type { FinanceSubscriptionEnrichedItemDTO } from '@/features/finance/dtos';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -62,7 +62,6 @@ export default function AssinaturasPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [loading, setLoading] = useState<boolean>(true);
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
@@ -72,9 +71,8 @@ export default function AssinaturasPage() {
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const params = new URLSearchParams();
       params.set('page', String(page));
       params.set('pageSize', String(pageSize));
@@ -83,6 +81,7 @@ export default function AssinaturasPage() {
 
       const res = await fetch(`/api/finance/subscriptions/enriched?${params.toString()}`, {
         cache: 'no-store',
+        signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -101,25 +100,9 @@ export default function AssinaturasPage() {
       const payload = await res.json();
       setAssinaturas(payload.data || []);
       setTotal(payload.total || 0);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
-      pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-      setAssinaturas([]);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [page, pageSize, searchQuery, statusFilter]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: true, cobrancaQueries: false },
-  });
+    },
+    { deps: [page, pageSize, searchQuery, statusFilter] },
+  );
 
   const handleStatusFilterChange = useCallback(
     (value: string) => {
@@ -206,7 +189,7 @@ export default function AssinaturasPage() {
       }
     >
       <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
-        {loading ? (
+        {isInitialLoading ? (
           <>
             <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
@@ -317,7 +300,7 @@ export default function AssinaturasPage() {
                                 asaasSubscriptionId={assinatura.asaasSubscriptionId}
                                 status={assinatura.status}
                                 matriculaId={assinatura.matriculaId}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                               />
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
@@ -364,7 +347,7 @@ export default function AssinaturasPage() {
                                 asaasSubscriptionId={assinatura.asaasSubscriptionId}
                                 status={assinatura.status}
                                 matriculaId={assinatura.matriculaId}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                               />
                             </div>
                           </div>
@@ -384,7 +367,7 @@ export default function AssinaturasPage() {
         onOpenChange={setCreateModalOpen}
         onSuccess={() => {
           setPage(1);
-          void load();
+          void refresh();
         }}
         defaultChargeType="SUBSCRIPTION"
       />

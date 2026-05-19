@@ -12,7 +12,7 @@
  * Domínio: Navegação / Agregação
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ChevronLeft as ArrowLeft, ExternalLink } from '@/components/icons/icons';
@@ -21,7 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -89,16 +89,13 @@ type ParcelamentoDetalhes = {
 
 export function ParcelamentoDetalheClient({ id }: { id: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
   const [parcelamento, setParcelamento] = useState<ParcelamentoDetalhes | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
+  const { isInitialLoading, error } = useFinanceListLoad(
+    async ({ signal }) => {
       const res = await fetch(`/api/finance/installments/${id}`, {
         cache: 'no-store',
+        signal,
       });
 
       if (!res.ok) {
@@ -108,31 +105,16 @@ export function ParcelamentoDetalheClient({ id }: { id: string }) {
 
       const data = await res.json();
       setParcelamento(data.data);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
-      setError(errorMessage);
-      pushToast({
-        title: 'Erro',
-        description: errorMessage,
-        variant: 'error',
-      });
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [id]);
+    },
+    {
+      resetKey: id,
+      liveRefresh: { dashboard: true, cobrancaQueries: true, localRefresh: true },
+      intervalMs: 20_000,
+      minIntervalMs: 5_000,
+    },
+  );
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: Boolean(parcelamento) && !loading,
-    intervalMs: 20_000,
-    minIntervalMs: 5_000,
-    realtime: { dashboard: true, cobrancaQueries: true },
-  });
-
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="container mx-auto py-6 px-4 max-w-5xl">
         <div className="flex items-center gap-4 mb-6">

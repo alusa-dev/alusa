@@ -35,15 +35,26 @@ export function useFinanceLiveRefresh(
           cobrancaQueries: !cobrancaId,
           financeiro: true,
           portal: true,
-          onListRefresh: () => {
-            void refresh('interval');
-          },
           ...(typeof realtime === 'object' ? realtime : {}),
         };
 
+  const scopeForSync =
+    realtimeScope === false
+      ? false
+      : {
+          ...realtimeScope,
+          onListRefresh:
+            realtimeScope.onListRefresh ??
+            (realtimeScope.localRefresh
+              ? () => {
+                  void refresh('interval');
+                }
+              : undefined),
+        };
+
   useFinanceRealtimeSync({
-    enabled: liveEnabled && realtimeScope !== false,
+    enabled: liveEnabled && scopeForSync !== false,
     cobrancaId,
-    scope: realtimeScope === false ? undefined : realtimeScope,
+    scope: scopeForSync === false ? undefined : scopeForSync,
   });
 }

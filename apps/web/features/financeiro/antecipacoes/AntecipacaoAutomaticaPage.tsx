@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { pushToast } from '@/components/ui/toast';
 import { CheckCircle, Warning } from '@/components/icons/icons';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import type { AnticipationConfiguration, AnticipationLimits } from './types';
 import { formatCurrency } from './utils';
 
@@ -30,7 +30,6 @@ function InfoCard({
 export function AntecipacaoAutomaticaPage() {
   const [configuration, setConfiguration] = useState<AnticipationConfiguration | null>(null);
   const [limits, setLimits] = useState<AnticipationLimits | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
 
@@ -39,12 +38,11 @@ export function AntecipacaoAutomaticaPage() {
   const automaticBlockedByPersonType =
     configuration?.automaticCreditCardReason === 'PERSON_TYPE_MUST_BE_PJ';
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
+  const { isInitialLoading } = useFinanceListLoad(
+    async ({ signal }) => {
       const [configResponse, limitsResponse] = await Promise.all([
-        fetch('/api/financeiro/antecipacoes/configuracao', { cache: 'no-store' }),
-        fetch('/api/financeiro/antecipacoes/limites', { cache: 'no-store' }),
+        fetch('/api/financeiro/antecipacoes/configuracao', { cache: 'no-store', signal }),
+        fetch('/api/financeiro/antecipacoes/limites', { cache: 'no-store', signal }),
       ]);
 
       if (!configResponse.ok) throw new Error('Falha ao carregar configuração');
@@ -55,27 +53,14 @@ export function AntecipacaoAutomaticaPage() {
         const limitsPayload = await limitsResponse.json();
         setLimits(limitsPayload.data ?? null);
       }
-    } catch (error) {
-      pushToast({
-        title: 'Não foi possível carregar configuração',
-        description: error instanceof Error ? error.message : 'Tente novamente.',
-        variant: 'error',
-      });
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading && !saving,
-    intervalMs: 60_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: true, portal: false },
-  });
+    },
+    {
+      liveRefreshEnabled: !saving,
+      liveRefresh: { dashboard: true, portal: false },
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   async function updateConfiguration(nextEnabled: boolean) {
     if (nextEnabled && !automaticEligible) {
@@ -157,7 +142,7 @@ export function AntecipacaoAutomaticaPage() {
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              {loading ? (
+              {isInitialLoading ? (
                 <Button disabled className="rounded-xl">Carregando...</Button>
               ) : enabled ? (
                 <Button

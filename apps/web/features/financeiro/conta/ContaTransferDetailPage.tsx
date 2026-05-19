@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 
 import { ArrowLeft, ReceiptText, XCircle } from 'lucide-react';
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import type { TransferDetailResultDTO } from '@alusa/finance';
 
 import { formatCurrency, formatDate } from '../extrato/utils/extrato-formatters';
@@ -171,18 +171,23 @@ function DetailSkeleton() {
 
 export function ContaTransferDetailPage({ transferId }: { transferId: string }) {
   const [data, setData] = useState<TransferDetailResultDTO | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [canceling, setCanceling] = useState(false);
 
-  const loadTransfer = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      setError(null);
+  const status = useMemo(() => (data ? mapTransferStatus(data.status) : null), [data]);
+  const transferInfoFields = useMemo(() => (data ? buildTransferInfoFields(data) : []), [data]);
+  const recipientFields = useMemo(() => (data ? buildRecipientFields(data) : []), [data]);
+  const allowCancel = Boolean(data && canCancelTransfer(data.status));
+  const isTransferFinal =
+    data?.status === 'DONE' || data?.status === 'FAILED' || data?.status === 'CANCELED';
 
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
+      setError(null);
       const response = await fetch(`/api/finance/transfers/${transferId}`, {
         cache: 'no-store',
+        signal,
       });
       const json = (await response.json().catch(() => ({}))) as {
         data?: TransferDetailResultDTO;
@@ -194,30 +199,15 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
       }
 
       setData(json.data);
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'ERRO_INTERNO');
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [transferId]);
-
-  useEffect(() => {
-    void loadTransfer();
-  }, [loadTransfer]);
-
-  const status = useMemo(() => (data ? mapTransferStatus(data.status) : null), [data]);
-  const transferInfoFields = useMemo(() => (data ? buildTransferInfoFields(data) : []), [data]);
-  const recipientFields = useMemo(() => (data ? buildRecipientFields(data) : []), [data]);
-  const allowCancel = Boolean(data && canCancelTransfer(data.status));
-
-  const isTransferFinal = data?.status === 'DONE' || data?.status === 'FAILED' || data?.status === 'CANCELED';
-
-  useFinanceLiveRefresh(() => loadTransfer(true), {
-    enabled: Boolean(data) && !loading && !canceling && !isTransferFinal,
-    intervalMs: 30_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: false, portal: false },
-  });
+    },
+    {
+      resetKey: transferId,
+      liveRefreshEnabled: Boolean(data) && !canceling && !isTransferFinal,
+      liveRefresh: { dashboard: false, portal: false, localRefresh: true },
+      intervalMs: 30_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   async function handleCancelTransfer() {
     if (!data) return;
@@ -235,7 +225,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
       });
 
       setCancelDialogOpen(false);
-      await loadTransfer(true);
+      await refresh();
     } catch (nextError) {
       pushToast({
         title: 'Não foi possível cancelar a transferência',
@@ -247,7 +237,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
     }
   }
 
-  if (loading) {
+  if (isInitialLoading) {
     return <DetailSkeleton />;
   }
 

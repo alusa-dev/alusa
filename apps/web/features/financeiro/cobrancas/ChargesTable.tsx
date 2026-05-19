@@ -1,9 +1,9 @@
 'use client';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { Badge, type StatusType } from '@/components/ui/badge';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 // Helper para formatar tipo de cobrança
 function formatarTipo(tipo: string): string {
@@ -41,7 +41,6 @@ interface ApiResponse {
 
 export default function ChargesTable() {
   const [rows, setRows] = useState<ChargeRow[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -50,46 +49,34 @@ export default function ChargesTable() {
   const [debounced, setDebounced] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [tipoFilters, setTipoFilters] = useState<string[]>([]);
-  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const fetchData = useCallback(async (silent = false) => {
-    const requestKey = JSON.stringify({ page, pageSize, debounced, statusFilters, tipoFilters });
-    const inFlight = inFlightRef.current;
-    if (inFlight?.key === requestKey) {
-      return inFlight.promise;
-    }
-
-    const trackedPromise = (async () => {
-      if (!silent) setLoading(true);
+  const { isInitialLoading, isRefreshing, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       setError(null);
-      try {
-        const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
-        if (debounced) params.set('q', debounced);
-        statusFilters.forEach((status) => params.append('status', status));
-        tipoFilters.forEach((tipo) => params.append('tipo', tipo));
-        router.replace(`/financeiro/cobrancas?${params.toString()}`);
-        const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`Erro ${res.status}`);
-        const json: ApiResponse = await res.json();
-        setRows(json.data);
-        setTotal(json.total);
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    })();
+      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      if (debounced) params.set('q', debounced);
+      statusFilters.forEach((status) => params.append('status', status));
+      tipoFilters.forEach((tipo) => params.append('tipo', tipo));
+      const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
+        cache: 'no-store',
+        signal,
+      });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const json: ApiResponse = await res.json();
+      setRows(json.data);
+      setTotal(json.total);
+    },
+    { deps: [page, pageSize, debounced, statusFilters, tipoFilters] },
+  );
 
-    inFlightRef.current = { key: requestKey, promise: trackedPromise };
-    trackedPromise.finally(() => {
-      if (inFlightRef.current?.promise === trackedPromise) {
-        inFlightRef.current = null;
-      }
-      if (!silent) setLoading(false);
-    });
-    return trackedPromise;
+  useEffect(() => {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (debounced) params.set('q', debounced);
+    statusFilters.forEach((status) => params.append('status', status));
+    tipoFilters.forEach((tipo) => params.append('tipo', tipo));
+    router.replace(`/financeiro/cobrancas?${params.toString()}`);
   }, [page, pageSize, debounced, statusFilters, tipoFilters, router]);
 
   // Inicializa filtros da URL
@@ -108,15 +95,8 @@ export default function ChargesTable() {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => {
-    void fetchData().catch(() => undefined);
-  }, [fetchData]);
-
-  useFinanceLiveRefresh(() => fetchData(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-  });
+  const loading = isInitialLoading;
+  const tableBusy = isInitialLoading || isRefreshing;
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -249,7 +229,7 @@ export default function ChargesTable() {
                         formaPagamento: r.formaPagamento || r.tipo,
                         atrasado: r.atrasado,
                       }}
-                      onActionComplete={() => void fetchData()}
+                      onActionComplete={() => void refresh()}
                       variant="button"
                     />
                   </td>
@@ -261,7 +241,7 @@ export default function ChargesTable() {
       <div className="flex items-center gap-4 text-sm">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page === 1 || loading}
+          disabled={page === 1 || tableBusy}
           className="px-3 py-1 rounded border disabled:opacity-40"
         >
           Anterior
@@ -271,7 +251,7 @@ export default function ChargesTable() {
         </span>
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={page === totalPages || loading}
+          disabled={page === totalPages || tableBusy}
           className="px-3 py-1 rounded border disabled:opacity-40"
         >
           Próxima

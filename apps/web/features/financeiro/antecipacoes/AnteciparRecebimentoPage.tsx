@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { pushToast } from '@/components/ui/toast';
 import { ChevronRight, CreditCard, DollarSign, Search } from '@/components/icons/icons';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { cn } from '@/lib/utils';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { Eye } from 'lucide-react';
@@ -383,7 +383,6 @@ export function AnteciparRecebimentoPage() {
   const [limits, setLimits] = useState<AnticipationLimits | null>(null);
   const [billingType, setBillingType] = useState<'ALL' | 'CREDIT_CARD' | 'BOLETO' | 'PIX'>('ALL');
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [simulation, setSimulation] = useState<AnticipationSimulation | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -391,15 +390,14 @@ export function AnteciparRecebimentoPage() {
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const [previewCandidate, setPreviewCandidate] = useState<AnticipationCandidate | null>(null);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const params = new URLSearchParams({ page: '1', pageSize: String(PAGE_SIZE), billingType });
       if (search.trim()) params.set('search', search.trim());
 
       const [candidatesResponse, limitsResponse] = await Promise.all([
-        fetch(`/api/financeiro/antecipacoes/candidatos?${params.toString()}`, { cache: 'no-store' }),
-        fetch('/api/financeiro/antecipacoes/limites', { cache: 'no-store' }),
+        fetch(`/api/financeiro/antecipacoes/candidatos?${params.toString()}`, { cache: 'no-store', signal }),
+        fetch('/api/financeiro/antecipacoes/limites', { cache: 'no-store', signal }),
       ]);
 
       if (!candidatesResponse.ok) throw new Error('Falha ao carregar recebíveis');
@@ -409,27 +407,15 @@ export function AnteciparRecebimentoPage() {
         const payload = await limitsResponse.json();
         setLimits(payload.data ?? null);
       }
-    } catch (error) {
-      pushToast({
-        title: 'Não foi possível carregar recebíveis',
-        description: error instanceof Error ? error.message : 'Tente novamente.',
-        variant: 'error',
-      });
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [billingType, search]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading && !submitting && !simulating,
-    intervalMs: 60_000,
-    minIntervalMs: 10_000,
-    realtime: { dashboard: true, portal: false },
-  });
+    },
+    {
+      deps: [billingType, search],
+      liveRefreshEnabled: !submitting && !simulating,
+      liveRefresh: { dashboard: true, portal: false },
+      intervalMs: 60_000,
+      minIntervalMs: 10_000,
+    },
+  );
 
   const candidateItems = candidates?.items ?? [];
 
@@ -566,7 +552,7 @@ export function AnteciparRecebimentoPage() {
 
       pushToast({ title: 'Antecipação solicitada', variant: 'success' });
       resetSelection();
-      await load();
+      await refresh();
     } catch (error) {
       pushToast({
         title: 'Não foi possível solicitar',
@@ -645,7 +631,7 @@ export function AnteciparRecebimentoPage() {
             </div>
           </div>
 
-          {loading ? (
+          {isInitialLoading ? (
             <div className="space-y-3 p-5">
               {Array.from({ length: 5 }).map((_, index) => (
                 <div key={index} className="h-16 animate-pulse rounded-xl bg-slate-100" />

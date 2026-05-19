@@ -27,7 +27,7 @@ import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -87,7 +87,6 @@ type Cobranca = {
 
 export default function CobrancasAvulsasPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState<boolean>(true);
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(12);
@@ -106,13 +105,15 @@ export default function CobrancasAvulsasPage() {
     action?: () => Promise<void> | void;
   }>({ open: false, title: '', description: '', variant: 'default', action: async () => {} });
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    try {
+  const { isInitialLoading, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const params = new URLSearchParams();
       params.set('statusView', statusView);
       params.set('scope', 'standalone');
-      const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, { cache: 'no-store' });
+      const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
+        cache: 'no-store',
+        signal,
+      });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         const errorMsg =
@@ -129,24 +130,9 @@ export default function CobrancasAvulsasPage() {
       }
       const payload = await res.json().catch(() => null);
       setCobrancas((payload && payload.data) || payload || []);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
-      pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-      setCobrancas([]);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [statusView]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: !loading,
-    intervalMs: 45_000,
-    minIntervalMs: 10_000,
-  });
+    },
+    { deps: [statusView] },
+  );
 
   const handleStatusViewChange = useCallback(
     (value: string) => {
@@ -263,7 +249,7 @@ export default function CobrancasAvulsasPage() {
       }
     >
       <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
-        {loading ? (
+        {isInitialLoading ? (
           <>
             <div className="hidden border-b bg-gray-50 px-6 py-3 lg:block">
               <div className="grid grid-cols-12 gap-4">
@@ -386,7 +372,7 @@ export default function CobrancasAvulsasPage() {
                                   atrasado: Boolean(cobranca.atrasado),
                                 }}
                                 onPrint={() => handlePrint(cobranca)}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                                 variant="icon"
                               />
                             </div>
@@ -440,7 +426,7 @@ export default function CobrancasAvulsasPage() {
                                   atrasado: Boolean(cobranca.atrasado),
                                 }}
                                 onPrint={() => handlePrint(cobranca)}
-                                onActionComplete={() => load()}
+                                onActionComplete={() => refresh()}
                                 variant="icon"
                               />
                             </div>
@@ -470,7 +456,7 @@ export default function CobrancasAvulsasPage() {
       <CreateChargeModal
         open={createModalOpen}
         onOpenChange={setCreateModalOpen}
-        onSuccess={load}
+        onSuccess={() => void refresh()}
         defaultChargeType="ONE_TIME"
       />
     </TableLayout>

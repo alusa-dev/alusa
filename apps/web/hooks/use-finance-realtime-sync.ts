@@ -13,6 +13,11 @@ export type FinanceRealtimeSyncScope = {
   cobrancaQueries?: boolean;
   financeiro?: boolean;
   portal?: boolean;
+  /**
+   * Quando true, dispara onListRefresh após eventos (para páginas com useState local).
+   * Padrão false — evita loop de skeleton em listas que não usam React Query.
+   */
+  localRefresh?: boolean;
   onListRefresh?: () => void;
 };
 

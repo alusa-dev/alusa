@@ -9,7 +9,7 @@
  * Domínio: Navegação
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,7 @@ import {
 import type { StatusCobranca } from '@prisma/client';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
-import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
+import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -92,17 +92,14 @@ type AssinaturaDetalhes = {
 
 export function AssinaturaDetalheClient({ id }: { id: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
   const [assinatura, setAssinatura] = useState<AssinaturaDetalhes | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [studentsDialogOpen, setStudentsDialogOpen] = useState(false);
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-    try {
+  const { isInitialLoading, error, refresh } = useFinanceListLoad(
+    async ({ signal }) => {
       const res = await fetch(`/api/finance/subscriptions/${id}`, {
         cache: 'no-store',
+        signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -110,28 +107,16 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
       }
       const payload = await res.json();
       setAssinatura(payload.data);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
-      setError(errMsg);
-      pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, [id]);
+    },
+    {
+      resetKey: id,
+      liveRefresh: { dashboard: true, cobrancaQueries: true, localRefresh: true },
+      intervalMs: 20_000,
+      minIntervalMs: 5_000,
+    },
+  );
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useFinanceLiveRefresh(() => load(true), {
-    enabled: Boolean(assinatura) && !loading,
-    intervalMs: 20_000,
-    minIntervalMs: 5_000,
-    realtime: { dashboard: true, cobrancaQueries: true },
-  });
-
-  // Loading state
-  if (loading) {
+  if (isInitialLoading) {
     return (
       <div className="container mx-auto max-w-5xl min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
         <Skeleton className="mb-4 h-10 w-32 sm:mb-5" />
@@ -180,7 +165,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
             <Button variant="outline" className="w-full sm:w-auto" onClick={() => router.back()}>
               Voltar
             </Button>
-            <Button className="w-full sm:w-auto" onClick={() => void load()}>
+            <Button className="w-full sm:w-auto" onClick={() => void refresh()}>
               Tentar novamente
             </Button>
           </div>
