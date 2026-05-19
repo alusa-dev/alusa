@@ -21,6 +21,7 @@ import { alertService } from '../foundation/alert-channel';
 import { mapAsaasToChargeStatus } from '../core';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { handlePaymentWebhook } from './payment-webhook-handler';
+import { handleSubscriptionWebhook } from './subscription-webhook-handler';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -866,10 +867,19 @@ export async function archiveProcessedWebhooks(
   };
 }
 
+function chooseSyntheticSubscriptionEvent(remote: {
+  status?: string;
+  deleted?: boolean;
+}): string {
+  if (remote.deleted) return 'SUBSCRIPTION_DELETED';
+  if (remote.status === 'INACTIVE') return 'SUBSCRIPTION_INACTIVATED';
+  return 'SUBSCRIPTION_UPDATED';
+}
+
 /**
  * Reconciliação ativa com Asaas:
  * - Pagamentos: compara snapshot remoto e aplica webhook sintético quando há drift.
- * - Assinaturas: sincroniza status remoto.
+ * - Assinaturas: aplica webhook sintético via handler (monotonicidade + side effects).
  * - Parcelamentos: detecta drift de contagem entre pagamentos remotos e locais.
  */
 export async function reconcileWithAsaas(
@@ -1016,14 +1026,24 @@ export async function reconcileWithAsaas(
       if (nextStatus !== sub.status) {
         subscriptionDrift += 1;
         if (!dryRun) {
-          await prisma.subscription.update({
-            where: { id: sub.id },
-            data: {
-              status: nextStatus,
-              statusUpdatedAt: new Date(),
+          const event = chooseSyntheticSubscriptionEvent({
+            status: remote.status,
+            deleted: remote.deleted,
+          });
+          const result = await handleSubscriptionWebhook(options.contaId, {
+            event,
+            subscription: {
+              id: remote.id,
+              status: remote.status,
+              externalReference: remote.externalReference ?? undefined,
+              deleted: remote.deleted,
             },
           });
-          reconciledSubscriptions += 1;
+          if (result.success) {
+            reconciledSubscriptions += 1;
+          } else {
+            errors.push(`subscription:${sub.asaasSubscriptionId}:${result.error ?? 'handler_failed'}`);
+          }
         }
       }
     } catch (error) {

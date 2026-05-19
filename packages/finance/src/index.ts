@@ -740,6 +740,16 @@ export {
   processAsaasWebhookQueue,
 } from './webhooks/asaas-webhook-handler';
 export { processAsaasWebhookQueueWithInbox } from './webhooks/process-webhook-queue-with-inbox';
+export {
+  drainFinanceWebhookSideEffectOutbox,
+  enqueueBillingNotificationSideEffects,
+  processFinanceWebhookSideEffectOutboxEvent,
+} from './webhooks/finance-side-effect-outbox.service';
+export { runWebhookQueuePreflight } from './webhooks/webhook-queue-preflight.service';
+export type {
+  WebhookQueuePreflightOptions,
+  WebhookQueuePreflightResult,
+} from './webhooks/webhook-queue-preflight.service';
 export { reprocessErroredAsaasWebhooks } from './webhooks/asaas-webhook-handler';
 export {
   ASAAS_WEBHOOK_TOKEN_HEADERS,
@@ -747,6 +757,7 @@ export {
   buildWebhookAuthTokenRotationData,
   getAsaasWebhookTokenHashPrefix,
   hashAsaasWebhookAccessToken,
+  hashWebhookPayload,
   isValidAsaasWebhookTokenFormat,
   resolveAsaasWebhookAccessToken,
   resolveContaIdFromWebhookAuthToken,
@@ -959,6 +970,12 @@ export type {
 // Jobs
 export { reconcileAsaasAccountsJob, shouldReconcileNow } from './jobs/reconcile-asaas-accounts';
 export type { ReconcileJobResult } from './jobs/reconcile-asaas-accounts';
+export { reconcileFinanceWebhooksJob } from './jobs/reconcile-finance-webhooks-job';
+export type {
+  ReconcileFinanceWebhooksJobOptions,
+  ReconcileFinanceWebhooksJobResult,
+  ReconcileFinanceWebhooksAccountResult,
+} from './jobs/reconcile-finance-webhooks-job';
 export {
   enqueueAsaasSubaccountProvisioning,
   processAsaasProvisioningJobs,
@@ -1153,6 +1170,7 @@ export {
   getWebhookDetails,
   evaluateRetentionAlert,
   markExhaustedWebhooks,
+  recoverStuckWebhooks,
 } from './webhooks/webhook-reconciliation.service';
 export type {
   ReconciliationResult,

@@ -285,6 +285,13 @@ enum FamilyBillingOutboxStatus {
   FAILED
 }
 
+enum FinanceWebhookSideEffectStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
 // Status de sincronização com integração financeira
 enum IntegrationSyncStatus {
   PENDENTE_SINCRONISMO
@@ -592,6 +599,7 @@ model Conta {
   descontos                     Desconto[]
   webhooks                      WebhookAsaas[]
   webhooksArchive               WebhookAsaasArchive[]
+  financeWebhookSideEffectOutbox FinanceWebhookSideEffectOutbox[]
   logsFinanceiros               LogFinanceiro[]
   logsIntegracao                LogIntegracao[]
   asaasIntegrationJobs          AsaasIntegrationJob[]
@@ -1899,6 +1907,29 @@ model WebhookAsaasRejection {
   @@index([contaId], name: "idx_webhookasaas_rejection_conta")
   @@index([contaId, recebidoEm], name: "idx_webhookasaas_rejection_conta_recebido")
   @@index([recebidoEm], name: "idx_webhookasaas_rejection_recebido")
+}
+
+model FinanceWebhookSideEffectOutbox {
+  id            String                           @id @default(cuid())
+  contaId       String
+  effectType    String
+  dedupeKey     String
+  payload       Json
+  status        FinanceWebhookSideEffectStatus   @default(PENDING)
+  attempts      Int                              @default(0)
+  availableAt   DateTime                         @default(now())
+  lockedAt      DateTime?
+  processedAt   DateTime?
+  lastAttemptAt DateTime?
+  lastError     String?
+  createdAt     DateTime                         @default(now())
+  updatedAt     DateTime                         @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, dedupeKey], name: "uq_finance_side_effect_dedupe")
+  @@index([status, availableAt], name: "idx_finance_side_effect_queue")
+  @@index([contaId, status, availableAt], name: "idx_finance_side_effect_conta_queue")
 }
 
 model LogFinanceiro {

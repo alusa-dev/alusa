@@ -49,8 +49,14 @@ export function resolveAsaasWebhookAccessToken(headers: Pick<Headers, 'get'>): s
   return null;
 }
 
+/** Hash SHA-256 determinístico para payload de webhook ou outros inputs opacos. */
+export function hashWebhookPayload(input: string): string {
+  return sha256Hex(input);
+}
+
+/** Hash do token de autenticação do webhook (alias semântico de hashWebhookPayload). */
 export function hashAsaasWebhookAccessToken(accessToken: string): string {
-  return sha256Hex(accessToken);
+  return hashWebhookPayload(accessToken);
 }
 
 export function getAsaasWebhookTokenHashPrefix(accessToken: string | null | undefined): string | null {

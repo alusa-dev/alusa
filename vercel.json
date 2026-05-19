@@ -19,6 +19,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/jobs/reconcile-finance-webhooks?includeGaps=true&windowHours=24&limit=100&maxAccounts=20",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/jobs/webhook-maintenance",
       "schedule": "0 3 * * *"
     },

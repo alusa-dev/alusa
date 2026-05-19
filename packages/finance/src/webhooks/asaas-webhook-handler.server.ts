@@ -21,7 +21,7 @@ import {
 import { getWebhookQueueMetrics, evaluateRetentionAlert } from './webhook-reconciliation.service';
 import {
   authenticateAsaasWebhookToken,
-  hashAsaasWebhookAccessToken,
+  hashWebhookPayload,
   getAsaasWebhookTokenHashPrefix,
 } from './asaas-webhook-auth';
 import { redactWebhookLogObject } from './webhook-redaction';
@@ -194,7 +194,7 @@ async function persistRejectedWebhook(params: {
         contaId: params.contaId ?? null,
         evento: params.event ?? 'UNKNOWN',
         eventId: params.eventId,
-        payloadHash: hashAsaasWebhookAccessToken(params.rawBody),
+        payloadHash: hashWebhookPayload(params.rawBody),
         payload: safePayload as object,
         reason: params.reason,
       },
@@ -216,6 +216,7 @@ async function processAsaasWebhookForRecord(params: {
   message?: string;
   duracaoMs: number;
   processedPayment?: {
+    contaId: string;
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
@@ -308,6 +309,7 @@ async function processAsaasWebhookForRecord(params: {
         duracaoMs: Date.now() - startedAt,
         processedPayment: ok
           ? {
+              contaId,
               event,
               eventId: payload.id ?? null,
               asaasPaymentId: payload.payment.id,
@@ -621,7 +623,7 @@ export async function enqueueAsaasWebhookEvent(
   }
   const contaId = auth.contaId;
 
-  const payloadHash = hashAsaasWebhookAccessToken(params.rawBody);
+  const payloadHash = hashWebhookPayload(params.rawBody);
   const eventId = payload.id ?? null;
   const now = new Date();
 
@@ -745,6 +747,7 @@ export async function processAsaasWebhookQueue(params?: {
   skipped: number;
   workerId: string;
   processedPayments: Array<{
+    contaId: string;
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
@@ -757,6 +760,7 @@ export async function processAsaasWebhookQueue(params?: {
   const source = params?.source ?? 'WEBHOOK';
   const workerId = `w-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const processedPayments: Array<{
+    contaId: string;
     event: string;
     eventId: string | null;
     asaasPaymentId: string;
@@ -975,7 +979,7 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
 
     const contaId = auth.contaId;
 
-    const payloadHash = hashAsaasWebhookAccessToken(params.rawBody);
+    const payloadHash = hashWebhookPayload(params.rawBody);
     const eventId = payload.id;
 
     const existing = eventId

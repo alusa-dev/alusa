@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { processAsaasWebhookQueueWithInbox } from '@alusa/finance';
+import {
+  drainFinanceWebhookSideEffectOutbox,
+  processAsaasWebhookQueueWithInbox,
+  runWebhookQueuePreflight,
+} from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,11 +16,13 @@ function jsonError(status: number, code: string, message: string) {
  * POST /api/jobs/process-finance-webhooks
  *
  * Processa fila assíncrona de webhooks (status PENDENTE/ERRO).
+ * Executa preflight (stuck recovery + DLQ) antes do drain.
  *
  * Query params:
  * - contaId (opcional): restringe processamento para 1 conta.
  * - limit (opcional): número máximo de webhooks por execução (default 100).
  * - onlyErrored (opcional): se "true", processa apenas status ERRO.
+ * - skipPreflight (opcional): se "true", pula stuck recovery e marcação DLQ.
  */
 async function run(req: Request) {
   try {
@@ -33,17 +39,31 @@ async function run(req: Request) {
     const limitRaw = Number(url.searchParams.get('limit') ?? '100');
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(1000, limitRaw)) : 100;
     const onlyErrored = url.searchParams.get('onlyErrored') === 'true';
+    const skipPreflight = url.searchParams.get('skipPreflight') === 'true';
 
-    const result = await processAsaasWebhookQueueWithInbox({
+    const preflight = skipPreflight
+      ? null
+      : await runWebhookQueuePreflight({
+          contaId,
+        });
+
+    const processed = await processAsaasWebhookQueueWithInbox({
       contaId,
       limit,
       statuses: onlyErrored ? ['ERRO'] : ['PENDENTE', 'ERRO'],
       source: tenantScope.isCron ? 'WEBHOOK' : 'REPROCESS',
     });
 
+    const sideEffects = await drainFinanceWebhookSideEffectOutbox({
+      contaId,
+      limit: Math.max(50, limit),
+    });
+
     return NextResponse.json({
       success: true,
-      processed: result,
+      preflight,
+      processed,
+      sideEffects,
     });
   } catch (error) {
     console.error('[Job Process Finance Webhooks] Erro:', error);

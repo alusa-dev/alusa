@@ -152,6 +152,35 @@ export async function acquireGuardLock(params: {
   await params.tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})::text`;
 }
 
+/**
+ * Lock de sessão (pg_advisory_lock) para serializar processamento de entidade
+ * fora de uma transação longa — útil em handlers de webhook com múltiplas escritas.
+ */
+export async function withSessionAdvisoryLock<T>(params: {
+  contaId: string;
+  scope: IdempotencyGuardScope;
+  key: string;
+  fn: () => Promise<T>;
+}): Promise<T> {
+  const compoundKey = buildGuardKey({
+    contaId: params.contaId,
+    scope: params.scope,
+    key: params.key,
+  });
+  const lockKey = advisoryLockKey(compoundKey);
+
+  await prisma.$queryRaw`SELECT pg_advisory_lock(${lockKey})::text`;
+  try {
+    return await params.fn();
+  } finally {
+    try {
+      await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})::text`;
+    } catch {
+      // fail-safe: lock pode já ter sido liberado
+    }
+  }
+}
+
 export async function withIdempotencyGuard<T>(params: {
   contaId: string;
   scope: IdempotencyGuardScope;

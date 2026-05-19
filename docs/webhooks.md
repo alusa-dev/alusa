@@ -66,6 +66,26 @@ Em produção, o modo assíncrono é **obrigatório**:
 
 Em produção, o inline drain é **desabilitado por padrão**. O processamento da fila deve ser feito por um worker externo. Em dev, o inline drain está habilitado por padrão para facilitar testes locais.
 
+### Preflight no cron de drain (produção)
+
+O job `GET /api/jobs/process-finance-webhooks` (cron a cada 1 min) executa **preflight** antes do drain:
+
+1. `recoverStuckWebhooks()` — reseta `PROCESSANDO` travados (> 5 min) para `ERRO`
+2. `markExhaustedWebhooks()` — move tentativas esgotadas para `EXAURIDO` (DLQ)
+3. `processAsaasWebhookQueueWithInbox()` — drain da fila
+4. `drainFinanceWebhookSideEffectOutbox()` — entrega efeitos colaterais (inbox)
+
+Use `?skipPreflight=true` apenas em debug operacional.
+
+### Modo sequencial vs não sequencial (Asaas)
+
+| Config Asaas | Quando usar | Impacto na Alusa |
+|---|---|---|
+| **Sequencial** | Cobranças/assinaturas com transições ordenadas | Fila Asaas bloqueia eventos posteriores se um falhar; manter resposta `200` rápida é crítico |
+| **Não sequencial** | Eventos isolados (ex.: confirmação de transferência) | Maior vazão; ordem local garantida por `recebidoEm ASC` + precedência de status |
+
+Recomendação: webhooks de **cobrança e assinatura** em modo sequencial; webhooks de **transferência/autorização** em não sequencial quando aplicável.
+
 ### Modo Síncrono (Dev)
 
 Em dev/staging, o handler processa o webhook imediatamente na mesma request HTTP. Útil para desenvolvimento local.
@@ -269,6 +289,14 @@ Webhooks identificados como stuck são resetados para status `ERRO` com mensagem
 
 `reconcileWithAsaas()`: verifica estado real no Asaas para cobranças/assinaturas com drift potencial.
 
+- **Pagamentos**: evento sintético via `handlePaymentWebhook`
+- **Assinaturas**: evento sintético via `handleSubscriptionWebhook` (mesma monotonicidade do webhook real)
+- **Cron**: `GET /api/jobs/reconcile-finance-webhooks?includeGaps=true` a cada 30 min (multi-tenant, até 20 contas/execução)
+
+### Outbox de efeitos colaterais
+
+Notificações da inbox (`emitBillingNotifications`) são enfileiradas em `FinanceWebhookSideEffectOutbox` após processamento bem-sucedido do webhook, com dedupe por `(contaId, dedupeKey)` e drain no mesmo cron de fila. Falhas de inbox não revertem o estado financeiro já persistido.
+
 ## Reflexão de UI e Fonte Oficial
 
 As telas financeiras usam leituras oficiais com `cache-control: no-store` onde o dado é transacional:
@@ -312,7 +340,7 @@ Esse padrão é deliberadamente **pull/read-through**. Webhooks podem disparar a
 | `contaId` | String | Tenant (isolamento) |
 | `evento` | String | Nome do evento Asaas |
 | `eventId` | String? | ID do evento no Asaas |
-| `payloadHash` | String? | SHA-256 do payload raw |
+| `payloadHash` | String? | SHA-256 do body raw (`hashWebhookPayload`) |
 | `payload` | JSON | Payload completo |
 | `status` | String | PENDENTE, PROCESSANDO, PROCESSADO, ERRO, EXAURIDO, REJEITADO |
 | `tentativas` | Int | Número de tentativas |

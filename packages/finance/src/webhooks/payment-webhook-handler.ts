@@ -14,6 +14,7 @@ import { findStandaloneSubscription } from '../foundation/standalone-subscriptio
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 import { financeSummaryReadModelService } from '../read-model/finance-summary-read-model.service';
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
+import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
 import type {
@@ -590,6 +591,23 @@ async function handleStandaloneChargeWebhook(
  * ADR-002: Webhook como fonte da verdade
  */
 export async function handlePaymentWebhook(
+  contaId: string,
+  payload: PaymentWebhookPayload
+): Promise<{ success: boolean; error?: string }> {
+  const paymentId = payload.payment?.id?.trim();
+  if (!paymentId) {
+    return { success: false, error: 'Payment ID ausente' };
+  }
+
+  return withSessionAdvisoryLock({
+    contaId,
+    scope: 'webhook-process',
+    key: `payment:${paymentId}`,
+    fn: () => handlePaymentWebhookCore(contaId, payload),
+  });
+}
+
+async function handlePaymentWebhookCore(
   contaId: string,
   payload: PaymentWebhookPayload
 ): Promise<{ success: boolean; error?: string }> {

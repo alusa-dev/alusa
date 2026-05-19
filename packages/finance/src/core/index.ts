@@ -89,6 +89,7 @@ export {
   checkExistingSubscriptionByExternalRef,
   acquireGuardLock,
   withIdempotencyGuard,
+  withSessionAdvisoryLock,
   buildGuardKey,
   isPrismaUniqueViolation,
 } from './idempotency.service';
