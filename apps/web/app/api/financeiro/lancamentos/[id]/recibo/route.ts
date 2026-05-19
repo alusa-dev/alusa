@@ -18,7 +18,8 @@ function err(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await safeGetServerSession();
     const user = (session as { user?: SessUser } | null)?.user;

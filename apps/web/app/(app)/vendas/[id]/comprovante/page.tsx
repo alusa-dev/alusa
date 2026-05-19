@@ -1,11 +1,10 @@
 import { SaleCompletionFeature } from '@/features/vendas/SaleCompletionFeature';
 
-interface LojaComprovantePageProps {
-  params: {
-    id: string;
-  };
-}
-
-export default function LojaComprovantePage({ params }: LojaComprovantePageProps) {
-  return <SaleCompletionFeature saleId={params.id} mode="receipt" />;
+export default async function LojaComprovantePage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  return <SaleCompletionFeature saleId={id} mode="receipt" />;
 }

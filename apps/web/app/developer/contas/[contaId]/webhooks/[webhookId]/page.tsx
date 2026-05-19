@@ -18,14 +18,15 @@ function JsonBlock({ value }: { value: unknown }) {
 export default async function SupportWebhookDetailPage({
   params,
 }: {
-  params: { contaId: string; webhookId: string };
+  params: Promise<{ contaId: string; webhookId: string }>;
 }) {
+  const resolvedParams = await params;
   const session = await requireGlobalAdminSessionForPage(
-    `/developer/contas/${params.contaId}/webhooks/${params.webhookId}`,
+    `/developer/contas/${resolvedParams.contaId}/webhooks/${resolvedParams.webhookId}`,
   );
   const [webhook] = await Promise.all([
-    getSupportWebhookDetail(params.contaId, params.webhookId),
-    listSupportNotes({ contaId: params.contaId, entityType: 'WEBHOOK', entityId: params.webhookId }),
+    getSupportWebhookDetail(resolvedParams.contaId, resolvedParams.webhookId),
+    listSupportNotes({ contaId: resolvedParams.contaId, entityType: 'WEBHOOK', entityId: resolvedParams.webhookId }),
   ]);
   if (!webhook) notFound();
 
@@ -65,14 +66,14 @@ export default async function SupportWebhookDetailPage({
             <SupportSafeActionButton
               label="Reprocessar webhook"
               endpoint="/api/developer/actions/replay-webhook"
-              payload={{ contaId: params.contaId, webhookId: params.webhookId }}
+              payload={{ contaId: resolvedParams.contaId, webhookId: resolvedParams.webhookId }}
             />
           </SupportPanel>
           <SupportPanel title="Nota interna">
-            <SupportNoteForm contaId={params.contaId} entityType="WEBHOOK" entityId={webhook.id} />
+            <SupportNoteForm contaId={resolvedParams.contaId} entityType="WEBHOOK" entityId={webhook.id} />
           </SupportPanel>
           <SupportPanel title="Abrir caso">
-            <SupportCaseForm contaId={params.contaId} entityType="WEBHOOK" entityId={webhook.id} />
+            <SupportCaseForm contaId={resolvedParams.contaId} entityType="WEBHOOK" entityId={webhook.id} />
           </SupportPanel>
         </div>
       </div>

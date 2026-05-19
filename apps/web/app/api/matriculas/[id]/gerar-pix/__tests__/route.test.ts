@@ -72,7 +72,7 @@ describe('POST /api/matriculas/[id]/gerar-pix', () => {
       },
     });
 
-    const res = await POST({} as never, { params: { id: 'm1' } });
+    const res = await POST({} as never, { params: Promise.resolve({ id: 'm1' }) });
     expect(res.status).toBe(409);
 
     expect(prismaMock.aluno.update).not.toHaveBeenCalled();

@@ -15,14 +15,15 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   return NextResponse.json({ error: { code, message, details } }, { status });
 }
 
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     const contaId =
       (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
     if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
 
-    const product = await getProduct(ctx.params.id, contaId);
+    const product = await getProduct(ctxParams.id, contaId);
     if (!product) return jsonError(404, 'PRODUTO_NAO_ENCONTRADO', 'Produto não encontrado');
 
     return NextResponse.json({ data: product });
@@ -31,7 +32,8 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     const contaId =
@@ -42,7 +44,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 
     if (body.restore === true) {
       try {
-        const product = await unarchiveProduct(ctx.params.id, contaId);
+        const product = await unarchiveProduct(ctxParams.id, contaId);
         return NextResponse.json({ data: product });
       } catch (err) {
         return jsonError(400, 'ERRO_RESTAURAR_PRODUTO', (err as Error).message);
@@ -51,7 +53,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 
     if (typeof body.isActive === 'boolean') {
       try {
-        const product = await toggleProductActive(ctx.params.id, contaId, body.isActive);
+        const product = await toggleProductActive(ctxParams.id, contaId, body.isActive);
         return NextResponse.json({ data: product });
       } catch (err) {
         return jsonError(400, 'ERRO_TOGGLE_PRODUTO', (err as Error).message);
@@ -85,7 +87,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
 
     try {
       const product = await updateProduct({
-        id: ctx.params.id,
+        id: ctxParams.id,
         contaId,
         ...updateData,
         averageCost,
@@ -99,7 +101,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     const contaId =
@@ -111,11 +114,11 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
 
     try {
       if (permanent) {
-        await deleteProduct(ctx.params.id, contaId);
+        await deleteProduct(ctxParams.id, contaId);
         return NextResponse.json({ success: true });
       }
 
-      const product = await archiveProduct(ctx.params.id, contaId);
+      const product = await archiveProduct(ctxParams.id, contaId);
       return NextResponse.json({ data: product });
     } catch (err) {
       return jsonError(

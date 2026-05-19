@@ -43,8 +43,9 @@ async function getContratoWithRelations(id: string, contaId: string) {
 
 export async function PATCH(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   const user = await getSessionUser();
   if (!user?.contaId) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });

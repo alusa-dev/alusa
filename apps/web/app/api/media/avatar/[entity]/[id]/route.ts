@@ -23,7 +23,7 @@ function isAvatarEntity(value: string): value is AvatarEntity {
 
 export async function GET(
   req: NextRequest,
-  context: { params: { entity: string; id: string } },
+  context: { params: Promise<{ entity: string; id: string }> },
 ) {
   const session = await getServerSession(authOptions);
   const contaId = (session?.user as { contaId?: string | null } | undefined)?.contaId;
@@ -31,8 +31,9 @@ export async function GET(
     return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   }
 
-  const entity = context.params.entity;
-  const id = context.params.id;
+  const routeParams = await context.params;
+  const entity = routeParams.entity;
+  const id = routeParams.id;
   if (!isAvatarEntity(entity) || !id) {
     return NextResponse.json({ error: 'Entidade inválida' }, { status: 400 });
   }

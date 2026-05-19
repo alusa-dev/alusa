@@ -7,11 +7,12 @@ import { SupportCaseForm, SupportNoteForm } from '@/features/support/shared/Supp
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
-export default async function SupportResponsavelPage({ params }: { params: { contaId: string; responsavelId: string } }) {
-  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${params.contaId}/responsaveis/${params.responsavelId}`);
+export default async function SupportResponsavelPage({ params }: { params: Promise<{ contaId: string; responsavelId: string }> }) {
+  const resolvedParams = await params;
+  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${resolvedParams.contaId}/responsaveis/${resolvedParams.responsavelId}`);
   const [responsavel, notes] = await Promise.all([
-    getSupportResponsavelDetail(params.contaId, params.responsavelId),
-    listSupportNotes({ contaId: params.contaId, entityType: 'RESPONSAVEL', entityId: params.responsavelId }),
+    getSupportResponsavelDetail(resolvedParams.contaId, resolvedParams.responsavelId),
+    listSupportNotes({ contaId: resolvedParams.contaId, entityType: 'RESPONSAVEL', entityId: resolvedParams.responsavelId }),
   ]);
   if (!responsavel) notFound();
 
@@ -36,7 +37,7 @@ export default async function SupportResponsavelPage({ params }: { params: { con
               {responsavel.alunos.map((item) => (
                 <RowLink
                   key={item.aluno.id}
-                  href={`/developer/contas/${params.contaId}/alunos/${item.aluno.id}`}
+                  href={`/developer/contas/${resolvedParams.contaId}/alunos/${item.aluno.id}`}
                   title={item.aluno.nome}
                   description={item.tipoVinculo}
                   meta={<StatusBadge value={item.aluno.status} />}
@@ -47,10 +48,10 @@ export default async function SupportResponsavelPage({ params }: { params: { con
         </div>
         <div className="space-y-6">
           <SupportPanel title="Nota interna">
-            <SupportNoteForm contaId={params.contaId} entityType="RESPONSAVEL" entityId={responsavel.id} />
+            <SupportNoteForm contaId={resolvedParams.contaId} entityType="RESPONSAVEL" entityId={responsavel.id} />
           </SupportPanel>
           <SupportPanel title="Abrir caso">
-            <SupportCaseForm contaId={params.contaId} entityType="RESPONSAVEL" entityId={responsavel.id} />
+            <SupportCaseForm contaId={resolvedParams.contaId} entityType="RESPONSAVEL" entityId={responsavel.id} />
           </SupportPanel>
         </div>
       </div>

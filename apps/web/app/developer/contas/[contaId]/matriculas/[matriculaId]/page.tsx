@@ -7,9 +7,10 @@ import { SupportCaseForm, SupportNoteForm } from '@/features/support/shared/Supp
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
-export default async function SupportEnrollmentPage({ params }: { params: { contaId: string; matriculaId: string } }) {
-  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${params.contaId}/matriculas/${params.matriculaId}`);
-  const matricula = await getSupportEnrollmentDetail(params.contaId, params.matriculaId);
+export default async function SupportEnrollmentPage({ params }: { params: Promise<{ contaId: string; matriculaId: string }> }) {
+  const resolvedParams = await params;
+  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${resolvedParams.contaId}/matriculas/${resolvedParams.matriculaId}`);
+  const matricula = await getSupportEnrollmentDetail(resolvedParams.contaId, resolvedParams.matriculaId);
   if (!matricula) notFound();
 
   return (
@@ -36,7 +37,7 @@ export default async function SupportEnrollmentPage({ params }: { params: { cont
               {matricula.cobrancas.map((charge) => (
                 <RowLink
                   key={charge.id}
-                  href={`/developer/contas/${params.contaId}/financeiro/cobrancas/${charge.asaasPaymentId ?? charge.id}`}
+                  href={`/developer/contas/${resolvedParams.contaId}/financeiro/cobrancas/${charge.asaasPaymentId ?? charge.id}`}
                   title={charge.id}
                   description={`${formatCurrency(charge.valor)} · vence ${formatDate(charge.vencimento)}`}
                   meta={<StatusBadge value={charge.asaasStatus ?? charge.status} />}
@@ -47,10 +48,10 @@ export default async function SupportEnrollmentPage({ params }: { params: { cont
         </div>
         <div className="space-y-6">
           <SupportPanel title="Nota interna">
-            <SupportNoteForm contaId={params.contaId} entityType="MATRICULA" entityId={matricula.id} />
+            <SupportNoteForm contaId={resolvedParams.contaId} entityType="MATRICULA" entityId={matricula.id} />
           </SupportPanel>
           <SupportPanel title="Abrir caso">
-            <SupportCaseForm contaId={params.contaId} entityType="MATRICULA" entityId={matricula.id} />
+            <SupportCaseForm contaId={resolvedParams.contaId} entityType="MATRICULA" entityId={matricula.id} />
           </SupportPanel>
         </div>
       </div>

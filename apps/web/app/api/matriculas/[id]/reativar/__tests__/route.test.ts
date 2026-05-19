@@ -41,7 +41,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(null);
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(401);
   });
 
@@ -51,7 +51,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
 
     const response = await POST(
       buildRequest('mat-1', { dataRetornoEfetiva: '2025-07-01' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
 
     expect(response.status).toBe(400);
@@ -63,7 +63,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
 
     const response = await POST(
       buildRequest('mat-1', { dataRetornoEfetiva: '01/07/2025', nextDueDate: '2025-08-01' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
 
     expect(response.status).toBe(400);
@@ -86,7 +86,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       warnings: [],
     });
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -119,7 +119,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       ),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(422);
@@ -140,7 +140,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       ),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(422);
@@ -158,7 +158,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       new PausaBusinessError('OPERACAO_DUPLICADA', 'Já existe uma solicitação em processamento.', 409),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(409);
   });
 
@@ -173,7 +173,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(404);
   });
 
@@ -192,7 +192,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
       ),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(502);
@@ -206,7 +206,7 @@ describe('POST /api/matriculas/[id]/reativar', () => {
 
     vi.mocked(reativarMatricula).mockRejectedValue(new Error('Unexpected'));
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(500);

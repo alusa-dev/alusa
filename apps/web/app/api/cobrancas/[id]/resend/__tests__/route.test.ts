@@ -33,7 +33,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: '123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(401);
@@ -56,7 +56,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -84,7 +84,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -111,7 +111,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -134,7 +134,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(410);
@@ -165,7 +165,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -200,7 +200,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(502);
@@ -222,7 +222,7 @@ describe('POST /api/cobrancas/[id]/resend', () => {
       method: 'POST',
     });
 
-    const response = await POST(request, { params: { id: 'cobranca-123' } });
+    const response = await POST(request, { params: Promise.resolve({ id: 'cobranca-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(500);

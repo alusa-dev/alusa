@@ -21,8 +21,9 @@ function err(status: number, code: string, message: string) {
  */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     type SessUser = { id?: string; contaId?: string; role?: string };
@@ -36,7 +37,7 @@ export async function GET(
     }
 
     const detail = await getInstallmentPlanDetail({
-      planId: params.id,
+      planId: rawParams.id,
       contaId: user.contaId,
     });
 

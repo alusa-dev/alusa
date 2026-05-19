@@ -91,7 +91,7 @@ describe('DELETE /api/matriculas/[id]', () => {
       buildRequest('http://localhost:3000/api/matriculas/matricula-1?contaId=conta-1', {
         motivo: 'Encerramento solicitado',
       }),
-      { params: { id: 'matricula-1' } },
+      { params: Promise.resolve({ id: 'matricula-1' }) },
     );
     const data = await response.json();
 
@@ -126,7 +126,7 @@ describe('DELETE /api/matriculas/[id]', () => {
       buildRequest('http://localhost:3000/api/matriculas/matricula-1?contaId=conta-1&hard=true', {
         motivo: 'Tentativa de limpeza',
       }),
-      { params: { id: 'matricula-1' } },
+      { params: Promise.resolve({ id: 'matricula-1' }) },
     );
     const data = await response.json();
 

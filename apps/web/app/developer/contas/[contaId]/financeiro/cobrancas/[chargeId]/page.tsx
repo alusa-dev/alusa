@@ -7,11 +7,12 @@ import { SupportCaseForm, SupportNoteForm, SupportSafeActionButton } from '@/fea
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
-export default async function SupportChargePage({ params }: { params: { contaId: string; chargeId: string } }) {
-  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${params.contaId}/financeiro/cobrancas/${params.chargeId}`);
+export default async function SupportChargePage({ params }: { params: Promise<{ contaId: string; chargeId: string }> }) {
+  const resolvedParams = await params;
+  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${resolvedParams.contaId}/financeiro/cobrancas/${resolvedParams.chargeId}`);
   const [charge, notes] = await Promise.all([
-    getSupportChargeDetail(params.contaId, params.chargeId),
-    listSupportNotes({ contaId: params.contaId, entityType: 'CHARGE', entityId: params.chargeId }),
+    getSupportChargeDetail(resolvedParams.contaId, resolvedParams.chargeId),
+    listSupportNotes({ contaId: resolvedParams.contaId, entityType: 'CHARGE', entityId: resolvedParams.chargeId }),
   ]);
   if (!charge) notFound();
 
@@ -54,7 +55,7 @@ export default async function SupportChargePage({ params }: { params: { contaId:
               {charge.webhooks.map((webhook) => (
                 <RowLink
                   key={webhook.id}
-                  href={`/developer/contas/${params.contaId}/webhooks/${webhook.id}`}
+                  href={`/developer/contas/${resolvedParams.contaId}/webhooks/${webhook.id}`}
                   title={webhook.evento}
                   description={webhook.eventId ?? compactId(webhook.id)}
                   meta={<StatusBadge value={webhook.status} />}
@@ -69,30 +70,30 @@ export default async function SupportChargePage({ params }: { params: { contaId:
               <SupportSafeActionButton
                 label="Rodar reconciliação individual"
                 endpoint="/api/developer/actions/reconcile-charge"
-                payload={{ contaId: params.contaId, chargeId: params.chargeId }}
+                payload={{ contaId: resolvedParams.contaId, chargeId: resolvedParams.chargeId }}
               />
               <SupportSafeActionButton
                 label="Consultar status Asaas"
                 endpoint="/api/developer/actions/check-asaas-status"
-                payload={{ contaId: params.contaId, chargeId: params.chargeId }}
+                payload={{ contaId: resolvedParams.contaId, chargeId: resolvedParams.chargeId }}
               />
               <SupportSafeActionButton
                 label="Obter links oficiais"
                 endpoint="/api/developer/actions/refresh-charge-links"
-                payload={{ contaId: params.contaId, chargeId: params.chargeId }}
+                payload={{ contaId: resolvedParams.contaId, chargeId: resolvedParams.chargeId }}
               />
               <SupportSafeActionButton
                 label="Marcar divergência"
                 endpoint="/api/developer/actions/divergence"
-                payload={{ contaId: params.contaId, entityType: 'CHARGE', entityId: read.id }}
+                payload={{ contaId: resolvedParams.contaId, entityType: 'CHARGE', entityId: read.id }}
               />
             </div>
           </SupportPanel>
           <SupportPanel title="Nota interna">
-            <SupportNoteForm contaId={params.contaId} entityType="CHARGE" entityId={read.id} />
+            <SupportNoteForm contaId={resolvedParams.contaId} entityType="CHARGE" entityId={read.id} />
           </SupportPanel>
           <SupportPanel title="Abrir caso">
-            <SupportCaseForm contaId={params.contaId} entityType="CHARGE" entityId={read.id} />
+            <SupportCaseForm contaId={resolvedParams.contaId} entityType="CHARGE" entityId={read.id} />
           </SupportPanel>
         </div>
       </div>

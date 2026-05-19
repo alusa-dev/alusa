@@ -24,7 +24,8 @@ function parseDate(input?: string) {
   return Number.isNaN(d.getTime()) ? new Date() : d;
 }
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await safeGetServerSession();
     const user = (session as { user?: SessUser } | null)?.user;

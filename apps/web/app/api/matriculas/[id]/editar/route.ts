@@ -38,7 +38,8 @@ async function resolveContaId(explicit?: string | null) {
   };
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const json = await req.json().catch(() => null);
     const parsedBody = editMatriculaInputDTOSchema.safeParse(json);
@@ -60,7 +61,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
 
     const currentMatricula = await prisma.matricula.findFirst({
-      where: { id: ctx.params.id, aluno: { contaId: contaCtx.contaId } },
+      where: { id: ctxParams.id, aluno: { contaId: contaCtx.contaId } },
       select: {
         id: true,
         planoId: true,
@@ -197,7 +198,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
 
     const matricula = await editarMatricula({
-      matriculaId: ctx.params.id,
+      matriculaId: ctxParams.id,
       contaId: contaCtx.contaId,
       createdById: contaCtx.sessionUserId,
       turmaId: parsedBody.data.turmaId ?? undefined,

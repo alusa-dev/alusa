@@ -3,11 +3,12 @@ import { NextResponse } from 'next/server';
 import { requireSupportApi } from '@/features/support/api/support-api.server';
 import { getSupportAccount, listSupportWebhooks } from '@/features/support/queries/support-account';
 
-export async function GET(req: Request, { params }: { params: { contaId: string } }) {
+export async function GET(req: Request, { params }: { params: Promise<{ contaId: string }> }) {
+    const rawParams = await params;
   const auth = await requireSupportApi(req);
   if (!auth.ok) return auth.response;
 
-  const account = await getSupportAccount(params.contaId);
+  const account = await getSupportAccount(rawParams.contaId);
   if (!account) {
     return NextResponse.json(
       { success: false, error: 'Conta não encontrada' },
@@ -15,6 +16,6 @@ export async function GET(req: Request, { params }: { params: { contaId: string 
     );
   }
 
-  const data = await listSupportWebhooks(params.contaId);
+  const data = await listSupportWebhooks(rawParams.contaId);
   return NextResponse.json({ success: true, data }, { headers: { 'cache-control': 'no-store' } });
 }

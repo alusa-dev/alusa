@@ -29,7 +29,8 @@ async function ensureAuth() {
   return { user };
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await ensureAuth();
     if ('error' in auth) return auth.error;

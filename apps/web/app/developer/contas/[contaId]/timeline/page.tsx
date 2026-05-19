@@ -6,13 +6,14 @@ import { formatDateTime } from '@/features/support/shared/format';
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
-export default async function SupportTimelinePage({ params }: { params: { contaId: string } }) {
+export default async function SupportTimelinePage({ params }: { params: Promise<{ contaId: string }> }) {
+  const resolvedParams = await params;
   const session = await requireGlobalAdminSessionForPage(
-    `/developer/contas/${params.contaId}/timeline`,
+    `/developer/contas/${resolvedParams.contaId}/timeline`,
   );
   const [account, timeline] = await Promise.all([
-    getSupportAccount(params.contaId),
-    getSupportTimeline(params.contaId),
+    getSupportAccount(resolvedParams.contaId),
+    getSupportTimeline(resolvedParams.contaId),
   ]);
   if (!account) notFound();
 

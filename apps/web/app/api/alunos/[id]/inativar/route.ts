@@ -11,7 +11,8 @@ const inativarSchema = z.object({
   }),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     // 1. Autenticação
     const session = await getServerSession(authOptions);
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // 5. Inativar aluno
     const result = await inativarAluno({
-      id: params.id,
+      id: rawParams.id,
       contaId: session.user.contaId,
       motivo: parsed.motivo,
       acao: parsed.acao,

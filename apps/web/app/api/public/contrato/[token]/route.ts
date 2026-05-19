@@ -10,8 +10,9 @@ import { jsonSensitive } from '@/lib/http-security';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { token: string } },
+  { params }: { params: Promise<{ token: string }> },
 ) {
+    const rawParams = await params;
   const { token } = contratoPublicTokenParamsDTOSchema.parse(params);
 
   try {

@@ -35,7 +35,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(null);
 
-    const response = await GET(buildRequest('mat-1'), { params: { id: 'mat-1' } });
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(401);
   });
 
@@ -72,7 +72,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
     vi.mocked(getPausaResumo).mockResolvedValue(mockResumo as never);
 
-    const response = await GET(buildRequest('mat-1'), { params: { id: 'mat-1' } });
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -107,7 +107,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
     vi.mocked(getPausaResumo).mockResolvedValue(mockResumo as never);
 
-    const response = await GET(buildRequest('mat-1'), { params: { id: 'mat-1' } });
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -126,7 +126,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
       new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404),
     );
 
-    const response = await GET(buildRequest('mat-1'), { params: { id: 'mat-1' } });
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -140,7 +140,7 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
     vi.mocked(getPausaResumo).mockRejectedValue(new Error('Unexpected'));
 
-    const response = await GET(buildRequest('mat-1'), { params: { id: 'mat-1' } });
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(500);

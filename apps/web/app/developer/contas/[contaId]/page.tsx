@@ -15,9 +15,10 @@ import {
   SupportPanel,
 } from '@/features/support/shared/SupportUI';
 
-export default async function SupportAccountPage({ params }: { params: { contaId: string } }) {
-  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${params.contaId}`);
-  const data = await getSupportAccount(params.contaId);
+export default async function SupportAccountPage({ params }: { params: Promise<{ contaId: string }> }) {
+  const resolvedParams = await params;
+  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${resolvedParams.contaId}`);
+  const data = await getSupportAccount(resolvedParams.contaId);
   if (!data) notFound();
 
   const { conta, counts } = data;

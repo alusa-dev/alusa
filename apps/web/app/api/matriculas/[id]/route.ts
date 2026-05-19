@@ -222,7 +222,8 @@ async function canHardDeleteMatricula(
   return { ok, details };
 }
 
-export async function GET(req: Request, ctx: { params: { id: string } }) {
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const contaCtx = await resolveContaId(null);
     if (!contaCtx.contaId) {
@@ -231,7 +232,7 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
     const forceRefresh = new URL(req.url).searchParams.get('fresh') === '1';
 
     const matricula = await buscarMatriculaPorId({
-      id: ctx.params.id,
+      id: ctxParams.id,
       contaId: contaCtx.contaId,
     });
 
@@ -321,7 +322,8 @@ export async function GET(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const json = await req.json().catch(() => null);
     const parsedBody = updateMatriculaInputDTOSchema.safeParse(json);
@@ -352,7 +354,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
       }
 
       const matricula = await atualizarStatusMatricula({
-        id: ctx.params.id,
+        id: ctxParams.id,
         contaId: contaCtx.contaId,
         status: parsedBody.data.status,
       });
@@ -374,7 +376,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
 
     const before = await prisma.matricula.findFirst({
-      where: { id: ctx.params.id, aluno: { contaId: contaCtx.contaId } },
+      where: { id: ctxParams.id, aluno: { contaId: contaCtx.contaId } },
       select: {
         id: true,
         asaasSubscriptionId: true,
@@ -506,7 +508,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
 
     const matricula = await atualizarDetalhesMatricula({
-      id: ctx.params.id,
+      id: ctxParams.id,
       contaId: contaCtx.contaId,
       actorId: contaCtx.sessionUserId,
       dataInicio: parsedBody.data.dataInicio,
@@ -542,7 +544,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const url = new URL(req.url);
     const contaCtx = await resolveContaId(url.searchParams.get('contaId'));
@@ -553,7 +556,7 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
-    const matriculaId = ctx.params.id;
+    const matriculaId = ctxParams.id;
     const contaId = contaCtx.contaId;
     const actorId = contaCtx.sessionUserId ?? null;
 

@@ -14,15 +14,16 @@ import { StatusBadge, SupportMetric, SupportPageHeader, SupportPanel } from '@/f
 export default async function SupportAccountFinancePage({
   params,
 }: {
-  params: { contaId: string };
+  params: Promise<{ contaId: string }>;
 }) {
+  const resolvedParams = await params;
   const session = await requireGlobalAdminSessionForPage(
-    `/developer/contas/${params.contaId}/financeiro`,
+    `/developer/contas/${resolvedParams.contaId}/financeiro`,
   );
   const [account, charges, overview] = await Promise.all([
-    getSupportAccount(params.contaId),
-    listSupportAccountFinance(params.contaId),
-    getSupportFinanceOverview(params.contaId),
+    getSupportAccount(resolvedParams.contaId),
+    listSupportAccountFinance(resolvedParams.contaId),
+    getSupportFinanceOverview(resolvedParams.contaId),
   ]);
   if (!account) notFound();
 
@@ -62,7 +63,7 @@ export default async function SupportAccountFinancePage({
                   <td className="py-3 pr-4">
                     <Link
                       className="font-medium text-slate-950 hover:underline"
-                      href={`/developer/contas/${params.contaId}/financeiro/cobrancas/${charge.id}`}
+                      href={`/developer/contas/${resolvedParams.contaId}/financeiro/cobrancas/${charge.id}`}
                     >
                       {charge.payerName}
                     </Link>

@@ -7,11 +7,12 @@ import { SupportCaseForm, SupportNoteForm } from '@/features/support/shared/Supp
 import { SupportShell } from '@/features/support/shared/SupportShell';
 import { KeyValue, RowLink, StatusBadge, SupportPageHeader, SupportPanel } from '@/features/support/shared/SupportUI';
 
-export default async function SupportStudentDetailPage({ params }: { params: { contaId: string; alunoId: string } }) {
-  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${params.contaId}/alunos/${params.alunoId}`);
+export default async function SupportStudentDetailPage({ params }: { params: Promise<{ contaId: string; alunoId: string }> }) {
+  const resolvedParams = await params;
+  const session = await requireGlobalAdminSessionForPage(`/developer/contas/${resolvedParams.contaId}/alunos/${resolvedParams.alunoId}`);
   const [student, notes] = await Promise.all([
-    getSupportStudentDetail(params.contaId, params.alunoId),
-    listSupportNotes({ contaId: params.contaId, entityType: 'ALUNO', entityId: params.alunoId }),
+    getSupportStudentDetail(resolvedParams.contaId, resolvedParams.alunoId),
+    listSupportNotes({ contaId: resolvedParams.contaId, entityType: 'ALUNO', entityId: resolvedParams.alunoId }),
   ]);
   if (!student) notFound();
 
@@ -36,7 +37,7 @@ export default async function SupportStudentDetailPage({ params }: { params: { c
               {student.matriculas.map((matricula) => (
                 <RowLink
                   key={matricula.id}
-                  href={`/developer/contas/${params.contaId}/matriculas/${matricula.id}`}
+                  href={`/developer/contas/${resolvedParams.contaId}/matriculas/${matricula.id}`}
                   title={matricula.id}
                   description={formatDateTime(matricula.createdAt)}
                   meta={<StatusBadge value={`${matricula.status} · ${matricula.statusFinanceiro}`} />}
@@ -49,7 +50,7 @@ export default async function SupportStudentDetailPage({ params }: { params: { c
               {student.responsaveis.map((link) => (
                 <RowLink
                   key={link.responsavel.id}
-                  href={`/developer/contas/${params.contaId}/responsaveis/${link.responsavel.id}`}
+                  href={`/developer/contas/${resolvedParams.contaId}/responsaveis/${link.responsavel.id}`}
                   title={link.responsavel.nome}
                   description={maskEmail(link.responsavel.email)}
                 />
@@ -59,10 +60,10 @@ export default async function SupportStudentDetailPage({ params }: { params: { c
         </div>
         <div className="space-y-6">
           <SupportPanel title="Nota interna">
-            <SupportNoteForm contaId={params.contaId} entityType="ALUNO" entityId={student.id} />
+            <SupportNoteForm contaId={resolvedParams.contaId} entityType="ALUNO" entityId={student.id} />
           </SupportPanel>
           <SupportPanel title="Abrir caso">
-            <SupportCaseForm contaId={params.contaId} entityType="ALUNO" entityId={student.id} />
+            <SupportCaseForm contaId={resolvedParams.contaId} entityType="ALUNO" entityId={student.id} />
           </SupportPanel>
         </div>
       </div>

@@ -56,8 +56,9 @@ function sanitizeUserAgent(value: string | undefined) {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { token: string } },
+  { params }: { params: Promise<{ token: string }> },
 ) {
+    const rawParams = await params;
   const { token } = contratoPublicTokenParamsDTOSchema.parse(params);
 
   try {

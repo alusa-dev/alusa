@@ -41,7 +41,8 @@ async function resolveSessionUser() {
  * PUT /api/matriculas/[id]/forma-pagamento
  * Atualiza a forma de pagamento da assinatura no Asaas
  */
-export async function PUT(req: Request, ctx: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const sessionUser = await resolveSessionUser();
     const json = await req.json().catch(() => null);
@@ -63,7 +64,7 @@ export async function PUT(req: Request, ctx: { params: { id: string } }) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
-    const matriculaId = ctx.params.id;
+    const matriculaId = ctxParams.id;
     const { billingType } = parsedBody.data;
 
     // Buscar matrícula

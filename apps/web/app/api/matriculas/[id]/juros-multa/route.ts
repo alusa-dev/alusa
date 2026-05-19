@@ -39,11 +39,12 @@ async function resolveSessionUser() {
  * PUT /api/matriculas/[id]/juros-multa
  * Atualiza juros e multa da assinatura no Asaas
  */
-export async function PUT(req: Request, ctx: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const sessionUser = await resolveSessionUser();
     console.log('🟡 [BACKEND] Recebendo requisição PUT /api/matriculas/[id]/juros-multa');
-    console.log('🟡 [BACKEND] Matrícula ID:', ctx.params.id);
+    console.log('🟡 [BACKEND] Matrícula ID:', ctxParams.id);
     
     const json = await req.json().catch(() => null);
     console.log('🟡 [BACKEND] Body recebido:', JSON.stringify(json, null, 2));
@@ -67,7 +68,7 @@ export async function PUT(req: Request, ctx: { params: { id: string } }) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
-    const matriculaId = ctx.params.id;
+    const matriculaId = ctxParams.id;
     const { interest, fine, discount } = parsedBody.data;
 
     // Buscar matrícula

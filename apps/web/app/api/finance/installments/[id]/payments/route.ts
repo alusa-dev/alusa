@@ -89,8 +89,9 @@ async function convergeStandaloneInstallmentCancellation(params: {
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     type SessUser = { id?: string; contaId?: string; role?: string };
@@ -104,13 +105,13 @@ export async function DELETE(
     }
 
     const academicPlan = await prisma.installmentPlan.findFirst({
-      where: { id: params.id, contaId: user.contaId },
+      where: { id: rawParams.id, contaId: user.contaId },
       select: { id: true, asaasInstallmentId: true, status: true, externalReference: true },
     });
 
     const standalonePlan = !academicPlan
       ? await prisma.standaloneInstallmentPlan.findFirst({
-          where: { id: params.id, contaId: user.contaId },
+          where: { id: rawParams.id, contaId: user.contaId },
           select: { id: true, asaasInstallmentId: true, status: true, externalReference: true },
         })
       : null;

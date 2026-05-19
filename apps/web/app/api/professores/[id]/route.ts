@@ -19,12 +19,13 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 }
 const prisma = new PrismaClient();
 
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   const session = await getServerSession(authOptions).catch(() => null);
   const contaId =
     (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
   if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
-  const prof = await prisma.professor.findFirst({ where: { id: ctx.params.id, contaId } });
+  const prof = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
   if (!prof) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
   return NextResponse.json(
     professorMutationResultDTOSchema.parse({
@@ -34,7 +35,8 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
   );
 }
 
-export async function PUT(req: Request, ctx: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const json = await req.json();
     // Regra: impedir alteração de cpf e email
@@ -58,20 +60,20 @@ export async function PUT(req: Request, ctx: { params: { id: string } }) {
       (session as { user?: { contaId?: string } } | null)?.user?.contaId?.trim() || null;
     if (!contaId) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
 
-    const existing = await prisma.professor.findFirst({ where: { id: ctx.params.id, contaId } });
+    const existing = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
     if (!existing) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
 
     try {
       // Multi-tenant: usar updateMany para garantir atomicidade com contaId
       const result = await prisma.professor.updateMany({ 
-        where: { id: ctx.params.id, contaId }, 
+        where: { id: ctxParams.id, contaId }, 
         data 
       });
       if (result.count === 0) {
         return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
       }
       // Buscar o registro atualizado
-      const updated = await prisma.professor.findFirst({ where: { id: ctx.params.id, contaId } });
+      const updated = await prisma.professor.findFirst({ where: { id: ctxParams.id, contaId } });
       if (!updated) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');
       return NextResponse.json(
         professorMutationResultDTOSchema.parse({

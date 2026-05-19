@@ -27,8 +27,9 @@ function resolveInvoiceUrl(value: unknown): string | null {
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+    const rawParams = await params;
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;

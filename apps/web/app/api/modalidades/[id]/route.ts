@@ -7,7 +7,8 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   return NextResponse.json({ error: { code, message, details } }, { status });
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const body = await req.json();
     const contaId = typeof body.contaId === 'string' ? body.contaId.trim() : '';
@@ -32,7 +33,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
     try {
       const modalidade = await updateModalidade({
-        id: ctx.params.id,
+        id: ctxParams.id,
         contaId,
         nome: body.nome,
         descricao: body.descricao,
@@ -47,7 +48,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const url = new URL(req.url);
     const contaId = url.searchParams.get('contaId')?.trim() || null;
@@ -63,7 +65,7 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
       );
     }
     try {
-      const modalidade = await deleteModalidade(ctx.params.id, contaId);
+      const modalidade = await deleteModalidade(ctxParams.id, contaId);
       return NextResponse.json({ data: modalidade });
     } catch (e) {
       return jsonError(400, 'ERRO_EXCLUIR_MODALIDADE', (e as Error).message);

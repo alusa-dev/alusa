@@ -27,7 +27,7 @@ export const dynamic = 'force-dynamic';
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -38,7 +38,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const matriculaId = params.id;
+    const rawParams = await params;
+    const matriculaId = rawParams.id;
     const parsedBody = updateMatriculaStatusSyncInputDTOSchema.safeParse(await request.json());
     if (!parsedBody.success) {
       return NextResponse.json({ error: 'Status inválido' }, { status: 400 });

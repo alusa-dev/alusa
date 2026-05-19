@@ -23,7 +23,8 @@ export const dynamic = 'force-dynamic';
  * - Para BOLETO/PIX/CARTAO: obtém (GET) ou cria (POST) o payment e retorna invoiceUrl
  * - Atualiza status da cobrança no banco local
  */
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     const user = (session as { user?: { id?: string; contaId?: string; role?: string } })?.user;

@@ -9,7 +9,8 @@ const reativarSchema = z.object({
   matriculasIds: z.array(z.string()).optional(),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     // 1. Autenticação
     const session = await getServerSession(authOptions);
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // 5. Reativar aluno
     const result = await reativarAlunoCompleto({
-      id: params.id,
+      id: rawParams.id,
       contaId: session.user.contaId,
       reativarMatriculas: parsed.reativarMatriculas,
       matriculasIds: parsed.matriculasIds,

@@ -85,14 +85,15 @@ async function ensureAuth(_req: NextRequest) {
   return { user };
 }
 
-export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await ensureAuth(_);
     if ('error' in auth) return auth.error;
     const user = auth.user!;
 
     const lancamento = await prisma.lancamento.findFirst({
-      where: { id: params.id, contaId: user.contaId },
+      where: { id: rawParams.id, contaId: user.contaId },
       include: { categoria: true, subcategoria: true, parent: true, centroCusto: true },
     });
     if (!lancamento) return err(404, 'NAO_ENCONTRADO', 'Lancamento nao encontrado');
@@ -107,7 +108,8 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   }
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await ensureAuth(req);
     if ('error' in auth) return auth.error;
@@ -120,7 +122,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const body = parsed.data;
 
     const current = await prisma.lancamento.findFirst({
-      where: { id: params.id, contaId: user.contaId },
+      where: { id: rawParams.id, contaId: user.contaId },
       include: { categoria: true, subcategoria: true, centroCusto: true },
     });
     if (!current) return err(404, 'NAO_ENCONTRADO', 'Lancamento nao encontrado');
@@ -152,7 +154,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     const dataPrevista = parseDate(body.dataPrevista);
 
     const updated = await prisma.lancamento.update({
-      where: { id: params.id },
+      where: { id: rawParams.id },
       data: {
         status: body.status,
         valor: body.valor,
@@ -182,7 +184,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function DELETE(req: NextRequest, { params: _params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params: _params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await ensureAuth(req);
     if ('error' in auth) return auth.error;

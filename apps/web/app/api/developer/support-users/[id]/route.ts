@@ -5,7 +5,8 @@ import { auditActorFromSession, recordSupportAudit, requestAuditMetadata } from 
 import { updateSupportUserSchema } from '@/features/support/auth/schemas';
 import { updateSupportUser } from '@/features/support/auth/support-users.server';
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   const auth = await requireSupportApi(req, {
     roles: ['SUPPORT_ADMIN', 'BREAK_GLASS'],
     scope: 'developer-support-users',
@@ -14,7 +15,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
   try {
     const body = updateSupportUserSchema.parse(await req.json());
-    const data = await updateSupportUser({ id: params.id, ...body });
+    const data = await updateSupportUser({ id: rawParams.id, ...body });
     await recordSupportAudit({
       ...auditActorFromSession(auth.session),
       ...requestAuditMetadata(req),

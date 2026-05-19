@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { anonimizarAluno } from '@alusa/lib';
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     const user = (session as { user?: { id?: string; contaId?: string; role?: string } })?.user;
@@ -18,7 +19,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const motivo = typeof body?.motivo === 'string' ? body.motivo : undefined;
 
     const aluno = await anonimizarAluno({
-      id: params.id,
+      id: rawParams.id,
       contaId: user.contaId,
       motivo,
       actorId: user.id,

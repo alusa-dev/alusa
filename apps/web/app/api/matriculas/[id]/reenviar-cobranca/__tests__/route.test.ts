@@ -91,7 +91,7 @@ describe('POST /api/matriculas/[id]/reenviar-cobranca', () => {
       responsavelFinanceiro: null,
     });
 
-    const res = await POST({} as never, { params: { id: 'm1' } });
+    const res = await POST({} as never, { params: Promise.resolve({ id: 'm1' }) });
     expect(res.status).toBe(409);
     expect(materializeSubscriptionPaymentForChargeMock).not.toHaveBeenCalled();
     expect(prismaMock.cobranca.update).not.toHaveBeenCalled();
@@ -151,7 +151,7 @@ describe('POST /api/matriculas/[id]/reenviar-cobranca', () => {
       responsavelFinanceiro: null,
     });
 
-    const res = await POST({} as never, { params: { id: 'm1' } });
+    const res = await POST({} as never, { params: Promise.resolve({ id: 'm1' }) });
     const data = await res.json();
 
     expect(res.status).toBe(200);

@@ -10,14 +10,15 @@ import { KeyValue, StatusBadge, SupportPageHeader, SupportPanel } from '@/featur
 export default async function SupportUserDetailPage({
   params,
 }: {
-  params: { contaId: string; usuarioId: string };
+  params: Promise<{ contaId: string; usuarioId: string }>;
 }) {
+  const resolvedParams = await params;
   const session = await requireGlobalAdminSessionForPage(
-    `/developer/contas/${params.contaId}/usuarios/${params.usuarioId}`,
+    `/developer/contas/${resolvedParams.contaId}/usuarios/${resolvedParams.usuarioId}`,
   );
   const [user, notes] = await Promise.all([
-    getSupportUserDetail(params.contaId, params.usuarioId),
-    listSupportNotes({ contaId: params.contaId, entityType: 'USUARIO', entityId: params.usuarioId }),
+    getSupportUserDetail(resolvedParams.contaId, resolvedParams.usuarioId),
+    listSupportNotes({ contaId: resolvedParams.contaId, entityType: 'USUARIO', entityId: resolvedParams.usuarioId }),
   ]);
   if (!user) notFound();
 
@@ -37,7 +38,7 @@ export default async function SupportUserDetailPage({
           </dl>
         </SupportPanel>
         <SupportPanel title="Ações seguras">
-          <SupportNoteForm contaId={params.contaId} entityType="USUARIO" entityId={user.id} />
+          <SupportNoteForm contaId={resolvedParams.contaId} entityType="USUARIO" entityId={user.id} />
         </SupportPanel>
       </div>
       <div className="mt-6">

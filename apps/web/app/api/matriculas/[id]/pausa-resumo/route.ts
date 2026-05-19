@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -21,7 +21,8 @@ export async function GET(
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const result = await getPausaResumo(prisma, params.id, user.contaId);
+    const rawParams = await params;
+    const result = await getPausaResumo(prisma, rawParams.id, user.contaId);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof PausaBusinessError) {

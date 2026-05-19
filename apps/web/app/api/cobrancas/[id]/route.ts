@@ -307,7 +307,8 @@ async function applyImmediateDeletedPaymentConvergence(
  * ADR: GET é READ-ONLY. Não escreve no banco.
  * Status e valores são refletidos apenas via webhook.
  */
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const user = await getSessionUser();
     if (!user?.contaId) {
@@ -317,7 +318,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     const forceRefresh = new URL(_req.url).searchParams.get('fresh') === '1';
     const asaasActive = isAsaasEnabled();
 
-    const { id } = params;
+    const { id } = rawParams;
 
     if (!id) {
       return NextResponse.json(
@@ -637,7 +638,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
  * Atualiza dados de uma cobrança (valor, vencimento, juros, multa, desconto)
  * Apenas permite edição se status for PENDENTE ou A_VENCER
  */
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const user = await getSessionUser();
     if (!user?.contaId) {
@@ -645,7 +647,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     }
     const { contaId } = user;
 
-    const { id } = params;
+    const { id } = rawParams;
     const body = await req.json();
 
     if (!id) {
@@ -1023,7 +1025,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
  * Solicita cancelamento de uma cobrança quando ela ainda está em aberto no fluxo financeiro
  * Não remove localmente: aguarda confirmação via webhook do Asaas.
  */
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const user = await getSessionUser();
     if (!user?.contaId) {
@@ -1031,7 +1034,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     }
     const { contaId } = user;
 
-    const { id } = params;
+    const { id } = rawParams;
 
     if (!id) {
       return NextResponse.json(

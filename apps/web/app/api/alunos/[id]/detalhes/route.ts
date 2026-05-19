@@ -69,7 +69,8 @@ function sanitizePreference(preference: {
   };
 }
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(await loadAuthOptions());
     const user = (session as { user?: SessionUser } | null)?.user;
@@ -79,7 +80,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     }
 
     const aluno = await prisma.aluno.findFirst({
-      where: { id: params.id, contaId: user.contaId },
+      where: { id: rawParams.id, contaId: user.contaId },
       include: {
         responsaveis: {
           include: { responsavel: true },

@@ -9,7 +9,7 @@ import { mapMatriculaGerarPixResultToDTO } from '@/features/cadastro/matriculas/
 
 export async function POST(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);

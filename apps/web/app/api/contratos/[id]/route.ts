@@ -43,15 +43,16 @@ async function getContratoWithRelations(id: string, contaId: string) {
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
   }
 
   try {
-    const contrato = await getContratoWithRelations(params.id, user.contaId);
+    const contrato = await getContratoWithRelations(rawParams.id, user.contaId);
 
     if (!contrato) {
       return NextResponse.json(
@@ -72,8 +73,9 @@ export async function GET(
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
@@ -82,7 +84,7 @@ export async function DELETE(
   try {
     const contrato = await prisma.contrato.findFirst({
       where: {
-        id: params.id,
+        id: rawParams.id,
         matricula: { aluno: { contaId: user.contaId } },
       },
       include: {
@@ -111,7 +113,7 @@ export async function DELETE(
     }
 
     await prisma.contrato.update({
-      where: { id: params.id },
+      where: { id: rawParams.id },
       data: { status: 'CANCELADO' },
     });
 

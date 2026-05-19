@@ -22,7 +22,8 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
-export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   // Multi-tenant: obter contaId da sessão
   const { getSessionUser } = await import('@/lib/auth/session');
   const user = await getSessionUser();
@@ -32,12 +33,13 @@ export async function GET(req: NextRequest, ctx: { params: { id: string } }) {
   const { contaId } = user;
 
   const db = prisma as unknown as { colaborador: any };
-  const colab = await db.colaborador.findFirst({ where: { id: ctx.params.id, contaId } });
+  const colab = await db.colaborador.findFirst({ where: { id: ctxParams.id, contaId } });
   if (!colab) return jsonError(404, 'NAO_ENCONTRADO', 'Colaborador não encontrado');
   return NextResponse.json({ data: colab }, { headers: { 'cache-control': 'no-store' } });
 }
 
-export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     // MULTI-TENANT: obter contaId da sessão
     const { getSessionUser } = await import('@/lib/auth/session');
@@ -92,7 +94,7 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
 
     // MULTI-TENANT: usar contaId da sessão, não do registro
     try {
-      const updated = await updateColab(ctx.params.id, contaId, parsed.data as any);
+      const updated = await updateColab(ctxParams.id, contaId, parsed.data as any);
       return NextResponse.json({ data: updated });
     } catch (e: unknown) {
       const msg = (e as Error)?.message || 'Falha ao atualizar colaborador';
@@ -106,7 +108,8 @@ export async function PATCH(req: NextRequest, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(_req: NextRequest, ctx: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     // MULTI-TENANT: obter contaId da sessão
     const { getSessionUser } = await import('@/lib/auth/session');
@@ -117,7 +120,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: { id: string } })
     const { contaId } = user;
 
     // Soft delete (inativar) para preservar auditoria - MULTI-TENANT: passar contaId
-    await removeColab(ctx.params.id, contaId);
+    await removeColab(ctxParams.id, contaId);
     return NextResponse.json({ ok: true });
   } catch (e: unknown) {
     const msg = (e as Error)?.message || 'Falha ao excluir colaborador';

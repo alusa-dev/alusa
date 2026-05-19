@@ -123,7 +123,8 @@ async function getAlunoDeletionBlockers(params: {
   };
 }
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId;
@@ -131,7 +132,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    const aluno = await getAluno(params.id, contaId);
+    const aluno = await getAluno(rawParams.id, contaId);
     if (!aluno) return NextResponse.json({ error: 'Registro não encontrado.' }, { status: 404 });
 
     type GetAlunoResult = Awaited<ReturnType<typeof getAluno>>;
@@ -179,7 +180,8 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   }
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     // Obter contaId da sessão para sincronização com Asaas
     const session = await getServerSession(authOptions);
@@ -189,16 +191,16 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
 
     const body = await req.json();
-    const parsed = updateAlunoInputDTOSchema.parse({ ...body, id: params.id });
+    const parsed = updateAlunoInputDTOSchema.parse({ ...body, id: rawParams.id });
 
     const existing = await prisma.aluno.findFirst({
-      where: { id: params.id, contaId },
+      where: { id: rawParams.id, contaId },
       select: { foto: true },
     });
 
     const normalizedFoto = await normalizeAvatarUpload({
       entity: 'aluno',
-      entityId: params.id,
+      entityId: rawParams.id,
       contaId,
       foto: parsed.foto,
       previousFoto: existing?.foto,
@@ -253,7 +255,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   let contaId: string | undefined;
   let actorId: string | undefined;
   try {
@@ -272,7 +275,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
 
     // 1) Carregar aluno + matrículas para montar o plano
     const alunoData = await prisma.aluno.findFirst({
-      where: { id: params.id, contaId },
+      where: { id: rawParams.id, contaId },
       select: { id: true, nome: true, status: true },
     });
 
@@ -281,7 +284,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     }
 
     const matriculasData = await prisma.matricula.findMany({
-      where: { alunoId: params.id, aluno: { contaId } },
+      where: { alunoId: rawParams.id, aluno: { contaId } },
       select: { id: true, status: true, asaasSubscriptionId: true },
     });
 
@@ -306,7 +309,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     } catch (err) {
       console.error('[alunos][delete] Erro ao sincronizar com gateway:', err);
       execution = {
-        alunoId: params.id,
+        alunoId: rawParams.id,
         ok: false,
         errors: [{ code: 'GATEWAY_SYNC_FAILED', message: 'Falha ao sincronizar com processador de pagamentos.' }],
         matriculaResults: [],
@@ -323,7 +326,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
           actorId: actorId ?? undefined,
           action: 'finance.aluno.archive.gateway_sync_failed',
           entityType: 'Aluno',
-          entityId: params.id,
+          entityId: rawParams.id,
           metadata: {
             error: err instanceof Error ? err.message : 'Erro desconhecido',
           },
@@ -332,19 +335,19 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     }
 
     // 4) Aplicar operação local (arquivar/hard delete + customer safety)
-    const alunoResult = await deleteAluno(params.id, contaId, motivo, forceDelete, actorId);
+    const alunoResult = await deleteAluno(rawParams.id, contaId, motivo, forceDelete, actorId);
     
     // 5) Calcular blockers depois (podem ter mudado)
-    const blockers = await getAlunoDeletionBlockers({ alunoId: params.id, contaId });
+    const blockers = await getAlunoDeletionBlockers({ alunoId: rawParams.id, contaId });
     const outcome = forceDelete
-      ? (await prisma.aluno.findFirst({ where: { id: params.id, contaId }, select: { id: true } }))
+      ? (await prisma.aluno.findFirst({ where: { id: rawParams.id, contaId }, select: { id: true } }))
         ? 'ARCHIVED'
         : 'HARD_DELETED'
       : 'ARCHIVED';
 
     if (outcome === 'ARCHIVED' && hasDeletionBlockers(blockers)) {
       console.info('[alunos][delete] Arquivado com vínculos ativos', {
-        alunoId: params.id,
+        alunoId: rawParams.id,
         contaId,
         blockers,
       });
@@ -432,7 +435,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
         },
       };
       console.warn('[alunos][delete] Bloqueado por dependências ativas', {
-        alunoId: params.id,
+        alunoId: rawParams.id,
         contaId,
         blockers,
       });
@@ -460,7 +463,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
         },
       };
       console.warn('[alunos][delete] Bloqueado por assinatura ativa', {
-        alunoId: params.id,
+        alunoId: rawParams.id,
         contaId,
         blockers,
       });
@@ -487,7 +490,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
         },
       };
       console.warn('[alunos][delete] Bloqueado por matrícula ativa', {
-        alunoId: params.id,
+        alunoId: rawParams.id,
         contaId,
         blockers,
       });

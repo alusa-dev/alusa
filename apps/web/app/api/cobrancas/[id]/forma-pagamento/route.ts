@@ -25,7 +25,8 @@ const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
  * PUT /api/cobrancas/[id]/forma-pagamento
  * Atualiza a forma de pagamento de uma cobrança e sincroniza com o Asaas
  */
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     // Removido: logs de variáveis sensíveis de ambiente
     const { id } = cobrancaRouteParamsDTOSchema.parse(params);

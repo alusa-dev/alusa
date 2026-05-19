@@ -18,7 +18,8 @@ async function resolveAuth(): Promise<SessionUser | null> {
   return (session as { user?: SessionUser } | null)?.user ?? null;
 }
 
-export async function POST(req: NextRequest, ctx: { params: { invoiceId: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ invoiceId: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest, ctx: { params: { invoiceId: string 
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) return gate.response;
 
-    const invoiceId = ctx.params.invoiceId;
+    const invoiceId = ctxParams.invoiceId;
     if (!invoiceId) return json(400, { error: 'INVOICE_ID_OBRIGATORIO' });
 
     const result = await cancelInvoice({

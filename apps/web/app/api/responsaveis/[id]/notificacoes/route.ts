@@ -106,7 +106,8 @@ async function resolveResponsavelCustomer(params: {
   return { status: 'OK' as const, customerId, responsavel };
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) {
@@ -115,7 +116,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
     const url = new URL(request.url);
     const context = await resolveResponsavelCustomer({
-      responsavelIdOrRouteId: params.id,
+      responsavelIdOrRouteId: rawParams.id,
       contaId: user.contaId,
       requestedCustomerId: url.searchParams.get('customerId'),
     });
@@ -150,7 +151,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function PUT(request: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) {
@@ -170,7 +172,7 @@ export async function PUT(request: Request, { params }: { params: { id: string }
     }
 
     const context = await resolveResponsavelCustomer({
-      responsavelIdOrRouteId: params.id,
+      responsavelIdOrRouteId: rawParams.id,
       contaId: user.contaId,
       requestedCustomerId: parsed.data.customerId,
     });

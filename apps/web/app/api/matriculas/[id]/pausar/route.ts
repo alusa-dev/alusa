@@ -22,7 +22,7 @@ const pausarInputSchema = z.object({
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
     const session = await getServerSession(authOptions);
@@ -32,6 +32,7 @@ export async function POST(
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
+    const rawParams = await params;
     const body = await request.json();
     const parsed = pausarInputSchema.safeParse(body);
 
@@ -44,14 +45,14 @@ export async function POST(
 
     const result = await pausarMatricula({
       prisma,
-      matriculaId: params.id,
+      matriculaId: rawParams.id,
       contaId: user.contaId,
       actorId: user.id,
       ...parsed.data,
     });
 
     void notifyMatriculaAction({
-      matriculaId: params.id,
+      matriculaId: rawParams.id,
       contaId: user.contaId,
       action: 'PAUSADA',
       motivo: parsed.data.motivoPausa,

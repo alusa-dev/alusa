@@ -11,7 +11,8 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   );
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const body = await req.json();
     const contaId = typeof body.contaId === 'string' ? body.contaId.trim() : '';
@@ -32,7 +33,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     if (!parsed.success)
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação', parsed.error.flatten());
     try {
-      const turma = await updateTurma({ ...parsed.data, id: ctx.params.id, contaId });
+      const turma = await updateTurma({ ...parsed.data, id: ctxParams.id, contaId });
       return NextResponse.json({ data: turma });
     } catch (e: unknown) {
       return jsonError(400, 'ERRO_ATUALIZAR_TURMA', (e as Error).message);
@@ -42,7 +43,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const url = new URL(req.url);
     const contaId = url.searchParams.get('contaId')?.trim() || null;
@@ -58,7 +60,7 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
       );
     }
     try {
-      const turma = await deleteTurma(ctx.params.id, contaId);
+      const turma = await deleteTurma(ctxParams.id, contaId);
       return NextResponse.json({ data: turma });
     } catch (e: unknown) {
       return jsonError(400, 'ERRO_EXCLUIR_TURMA', (e as Error).message);

@@ -99,7 +99,7 @@ describe('PATCH /api/matriculas/[id]', () => {
       updatedAt: new Date('2026-03-11T00:00:00.000Z'),
     });
 
-    const response = await PATCH(buildRequest({ vencimentoDia: 10 }), { params: { id: 'mat-1' } });
+    const response = await PATCH(buildRequest({ vencimentoDia: 10 }), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -126,7 +126,7 @@ describe('PATCH /api/matriculas/[id]', () => {
   it('bloqueia payload que mistura troca de status com edição de detalhes', async () => {
     const response = await PATCH(
       buildRequest({ status: 'ATIVA', vencimentoDia: 15 }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
     const data = await response.json();
 

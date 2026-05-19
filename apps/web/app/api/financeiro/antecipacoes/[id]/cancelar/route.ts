@@ -6,17 +6,18 @@ import { anticipationErrorResponse, json, requireFinanceUser } from '../../_shar
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await requireFinanceUser();
     if (!auth.ok) return auth.response;
 
-    if (!params.id) return json(400, { error: 'ID_OBRIGATORIO' });
+    if (!rawParams.id) return json(400, { error: 'ID_OBRIGATORIO' });
 
     const result = await cancelReceivableAnticipation({
       contaId: auth.user.contaId,
       userId: auth.user.id,
-      anticipationId: params.id,
+      anticipationId: rawParams.id,
     });
 
     if (!result.success) return anticipationErrorResponse(result.error);

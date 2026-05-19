@@ -7,7 +7,8 @@ function jsonError(status: number, code: string, message: string, details?: unkn
   return NextResponse.json({ error: { code, message, details } }, { status });
 }
 
-export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     // MULTI-TENANT: validar sessão e usar contaId da sessão
     const session = await getServerSession(authOptions);
@@ -36,7 +37,7 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
     }
     try {
       const sala = await updateSala({
-        id: ctx.params.id,
+        id: ctxParams.id,
         contaId,
         nome: body.nome,
         descricao: body.descricao,
@@ -52,7 +53,8 @@ export async function PATCH(req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     // MULTI-TENANT: validar sessão e usar contaId da sessão
     const session = await getServerSession(authOptions);
@@ -62,7 +64,7 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
     }
 
     try {
-      const sala = await deleteSala(ctx.params.id, contaId);
+      const sala = await deleteSala(ctxParams.id, contaId);
       return NextResponse.json({ data: sala });
     } catch (e) {
       return jsonError(400, 'ERRO_EXCLUIR_SALA', (e as Error).message);

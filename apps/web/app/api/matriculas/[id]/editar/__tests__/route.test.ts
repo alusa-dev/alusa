@@ -98,7 +98,7 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
 
     const response = await PATCH(
       buildRequest({ contaId: 'conta-1', planoId: 'plano-novo', turmaId: 'turma-2' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
     const data = await response.json();
 

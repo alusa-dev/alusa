@@ -99,8 +99,9 @@ async function convergeStandaloneSubscriptionDeletion(params: {
  */
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     type SessUser = { id?: string; contaId?: string; role?: string };
@@ -115,7 +116,7 @@ export async function GET(
 
     const result = await getSubscriptionWithCharges({
       contaId: user.contaId,
-      subscriptionId: params.id,
+      subscriptionId: rawParams.id,
     });
 
     if (!result.success) {
@@ -134,7 +135,7 @@ export async function GET(
       if (syncResult.processed || syncResult.localCharge) {
         const refreshed = await getSubscriptionWithCharges({
           contaId: user.contaId,
-          subscriptionId: params.id,
+          subscriptionId: rawParams.id,
         });
 
         if (refreshed.success) {
@@ -158,8 +159,9 @@ export async function GET(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
+    const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
     type SessUser = { id?: string; contaId?: string; role?: string };
@@ -173,13 +175,13 @@ export async function DELETE(
     }
 
     const academicSubscription = await prisma.subscription.findFirst({
-      where: { id: params.id, contaId: user.contaId },
+      where: { id: rawParams.id, contaId: user.contaId },
       select: { id: true, asaasSubscriptionId: true, status: true, externalReference: true },
     });
 
     const standaloneSubscription = !academicSubscription
       ? await prisma.standaloneSubscription.findFirst({
-          where: { id: params.id, contaId: user.contaId },
+          where: { id: rawParams.id, contaId: user.contaId },
           select: { id: true, asaasSubscriptionId: true, status: true, externalReference: true },
         })
       : null;

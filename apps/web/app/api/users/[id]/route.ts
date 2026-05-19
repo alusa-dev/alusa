@@ -100,7 +100,8 @@ async function findManagedUser(userId: string, contaId: string) {
   return legacy ? { ...legacy, viaMembership: false } : null;
 }
 
-export async function PATCH(_req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await requireAdminAndGetContaId();
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -109,11 +110,11 @@ export async function PATCH(_req: Request, { params }: { params: { id: string } 
     const parsed = updateManagedUserInputSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
 
-    const exists = await findManagedUser(params.id, auth.contaId);
+    const exists = await findManagedUser(rawParams.id, auth.contaId);
     if (!exists) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
 
     if (
-      params.id === auth.currentUserId &&
+      rawParams.id === auth.currentUserId &&
       typeof parsed.data.status !== 'undefined' &&
       parsed.data.status !== exists.status
     ) {
@@ -122,7 +123,7 @@ export async function PATCH(_req: Request, { params }: { params: { id: string } 
 
     // Bloquear mudanças de role/status do Owner
     const conta = await prisma.conta.findUnique({ where: { id: auth.contaId }, select: { ownerUserId: true } });
-    if (conta && conta.ownerUserId === params.id) {
+    if (conta && conta.ownerUserId === rawParams.id) {
       // auditoria de tentativa
       console.warn(`[AUDIT] Tentativa de alterar role/status do Owner por ${auth.currentUserId}`);
       return NextResponse.json({ error: 'Alterações no usuário Owner não são permitidas.' }, { status: 403 });
@@ -141,11 +142,11 @@ export async function PATCH(_req: Request, { params }: { params: { id: string } 
 
     if (exists.viaMembership) {
       if (typeof parsed.data.name !== 'undefined') {
-        await prisma.usuario.update({ where: { id: params.id }, data: { nome: parsed.data.name } });
+        await prisma.usuario.update({ where: { id: rawParams.id }, data: { nome: parsed.data.name } });
       }
       if (typeof parsed.data.status !== 'undefined' && membershipClient?.updateMany) {
         const updateResult = await membershipClient.updateMany({
-          where: { usuarioId: params.id, contaId: auth.contaId },
+          where: { usuarioId: rawParams.id, contaId: auth.contaId },
           data: { status: parsed.data.status },
         });
         if (updateResult.count === 0) {
@@ -155,14 +156,14 @@ export async function PATCH(_req: Request, { params }: { params: { id: string } 
     } else {
       // Multi-tenant legado: usar updateMany para garantir atomicidade com contaId
       const updateResult = await prisma.usuario.updateMany({
-        where: { id: params.id, contaId: auth.contaId },
+        where: { id: rawParams.id, contaId: auth.contaId },
         data,
       });
       if (updateResult.count === 0) {
         return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
       }
     }
-    const updated = await findManagedUser(params.id, auth.contaId);
+    const updated = await findManagedUser(rawParams.id, auth.contaId);
     if (!updated) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
 
     await prisma.auditLog.create({
@@ -193,21 +194,22 @@ export async function PATCH(_req: Request, { params }: { params: { id: string } 
   }
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const auth = await requireAdminAndGetContaId();
     if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-    if (params.id === auth.currentUserId) {
+    if (rawParams.id === auth.currentUserId) {
       return NextResponse.json({ error: 'Você não pode remover o próprio acesso.' }, { status: 400 });
     }
 
-    const exists = await findManagedUser(params.id, auth.contaId);
+    const exists = await findManagedUser(rawParams.id, auth.contaId);
     if (!exists) return NextResponse.json({ error: 'Usuário não encontrado' }, { status: 404 });
 
     // Bloquear exclusão do Owner
     const conta = await prisma.conta.findUnique({ where: { id: auth.contaId }, select: { ownerUserId: true } });
-    if (conta && conta.ownerUserId === params.id) {
+    if (conta && conta.ownerUserId === rawParams.id) {
       console.warn(`[AUDIT] Tentativa de excluir Owner por ${auth.currentUserId}`);
       return NextResponse.json({ error: 'Exclusão do usuário Owner não é permitida.' }, { status: 403 });
     }
@@ -219,7 +221,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
         : undefined;
 
     const removal = await removeManagedUserAccess({
-      userId: params.id,
+      userId: rawParams.id,
       contaId: auth.contaId,
       actorId: auth.currentUserId,
       reason,

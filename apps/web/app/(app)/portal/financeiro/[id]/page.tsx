@@ -6,8 +6,9 @@ export const metadata: Metadata = {
   description: 'Visualize os detalhes completos da sua cobrança',
 };
 
-export default function CobrancaDetalhesPage({ params }: { params: { id: string } }) {
-  return <CobrancaDetalhesFeature cobrancaId={params.id} />;
+export default async function CobrancaDetalhesPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params;
+  return <CobrancaDetalhesFeature cobrancaId={resolvedParams.id} />;
 }
 
 

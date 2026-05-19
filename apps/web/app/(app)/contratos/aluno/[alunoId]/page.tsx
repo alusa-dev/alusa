@@ -1,5 +1,6 @@
 import { ContratosDoAlunoFeature } from '@/features/contratos/ContratosDoAlunoFeature';
 
-export default function ContratosDoAlunoPage({ params }: { params: { alunoId: string } }) {
-  return <ContratosDoAlunoFeature alunoId={params.alunoId} />;
+export default async function ContratosDoAlunoPage({ params }: { params: Promise<{ alunoId: string }> }) {
+  const resolvedParams = await params;
+  return <ContratosDoAlunoFeature alunoId={resolvedParams.alunoId} />;
 }

@@ -1,11 +1,10 @@
 import { SaleDetailsFeature } from '@/features/vendas/SaleDetailsFeature';
 
-interface LojaVendaDetalhesPageProps {
-  params: {
-    id: string;
-  };
-}
-
-export default function LojaVendaDetalhesPage({ params }: LojaVendaDetalhesPageProps) {
-  return <SaleDetailsFeature saleId={params.id} />;
+export default async function LojaVendaDetalhesPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  return <SaleDetailsFeature saleId={id} />;
 }

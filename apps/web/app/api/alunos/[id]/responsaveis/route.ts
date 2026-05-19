@@ -11,14 +11,15 @@ import {
 
 export async function POST(
   request: NextRequest,
-  ctx: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
+    const ctxParams = await ctx.params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
   }
 
-  const alunoId = ctx.params.id?.trim();
+  const alunoId = ctxParams.id?.trim();
   if (!alunoId) {
     return NextResponse.json({ error: { message: 'alunoId é obrigatório' } }, { status: 400 });
   }

@@ -43,7 +43,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(null);
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(401);
   });
 
@@ -53,7 +53,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
     const response = await POST(
       buildRequest('mat-1', { ...validPayload, motivoPausa: '' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
     const data = await response.json();
 
@@ -67,7 +67,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
     const response = await POST(
       buildRequest('mat-1', { ...validPayload, dataInicioPausa: '01/06/2025' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
 
     expect(response.status).toBe(400);
@@ -79,7 +79,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
     const response = await POST(
       buildRequest('mat-1', { ...validPayload, manterVaga: 'sim' }),
-      { params: { id: 'mat-1' } },
+      { params: Promise.resolve({ id: 'mat-1' }) },
     );
 
     expect(response.status).toBe(400);
@@ -105,7 +105,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
       warnings: [],
     });
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -136,7 +136,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
       new PausaBusinessError('MATRICULA_JA_PAUSADA', 'A matrícula já se encontra pausada.'),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(422);
@@ -158,7 +158,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
       ),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(409);
@@ -176,7 +176,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
       new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(404);
   });
 
@@ -195,7 +195,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
       ),
     );
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(502);
@@ -209,7 +209,7 @@ describe('POST /api/matriculas/[id]/pausar', () => {
 
     vi.mocked(pausarMatricula).mockRejectedValue(new Error('TypeError'));
 
-    const response = await POST(buildRequest('mat-1', validPayload), { params: { id: 'mat-1' } });
+    const response = await POST(buildRequest('mat-1', validPayload), { params: Promise.resolve({ id: 'mat-1' }) });
     const data = await response.json();
 
     expect(response.status).toBe(500);

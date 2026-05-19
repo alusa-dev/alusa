@@ -20,9 +20,10 @@ export const dynamic = 'force-dynamic';
  */
 export async function POST(
   _request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const rawParams = await params;
     const session = await getServerSession(authOptions);
     const user = (session as { user?: { id?: string; contaId?: string } })?.user;
 
@@ -31,7 +32,7 @@ export async function POST(
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const cobrancaId = params.id;
+    const cobrancaId = rawParams.id;
 
     const result = await resendTaxaMatricula({
       cobrancaId,

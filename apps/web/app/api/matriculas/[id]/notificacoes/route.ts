@@ -75,14 +75,15 @@ async function resolveFinancialCustomer(matriculaId: string, contaId: string) {
   };
 }
 
-export async function GET(_req: Request, ctx: { params: { id: string } }) {
+export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const contaCtx = await resolveContaId(null);
     if (!contaCtx.contaId) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
 
-    const financialCustomer = await resolveFinancialCustomer(ctx.params.id, contaCtx.contaId);
+    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaCtx.contaId);
     if (!financialCustomer) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
@@ -119,7 +120,8 @@ export async function GET(_req: Request, ctx: { params: { id: string } }) {
   }
 }
 
-export async function PUT(req: Request, ctx: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+    const ctxParams = await ctx.params;
   try {
     const body = await req.json().catch(() => null);
     const parsed = updateMatriculaNotificationChannelsInputDTOSchema.safeParse(body);
@@ -140,7 +142,7 @@ export async function PUT(req: Request, ctx: { params: { id: string } }) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
 
-    const financialCustomer = await resolveFinancialCustomer(ctx.params.id, contaCtx.contaId);
+    const financialCustomer = await resolveFinancialCustomer(ctxParams.id, contaCtx.contaId);
     if (!financialCustomer) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }

@@ -17,7 +17,8 @@ async function resolveContaId(explicit?: string | null) {
   return { contaId: requested || sessionContaId, mismatch: false, sessionContaId };
 }
 
-export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object')
@@ -27,7 +28,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     const parsed = comboUpdateSchema.safeParse({
       ...body,
-      id: params.id,
+      id: rawParams.id,
       contaId: contaCtx.contaId,
     });
     if (!parsed.success) {
@@ -44,14 +45,15 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   }
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const rawParams = await params;
   try {
     const body = await req.json().catch(() => null);
     const contaCtx = await resolveContaId((body as { contaId?: string } | null)?.contaId ?? null);
     if (contaCtx.mismatch) return jsonError(403, 'CONTA_INVALIDA', 'Conta inválida');
     if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     try {
-      const combo = await deleteCombo(params.id, contaCtx.contaId);
+      const combo = await deleteCombo(rawParams.id, contaCtx.contaId);
       return NextResponse.json({ data: combo });
     } catch (err) {
       return jsonError(400, 'ERRO_EXCLUIR_COMBO', (err as Error).message);

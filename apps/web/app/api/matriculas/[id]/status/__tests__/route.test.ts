@@ -45,7 +45,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(null);
 
-    const response = await PATCH(buildRequest('123', { status: 'CANCELADA' }), { params: { id: '123' } });
+    const response = await PATCH(buildRequest('123', { status: 'CANCELADA' }), { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(401);
@@ -56,7 +56,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
-    const response = await PATCH(buildRequest('123', { status: 'INVALIDO' }), { params: { id: '123' } });
+    const response = await PATCH(buildRequest('123', { status: 'INVALIDO' }), { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -67,7 +67,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
-    const response = await PATCH(buildRequest('123', { status: 'PAUSADA' }), { params: { id: '123' } });
+    const response = await PATCH(buildRequest('123', { status: 'PAUSADA' }), { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(409);
@@ -79,7 +79,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
     const { getServerSession } = await import('next-auth');
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
 
-    const response = await PATCH(buildRequest('123', { status: 'ATIVA' }), { params: { id: '123' } });
+    const response = await PATCH(buildRequest('123', { status: 'ATIVA' }), { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(409);
@@ -113,7 +113,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
 
     const response = await PATCH(
       buildRequest('matricula-123', { status: 'CANCELADA', motivo: 'Pedido do responsável' }),
-      { params: { id: 'matricula-123' } },
+      { params: Promise.resolve({ id: 'matricula-123' }) },
     );
     const data = await response.json();
 
@@ -142,7 +142,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
       new ManualSyncError(404, 'MATRICULA_NOT_FOUND', 'Matrícula não encontrada.'),
     );
 
-    const response = await PATCH(buildRequest('123', { status: 'CANCELADA' }), { params: { id: '123' } });
+    const response = await PATCH(buildRequest('123', { status: 'CANCELADA' }), { params: Promise.resolve({ id: '123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -165,7 +165,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
       ),
     );
 
-    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: { id: 'matricula-123' } });
+    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: Promise.resolve({ id: 'matricula-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(409);
@@ -196,7 +196,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
       nextDueDate: null,
     });
 
-    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: { id: 'matricula-123' } });
+    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: Promise.resolve({ id: 'matricula-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -213,7 +213,7 @@ describe('PATCH /api/matriculas/[id]/status', () => {
     vi.mocked(getServerSession).mockResolvedValue(authenticatedSession() as never);
     vi.mocked(syncMatriculaStatus).mockRejectedValue(new Error('Erro inesperado'));
 
-    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: { id: 'matricula-123' } });
+    const response = await PATCH(buildRequest('matricula-123', { status: 'CANCELADA' }), { params: Promise.resolve({ id: 'matricula-123' }) });
     const data = await response.json();
 
     expect(response.status).toBe(500);

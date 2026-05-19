@@ -1,5 +1,6 @@
 import { ResponsavelDetalhesFeature } from '@/features/cadastro/responsaveis/ResponsavelDetalhesFeature';
 
-export default function ResponsavelDetalhesPage({ params }: { params: { id: string } }) {
-  return <ResponsavelDetalhesFeature responsavelId={params.id} />;
+export default async function ResponsavelDetalhesPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params;
+  return <ResponsavelDetalhesFeature responsavelId={resolvedParams.id} />;
 }
