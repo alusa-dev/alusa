@@ -75,12 +75,12 @@ export const homePage = {
     }
   ],
   financial: {
-    title: 'Cobranças e pagamentos conectados à operação da sua escola.',
+    title: 'Cobranças e pagamentos conectados à operação\nda sua escola.',
     body: 'A Alusa conecta contratos, cobranças recorrentes e pagamentos ao fluxo acadêmico da instituição, eliminando controles paralelos, reduzindo processos manuais e dando à equipe uma operação financeira mais clara, integrada e confiável.'
   },
   automation: {
-    title: 'Menos tarefas manuais. Mais eficiência operacional.',
-    body: 'Automatize cobranças recorrentes, confirmações, vencimentos, acompanhamento financeiro e processos operacionais para sua equipe focar no crescimento da escola.',
+    title: 'Menos tarefas manuais.\nMais eficiência operacional.',
+    body: 'Automatize cobranças recorrentes, confirmações,\nvencimentos, acompanhamento financeiro e processos operacionais\npara sua equipe focar no crescimento da\u00a0escola.',
     bullets: [
       'Cobranças automáticas',
       'Recorrência mensal',
@@ -102,25 +102,6 @@ export const homePage = {
     ],
     body: 'Todos os processos conectados em uma única plataforma para reduzir retrabalho, falhas operacionais e perda de informação.'
   },
-  trust: {
-    eyebrow: 'Segurança',
-    title: 'Controle e previsibilidade para operações recorrentes.',
-    body: 'A Alusa foi desenvolvida para escolas que precisam de organização financeira, rastreabilidade operacional e controle sobre a rotina acadêmica.',
-    items: [
-      {
-        title: 'Financeiro integrado',
-        body: 'Cobranças e pagamentos conectados à operação.'
-      },
-      {
-        title: 'Histórico operacional',
-        body: 'Acompanhamento centralizado de processos e movimentações.'
-      },
-      {
-        title: 'Gestão centralizada',
-        body: 'Informações organizadas em uma única plataforma.'
-      }
-    ]
-  },
   benefits: {
     title: 'Sua equipe ganha velocidade para focar no que realmente importa.',
     items: [
@@ -130,12 +111,46 @@ export const homePage = {
       { title: 'Operação integrada', body: 'Acadêmico e financeiro funcionando juntos.' }
     ]
   },
-  cta: {
-    title: 'Modernize a operação da sua escola.',
-    body: 'Conheça como a Alusa pode centralizar processos acadêmicos, operacionais e financeiros em uma única plataforma.',
-    ctas: [
-      { label: 'Agendar demonstração', href: 'mailto:contato@alusa.app', variant: 'primary' },
-      { label: 'Conhecer plataforma', href: '#modulos', variant: 'secondary' }
+  faq: {
+    title: 'Tem dúvidas? Relaxa,\nnós temos as respostas.',
+    description:
+      'Selecionamos algumas dúvidas que recebemos com frequência sobre a Alusa. Elas podem ajudar você a entender como a plataforma funciona no dia a dia da sua escola.',
+    items: [
+      {
+        question: 'O que é a Alusa e para quem ela serve?',
+        answer:
+          'A Alusa é uma plataforma de gestão escolar, financeira e operacional voltada a instituições com receita recorrente, como escolas, cursos, academias e negócios com matrículas, turmas e mensalidades.\n\nEm um único ambiente, você centraliza matrículas, contratos, cobranças, agenda e portal do responsável.'
+      },
+      {
+        question: 'Quais formas de pagamento são aceitas na plataforma?',
+        answer:
+          'A plataforma permite cobranças por Pix, boleto e cartão, com suporte a pagamentos recorrentes.\n\nTudo fica conectado à rotina acadêmica e financeira da escola, com acompanhamento de status e histórico em tempo real.'
+      },
+      {
+        question: 'A Alusa substitui os sistemas que já usamos na escola?',
+        answer:
+          'A Alusa ajuda a reduzir o uso de planilhas, ferramentas desconectadas e processos manuais. Muitas escolas passam a concentrar matrículas, financeiro, turmas e comunicação com as famílias em um só lugar.\n\nNa demonstração, avaliamos a rotina da sua instituição e definimos o que faz sentido migrar ou integrar.'
+      },
+      {
+        question: 'O portal do responsável está incluído?',
+        answer:
+          'Sim. Pelo portal, os responsáveis acompanham pagamentos, contratos, comunicados e informações acadêmicas em um único lugar.\n\nCom isso, a equipe reduz retrabalho com cobranças e atendimentos repetitivos.'
+      },
+      {
+        question: 'Como funciona a cobrança recorrente e o financeiro integrado?',
+        answer:
+          'A partir de contratos e matrículas, a plataforma gera cobranças automáticas conforme o plano definido pela escola.\n\nVencimentos, confirmações de pagamento e inadimplência ficam visíveis para a equipe, sem controles paralelos em planilhas ou mensagens avulsas.'
+      },
+      {
+        question: 'Preciso de uma equipe de TI para implementar?',
+        answer:
+          'Não necessariamente. A Alusa foi pensada para equipes administrativas e financeiras.\n\nNa demonstração, alinhamos os cadastros iniciais, os fluxos da escola e a ordem ideal de adoção da plataforma.'
+      },
+      {
+        question: 'Os dados da escola estão seguros?',
+        answer:
+          'A plataforma prioriza organização, rastreabilidade e controle operacional. Processos e movimentações ficam centralizados para dar mais previsibilidade à gestão.\n\nTambém adotamos práticas compatíveis com o dia a dia de instituições que lidam com cobranças e dados sensíveis de alunos e responsáveis.'
+      }
     ]
   }
 } as const satisfies HomePageDto;

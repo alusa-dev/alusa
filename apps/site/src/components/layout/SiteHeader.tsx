@@ -13,7 +13,7 @@ export function SiteHeader() {
   const [open, setOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#1F1266]">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#430D88]">
       <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between gap-6 px-6 sm:px-8">
         <Link
           href="/"
@@ -37,10 +37,16 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-2 lg:flex">
-          <ButtonLink href="https://www.alusa.app/auth/login" variant="ghost" tone="dark" className="h-10 px-4 text-white hover:bg-white/10">
+          <ButtonLink href="https://www.alusa.app/auth/login" variant="ghost" tone="dark" className="h-10 px-4 text-white">
             Entrar
           </ButtonLink>
-          <ButtonLink href="mailto:contato@alusa.app" variant="primary" tone="dark" event="sales_cta_clicked" className="h-10 bg-white text-[#1F1266] hover:bg-white/90 shadow-sm">
+          <ButtonLink
+            href="mailto:contato@alusa.app"
+            variant="primary"
+            tone="dark"
+            event="sales_cta_clicked"
+            className="h-10 bg-white text-[#430D88] shadow-sm"
+          >
             Fale com vendas
           </ButtonLink>
         </div>
@@ -56,7 +62,7 @@ export function SiteHeader() {
         </button>
       </div>
 
-      <div className={cn('border-t border-white/10 bg-[#1F1266] lg:hidden', open ? 'block' : 'hidden')}>
+      <div className={cn('border-t border-white/10 bg-[#430D88] lg:hidden', open ? 'block' : 'hidden')}>
         <nav className="mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
           {primaryNavigation.map((item) => (
             <Link

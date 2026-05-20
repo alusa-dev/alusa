@@ -1,23 +1,27 @@
 import { homePage } from '@/content/home';
 import { ArrowRight } from '@/components/icons/icons';
 
+import { VerticalGridLines } from '@/components/layout/VerticalGridLines';
+import { ScrollReveal } from '@/components/motion/ScrollReveal';
+
 export function FlowSection() {
   const { flow } = homePage;
 
   return (
-    <section className="bg-alusa-purple-deeper py-section text-white sm:py-section-lg relative overflow-hidden">
-      <div className="relative mx-auto max-w-7xl px-6 sm:px-8">
-        <div className="max-w-2xl">
+    <section className="relative overflow-hidden bg-alusa-purple-deeper py-section text-white sm:py-section-lg">
+      <VerticalGridLines />
+      <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
+        <ScrollReveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/60">Fluxo operacional</p>
-          <h2 className="mt-4 font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+          <h2 className="mt-4 font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight">
             {flow.title}
           </h2>
           <p className="mt-5 text-base leading-7 text-white/65 sm:text-lg sm:leading-8">
             {flow.body}
           </p>
-        </div>
+        </ScrollReveal>
 
-        <div className="mt-14 flex flex-wrap items-start gap-4">
+        <ScrollReveal delay={120} className="mt-14 flex flex-wrap items-start gap-4">
           {flow.steps.map((step, i) => {
             const Icon = step.icon;
             return (
@@ -36,7 +40,7 @@ export function FlowSection() {
               </div>
             );
           })}
-        </div>
+        </ScrollReveal>
       </div>
     </section>
   );

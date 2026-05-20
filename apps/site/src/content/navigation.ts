@@ -3,7 +3,6 @@ import type { FooterGroupDto, RouteDto } from '@/lib/site-dtos';
 export const primaryNavigation = [
   { label: 'Produto', href: '#modulos' },
   { label: 'Financeiro', href: '#financeiro' },
-  { label: 'Segurança', href: '#seguranca' },
   { label: 'Demonstração', href: 'mailto:contato@alusa.app' },
   { label: 'Contato', href: '#contato' }
 ] as const satisfies readonly RouteDto[];
@@ -30,8 +29,7 @@ export const footerGroups = [
     title: 'Legal',
     links: [
       { label: 'Privacidade', href: '#contato' },
-      { label: 'Termos', href: '#contato' },
-      { label: 'Segurança', href: '#seguranca' }
+      { label: 'Termos', href: '#contato' }
     ]
   },
   {

@@ -19,16 +19,17 @@ type ButtonLinkProps = {
 const variants = {
   light: {
     primary:
-      'bg-alusa-purple text-white hover:bg-alusa-purple-hover focus-visible:ring-white',
+      'border border-transparent bg-alusa-purple text-white hover:bg-alusa-purple-hover focus-visible:ring-white',
     secondary:
-      'border border-alusa-purple-dark/12 bg-white text-alusa-purple-dark hover:border-alusa-purple/35 hover:bg-alusa-purple-tint',
-    ghost: 'text-alusa-purple-dark hover:bg-alusa-purple-dark/[0.06]'
+      'border border-alusa-purple-dark/12 bg-white text-alusa-purple-dark hover:border-alusa-purple hover:bg-alusa-purple hover:text-white',
+    ghost: 'text-alusa-purple-dark hover:bg-alusa-purple hover:text-white'
   },
   dark: {
-    primary: 'bg-white text-alusa-purple-dark hover:bg-white/92 focus-visible:ring-alusa-purple-deeper',
+    primary:
+      'border border-transparent bg-white text-alusa-purple-dark hover:border-alusa-purple hover:bg-alusa-purple hover:text-white focus-visible:ring-alusa-purple-deeper',
     secondary:
-      'border border-white/35 bg-transparent text-white hover:border-white hover:bg-white/10',
-    ghost: 'text-white/88 hover:bg-white/10'
+      'border border-white/35 bg-transparent text-white hover:border-alusa-purple hover:bg-alusa-purple hover:text-white',
+    ghost: 'text-white/88 hover:bg-alusa-purple hover:text-white'
   }
 } as const;
 
@@ -50,7 +51,7 @@ export function ButtonLink({
         }
       }}
       className={cn(
-        'inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-6 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
+        'inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-6 text-sm font-semibold transition-colors duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2',
         tone === 'dark' ? 'focus-visible:ring-offset-alusa-purple' : 'focus-visible:ring-offset-white',
         variants[tone][variant],
         className

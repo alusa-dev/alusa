@@ -20,6 +20,11 @@ export type TrustItemDto = {
   readonly body: string;
 };
 
+export type FaqItemDto = {
+  readonly question: string;
+  readonly answer: string;
+};
+
 export type FooterGroupDto = {
   readonly title: string;
   readonly links: readonly RouteDto[];
@@ -61,19 +66,13 @@ export type HomePageDto = {
     readonly steps: readonly FlowStepDto[];
     readonly body: string;
   };
-  readonly trust: {
-    readonly eyebrow: string;
-    readonly title: string;
-    readonly body: string;
-    readonly items: readonly TrustItemDto[];
-  };
   readonly benefits: {
     readonly title: string;
     readonly items: readonly TrustItemDto[];
   };
-  readonly cta: {
+  readonly faq: {
     readonly title: string;
-    readonly body: string;
-    readonly ctas: readonly CtaDto[];
+    readonly description: string;
+    readonly items: readonly FaqItemDto[];
   };
 };

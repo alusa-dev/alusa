@@ -1,19 +1,23 @@
 import { homePage } from '@/content/home';
 
+import { VerticalGridLines } from '@/components/layout/VerticalGridLines';
+import { ScrollReveal } from '@/components/motion/ScrollReveal';
+
 export function BenefitsSection() {
   const { benefits } = homePage;
 
   return (
-    <section className="bg-white py-section sm:py-section-lg border-b border-alusa-purple-dark/5">
-      <div className="mx-auto max-w-7xl px-6 sm:px-8">
-        <div className="max-w-2xl">
+    <section className="relative border-b border-alusa-grid-line-light bg-white py-section sm:py-section-lg">
+      <VerticalGridLines />
+      <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
+        <ScrollReveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-alusa-purple">Benefícios</p>
-          <h2 className="mt-4 font-display text-3xl font-bold leading-tight tracking-tight text-alusa-purple-deeper sm:text-4xl">
+          <h2 className="mt-4 font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight text-alusa-purple-deeper">
             {benefits.title}
           </h2>
-        </div>
+        </ScrollReveal>
 
-        <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:mt-14">
+        <ScrollReveal delay={120} className="mt-12 grid gap-5 sm:grid-cols-2 lg:mt-14">
           {benefits.items.map((item) => (
             <article
               key={item.title}
@@ -23,7 +27,7 @@ export function BenefitsSection() {
               <p className="mt-3 text-base leading-relaxed text-alusa-purple-muted">{item.body}</p>
             </article>
           ))}
-        </div>
+        </ScrollReveal>
       </div>
     </section>
   );
