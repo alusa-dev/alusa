@@ -75,13 +75,8 @@ export const homePage = {
     }
   ],
   financial: {
-    eyebrow: 'Financeiro integrado',
     title: 'Cobranças e pagamentos conectados à operação da sua escola.',
-    body: [
-      'A Alusa integra contratos, cobranças, recorrência e pagamentos diretamente ao fluxo acadêmico da instituição.',
-      'Sem controles paralelos, sem processos manuais e sem depender de múltiplos sistemas para operar.'
-    ],
-    steps: ['Aluno', 'Matrícula', 'Contrato', 'Cobrança', 'Pagamento']
+    body: 'A Alusa conecta contratos, cobranças recorrentes e pagamentos ao fluxo acadêmico da instituição, eliminando controles paralelos, reduzindo processos manuais e dando à equipe uma operação financeira mais clara, integrada e confiável.'
   },
   automation: {
     title: 'Menos tarefas manuais. Mais eficiência operacional.',

@@ -48,10 +48,8 @@ export type HomePageDto = {
   };
   readonly modules: readonly CapabilityDto[];
   readonly financial: {
-    readonly eyebrow: string;
     readonly title: string;
-    readonly body: readonly string[];
-    readonly steps: readonly string[];
+    readonly body: string;
   };
   readonly automation: {
     readonly title: string;
