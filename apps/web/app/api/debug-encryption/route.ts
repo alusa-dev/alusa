@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { loadAsaasCredentials } from '@alusa/database';
+import { isDiagnosticsRouteEnabled, notFoundJson } from '@/lib/security/runtime-guards';
 
 export async function GET() {
+  if (!isDiagnosticsRouteEnabled()) {
+    return notFoundJson();
+  }
+
   const hasEncryptionKey = Boolean(process.env.ENCRYPTION_KEY);
-  const encryptionKeyLength = process.env.ENCRYPTION_KEY?.length ?? 0;
-  
+
   // Testa carregar credenciais para uma conta específica
   const testContaId = 'ca37e235-4310-4499-9a55-9cc46d06d7d9';
   let credentialsResult: { success: boolean; error?: string; hasApiKey?: boolean } = { success: false };
@@ -24,8 +28,7 @@ export async function GET() {
 
   return NextResponse.json({
     hasEncryptionKey,
-    encryptionKeyLength,
     credentialsResult,
     nodeEnv: process.env.NODE_ENV,
-  });
+  }, { headers: { 'cache-control': 'no-store' } });
 }

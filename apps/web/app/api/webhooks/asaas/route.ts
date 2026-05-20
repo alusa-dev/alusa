@@ -33,7 +33,10 @@ function isJsonContentType(value: string | null): boolean {
 }
 
 function isStrictHttpRejectionsEnabled(): boolean {
-  return process.env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS === 'true';
+  const configured = process.env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS;
+  if (configured === 'true') return true;
+  if (configured === 'false') return false;
+  return process.env.NODE_ENV === 'production';
 }
 
 function resolveWebhookResponseStatus(resultStatus: number | undefined): number {

@@ -220,7 +220,7 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
                     <a
                       href="https://www.asaas.com"
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="font-medium text-[#5B21B6] underline underline-offset-2"
                     >
                       asaas.com

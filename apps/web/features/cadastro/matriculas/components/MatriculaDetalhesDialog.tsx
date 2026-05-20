@@ -136,13 +136,13 @@ export function MatriculaDetalhesDialog({
       };
       const url = json?.data?.asaasData?.transactionReceiptUrl || json?.data?.asaasData?.invoiceUrl;
       if (url) {
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener,noreferrer');
         return;
       }
     } catch (_err) {
       // ignore
     }
-    window.open(`/cobrancas/${taxaCobranca.id}`, '_blank');
+    window.open(`/cobrancas/${taxaCobranca.id}`, '_blank', 'noopener,noreferrer');
   }, [taxaCobranca]);
 
   const cobrancasList = useMemo(() => {
@@ -413,7 +413,7 @@ export function MatriculaDetalhesDialog({
                               {loadingLinks ? 'Gerando...' : 'Gerar Segunda Via'}
                             </Button>
                             <Button
-                              onClick={() => window.open(`/cobrancas/${taxaCobranca.id}`, '_blank')}
+                              onClick={() => window.open(`/cobrancas/${taxaCobranca.id}`, '_blank', 'noopener,noreferrer')}
                               size="sm"
                               variant="outline"
                               className="flex-1 shadow-none border-gray-300"
@@ -439,7 +439,7 @@ export function MatriculaDetalhesDialog({
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => window.open(taxaLinks.invoiceUrl!, '_blank')}
+                                    onClick={() => window.open(taxaLinks.invoiceUrl!, '_blank', 'noopener,noreferrer')}
                                     className="shadow-none bg-white hover:bg-indigo-50 border-indigo-300"
                                   >
                                     <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-2" />
@@ -451,7 +451,7 @@ export function MatriculaDetalhesDialog({
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => window.open(taxaLinks.bankSlipUrl!, '_blank')}
+                                    onClick={() => window.open(taxaLinks.bankSlipUrl!, '_blank', 'noopener,noreferrer')}
                                     className="shadow-none bg-white hover:bg-indigo-50 border-indigo-300"
                                   >
                                     <ArrowTopRightOnSquareIcon className="h-4 w-4 mr-2" />
@@ -463,7 +463,7 @@ export function MatriculaDetalhesDialog({
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => window.open(taxaLinks.pixQrCodeUrl!, '_blank')}
+                                    onClick={() => window.open(taxaLinks.pixQrCodeUrl!, '_blank', 'noopener,noreferrer')}
                                     className="shadow-none bg-white hover:bg-indigo-50 border-indigo-300"
                                   >
                                     <QrCodeIcon className="h-4 w-4 mr-2" />

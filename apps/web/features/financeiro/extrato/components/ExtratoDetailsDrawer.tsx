@@ -156,7 +156,7 @@ export function ExtratoDetailsDrawer({ entry, onClose }: ExtratoDetailsDrawerPro
                 {hasComprovante && (
                   <Button
                     className="h-10 rounded-lg text-sm font-medium"
-                    onClick={() => window.open(`/api/financeiro/extrato/${encodeURIComponent(entry.paymentId!)}/comprovante`, '_blank')}
+                    onClick={() => window.open(`/api/financeiro/extrato/${encodeURIComponent(entry.paymentId!)}/comprovante`, '_blank', 'noopener,noreferrer')}
                   >
                     <Download className="h-4 w-4" />
                     Ver comprovante

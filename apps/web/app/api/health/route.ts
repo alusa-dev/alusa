@@ -3,6 +3,7 @@ import { prisma } from '@/src/prisma';
 import type { Prisma } from '@prisma/client';
 import { appHealthResultDTOSchema } from '@/features/system/dtos';
 import { mapAppHealthResultToDTO } from '@/features/system/mappers';
+import { NO_STORE_HEADERS } from '@/lib/http-security';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -47,21 +48,22 @@ export async function GET() {
         appHealthResultDTOSchema.parse(
           mapAppHealthResultToDTO({ ok: true, conta: { id: conta.id, nome: conta.nome } }),
         ),
-        { status: 200 },
+        { status: 200, headers: NO_STORE_HEADERS },
       );
     }
 
     // Em produção, apenas um ping leve ao banco
-    const now = await prisma.$queryRawUnsafe<Date[]>(`SELECT NOW()`);
+    await prisma.$queryRaw`SELECT 1`;
     return NextResponse.json(
-      appHealthResultDTOSchema.parse(mapAppHealthResultToDTO({ ok: true, now: now?.[0] ?? null })),
-      { status: 200 },
+      appHealthResultDTOSchema.parse(mapAppHealthResultToDTO({ ok: true })),
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (e: unknown) {
-    const message = (e as Error).message || 'erro no health';
+    const message =
+      process.env.NODE_ENV === 'production' ? 'health check failed' : (e as Error).message || 'erro no health';
     return NextResponse.json(
       appHealthResultDTOSchema.parse(mapAppHealthResultToDTO({ ok: false, error: message })),
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

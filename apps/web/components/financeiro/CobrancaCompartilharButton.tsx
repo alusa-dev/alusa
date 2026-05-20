@@ -97,7 +97,7 @@ export function CobrancaCompartilharButton({
     const mensagem = `Olá ${alunoNome}! 👋\n\nSegue o link para visualizar e pagar sua cobrança:\n\n${faturaUrl}\n\nQualquer dúvida, estamos à disposição!`;
     const whatsappUrl = `https://wa.me/55${telefone}?text=${encodeURIComponent(mensagem)}`;
 
-    window.open(whatsappUrl, '_blank');
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
 
     pushToast({
       title: 'WhatsApp aberto',

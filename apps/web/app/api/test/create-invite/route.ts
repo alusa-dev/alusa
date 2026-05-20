@@ -6,10 +6,11 @@ import {
   testCreateInviteResultDTOSchema,
 } from '@/features/system/dtos';
 import { mapTestCreateInviteResultToDTO } from '@/features/system/mappers';
+import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 
 export async function POST(req: Request) {
   try {
-    if (process.env.NODE_ENV === 'production' || process.env.TEST_ROUTES_ENABLED !== 'true') {
+    if (!isTestRouteEnabled()) {
       return NextResponse.json({ error: 'Not Found' }, { status: 404 });
     }
     const body = await req.json().catch(() => ({}));

@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { verifyCredentials } from '@/lib/auth-service';
+import { isTestRouteEnabled, notFoundJson } from '@/lib/security/runtime-guards';
 
 const bodySchema = z.object({ email: z.string().email(), password: z.string().min(1) });
 
 export async function POST(req: Request) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Not allowed' }, { status: 404 });
+  if (!isTestRouteEnabled()) {
+    return notFoundJson();
   }
   try {
     const json = await req.json();

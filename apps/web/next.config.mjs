@@ -4,6 +4,14 @@ import { withSentryConfig } from '@sentry/nextjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const scriptSrc = [
+  "script-src 'self'",
+  "'unsafe-inline'",
+  ...(process.env.NODE_ENV === 'production' ? [] : ["'unsafe-eval'"]),
+  'https://va.vercel-scripts.com',
+  'https://vercel.live',
+].join(' ');
+
 const securityHeaders = [
   {
     key: 'Strict-Transport-Security',
@@ -33,7 +41,7 @@ const securityHeaders = [
       "object-src 'none'",
       "frame-ancestors 'none'",
       "form-action 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com https://vercel.live",
+      scriptSrc,
       "worker-src 'self' blob:",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
@@ -47,6 +55,7 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  poweredByHeader: false,
   eslint: {
     // Evita falhas no build devido à configuração ESLint da raiz (fora do workspace)
     ignoreDuringBuilds: true,

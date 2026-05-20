@@ -1,3 +1,5 @@
+import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
+
 /**
  * API routes that must never pass through page session gates (redirect/HTML).
  * Aligns with Next.js guidance to exclude /api from auth redirect middleware.
@@ -23,7 +25,7 @@ export function isPublicApiPath(pathname: string): boolean {
     return true;
   }
 
-  if (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true') {
+  if (isTestRouteEnabled()) {
     return pathname.startsWith('/api/test/') || pathname.startsWith('/api/dev/');
   }
 

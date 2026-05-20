@@ -124,7 +124,7 @@ export function PagamentoDetalhesDialog({
   const handleViewComprovante = (comprovante: string) => {
     // Se for URL, abre em nova aba
     if (comprovante.startsWith('http') || comprovante.startsWith('/')) {
-      window.open(comprovante, '_blank');
+      window.open(comprovante, '_blank', 'noopener,noreferrer');
     } else {
       setSelectedComprovante(comprovante);
     }

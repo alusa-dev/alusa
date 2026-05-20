@@ -658,7 +658,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       if (pagamentoConfirmado) {
         // Se houver um comprovante no pagamento, abrir
         if (pagamentoConfirmado.comprovante) {
-          window.open(pagamentoConfirmado.comprovante, '_blank');
+          window.open(pagamentoConfirmado.comprovante, '_blank', 'noopener,noreferrer');
           return;
         }
         
@@ -888,7 +888,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
       const invoiceUrl = result.invoiceUrl || result.bankSlipUrl;
       if (invoiceUrl) {
-        window.open(invoiceUrl, '_blank');
+        window.open(invoiceUrl, '_blank', 'noopener,noreferrer');
       }
 
       await loadCobranca();

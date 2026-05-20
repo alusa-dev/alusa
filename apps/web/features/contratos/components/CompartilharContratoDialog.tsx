@@ -34,7 +34,7 @@ export function CompartilharContratoDialog({
 
   const handleWhatsApp = () => {
     const text = `Olá! Segue o link para assinatura do contrato da matrícula de ${alunoNome}: ${link}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
 
   return (

@@ -238,7 +238,7 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
                         </p>
                      </div>
                      <Button 
-                        onClick={() => contrato && window.open(contrato.arquivoPdfUrl, '_blank')}
+                        onClick={() => contrato && window.open(contrato.arquivoPdfUrl, '_blank', 'noopener,noreferrer')}
                         className="w-full bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
                         size="lg"
                      >

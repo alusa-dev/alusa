@@ -89,7 +89,7 @@ export function KycBlockingModal({ open, onOpenChange, verification, reason }: P
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={() => window.open(redirectAction.redirectUrl!, '_blank')}
+                onClick={() => window.open(redirectAction.redirectUrl!, '_blank', 'noopener,noreferrer')}
               >
                 Continuar verificação externa
               </Button>

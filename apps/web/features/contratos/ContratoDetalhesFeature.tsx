@@ -61,7 +61,7 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
 
   const handleViewPdf = () => {
     if (!contrato?.arquivoPdfUrl) return;
-    window.open(contrato.arquivoPdfUrl, '_blank');
+    window.open(contrato.arquivoPdfUrl, '_blank', 'noopener,noreferrer');
   };
 
   if (loading) {

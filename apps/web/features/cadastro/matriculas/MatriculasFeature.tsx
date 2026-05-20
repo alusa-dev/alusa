@@ -497,14 +497,14 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       const invoice = json?.data?.asaasData?.invoiceUrl;
       const url = receipt || invoice;
       if (url) {
-        window.open(url, '_blank');
+        window.open(url, '_blank', 'noopener,noreferrer');
         return;
       }
       // Fallback para página da cobrança (tem botão de visualizar comprovante)
-      window.open(`/cobrancas/${cobrancaId}`, '_blank');
+      window.open(`/cobrancas/${cobrancaId}`, '_blank', 'noopener,noreferrer');
     } catch (error) {
       // Fallback silencioso
-      window.open(`/cobrancas/${cobrancaId}`, '_blank');
+      window.open(`/cobrancas/${cobrancaId}`, '_blank', 'noopener,noreferrer');
     }
   }, []);
 
@@ -1195,7 +1195,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                                 <Button
                                   variant="default"
                                   size="sm"
-                                  onClick={() => window.open(checkoutUrl, '_blank')}
+                                  onClick={() => window.open(checkoutUrl, '_blank', 'noopener,noreferrer')}
                                   className="bg-violet-600 text-white hover:bg-violet-700 text-xs h-8"
                                 >
                                   <ArrowTopRightOnSquareIcon className="h-3.5 w-3.5 mr-1" />

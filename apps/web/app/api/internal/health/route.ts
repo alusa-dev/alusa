@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
 
 import { getAsaasBaseUrlFromEnvOrThrow, AsaasBaseUrlError } from '@alusa/asaas';
 
 import { prisma } from '@/src/prisma';
 import { internalHealthResultDTOSchema } from '@/features/system/dtos';
 import { mapInternalHealthResultToDTO } from '@/features/system/mappers';
+import { authOptions } from '@/lib/auth-options';
 
 type HealthCheckStatus = 'OK' | 'WARNING' | 'ERROR';
 
@@ -24,7 +26,25 @@ function summarizeOverallStatus(checks: HealthCheck[]): 'OK' | 'DEGRADED' | 'ERR
   return 'OK';
 }
 
-export async function GET() {
+async function canReadInternalHealth(req: Request): Promise<boolean> {
+  const configuredToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
+  const cronToken = req.headers.get('x-cron-token');
+  const authorization = req.headers.get('authorization');
+  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
+  if (configuredToken && (cronToken === configuredToken || bearerToken === configuredToken)) {
+    return true;
+  }
+
+  const session = await getServerSession(authOptions).catch(() => null);
+  const role = (session as { user?: { role?: string } } | null)?.user?.role?.toUpperCase();
+  return role === 'ADMIN' || role === 'SUPER_ADMIN';
+}
+
+export async function GET(req: Request) {
+  if (!(await canReadInternalHealth(req))) {
+    return json(401, { error: 'Unauthorized' });
+  }
+
   const checks: HealthCheck[] = [];
 
   // DB (somente conectividade)

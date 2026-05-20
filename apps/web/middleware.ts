@@ -4,12 +4,13 @@ import { getToken } from 'next-auth/jwt';
 
 import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
 import { isPublicApiPath } from '@/lib/middleware/public-api-paths';
+import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
 type AccountAccessResponse = { ok?: boolean; reason?: string };
 
-const isTest = process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true';
+const isTest = isTestRouteEnabled();
 const legacyDeveloperPaths = [
   '/developer/dashboard',
   '/developer/search',

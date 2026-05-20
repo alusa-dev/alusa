@@ -148,7 +148,7 @@ export function ModeloDetalhesFeature({ modeloId }: ModeloDetalhesFeatureProps) 
             <Button
               variant="outline"
               size="sm"
-              onClick={() => window.open(modelo.arquivoPdfUrl, '_blank')}
+              onClick={() => window.open(modelo.arquivoPdfUrl, '_blank', 'noopener,noreferrer')}
               className="hidden sm:flex"
             >
               <EyeIcon className="h-4 w-4 mr-2" />

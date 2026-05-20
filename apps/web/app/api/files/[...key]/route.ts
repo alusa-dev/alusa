@@ -17,6 +17,42 @@ async function canReadStorageKey(key: string, user: SessionUser): Promise<boolea
   if (!user.id || !user.contaId) return false;
 
   const url = storageUrlForRequestKey(key);
+  const filename = key.split('/').pop() ?? '';
+
+  if (key.startsWith('uploads/avatars/')) {
+    const scopedPrefix = `${user.contaId}-${user.id}-`;
+    if (filename.startsWith(scopedPrefix)) return true;
+
+    const avatarOwner = await prisma.usuario.findFirst({
+      where: {
+        id: user.id,
+        contaId: user.contaId,
+        foto: url,
+      },
+      select: { id: true },
+    });
+    return Boolean(avatarOwner);
+  }
+
+  if (key.startsWith('uploads/produtos/')) {
+    const image = await prisma.productImage.findFirst({
+      where: {
+        url,
+        product: { contaId: user.contaId },
+      },
+      select: { id: true },
+    });
+    if (image) return true;
+
+    const variant = await prisma.productVariant.findFirst({
+      where: {
+        imageUrl: url,
+        product: { contaId: user.contaId },
+      },
+      select: { id: true },
+    });
+    return Boolean(variant);
+  }
 
   if (key.startsWith('uploads/cobrancas/')) {
     const arquivoCobranca = await prisma.arquivoCobranca.findFirst({
@@ -67,7 +103,7 @@ async function canReadStorageKey(key: string, user: SessionUser): Promise<boolea
     return Boolean(modelo);
   }
 
-  return true;
+  return false;
 }
 
 export async function GET(_req: NextRequest, context: { params: { key?: string[] } }) {

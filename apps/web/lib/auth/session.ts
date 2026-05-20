@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '../auth-options';
 import { prisma } from '@/prisma/client';
+import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 
 export type SessionUser = {
   id: string;
@@ -69,7 +70,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const session = (await getServerSession(authOptions)) as unknown as { user?: { id?: string; role?: string; contaId?: string } };
   const user = session?.user;
   if (!user?.id || !user?.role) {
-    if (process.env.NODE_ENV !== 'production' && process.env.TEST_ROUTES_ENABLED === 'true') {
+    if (isTestRouteEnabled()) {
       return ensureTestSessionUser();
     }
     return null;

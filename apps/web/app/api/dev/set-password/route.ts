@@ -6,10 +6,11 @@ import {
   devSetPasswordResultDTOSchema,
 } from '@/features/system/dtos';
 import { mapDevSetPasswordResultToDTO } from '@/features/system/mappers';
+import { isTestRouteEnabled, notFoundJson } from '@/lib/security/runtime-guards';
 
 export async function POST(req: Request) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Not allowed' }, { status: 404 });
+  if (!isTestRouteEnabled()) {
+    return notFoundJson();
   }
   const body = await req.json();
   const parsed = devSetPasswordInputDTOSchema.safeParse(body);

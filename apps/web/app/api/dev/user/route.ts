@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/src/prisma';
 import { devUserQueryDTOSchema, devUserResultDTOSchema } from '@/features/system/dtos';
 import { mapDevUserResultToDTO } from '@/features/system/mappers';
+import { isTestRouteEnabled, notFoundJson } from '@/lib/security/runtime-guards';
 
 export async function GET(req: Request) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Not allowed' }, { status: 404 });
+  if (!isTestRouteEnabled()) {
+    return notFoundJson();
   }
   const { searchParams } = new URL(req.url);
   const parsedQuery = devUserQueryDTOSchema.safeParse({

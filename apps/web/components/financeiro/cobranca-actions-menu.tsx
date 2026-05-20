@@ -141,7 +141,7 @@ export function CobrancaActionsMenu({
     // Ações que não precisam de API
     if (action === 'VIEW_INVOICE') {
       if (invoiceUrl) {
-        window.open(invoiceUrl, '_blank');
+        window.open(invoiceUrl, '_blank', 'noopener,noreferrer');
       } else {
         toast.error('URL da fatura não disponível');
       }
