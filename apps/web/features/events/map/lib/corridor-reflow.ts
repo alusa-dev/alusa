@@ -29,11 +29,59 @@ type SeatEntry = {
 
 type CorridorObstacle = {
   group: CorridorUnionGroup;
+  memberObjectIds: string[];
   bodyRect: BoundsRect;
   clearance: number;
   axis: 'x' | 'y';
   splitCenter: number;
 };
+
+function getSeatSize(seat: EventSeatDTO) {
+  return seat.size ?? DEFAULT_SEAT_SIZE;
+}
+
+function getSeatBasePoint(seat: EventSeatDTO, baseLayout: SeatBaseLayout) {
+  return baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
+}
+
+function getSeatRectFromBase(seat: EventSeatDTO, base: { x: number; y: number }): BoundsRect {
+  const size = getSeatSize(seat);
+
+  return {
+    x: base.x - size / 2,
+    y: base.y - size / 2,
+    width: size,
+    height: size,
+  };
+}
+
+function getSeatAxisEdge(seat: EventSeatDTO, axis: 'x' | 'y', edge: 'start' | 'end') {
+  const size = getSeatSize(seat);
+  const center = axis === 'x' ? seat.x : seat.y;
+
+  if (edge === 'start') {
+    return center - size / 2;
+  }
+
+  return center + size / 2;
+}
+
+function getSeatBaseAxisEdge(
+  seat: EventSeatDTO,
+  baseLayout: SeatBaseLayout,
+  axis: 'x' | 'y',
+  edge: 'start' | 'end',
+) {
+  const base = getSeatBasePoint(seat, baseLayout);
+  const size = getSeatSize(seat);
+  const center = axis === 'x' ? base.x : base.y;
+
+  if (edge === 'start') {
+    return center - size / 2;
+  }
+
+  return center + size / 2;
+}
 
 function isCorridor(object: EventMapObjectDTO) {
   return object.type === 'CORRIDOR' && !object.hidden;
@@ -172,10 +220,6 @@ function getDefaultCorridorSpacing(): CorridorSpacing {
   };
 }
 
-function getGroupBodyBounds(group: CorridorUnionGroup): BoundsRect {
-  return unionRects(group.members.map((member) => member.rect));
-}
-
 function getMemberClearance(
   memberRect: BoundsRect,
   spacing: CorridorSpacing,
@@ -193,14 +237,6 @@ function getMemberClearance(
     return body + spacing.left + spacing.right;
   }
   return body + spacing.top + spacing.bottom;
-}
-
-function getGroupClearance(group: CorridorUnionGroup, corridorById: Map<string, EventMapObjectDTO>, axis: 'x' | 'y') {
-  return group.members.reduce((maxClearance, member) => {
-    const corridor = corridorById.get(member.objectId);
-    const spacing = corridor ? getCorridorSpacing(corridor) : getDefaultCorridorSpacing();
-    return Math.max(maxClearance, getMemberClearance(member.rect, spacing, axis, corridor));
-  }, 0);
 }
 
 function getObstacleSpacedRect(obstacle: CorridorObstacle): BoundsRect {
@@ -311,6 +347,7 @@ function unionGroupAffectsSection({
         const expanded = expandObstacleBodyForSection(
           {
             group,
+            memberObjectIds: [member.objectId],
             bodyRect: bounds,
             clearance: 0,
             axis: axis === 'vertical' ? 'x' : 'y',
@@ -344,34 +381,138 @@ function getCorridorSplitCenter(corridor: EventMapObjectDTO, memberRect: BoundsR
   return axis === 'x' ? memberRect.x + memberRect.width / 2 : memberRect.y + memberRect.height / 2;
 }
 
-function ensureCorridorSplitAnchors(group: CorridorUnionGroup, corridorById: Map<string, EventMapObjectDTO>) {
+function getSeatAxisCenters(sectionSeats: EventSeatDTO[], baseLayout: SeatBaseLayout, axis: 'x' | 'y') {
+  const centers = sectionSeats.map((seat) => {
+    const base = getSeatBasePoint(seat, baseLayout);
+    return axis === 'x' ? base.x : base.y;
+  });
+
+  return [...new Set(centers.map((center) => Number(center.toFixed(4))))].sort((left, right) => left - right);
+}
+
+function resolveInitialCorridorSplitCenter(
+  memberRect: BoundsRect,
+  axis: 'x' | 'y',
+  sectionSeats: EventSeatDTO[],
+  baseLayout: SeatBaseLayout,
+) {
+  const centers = getSeatAxisCenters(sectionSeats, baseLayout, axis);
+  if (centers.length < 2) {
+    return axis === 'x'
+      ? memberRect.x + memberRect.width / 2
+      : memberRect.y + memberRect.height / 2;
+  }
+
+  const edge = axis === 'x' ? memberRect.x : memberRect.y;
+  let before: number | undefined;
+  let after: number | undefined;
+
+  for (const center of centers) {
+    if (center < edge) {
+      before = center;
+      continue;
+    }
+    after = center;
+    break;
+  }
+
+  if (before !== undefined && after !== undefined) {
+    return (before + after) / 2;
+  }
+
+  return axis === 'x'
+    ? memberRect.x + memberRect.width / 2
+    : memberRect.y + memberRect.height / 2;
+}
+
+function getPartitionedPairIndex(centers: number[], split: number) {
+  for (let index = 0; index < centers.length - 1; index += 1) {
+    const left = centers[index]!;
+    const right = centers[index + 1]!;
+    if (left < split && split <= right) return index;
+  }
+  return null;
+}
+
+function corridorGeometryMatchesAxis(corridor: EventMapObjectDTO, memberRect: BoundsRect) {
+  const axis = resolveCorridorAxis(corridor);
+  if (axis === 'vertical') return memberRect.height >= memberRect.width;
+  return memberRect.width >= memberRect.height;
+}
+
+function reconcileCorridorSplitAnchor(
+  corridor: EventMapObjectDTO,
+  memberRect: BoundsRect,
+  axis: 'x' | 'y',
+  sectionSeats: EventSeatDTO[],
+  baseLayout: SeatBaseLayout,
+) {
+  const key = axis === 'x' ? CORRIDOR_SPLIT_X_KEY : CORRIDOR_SPLIT_Y_KEY;
+  const stored = Number(corridor.data[key]);
+  if (!Number.isFinite(stored) || !corridorGeometryMatchesAxis(corridor, memberRect)) return;
+
+  const centers = getSeatAxisCenters(sectionSeats, baseLayout, axis);
+  if (centers.length < 2) return;
+
+  const resolved = resolveInitialCorridorSplitCenter(memberRect, axis, sectionSeats, baseLayout);
+  const storedPair = getPartitionedPairIndex(centers, stored);
+  const resolvedPair = getPartitionedPairIndex(centers, resolved);
+
+  if (resolvedPair !== null && storedPair !== resolvedPair) {
+    corridor.data = { ...corridor.data, [key]: resolved };
+  }
+}
+
+function ensureCorridorSplitAnchors(
+  group: CorridorUnionGroup,
+  corridorById: Map<string, EventMapObjectDTO>,
+  sectionSeats: EventSeatDTO[],
+  baseLayout: SeatBaseLayout,
+) {
   for (const member of group.members) {
     const corridor = corridorById.get(member.objectId);
     if (!corridor) continue;
 
     persistCorridorMetadata(corridor);
+    const corridorAxis = resolveCorridorAxis(corridor);
     const nextData: Record<string, unknown> = { ...corridor.data };
-    if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
+
+    if (corridorAxis === 'vertical') {
+      if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
+        nextData[CORRIDOR_SPLIT_X_KEY] = resolveInitialCorridorSplitCenter(
+          member.rect,
+          'x',
+          sectionSeats,
+          baseLayout,
+        );
+      } else {
+        corridor.data = nextData;
+        reconcileCorridorSplitAnchor(corridor, member.rect, 'x', sectionSeats, baseLayout);
+        nextData[CORRIDOR_SPLIT_X_KEY] = corridor.data[CORRIDOR_SPLIT_X_KEY];
+      }
+    } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
       nextData[CORRIDOR_SPLIT_X_KEY] = member.rect.x + member.rect.width / 2;
     }
-    if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
+
+    if (corridorAxis === 'horizontal') {
+      if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
+        nextData[CORRIDOR_SPLIT_Y_KEY] = resolveInitialCorridorSplitCenter(
+          member.rect,
+          'y',
+          sectionSeats,
+          baseLayout,
+        );
+      } else {
+        corridor.data = nextData;
+        reconcileCorridorSplitAnchor(corridor, member.rect, 'y', sectionSeats, baseLayout);
+        nextData[CORRIDOR_SPLIT_Y_KEY] = corridor.data[CORRIDOR_SPLIT_Y_KEY];
+      }
+    } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
       nextData[CORRIDOR_SPLIT_Y_KEY] = member.rect.y + member.rect.height / 2;
     }
+
     corridor.data = nextData;
   }
-}
-
-function getGroupSplitCenter(group: CorridorUnionGroup, corridorById: Map<string, EventMapObjectDTO>, axis: 'x' | 'y') {
-  const centers = group.members.map((member) => {
-    const corridor = corridorById.get(member.objectId);
-    if (!corridor) {
-      return axis === 'x' ? member.rect.x + member.rect.width / 2 : member.rect.y + member.rect.height / 2;
-    }
-    return getCorridorSplitCenter(corridor, member.rect, axis);
-  });
-
-  centers.sort((left, right) => left - right);
-  return centers[Math.floor(centers.length / 2)]!;
 }
 
 export function persistCorridorMetadataOnly(corridor: EventMapObjectDTO) {
@@ -430,20 +571,6 @@ export function updateCorridorSplitAnchorsOnDrag(
   corridor.data = nextData;
 }
 
-function resolveGroupAxis(group: CorridorUnionGroup, corridorById: Map<string, EventMapObjectDTO>): CorridorAxis {
-  let dominant: { axis: CorridorAxis; area: number } | null = null;
-
-  for (const member of group.members) {
-    const corridor = corridorById.get(member.objectId);
-    if (corridor) persistCorridorMetadata(corridor);
-    const axis = corridor ? resolveCorridorAxis(corridor) : inferCorridorAxisFromSize(member.rect.width, member.rect.height);
-    const area = member.rect.width * member.rect.height;
-    if (!dominant || area > dominant.area) dominant = { axis, area };
-  }
-
-  return dominant?.axis ?? 'vertical';
-}
-
 function expandObstacleBodyForSection(
   obstacle: CorridorObstacle,
   sectionSeats: EventSeatDTO[],
@@ -451,16 +578,14 @@ function expandObstacleBodyForSection(
 ): BoundsRect {
   if (sectionSeats.length === 0) return obstacle.bodyRect;
 
+  const seatRects = sectionSeats.map((seat) => {
+    const base = getSeatBasePoint(seat, baseLayout);
+    return getSeatRectFromBase(seat, base);
+  });
+
   if (obstacle.axis === 'x') {
-    const rows = groupSeatsByRow(sectionSeats, baseLayout);
-    const minY = Math.min(
-      ...rows.flatMap((lineSeats) => lineSeats.map((seat) => (baseLayout[seat.id] ?? { x: seat.x, y: seat.y }).y)),
-    );
-    const maxY = Math.max(
-      ...rows.flatMap((lineSeats) =>
-        lineSeats.map((seat) => (baseLayout[seat.id] ?? { x: seat.x, y: seat.y }).y + (seat.size ?? DEFAULT_SEAT_SIZE)),
-      ),
-    );
+    const minY = Math.min(...seatRects.map((rect) => rect.y));
+    const maxY = Math.max(...seatRects.map((rect) => rect.y + rect.height));
 
     return {
       ...obstacle.bodyRect,
@@ -469,15 +594,8 @@ function expandObstacleBodyForSection(
     };
   }
 
-  const columns = groupSeatsByColumn(sectionSeats, baseLayout);
-  const minX = Math.min(
-    ...columns.flatMap((lineSeats) => lineSeats.map((seat) => (baseLayout[seat.id] ?? { x: seat.x, y: seat.y }).x)),
-  );
-  const maxX = Math.max(
-    ...columns.flatMap((lineSeats) =>
-      lineSeats.map((seat) => (baseLayout[seat.id] ?? { x: seat.x, y: seat.y }).x + (seat.size ?? DEFAULT_SEAT_SIZE)),
-    ),
-  );
+  const minX = Math.min(...seatRects.map((rect) => rect.x));
+  const maxX = Math.max(...seatRects.map((rect) => rect.x + rect.width));
 
   return {
     ...obstacle.bodyRect,
@@ -486,41 +604,43 @@ function expandObstacleBodyForSection(
   };
 }
 
-function normalizeGroupSplitCenters(group: CorridorUnionGroup, corridorById: Map<string, EventMapObjectDTO>, axis: 'x' | 'y') {
-  const splitCenter = getGroupSplitCenter(group, corridorById, axis);
-  const key = axis === 'x' ? CORRIDOR_SPLIT_X_KEY : CORRIDOR_SPLIT_Y_KEY;
-
-  for (const member of group.members) {
-    const corridor = corridorById.get(member.objectId);
-    if (!corridor) continue;
-    corridor.data = { ...corridor.data, [key]: splitCenter };
-  }
-}
-
 function buildCorridorObstacles(
   groups: CorridorUnionGroup[],
   corridorById: Map<string, EventMapObjectDTO>,
+  sectionSeats: EventSeatDTO[],
+  baseLayout: SeatBaseLayout,
 ): { vertical: CorridorObstacle[]; horizontal: CorridorObstacle[] } {
   const vertical: CorridorObstacle[] = [];
   const horizontal: CorridorObstacle[] = [];
 
   for (const group of groups) {
-    ensureCorridorSplitAnchors(group, corridorById);
-    const corridorAxis = resolveGroupAxis(group, corridorById);
-    const isVertical = corridorAxis === 'vertical';
-    const axis = isVertical ? 'x' : 'y';
-    normalizeGroupSplitCenters(group, corridorById, axis);
-    const bodyRect = getGroupBodyBounds(group);
-    const obstacle: CorridorObstacle = {
-      group,
-      bodyRect,
-      clearance: getGroupClearance(group, corridorById, axis),
-      axis,
-      splitCenter: getGroupSplitCenter(group, corridorById, axis),
-    };
+    ensureCorridorSplitAnchors(group, corridorById, sectionSeats, baseLayout);
 
-    if (isVertical) vertical.push(obstacle);
-    else horizontal.push(obstacle);
+    for (const member of group.members) {
+      const corridor = corridorById.get(member.objectId);
+      if (!corridor) continue;
+
+      persistCorridorMetadata(corridor);
+
+      const corridorAxis = resolveCorridorAxis(corridor);
+      const axis = corridorAxis === 'vertical' ? 'x' : 'y';
+      const spacing = getCorridorSpacing(corridor);
+
+      const obstacle: CorridorObstacle = {
+        group,
+        memberObjectIds: [member.objectId],
+        bodyRect: member.rect,
+        clearance: getMemberClearance(member.rect, spacing, axis, corridor),
+        axis,
+        splitCenter: getCorridorSplitCenter(corridor, member.rect, axis),
+      };
+
+      if (corridorAxis === 'vertical') {
+        vertical.push(obstacle);
+      } else {
+        horizontal.push(obstacle);
+      }
+    }
   }
 
   vertical.sort((a, b) => a.splitCenter - b.splitCenter);
@@ -560,6 +680,9 @@ function dedupeObstaclesBySplitCenter(obstacles: CorridorObstacle[]) {
     }
 
     existing.group = mergeCorridorUnionGroups(existing.group, obstacle.group);
+    existing.memberObjectIds = [
+      ...new Set([...existing.memberObjectIds, ...obstacle.memberObjectIds]),
+    ];
     existing.bodyRect = unionRects([existing.bodyRect, obstacle.bodyRect]);
     existing.clearance = Math.max(existing.clearance, obstacle.clearance);
     existing.splitCenter = (existing.splitCenter + obstacle.splitCenter) / 2;
@@ -597,16 +720,28 @@ function groupSeatsByColumn(seats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
 }
 
 function rowOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const rowMinY = Math.min(...entries.map((entry) => entry.base.y));
-  const rowMaxY = Math.max(...entries.map((entry) => entry.base.y + (entry.seat.size ?? DEFAULT_SEAT_SIZE)));
+  const rowMinY = Math.min(
+    ...entries.map((entry) => entry.base.y - getSeatSize(entry.seat) / 2),
+  );
+
+  const rowMaxY = Math.max(
+    ...entries.map((entry) => entry.base.y + getSeatSize(entry.seat) / 2),
+  );
+
   const spacedRect = getObstacleSpacedRect(obstacle);
 
   return !(rowMaxY < spacedRect.y || rowMinY > spacedRect.y + spacedRect.height);
 }
 
 function columnOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const colMinX = Math.min(...entries.map((entry) => entry.base.x));
-  const colMaxX = Math.max(...entries.map((entry) => entry.base.x + (entry.seat.size ?? DEFAULT_SEAT_SIZE)));
+  const colMinX = Math.min(
+    ...entries.map((entry) => entry.base.x - getSeatSize(entry.seat) / 2),
+  );
+
+  const colMaxX = Math.max(
+    ...entries.map((entry) => entry.base.x + getSeatSize(entry.seat) / 2),
+  );
+
   const spacedRect = getObstacleSpacedRect(obstacle);
 
   return !(colMaxX < spacedRect.x || colMinX > spacedRect.x + spacedRect.width);
@@ -615,8 +750,7 @@ function columnOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle
 function buildSeatEntries(seats: EventSeatDTO[], baseLayout: SeatBaseLayout, axis: 'x' | 'y'): SeatEntry[] {
   return seats.map((seat) => {
     const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
-    const size = seat.size ?? DEFAULT_SEAT_SIZE;
-    const center = axis === 'x' ? base.x + size / 2 : base.y + size / 2;
+    const center = axis === 'x' ? base.x : base.y;
     return { seat, base, center };
   });
 }
@@ -639,11 +773,13 @@ function assignSeatStacks(entries: SeatEntry[], splitCenters: number[]) {
 }
 
 function getSeatEdge(seat: EventSeatDTO, axis: 'x' | 'y', edge: 'start' | 'end') {
-  const size = seat.size ?? DEFAULT_SEAT_SIZE;
-  if (axis === 'x') {
-    return edge === 'start' ? seat.x : seat.x + size;
-  }
-  return edge === 'start' ? seat.y : seat.y + size;
+  return getSeatAxisEdge(seat, axis, edge);
+}
+
+function getSeatBaseEdge(entry: SeatEntry, axis: 'x' | 'y', edge: 'start' | 'end') {
+  const size = getSeatSize(entry.seat);
+  const center = axis === 'x' ? entry.base.x : entry.base.y;
+  return edge === 'start' ? center - size / 2 : center + size / 2;
 }
 
 function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle[], axis: 'x' | 'y') {
@@ -660,10 +796,13 @@ function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle
       continue;
     }
 
-    const minBase = Math.min(...stack.map((entry) => (axis === 'x' ? entry.base.x : entry.base.y)));
-    if (cursor == null) cursor = minBase;
+    const stackStart = Math.min(...stack.map((entry) => getSeatBaseEdge(entry, axis, 'start')));
 
-    const delta = cursor - minBase;
+    if (cursor == null) {
+      cursor = stackStart;
+    }
+
+    const delta = cursor - stackStart;
     for (const entry of stack) {
       if (axis === 'x') {
         entry.seat.x = entry.base.x + delta;
@@ -673,8 +812,8 @@ function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle
     }
 
     if (obstacle) {
-      const maxEdge = Math.max(...stack.map((entry) => getSeatEdge(entry.seat, axis, 'end')));
-      cursor = maxEdge + obstacle.clearance;
+      const movedEnd = Math.max(...stack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')));
+      cursor = movedEnd + obstacle.clearance;
     }
   }
 }
@@ -705,14 +844,22 @@ function getCrossAxisSpan(entries: SeatEntry[], partitionAxis: 'x' | 'y') {
 
   if (partitionAxis === 'x') {
     return {
-      min: Math.min(...entries.map((entry) => entry.seat.y)),
-      max: Math.max(...entries.map((entry) => entry.seat.y + (entry.seat.size ?? DEFAULT_SEAT_SIZE))),
+      min: Math.min(
+        ...entries.map((entry) => entry.seat.y - getSeatSize(entry.seat) / 2),
+      ),
+      max: Math.max(
+        ...entries.map((entry) => entry.seat.y + getSeatSize(entry.seat) / 2),
+      ),
     };
   }
 
   return {
-    min: Math.min(...entries.map((entry) => entry.seat.x)),
-    max: Math.max(...entries.map((entry) => entry.seat.x + (entry.seat.size ?? DEFAULT_SEAT_SIZE))),
+    min: Math.min(
+      ...entries.map((entry) => entry.seat.x - getSeatSize(entry.seat) / 2),
+    ),
+    max: Math.max(
+      ...entries.map((entry) => entry.seat.x + getSeatSize(entry.seat) / 2),
+    ),
   };
 }
 
@@ -741,17 +888,9 @@ function applyCorridorGeometry({
     if (axis === 'x') {
       corridor.x = gapStart + Math.max(0, (availableGap - bodyWidth) / 2);
       corridor.y = crossSpan.min + Math.max(0, (crossSize - bodyHeight) / 2);
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_X_KEY]: gapStart + availableGap / 2,
-      };
     } else {
       corridor.y = gapStart + Math.max(0, (availableGap - bodyHeight) / 2);
       corridor.x = crossSpan.min + Math.max(0, (crossSize - bodyWidth) / 2);
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_Y_KEY]: gapStart + availableGap / 2,
-      };
     }
     persistCorridorMetadata(corridor);
     return;
@@ -763,19 +902,11 @@ function applyCorridorGeometry({
       corridor.y = crossSpan.min;
       corridor.width = availableGap;
       corridor.height = crossSize;
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_X_KEY]: gapStart + availableGap / 2,
-      };
     } else {
       corridor.x = crossSpan.min;
       corridor.y = gapStart;
       corridor.width = crossSize;
       corridor.height = availableGap;
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_Y_KEY]: gapStart + availableGap / 2,
-      };
     }
   } else {
     const bodyWidth = corridor.width ?? availableGap;
@@ -783,17 +914,9 @@ function applyCorridorGeometry({
     if (axis === 'x') {
       corridor.x = gapStart + Math.max(0, (availableGap - bodyWidth) / 2);
       corridor.y = crossSpan.min + Math.max(0, (crossSize - bodyHeight) / 2);
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_X_KEY]: gapStart + availableGap / 2,
-      };
     } else {
       corridor.y = gapStart + Math.max(0, (availableGap - bodyHeight) / 2);
       corridor.x = crossSpan.min + Math.max(0, (crossSize - bodyWidth) / 2);
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_Y_KEY]: gapStart + availableGap / 2,
-      };
     }
   }
 
@@ -847,8 +970,8 @@ function syncCorridorObjectsToOpenedGaps(
       getCrossAxisSpan([...leftStack, ...rightStack], axis);
     if (!crossSpan) continue;
 
-    for (const member of obstacle.group.members) {
-      const corridor = corridorById.get(member.objectId);
+    for (const objectId of obstacle.memberObjectIds) {
+      const corridor = corridorById.get(objectId);
       if (!corridor) continue;
 
       applyCorridorGeometry({
@@ -858,36 +981,6 @@ function syncCorridorObjectsToOpenedGaps(
         gapEnd,
         crossSpan,
       });
-    }
-  }
-}
-
-function realignCorridorSplitAnchorsForSection(
-  corridors: EventMapObjectDTO[],
-  sectionSeats: EventSeatDTO[],
-  baseLayout: SeatBaseLayout,
-) {
-  for (const corridor of corridors) {
-    const bounds = getCorridorBounds(corridor);
-    const affectsSection = sectionSeats.some((seat) => {
-      const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
-      return intersectsRect(getSeatBounds({ ...seat, x: base.x, y: base.y }), bounds);
-    });
-    if (!affectsSection) continue;
-
-    const axis = resolveCorridorAxis(corridor);
-    if (axis === 'vertical') {
-      const coreWidth = getCorridorCoreThickness(corridor, 'x');
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_X_KEY]: corridor.x + coreWidth / 2,
-      };
-    } else {
-      const coreHeight = getCorridorCoreThickness(corridor, 'y');
-      corridor.data = {
-        ...corridor.data,
-        [CORRIDOR_SPLIT_Y_KEY]: corridor.y + coreHeight / 2,
-      };
     }
   }
 }
@@ -953,12 +1046,7 @@ export function applyCorridorReflow(map: EventMapDTO) {
     ).filter((group) => unionGroupAffectsSection({ group, corridorById, sectionObject, sectionSeats, baseLayout, baseBounds }));
 
     if (sectionCorridorGroups.length > 0) {
-      realignCorridorSplitAnchorsForSection(
-        corridors.filter((corridor) => corridor.levelId === sectionObject.levelId),
-        sectionSeats,
-        baseLayout,
-      );
-      const obstacles = buildCorridorObstacles(sectionCorridorGroups, corridorById);
+      const obstacles = buildCorridorObstacles(sectionCorridorGroups, corridorById, sectionSeats, baseLayout);
       applyCorridorStackReflow(sectionSeats, baseLayout, obstacles, corridorById);
       writeSeatBaseLayout(sectionObject, baseLayout);
       writeSectionBaseBounds(sectionObject, baseBounds);

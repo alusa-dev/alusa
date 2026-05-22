@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { EventMapDTO } from '../api/event-map-service';
 import { DEFAULT_SEAT_GRID_CONFIG } from '../lib/seat-grid';
+import { getSeatBounds } from '../lib/selection-utils';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 function createMap(): EventMapDTO {
@@ -556,6 +557,43 @@ describe('event-map-editor-store history', () => {
       height: 280,
       data: expect.objectContaining({ corridorAxis: 'vertical', corridorAutoFit: true }),
     });
+  });
+
+  it('reflows a new seat grid immediately when a corridor already exists in the area', () => {
+    const store = useEventMapEditorStore;
+    store.getState().loadMap(createMap());
+
+    const corridorId = store.getState().addObjectAt('corridor', { x: 135, y: 70 }, { width: 30, height: 120 });
+    expect(corridorId).toBeTruthy();
+    if (!corridorId) return;
+
+    store.getState().addSeatGridAt(
+      { x: 100, y: 100 },
+      {
+        ...DEFAULT_SEAT_GRID_CONFIG,
+        totalSeats: 8,
+        rows: 2,
+        columns: 4,
+        seatSize: 20,
+        horizontalSpacing: 40,
+        verticalSpacing: 40,
+      },
+    );
+
+    const createdSection = store.getState().map?.sections.at(-1);
+    const gridSeats =
+      store.getState().map?.seats.filter((seat) => seat.sectionId === createdSection?.id) ?? [];
+    const col1 = gridSeats.find((seat) => seat.seatNumber === '1' && seat.rowLabel === 'A');
+    const col2 = gridSeats.find((seat) => seat.seatNumber === '2' && seat.rowLabel === 'A');
+    expect(col1).toBeTruthy();
+    expect(col2).toBeTruthy();
+    if (!col1 || !col2) return;
+
+    const col1Bounds = getSeatBounds(col1);
+    const col2Bounds = getSeatBounds(col2);
+    const gap = col2Bounds.x - (col1Bounds.x + col1Bounds.width);
+
+    expect(gap).toBeGreaterThan(20);
   });
 
   it('recalculates corridor reflow when corridor axis changes', () => {

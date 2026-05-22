@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
 import { applyCorridorReflow, resolveCorridorAxis } from '../lib/corridor-reflow';
 import { buildSeatGridPreview } from '../lib/seat-grid';
-import { intersectsRect } from '../lib/selection-utils';
+import { getSeatBounds, intersectsRect } from '../lib/selection-utils';
 
 function createSectionMap(seats: EventSeatDTO[], sectionObject: EventMapObjectDTO): EventMapDTO {
   return {
@@ -100,10 +100,11 @@ function buildSeatGridMap(rows: number, columns: number) {
     rotation: 0,
   }));
 
-  const minX = Math.min(...seats.map((seat) => seat.x));
-  const minY = Math.min(...seats.map((seat) => seat.y));
-  const maxX = Math.max(...seats.map((seat) => seat.x + (seat.size ?? 20)));
-  const maxY = Math.max(...seats.map((seat) => seat.y + (seat.size ?? 20)));
+  const seatBounds = seats.map((seat) => getSeatBounds(seat));
+  const minX = Math.min(...seatBounds.map((bounds) => bounds.x));
+  const minY = Math.min(...seatBounds.map((bounds) => bounds.y));
+  const maxX = Math.max(...seatBounds.map((bounds) => bounds.x + bounds.width));
+  const maxY = Math.max(...seatBounds.map((bounds) => bounds.y + bounds.height));
 
   const sectionObject: EventMapObjectDTO = {
     id: 'section-object-1',
@@ -127,7 +128,16 @@ function buildSeatGridMap(rows: number, columns: number) {
 function seatsByColumn(seats: EventSeatDTO[], column: number) {
   return seats
     .filter((seat) => Number(seat.seatNumber) === column)
-    .sort((left, right) => left.rowLabel.localeCompare(right.rowLabel));
+    .sort((left, right) => String(left.rowLabel ?? '').localeCompare(String(right.rowLabel ?? '')));
+}
+
+function corridorBounds(object: EventMapObjectDTO) {
+  return {
+    x: object.x,
+    y: object.y,
+    width: object.width ?? 0,
+    height: object.height ?? 0,
+  };
 }
 
 describe('corridor-reflow', () => {
@@ -165,8 +175,13 @@ describe('corridor-reflow', () => {
     const col10 = seatsByColumn(map.seats, 10)[0]!;
     const col11 = seatsByColumn(map.seats, 11)[0]!;
 
-    expect(col4.x - (col3.x + (col3.size ?? 20))).toBeGreaterThanOrEqual(30);
-    expect(col11.x - (col10.x + (col10.size ?? 20))).toBeGreaterThanOrEqual(30);
+    const col3Bounds = getSeatBounds(col3);
+    const col4Bounds = getSeatBounds(col4);
+    const col10Bounds = getSeatBounds(col10);
+    const col11Bounds = getSeatBounds(col11);
+
+    expect(col4Bounds.x - (col3Bounds.x + col3Bounds.width)).toBeGreaterThanOrEqual(30);
+    expect(col11Bounds.x - (col10Bounds.x + col10Bounds.width)).toBeGreaterThanOrEqual(30);
 
     const baseCol4 = baseSeats.find((seat) => seat.id === col4.id)!;
     const baseCol10 = baseSeats.find((seat) => seat.id === col10.id)!;
@@ -186,7 +201,9 @@ describe('corridor-reflow', () => {
     const readGap = () => {
       const col1 = map.seats.find((seat) => seat.seatNumber === '1')!;
       const col2 = map.seats.find((seat) => seat.seatNumber === '2')!;
-      return col2.x - (col1.x + (col1.size ?? 20));
+      const col1Bounds = getSeatBounds(col1);
+      const col2Bounds = getSeatBounds(col2);
+      return col2Bounds.x - (col1Bounds.x + col1Bounds.width);
     };
 
     const defaultGap = readGap();
@@ -210,21 +227,8 @@ describe('corridor-reflow', () => {
     applyCorridorReflow(map);
 
     for (const corridorObject of map.objects.filter((object) => object.type === 'CORRIDOR')) {
-      const corridorBounds = {
-        x: corridorObject.x,
-        y: corridorObject.y,
-        width: corridorObject.width ?? 0,
-        height: corridorObject.height ?? 0,
-      };
-
       for (const seat of map.seats) {
-        const seatBounds = {
-          x: seat.x,
-          y: seat.y,
-          width: seat.size ?? 20,
-          height: seat.size ?? 20,
-        };
-        expect(intersectsRect(seatBounds, corridorBounds)).toBe(false);
+        expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
       }
     }
   });
@@ -244,8 +248,13 @@ describe('corridor-reflow', () => {
     expect(middleBlock.map((seat) => Number(seat.seatNumber))).toEqual([4, 5, 6, 7, 8, 9, 10]);
     expect(rightBlock.map((seat) => Number(seat.seatNumber))).toEqual([11, 12, 13]);
 
-    const gapAfterLeft = middleBlock[0]!.x - (leftBlock[2]!.x + (leftBlock[2]!.size ?? 20));
-    const gapBeforeRight = rightBlock[0]!.x - (middleBlock[6]!.x + (middleBlock[6]!.size ?? 20));
+    const leftBounds = getSeatBounds(leftBlock[2]!);
+    const middleStartBounds = getSeatBounds(middleBlock[0]!);
+    const middleEndBounds = getSeatBounds(middleBlock[6]!);
+    const rightBounds = getSeatBounds(rightBlock[0]!);
+
+    const gapAfterLeft = middleStartBounds.x - (leftBounds.x + leftBounds.width);
+    const gapBeforeRight = rightBounds.x - (middleEndBounds.x + middleEndBounds.width);
     expect(gapAfterLeft).toBeGreaterThanOrEqual(30);
     expect(gapBeforeRight).toBeGreaterThanOrEqual(30);
   });
@@ -257,8 +266,10 @@ describe('corridor-reflow', () => {
 
     const col1 = map.seats.find((seat) => seat.seatNumber === '1')!;
     const col2 = map.seats.find((seat) => seat.seatNumber === '2')!;
-    const gapStart = col1.x + (col1.size ?? 20);
-    const gapEnd = col2.x;
+    const col1Bounds = getSeatBounds(col1);
+    const col2Bounds = getSeatBounds(col2);
+    const gapStart = col1Bounds.x + col1Bounds.width;
+    const gapEnd = col2Bounds.x;
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
 
     expect(corridorObject.x).toBeCloseTo(gapStart, 1);
@@ -272,13 +283,17 @@ describe('corridor-reflow', () => {
 
     const rowA = map.seats.filter((seat) => seat.rowLabel === 'A');
     const rowB = map.seats.filter((seat) => seat.rowLabel === 'B');
-    const gapStart = Math.max(...rowA.map((seat) => seat.y + (seat.size ?? 20)));
-    const gapEnd = Math.min(...rowB.map((seat) => seat.y));
+    const gapStart = Math.max(...rowA.map((seat) => getSeatBounds(seat).y + getSeatBounds(seat).height));
+    const gapEnd = Math.min(...rowB.map((seat) => getSeatBounds(seat).y));
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
+    const rowABounds = rowA.map((seat) => getSeatBounds(seat));
 
     expect(corridorObject.y).toBeCloseTo(gapStart, 1);
     expect(corridorObject.height).toBeCloseTo(gapEnd - gapStart, 1);
-    expect(corridorObject.width).toBeCloseTo(Math.max(...rowA.map((seat) => seat.x + (seat.size ?? 20))) - Math.min(...rowA.map((seat) => seat.x)), 1);
+    expect(corridorObject.width).toBeCloseTo(
+      Math.max(...rowABounds.map((bounds) => bounds.x + bounds.width)) - Math.min(...rowABounds.map((bounds) => bounds.x)),
+      1,
+    );
   });
 
   it('persists inferred corridor axis during reflow migration', () => {
@@ -328,8 +343,130 @@ describe('corridor-reflow', () => {
 
     const col1 = map.seats.find((seat) => seat.seatNumber === '1')!;
     const col2 = map.seats.find((seat) => seat.seatNumber === '2')!;
-    const gap = col2.x - (col1.x + (col1.size ?? 20));
+    const col1Bounds = getSeatBounds(col1);
+    const col2Bounds = getSeatBounds(col2);
+    const gap = col2Bounds.x - (col1Bounds.x + col1Bounds.width);
 
     expect(gap).toBeGreaterThanOrEqual(30 + 40 + 8);
+  });
+
+  it('keeps vertical auto-fit corridor outside centered seat bounds', () => {
+    const map = buildSeatGridMap(7, 13);
+
+    map.objects.push(
+      corridor('corridor-left', 205, 80, 32, 280, {
+        corridorAxis: 'vertical',
+        corridorAutoFit: true,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const corridorObject = map.objects.find((object) => object.id === 'corridor-left')!;
+
+    for (const seat of map.seats) {
+      expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
+    }
+  });
+
+  it('keeps horizontal auto-fit corridor outside centered seat bounds', () => {
+    const map = buildSeatGridMap(7, 13);
+
+    map.objects.push(
+      corridor('corridor-top', 80, 125, 520, 32, {
+        corridorAxis: 'horizontal',
+        corridorAutoFit: true,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const corridorObject = map.objects.find((object) => object.id === 'corridor-top')!;
+
+    for (const seat of map.seats) {
+      expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
+    }
+  });
+
+  it('handles connected vertical and horizontal corridors as independent layout obstacles', () => {
+    const map = buildSeatGridMap(7, 13);
+
+    map.objects.push(
+      corridor('corridor-vertical', 205, 80, 32, 280, {
+        corridorAxis: 'vertical',
+        corridorAutoFit: true,
+      }),
+    );
+
+    map.objects.push(
+      corridor('corridor-horizontal', 80, 205, 520, 32, {
+        corridorAxis: 'horizontal',
+        corridorAutoFit: true,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const corridors = map.objects.filter((object) => object.type === 'CORRIDOR');
+
+    for (const corridorObject of corridors) {
+      for (const seat of map.seats) {
+        expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
+      }
+    }
+
+    const rowA = map.seats
+      .filter((seat) => seat.rowLabel === 'A')
+      .sort((a, b) => Number(a.seatNumber) - Number(b.seatNumber));
+
+    const col1 = map.seats
+      .filter((seat) => seat.seatNumber === '1')
+      .sort((a, b) => String(a.rowLabel).localeCompare(String(b.rowLabel)));
+
+    const horizontalMovementExists = rowA.some((seat, index) => {
+      if (index === 0) return false;
+      return seat.x - rowA[index - 1]!.x > 40;
+    });
+
+    const verticalMovementExists = col1.some((seat, index) => {
+      if (index === 0) return false;
+      return seat.y - col1[index - 1]!.y > 40;
+    });
+
+    expect(horizontalMovementExists).toBe(true);
+    expect(verticalMovementExists).toBe(true);
+  });
+
+  it('keeps corridor split anchor stable after repeated auto-fit reflows', () => {
+    const map = buildSeatGridMap(7, 13);
+
+    map.objects.push(
+      corridor('corridor-1', 205, 80, 32, 280, {
+        corridorAxis: 'vertical',
+        corridorAutoFit: true,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
+    const firstSplit = corridorObject.data.corridorSplitX;
+    const firstSeats = map.seats.map((seat) => ({
+      id: seat.id,
+      x: seat.x,
+      y: seat.y,
+    }));
+
+    applyCorridorReflow(map);
+    applyCorridorReflow(map);
+
+    expect(corridorObject.data.corridorSplitX).toBe(firstSplit);
+    expect(
+      map.seats.map((seat) => ({
+        id: seat.id,
+        x: seat.x,
+        y: seat.y,
+      })),
+    ).toEqual(firstSeats);
   });
 });

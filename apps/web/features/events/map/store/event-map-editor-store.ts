@@ -224,6 +224,56 @@ function updateCounts(map: EventMapDTO) {
   };
 }
 
+function hasCorridorGeometryPatch(patch: Partial<EventMapObjectDTO>) {
+  return (
+    typeof patch.x === 'number' ||
+    typeof patch.y === 'number' ||
+    typeof patch.width === 'number' ||
+    typeof patch.height === 'number' ||
+    typeof patch.rotation === 'number'
+  );
+}
+
+function hasCorridorMetadataPatch(patch: Partial<EventMapObjectDTO>) {
+  return Boolean(
+    patch.data &&
+      ('corridorAxis' in patch.data || 'corridorAutoFit' in patch.data),
+  );
+}
+
+function applyObjectPatchWithCorridorMetadata(
+  object: EventMapObjectDTO,
+  patch: Partial<EventMapObjectDTO>,
+): EventMapObjectDTO {
+  const previous: EventMapObjectDTO = {
+    ...object,
+    data: { ...object.data },
+  };
+
+  const next: EventMapObjectDTO = patch.data
+    ? {
+        ...object,
+        ...patch,
+        data: { ...object.data, ...patch.data },
+      }
+    : {
+        ...object,
+        ...patch,
+      };
+
+  if (next.type === 'CORRIDOR' && hasCorridorGeometryPatch(patch)) {
+    updateCorridorSplitAnchorsOnDrag(next, patch, previous);
+    return next;
+  }
+
+  if (next.type === 'CORRIDOR' && hasCorridorMetadataPatch(patch)) {
+    persistCorridorMetadataOnly(next);
+    return next;
+  }
+
+  return next;
+}
+
 export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => ({
   map: null,
   activeLevelId: null,
@@ -582,8 +632,17 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         });
       }
 
+      applyCorridorReflow(map);
       updateCounts(map);
-      return { map, selection: replaceSelection({ type: 'section', id: sectionId }), tool: 'select', isDirty: true, past, future: [] };
+
+      return {
+        map,
+        selection: replaceSelection({ type: 'section', id: sectionId }),
+        tool: 'select',
+        isDirty: true,
+        past,
+        future: [],
+      };
     }),
   updateObject: (id, patch) =>
     set((state) => {
@@ -603,28 +662,8 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           : null;
       map.objects = map.objects.map((object) => {
         if (object.id !== id) return object;
-        if (patch.data) {
-          return { ...object, ...patch, data: { ...object.data, ...patch.data } };
-        }
-        return { ...object, ...patch };
+        return applyObjectPatchWithCorridorMetadata(object, patch);
       });
-      const updatedObject = map.objects.find((object) => object.id === id);
-      if (
-        updatedObject?.type === 'CORRIDOR' &&
-        (typeof patch.x === 'number' ||
-          typeof patch.y === 'number' ||
-          typeof patch.width === 'number' ||
-          typeof patch.height === 'number' ||
-          typeof patch.rotation === 'number')
-      ) {
-        updateCorridorSplitAnchorsOnDrag(updatedObject, patch, target ?? undefined);
-      } else if (
-        updatedObject?.type === 'CORRIDOR' &&
-        patch.data &&
-        ('corridorAxis' in patch.data || 'corridorAutoFit' in patch.data)
-      ) {
-        persistCorridorMetadataOnly(updatedObject);
-      }
       if (sectionDelta) translateSectionCorridorBase(map, sectionDelta.sectionId, sectionDelta.delta);
       applyCorridorReflow(map);
       return { map, isDirty: true, past, future: [] };
@@ -652,10 +691,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       map.objects = map.objects.map((object) => {
         const patch = patchById.get(object.id);
         if (!patch) return object;
-        if (patch.data) {
-          return { ...object, ...patch, data: { ...object.data, ...patch.data } };
-        }
-        return { ...object, ...patch };
+        return applyObjectPatchWithCorridorMetadata(object, patch);
       });
 
       for (const entry of sectionDeltas) {
@@ -689,10 +725,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         map.objects = map.objects.map((object) => {
           const patch = objectPatchById.get(object.id);
           if (!patch) return object;
-          if (patch.data) {
-            return { ...object, ...patch, data: { ...object.data, ...patch.data } };
-          }
-          return { ...object, ...patch };
+          return applyObjectPatchWithCorridorMetadata(object, patch);
         });
 
         for (const [sectionId, delta] of sectionDeltaById) {
@@ -1089,8 +1122,12 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           const object = map.objects.find((entry) => entry.id === item.id);
           if (!object || object.locked) continue;
           if (object.sectionId && movedSectionIds.has(object.sectionId)) continue;
-          object.x += dx;
-          object.y += dy;
+
+          const patched = applyObjectPatchWithCorridorMetadata(object, {
+            x: object.x + dx,
+            y: object.y + dy,
+          });
+          Object.assign(object, patched);
         }
 
         if (item.type === 'seat') {

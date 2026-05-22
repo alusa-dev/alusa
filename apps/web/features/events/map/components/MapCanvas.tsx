@@ -1954,12 +1954,36 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                     width={width}
                     height={height}
                     cornerRadius={cornerRadius}
-                    fill={object.type === 'CORRIDOR' ? 'rgba(248, 250, 252, 0.01)' : appearance.fill}
+                    fill={
+                      object.type === 'CORRIDOR'
+                        ? selected
+                          ? 'rgba(124, 58, 237, 0.08)'
+                          : 'rgba(248, 250, 252, 0.01)'
+                        : appearance.fill
+                    }
                     opacity={object.type === 'CORRIDOR' ? 1 : opacity}
-                    stroke={object.type === 'CORRIDOR' ? undefined : appearance.stroke}
-                    strokeWidth={object.type === 'CORRIDOR' ? 0 : appearance.strokeWidth}
+                    stroke={
+                      object.type === 'CORRIDOR'
+                        ? selected
+                          ? '#7c3aed'
+                          : undefined
+                        : appearance.stroke
+                    }
+                    strokeWidth={
+                      object.type === 'CORRIDOR'
+                        ? selected
+                          ? 1.5
+                          : 0
+                        : appearance.strokeWidth
+                    }
                     strokeScaleEnabled={false}
-                    dash={object.type === 'CORRIDOR' ? undefined : appearance.dash}
+                    dash={
+                      object.type === 'CORRIDOR'
+                        ? selected
+                          ? [8, 6]
+                          : undefined
+                        : appearance.dash
+                    }
                   />
                 )}
                 {selected && object.type !== 'CORRIDOR' ? (
