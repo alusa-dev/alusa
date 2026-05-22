@@ -20,6 +20,10 @@ import {
 } from '../lib/event-map-local-draft';
 import { validateGroupCandidates } from '../lib/object-groups';
 import { getSelectableItems } from '../lib/selection-utils';
+import {
+  registerEventMapE2EBridge,
+  unregisterEventMapE2EBridge,
+} from '../lib/event-map-e2e-bridge';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import { FloatingMapToolbar } from './FloatingMapToolbar';
 import { MapAreasPanel } from './MapAreasPanel';
@@ -139,6 +143,11 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     }
     await publishMutation.mutateAsync();
   }
+
+  useEffect(() => {
+    registerEventMapE2EBridge();
+    return () => unregisterEventMapE2EBridge();
+  }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -266,7 +275,10 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   const readOnly = map.status !== 'DRAFT';
 
   return (
-    <main className="flex h-[100svh] min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-950">
+    <main
+      data-testid="event-map-editor"
+      className="flex h-[100svh] min-h-0 flex-col overflow-hidden bg-slate-100 text-slate-950"
+    >
       <MapEditorHeader
         map={map}
         isSaving={saveMutation.isPending}

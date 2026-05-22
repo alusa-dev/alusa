@@ -1,25 +1,39 @@
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
-import { getCorridorBounds, getCorridorUnionGroups, type CorridorUnionGroup } from './corridor-union';
+import {
+  cloneEventMap,
+  CORRIDOR_AXIS_KEY,
+  CORRIDOR_AUTO_FIT_KEY,
+  CORRIDOR_CORE_HEIGHT_KEY,
+  CORRIDOR_CORE_WIDTH_KEY,
+  CORRIDOR_SPLIT_X_KEY,
+  CORRIDOR_SPLIT_Y_KEY,
+  CORRIDOR_THICKNESS_KEY,
+  DEFAULT_CORRIDOR_GAP,
+  DEFAULT_CORRIDOR_THICKNESS,
+  expandRectWithSpacing,
+  getCorridorSpacing,
+  inferCorridorAxisFromSize,
+  inferSmartCorridorAxisFromCoreRect,
+  normalizeSmartCorridorObject,
+  readCorridorThickness,
+  resolveSmartCorridorLayout,
+  SMART_CORRIDOR_KIND_KEY,
+  type CorridorSpacing,
+  type SmartCorridorAxis,
+} from './smart-corridor-layout';
 import { getObjectBounds, getSeatBounds, intersectsRect, type BoundsRect } from './selection-utils';
+
+export { cloneEventMap, inferCorridorAxisFromSize };
 
 const SEAT_BASE_LAYOUT_KEY = 'seatBaseLayout';
 const SECTION_BASE_BOUNDS_KEY = 'sectionBaseBounds';
-const CORRIDOR_REFLOW_PADDING = 8;
 const SECTION_REFLOW_PADDING = 24;
-const CORRIDOR_GAP_DEFAULT = 8;
 const DEFAULT_SEAT_SIZE = 24;
-const CORRIDOR_SPLIT_X_KEY = 'corridorSplitX';
-const CORRIDOR_SPLIT_Y_KEY = 'corridorSplitY';
-const CORRIDOR_AXIS_KEY = 'corridorAxis';
-const CORRIDOR_AUTO_FIT_KEY = 'corridorAutoFit';
-const CORRIDOR_CORE_WIDTH_KEY = 'corridorCoreWidth';
-const CORRIDOR_CORE_HEIGHT_KEY = 'corridorCoreHeight';
 
-export type CorridorAxis = 'vertical' | 'horizontal';
+export type CorridorAxis = SmartCorridorAxis;
 
 type SeatBaseLayout = Record<string, { x: number; y: number }>;
 type SectionBaseBounds = { x: number; y: number; width: number; height: number };
-type CorridorSpacing = { left: number; right: number; top: number; bottom: number };
 
 type SeatEntry = {
   seat: EventSeatDTO;
@@ -28,13 +42,107 @@ type SeatEntry = {
 };
 
 type CorridorObstacle = {
-  group: CorridorUnionGroup;
-  memberObjectIds: string[];
-  bodyRect: BoundsRect;
-  clearance: number;
+  objectIds: string[];
   axis: 'x' | 'y';
+  coreRect: BoundsRect;
+  clearanceRect: BoundsRect;
+  spacing: CorridorSpacing;
+  thickness: number;
   splitCenter: number;
 };
+
+function unionRects(rects: BoundsRect[]): BoundsRect {
+  if (rects.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function rebuildObstacleClearanceRect(obstacle: {
+  axis: 'x' | 'y';
+  coreRect: BoundsRect;
+  spacing: CorridorSpacing;
+  thickness: number;
+  splitCenter: number;
+}): BoundsRect {
+  const { coreRect, spacing, thickness, splitCenter, axis } = obstacle;
+
+  if (axis === 'x') {
+    const width = thickness + spacing.left + spacing.right;
+    return {
+      x: splitCenter - width / 2,
+      y: coreRect.y - spacing.top,
+      width,
+      height: coreRect.height + spacing.top + spacing.bottom,
+    };
+  }
+
+  const height = thickness + spacing.top + spacing.bottom;
+  return {
+    x: coreRect.x - spacing.left,
+    y: splitCenter - height / 2,
+    width: coreRect.width + spacing.left + spacing.right,
+    height,
+  };
+}
+
+function partitionAxisSpan(obstacle: CorridorObstacle) {
+  if (obstacle.axis === 'x') {
+    return { start: obstacle.clearanceRect.x, size: obstacle.clearanceRect.width };
+  }
+  return { start: obstacle.clearanceRect.y, size: obstacle.clearanceRect.height };
+}
+
+function obstaclesShouldMerge(left: CorridorObstacle, right: CorridorObstacle) {
+  if (left.axis !== right.axis) return false;
+  if (Math.abs(left.splitCenter - right.splitCenter) < 2) return true;
+
+  const leftSpan = partitionAxisSpan(left);
+  const rightSpan = partitionAxisSpan(right);
+  const overlap = Math.min(leftSpan.start + leftSpan.size, rightSpan.start + rightSpan.size) - Math.max(leftSpan.start, rightSpan.start);
+  const minSize = Math.min(leftSpan.size, rightSpan.size);
+  return overlap > minSize * 0.5;
+}
+
+function mergeCorridorObstacle(existing: CorridorObstacle, obstacle: CorridorObstacle) {
+  existing.objectIds = [...new Set([...existing.objectIds, ...obstacle.objectIds])];
+  existing.coreRect = unionRects([existing.coreRect, obstacle.coreRect]);
+  existing.thickness = Math.max(existing.thickness, obstacle.thickness);
+  existing.spacing = {
+    top: Math.max(existing.spacing.top, obstacle.spacing.top),
+    right: Math.max(existing.spacing.right, obstacle.spacing.right),
+    bottom: Math.max(existing.spacing.bottom, obstacle.spacing.bottom),
+    left: Math.max(existing.spacing.left, obstacle.spacing.left),
+  };
+  existing.splitCenter = (existing.splitCenter + obstacle.splitCenter) / 2;
+  existing.clearanceRect = rebuildObstacleClearanceRect(existing);
+}
+
+function dedupeObstaclesBySplitCenter(obstacles: CorridorObstacle[]) {
+  const merged: CorridorObstacle[] = [];
+
+  for (const obstacle of obstacles) {
+    const existing = merged.find((entry) => obstaclesShouldMerge(entry, obstacle));
+
+    if (!existing) {
+      merged.push({ ...obstacle });
+      continue;
+    }
+
+    mergeCorridorObstacle(existing, obstacle);
+  }
+
+  return merged;
+}
 
 function getSeatSize(seat: EventSeatDTO) {
   return seat.size ?? DEFAULT_SEAT_SIZE;
@@ -44,90 +152,36 @@ function getSeatBasePoint(seat: EventSeatDTO, baseLayout: SeatBaseLayout) {
   return baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
 }
 
-function getSeatRectFromBase(seat: EventSeatDTO, base: { x: number; y: number }): BoundsRect {
-  const size = getSeatSize(seat);
-
-  return {
-    x: base.x - size / 2,
-    y: base.y - size / 2,
-    width: size,
-    height: size,
-  };
-}
-
 function getSeatAxisEdge(seat: EventSeatDTO, axis: 'x' | 'y', edge: 'start' | 'end') {
   const size = getSeatSize(seat);
   const center = axis === 'x' ? seat.x : seat.y;
-
-  if (edge === 'start') {
-    return center - size / 2;
-  }
-
-  return center + size / 2;
-}
-
-function getSeatBaseAxisEdge(
-  seat: EventSeatDTO,
-  baseLayout: SeatBaseLayout,
-  axis: 'x' | 'y',
-  edge: 'start' | 'end',
-) {
-  const base = getSeatBasePoint(seat, baseLayout);
-  const size = getSeatSize(seat);
-  const center = axis === 'x' ? base.x : base.y;
-
-  if (edge === 'start') {
-    return center - size / 2;
-  }
-
-  return center + size / 2;
+  return edge === 'start' ? center - size / 2 : center + size / 2;
 }
 
 function isCorridor(object: EventMapObjectDTO) {
   return object.type === 'CORRIDOR' && !object.hidden;
 }
 
-export function inferCorridorAxisFromSize(width: number, height: number): CorridorAxis {
-  return width > height ? 'horizontal' : 'vertical';
-}
-
 export function resolveCorridorAxis(corridor: EventMapObjectDTO): CorridorAxis {
-  const stored = corridor.data[CORRIDOR_AXIS_KEY];
-  if (stored === 'vertical' || stored === 'horizontal') return stored;
-  return inferCorridorAxisFromSize(
-    corridor.width ?? getCorridorBounds(corridor).width,
-    corridor.height ?? getCorridorBounds(corridor).height,
-  );
+  return resolveSmartCorridorLayout(corridor).axis;
 }
 
-export function isCorridorAutoFit(corridor: EventMapObjectDTO) {
-  return corridor.data[CORRIDOR_AUTO_FIT_KEY] !== false;
+export function isCorridorAutoFit(_corridor: EventMapObjectDTO) {
+  return true;
 }
 
-function persistCorridorMetadata(corridor: EventMapObjectDTO) {
-  const axis = resolveCorridorAxis(corridor);
-  const bounds = getCorridorBounds(corridor);
-  const nextData: Record<string, unknown> = {
+function persistSmartCorridorMetadata(corridor: EventMapObjectDTO) {
+  normalizeSmartCorridorObject(corridor);
+  const layout = resolveSmartCorridorLayout(corridor);
+  corridor.data = {
     ...corridor.data,
-    [CORRIDOR_AXIS_KEY]: axis,
-    [CORRIDOR_AUTO_FIT_KEY]: isCorridorAutoFit(corridor),
+    [SMART_CORRIDOR_KIND_KEY]: true,
+    [CORRIDOR_AXIS_KEY]: layout.axis,
+    [CORRIDOR_AUTO_FIT_KEY]: true,
+    [CORRIDOR_THICKNESS_KEY]: layout.thickness,
+    [CORRIDOR_CORE_WIDTH_KEY]: layout.axis === 'vertical' ? layout.thickness : layout.coreRect.width,
+    [CORRIDOR_CORE_HEIGHT_KEY]: layout.axis === 'horizontal' ? layout.thickness : layout.coreRect.height,
   };
-
-  if (!Number.isFinite(Number(nextData[CORRIDOR_CORE_WIDTH_KEY]))) {
-    nextData[CORRIDOR_CORE_WIDTH_KEY] = corridor.width ?? bounds.width;
-  }
-  if (!Number.isFinite(Number(nextData[CORRIDOR_CORE_HEIGHT_KEY]))) {
-    nextData[CORRIDOR_CORE_HEIGHT_KEY] = corridor.height ?? bounds.height;
-  }
-
-  corridor.data = nextData;
-}
-
-function getCorridorCoreThickness(corridor: EventMapObjectDTO, axis: 'x' | 'y') {
-  const key = axis === 'x' ? CORRIDOR_CORE_WIDTH_KEY : CORRIDOR_CORE_HEIGHT_KEY;
-  const stored = Number(corridor.data[key]);
-  if (Number.isFinite(stored) && stored > 0) return stored;
-  return axis === 'x' ? (corridor.width ?? 32) : (corridor.height ?? 32);
 }
 
 function isSectionObject(object: EventMapObjectDTO) {
@@ -172,91 +226,6 @@ function writeSectionBaseBounds(object: EventMapObjectDTO, bounds: SectionBaseBo
   object.data = { ...object.data, [SECTION_BASE_BOUNDS_KEY]: bounds };
 }
 
-function getCorridorSpacing(corridor: EventMapObjectDTO): CorridorSpacing {
-  const read = (key: string) => {
-    const value = Number(corridor.data[key]);
-    return Number.isFinite(value) ? Math.max(0, value) : CORRIDOR_GAP_DEFAULT;
-  };
-
-  return {
-    left: read('seatGapLeft'),
-    right: read('seatGapRight'),
-    top: read('seatGapTop'),
-    bottom: read('seatGapBottom'),
-  };
-}
-
-function getSpacedCorridorBounds(bounds: BoundsRect, spacing: CorridorSpacing): BoundsRect {
-  return {
-    x: bounds.x - spacing.left,
-    y: bounds.y - spacing.top,
-    width: bounds.width + spacing.left + spacing.right,
-    height: bounds.height + spacing.top + spacing.bottom,
-  };
-}
-
-function unionRects(rects: BoundsRect[]): BoundsRect {
-  if (rects.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
-
-  const minX = Math.min(...rects.map((rect) => rect.x));
-  const minY = Math.min(...rects.map((rect) => rect.y));
-  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
-  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
-
-  return {
-    x: minX,
-    y: minY,
-    width: maxX - minX,
-    height: maxY - minY,
-  };
-}
-
-function getDefaultCorridorSpacing(): CorridorSpacing {
-  return {
-    left: CORRIDOR_REFLOW_PADDING,
-    right: CORRIDOR_REFLOW_PADDING,
-    top: CORRIDOR_REFLOW_PADDING,
-    bottom: CORRIDOR_REFLOW_PADDING,
-  };
-}
-
-function getMemberClearance(
-  memberRect: BoundsRect,
-  spacing: CorridorSpacing,
-  axis: 'x' | 'y',
-  corridor?: EventMapObjectDTO,
-) {
-  const body =
-    corridor && isCorridorAutoFit(corridor)
-      ? getCorridorCoreThickness(corridor, axis)
-      : axis === 'x'
-        ? memberRect.width
-        : memberRect.height;
-
-  if (axis === 'x') {
-    return body + spacing.left + spacing.right;
-  }
-  return body + spacing.top + spacing.bottom;
-}
-
-function getObstacleSpacedRect(obstacle: CorridorObstacle): BoundsRect {
-  if (obstacle.axis === 'x') {
-    return {
-      x: obstacle.splitCenter - obstacle.clearance / 2,
-      y: obstacle.bodyRect.y,
-      width: obstacle.clearance,
-      height: obstacle.bodyRect.height,
-    };
-  }
-
-  return {
-    x: obstacle.bodyRect.x,
-    y: obstacle.splitCenter - obstacle.clearance / 2,
-    width: obstacle.bodyRect.width,
-    height: obstacle.clearance,
-  };
-}
-
 function getSectionSeatBounds(seats: EventSeatDTO[]) {
   if (seats.length === 0) return null;
 
@@ -278,15 +247,37 @@ function resizeSectionToSeats(sectionObject: EventMapObjectDTO, seats: EventSeat
   const seatBounds = getSectionSeatBounds(seats);
   if (!seatBounds) return;
 
-  const x = Math.min(baseBounds.x, seatBounds.minX - SECTION_REFLOW_PADDING);
-  const y = Math.min(baseBounds.y, seatBounds.minY - SECTION_REFLOW_PADDING);
-  const maxX = Math.max(baseBounds.x + baseBounds.width, seatBounds.maxX + SECTION_REFLOW_PADDING);
-  const maxY = Math.max(baseBounds.y + baseBounds.height, seatBounds.maxY + SECTION_REFLOW_PADDING);
+  sectionObject.x = Math.min(baseBounds.x, seatBounds.minX - SECTION_REFLOW_PADDING);
+  sectionObject.y = Math.min(baseBounds.y, seatBounds.minY - SECTION_REFLOW_PADDING);
+  sectionObject.width =
+    Math.max(baseBounds.x + baseBounds.width, seatBounds.maxX + SECTION_REFLOW_PADDING) - sectionObject.x;
+  sectionObject.height =
+    Math.max(baseBounds.y + baseBounds.height, seatBounds.maxY + SECTION_REFLOW_PADDING) - sectionObject.y;
+}
 
-  sectionObject.x = x;
-  sectionObject.y = y;
-  sectionObject.width = maxX - x;
-  sectionObject.height = maxY - y;
+function getSeatBoundsFromBase(seat: EventSeatDTO, baseLayout: SeatBaseLayout) {
+  const base = getSeatBasePoint(seat, baseLayout);
+  return getSeatBounds({ ...seat, x: base.x, y: base.y });
+}
+
+function corridorAffectsSection({
+  corridor,
+  sectionSeats,
+  baseLayout,
+  baseBounds,
+}: {
+  corridor: EventMapObjectDTO;
+  sectionSeats: EventSeatDTO[];
+  baseLayout: SeatBaseLayout;
+  baseBounds: SectionBaseBounds;
+}) {
+  const { clearanceRect } = resolveSmartCorridorLayout(corridor);
+
+  if (intersectsRect(baseBounds, clearanceRect)) {
+    return true;
+  }
+
+  return sectionSeats.some((seat) => intersectsRect(getSeatBoundsFromBase(seat, baseLayout), clearanceRect));
 }
 
 function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDTO[]) {
@@ -294,18 +285,24 @@ function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDT
   const sectionObjects = map.objects.filter(isSectionObject);
 
   for (const corridor of corridors) {
-    const corridorBounds = getSpacedCorridorBounds(getCorridorBounds(corridor), getCorridorSpacing(corridor));
+    const { clearanceRect } = resolveSmartCorridorLayout(corridor);
 
     for (const sectionObject of sectionObjects) {
       if (sectionObject.levelId !== corridor.levelId || !sectionObject.sectionId) continue;
 
-      if (intersectsRect(getObjectBounds(sectionObject), corridorBounds)) {
-        affected.add(sectionObject.sectionId);
-        continue;
-      }
+      const baseLayout = readSeatBaseLayout(sectionObject);
+      const baseBounds =
+        readSectionBaseBounds(sectionObject) ??
+        ({
+          x: sectionObject.x,
+          y: sectionObject.y,
+          width: sectionObject.width ?? 0,
+          height: sectionObject.height ?? 0,
+        } satisfies SectionBaseBounds);
 
       const sectionSeats = map.seats.filter((seat) => seat.sectionId === sectionObject.sectionId);
-      if (sectionSeats.some((seat) => intersectsRect(getSeatBounds(seat), corridorBounds))) {
+
+      if (corridorAffectsSection({ corridor, sectionSeats, baseLayout, baseBounds })) {
         affected.add(sectionObject.sectionId);
       }
     }
@@ -321,66 +318,6 @@ function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDT
   return affected;
 }
 
-function unionGroupAffectsSection({
-  group,
-  corridorById,
-  sectionObject,
-  sectionSeats,
-  baseLayout,
-  baseBounds,
-}: {
-  group: CorridorUnionGroup;
-  corridorById: Map<string, EventMapObjectDTO>;
-  sectionObject: EventMapObjectDTO;
-  sectionSeats: EventSeatDTO[];
-  baseLayout: SeatBaseLayout;
-  baseBounds: SectionBaseBounds;
-}) {
-  const spacedBounds = unionRects(
-    group.members.map((member) => {
-      const corridor = corridorById.get(member.objectId);
-      const spacing = corridor ? getCorridorSpacing(corridor) : getDefaultCorridorSpacing();
-      let bounds = member.rect;
-
-      if (corridor) {
-        const axis = resolveCorridorAxis(corridor);
-        const expanded = expandObstacleBodyForSection(
-          {
-            group,
-            memberObjectIds: [member.objectId],
-            bodyRect: bounds,
-            clearance: 0,
-            axis: axis === 'vertical' ? 'x' : 'y',
-            splitCenter: 0,
-          },
-          sectionSeats,
-          baseLayout,
-        );
-        bounds = expanded;
-      }
-
-      return getSpacedCorridorBounds(bounds, spacing);
-    }),
-  );
-
-  if (intersectsRect(baseBounds, spacedBounds)) {
-    return true;
-  }
-
-  return sectionSeats.some((seat) => {
-    const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
-    const seatBounds = getSeatBounds({ ...seat, x: base.x, y: base.y });
-    return intersectsRect(seatBounds, spacedBounds);
-  });
-}
-
-function getCorridorSplitCenter(corridor: EventMapObjectDTO, memberRect: BoundsRect, axis: 'x' | 'y') {
-  const key = axis === 'x' ? CORRIDOR_SPLIT_X_KEY : CORRIDOR_SPLIT_Y_KEY;
-  const stored = Number(corridor.data[key]);
-  if (Number.isFinite(stored)) return stored;
-  return axis === 'x' ? memberRect.x + memberRect.width / 2 : memberRect.y + memberRect.height / 2;
-}
-
 function getSeatAxisCenters(sectionSeats: EventSeatDTO[], baseLayout: SeatBaseLayout, axis: 'x' | 'y') {
   const centers = sectionSeats.map((seat) => {
     const base = getSeatBasePoint(seat, baseLayout);
@@ -391,19 +328,17 @@ function getSeatAxisCenters(sectionSeats: EventSeatDTO[], baseLayout: SeatBaseLa
 }
 
 function resolveInitialCorridorSplitCenter(
-  memberRect: BoundsRect,
+  coreRect: BoundsRect,
   axis: 'x' | 'y',
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
 ) {
   const centers = getSeatAxisCenters(sectionSeats, baseLayout, axis);
   if (centers.length < 2) {
-    return axis === 'x'
-      ? memberRect.x + memberRect.width / 2
-      : memberRect.y + memberRect.height / 2;
+    return axis === 'x' ? coreRect.x + coreRect.width / 2 : coreRect.y + coreRect.height / 2;
   }
 
-  const edge = axis === 'x' ? memberRect.x : memberRect.y;
+  const edge = axis === 'x' ? coreRect.x : coreRect.y;
   let before: number | undefined;
   let after: number | undefined;
 
@@ -420,9 +355,7 @@ function resolveInitialCorridorSplitCenter(
     return (before + after) / 2;
   }
 
-  return axis === 'x'
-    ? memberRect.x + memberRect.width / 2
-    : memberRect.y + memberRect.height / 2;
+  return axis === 'x' ? coreRect.x + coreRect.width / 2 : coreRect.y + coreRect.height / 2;
 }
 
 function getPartitionedPairIndex(centers: number[], split: number) {
@@ -434,27 +367,26 @@ function getPartitionedPairIndex(centers: number[], split: number) {
   return null;
 }
 
-function corridorGeometryMatchesAxis(corridor: EventMapObjectDTO, memberRect: BoundsRect) {
-  const axis = resolveCorridorAxis(corridor);
-  if (axis === 'vertical') return memberRect.height >= memberRect.width;
-  return memberRect.width >= memberRect.height;
+function corridorGeometryMatchesAxis(layout: ReturnType<typeof resolveSmartCorridorLayout>) {
+  if (layout.axis === 'vertical') return layout.coreRect.height >= layout.coreRect.width;
+  return layout.coreRect.width >= layout.coreRect.height;
 }
 
 function reconcileCorridorSplitAnchor(
   corridor: EventMapObjectDTO,
-  memberRect: BoundsRect,
-  axis: 'x' | 'y',
+  layout: ReturnType<typeof resolveSmartCorridorLayout>,
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
 ) {
+  const axis = layout.axis === 'vertical' ? 'x' : 'y';
   const key = axis === 'x' ? CORRIDOR_SPLIT_X_KEY : CORRIDOR_SPLIT_Y_KEY;
   const stored = Number(corridor.data[key]);
-  if (!Number.isFinite(stored) || !corridorGeometryMatchesAxis(corridor, memberRect)) return;
+  if (!Number.isFinite(stored) || !corridorGeometryMatchesAxis(layout)) return;
 
   const centers = getSeatAxisCenters(sectionSeats, baseLayout, axis);
   if (centers.length < 2) return;
 
-  const resolved = resolveInitialCorridorSplitCenter(memberRect, axis, sectionSeats, baseLayout);
+  const resolved = resolveInitialCorridorSplitCenter(layout.coreRect, axis, sectionSeats, baseLayout);
   const storedPair = getPartitionedPairIndex(centers, stored);
   const resolvedPair = getPartitionedPairIndex(centers, resolved);
 
@@ -463,69 +395,76 @@ function reconcileCorridorSplitAnchor(
   }
 }
 
+function getCorridorSplitCenter(
+  corridor: EventMapObjectDTO,
+  layout: ReturnType<typeof resolveSmartCorridorLayout>,
+  axis: 'x' | 'y',
+) {
+  const key = axis === 'x' ? CORRIDOR_SPLIT_X_KEY : CORRIDOR_SPLIT_Y_KEY;
+  const stored = Number(corridor.data[key]);
+  if (Number.isFinite(stored)) return stored;
+  return axis === 'x'
+    ? layout.coreRect.x + layout.coreRect.width / 2
+    : layout.coreRect.y + layout.coreRect.height / 2;
+}
+
 function ensureCorridorSplitAnchors(
-  group: CorridorUnionGroup,
-  corridorById: Map<string, EventMapObjectDTO>,
+  corridor: EventMapObjectDTO,
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
 ) {
-  for (const member of group.members) {
-    const corridor = corridorById.get(member.objectId);
-    if (!corridor) continue;
+  persistSmartCorridorMetadata(corridor);
+  const layout = resolveSmartCorridorLayout(corridor);
+  const nextData: Record<string, unknown> = { ...corridor.data };
 
-    persistCorridorMetadata(corridor);
-    const corridorAxis = resolveCorridorAxis(corridor);
-    const nextData: Record<string, unknown> = { ...corridor.data };
-
-    if (corridorAxis === 'vertical') {
-      if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
-        nextData[CORRIDOR_SPLIT_X_KEY] = resolveInitialCorridorSplitCenter(
-          member.rect,
-          'x',
-          sectionSeats,
-          baseLayout,
-        );
-      } else {
-        corridor.data = nextData;
-        reconcileCorridorSplitAnchor(corridor, member.rect, 'x', sectionSeats, baseLayout);
-        nextData[CORRIDOR_SPLIT_X_KEY] = corridor.data[CORRIDOR_SPLIT_X_KEY];
-      }
-    } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
-      nextData[CORRIDOR_SPLIT_X_KEY] = member.rect.x + member.rect.width / 2;
+  if (layout.axis === 'vertical') {
+    if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
+      nextData[CORRIDOR_SPLIT_X_KEY] = resolveInitialCorridorSplitCenter(
+        layout.coreRect,
+        'x',
+        sectionSeats,
+        baseLayout,
+      );
+    } else {
+      corridor.data = nextData;
+      reconcileCorridorSplitAnchor(corridor, layout, sectionSeats, baseLayout);
+      nextData[CORRIDOR_SPLIT_X_KEY] = corridor.data[CORRIDOR_SPLIT_X_KEY];
     }
-
-    if (corridorAxis === 'horizontal') {
-      if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
-        nextData[CORRIDOR_SPLIT_Y_KEY] = resolveInitialCorridorSplitCenter(
-          member.rect,
-          'y',
-          sectionSeats,
-          baseLayout,
-        );
-      } else {
-        corridor.data = nextData;
-        reconcileCorridorSplitAnchor(corridor, member.rect, 'y', sectionSeats, baseLayout);
-        nextData[CORRIDOR_SPLIT_Y_KEY] = corridor.data[CORRIDOR_SPLIT_Y_KEY];
-      }
-    } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
-      nextData[CORRIDOR_SPLIT_Y_KEY] = member.rect.y + member.rect.height / 2;
-    }
-
-    corridor.data = nextData;
+  } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
+    nextData[CORRIDOR_SPLIT_X_KEY] = layout.coreRect.x + layout.coreRect.width / 2;
   }
+
+  if (layout.axis === 'horizontal') {
+    if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
+      nextData[CORRIDOR_SPLIT_Y_KEY] = resolveInitialCorridorSplitCenter(
+        layout.coreRect,
+        'y',
+        sectionSeats,
+        baseLayout,
+      );
+    } else {
+      corridor.data = nextData;
+      reconcileCorridorSplitAnchor(corridor, layout, sectionSeats, baseLayout);
+      nextData[CORRIDOR_SPLIT_Y_KEY] = corridor.data[CORRIDOR_SPLIT_Y_KEY];
+    }
+  } else if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_Y_KEY]))) {
+    nextData[CORRIDOR_SPLIT_Y_KEY] = layout.coreRect.y + layout.coreRect.height / 2;
+  }
+
+  corridor.data = nextData;
 }
 
 export function persistCorridorMetadataOnly(corridor: EventMapObjectDTO) {
-  persistCorridorMetadata(corridor);
+  persistSmartCorridorMetadata(corridor);
 }
 
 export function updateCorridorSplitAnchors(corridor: EventMapObjectDTO) {
-  const bounds = getCorridorBounds(corridor);
-  persistCorridorMetadata(corridor);
+  const layout = resolveSmartCorridorLayout(corridor);
+  persistSmartCorridorMetadata(corridor);
   corridor.data = {
     ...corridor.data,
-    [CORRIDOR_SPLIT_X_KEY]: bounds.x + bounds.width / 2,
-    [CORRIDOR_SPLIT_Y_KEY]: bounds.y + bounds.height / 2,
+    [CORRIDOR_SPLIT_X_KEY]: layout.coreRect.x + layout.coreRect.width / 2,
+    [CORRIDOR_SPLIT_Y_KEY]: layout.coreRect.y + layout.coreRect.height / 2,
   };
 }
 
@@ -534,112 +473,71 @@ export function updateCorridorSplitAnchorsOnDrag(
   patch: Partial<EventMapObjectDTO>,
   previous?: EventMapObjectDTO,
 ) {
-  const axis = resolveCorridorAxis(corridor);
-  const bounds = getCorridorBounds(corridor);
-  const nextData: Record<string, unknown> = { ...corridor.data, [CORRIDOR_AXIS_KEY]: axis };
+  const layout = resolveSmartCorridorLayout(corridor);
+  const axis = layout.axis;
+  const nextData: Record<string, unknown> = {
+    ...corridor.data,
+    [SMART_CORRIDOR_KIND_KEY]: true,
+  };
 
-  const resizedOrRotated =
-    typeof patch.width === 'number' ||
-    typeof patch.height === 'number' ||
-    typeof patch.rotation === 'number';
+  const movedX = typeof patch.x === 'number' && previous;
+  const movedY = typeof patch.y === 'number' && previous;
 
-  if (resizedOrRotated) {
-    nextData[CORRIDOR_SPLIT_X_KEY] = bounds.x + bounds.width / 2;
-    nextData[CORRIDOR_SPLIT_Y_KEY] = bounds.y + bounds.height / 2;
-    if (typeof patch.width === 'number') {
-      nextData[CORRIDOR_CORE_WIDTH_KEY] = patch.width;
-    }
-    if (typeof patch.height === 'number') {
-      nextData[CORRIDOR_CORE_HEIGHT_KEY] = patch.height;
-    }
-  } else if (axis === 'vertical' && typeof patch.x === 'number') {
+  if (axis === 'vertical') {
     const previousSplit = Number(previous?.data[CORRIDOR_SPLIT_X_KEY]);
-    if (previous && Number.isFinite(previousSplit)) {
-      nextData[CORRIDOR_SPLIT_X_KEY] = previousSplit + (patch.x - previous.x);
-    } else {
-      nextData[CORRIDOR_SPLIT_X_KEY] = bounds.x + bounds.width / 2;
-    }
-  } else if (axis === 'horizontal' && typeof patch.y === 'number') {
-    const previousSplit = Number(previous?.data[CORRIDOR_SPLIT_Y_KEY]);
-    if (previous && Number.isFinite(previousSplit)) {
-      nextData[CORRIDOR_SPLIT_Y_KEY] = previousSplit + (patch.y - previous.y);
-    } else {
-      nextData[CORRIDOR_SPLIT_Y_KEY] = bounds.y + bounds.height / 2;
-    }
+    nextData[CORRIDOR_SPLIT_X_KEY] =
+      movedX && Number.isFinite(previousSplit)
+        ? previousSplit + (corridor.x - previous.x)
+        : layout.coreRect.x + layout.coreRect.width / 2;
   }
 
+  if (axis === 'horizontal') {
+    const previousSplit = Number(previous?.data[CORRIDOR_SPLIT_Y_KEY]);
+    nextData[CORRIDOR_SPLIT_Y_KEY] =
+      movedY && Number.isFinite(previousSplit)
+        ? previousSplit + (corridor.y - previous.y)
+        : layout.coreRect.y + layout.coreRect.height / 2;
+  }
+
+  if (typeof patch.width === 'number' || typeof patch.height === 'number') {
+    const nextLayout = resolveSmartCorridorLayout(corridor);
+    nextData[CORRIDOR_THICKNESS_KEY] =
+      nextLayout.axis === 'vertical'
+        ? Math.max(1, nextLayout.coreRect.width)
+        : Math.max(1, nextLayout.coreRect.height);
+  }
+
+  corridor.rotation = 0;
   corridor.data = nextData;
 }
 
-function expandObstacleBodyForSection(
-  obstacle: CorridorObstacle,
-  sectionSeats: EventSeatDTO[],
-  baseLayout: SeatBaseLayout,
-): BoundsRect {
-  if (sectionSeats.length === 0) return obstacle.bodyRect;
-
-  const seatRects = sectionSeats.map((seat) => {
-    const base = getSeatBasePoint(seat, baseLayout);
-    return getSeatRectFromBase(seat, base);
-  });
-
-  if (obstacle.axis === 'x') {
-    const minY = Math.min(...seatRects.map((rect) => rect.y));
-    const maxY = Math.max(...seatRects.map((rect) => rect.y + rect.height));
-
-    return {
-      ...obstacle.bodyRect,
-      y: minY,
-      height: maxY - minY,
-    };
-  }
-
-  const minX = Math.min(...seatRects.map((rect) => rect.x));
-  const maxX = Math.max(...seatRects.map((rect) => rect.x + rect.width));
-
-  return {
-    ...obstacle.bodyRect,
-    x: minX,
-    width: maxX - minX,
-  };
-}
-
 function buildCorridorObstacles(
-  groups: CorridorUnionGroup[],
-  corridorById: Map<string, EventMapObjectDTO>,
+  corridors: EventMapObjectDTO[],
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
 ): { vertical: CorridorObstacle[]; horizontal: CorridorObstacle[] } {
   const vertical: CorridorObstacle[] = [];
   const horizontal: CorridorObstacle[] = [];
 
-  for (const group of groups) {
-    ensureCorridorSplitAnchors(group, corridorById, sectionSeats, baseLayout);
+  for (const corridor of corridors) {
+    ensureCorridorSplitAnchors(corridor, sectionSeats, baseLayout);
+    const layout = resolveSmartCorridorLayout(corridor);
+    const partitionAxis = layout.axis === 'vertical' ? 'x' : 'y';
 
-    for (const member of group.members) {
-      const corridor = corridorById.get(member.objectId);
-      if (!corridor) continue;
+    const obstacle: CorridorObstacle = {
+      objectIds: [corridor.id],
+      axis: partitionAxis,
+      coreRect: layout.coreRect,
+      clearanceRect: layout.clearanceRect,
+      spacing: layout.spacing,
+      thickness: layout.thickness,
+      splitCenter: getCorridorSplitCenter(corridor, layout, partitionAxis),
+    };
 
-      persistCorridorMetadata(corridor);
-
-      const corridorAxis = resolveCorridorAxis(corridor);
-      const axis = corridorAxis === 'vertical' ? 'x' : 'y';
-      const spacing = getCorridorSpacing(corridor);
-
-      const obstacle: CorridorObstacle = {
-        group,
-        memberObjectIds: [member.objectId],
-        bodyRect: member.rect,
-        clearance: getMemberClearance(member.rect, spacing, axis, corridor),
-        axis,
-        splitCenter: getCorridorSplitCenter(corridor, member.rect, axis),
-      };
-
-      if (corridorAxis === 'vertical') {
-        vertical.push(obstacle);
-      } else {
-        horizontal.push(obstacle);
-      }
+    if (layout.axis === 'vertical') {
+      vertical.push(obstacle);
+    } else {
+      horizontal.push(obstacle);
     }
   }
 
@@ -652,50 +550,11 @@ function buildCorridorObstacles(
   };
 }
 
-function mergeCorridorUnionGroups(left: CorridorUnionGroup, right: CorridorUnionGroup): CorridorUnionGroup {
-  const members = [...left.members, ...right.members];
-  const rects = members.map((member) => member.rect);
-
-  return {
-    id: [...left.objectIds, ...right.objectIds].sort().join(':'),
-    objectIds: [...left.objectIds, ...right.objectIds],
-    members,
-    rects,
-    bounds: unionRects(rects),
-    segments: [...left.segments, ...right.segments],
-  };
-}
-
-function dedupeObstaclesBySplitCenter(obstacles: CorridorObstacle[]) {
-  const merged: CorridorObstacle[] = [];
-
-  for (const obstacle of obstacles) {
-    const existing = merged.find(
-      (entry) => entry.axis === obstacle.axis && Math.abs(entry.splitCenter - obstacle.splitCenter) < 2,
-    );
-
-    if (!existing) {
-      merged.push(obstacle);
-      continue;
-    }
-
-    existing.group = mergeCorridorUnionGroups(existing.group, obstacle.group);
-    existing.memberObjectIds = [
-      ...new Set([...existing.memberObjectIds, ...obstacle.memberObjectIds]),
-    ];
-    existing.bodyRect = unionRects([existing.bodyRect, obstacle.bodyRect]);
-    existing.clearance = Math.max(existing.clearance, obstacle.clearance);
-    existing.splitCenter = (existing.splitCenter + obstacle.splitCenter) / 2;
-  }
-
-  return merged;
-}
-
 function groupSeatsByRow(seats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
   const groups = new Map<string, EventSeatDTO[]>();
 
   for (const seat of seats) {
-    const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
+    const base = getSeatBasePoint(seat, baseLayout);
     const key = seat.rowLabel?.trim() ? seat.rowLabel : `y:${Math.round(base.y)}`;
     const current = groups.get(key) ?? [];
     current.push(seat);
@@ -709,7 +568,7 @@ function groupSeatsByColumn(seats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
   const groups = new Map<string, EventSeatDTO[]>();
 
   for (const seat of seats) {
-    const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
+    const base = getSeatBasePoint(seat, baseLayout);
     const key = seat.seatNumber?.trim() ? seat.seatNumber : `x:${Math.round(base.x)}`;
     const current = groups.get(key) ?? [];
     current.push(seat);
@@ -720,38 +579,23 @@ function groupSeatsByColumn(seats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
 }
 
 function rowOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const rowMinY = Math.min(
-    ...entries.map((entry) => entry.base.y - getSeatSize(entry.seat) / 2),
-  );
-
-  const rowMaxY = Math.max(
-    ...entries.map((entry) => entry.base.y + getSeatSize(entry.seat) / 2),
-  );
-
-  const spacedRect = getObstacleSpacedRect(obstacle);
-
-  return !(rowMaxY < spacedRect.y || rowMinY > spacedRect.y + spacedRect.height);
+  const rowMinY = Math.min(...entries.map((entry) => entry.base.y - getSeatSize(entry.seat) / 2));
+  const rowMaxY = Math.max(...entries.map((entry) => entry.base.y + getSeatSize(entry.seat) / 2));
+  const rect = obstacle.clearanceRect;
+  return !(rowMaxY < rect.y || rowMinY > rect.y + rect.height);
 }
 
 function columnOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const colMinX = Math.min(
-    ...entries.map((entry) => entry.base.x - getSeatSize(entry.seat) / 2),
-  );
-
-  const colMaxX = Math.max(
-    ...entries.map((entry) => entry.base.x + getSeatSize(entry.seat) / 2),
-  );
-
-  const spacedRect = getObstacleSpacedRect(obstacle);
-
-  return !(colMaxX < spacedRect.x || colMinX > spacedRect.x + spacedRect.width);
+  const colMinX = Math.min(...entries.map((entry) => entry.base.x - getSeatSize(entry.seat) / 2));
+  const colMaxX = Math.max(...entries.map((entry) => entry.base.x + getSeatSize(entry.seat) / 2));
+  const rect = obstacle.clearanceRect;
+  return !(colMaxX < rect.x || colMinX > rect.x + rect.width);
 }
 
 function buildSeatEntries(seats: EventSeatDTO[], baseLayout: SeatBaseLayout, axis: 'x' | 'y'): SeatEntry[] {
   return seats.map((seat) => {
-    const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
-    const center = axis === 'x' ? base.x : base.y;
-    return { seat, base, center };
+    const base = getSeatBasePoint(seat, baseLayout);
+    return { seat, base, center: axis === 'x' ? base.x : base.y };
   });
 }
 
@@ -772,14 +616,14 @@ function assignSeatStacks(entries: SeatEntry[], splitCenters: number[]) {
   return stacks;
 }
 
-function getSeatEdge(seat: EventSeatDTO, axis: 'x' | 'y', edge: 'start' | 'end') {
-  return getSeatAxisEdge(seat, axis, edge);
-}
-
 function getSeatBaseEdge(entry: SeatEntry, axis: 'x' | 'y', edge: 'start' | 'end') {
   const size = getSeatSize(entry.seat);
   const center = axis === 'x' ? entry.base.x : entry.base.y;
   return edge === 'start' ? center - size / 2 : center + size / 2;
+}
+
+function getObstacleClearanceSize(obstacle: CorridorObstacle, axis: 'x' | 'y') {
+  return axis === 'x' ? obstacle.clearanceRect.width : obstacle.clearanceRect.height;
 }
 
 function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle[], axis: 'x' | 'y') {
@@ -791,7 +635,7 @@ function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle
 
     if (stack.length === 0) {
       if (cursor != null && obstacle) {
-        cursor += obstacle.clearance;
+        cursor += getObstacleClearanceSize(obstacle, axis);
       }
       continue;
     }
@@ -813,7 +657,7 @@ function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle
 
     if (obstacle) {
       const movedEnd = Math.max(...stack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')));
-      cursor = movedEnd + obstacle.clearance;
+      cursor = movedEnd + getObstacleClearanceSize(obstacle, axis);
     }
   }
 }
@@ -833,8 +677,10 @@ function applyAxisObstaclesToSeatLines(
     const activeObstacles = obstacles.filter((obstacle) => overlaps(entries, obstacle));
     if (activeObstacles.length === 0) continue;
 
-    const activeSplitCenters = activeObstacles.map((obstacle) => obstacle.splitCenter);
-    const stacks = assignSeatStacks(entries, activeSplitCenters);
+    const stacks = assignSeatStacks(
+      entries,
+      activeObstacles.map((obstacle) => obstacle.splitCenter),
+    );
     repositionSeatStacks(stacks, activeObstacles, axis);
   }
 }
@@ -844,148 +690,143 @@ function getCrossAxisSpan(entries: SeatEntry[], partitionAxis: 'x' | 'y') {
 
   if (partitionAxis === 'x') {
     return {
-      min: Math.min(
-        ...entries.map((entry) => entry.seat.y - getSeatSize(entry.seat) / 2),
-      ),
-      max: Math.max(
-        ...entries.map((entry) => entry.seat.y + getSeatSize(entry.seat) / 2),
-      ),
+      min: Math.min(...entries.map((entry) => entry.seat.y - getSeatSize(entry.seat) / 2)),
+      max: Math.max(...entries.map((entry) => entry.seat.y + getSeatSize(entry.seat) / 2)),
     };
   }
 
   return {
-    min: Math.min(
-      ...entries.map((entry) => entry.seat.x - getSeatSize(entry.seat) / 2),
-    ),
-    max: Math.max(
-      ...entries.map((entry) => entry.seat.x + getSeatSize(entry.seat) / 2),
-    ),
+    min: Math.min(...entries.map((entry) => entry.seat.x - getSeatSize(entry.seat) / 2)),
+    max: Math.max(...entries.map((entry) => entry.seat.x + getSeatSize(entry.seat) / 2)),
   };
 }
 
-function applyCorridorGeometry({
+function applyCorridorCoreGeometry({
   corridor,
   axis,
   gapStart,
   gapEnd,
   crossSpan,
+  spacing,
+  thickness,
 }: {
   corridor: EventMapObjectDTO;
   axis: 'x' | 'y';
   gapStart: number;
   gapEnd: number;
   crossSpan: { min: number; max: number };
+  spacing: CorridorSpacing;
+  thickness: number;
 }) {
   const availableGap = gapEnd - gapStart;
   if (availableGap <= 0.001) return;
 
   const crossSize = crossSpan.max - crossSpan.min;
-  const rotation = Number(corridor.rotation ?? 0);
+  if (crossSize <= 0.001) return;
 
-  if (Math.abs(rotation % 360) > 0.001) {
-    const bodyWidth = corridor.width ?? availableGap;
-    const bodyHeight = corridor.height ?? crossSize;
-    if (axis === 'x') {
-      corridor.x = gapStart + Math.max(0, (availableGap - bodyWidth) / 2);
-      corridor.y = crossSpan.min + Math.max(0, (crossSize - bodyHeight) / 2);
-    } else {
-      corridor.y = gapStart + Math.max(0, (availableGap - bodyHeight) / 2);
-      corridor.x = crossSpan.min + Math.max(0, (crossSize - bodyWidth) / 2);
-    }
-    persistCorridorMetadata(corridor);
-    return;
-  }
-
-  if (isCorridorAutoFit(corridor)) {
-    if (axis === 'x') {
-      corridor.x = gapStart;
-      corridor.y = crossSpan.min;
-      corridor.width = availableGap;
-      corridor.height = crossSize;
-    } else {
-      corridor.x = crossSpan.min;
-      corridor.y = gapStart;
-      corridor.width = crossSize;
-      corridor.height = availableGap;
-    }
+  if (axis === 'x') {
+    corridor.x = gapStart + spacing.left;
+    corridor.y = crossSpan.min;
+    corridor.width = Math.min(thickness, Math.max(1, availableGap - spacing.left - spacing.right));
+    corridor.height = crossSize;
   } else {
-    const bodyWidth = corridor.width ?? availableGap;
-    const bodyHeight = corridor.height ?? crossSize;
-    if (axis === 'x') {
-      corridor.x = gapStart + Math.max(0, (availableGap - bodyWidth) / 2);
-      corridor.y = crossSpan.min + Math.max(0, (crossSize - bodyHeight) / 2);
-    } else {
-      corridor.y = gapStart + Math.max(0, (availableGap - bodyHeight) / 2);
-      corridor.x = crossSpan.min + Math.max(0, (crossSize - bodyWidth) / 2);
-    }
+    corridor.x = crossSpan.min;
+    corridor.y = gapStart + spacing.top;
+    corridor.width = crossSize;
+    corridor.height = Math.min(thickness, Math.max(1, availableGap - spacing.top - spacing.bottom));
   }
 
-  persistCorridorMetadata(corridor);
+  corridor.rotation = 0;
+  corridor.data = {
+    ...corridor.data,
+    [SMART_CORRIDOR_KIND_KEY]: true,
+    [CORRIDOR_THICKNESS_KEY]: axis === 'x' ? corridor.width : corridor.height,
+    [CORRIDOR_AXIS_KEY]: axis === 'x' ? 'vertical' : 'horizontal',
+    [CORRIDOR_AUTO_FIT_KEY]: true,
+  };
 }
 
-function syncCorridorObjectsToOpenedGaps(
+function syncCorridorCoresToOpenedGaps(
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
   obstacles: CorridorObstacle[],
   corridorById: Map<string, EventMapObjectDTO>,
   axis: 'x' | 'y',
 ) {
-  if (obstacles.length === 0 || sectionSeats.length === 0) return;
-
-  const seatLines = axis === 'x' ? groupSeatsByRow(sectionSeats, baseLayout) : groupSeatsByColumn(sectionSeats, baseLayout);
+  const lines =
+    axis === 'x' ? groupSeatsByRow(sectionSeats, baseLayout) : groupSeatsByColumn(sectionSeats, baseLayout);
   const overlaps = axis === 'x' ? rowOverlapsObstacle : columnOverlapsObstacle;
-  const referenceLine = seatLines.find((lineSeats) => {
-    const entries = buildSeatEntries(lineSeats, baseLayout, axis);
-    return entries.length > 0 && obstacles.some((obstacle) => overlaps(entries, obstacle));
-  });
 
-  if (!referenceLine) return;
+  for (const obstacle of obstacles) {
+    const affectedLines = lines.filter((lineSeats) => {
+      const entries = buildSeatEntries(lineSeats, baseLayout, axis);
+      return entries.length > 0 && overlaps(entries, obstacle);
+    });
 
-  const baseEntries = buildSeatEntries(referenceLine, baseLayout, axis);
-  const activeObstacles = obstacles.filter((obstacle) => overlaps(baseEntries, obstacle));
-  const stacks = assignSeatStacks(
-    baseEntries,
-    activeObstacles.map((obstacle) => obstacle.splitCenter),
-  );
-  const sectionCrossSpan = getCrossAxisSpan(
-    sectionSeats.map((seat) => {
-      const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
-      return { seat, base, center: 0 };
-    }),
-    axis,
-  );
+    if (affectedLines.length === 0) continue;
 
-  for (let index = 0; index < activeObstacles.length; index += 1) {
-    const leftStack = stacks[index]!;
-    const rightStack = stacks[index + 1]!;
-    const obstacle = activeObstacles[index]!;
-    if (leftStack.length === 0 || rightStack.length === 0) continue;
+    let gapStart = -Infinity;
+    let gapEnd = Infinity;
+    const crossMins: number[] = [];
+    const crossMaxs: number[] = [];
 
-    const gapStart = Math.max(...leftStack.map((entry) => getSeatEdge(entry.seat, axis, 'end')));
-    const gapEnd = Math.min(...rightStack.map((entry) => getSeatEdge(entry.seat, axis, 'start')));
-    if (gapEnd - gapStart <= 0.001) continue;
+    for (const lineSeats of affectedLines) {
+      const entries = buildSeatEntries(lineSeats, baseLayout, axis);
+      const stacks = assignSeatStacks(entries, [obstacle.splitCenter]);
+      const leftStack = stacks[0] ?? [];
+      const rightStack = stacks[1] ?? [];
 
-    const crossSpan =
-      sectionCrossSpan ??
-      getCrossAxisSpan([...leftStack, ...rightStack], axis);
-    if (!crossSpan) continue;
+      if (leftStack.length === 0 || rightStack.length === 0) continue;
 
-    for (const objectId of obstacle.memberObjectIds) {
-      const corridor = corridorById.get(objectId);
-      if (!corridor) continue;
+      gapStart = Math.max(
+        gapStart,
+        ...leftStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')),
+      );
+      gapEnd = Math.min(
+        gapEnd,
+        ...rightStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'start')),
+      );
 
-      applyCorridorGeometry({
-        corridor,
+      const span = getCrossAxisSpan([...leftStack, ...rightStack], axis);
+      if (span) {
+        crossMins.push(span.min);
+        crossMaxs.push(span.max);
+      }
+    }
+
+    if (!Number.isFinite(gapStart) || !Number.isFinite(gapEnd) || gapEnd <= gapStart) continue;
+    if (crossMins.length === 0 || crossMaxs.length === 0) continue;
+
+    const corridor = corridorById.get(obstacle.objectIds[0]!);
+    if (!corridor) continue;
+
+    applyCorridorCoreGeometry({
+      corridor,
+      axis,
+      gapStart,
+      gapEnd,
+      crossSpan: { min: Math.min(...crossMins), max: Math.max(...crossMaxs) },
+      spacing: obstacle.spacing,
+      thickness: obstacle.thickness,
+    });
+
+    for (const objectId of obstacle.objectIds.slice(1)) {
+      const extra = corridorById.get(objectId);
+      if (!extra) continue;
+      applyCorridorCoreGeometry({
+        corridor: extra,
         axis,
         gapStart,
         gapEnd,
-        crossSpan,
+        crossSpan: { min: Math.min(...crossMins), max: Math.max(...crossMaxs) },
+        spacing: obstacle.spacing,
+        thickness: obstacle.thickness,
       });
     }
   }
 }
 
-function applyCorridorStackReflow(
+function applySmartCorridorStackReflow(
   sectionSeats: EventSeatDTO[],
   baseLayout: SeatBaseLayout,
   obstacles: { vertical: CorridorObstacle[]; horizontal: CorridorObstacle[] },
@@ -997,20 +838,11 @@ function applyCorridorStackReflow(
     seat.y = base.y;
   }
 
-  const verticalObstacles = obstacles.vertical.map((obstacle) => ({
-    ...obstacle,
-    bodyRect: expandObstacleBodyForSection(obstacle, sectionSeats, baseLayout),
-  }));
-  const horizontalObstacles = obstacles.horizontal.map((obstacle) => ({
-    ...obstacle,
-    bodyRect: expandObstacleBodyForSection(obstacle, sectionSeats, baseLayout),
-  }));
+  applyAxisObstaclesToSeatLines(groupSeatsByRow(sectionSeats, baseLayout), baseLayout, obstacles.vertical, 'x');
+  applyAxisObstaclesToSeatLines(groupSeatsByColumn(sectionSeats, baseLayout), baseLayout, obstacles.horizontal, 'y');
 
-  applyAxisObstaclesToSeatLines(groupSeatsByRow(sectionSeats, baseLayout), baseLayout, verticalObstacles, 'x');
-  applyAxisObstaclesToSeatLines(groupSeatsByColumn(sectionSeats, baseLayout), baseLayout, horizontalObstacles, 'y');
-
-  syncCorridorObjectsToOpenedGaps(sectionSeats, baseLayout, verticalObstacles, corridorById, 'x');
-  syncCorridorObjectsToOpenedGaps(sectionSeats, baseLayout, horizontalObstacles, corridorById, 'y');
+  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.vertical, corridorById, 'x');
+  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.horizontal, corridorById, 'y');
 }
 
 export function applyCorridorReflow(map: EventMapDTO) {
@@ -1041,13 +873,14 @@ export function applyCorridorReflow(map: EventMapDTO) {
       height: sectionObject.height ?? 0,
     };
 
-    const sectionCorridorGroups = getCorridorUnionGroups(
-      corridors.filter((corridor) => corridor.levelId === sectionObject.levelId),
-    ).filter((group) => unionGroupAffectsSection({ group, corridorById, sectionObject, sectionSeats, baseLayout, baseBounds }));
+    const sectionCorridors = corridors.filter((corridor) => {
+      if (corridor.levelId !== sectionObject.levelId) return false;
+      return corridorAffectsSection({ corridor, sectionSeats, baseLayout, baseBounds });
+    });
 
-    if (sectionCorridorGroups.length > 0) {
-      const obstacles = buildCorridorObstacles(sectionCorridorGroups, corridorById, sectionSeats, baseLayout);
-      applyCorridorStackReflow(sectionSeats, baseLayout, obstacles, corridorById);
+    if (sectionCorridors.length > 0) {
+      const obstacles = buildCorridorObstacles(sectionCorridors, sectionSeats, baseLayout);
+      applySmartCorridorStackReflow(sectionSeats, baseLayout, obstacles, corridorById);
       writeSeatBaseLayout(sectionObject, baseLayout);
       writeSectionBaseBounds(sectionObject, baseBounds);
       resizeSectionToSeats(sectionObject, sectionSeats, baseBounds);
@@ -1136,3 +969,13 @@ export function translateSeatCorridorBase(
     if (changed) writeSeatBaseLayout(sectionObject, nextLayout);
   }
 }
+
+export {
+  DEFAULT_CORRIDOR_GAP,
+  DEFAULT_CORRIDOR_THICKNESS,
+  expandRectWithSpacing,
+  getCorridorSpacing,
+  inferSmartCorridorAxisFromCoreRect,
+  readCorridorThickness,
+  resolveSmartCorridorLayout,
+};

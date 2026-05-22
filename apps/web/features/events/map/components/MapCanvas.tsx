@@ -20,7 +20,9 @@ import {
   type ObjectTransformSnapshot,
 } from '../lib/uniform-group-transform';
 import { applyScrubZoom, computeScrubDelta } from '../lib/zoom-scrub';
+import { applyCorridorReflow, cloneEventMap } from '../lib/corridor-reflow';
 import { getCorridorUnionGroups } from '../lib/corridor-union';
+import { getCorridorSpacing, resolveSmartCorridorLayout } from '../lib/smart-corridor-layout';
 import {
   buildTextEditorState,
   getTextEditorDimensions,
@@ -371,6 +373,8 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const textEditorFocusKeyRef = useRef<string | null>(null);
   const textEditSnapshotRef = useRef<string | null>(null);
   const groupDragRef = useRef<GroupDragState | null>(null);
+  const corridorPreviewBaseMapRef = useRef<EventMapDTO | null>(null);
+  const [corridorPreviewMap, setCorridorPreviewMap] = useState<EventMapDTO | null>(null);
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
   const zoomScrubRef = useRef<ZoomScrubState | null>(null);
   const uniformTransformRef = useRef<UniformTransformSession | null>(null);
@@ -404,6 +408,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   }, []);
 
   const map = useEventMapEditorStore((state) => state.map);
+  const renderMap = corridorPreviewMap ?? map;
   const tool = useEventMapEditorStore((state) => state.tool);
   const selection = useEventMapEditorStore((state) => state.selection);
   const activeLevelId = useEventMapEditorStore((state) => state.activeLevelId);
@@ -422,11 +427,25 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
   const setInlineTextEditorActive = useEventMapEditorStore((state) => state.setInlineTextEditorActive);
 
-  const level = useMemo(() => map?.levels.find((item) => item.id === activeLevelId) ?? map?.levels[0] ?? null, [map, activeLevelId]);
-  const levelObjects = useMemo(() => map?.objects.filter((object) => object.levelId === level?.id && !object.hidden) ?? [], [map, level?.id]);
-  const levelSeats = useMemo(() => map?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible) ?? [], [map, level?.id]);
+  const level = useMemo(
+    () => renderMap?.levels.find((item) => item.id === activeLevelId) ?? renderMap?.levels[0] ?? null,
+    [renderMap, activeLevelId],
+  );
+  const levelObjects = useMemo(
+    () => renderMap?.objects.filter((object) => object.levelId === level?.id && !object.hidden) ?? [],
+    [renderMap, level?.id],
+  );
+  const levelSeats = useMemo(
+    () => renderMap?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible) ?? [],
+    [renderMap, level?.id],
+  );
   const corridorUnionGroups = useMemo(
-    () => getCorridorUnionGroups(levelObjects.filter((object) => object.type === 'CORRIDOR')),
+    () =>
+      getCorridorUnionGroups(
+        levelObjects.filter((object) => object.type === 'CORRIDOR'),
+        1,
+        (corridor) => resolveSmartCorridorLayout(corridor).coreRect,
+      ),
     [levelObjects],
   );
   const selectedCorridorIds = useMemo(() => {
@@ -685,6 +704,51 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     },
     [selectedNodeIds, map],
   );
+
+  const selectedAnyCorridor = useMemo(() => {
+    if (!map) return false;
+    return selectedObjectIds.some((id) =>
+      map.objects.some((object) => object.id === id && object.type === 'CORRIDOR'),
+    );
+  }, [map, selectedObjectIds]);
+
+  const clearSmartCorridorPreview = useCallback(() => {
+    corridorPreviewBaseMapRef.current = null;
+    setCorridorPreviewMap(null);
+  }, []);
+
+  const updateSmartCorridorPreviewFromStage = useCallback(() => {
+    const baseMap = corridorPreviewBaseMapRef.current;
+    const stage = stageRef.current;
+    if (!baseMap || !stage) return;
+
+    const preview = cloneEventMap(baseMap);
+    const nodeIds =
+      groupDragRef.current && groupDragRef.current.origin.size > 0
+        ? [...groupDragRef.current.origin.keys()]
+        : selectedNodeIds;
+
+    for (const nodeId of nodeIds) {
+      const objectId = nodeId.replace(/^node-/, '');
+      const object = preview.objects.find((entry) => entry.id === objectId);
+      const node = stage.findOne(`#${nodeId}`);
+      if (!object || !node || object.type !== 'CORRIDOR') continue;
+
+      const scaleX = node.scaleX();
+      const scaleY = node.scaleY();
+      object.x = node.x();
+      object.y = node.y();
+      object.rotation = 0;
+
+      if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
+        object.width = Math.max(MIN_OBJECT_SIZE, (object.width ?? 32) * Math.abs(scaleX || 1));
+        object.height = Math.max(MIN_OBJECT_SIZE, (object.height ?? 32) * Math.abs(scaleY || 1));
+      }
+    }
+
+    applyCorridorReflow(preview);
+    setCorridorPreviewMap(preview);
+  }, [selectedNodeIds]);
 
   const mixedTextAndShapes = useMemo(() => {
     if (!map || selectedObjectIds.length < 2) return false;
@@ -1004,7 +1068,8 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     if (objectUpdates.length > 0 || seatUpdates.length > 0) {
       updateMapItems({ objects: objectUpdates, seats: seatUpdates });
     }
-  }, [map?.objects, map?.seats, updateMapItems]);
+    clearSmartCorridorPreview();
+  }, [clearSmartCorridorPreview, map?.objects, map?.seats, updateMapItems]);
 
   const levelBounds = useMemo(
     () => (level ? { width: level.widthPx, height: level.heightPx } : null),
@@ -1020,6 +1085,55 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     groupDragRef,
     syncGroupDrag,
   });
+
+  const handleResponsiveDragMove = useCallback(
+    (event: Konva.KonvaEventObject<DragEvent>) => {
+      handleSnapDragMove(event);
+
+      const entityId = event.target.id().replace(/^node-/, '');
+      const current = useEventMapEditorStore.getState().map;
+      const isCorridorDrag =
+        current?.objects.some((object) => object.id === entityId && object.type === 'CORRIDOR') ||
+        (groupDragRef.current
+          ? [...groupDragRef.current.origin.keys()].some((nodeId) => {
+              const id = nodeId.replace(/^node-/, '');
+              return current?.objects.some((object) => object.id === id && object.type === 'CORRIDOR');
+            })
+          : false);
+
+      if (isCorridorDrag && corridorPreviewBaseMapRef.current) {
+        updateSmartCorridorPreviewFromStage();
+      }
+    },
+    [handleSnapDragMove, updateSmartCorridorPreviewFromStage],
+  );
+
+  useEffect(() => {
+    const transformer = transformerRef.current;
+    const stage = stageRef.current;
+    if (!transformer || !stage || !selectedAnyCorridor || useAtomicSelectionTransform) return;
+
+    function onCorridorTransformStart() {
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (currentMap) {
+        corridorPreviewBaseMapRef.current = cloneEventMap(currentMap);
+      }
+    }
+
+    function onCorridorTransform() {
+      if (corridorPreviewBaseMapRef.current) {
+        updateSmartCorridorPreviewFromStage();
+      }
+    }
+
+    transformer.on('transformstart', onCorridorTransformStart);
+    transformer.on('transform', onCorridorTransform);
+
+    return () => {
+      transformer.off('transformstart', onCorridorTransformStart);
+      transformer.off('transform', onCorridorTransform);
+    };
+  }, [selectedAnyCorridor, useAtomicSelectionTransform, updateSmartCorridorPreviewFromStage]);
 
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -1201,6 +1315,15 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       }
 
       beginGroupDrag(nodeId, resolvedNodeIds);
+
+      const corridorIds = new Set(
+        (currentState.map?.objects ?? [])
+          .filter((object) => object.type === 'CORRIDOR')
+          .map((object) => object.id),
+      );
+      if (resolvedNodeIds.some((id) => corridorIds.has(id.replace(/^node-/, '')))) {
+        corridorPreviewBaseMapRef.current = currentState.map ? cloneEventMap(currentState.map) : null;
+      }
     },
     [activeLevelId, beginGroupDrag, clearGuides, getSectionGroupNodeIds, individualSeatDragId, levelObjects, setSelection],
   );
@@ -1217,6 +1340,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
       if (committedGroupDragNodeIdsRef.current.has(nodeId)) {
         committedGroupDragNodeIdsRef.current.delete(nodeId);
+        clearSmartCorridorPreview();
         return;
       }
 
@@ -1226,16 +1350,19 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       const ny = event.target.y();
       if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
         groupDragRef.current = null;
+        clearSmartCorridorPreview();
         return;
       }
       const last = lastTransformCommitRef.current.get(entityId);
       if (last && Math.abs(last.x - nx) < 0.5 && Math.abs(last.y - ny) < 0.5) {
         lastTransformCommitRef.current.delete(entityId);
+        clearSmartCorridorPreview();
         return;
       }
       onCommit(nx, ny);
+      clearSmartCorridorPreview();
     },
-    [clearGuides, commitGroupDrag],
+    [clearGuides, clearSmartCorridorPreview, commitGroupDrag],
   );
 
   function handleStageDragMove(event: Konva.KonvaEventObject<DragEvent>) {
@@ -1630,8 +1757,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       y,
       width: nextWidth,
       height: nextHeight,
-      rotation: node.rotation(),
+      rotation: object.type === 'CORRIDOR' ? 0 : node.rotation(),
     });
+    if (object.type === 'CORRIDOR') {
+      clearSmartCorridorPreview();
+    }
   }
 
   function renderSeatGridPreview() {
@@ -1881,7 +2011,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                   }}
                   visible={textEditor?.objectId !== object.id}
                   onDragStart={() => handleNodeDragStart(`node-${object.id}`, { type: 'object', id: object.id })}
-                  onDragMove={handleSnapDragMove}
+                  onDragMove={handleResponsiveDragMove}
                   onDragEnd={(event) =>
                     handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
                   }
@@ -1898,7 +2028,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                 id={`node-${object.id}`}
                 x={object.x}
                 y={object.y}
-                rotation={object.rotation}
+                rotation={object.type === 'CORRIDOR' ? 0 : object.rotation}
                 name={SNAP_TARGET_NAME}
                 listening={!placementToolActive}
                 draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !object.locked}
@@ -1914,7 +2044,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                     object.sectionId ? { type: 'section', id: object.sectionId } : { type: 'object', id: object.id },
                   )
                 }
-                onDragMove={handleSnapDragMove}
+                onDragMove={handleResponsiveDragMove}
                 onDragEnd={(event) =>
                   handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
                 }
@@ -1950,6 +2080,20 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                     rotation={30}
                   />
                 ) : (
+                  <>
+                    {object.type === 'CORRIDOR' && selected ? (
+                      <Rect
+                        x={-getCorridorSpacing(object).left}
+                        y={-getCorridorSpacing(object).top}
+                        width={width + getCorridorSpacing(object).left + getCorridorSpacing(object).right}
+                        height={height + getCorridorSpacing(object).top + getCorridorSpacing(object).bottom}
+                        fill="rgba(124, 58, 237, 0.04)"
+                        stroke="rgba(124, 58, 237, 0.35)"
+                        strokeWidth={1}
+                        dash={[6, 6]}
+                        listening={false}
+                      />
+                    ) : null}
                   <Rect
                     width={width}
                     height={height}
@@ -1985,6 +2129,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                         : appearance.dash
                     }
                   />
+                  </>
                 )}
                 {selected && object.type !== 'CORRIDOR' ? (
                   <Rect
@@ -2022,7 +2167,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                   setSelection(replaceSelection({ type: 'seat', id: seat.id }));
                 }}
                 onDragStart={() => handleNodeDragStart(`node-${seat.id}`, { type: 'seat', id: seat.id })}
-                onDragMove={handleSnapDragMove}
+                onDragMove={handleResponsiveDragMove}
                 onDragEnd={(event) =>
                   handleNodeDragEnd(`node-${seat.id}`, event, (x, y) => updateSeat(seat.id, { x, y }))
                 }
@@ -2047,7 +2192,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
           <Transformer
             ref={transformerRef}
-            rotateEnabled
+            rotateEnabled={!selectedAnyCorridor}
             resizeEnabled
             keepRatio={useUniformGroupTransform}
             centeredScaling={useUniformGroupTransform}

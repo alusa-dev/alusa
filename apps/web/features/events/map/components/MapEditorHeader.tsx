@@ -63,6 +63,7 @@ export function MapEditorHeader({
           type="button"
           variant="outline"
           size="sm"
+          data-testid="save-map-button"
           onClick={onSave}
           disabled={isSaving || map.status !== 'DRAFT'}
           className="border-slate-200 bg-white text-slate-700 shadow-none"

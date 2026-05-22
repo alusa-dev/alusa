@@ -109,7 +109,12 @@ function ToolbarDropdown({
         {items.map((tool) => {
           const Icon = tool.icon;
           return (
-            <DropdownMenuItem key={tool.id} onSelect={() => onToolChange(tool.id)} className="gap-2">
+            <DropdownMenuItem
+              key={tool.id}
+              data-testid={`toolbar-${tool.id}-tool`}
+              onSelect={() => onToolChange(tool.id)}
+              className="gap-2"
+            >
               <Icon className="h-4 w-4 text-slate-500" />
               <span className="flex-1">{tool.label}</span>
               {tool.shortcut ? <span className="text-xs text-slate-400">{tool.shortcut}</span> : null}
@@ -124,7 +129,10 @@ function ToolbarDropdown({
 export function FloatingMapToolbar({ activeTool, onToolChange }: { activeTool: MapTool; onToolChange: (tool: MapTool) => void }) {
   return (
     <TooltipProvider>
-      <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur">
+      <div
+        data-testid="map-toolbar"
+        className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur"
+      >
         {tools.map((tool) => {
           const Icon = tool.icon;
           const active = activeTool === tool.id;

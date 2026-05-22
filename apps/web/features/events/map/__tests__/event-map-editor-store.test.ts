@@ -544,7 +544,7 @@ describe('event-map-editor-store history', () => {
     );
   });
 
-  it('creates corridor defaults as vertical with auto-fit metadata', () => {
+  it('creates corridor defaults as smart corridor with spacing metadata', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap(createMap());
 
@@ -555,7 +555,15 @@ describe('event-map-editor-store history', () => {
     expect(corridor).toMatchObject({
       width: 32,
       height: 280,
-      data: expect.objectContaining({ corridorAxis: 'vertical', corridorAutoFit: true }),
+      rotation: 0,
+      data: expect.objectContaining({
+        smartCorridor: true,
+        seatGapTop: 8,
+        seatGapRight: 8,
+        seatGapBottom: 8,
+        seatGapLeft: 8,
+        corridorThickness: 32,
+      }),
     });
   });
 
@@ -596,7 +604,7 @@ describe('event-map-editor-store history', () => {
     expect(gap).toBeGreaterThan(20);
   });
 
-  it('recalculates corridor reflow when corridor axis changes', () => {
+  it('recalculates corridor reflow when corridor geometry changes orientation', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap(createMap());
 
@@ -619,12 +627,12 @@ describe('event-map-editor-store history', () => {
 
     const verticalLayout =
       store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
-    store.getState().updateObject(corridorId, { data: { corridorAxis: 'horizontal' } });
+    store.getState().updateObject(corridorId, { width: 280, height: 32 });
     const horizontalLayout =
       store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y })) ?? [];
 
     expect(horizontalLayout).not.toEqual(verticalLayout);
-    store.getState().updateObject(corridorId, { data: { corridorAxis: 'vertical' } });
+    store.getState().updateObject(corridorId, { width: 30, height: 120 });
     expect(store.getState().map?.seats.slice(1).map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }))).toEqual(
       verticalLayout,
     );
@@ -659,7 +667,7 @@ describe('event-map-editor-store history', () => {
     expect(duplicated).toBeTruthy();
     if (!duplicated) return;
 
-    expect(duplicated).toMatchObject({ rotation: 90 });
+    expect(duplicated).toMatchObject({ rotation: 0 });
     expect(Number.isFinite(duplicated.x)).toBe(true);
     expect(Number.isFinite(duplicated.y)).toBe(true);
     expect(duplicated.width).toBe(120);

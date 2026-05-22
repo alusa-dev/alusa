@@ -23,14 +23,15 @@ export function MapBottomBar() {
           <Plus className="h-4 w-4" />
         </Button>
       </div>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-9 w-9 rounded-lg"
-        onClick={fitArtboardToView}
-        aria-label="Ajustar zoom para visualizar a prancheta inteira"
-      >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              data-testid="fit-artboard-button"
+              className="h-9 w-9 rounded-lg"
+              onClick={fitArtboardToView}
+              aria-label="Ajustar zoom para visualizar a prancheta inteira"
+            >
         <Maximize2 className="h-4 w-4" />
       </Button>
       <span className="ml-2 border-l border-slate-200 pl-3 text-xs text-slate-500">

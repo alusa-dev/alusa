@@ -289,15 +289,6 @@ function ObjectProperties({
   const seatGapRight = numberValue(typeof object.data.seatGapRight === 'number' ? object.data.seatGapRight : Number(object.data.seatGapRight), 8);
   const seatGapBottom = numberValue(typeof object.data.seatGapBottom === 'number' ? object.data.seatGapBottom : Number(object.data.seatGapBottom), 8);
   const seatGapLeft = numberValue(typeof object.data.seatGapLeft === 'number' ? object.data.seatGapLeft : Number(object.data.seatGapLeft), 8);
-  const corridorAxis =
-    object.data.corridorAxis === 'horizontal'
-      ? 'horizontal'
-      : object.data.corridorAxis === 'vertical'
-        ? 'vertical'
-        : (object.width ?? 0) > (object.height ?? 0)
-          ? 'horizontal'
-          : 'vertical';
-  const corridorAutoFit = object.data.corridorAutoFit !== false;
   const fillEnabled = isAppearanceFlagEnabled(object.data.fillEnabled);
   const strokeEnabled = isAppearanceFlagEnabled(object.data.strokeEnabled);
   const strokeWidthEnabled = isAppearanceFlagEnabled(object.data.strokeWidthEnabled);
@@ -335,41 +326,17 @@ function ObjectProperties({
             <Input type="number" min={1} value={object.height != null && Number.isFinite(object.height) ? object.height : ''} disabled={disabled} onChange={(event) => onUpdate({ height: Math.max(1, toNumber(event.target.value, object.height ?? 1)) })} className={FIELD_CLASS} />
           </PanelField>
           <PanelField label="Rotação">
-            <Input type="number" value={numberValue(object.rotation, 0)} disabled={disabled} onChange={(event) => onUpdate({ rotation: toNumber(event.target.value, object.rotation ?? 0) })} className={FIELD_CLASS} />
+            <Input type="number" value={numberValue(object.rotation, 0)} disabled={disabled || object.type === 'CORRIDOR'} onChange={(event) => onUpdate({ rotation: toNumber(event.target.value, object.rotation ?? 0) })} className={FIELD_CLASS} />
           </PanelField>
         </div>
       </PanelSection>
 
       {object.type === 'CORRIDOR' ? (
-        <>
-          <PanelSection title="Corredor">
-            <PanelField label="Orientação">
-              <select
-                value={corridorAxis}
-                disabled={disabled}
-                onChange={(event) =>
-                  updateData({ corridorAxis: event.target.value === 'horizontal' ? 'horizontal' : 'vertical' })
-                }
-                className={cn(FIELD_CLASS, 'px-2 text-xs')}
-              >
-                <option value="vertical">Vertical</option>
-                <option value="horizontal">Horizontal</option>
-              </select>
-            </PanelField>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <Checkbox
-                checked={corridorAutoFit}
-                disabled={disabled}
-                onCheckedChange={(checked) => updateData({ corridorAutoFit: checked === true })}
-              />
-              Ajustar ao gap
-            </label>
-          </PanelSection>
-
           <PanelSection title="Espaçamento dos assentos">
           <div className="grid grid-cols-2 gap-3">
             <PanelField label="Superior">
               <Input
+                data-testid="corridor-seat-gap-top"
                 type="number"
                 min={0}
                 value={seatGapTop}
@@ -380,6 +347,7 @@ function ObjectProperties({
             </PanelField>
             <PanelField label="Direita">
               <Input
+                data-testid="corridor-seat-gap-right"
                 type="number"
                 min={0}
                 value={seatGapRight}
@@ -390,6 +358,7 @@ function ObjectProperties({
             </PanelField>
             <PanelField label="Inferior">
               <Input
+                data-testid="corridor-seat-gap-bottom"
                 type="number"
                 min={0}
                 value={seatGapBottom}
@@ -400,6 +369,7 @@ function ObjectProperties({
             </PanelField>
             <PanelField label="Esquerda">
               <Input
+                data-testid="corridor-seat-gap-left"
                 type="number"
                 min={0}
                 value={seatGapLeft}
@@ -409,9 +379,8 @@ function ObjectProperties({
               />
             </PanelField>
           </div>
-          <p className="text-xs text-slate-500">Controla a folga mínima entre este corredor e os assentos em cada lado.</p>
+          <p className="text-xs text-slate-500">Define a folga mínima entre o corpo do corredor e os assentos.</p>
         </PanelSection>
-        </>
       ) : null}
 
       <PanelSection title="Aparência">
@@ -513,7 +482,10 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
   const multiSelectCount = getSelectableItems(selection).length;
 
   return (
-    <aside className="absolute right-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-80 flex-col rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur">
+    <aside
+      data-testid="properties-panel"
+      className="absolute right-4 top-24 z-20 flex max-h-[calc(100%-8rem)] w-80 flex-col rounded-xl border border-slate-200 bg-white/95 shadow-lg shadow-slate-300/30 backdrop-blur"
+    >
       <div className="border-b border-slate-200 px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-950">Propriedades</h2>
         <p className="text-xs text-slate-500">Configurações do item selecionado</p>

@@ -113,10 +113,14 @@ function getBoundarySegments(rects: BoundsRect[]) {
   return segments;
 }
 
-export function getCorridorUnionGroups(corridors: EventMapObjectDTO[], mergePadding = 1): CorridorUnionGroup[] {
+export function getCorridorUnionGroups(
+  corridors: EventMapObjectDTO[],
+  mergePadding = 1,
+  getBounds: (object: EventMapObjectDTO) => BoundsRect = getCorridorBounds,
+): CorridorUnionGroup[] {
   const entries = corridors
     .filter((object) => object.type === 'CORRIDOR' && !object.hidden)
-    .map((object) => ({ object, bounds: getCorridorBounds(object) }));
+    .map((object) => ({ object, bounds: getBounds(object) }));
   const visited = new Set<string>();
   const groups: CorridorUnionGroup[] = [];
 

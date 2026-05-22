@@ -235,9 +235,12 @@ function hasCorridorGeometryPatch(patch: Partial<EventMapObjectDTO>) {
 }
 
 function hasCorridorMetadataPatch(patch: Partial<EventMapObjectDTO>) {
-  return Boolean(
-    patch.data &&
-      ('corridorAxis' in patch.data || 'corridorAutoFit' in patch.data),
+  if (!patch.data) return false;
+  return (
+    'seatGapTop' in patch.data ||
+    'seatGapRight' in patch.data ||
+    'seatGapBottom' in patch.data ||
+    'seatGapLeft' in patch.data
   );
 }
 
@@ -473,7 +476,15 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           type: 'CORRIDOR' as const,
           width: 32,
           height: 280,
-          data: { fill: '#f1f5f9', corridorAxis: 'vertical', corridorAutoFit: true },
+          data: {
+            fill: '#f8fafc',
+            smartCorridor: true,
+            seatGapTop: 8,
+            seatGapRight: 8,
+            seatGapBottom: 8,
+            seatGapLeft: 8,
+            corridorThickness: 32,
+          },
         },
         booth: { type: 'BOOTH' as const, width: 180, height: 120, data: { fill: '#fff7ed' } },
         general: { type: 'GENERAL_AREA' as const, width: 280, height: 160, data: { fill: '#ecfeff' } },
@@ -500,6 +511,12 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       if (config.type === 'CORRIDOR') {
         const width = typeof objectWidth === 'number' ? objectWidth : config.width;
         const height = typeof objectHeight === 'number' ? objectHeight : config.height;
+        objectData.smartCorridor = true;
+        objectData.seatGapTop = 8;
+        objectData.seatGapRight = 8;
+        objectData.seatGapBottom = 8;
+        objectData.seatGapLeft = 8;
+        objectData.corridorThickness = Math.min(width, height);
         objectData.corridorAxis = inferCorridorAxisFromSize(width, height);
         objectData.corridorAutoFit = true;
       }

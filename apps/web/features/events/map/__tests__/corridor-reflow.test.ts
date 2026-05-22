@@ -259,9 +259,17 @@ describe('corridor-reflow', () => {
     expect(gapBeforeRight).toBeGreaterThanOrEqual(30);
   });
 
-  it('auto-fits vertical corridor width to the opened gap', () => {
+  it('auto-fits vertical corridor core inside the opened gap without occupying padding', () => {
     const map = buildSeatGridMap(2, 4);
-    map.objects.push(corridor('corridor-1', 135, 70, 30, 120, { corridorAxis: 'vertical', corridorAutoFit: true }));
+    map.objects.push(
+      corridor('corridor-1', 135, 70, 30, 120, {
+        corridorAxis: 'vertical',
+        corridorAutoFit: true,
+        seatGapLeft: 8,
+        seatGapRight: 8,
+        corridorThickness: 32,
+      }),
+    );
     applyCorridorReflow(map);
 
     const col1 = map.seats.find((seat) => seat.seatNumber === '1')!;
@@ -272,13 +280,26 @@ describe('corridor-reflow', () => {
     const gapEnd = col2Bounds.x;
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
 
-    expect(corridorObject.x).toBeCloseTo(gapStart, 1);
-    expect(corridorObject.width).toBeCloseTo(gapEnd - gapStart, 1);
+    expect(gapEnd - gapStart).toBeGreaterThanOrEqual(8 + 32 + 8);
+    expect(corridorObject.x).toBeCloseTo(gapStart + 8, 1);
+    expect(corridorObject.width).toBeCloseTo(32, 1);
+
+    for (const seat of map.seats) {
+      expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
+    }
   });
 
-  it('auto-fits horizontal corridor height to the opened gap and row span', () => {
+  it('auto-fits horizontal corridor core inside the opened gap and row span', () => {
     const map = buildSeatGridMap(4, 5);
-    map.objects.push(corridor('corridor-1', 90, 125, 280, 32, { corridorAxis: 'horizontal', corridorAutoFit: true }));
+    map.objects.push(
+      corridor('corridor-1', 90, 125, 280, 32, {
+        corridorAxis: 'horizontal',
+        corridorAutoFit: true,
+        seatGapTop: 8,
+        seatGapBottom: 8,
+        corridorThickness: 32,
+      }),
+    );
     applyCorridorReflow(map);
 
     const rowA = map.seats.filter((seat) => seat.rowLabel === 'A');
@@ -288,8 +309,9 @@ describe('corridor-reflow', () => {
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
     const rowABounds = rowA.map((seat) => getSeatBounds(seat));
 
-    expect(corridorObject.y).toBeCloseTo(gapStart, 1);
-    expect(corridorObject.height).toBeCloseTo(gapEnd - gapStart, 1);
+    expect(gapEnd - gapStart).toBeGreaterThanOrEqual(8 + 32 + 8);
+    expect(corridorObject.y).toBeCloseTo(gapStart + 8, 1);
+    expect(corridorObject.height).toBeCloseTo(32, 1);
     expect(corridorObject.width).toBeCloseTo(
       Math.max(...rowABounds.map((bounds) => bounds.x + bounds.width)) - Math.min(...rowABounds.map((bounds) => bounds.x)),
       1,
@@ -468,5 +490,57 @@ describe('corridor-reflow', () => {
         y: seat.y,
       })),
     ).toEqual(firstSeats);
+  });
+
+  it('reflow is idempotent', () => {
+    const map = buildSeatGridMap(2, 4);
+    map.objects.push(corridor('corridor-1', 135, 70, 30, 120));
+
+    applyCorridorReflow(map);
+    const once = map.seats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }));
+    const onceCorridor = map.objects.find((object) => object.id === 'corridor-1');
+
+    applyCorridorReflow(map);
+    applyCorridorReflow(map);
+
+    expect(map.seats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }))).toEqual(once);
+    expect(map.objects.find((object) => object.id === 'corridor-1')).toEqual(onceCorridor);
+  });
+
+  it('normalizes corridor rotation to zero during reflow', () => {
+    const map = buildSeatGridMap(2, 4);
+    map.objects.push({
+      ...corridor('corridor-1', 135, 70, 30, 120),
+      rotation: 90,
+    });
+
+    applyCorridorReflow(map);
+
+    const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
+    expect(corridorObject.rotation).toBe(0);
+    expect(resolveCorridorAxis(corridorObject)).toBe('vertical');
+  });
+
+  it('partial vertical corridor affects only overlapped rows', () => {
+    const map = buildSeatGridMap(7, 4);
+    const baseCol1ByRow = new Map<string, number>();
+
+    for (const seat of map.seats.filter((entry) => entry.seatNumber === '1')) {
+      baseCol1ByRow.set(String(seat.rowLabel), seat.x);
+    }
+
+    const baseCol2RowC =
+      map.seats.find((seat) => seat.rowLabel === 'C' && seat.seatNumber === '2')!.x;
+
+    map.objects.push(corridor('corridor-partial', 135, 155, 30, 80));
+    applyCorridorReflow(map);
+
+    const rowACol1 = map.seats.find((seat) => seat.rowLabel === 'A' && seat.seatNumber === '1')!;
+    const rowGCol1 = map.seats.find((seat) => seat.rowLabel === 'G' && seat.seatNumber === '1')!;
+    const col2RowC = map.seats.find((seat) => seat.rowLabel === 'C' && seat.seatNumber === '2')!;
+
+    expect(rowACol1.x).toBe(baseCol1ByRow.get('A'));
+    expect(rowGCol1.x).toBe(baseCol1ByRow.get('G'));
+    expect(col2RowC.x).toBeGreaterThan(baseCol2RowC);
   });
 });

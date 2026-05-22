@@ -34,7 +34,10 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
   }
 
   return (
-    <div className="absolute right-6 top-6 z-40 w-[360px] rounded-lg border border-slate-200 bg-white shadow-xl">
+    <div
+      data-testid="seat-grid-dialog"
+      className="absolute right-6 top-6 z-40 w-[360px] rounded-lg border border-slate-200 bg-white shadow-xl"
+    >
       <div className="border-b border-slate-200 px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-950">Organizar assentos</h2>
         <p className="mt-1 text-xs text-slate-500">Ajuste a grade e confira a prévia na prancheta.</p>
@@ -44,6 +47,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Assentos
           <input
+            data-testid="seat-grid-total-seats"
             type="number"
             min={1}
             max={capacity}
@@ -56,6 +60,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Tamanho
           <input
+            data-testid="seat-grid-seat-size"
             type="number"
             min={12}
             max={80}
@@ -68,6 +73,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Linhas
           <input
+            data-testid="seat-grid-rows"
             type="number"
             min={1}
             max={50}
@@ -80,6 +86,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Colunas
           <input
+            data-testid="seat-grid-columns"
             type="number"
             min={1}
             max={80}
@@ -92,6 +99,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Espaço horizontal
           <input
+            data-testid="seat-grid-horizontal-spacing"
             type="number"
             min={12}
             max={200}
@@ -104,6 +112,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
         <label className="space-y-1 text-xs font-medium text-slate-600">
           Espaço vertical
           <input
+            data-testid="seat-grid-vertical-spacing"
             type="number"
             min={12}
             max={200}
@@ -166,6 +175,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
           </button>
           <button
             type="button"
+            data-testid="seat-grid-submit"
             onClick={onConfirm}
             className="h-9 rounded-md bg-violet-700 px-3 text-sm font-semibold text-white hover:bg-violet-800"
           >
