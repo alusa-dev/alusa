@@ -75,5 +75,9 @@ export type {
   ValidarDatasContratoResult,
 } from './rules/validation-engine.js';
 
+// Eventos escolares
+export * from './events/index.js';
+export * from './events/map/map-rules.js';
+
 // DTOs formais do domínio
 export * from './dtos/index.js';

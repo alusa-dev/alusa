@@ -52,7 +52,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const themeInitPrefixes = JSON.stringify([...AUTH_LIGHT_THEME_PATH_PREFIXES]);
   const themeInitRoots = JSON.stringify([...AUTH_LIGHT_THEME_ROOT_PATHS]);
   return (
-    <html lang="pt-BR" className={`${inter.variable} min-h-full bg-white`} data-theme={themeCookie}>
+    <html
+      lang="pt-BR"
+      className={`${inter.variable} min-h-full bg-white`}
+      data-theme={themeCookie}
+      suppressHydrationWarning
+    >
       <head>
         {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar); auth/onboarding financeiro forçam claro antes do React. */}
         <Script id="theme-init" strategy="beforeInteractive">

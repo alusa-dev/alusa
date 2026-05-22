@@ -13,4 +13,8 @@ export const PAYMENT_STATUSES = {
     OVERDUE: 'OVERDUE',
     REFUNDED: 'REFUNDED',
     CANCELLED: 'CANCELLED',
+    /** Chargeback em qualquer fase (disputado, aguardando reversão, etc.) */
+    CHARGEBACK: 'CHARGEBACK',
+    /** Recebido em dinheiro/mãos - fora do Asaas */
+    RECEIVED_IN_CASH: 'RECEIVED_IN_CASH',
 };

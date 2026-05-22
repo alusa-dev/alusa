@@ -70,7 +70,7 @@ const nextConfig = {
     '@sentry/react',
     '@sentry/browser',
   ],
-  transpilePackages: ['@alusa/lib', '@alusa/ui'],
+  transpilePackages: ['@alusa/lib', '@alusa/ui', 'konva'],
   experimental: {
     optimizePackageImports: [
       'lucide-react',
@@ -120,9 +120,13 @@ const nextConfig = {
     const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist/lib/src');
     config.resolve.alias['@alusa/lib/cpf-cnpj'] = resolvePath(libDistSrc, 'utils/cpf-cnpj.js');
     config.resolve.alias['@alusa/lib/client'] = resolvePath(libDistSrc, 'client.js');
+    config.resolve.alias['@alusa/lib/events/map'] = resolvePath(libDistSrc, 'events/map');
+    config.resolve.alias['@alusa/lib/events'] = resolvePath(libDistSrc, 'events');
     config.resolve.alias['@alusa/lib/prisma'] = resolvePath(libDistSrc, 'prisma.js');
     config.resolve.alias['@alusa/lib/server'] = resolvePath(libDistSrc, 'server.js');
     config.resolve.alias['@alusa/lib'] = resolvePath(libDistSrc, 'index.js');
+    // konva: externaliza canvas (não disponível no Edge/SSR).
+    config.externals = [...(Array.isArray(config.externals) ? config.externals : []), { canvas: 'canvas' }];
     return config;
   },
 };

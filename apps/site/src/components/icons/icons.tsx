@@ -41,6 +41,13 @@ export const X: SiteIcon = (props) => (
   </BaseIcon>
 );
 
+export const Plus: SiteIcon = (props) => (
+  <BaseIcon {...props}>
+    <path d="M12 5v14" />
+    <path d="M5 12h14" />
+  </BaseIcon>
+);
+
 export const Activity: SiteIcon = (props) => (
   <BaseIcon {...props}>
     <path d="M3 12h4l3-7 4 14 3-7h4" />
@@ -115,6 +122,12 @@ export const ReceiptText: SiteIcon = (props) => (
     <path d="M9 8h6" />
     <path d="M9 12h6" />
     <path d="M9 16h4" />
+  </BaseIcon>
+);
+
+export const Check: SiteIcon = (props) => (
+  <BaseIcon {...props}>
+    <path d="m5 13 4 4 10-10" />
   </BaseIcon>
 );
 

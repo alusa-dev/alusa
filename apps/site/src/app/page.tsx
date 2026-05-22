@@ -5,7 +5,7 @@ import { HeroSection } from '@/components/sections/HeroSection';
 import { PlatformSection } from '@/components/sections/PlatformSection';
 import { ProblemSection } from '@/components/sections/ProblemSection';
 import { ProductSection } from '@/components/sections/ProductSection';
-import { TrustSection } from '@/components/sections/TrustSection';
+import { FaqSection } from '@/components/sections/FaqSection';
 
 export default function HomePage() {
   return (
@@ -17,7 +17,7 @@ export default function HomePage() {
       <AutomationSection />
       <FlowSection />
       <BenefitsSection />
-      <TrustSection />
+      <FaqSection />
     </>
   );
 }

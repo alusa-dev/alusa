@@ -94,3 +94,9 @@ export {
   type NotifyMatriculaActionInput,
   type NotificationResult as MatriculaNotificationResult,
 } from './notifications/matricula-notifications';
+
+// Eventos escolares
+export * from './events/events.schema';
+export * from './events/events.service';
+export * from './events/map/event-map.schema';
+export * from './events/map/event-map.service';

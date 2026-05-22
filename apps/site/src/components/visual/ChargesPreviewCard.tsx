@@ -36,8 +36,11 @@ const charges: readonly ChargePreviewRow[] = [
 
 export function ChargesPreviewCard() {
   return (
-    <div className="relative overflow-hidden rounded-2xl shadow-[0_28px_80px_rgba(0,0,0,0.22)]">
-      <div className="min-w-[720px] overflow-hidden rounded-2xl bg-white shadow-[0_2px_8px_rgba(15,23,42,0.08)]">
+    <div
+      data-testid="charges-preview-card"
+      className="min-w-[720px] rounded-2xl bg-white shadow-charges-preview"
+    >
+      <div className="overflow-hidden rounded-2xl">
         <div className="flex h-16 items-center justify-between border-b border-[#f1f2f4] px-6">
           <h3 className="text-base font-semibold text-[#171923]">Últimas Cobranças</h3>
           <button

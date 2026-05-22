@@ -15,3 +15,6 @@ export { ok, err } from './types/common';
 // Constants
 export { BILLING_TYPES, PAYMENT_STATUSES } from './constants/billing';
 export type { BillingType, PaymentStatus } from './constants/billing';
+
+// Eventos escolares
+export * from './events/types';

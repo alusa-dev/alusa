@@ -161,6 +161,154 @@ enum AulasOperationLogLevel {
   ERROR
 }
 
+enum SchoolEventStatus {
+  DRAFT
+  PLANNING
+  ACTIVE
+  FINISHED
+  CANCELLED
+  ARCHIVED
+}
+
+enum SchoolEventType {
+  PRESENTATION
+  PARTY
+  GRADUATION
+  TRIP
+  WORKSHOP
+  MEETING
+  CHAMPIONSHIP
+  CULTURAL_SHOW
+  OTHER
+}
+
+enum EventTicketType {
+  FULL
+  HALF
+  PROMOTIONAL
+  COMPLIMENTARY
+  STUDENT
+  GUARDIAN
+  GUEST
+  OTHER
+}
+
+enum EventTicketMode {
+  NONE
+  SIMPLE
+  NUMBERED_SEATS
+}
+
+enum EventTicketLotStatus {
+  DRAFT
+  ACTIVE
+  SOLD_OUT
+  CLOSED
+  CANCELLED
+  ARCHIVED
+}
+
+enum EventMapStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum EventMapObjectType {
+  BOARD
+  SECTION
+  ROW
+  SEAT
+  STAGE
+  TABLE
+  TEXT
+  BLOCKED_AREA
+  CORRIDOR
+  BOOTH
+  GENERAL_AREA
+}
+
+enum EventSeatStatus {
+  AVAILABLE
+  HELD
+  SOLD
+  BLOCKED
+  COMPLIMENTARY
+  UNAVAILABLE
+}
+
+enum EventTicketSaleStatus {
+  PENDING
+  PAID
+  CANCELLED
+  REFUNDED
+  COMPLIMENTARY
+}
+
+enum EventPaymentMethod {
+  CASH
+  MANUAL_PIX
+  EXTERNAL_CARD
+  TRANSFER
+  COMPLIMENTARY
+  OTHER
+}
+
+enum EventCostumeCategory {
+  CLOTHING
+  ACCESSORY
+  SHOES
+  PROP
+  COMPLETE_KIT
+  OTHER
+}
+
+enum EventCostumeAssignmentStatus {
+  PENDING
+  ORDERED
+  RECEIVED
+  DELIVERED
+  RETURNED
+  DAMAGED
+  LOST
+  CANCELLED
+}
+
+enum EventFinancialEntryType {
+  COST
+  REVENUE
+}
+
+enum EventFinancialEntryStatus {
+  EXPECTED
+  PENDING
+  PAID
+  RECEIVED
+  CANCELLED
+  REFUNDED
+}
+
+enum EventFinancialOriginType {
+  MANUAL
+  TICKET_SALE
+  COSTUME
+  COSTUME_ASSIGNMENT
+}
+
+enum EventParticipantType {
+  STUDENT
+  CLASS
+  GUARDIAN
+  GUEST
+  OTHER
+}
+
+enum EventReportType {
+  GENERAL
+  EVENT
+  COMPARATIVE
+}
+
 // Política de ativação de matrícula por conta/instituição
 enum MatriculaActivationPolicy {
   IMMEDIATE // Matrícula é ativada imediatamente ao ser criada
@@ -573,108 +721,123 @@ model Colaborador {
 model Conta {
   // Tenant principal. Contas restauradas manualmente para recompor integridade
   // referencial devem manter o mesmo id e receber dados reais posteriormente.
-  id                            String                        @id @default(cuid())
-  nome                          String
-  cpfCnpj                       String?
-  status                        Status                        @default(ATIVO)
-  financeStatus                 FinanceStatus                 @default(FINANCE_NOT_STARTED)
-  financeIntegrationMode        FinanceIntegrationMode        @default(WHITELABEL_BAAS)
-  externalAsaasOnboardingStatus ExternalAsaasOnboardingStatus @default(NOT_STARTED)
-  deletedAt                     DateTime?
-  deletedByUserId               String?
-  deletedByUser                 Usuario?                      @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
-  deleteReason                  String?
-  createdAt                     DateTime                      @default(now())
-  updatedAt                     DateTime                      @updatedAt
+  id                             String                           @id @default(cuid())
+  nome                           String
+  cpfCnpj                        String?
+  status                         Status                           @default(ATIVO)
+  financeStatus                  FinanceStatus                    @default(FINANCE_NOT_STARTED)
+  financeIntegrationMode         FinanceIntegrationMode           @default(WHITELABEL_BAAS)
+  externalAsaasOnboardingStatus  ExternalAsaasOnboardingStatus    @default(NOT_STARTED)
+  deletedAt                      DateTime?
+  deletedByUserId                String?
+  deletedByUser                  Usuario?                         @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
+  deleteReason                   String?
+  createdAt                      DateTime                         @default(now())
+  updatedAt                      DateTime                         @updatedAt
   // Dono (owner) da conta — imutável na lógica de negócio
-  ownerUserId                   String?
-  ownerUser                     Usuario?                      @relation("ContaOwner", fields: [ownerUserId], references: [id])
-  usuarios                      Usuario[]                     @relation("ContaUsuarios")
-  usuariosConta                 UsuarioConta[]
-  invites                       Invite[]
-  alunos                        Aluno[]
-  turmas                        Turma[]
-  planos                        Plano[]
-  combos                        Combo[]
-  descontos                     Desconto[]
-  webhooks                      WebhookAsaas[]
-  webhooksArchive               WebhookAsaasArchive[]
+  ownerUserId                    String?
+  ownerUser                      Usuario?                         @relation("ContaOwner", fields: [ownerUserId], references: [id])
+  usuarios                       Usuario[]                        @relation("ContaUsuarios")
+  usuariosConta                  UsuarioConta[]
+  invites                        Invite[]
+  alunos                         Aluno[]
+  turmas                         Turma[]
+  planos                         Plano[]
+  combos                         Combo[]
+  descontos                      Desconto[]
+  webhooks                       WebhookAsaas[]
+  webhooksArchive                WebhookAsaasArchive[]
   financeWebhookSideEffectOutbox FinanceWebhookSideEffectOutbox[]
-  logsFinanceiros               LogFinanceiro[]
-  logsIntegracao                LogIntegracao[]
-  asaasIntegrationJobs          AsaasIntegrationJob[]
-  asaasNotificationPreferences  AsaasNotificationPreference[]
+  logsFinanceiros                LogFinanceiro[]
+  logsIntegracao                 LogIntegracao[]
+  asaasIntegrationJobs           AsaasIntegrationJob[]
+  asaasNotificationPreferences   AsaasNotificationPreference[]
   // Núcleo financeiro whitelabel (Fases 0+)
-  financeProfile                FinanceProfile?
-  tenantFeatureFlags            TenantFeatureFlags?
-  auditLogs                     AuditLog[]
-  notifications                 Notification[]
-  notificationRecipients        NotificationRecipient[]
-  customers                     Customer[]
-  charges                       Charge[]
-  chargeReadModels              ChargeReadModel[]
-  financeSummaryReadModels      FinanceSummaryReadModel[]
-  invoices                      Invoice[]
-  subscriptions                 Subscription[]
-  installmentPlans              InstallmentPlan[]
-  standaloneInstallmentPlans    StandaloneInstallmentPlan[]
-  standaloneSubscriptions       StandaloneSubscription[]
-  transferRequests              TransferRequest[]
-  pixTransferSessions           PixTransferSession[]
-  professores                   Professor[]
-  colaboradores                 Colaborador[]
-  responsaveis                  Responsavel[]
-  alunoResponsaveis             AlunoResponsavel[]
-  modalidades                   Modalidade[]
-  salas                         Sala[]
-  matriculas                    Matricula[]
-  cobrancas                     Cobranca[]
-  pagamentos                    Pagamento[]
-  turmaProfessores              TurmaProfessor[]
-  matriculaTurmas               MatriculaTurma[]
-  comboTurmas                   ComboTurma[]
-  calendarEventProfessores      CalendarEventProfessor[]
-  lancamentos                   Lancamento[]
-  centrosCusto                  CentroCusto[]
-  categoriasLancamento          CategoriaLancamento[]
-  portalEventos                 PortalEvento[]
-  portalEventoInscricoes        PortalEventoInscricao[]
-  contratoTemplates             ContratoTemplate[]
-  contratoModelos               ContratoModelo[]
-  rematriculaOperacoes          RematriculaOperacao[]
-  payerChangeOperacoes          PayerChangeOperacao[]
-  matriculaOperacoes            MatriculaOperacao[]
-  matriculasFamiliares          MatriculaFamiliar[]
-  rematriculasFamiliares        RematriculaFamiliar[]
-  familyBillingOutboxEvents     FamilyBillingOutbox[]
-  calendarEvents                CalendarEvent[]
-  aulasExperimentais            AulaExperimental[]
-  attendanceRecords             AttendanceRecord[]
-  makeupClasses                 MakeupClass[]
-  aulasOperationLogs            AulasOperationLog[]
+  financeProfile                 FinanceProfile?
+  tenantFeatureFlags             TenantFeatureFlags?
+  auditLogs                      AuditLog[]
+  notifications                  Notification[]
+  notificationRecipients         NotificationRecipient[]
+  customers                      Customer[]
+  charges                        Charge[]
+  chargeReadModels               ChargeReadModel[]
+  financeSummaryReadModels       FinanceSummaryReadModel[]
+  invoices                       Invoice[]
+  subscriptions                  Subscription[]
+  installmentPlans               InstallmentPlan[]
+  standaloneInstallmentPlans     StandaloneInstallmentPlan[]
+  standaloneSubscriptions        StandaloneSubscription[]
+  transferRequests               TransferRequest[]
+  pixTransferSessions            PixTransferSession[]
+  professores                    Professor[]
+  colaboradores                  Colaborador[]
+  responsaveis                   Responsavel[]
+  alunoResponsaveis              AlunoResponsavel[]
+  modalidades                    Modalidade[]
+  salas                          Sala[]
+  matriculas                     Matricula[]
+  cobrancas                      Cobranca[]
+  pagamentos                     Pagamento[]
+  turmaProfessores               TurmaProfessor[]
+  matriculaTurmas                MatriculaTurma[]
+  comboTurmas                    ComboTurma[]
+  calendarEventProfessores       CalendarEventProfessor[]
+  lancamentos                    Lancamento[]
+  centrosCusto                   CentroCusto[]
+  categoriasLancamento           CategoriaLancamento[]
+  portalEventos                  PortalEvento[]
+  portalEventoInscricoes         PortalEventoInscricao[]
+  schoolEvents                   SchoolEvent[]
+  eventMaps                      EventMap[]
+  eventMapVersions               EventMapVersion[]
+  eventMapLevels                 EventMapLevel[]
+  eventMapObjects                EventMapObject[]
+  eventMapSections               EventMapSection[]
+  eventSeats                     EventSeat[]
+  eventTicketLots                EventTicketLot[]
+  eventTicketSales               EventTicketSale[]
+  eventCostumes                  EventCostume[]
+  eventCostumeAssignments        EventCostumeAssignment[]
+  eventFinancialEntries          EventFinancialEntry[]
+  eventParticipants              EventParticipant[]
+  eventReports                   EventReport[]
+  eventAudits                    EventAudit[]
+  contratoTemplates              ContratoTemplate[]
+  contratoModelos                ContratoModelo[]
+  rematriculaOperacoes           RematriculaOperacao[]
+  payerChangeOperacoes           PayerChangeOperacao[]
+  matriculaOperacoes             MatriculaOperacao[]
+  matriculasFamiliares           MatriculaFamiliar[]
+  rematriculasFamiliares         RematriculaFamiliar[]
+  familyBillingOutboxEvents      FamilyBillingOutbox[]
+  calendarEvents                 CalendarEvent[]
+  aulasExperimentais             AulaExperimental[]
+  attendanceRecords              AttendanceRecord[]
+  makeupClasses                  MakeupClass[]
+  aulasOperationLogs             AulasOperationLog[]
   // Loja / Vendas
-  products                      Product[]
-  productCategories             ProductCategory[]
-  sales                         Sale[]
-  inventoryBalances             InventoryBalance[]
-  inventoryMovements            InventoryMovement[]
-  restockOrders                 RestockOrder[]
+  products                       Product[]
+  productCategories              ProductCategory[]
+  sales                          Sale[]
+  inventoryBalances              InventoryBalance[]
+  inventoryMovements             InventoryMovement[]
+  restockOrders                  RestockOrder[]
   /// Fuso horário IANA para materialização da agenda (ex.: America/Sao_Paulo, America/Manaus)
-  timezone                      String                        @default("America/Sao_Paulo") @db.VarChar(64)
+  timezone                       String                           @default("America/Sao_Paulo") @db.VarChar(64)
   // Campos de endereço da conta (escola)
-  enderecoCep                   String?                       @db.Char(8)
-  enderecoLogradouro            String?
-  enderecoNumero                String?
-  enderecoBairro                String?
-  enderecoCidade                String?
-  enderecoUf                    String?                       @db.Char(2)
+  enderecoCep                    String?                          @db.Char(8)
+  enderecoLogradouro             String?
+  enderecoNumero                 String?
+  enderecoBairro                 String?
+  enderecoCidade                 String?
+  enderecoUf                     String?                          @db.Char(2)
   // Credenciais de integração (criptografadas em repouso). Armazenamos separadamente para permitir rotação.
-  asaasApiKeyEncrypted          String?
-  asaasWebhookSecretEncrypted   String?
-  asaasCredsUpdatedAt           DateTime?
+  asaasApiKeyEncrypted           String?
+  asaasWebhookSecretEncrypted    String?
+  asaasCredsUpdatedAt            DateTime?
   // Política de ativação de matrícula
-  matriculaActivationPolicy     MatriculaActivationPolicy     @default(IMMEDIATE)
-  financialPolicy               ContaFinancialPolicy?
+  matriculaActivationPolicy      MatriculaActivationPolicy        @default(IMMEDIATE)
+  financialPolicy                ContaFinancialPolicy?
 
   @@index([cpfCnpj])
   @@index([ownerUserId])
@@ -835,14 +998,21 @@ model Usuario {
   payerChangeOperacoes      PayerChangeOperacao[]
   matriculaOperacoes        MatriculaOperacao[]
   notifications             NotificationRecipient[]
-  attendanceRecorded        AttendanceRecord[]      @relation("AttendanceRecordedBy")
-  makeupClassesCreated      MakeupClass[]           @relation("MakeupClassCreatedBy")
+  attendanceRecorded        AttendanceRecord[]       @relation("AttendanceRecordedBy")
+  makeupClassesCreated      MakeupClass[]            @relation("MakeupClassCreatedBy")
   authActionTokens          AuthActionToken[]
-  salesOperated             Sale[]                  @relation("SalesOperated")
-  inventoryMovementsCreated InventoryMovement[]     @relation("InventoryMovementActor")
-  restockOrdersCreated      RestockOrder[]          @relation("RestockOrderCreatedBy")
-  acessosConta              UsuarioConta[]          @relation("UsuarioContaUsuario")
-  acessosConvidados         UsuarioConta[]          @relation("UsuarioContaInvitedBy")
+  salesOperated             Sale[]                   @relation("SalesOperated")
+  inventoryMovementsCreated InventoryMovement[]      @relation("InventoryMovementActor")
+  restockOrdersCreated      RestockOrder[]           @relation("RestockOrderCreatedBy")
+  schoolEventsResponsible   SchoolEvent[]            @relation("SchoolEventResponsibleUser")
+  schoolEventsCreated       SchoolEvent[]            @relation("SchoolEventCreatedBy")
+  eventTicketSalesCreated   EventTicketSale[]        @relation("EventTicketSaleCreatedBy")
+  eventAssignmentsDelivered EventCostumeAssignment[] @relation("EventCostumeAssignmentDeliveredBy")
+  eventFinancialEntries     EventFinancialEntry[]    @relation("EventFinancialEntryCreatedBy")
+  eventReportsGenerated     EventReport[]            @relation("EventReportGeneratedBy")
+  eventAudits               EventAudit[]             @relation("EventAuditActor")
+  acessosConta              UsuarioConta[]           @relation("UsuarioContaUsuario")
+  acessosConvidados         UsuarioConta[]           @relation("UsuarioContaInvitedBy")
 
   @@index([contaId])
 }
@@ -921,7 +1091,7 @@ model Aluno {
   createdAt                      DateTime  @default(now())
   updatedAt                      DateTime  @updatedAt
 
-  conta              Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  conta              Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   inscricoesEvento   PortalEventoInscricao[]
   responsaveis       AlunoResponsavel[]
   matriculas         Matricula[]
@@ -929,6 +1099,9 @@ model Aluno {
   attendanceRecords  AttendanceRecord[]
   makeupClasses      MakeupClass[]
   sales              Sale[]
+  eventTicketSales   EventTicketSale[]
+  eventAssignments   EventCostumeAssignment[]
+  eventParticipants  EventParticipant[]
 
   @@unique([contaId, cpf])
   @@unique([contaId, email])
@@ -981,6 +1154,8 @@ model Responsavel {
   matriculasFamiliares   MatriculaFamiliar[]
   rematriculasFamiliares RematriculaFamiliar[]
   sales                  Sale[]
+  eventTicketSales       EventTicketSale[]
+  eventParticipants      EventParticipant[]
 
   // Multi-tenant: unicidade por conta
   @@unique([contaId, cpf])
@@ -1026,16 +1201,18 @@ model Turma {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  conta                Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  modalidade           Modalidade       @relation(fields: [modalidadeId], references: [id])
-  sala                 Sala             @relation(fields: [salaId], references: [id])
+  conta                Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  modalidade           Modalidade               @relation(fields: [modalidadeId], references: [id])
+  sala                 Sala                     @relation(fields: [salaId], references: [id])
   matriculas           Matricula[]
   combos               ComboTurma[]
   professores          TurmaProfessor[]
   matriculaTurmas      MatriculaTurma[]
   calendarEvents       CalendarEvent[]
-  makeupClassesOrigem  MakeupClass[]    @relation("MakeupClassTurmaOrigem")
-  makeupClassesDestino MakeupClass[]    @relation("MakeupClassTurmaDestino")
+  makeupClassesOrigem  MakeupClass[]            @relation("MakeupClassTurmaOrigem")
+  makeupClassesDestino MakeupClass[]            @relation("MakeupClassTurmaDestino")
+  eventAssignments     EventCostumeAssignment[]
+  eventParticipants    EventParticipant[]
 
   @@unique([contaId, nome], name: "uq_turma_conta_nome")
   @@index([contaId], name: "idx_turma_conta")
@@ -1910,20 +2087,20 @@ model WebhookAsaasRejection {
 }
 
 model FinanceWebhookSideEffectOutbox {
-  id            String                           @id @default(cuid())
+  id            String                         @id @default(cuid())
   contaId       String
   effectType    String
   dedupeKey     String
   payload       Json
-  status        FinanceWebhookSideEffectStatus   @default(PENDING)
-  attempts      Int                              @default(0)
-  availableAt   DateTime                         @default(now())
+  status        FinanceWebhookSideEffectStatus @default(PENDING)
+  attempts      Int                            @default(0)
+  availableAt   DateTime                       @default(now())
   lockedAt      DateTime?
   processedAt   DateTime?
   lastAttemptAt DateTime?
   lastError     String?
-  createdAt     DateTime                         @default(now())
-  updatedAt     DateTime                         @updatedAt
+  createdAt     DateTime                       @default(now())
+  updatedAt     DateTime                       @updatedAt
 
   conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
 
@@ -2186,6 +2363,440 @@ model PortalEventoInscricao {
   @@index([contaId, alunoId], name: "idx_portal_evento_inscricao_conta_aluno")
   @@index([eventoId])
   @@index([alunoId])
+}
+
+// --- Eventos escolares gerenciados internamente ---
+
+model SchoolEvent {
+  id                  String            @id @default(cuid())
+  contaId             String
+  name                String
+  description         String?
+  type                SchoolEventType
+  status              SchoolEventStatus @default(PLANNING)
+  startsAt            DateTime
+  endsAt              DateTime?
+  locationName        String?
+  locationAddress     String?
+  estimatedCapacity   Int?
+  responsibleUserId   String?
+  hasTickets          Boolean           @default(false)
+  ticketMode          EventTicketMode   @default(NONE)
+  hasCostumes         Boolean           @default(false)
+  hasFinancialControl Boolean           @default(true)
+  notes               String?
+  createdByUserId     String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  cancelledAt         DateTime?
+  finishedAt          DateTime?
+  archivedAt          DateTime?
+
+  conta            Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsibleUser  Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
+  createdBy        Usuario?                 @relation("SchoolEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  maps             EventMap[]
+  ticketLots       EventTicketLot[]
+  ticketSales      EventTicketSale[]
+  costumes         EventCostume[]
+  assignments      EventCostumeAssignment[]
+  financialEntries EventFinancialEntry[]
+  participants     EventParticipant[]
+  reports          EventReport[]
+  audits           EventAudit[]
+
+  @@index([contaId], name: "idx_school_event_conta")
+  @@index([contaId, status, startsAt], name: "idx_school_event_conta_status_start")
+  @@index([contaId, type, startsAt], name: "idx_school_event_conta_type_start")
+  @@index([contaId, responsibleUserId], name: "idx_school_event_conta_responsible")
+  @@index([contaId, createdAt], name: "idx_school_event_conta_created")
+}
+
+model EventTicketLot {
+  id            String               @id @default(cuid())
+  contaId       String
+  eventId       String
+  name          String
+  ticketType    EventTicketType
+  unitPrice     Decimal              @db.Decimal(12, 2)
+  quantityTotal Int
+  quantitySold  Int                  @default(0)
+  saleStartsAt  DateTime?
+  saleEndsAt    DateTime?
+  status        EventTicketLotStatus @default(DRAFT)
+  notes         String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  conta       Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  sales       EventTicketSale[]
+  mapSections EventMapSection[]
+
+  @@unique([contaId, eventId, name], name: "uq_event_ticket_lot_conta_event_name")
+  @@index([contaId], name: "idx_event_ticket_lot_conta")
+  @@index([contaId, eventId, status], name: "idx_event_ticket_lot_conta_event_status")
+  @@index([contaId, saleStartsAt, saleEndsAt], name: "idx_event_ticket_lot_conta_sale_window")
+}
+
+model EventMap {
+  id                 String         @id @default(cuid())
+  contaId            String
+  eventId            String
+  name               String
+  status             EventMapStatus @default(DRAFT)
+  publishedVersionId String?
+  createdByUserId    String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  publishedAt        DateTime?
+  archivedAt         DateTime?
+
+  conta    Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event    SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  versions EventMapVersion[]
+  levels   EventMapLevel[]
+  objects  EventMapObject[]
+  sections EventMapSection[]
+  seats    EventSeat[]
+
+  @@index([contaId], name: "idx_event_map_conta")
+  @@index([contaId, eventId, status], name: "idx_event_map_conta_event_status")
+  @@index([contaId, updatedAt], name: "idx_event_map_conta_updated")
+}
+
+model EventMapVersion {
+  id         String         @id @default(cuid())
+  contaId    String
+  eventMapId String
+  version    Int
+  status     EventMapStatus
+  snapshot   Json
+  createdAt  DateTime       @default(now())
+
+  conta Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map   EventMap @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+
+  @@unique([eventMapId, version], name: "uq_event_map_version_map_version")
+  @@index([contaId, eventMapId], name: "idx_event_map_version_conta_map")
+}
+
+model EventMapLevel {
+  id         String   @id @default(cuid())
+  contaId    String
+  eventMapId String
+  name       String
+  sortOrder  Int      @default(0)
+  widthPx    Int      @default(1600)
+  heightPx   Int      @default(1000)
+  unit       String   @default("px")
+  scale      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  conta    Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map      EventMap          @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  objects  EventMapObject[]
+  sections EventMapSection[]
+  seats    EventSeat[]
+
+  @@index([contaId, eventMapId], name: "idx_event_map_level_conta_map")
+}
+
+model EventMapObject {
+  id         String             @id @default(cuid())
+  contaId    String
+  eventMapId String
+  levelId    String
+  sectionId  String?
+  type       EventMapObjectType
+  data       Json
+  x          Decimal            @db.Decimal(12, 2)
+  y          Decimal            @db.Decimal(12, 2)
+  width      Decimal?           @db.Decimal(12, 2)
+  height     Decimal?           @db.Decimal(12, 2)
+  rotation   Decimal            @default(0) @db.Decimal(8, 2)
+  locked     Boolean            @default(false)
+  hidden     Boolean            @default(false)
+  sortOrder  Int                @default(0)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  conta Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map   EventMap      @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  level EventMapLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, eventMapId, levelId], name: "idx_event_map_object_conta_map_level")
+  @@index([contaId, sectionId], name: "idx_event_map_object_conta_section")
+}
+
+model EventMapSection {
+  id         String   @id @default(cuid())
+  contaId    String
+  eventMapId String
+  levelId    String
+  lotId      String?
+  name       String
+  color      String
+  capacity   Int?
+  status     String   @default("ACTIVE")
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  conta Conta           @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map   EventMap        @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  level EventMapLevel   @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  lot   EventTicketLot? @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  seats EventSeat[]
+
+  @@index([contaId, eventMapId], name: "idx_event_map_section_conta_map")
+  @@index([contaId, lotId], name: "idx_event_map_section_conta_lot")
+}
+
+model EventSeat {
+  id            String          @id @default(cuid())
+  contaId       String
+  eventMapId    String
+  levelId       String
+  sectionId     String
+  objectId      String?
+  technicalCode String
+  displayLabel  String
+  rowLabel      String?
+  seatNumber    String?
+  status        EventSeatStatus @default(AVAILABLE)
+  accessible    Boolean         @default(false)
+  publicVisible Boolean         @default(true)
+  x             Decimal         @db.Decimal(12, 2)
+  y             Decimal         @db.Decimal(12, 2)
+  size          Decimal?        @db.Decimal(8, 2)
+  rotation      Decimal         @default(0) @db.Decimal(8, 2)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  conta   Conta           @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map     EventMap        @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  level   EventMapLevel   @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  section EventMapSection @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, eventMapId, technicalCode], name: "uq_event_seat_conta_map_code")
+  @@index([contaId, eventMapId, status], name: "idx_event_seat_conta_map_status")
+  @@index([contaId, sectionId], name: "idx_event_seat_conta_section")
+}
+
+model EventTicketSale {
+  id                String                @id @default(cuid())
+  contaId           String
+  eventId           String
+  lotId             String
+  buyerName         String
+  alunoId           String?
+  responsavelId     String?
+  quantity          Int
+  unitPriceSnapshot Decimal               @db.Decimal(12, 2)
+  totalAmount       Decimal               @db.Decimal(12, 2)
+  paymentMethod     EventPaymentMethod
+  status            EventTicketSaleStatus @default(PENDING)
+  soldAt            DateTime              @default(now())
+  paidAt            DateTime?
+  cancelledAt       DateTime?
+  refundedAt        DateTime?
+  createdByUserId   String?
+  notes             String?
+  revenueEntryId    String?
+  paymentProvider   String?
+  asaasPaymentId    String?
+  paymentStatus     String?
+  providerChargeId  String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  conta       Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  lot         EventTicketLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  aluno       Aluno?         @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  responsavel Responsavel?   @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  createdBy   Usuario?       @relation("EventTicketSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId], name: "idx_event_ticket_sale_conta")
+  @@index([contaId, eventId, status], name: "idx_event_ticket_sale_conta_event_status")
+  @@index([contaId, lotId, status], name: "idx_event_ticket_sale_conta_lot_status")
+  @@index([contaId, soldAt], name: "idx_event_ticket_sale_conta_sold")
+  @@index([contaId, alunoId], name: "idx_event_ticket_sale_conta_aluno")
+  @@index([contaId, responsavelId], name: "idx_event_ticket_sale_conta_responsavel")
+  @@index([contaId, asaasPaymentId], name: "idx_event_ticket_sale_conta_asaas_payment")
+}
+
+model EventCostume {
+  id           String               @id @default(cuid())
+  contaId      String
+  eventId      String
+  name         String
+  description  String?
+  category     EventCostumeCategory
+  size         String?
+  color        String?
+  accessories  String?
+  schoolCost   Decimal?             @db.Decimal(12, 2)
+  chargedValue Decimal?             @db.Decimal(12, 2)
+  supplier     String?
+  quantity     Int                  @default(1)
+  notes        String?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  conta       Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignments EventCostumeAssignment[]
+
+  @@unique([contaId, eventId, name, size], name: "uq_event_costume_conta_event_name_size")
+  @@index([contaId], name: "idx_event_costume_conta")
+  @@index([contaId, eventId, category], name: "idx_event_costume_conta_event_category")
+}
+
+model EventCostumeAssignment {
+  id                String                       @id @default(cuid())
+  contaId           String
+  eventId           String
+  costumeId         String
+  alunoId           String?
+  turmaId           String?
+  definedSize       String?
+  status            EventCostumeAssignmentStatus @default(PENDING)
+  chargedValue      Decimal?                     @db.Decimal(12, 2)
+  isPaid            Boolean                      @default(false)
+  deliveredAt       DateTime?
+  returnedAt        DateTime?
+  deliveredByUserId String?
+  notes             String?
+  revenueEntryId    String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  costume     EventCostume @relation(fields: [costumeId], references: [id], onDelete: Cascade)
+  aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  turma       Turma?       @relation(fields: [turmaId], references: [id], onDelete: SetNull)
+  deliveredBy Usuario?     @relation("EventCostumeAssignmentDeliveredBy", fields: [deliveredByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, eventId, alunoId, costumeId], name: "uq_event_costume_assignment_conta_event_aluno_costume")
+  @@index([contaId], name: "idx_event_costume_assignment_conta")
+  @@index([contaId, eventId, status], name: "idx_event_costume_assignment_conta_event_status")
+  @@index([contaId, costumeId, status], name: "idx_event_costume_assignment_conta_costume_status")
+  @@index([contaId, alunoId], name: "idx_event_costume_assignment_conta_aluno")
+  @@index([contaId, turmaId], name: "idx_event_costume_assignment_conta_turma")
+}
+
+model EventFinancialEntry {
+  id              String                    @id @default(cuid())
+  contaId         String
+  eventId         String
+  type            EventFinancialEntryType
+  category        String
+  description     String
+  supplier        String?
+  originType      EventFinancialOriginType  @default(MANUAL)
+  originId        String?
+  expectedAmount  Decimal                   @db.Decimal(12, 2)
+  actualAmount    Decimal?                  @db.Decimal(12, 2)
+  dueDate         DateTime?
+  realizedAt      DateTime?
+  status          EventFinancialEntryStatus
+  paymentMethod   EventPaymentMethod?
+  proofUrl        String?
+  notes           String?
+  createdByUserId String?
+  paymentProvider String?
+  asaasPaymentId  String?
+  paymentStatus   String?
+  cancelledAt     DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+
+  conta     Conta       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  createdBy Usuario?    @relation("EventFinancialEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, originType, originId], name: "uq_event_financial_entry_conta_origin")
+  @@index([contaId], name: "idx_event_financial_entry_conta")
+  @@index([contaId, eventId, type, status], name: "idx_event_financial_entry_conta_event_type_status")
+  @@index([contaId, eventId, category], name: "idx_event_financial_entry_conta_event_category")
+  @@index([contaId, realizedAt], name: "idx_event_financial_entry_conta_realized")
+  @@index([contaId, dueDate], name: "idx_event_financial_entry_conta_due")
+  @@index([contaId, asaasPaymentId], name: "idx_event_financial_entry_conta_asaas_payment")
+}
+
+model EventParticipant {
+  id            String               @id @default(cuid())
+  contaId       String
+  eventId       String
+  type          EventParticipantType
+  alunoId       String?
+  turmaId       String?
+  responsavelId String?
+  displayName   String?
+  notes         String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  turma       Turma?       @relation(fields: [turmaId], references: [id], onDelete: SetNull)
+  responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+
+  @@index([contaId], name: "idx_event_participant_conta")
+  @@index([contaId, eventId, type], name: "idx_event_participant_conta_event_type")
+  @@index([contaId, alunoId], name: "idx_event_participant_conta_aluno")
+  @@index([contaId, turmaId], name: "idx_event_participant_conta_turma")
+  @@index([contaId, responsavelId], name: "idx_event_participant_conta_responsavel")
+}
+
+model EventReport {
+  id                String          @id @default(cuid())
+  contaId           String
+  eventId           String?
+  type              EventReportType
+  title             String
+  filters           Json?
+  data              Json
+  generatedByUserId String?
+  generatedAt       DateTime        @default(now())
+
+  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  generatedBy Usuario?     @relation("EventReportGeneratedBy", fields: [generatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId], name: "idx_event_report_conta")
+  @@index([contaId, eventId, generatedAt], name: "idx_event_report_conta_event_generated")
+  @@index([contaId, type, generatedAt], name: "idx_event_report_conta_type_generated")
+}
+
+model EventAudit {
+  id          String   @id @default(cuid())
+  contaId     String
+  eventId     String?
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  before      Json?
+  after       Json?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  conta Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event SchoolEvent? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actor Usuario?     @relation("EventAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId], name: "idx_event_audit_conta")
+  @@index([contaId, eventId, createdAt], name: "idx_event_audit_conta_event_created")
+  @@index([contaId, entityType, entityId], name: "idx_event_audit_conta_entity")
+  @@index([contaId, action, createdAt], name: "idx_event_audit_conta_action")
+  @@index([contaId, actorUserId, createdAt], name: "idx_event_audit_conta_actor")
 }
 
 // --- Contratos Eletrônicos (PDF-based) ---

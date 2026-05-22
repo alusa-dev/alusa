@@ -14,6 +14,10 @@ export declare const PAYMENT_STATUSES: {
     readonly OVERDUE: "OVERDUE";
     readonly REFUNDED: "REFUNDED";
     readonly CANCELLED: "CANCELLED";
+    /** Chargeback em qualquer fase (disputado, aguardando reversão, etc.) */
+    readonly CHARGEBACK: "CHARGEBACK";
+    /** Recebido em dinheiro/mãos - fora do Asaas */
+    readonly RECEIVED_IN_CASH: "RECEIVED_IN_CASH";
 };
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[keyof typeof PAYMENT_STATUSES];
 //# sourceMappingURL=billing.d.ts.map
