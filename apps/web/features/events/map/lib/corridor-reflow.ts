@@ -59,7 +59,7 @@ export function isCorridorAutoFit(corridor: EventMapObjectDTO) {
 function persistCorridorMetadata(corridor: EventMapObjectDTO) {
   const axis = resolveCorridorAxis(corridor);
   const bounds = getCorridorBounds(corridor);
-  const nextData = {
+  const nextData: Record<string, unknown> = {
     ...corridor.data,
     [CORRIDOR_AXIS_KEY]: axis,
     [CORRIDOR_AUTO_FIT_KEY]: isCorridorAutoFit(corridor),
