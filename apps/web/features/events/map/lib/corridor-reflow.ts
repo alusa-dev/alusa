@@ -350,7 +350,7 @@ function ensureCorridorSplitAnchors(group: CorridorUnionGroup, corridorById: Map
     if (!corridor) continue;
 
     persistCorridorMetadata(corridor);
-    const nextData = { ...corridor.data };
+    const nextData: Record<string, unknown> = { ...corridor.data };
     if (!Number.isFinite(Number(nextData[CORRIDOR_SPLIT_X_KEY]))) {
       nextData[CORRIDOR_SPLIT_X_KEY] = member.rect.x + member.rect.width / 2;
     }
@@ -395,7 +395,7 @@ export function updateCorridorSplitAnchorsOnDrag(
 ) {
   const axis = resolveCorridorAxis(corridor);
   const bounds = getCorridorBounds(corridor);
-  const nextData = { ...corridor.data, [CORRIDOR_AXIS_KEY]: axis };
+  const nextData: Record<string, unknown> = { ...corridor.data, [CORRIDOR_AXIS_KEY]: axis };
 
   const resizedOrRotated =
     typeof patch.width === 'number' ||

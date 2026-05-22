@@ -439,7 +439,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       const textMode = config.type === 'TEXT' ? getTextModeFromCreation(size?.width ?? null, size?.height ?? null) : undefined;
       const objectWidth = config.type === 'TEXT' && !size?.width ? null : size?.width ?? config.width;
       const objectHeight = config.type === 'TEXT' && !size?.height ? null : size?.height ?? config.height;
-      const objectData =
+      const objectData: Record<string, unknown> =
         config.type === 'TEXT'
           ? normalizeTextData({
               ...withAutoObjectLabel(config.data, tool, map.objects),
