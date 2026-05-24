@@ -77,6 +77,9 @@ export const eventSeatSchema = z.object({
   levelId: idSchema,
   sectionId: idSchema,
   objectId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable()),
+  groupId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable()),
+  rowIndex: z.coerce.number().int().min(0).optional().nullable(),
+  columnIndex: z.coerce.number().int().min(0).optional().nullable(),
   technicalCode: z.string().trim().min(1).max(120),
   displayLabel: z.string().trim().min(1).max(120),
   rowLabel: z.string().trim().max(80).optional().nullable(),
@@ -90,11 +93,33 @@ export const eventSeatSchema = z.object({
   rotation: z.coerce.number().finite().default(0),
 });
 
+export const eventSeatGroupSchema = z.object({
+  id: idSchema,
+  levelId: idSchema,
+  name: z.string().trim().max(120).optional().nullable(),
+  x: coordinate,
+  y: coordinate,
+  rotation: z.coerce.number().finite().default(0),
+  rows: z.coerce.number().int().min(1).max(200),
+  columns: z.coerce.number().int().min(1).max(200),
+  seatWidth: z.coerce.number().finite().positive().default(28),
+  seatHeight: z.coerce.number().finite().positive().default(28),
+  gapX: z.coerce.number().finite().min(0).default(4),
+  gapY: z.coerce.number().finite().min(0).default(4),
+  paddingTop: z.coerce.number().finite().min(0).default(0),
+  paddingRight: z.coerce.number().finite().min(0).default(0),
+  paddingBottom: z.coerce.number().finite().min(0).default(0),
+  paddingLeft: z.coerce.number().finite().min(0).default(0),
+  numbering: z.record(z.unknown()).default({}),
+  locked: z.coerce.boolean().default(false),
+});
+
 export const updateEventMapDraftSchema = z.object({
   name: requiredText('Informe o nome do mapa.').optional(),
   levels: z.array(eventMapLevelSchema).min(1, 'Crie pelo menos uma prancheta.'),
   sections: z.array(eventMapSectionSchema).default([]),
   objects: z.array(eventMapObjectSchema).default([]),
+  seatGroups: z.array(eventSeatGroupSchema).default([]),
   seats: z.array(eventSeatSchema).default([]),
 });
 
@@ -105,3 +130,4 @@ export const duplicateEventMapSchema = z.object({
 export type CreateEventMapInput = z.infer<typeof createEventMapSchema>;
 export type UpdateEventMapDraftInput = z.infer<typeof updateEventMapDraftSchema>;
 export type DuplicateEventMapInput = z.infer<typeof duplicateEventMapSchema>;
+export type EventSeatGroupInput = z.infer<typeof eventSeatGroupSchema>;

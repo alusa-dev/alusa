@@ -57,6 +57,9 @@ export type EventSeatDTO = {
   levelId: string;
   sectionId: string;
   objectId: string | null;
+  groupId: string | null;
+  rowIndex: number | null;
+  columnIndex: number | null;
   technicalCode: string;
   displayLabel: string;
   rowLabel: string | null;
@@ -68,6 +71,27 @@ export type EventSeatDTO = {
   y: number;
   size: number | null;
   rotation: number;
+};
+
+export type EventSeatGroupDTO = {
+  id: string;
+  levelId: string;
+  name: string | null;
+  x: number;
+  y: number;
+  rotation: number;
+  rows: number;
+  columns: number;
+  seatWidth: number;
+  seatHeight: number;
+  gapX: number;
+  gapY: number;
+  paddingTop: number;
+  paddingRight: number;
+  paddingBottom: number;
+  paddingLeft: number;
+  numbering: Record<string, unknown>;
+  locked: boolean;
 };
 
 export type EventMapDTO = {
@@ -86,6 +110,7 @@ export type EventMapDTO = {
   levels: EventMapLevelDTO[];
   sections: EventMapSectionDTO[];
   objects: EventMapObjectDTO[];
+  seatGroups: EventSeatGroupDTO[];
   seats: EventSeatDTO[];
   versions: Array<{ id: string; version: number; status: EventMapStatus; createdAt: string }>;
   counts: {
@@ -101,6 +126,7 @@ export type EventMapDraftPayload = {
   levels: EventMapLevelDTO[];
   sections: Array<Omit<EventMapSectionDTO, 'lot'>>;
   objects: EventMapObjectDTO[];
+  seatGroups: EventSeatGroupDTO[];
   seats: EventSeatDTO[];
 };
 

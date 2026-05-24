@@ -51,6 +51,7 @@ function createMap(): EventMapDTO {
       },
     ],
     objects: [],
+    seatGroups: [],
     seats: [],
     versions: [],
     counts: { levels: 1, sections: 1, seats: 0, availableSeats: 0 },
@@ -96,6 +97,9 @@ function createPayload(): EventMapDraftPayload {
         levelId: 'level-1',
         sectionId: 'section-1',
         objectId: null,
+        groupId: null,
+        rowIndex: null,
+        columnIndex: null,
         technicalCode: 'A1',
         displayLabel: 'A1',
         rowLabel: 'A',
@@ -109,6 +113,7 @@ function createPayload(): EventMapDraftPayload {
         rotation: 0,
       },
     ],
+    seatGroups: [],
   };
 }
 

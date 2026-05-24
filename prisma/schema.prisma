@@ -794,6 +794,7 @@ model Conta {
   eventMapObjects                EventMapObject[]
   eventMapSections               EventMapSection[]
   eventSeats                     EventSeat[]
+  eventSeatGroups                EventSeatGroup[]
   eventTicketLots                EventTicketLot[]
   eventTicketSales               EventTicketSale[]
   eventCostumes                  EventCostume[]
@@ -2459,6 +2460,7 @@ model EventMap {
   objects  EventMapObject[]
   sections EventMapSection[]
   seats    EventSeat[]
+  seatGroups EventSeatGroup[]
 
   @@index([contaId], name: "idx_event_map_conta")
   @@index([contaId, eventId, status], name: "idx_event_map_conta_event_status")
@@ -2499,8 +2501,41 @@ model EventMapLevel {
   objects  EventMapObject[]
   sections EventMapSection[]
   seats    EventSeat[]
+  seatGroups EventSeatGroup[]
 
   @@index([contaId, eventMapId], name: "idx_event_map_level_conta_map")
+}
+
+model EventSeatGroup {
+  id            String   @id @default(cuid())
+  contaId       String
+  eventMapId    String
+  levelId       String
+  name          String?
+  x             Decimal  @db.Decimal(12, 2)
+  y             Decimal  @db.Decimal(12, 2)
+  rotation      Decimal  @default(0) @db.Decimal(8, 2)
+  rows          Int
+  columns       Int
+  seatWidth     Decimal  @default(28) @db.Decimal(8, 2)
+  seatHeight    Decimal  @default(28) @db.Decimal(8, 2)
+  gapX          Decimal  @default(4) @db.Decimal(8, 2)
+  gapY          Decimal  @default(4) @db.Decimal(8, 2)
+  paddingTop    Decimal  @default(0) @db.Decimal(8, 2)
+  paddingRight  Decimal  @default(0) @db.Decimal(8, 2)
+  paddingBottom Decimal  @default(0) @db.Decimal(8, 2)
+  paddingLeft   Decimal  @default(0) @db.Decimal(8, 2)
+  numbering     Json
+  locked        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conta  Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map    EventMap      @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  level  EventMapLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  seats  EventSeat[]
+
+  @@index([contaId, eventMapId, levelId], name: "idx_event_seat_group_conta_map_level")
 }
 
 model EventMapObject {
@@ -2565,6 +2600,9 @@ model EventSeat {
   displayLabel  String
   rowLabel      String?
   seatNumber    String?
+  groupId       String?
+  rowIndex      Int?
+  columnIndex   Int?
   status        EventSeatStatus @default(AVAILABLE)
   accessible    Boolean         @default(false)
   publicVisible Boolean         @default(true)
@@ -2579,6 +2617,7 @@ model EventSeat {
   map     EventMap        @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
   level   EventMapLevel   @relation(fields: [levelId], references: [id], onDelete: Cascade)
   section EventMapSection @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  group   EventSeatGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@unique([contaId, eventMapId, technicalCode], name: "uq_event_seat_conta_map_code")
   @@index([contaId, eventMapId, status], name: "idx_event_seat_conta_map_status")

@@ -13,8 +13,9 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 import type { TicketLotDTO } from '../../events-service';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
 import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX } from '../lib/level-utils';
+import { snapSmartCorridorRotation } from '../lib/smart-corridor-layout';
 import {
   applyTextModePatch,
   getTextDecorationParts,
@@ -326,7 +327,22 @@ function ObjectProperties({
             <Input type="number" min={1} value={object.height != null && Number.isFinite(object.height) ? object.height : ''} disabled={disabled} onChange={(event) => onUpdate({ height: Math.max(1, toNumber(event.target.value, object.height ?? 1)) })} className={FIELD_CLASS} />
           </PanelField>
           <PanelField label="Rotação">
-            <Input type="number" value={numberValue(object.rotation, 0)} disabled={disabled || object.type === 'CORRIDOR'} onChange={(event) => onUpdate({ rotation: toNumber(event.target.value, object.rotation ?? 0) })} className={FIELD_CLASS} />
+            <Input
+              data-testid={object.type === 'CORRIDOR' ? 'corridor-rotation' : undefined}
+              type="number"
+              step={object.type === 'CORRIDOR' ? 90 : 1}
+              value={numberValue(object.rotation, 0)}
+              disabled={disabled}
+              onChange={(event) =>
+                onUpdate({
+                  rotation:
+                    object.type === 'CORRIDOR'
+                      ? snapSmartCorridorRotation(toNumber(event.target.value, object.rotation ?? 0))
+                      : toNumber(event.target.value, object.rotation ?? 0),
+                })
+              }
+              className={FIELD_CLASS}
+            />
           </PanelField>
         </div>
       </PanelSection>
@@ -465,6 +481,8 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
   const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
   const updateLevel = useEventMapEditorStore((state) => state.updateLevel);
+  const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
+  const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
   const inlineTextEditorActive = useEventMapEditorStore((state) => state.inlineTextEditorActive);
   const disabled = status !== 'DRAFT';
 
@@ -474,6 +492,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
     if (!primary) return null;
     if (primary.type === 'section') return { type: 'section' as const, value: map.sections.find((section) => section.id === primary.id) };
     if (primary.type === 'seat') return { type: 'seat' as const, value: map.seats.find((seat) => seat.id === primary.id) };
+    if (primary.type === 'seatgroup') return { type: 'seatgroup' as const, value: (map.seatGroups ?? []).find((g) => g.id === primary.id) };
     if (primary.type === 'object') return { type: 'object' as const, value: map.objects.find((object) => object.id === primary.id) };
     if (primary.type === 'level') return { type: 'level' as const, value: map.levels.find((level) => level.id === primary.id) };
     return null;
@@ -620,6 +639,70 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 <Input type="number" value={selected.value!.y} disabled={disabled} onChange={(event) => updateSeat(selected.value!.id, { y: Number(event.target.value) })} className={FIELD_CLASS} />
               </PanelField>
             </div>
+          </>
+        ) : null}
+
+        {multiSelectCount <= 1 && selected?.type === 'seatgroup' && selected.value ? (
+          <>
+            <PanelSection title="Grupo de cadeiras">
+              <PanelField label="Nome">
+                <Input
+                  value={selected.value.name ?? ''}
+                  disabled={disabled}
+                  onChange={(event) => updateSeatGroup(selected.value!.id, { name: event.target.value || null })}
+                  className={FIELD_CLASS}
+                />
+              </PanelField>
+              <div className="grid grid-cols-2 gap-3">
+                <PanelField label="Fileiras">
+                  <Input type="number" min={1} max={50} value={selected.value.rows} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { rows: Math.max(1, toNumber(event.target.value, selected.value!.rows)) })} className={FIELD_CLASS} />
+                </PanelField>
+                <PanelField label="Colunas">
+                  <Input type="number" min={1} max={80} value={selected.value.columns} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { columns: Math.max(1, toNumber(event.target.value, selected.value!.columns)) })} className={FIELD_CLASS} />
+                </PanelField>
+              </div>
+            </PanelSection>
+            <PanelSection title="Cadeira">
+              <div className="grid grid-cols-2 gap-3">
+                <PanelField label="Largura">
+                  <Input type="number" min={8} value={selected.value.seatWidth} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatWidth: Math.max(8, toNumber(event.target.value, selected.value!.seatWidth)) })} className={FIELD_CLASS} />
+                </PanelField>
+                <PanelField label="Altura">
+                  <Input type="number" min={8} value={selected.value.seatHeight} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatHeight: Math.max(8, toNumber(event.target.value, selected.value!.seatHeight)) })} className={FIELD_CLASS} />
+                </PanelField>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <PanelField label="Espaç. horizontal">
+                  <Input type="number" min={0} value={selected.value.gapX} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { gapX: Math.max(0, toNumber(event.target.value, selected.value!.gapX)) })} className={FIELD_CLASS} />
+                </PanelField>
+                <PanelField label="Espaç. vertical">
+                  <Input type="number" min={0} value={selected.value.gapY} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { gapY: Math.max(0, toNumber(event.target.value, selected.value!.gapY)) })} className={FIELD_CLASS} />
+                </PanelField>
+              </div>
+            </PanelSection>
+            <PanelSection title="Posição">
+              <div className="grid grid-cols-2 gap-3">
+                <PanelField label="X">
+                  <Input type="number" value={selected.value.x} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { x: toNumber(event.target.value, selected.value!.x) })} className={FIELD_CLASS} />
+                </PanelField>
+                <PanelField label="Y">
+                  <Input type="number" value={selected.value.y} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { y: toNumber(event.target.value, selected.value!.y) })} className={FIELD_CLASS} />
+                </PanelField>
+              </div>
+              <PanelField label="Rotação">
+                <Input type="number" value={selected.value.rotation} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { rotation: toNumber(event.target.value, 0) })} className={FIELD_CLASS} />
+              </PanelField>
+            </PanelSection>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={disabled}
+              className="w-full"
+              onClick={() => deleteSeatGroup(selected.value!.id)}
+            >
+              Excluir grupo
+            </Button>
           </>
         ) : null}
 

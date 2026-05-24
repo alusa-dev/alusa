@@ -48,17 +48,37 @@ declare global {
     __ALUSA_EVENT_MAP_EDITOR_E2E__?: {
       getState: () => EventMapE2EState;
       getGeometry: () => EventMapE2EGeometry;
+      getRenderGeometry: () => EventMapE2EGeometry;
+      getLastCorridorDomainOperations: () => unknown[];
       fitArtboardToView: () => void;
     };
   }
+}
+
+let currentRenderMapProvider: (() => EventMapDTO | null) | null = null;
+let lastCorridorDomainOperations: unknown[] = [];
+
+export function recordCorridorDomainOperations(operations: unknown[]) {
+  lastCorridorDomainOperations = operations;
+}
+
+export function getLastCorridorDomainOperations() {
+  return lastCorridorDomainOperations;
+}
+
+export function setEventMapE2ERenderMapProvider(provider: (() => EventMapDTO | null) | null) {
+  currentRenderMapProvider = provider;
 }
 
 export function shouldExposeEventMapE2EBridge() {
   return process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_E2E === 'true';
 }
 
-function buildGeometry(): EventMapE2EGeometry {
-  const map = useEventMapEditorStore.getState().map;
+function getBridgeMap() {
+  return currentRenderMapProvider?.() ?? useEventMapEditorStore.getState().map;
+}
+
+function buildGeometry(map: EventMapDTO | null): EventMapE2EGeometry {
   if (!map) {
     return { seats: [], corridors: [], sections: [] };
   }
@@ -121,7 +141,7 @@ export function registerEventMapE2EBridge() {
     getState: () => {
       const state = useEventMapEditorStore.getState();
       return {
-        map: state.map,
+        map: getBridgeMap(),
         selection: state.selection,
         tool: state.tool,
         activeLevelId: state.activeLevelId,
@@ -129,7 +149,9 @@ export function registerEventMapE2EBridge() {
         zoom: state.zoom,
       };
     },
-    getGeometry: buildGeometry,
+    getGeometry: () => buildGeometry(useEventMapEditorStore.getState().map),
+    getRenderGeometry: () => buildGeometry(getBridgeMap()),
+    getLastCorridorDomainOperations: () => getLastCorridorDomainOperations(),
     fitArtboardToView: () => {
       useEventMapEditorStore.getState().fitArtboardToView();
     },
@@ -138,5 +160,6 @@ export function registerEventMapE2EBridge() {
 
 export function unregisterEventMapE2EBridge() {
   if (typeof window === 'undefined') return;
+  currentRenderMapProvider = null;
   delete window.__ALUSA_EVENT_MAP_EDITOR_E2E__;
 }

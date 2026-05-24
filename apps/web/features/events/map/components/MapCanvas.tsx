@@ -4,25 +4,54 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Circle, Ellipse, Group, Layer, Line, Rect, RegularPolygon, Stage, Text, Transformer } from 'react-konva';
 
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
 import { useSnapGuidesSession } from '../hooks/useSnapGuidesSession';
 import {
-  buildUniformTransformUpdates,
-  clampFontSize,
-  clampObjectSize,
-  clampUniformScale,
-  computeUniformTransformPatch,
-  getObjectTransformSnapshot,
-  getSnapshotsUnionBounds,
-  MIN_OBJECT_SIZE,
-  MIN_UNIFORM_SCALE,
-  resolveLiveUniformScale,
-  type ObjectTransformSnapshot,
-} from '../lib/uniform-group-transform';
-import { applyScrubZoom, computeScrubDelta } from '../lib/zoom-scrub';
-import { applyCorridorReflow, cloneEventMap } from '../lib/corridor-reflow';
+  applyScrubZoom,
+  computeScrubDelta,
+} from '../lib/zoom-scrub';
+import {
+  buildSmartCorridorDragPreview,
+  buildSmartCorridorTransformPreview,
+  cloneEventMap,
+  CORRIDOR_REFLOW_ITERATIONS,
+  extractCorridorDragCommitUpdates,
+  extractGroupDragCommitUpdates,
+  resolveCorridorDragMode,
+  type CorridorDragMode,
+} from '../lib/corridor-reflow';
+import {
+  beginMapTransformSession,
+  applyMapTransformLivePreview,
+  buildMapTransformCommit,
+  resetMapTransformTransformer,
+  type MapTransformSession,
+} from '../lib/map-transform-session';
+import { buildCorridorTransformCommitPatches } from '../lib/corridor-transform-session';
+import {
+  DEFAULT_TRANSFORMER_SCALE_OPTIONS,
+  resolveCorridorTransformerScaleOptions,
+  resolveGenericTransformerScaleOptions,
+  resolveUniformTransformerScaleOptions,
+  type TransformerScaleOptions,
+} from '../lib/transform-handle-mode';
+import { corridorPatchesToDomainOperations } from '../lib/corridor-domain-transform-bridge';
+import { recordCorridorDomainOperations } from '../lib/event-map-e2e-bridge';
+import { resolveTransformRouting } from '../lib/transform-routing';
+import {
+  captureTransformNodeSnapshots,
+  restoreTransformNodeSnapshots,
+  type TransformNodeSnapshot,
+} from '../lib/transform-cancel';
+import { applyCorridorPreviewToStage, restoreCorridorStageFromMap } from '../lib/corridor-preview-stage';
+import { setEventMapE2ERenderMapProvider } from '../lib/event-map-e2e-bridge';
 import { getCorridorUnionGroups } from '../lib/corridor-union';
-import { getCorridorSpacing, resolveSmartCorridorLayout } from '../lib/smart-corridor-layout';
+import { polygonToKonvaPoints } from '../lib/corridor-domain-bridge';
+import { resolveCorridorObjectsForRender } from '../lib/corridor-union-live';
+import {
+  applyCorridorNodeFromModel,
+  syncCorridorNodesFromMap,
+} from '../lib/corridor-canvas';
 import {
   buildTextEditorState,
   getTextEditorDimensions,
@@ -68,7 +97,13 @@ import {
 } from '../lib/seat-grid';
 import type { MapTool } from '../store/event-map-editor-store';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import {
+  clampFontSize,
+  clampObjectSize,
+  MIN_OBJECT_SIZE,
+} from '../lib/uniform-group-transform';
 import { CreateSeatGridDialog } from './CreateSeatGridDialog';
+import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
 import { SnapGuidesLayer } from './SnapGuidesLayer';
 
 type MarqueeDraft = {
@@ -79,6 +114,28 @@ type MarqueeDraft = {
 type GroupDragState = {
   anchorNodeId: string;
   origin: Map<string, { x: number; y: number }>;
+  delta: { x: number; y: number };
+};
+
+type SeatGroupResizeHandle = 'right' | 'bottom' | 'bottom-right';
+type SeatGroupResizeState = {
+  groupId: string;
+  handle: SeatGroupResizeHandle;
+  startWorldPt: { x: number; y: number };
+  startRows: number;
+  startColumns: number;
+  startTotalW: number;
+  startTotalH: number;
+  stepX: number;
+  stepY: number;
+  paddingLeft: number;
+  paddingRight: number;
+  paddingTop: number;
+  paddingBottom: number;
+  gapX: number;
+  gapY: number;
+  lastCommittedRows: number;
+  lastCommittedCols: number;
 };
 
 function isAdditiveSelect(event: Konva.KonvaEventObject<MouseEvent>) {
@@ -95,112 +152,6 @@ const RESIZE_ANCHORS = [
   'top-center',
   'bottom-center',
 ] as const;
-
-type UniformTransformSession = {
-  snapshots: Map<string, ObjectTransformSnapshot>;
-  initialBounds: ReturnType<typeof getSnapshotsUnionBounds>;
-  initialRotation: number;
-};
-
-function readUniformTransformCommitFromNodes(
-  stage: Konva.Stage,
-  session: UniformTransformSession,
-  selectedIds: string[],
-) {
-  const updates: Array<{ id: string; patch: ReturnType<typeof computeUniformTransformPatch> }> = [];
-
-  for (const objectId of selectedIds) {
-    const snapshot = session.snapshots.get(objectId);
-    const node = stage.findOne(`#node-${objectId}`);
-    if (!snapshot || !node) continue;
-
-    if (snapshot.type === 'TEXT') {
-      const textNode = node as Konva.Text;
-      const fontSize = clampFontSize(textNode.fontSize());
-      updates.push({
-        id: objectId,
-        patch: {
-          x: textNode.x(),
-          y: textNode.y(),
-          rotation: textNode.rotation(),
-          width:
-            snapshot.textMode === 'multiline' && textNode.width() > 0
-              ? clampObjectSize(textNode.width())
-              : null,
-          height:
-            snapshot.textMode === 'multiline' && textNode.height() > 0
-              ? clampObjectSize(textNode.height())
-              : null,
-          data: { fontSize },
-        },
-      });
-      continue;
-    }
-
-    const scale = clampUniformScale(Math.max(Math.abs(node.scaleX()), Math.abs(node.scaleY()), MIN_UNIFORM_SCALE));
-    updates.push({
-      id: objectId,
-      patch: {
-        x: node.x(),
-        y: node.y(),
-        rotation: node.rotation(),
-        width: clampObjectSize(snapshot.width * scale),
-        height: clampObjectSize(snapshot.height * scale),
-      },
-    });
-  }
-
-  return updates;
-}
-
-function applyUniformGroupTransform({
-  session,
-  stage,
-  transformer,
-  scale,
-}: {
-  session: UniformTransformSession;
-  stage: Konva.Stage;
-  transformer: Konva.Transformer;
-  scale: number;
-}) {
-  const rotationDelta = transformer.rotation() - session.initialRotation;
-  const updates = buildUniformTransformUpdates(
-    session.snapshots,
-    session.initialBounds.centerX,
-    session.initialBounds.centerY,
-    scale,
-    rotationDelta,
-  );
-
-  for (const entry of updates) {
-    const snapshot = session.snapshots.get(entry.id);
-    const node = stage.findOne(`#node-${entry.id}`);
-    if (!snapshot || !node) continue;
-
-    node.x(entry.patch.x);
-    node.y(entry.patch.y);
-    node.rotation(entry.patch.rotation ?? 0);
-
-    if (node instanceof Konva.Text) {
-      node.scaleX(1);
-      node.scaleY(1);
-      if (snapshot.textMode === 'multiline' && typeof entry.patch.width === 'number') {
-        node.width(entry.patch.width);
-        node.wrap('word');
-      } else {
-        node.width(undefined);
-        node.wrap('none');
-      }
-      const fontSize = entry.patch.data?.fontSize;
-      if (typeof fontSize === 'number') node.fontSize(fontSize);
-      continue;
-    }
-
-    node.scaleX(scale);
-    node.scaleY(scale);
-  }
-}
 
 function findItemsInMarquee(
   box: ReturnType<typeof normalizeBoundsRect>,
@@ -361,6 +312,7 @@ type ZoomScrubState = {
 export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
+  const contentLayerRef = useRef<Konva.Layer | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
   const [size, setSize] = useState({ width: 1200, height: 800 });
   const [isPanning, setIsPanning] = useState(false);
@@ -373,42 +325,43 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const textEditorFocusKeyRef = useRef<string | null>(null);
   const textEditSnapshotRef = useRef<string | null>(null);
   const groupDragRef = useRef<GroupDragState | null>(null);
+  const seatGroupResizeRef = useRef<SeatGroupResizeState | null>(null);
   const corridorPreviewBaseMapRef = useRef<EventMapDTO | null>(null);
-  const [corridorPreviewMap, setCorridorPreviewMap] = useState<EventMapDTO | null>(null);
+  const corridorPreviewWorkingMapRef = useRef<EventMapDTO | null>(null);
+  const corridorPreviewRafRef = useRef<number | null>(null);
+  const corridorDragCorridorNodeIdsRef = useRef<string[]>([]);
+  const corridorDragModeRef = useRef<CorridorDragMode>('reflow');
+  const isCorridorLivePreviewRef = useRef(false);
+  const isCorridorTransformActiveRef = useRef(false);
+  const mapTransformSessionRef = useRef<MapTransformSession | null>(null);
+  const transformReflowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transformCancelSnapshotsRef = useRef<TransformNodeSnapshot[]>([]);
+  const transformCancelledRef = useRef(false);
+  const transformContextRef = useRef({
+    selectedObjectIds: [] as string[],
+    selectedSeatIds: [] as string[],
+    selectedNodeIds: [] as string[],
+    transformKind: null as ReturnType<typeof resolveTransformRouting>['kind'],
+    levelBounds: null as { x: number; y: number; width: number; height: number } | null,
+  });
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
   const zoomScrubRef = useRef<ZoomScrubState | null>(null);
-  const uniformTransformRef = useRef<UniformTransformSession | null>(null);
+  const [isTransformSessionActive, setIsTransformSessionActive] = useState(false);
+  const [transformerScaleOptions, setTransformerScaleOptions] = useState<TransformerScaleOptions>(
+    DEFAULT_TRANSFORMER_SCALE_OPTIONS,
+  );
   const [isZoomScrubbing, setIsZoomScrubbing] = useState(false);
+  const [corridorVisualRevision, setCorridorVisualRevision] = useState(0);
+  const [activeUnionDragIds, setActiveUnionDragIds] = useState<Set<string>>(() => new Set());
+  const bumpCorridorVisualRevision = useCallback(() => {
+    setCorridorVisualRevision((value) => value + 1);
+  }, []);
   // After any transform, store committed {x,y} so the redundant dragend is skipped.
   // Works for resize (dragend fires with same position) AND rotation (dragend may not fire at all).
   const lastTransformCommitRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
-  // Shift + rotation handle → snap every 15°
-  const ROTATION_SNAPS_15 = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345];
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Shift') return;
-      const tr = transformerRef.current;
-      if (!tr) return;
-      if (e.type === 'keydown') {
-        tr.rotationSnaps(ROTATION_SNAPS_15);
-        tr.rotationSnapTolerance(7);
-      } else {
-        tr.rotationSnaps([]);
-        tr.rotationSnapTolerance(5);
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('keyup', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('keyup', onKey);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const map = useEventMapEditorStore((state) => state.map);
-  const renderMap = corridorPreviewMap ?? map;
+  const renderMap = map;
   const tool = useEventMapEditorStore((state) => state.tool);
   const selection = useEventMapEditorStore((state) => state.selection);
   const activeLevelId = useEventMapEditorStore((state) => state.activeLevelId);
@@ -425,29 +378,50 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const updateMapItems = useEventMapEditorStore((state) => state.updateMapItems);
   const deleteObject = useEventMapEditorStore((state) => state.deleteObject);
   const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
+  const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
+  const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
   const setInlineTextEditorActive = useEventMapEditorStore((state) => state.setInlineTextEditorActive);
 
   const level = useMemo(
     () => renderMap?.levels.find((item) => item.id === activeLevelId) ?? renderMap?.levels[0] ?? null,
     [renderMap, activeLevelId],
   );
+  const levelBounds = useMemo(
+    () => (level ? { width: level.widthPx, height: level.heightPx } : null),
+    [level],
+  );
   const levelObjects = useMemo(
     () => renderMap?.objects.filter((object) => object.levelId === level?.id && !object.hidden) ?? [],
     [renderMap, level?.id],
   );
+  const displayLevelObjects = useMemo(() => {
+    const livePreview = isCorridorLivePreviewRef.current || isTransformSessionActive;
+    if (!livePreview) return levelObjects;
+    return resolveCorridorObjectsForRender(stageRef.current, levelObjects, true);
+  }, [levelObjects, corridorVisualRevision, isTransformSessionActive]);
   const levelSeats = useMemo(
     () => renderMap?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible) ?? [],
     [renderMap, level?.id],
   );
-  const corridorUnionGroups = useMemo(
-    () =>
-      getCorridorUnionGroups(
-        levelObjects.filter((object) => object.type === 'CORRIDOR'),
-        1,
-        (corridor) => resolveSmartCorridorLayout(corridor).coreRect,
-      ),
-    [levelObjects],
+  const levelSeatGroups = useMemo(
+    () => renderMap?.seatGroups?.filter((g) => g.levelId === level?.id) ?? [],
+    [renderMap, level?.id],
   );
+  // Sections whose seats belong to a seatgroup — their SECTION object must NOT render
+  // because renderSeatGroups() already draws the correct bounding rect.
+  const seatGroupSectionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const seat of levelSeats) {
+      if (seat.groupId != null && seat.sectionId != null) {
+        ids.add(seat.sectionId);
+      }
+    }
+    return ids;
+  }, [levelSeats]);
+  const corridorUnionGroups = useMemo(() => {
+    const corridors = displayLevelObjects.filter((object) => object.type === 'CORRIDOR');
+    return getCorridorUnionGroups(corridors, 1);
+  }, [displayLevelObjects]);
   const selectedCorridorIds = useMemo(() => {
     const ids = new Set<string>();
     for (const item of selection) {
@@ -712,43 +686,100 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     );
   }, [map, selectedObjectIds]);
 
-  const clearSmartCorridorPreview = useCallback(() => {
-    corridorPreviewBaseMapRef.current = null;
-    setCorridorPreviewMap(null);
+  const selectionContainsSeatsOrSections = useMemo(() => {
+    if (selectedSeatIds.length > 0) return true;
+    return selection.some((item) => item.type === 'section');
+  }, [selectedSeatIds, selection]);
+
+  useEffect(() => {
+    setEventMapE2ERenderMapProvider(
+      () =>
+        corridorPreviewWorkingMapRef.current ??
+        useEventMapEditorStore.getState().map,
+    );
+    return () => setEventMapE2ERenderMapProvider(null);
+  }, [map]);
+
+  const cancelCorridorPreviewFrame = useCallback(() => {
+    if (corridorPreviewRafRef.current === null) return;
+    cancelAnimationFrame(corridorPreviewRafRef.current);
+    corridorPreviewRafRef.current = null;
   }, []);
 
-  const updateSmartCorridorPreviewFromStage = useCallback(() => {
-    const baseMap = corridorPreviewBaseMapRef.current;
-    const stage = stageRef.current;
-    if (!baseMap || !stage) return;
+  const clearSmartCorridorPreview = useCallback(() => {
+    cancelCorridorPreviewFrame();
 
-    const preview = cloneEventMap(baseMap);
-    const nodeIds =
-      groupDragRef.current && groupDragRef.current.origin.size > 0
-        ? [...groupDragRef.current.origin.keys()]
-        : selectedNodeIds;
-
-    for (const nodeId of nodeIds) {
-      const objectId = nodeId.replace(/^node-/, '');
-      const object = preview.objects.find((entry) => entry.id === objectId);
-      const node = stage.findOne(`#${nodeId}`);
-      if (!object || !node || object.type !== 'CORRIDOR') continue;
-
-      const scaleX = node.scaleX();
-      const scaleY = node.scaleY();
-      object.x = node.x();
-      object.y = node.y();
-      object.rotation = 0;
-
-      if (Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001) {
-        object.width = Math.max(MIN_OBJECT_SIZE, (object.width ?? 32) * Math.abs(scaleX || 1));
-        object.height = Math.max(MIN_OBJECT_SIZE, (object.height ?? 32) * Math.abs(scaleY || 1));
+    if (isCorridorLivePreviewRef.current) {
+      const stage = stageRef.current;
+      const currentMap = useEventMapEditorStore.getState().map;
+      const levelId = useEventMapEditorStore.getState().activeLevelId;
+      if (stage && currentMap && levelId) {
+        restoreCorridorStageFromMap(stage, currentMap, levelId);
+        contentLayerRef.current?.batchDraw();
       }
     }
 
-    applyCorridorReflow(preview);
-    setCorridorPreviewMap(preview);
-  }, [selectedNodeIds]);
+    corridorPreviewBaseMapRef.current = null;
+    corridorPreviewWorkingMapRef.current = null;
+    corridorDragCorridorNodeIdsRef.current = [];
+    corridorDragModeRef.current = 'reflow';
+    isCorridorLivePreviewRef.current = false;
+    isCorridorTransformActiveRef.current = false;
+    mapTransformSessionRef.current = null;
+    if (transformReflowTimerRef.current) {
+      clearTimeout(transformReflowTimerRef.current);
+      transformReflowTimerRef.current = null;
+    }
+    setIsTransformSessionActive(false);
+    setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
+    setActiveUnionDragIds(new Set());
+    bumpCorridorVisualRevision();
+  }, [bumpCorridorVisualRevision, cancelCorridorPreviewFrame]);
+
+  const runCorridorDragPreviewFrame = useCallback(() => {
+    corridorPreviewRafRef.current = null;
+
+    const baseMap = corridorPreviewBaseMapRef.current;
+    const drag = groupDragRef.current;
+    const stage = stageRef.current;
+    const levelId = useEventMapEditorStore.getState().activeLevelId;
+    const corridorNodeIds = corridorDragCorridorNodeIdsRef.current;
+
+    if (!baseMap || !drag || !stage || !levelId || corridorNodeIds.length === 0) return;
+
+    if (!corridorPreviewWorkingMapRef.current) {
+      corridorPreviewWorkingMapRef.current = cloneEventMap(baseMap);
+    }
+
+    const activeCorridorIds = corridorNodeIds.map((nodeId) => nodeId.replace(/^node-/, ''));
+    const dragMode =
+      corridorDragModeRef.current ||
+      resolveCorridorDragMode(baseMap, drag, activeCorridorIds);
+    corridorDragModeRef.current = dragMode;
+
+    const preview = buildSmartCorridorDragPreview(baseMap, drag, corridorNodeIds, {
+      previewMap: corridorPreviewWorkingMapRef.current,
+      maxIterations: CORRIDOR_REFLOW_ITERATIONS,
+      activeCorridorIds,
+      mode: dragMode,
+    });
+
+    applyCorridorPreviewToStage(stage, preview, baseMap, corridorNodeIds, levelId, {
+      syncCorridorGeometry: false,
+    });
+    contentLayerRef.current?.batchDraw();
+    bumpCorridorVisualRevision();
+  }, [bumpCorridorVisualRevision]);
+
+  const scheduleCorridorDragPreview = useCallback(() => {
+    if (corridorPreviewRafRef.current !== null) return;
+    corridorPreviewRafRef.current = requestAnimationFrame(runCorridorDragPreviewFrame);
+  }, [runCorridorDragPreviewFrame]);
+
+  const flushCorridorDragPreview = useCallback(() => {
+    cancelCorridorPreviewFrame();
+    runCorridorDragPreviewFrame();
+  }, [cancelCorridorPreviewFrame, runCorridorDragPreviewFrame]);
 
   const mixedTextAndShapes = useMemo(() => {
     if (!map || selectedObjectIds.length < 2) return false;
@@ -760,8 +791,42 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     return selectedObjectIds.filter((id) => map.objects.some((object) => object.id === id && object.type === 'TEXT')).length;
   }, [map, selectedObjectIds]);
 
-  const useAtomicSelectionTransform = selectedNodeIds.length > 1;
-  const useUniformGroupTransform = useAtomicSelectionTransform && (mixedTextAndShapes || selectedTextCount > 0);
+  const transformRouting = useMemo(
+    () =>
+      resolveTransformRouting({
+        selectedNodeCount: selectedNodeIds.length,
+        selectedObjectIds,
+        objects: map?.objects ?? [],
+        mixedTextAndShapes,
+        selectedTextCount,
+        selectionContainsSeatsOrSections,
+      }),
+    [
+      map?.objects,
+      mixedTextAndShapes,
+      selectedNodeIds.length,
+      selectedObjectIds,
+      selectedTextCount,
+      selectionContainsSeatsOrSections,
+    ],
+  );
+
+  const useUniformGroupTransform = transformRouting.kind === 'uniform';
+  const useCorridorTransformerPipeline = transformRouting.kind === 'corridor';
+  const useGenericTransform = transformRouting.kind === 'generic';
+
+  const transformPipelineActive = transformRouting.kind !== null;
+
+  transformContextRef.current = {
+    selectedObjectIds,
+    selectedSeatIds,
+    selectedNodeIds,
+    transformKind: transformRouting.kind,
+    levelBounds,
+  };
+
+  const disableResizeForMixedSmartCorridorSelection = transformRouting.transformDisabled;
+  const disableRotateForMixedSmartCorridorSelection = transformRouting.transformDisabled;
 
   const selectedTextTransformAnchors = useMemo(() => {
     if (selectedObjectIds.length !== 1) return [...RESIZE_ANCHORS];
@@ -770,74 +835,244 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     return [...getTextResizeAnchors(getTextMode(object))];
   }, [levelObjects, selectedObjectIds]);
 
+  const ROTATION_SNAPS_15 = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345];
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Shift') return;
+      if (selectedAnyCorridor) return;
+      const tr = transformerRef.current;
+      if (!tr) return;
+      if (e.type === 'keydown') {
+        tr.rotationSnaps(ROTATION_SNAPS_15);
+        tr.rotationSnapTolerance(7);
+      } else {
+        tr.rotationSnaps([]);
+        tr.rotationSnapTolerance(5);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('keyup', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
+    };
+  }, [selectedAnyCorridor]);
+
   useEffect(() => {
     const transformer = transformerRef.current;
     const stage = stageRef.current;
-    if (!transformer || !stage || !useUniformGroupTransform || !map) return;
+    if (!transformer || !stage || !transformPipelineActive || !map) return;
 
-    function onTransformStart() {
-      const snapshots = new Map<string, ObjectTransformSnapshot>();
-      for (const objectId of selectedObjectIds) {
-        const object = map!.objects.find((entry) => entry.id === objectId);
-        if (!object) continue;
-        snapshots.set(objectId, getObjectTransformSnapshot(object));
+    function buildCorridorSnapContext() {
+      const ctx = transformContextRef.current;
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (!currentMap || !ctx.levelBounds) return undefined;
 
-        const node = stage!.findOne(`#node-${objectId}`);
-        if (node) {
-          node.scaleX(1);
-          node.scaleY(1);
-        }
-      }
-      if (snapshots.size === 0) return;
+      const skipIds = new Set(ctx.selectedObjectIds);
+      const objectBounds = currentMap.objects
+        .filter((object) => object.levelId === level?.id && !object.hidden && !skipIds.has(object.id))
+        .map((object) => getObjectBounds(object));
 
-      uniformTransformRef.current = {
-        snapshots,
-        initialBounds: getSnapshotsUnionBounds([...snapshots.values()]),
-        initialRotation: transformer!.rotation(),
+      return {
+        levelBounds: ctx.levelBounds,
+        objectBounds,
       };
     }
 
-    function readLiveScale(session: UniformTransformSession) {
-      return resolveLiveUniformScale(session.snapshots, (objectId) => {
-        const node = stage!.findOne(`#node-${objectId}`);
-        if (!node) return null;
-        return { scaleX: node.scaleX(), scaleY: node.scaleY() };
+    function scheduleDebouncedReflowPreview() {
+      const session = mapTransformSessionRef.current;
+      if (!session || session.kind !== 'corridor' || !session.corridor) return;
+      if (session.corridor.mode === 'rotate' && session.corridor.snapshots.length < 2) return;
+
+      if (transformReflowTimerRef.current) clearTimeout(transformReflowTimerRef.current);
+      transformReflowTimerRef.current = setTimeout(() => {
+        transformReflowTimerRef.current = null;
+        const baseMap = corridorPreviewBaseMapRef.current;
+        const corridorSession = mapTransformSessionRef.current?.corridor;
+        const levelId = useEventMapEditorStore.getState().activeLevelId;
+        if (!baseMap || !corridorSession || !levelId) return;
+
+        const patches = buildCorridorTransformCommitPatches(
+          corridorSession,
+          { stage: stage!, transformer: transformer! },
+          buildCorridorSnapContext(),
+        );
+        if (patches.length === 0) return;
+
+        const preview = buildSmartCorridorTransformPreview(baseMap, patches, {
+          previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
+          maxIterations: CORRIDOR_REFLOW_ITERATIONS,
+          activeCorridorIds: corridorSession.corridorIds,
+        });
+        applyCorridorPreviewToStage(
+          stage!,
+          preview,
+          baseMap,
+          corridorSession.corridorIds.map((id) => `node-${id}`),
+          levelId,
+          { syncCorridorGeometry: false },
+        );
+        contentLayerRef.current?.batchDraw();
+      }, 100);
+    }
+
+    function onTransformStart() {
+      transformCancelledRef.current = false;
+      const ctx = transformContextRef.current;
+      const transformKind = ctx.transformKind;
+      if (!transformKind) return;
+
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (!currentMap) return;
+
+      transformCancelSnapshotsRef.current = captureTransformNodeSnapshots(stage!, ctx.selectedNodeIds);
+
+      const corridorIds = ctx.selectedObjectIds.filter((objectId) =>
+        currentMap.objects.some((entry) => entry.id === objectId && entry.type === 'CORRIDOR'),
+      );
+
+      const anchor = transformer!.getActiveAnchor() ?? '';
+
+      if (transformKind === 'corridor') {
+        corridorPreviewBaseMapRef.current = cloneEventMap(currentMap);
+        corridorPreviewWorkingMapRef.current = cloneEventMap(currentMap);
+        isCorridorTransformActiveRef.current = true;
+        setIsTransformSessionActive(true);
+        setTransformerScaleOptions(resolveCorridorTransformerScaleOptions(anchor, corridorIds.length));
+      } else if (transformKind === 'uniform') {
+        setIsTransformSessionActive(true);
+        setTransformerScaleOptions(resolveUniformTransformerScaleOptions());
+      } else if (transformKind === 'generic') {
+        setIsTransformSessionActive(true);
+        setTransformerScaleOptions(resolveGenericTransformerScaleOptions(false));
+      }
+
+      const session = beginMapTransformSession({
+        kind: transformKind,
+        map: currentMap,
+        corridorIds,
+        selectedObjectIds: ctx.selectedObjectIds,
+        selectedSeatIds: ctx.selectedSeatIds,
+        stage: stage!,
+        transformer: transformer!,
       });
+      if (!session) return;
+      mapTransformSessionRef.current = session;
     }
 
     function onTransform() {
-      const session = uniformTransformRef.current;
+      const session = mapTransformSessionRef.current;
       if (!session) return;
-      const scale = readLiveScale(session);
-      applyUniformGroupTransform({ session, stage: stage!, transformer: transformer!, scale });
+
+      applyMapTransformLivePreview(session, {
+        stage: stage!,
+        transformer: transformer!,
+        snap: buildCorridorSnapContext(),
+      });
       transformer!.getLayer()?.batchDraw();
+      scheduleDebouncedReflowPreview();
     }
 
     function onTransformEnd() {
-      const session = uniformTransformRef.current;
-      if (!session) return;
-
-      const scale = readLiveScale(session);
-      applyUniformGroupTransform({ session, stage: stage!, transformer: transformer!, scale });
-      const updates = readUniformTransformCommitFromNodes(stage!, session, selectedObjectIds);
-
-      updateObjects(
-        updates.map((entry) => ({
-          id: entry.id,
-          patch: entry.patch,
-        })),
-      );
-
-      for (const entry of updates) {
-        lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x, y: entry.patch.y });
+      if (transformCancelledRef.current) {
+        transformCancelledRef.current = false;
+        return;
       }
 
-      uniformTransformRef.current = null;
-      const nodes = selectedObjectIds
-        .map((objectId) => stage!.findOne(`#node-${objectId}`))
+      const ctx = transformContextRef.current;
+      const session = mapTransformSessionRef.current;
+      const currentMap = useEventMapEditorStore.getState().map;
+      if (!currentMap) return;
+
+      if (transformReflowTimerRef.current) {
+        clearTimeout(transformReflowTimerRef.current);
+        transformReflowTimerRef.current = null;
+      }
+
+      const corridorIds = ctx.selectedObjectIds.filter((objectId) =>
+        currentMap.objects.some((entry) => entry.id === objectId && entry.type === 'CORRIDOR'),
+      );
+
+      const commit = session
+        ? buildMapTransformCommit(
+            session,
+            { stage: stage!, transformer: transformer!, snap: buildCorridorSnapContext() },
+            currentMap,
+          )
+        : { objectUpdates: [], seatUpdates: [], corridorPatches: [] };
+
+      for (const entry of commit.objectUpdates) {
+        lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+      }
+      for (const entry of commit.seatUpdates) {
+        lastTransformCommitRef.current.set(entry.id, { x: entry.patch.x ?? 0, y: entry.patch.y ?? 0 });
+      }
+
+      if (session?.kind === 'uniform' && commit.objectUpdates.length > 0) {
+        updateObjects(commit.objectUpdates.map((entry) => ({ id: entry.id, patch: entry.patch })));
+      } else if (session?.kind === 'generic' && commit.objectUpdates.length > 0) {
+        updateObjects(commit.objectUpdates.map((entry) => ({ id: entry.id, patch: entry.patch })));
+      } else if (session?.kind === 'corridor' && corridorIds.length > 0) {
+        const baseMap = corridorPreviewBaseMapRef.current ?? cloneEventMap(currentMap);
+        const patches = commit.corridorPatches;
+        const sessionAnchor = session.corridor?.anchor;
+
+        for (const patch of patches) {
+          lastTransformCommitRef.current.set(patch.objectId, {
+            x: patch.patch.x ?? 0,
+            y: patch.patch.y ?? 0,
+          });
+        }
+
+        recordCorridorDomainOperations(corridorPatchesToDomainOperations(patches, sessionAnchor));
+
+        if (patches.length > 0) {
+          const preview = buildSmartCorridorTransformPreview(baseMap, patches, {
+            previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
+            maxIterations: CORRIDOR_REFLOW_ITERATIONS,
+            activeCorridorIds: corridorIds,
+          });
+          const { objects: corridorObjects, seats: reflowedSeats } = extractCorridorDragCommitUpdates(
+            baseMap,
+            preview,
+            corridorIds,
+          );
+
+          updateMapItems({
+            objects: [...commit.objectUpdates, ...corridorObjects],
+            seats: reflowedSeats.length > 0 ? reflowedSeats : commit.seatUpdates,
+            skipSeatBaseLayoutTranslation: reflowedSeats.length > 0,
+            skipCorridorReflow: corridorIds.length > 0,
+          });
+        } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0) {
+          updateMapItems({ objects: commit.objectUpdates, seats: commit.seatUpdates });
+        }
+      } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0) {
+        updateMapItems({ objects: commit.objectUpdates, seats: commit.seatUpdates });
+      }
+
+      if (session) resetMapTransformTransformer(session, transformer!);
+
+      isCorridorTransformActiveRef.current = false;
+      mapTransformSessionRef.current = null;
+      corridorPreviewBaseMapRef.current = null;
+      corridorPreviewWorkingMapRef.current = null;
+      transformCancelSnapshotsRef.current = [];
+      setIsTransformSessionActive(false);
+      setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
+
+      const levelId = useEventMapEditorStore.getState().activeLevelId;
+      const committedMap = useEventMapEditorStore.getState().map;
+      if (committedMap && levelId) {
+        syncCorridorNodesFromMap(stage!, committedMap.objects, levelId);
+      }
+
+      const nodes = ctx.selectedNodeIds
+        .map((nodeId) => stage!.findOne(`#${nodeId}`))
         .filter((node): node is Konva.Node => Boolean(node));
       transformer!.nodes(nodes);
       transformer!.getLayer()?.batchDraw();
+      bumpCorridorVisualRevision();
     }
 
     transformer.on('transformstart', onTransformStart);
@@ -848,101 +1083,106 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       transformer.off('transformstart', onTransformStart);
       transformer.off('transform', onTransform);
       transformer.off('transformend', onTransformEnd);
-      uniformTransformRef.current = null;
+      mapTransformSessionRef.current = null;
+      isCorridorTransformActiveRef.current = false;
+      if (transformReflowTimerRef.current) {
+        clearTimeout(transformReflowTimerRef.current);
+        transformReflowTimerRef.current = null;
+      }
     };
-  }, [map, selectedObjectIds, updateObjects, useUniformGroupTransform]);
+  }, [transformPipelineActive, map, level?.id, updateMapItems, updateObjects, bumpCorridorVisualRevision]);
 
   useEffect(() => {
-    const transformer = transformerRef.current;
-    const stage = stageRef.current;
-    if (!transformer || !stage || !useAtomicSelectionTransform || useUniformGroupTransform) return;
+    if (!isTransformSessionActive) return;
 
-    function onTransformEnd() {
-      const currentMap = useEventMapEditorStore.getState().map;
-      if (!currentMap) return;
+    function onEscape(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
 
-      const objectUpdates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
-      const seatUpdates: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
+      const stage = stageRef.current;
+      const transformer = transformerRef.current;
+      const snapshots = transformCancelSnapshotsRef.current;
+      if (!stage || !transformer || snapshots.length === 0) return;
 
-      for (const objectId of selectedObjectIds) {
-        const object = currentMap.objects.find((entry) => entry.id === objectId);
-        const node = stage!.findOne(`#node-${objectId}`);
-        if (!object || !node || object.type === 'TEXT') continue;
+      event.preventDefault();
+      transformCancelledRef.current = true;
 
-        const scaleX = node.scaleX();
-        const scaleY = node.scaleY();
-        const bounds = getObjectBounds(object);
-        const x = node.x();
-        const y = node.y();
-        const width = clampObjectSize(bounds.width * Math.abs(scaleX || 1));
-        const height = clampObjectSize(bounds.height * Math.abs(scaleY || 1));
-        const rotation = node.rotation();
-
-        node.scaleX(1);
-        node.scaleY(1);
-
-        if (![x, y, width, height, rotation].every(Number.isFinite)) continue;
-        objectUpdates.push({ id: objectId, patch: { x, y, width, height, rotation } });
-        lastTransformCommitRef.current.set(objectId, { x, y });
+      if (transformReflowTimerRef.current) {
+        clearTimeout(transformReflowTimerRef.current);
+        transformReflowTimerRef.current = null;
       }
 
-      for (const seatId of selectedSeatIds) {
-        const seat = currentMap.seats.find((entry) => entry.id === seatId);
-        const node = stage!.findOne(`#node-${seatId}`);
-        if (!seat || !node || seat.status === 'SOLD') continue;
+      restoreTransformNodeSnapshots(stage, snapshots);
 
-        const scale = Math.max(Math.abs(node.scaleX() || 1), Math.abs(node.scaleY() || 1));
-        const x = node.x();
-        const y = node.y();
-        const size = Math.max(MIN_OBJECT_SIZE, (seat.size ?? 24) * scale);
-        const rotation = node.rotation();
+      const session = mapTransformSessionRef.current;
+      if (session) resetMapTransformTransformer(session, transformer);
 
-        node.scaleX(1);
-        node.scaleY(1);
+      isCorridorTransformActiveRef.current = false;
+      mapTransformSessionRef.current = null;
+      corridorPreviewBaseMapRef.current = null;
+      corridorPreviewWorkingMapRef.current = null;
+      transformCancelSnapshotsRef.current = [];
+      setIsTransformSessionActive(false);
+      setTransformerScaleOptions(DEFAULT_TRANSFORMER_SCALE_OPTIONS);
 
-        if (![x, y, size, rotation].every(Number.isFinite)) continue;
-        seatUpdates.push({ id: seatId, patch: { x, y, size, rotation } });
-        lastTransformCommitRef.current.set(seatId, { x, y });
+      const levelId = useEventMapEditorStore.getState().activeLevelId;
+      const committedMap = useEventMapEditorStore.getState().map;
+      if (committedMap && levelId) {
+        syncCorridorNodesFromMap(stage, committedMap.objects, levelId);
       }
 
-      if (objectUpdates.length > 0 || seatUpdates.length > 0) {
-        updateMapItems({ objects: objectUpdates, seats: seatUpdates });
-      }
-
-      const nodes = selectedNodeIds
-        .map((nodeId) => stage!.findOne(`#${nodeId}`))
+      const ctx = transformContextRef.current;
+      const nodes = ctx.selectedNodeIds
+        .map((nodeId) => stage.findOne(`#${nodeId}`))
         .filter((node): node is Konva.Node => Boolean(node));
-      transformer!.nodes(nodes);
-      transformer!.getLayer()?.batchDraw();
+      transformer.nodes(nodes);
+      transformer.getLayer()?.batchDraw();
+      bumpCorridorVisualRevision();
     }
 
-    transformer.on('transformend', onTransformEnd);
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [isTransformSessionActive, bumpCorridorVisualRevision]);
+
+  useEffect(() => {
+    if (!isTransformSessionActive) return;
+
+    function onShiftKey(event: KeyboardEvent) {
+      if (event.key !== 'Shift') return;
+      if (transformContextRef.current.transformKind !== 'generic') return;
+      setTransformerScaleOptions(resolveGenericTransformerScaleOptions(event.type === 'keydown'));
+    }
+
+    window.addEventListener('keydown', onShiftKey);
+    window.addEventListener('keyup', onShiftKey);
     return () => {
-      transformer.off('transformend', onTransformEnd);
+      window.removeEventListener('keydown', onShiftKey);
+      window.removeEventListener('keyup', onShiftKey);
     };
-  }, [
-    selectedNodeIds,
-    selectedObjectIds,
-    selectedSeatIds,
-    updateMapItems,
-    useAtomicSelectionTransform,
-    useUniformGroupTransform,
-  ]);
+  }, [isTransformSessionActive]);
 
   useEffect(() => {
     const transformer = transformerRef.current;
     const stage = stageRef.current;
-    if (!transformer || !stage || selectedNodeIds.length === 0) {
+    if (!stage || !level?.id) return;
+
+    if (!isCorridorLivePreviewRef.current && !isCorridorTransformActiveRef.current) {
+      syncCorridorNodesFromMap(stage, levelObjects, level.id);
+      contentLayerRef.current?.batchDraw();
+    }
+
+    if (!transformer || selectedNodeIds.length === 0) {
       transformer?.nodes([]);
       transformer?.getLayer()?.batchDraw();
       return;
     }
+    if (isCorridorLivePreviewRef.current || isCorridorTransformActiveRef.current) return;
+
     const nodes = selectedNodeIds
       .map((nodeId) => stage.findOne(`#${nodeId}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedNodeIds, levelObjects, levelSeats]);
+  }, [level?.id, levelObjects, selectedNodeIds]);
 
   const handleSelectItem = useCallback(
     (item: MapSelectionItem, event: Konva.KonvaEventObject<MouseEvent>) => {
@@ -986,7 +1226,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
   const beginGroupDrag = useCallback((nodeId: string, nodeIds: string[]) => {
     committedGroupDragNodeIdsRef.current.clear();
-    if (nodeIds.length <= 1 || !nodeIds.includes(nodeId)) {
+    if (!nodeIds.includes(nodeId)) {
       groupDragRef.current = null;
       return;
     }
@@ -1013,7 +1253,13 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       const node = stage.findOne(`#${id}`);
       if (node) origin.set(id, { x: node.x(), y: node.y() });
     }
-    groupDragRef.current = { anchorNodeId: nodeId, origin };
+
+    if (origin.size <= 1) {
+      groupDragRef.current = { anchorNodeId: nodeId, origin, delta: { x: 0, y: 0 } };
+      return;
+    }
+
+    groupDragRef.current = { anchorNodeId: nodeId, origin, delta: { x: 0, y: 0 } };
   }, []);
 
   const syncGroupDrag = useCallback((event: Konva.KonvaEventObject<DragEvent>) => {
@@ -1025,6 +1271,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
     const dx = event.target.x() - anchorOrigin.x;
     const dy = event.target.y() - anchorOrigin.y;
+    drag.delta = { x: dx, y: dy };
     const stage = stageRef.current;
     if (!stage) return;
 
@@ -1043,20 +1290,54 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     if (!drag) return;
     committedGroupDragNodeIdsRef.current = new Set(drag.origin.keys());
 
-    const stage = stageRef.current;
-    if (!stage) return;
+    const baseMap = corridorPreviewBaseMapRef.current;
+    const corridorNodeIds = [...drag.origin.keys()].filter((nodeId) => {
+      const id = nodeId.replace(/^node-/, '');
+      return map?.objects.some((object) => object.id === id && object.type === 'CORRIDOR');
+    });
+    const movingCorridor = corridorNodeIds.length > 0;
 
+    if (movingCorridor && baseMap) {
+      flushCorridorDragPreview();
+
+      const corridorIds = corridorNodeIds.map((nodeId) => nodeId.replace(/^node-/, ''));
+      const dragMode = corridorDragModeRef.current || resolveCorridorDragMode(baseMap, drag, corridorIds);
+      const preview = buildSmartCorridorDragPreview(baseMap, drag, corridorNodeIds, {
+        previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
+        maxIterations: CORRIDOR_REFLOW_ITERATIONS,
+        activeCorridorIds: corridorIds,
+        mode: dragMode,
+      });
+      const { objects, seats } = extractGroupDragCommitUpdates(
+        baseMap,
+        preview,
+        drag,
+        corridorIds,
+        dragMode,
+      );
+
+      if (objects.length > 0 || seats.length > 0) {
+        updateMapItems({
+          objects,
+          seats,
+          skipSeatBaseLayoutTranslation: dragMode === 'reflow',
+          skipCorridorReflow: true,
+        });
+      }
+      clearSmartCorridorPreview();
+      return;
+    }
+
+    const { delta } = drag;
     const objectUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
     const seatUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
 
-    for (const nodeId of drag.origin.keys()) {
-      const node = stage.findOne(`#${nodeId}`);
-      if (!node) continue;
+    for (const [nodeId, start] of drag.origin) {
       const id = nodeId.replace('node-', '');
-      const nx = node.x();
-      const ny = node.y();
-      const start = drag.origin.get(nodeId);
-      if (!start || (Math.abs(start.x - nx) < 0.5 && Math.abs(start.y - ny) < 0.5)) continue;
+      const nx = start.x + delta.x;
+      const ny = start.y + delta.y;
+
+      if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) continue;
 
       if (map?.objects.some((object) => object.id === id)) {
         objectUpdates.push({ id, patch: { x: nx, y: ny } });
@@ -1069,12 +1350,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       updateMapItems({ objects: objectUpdates, seats: seatUpdates });
     }
     clearSmartCorridorPreview();
-  }, [clearSmartCorridorPreview, map?.objects, map?.seats, updateMapItems]);
-
-  const levelBounds = useMemo(
-    () => (level ? { width: level.widthPx, height: level.heightPx } : null),
-    [level],
-  );
+  }, [clearSmartCorridorPreview, flushCorridorDragPreview, map?.objects, map?.seats, updateMapItems]);
 
   const { guidesLayerRef, clearGuides, handleDragMove: handleSnapDragMove, handleAnchorDragBound } =
     useSnapGuidesSession({
@@ -1086,54 +1362,66 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     syncGroupDrag,
   });
 
+  const isSmartCorridorPreviewDrag = useCallback((event: Konva.KonvaEventObject<DragEvent>) => {
+    if (isCorridorLivePreviewRef.current) return true;
+    if (!corridorPreviewBaseMapRef.current) return false;
+
+    const current = useEventMapEditorStore.getState().map;
+    if (!current) return false;
+
+    const corridorIds = new Set(
+      current.objects.filter((object) => object.type === 'CORRIDOR').map((object) => object.id),
+    );
+    if (corridorIds.size === 0) return false;
+
+    const drag = groupDragRef.current;
+    if (drag && drag.origin.size > 0) {
+      return [...drag.origin.keys()].some((nodeId) => corridorIds.has(nodeId.replace(/^node-/, '')));
+    }
+
+    const entityId = event.target.id().replace(/^node-/, '');
+    return corridorIds.has(entityId);
+  }, []);
+
   const handleResponsiveDragMove = useCallback(
     (event: Konva.KonvaEventObject<DragEvent>) => {
-      handleSnapDragMove(event);
+      if (isSmartCorridorPreviewDrag(event)) {
+        if (corridorDragModeRef.current === 'rigid') {
+          handleSnapDragMove(event);
+          scheduleCorridorDragPreview();
+          return;
+        }
 
-      const entityId = event.target.id().replace(/^node-/, '');
-      const current = useEventMapEditorStore.getState().map;
-      const isCorridorDrag =
-        current?.objects.some((object) => object.id === entityId && object.type === 'CORRIDOR') ||
-        (groupDragRef.current
-          ? [...groupDragRef.current.origin.keys()].some((nodeId) => {
-              const id = nodeId.replace(/^node-/, '');
-              return current?.objects.some((object) => object.id === id && object.type === 'CORRIDOR');
-            })
-          : false);
-
-      if (isCorridorDrag && corridorPreviewBaseMapRef.current) {
-        updateSmartCorridorPreviewFromStage();
+        clearGuides();
+        syncGroupDrag(event);
+        scheduleCorridorDragPreview();
+        return;
       }
+
+      handleSnapDragMove(event);
     },
-    [handleSnapDragMove, updateSmartCorridorPreviewFromStage],
+    [
+      clearGuides,
+      handleSnapDragMove,
+      isSmartCorridorPreviewDrag,
+      scheduleCorridorDragPreview,
+      syncGroupDrag,
+    ],
   );
 
+  const CORRIDOR_ROTATION_SNAPS = [0, 90, 180, 270];
   useEffect(() => {
     const transformer = transformerRef.current;
-    const stage = stageRef.current;
-    if (!transformer || !stage || !selectedAnyCorridor || useAtomicSelectionTransform) return;
+    if (!transformer || !selectedAnyCorridor) return;
 
-    function onCorridorTransformStart() {
-      const currentMap = useEventMapEditorStore.getState().map;
-      if (currentMap) {
-        corridorPreviewBaseMapRef.current = cloneEventMap(currentMap);
-      }
-    }
-
-    function onCorridorTransform() {
-      if (corridorPreviewBaseMapRef.current) {
-        updateSmartCorridorPreviewFromStage();
-      }
-    }
-
-    transformer.on('transformstart', onCorridorTransformStart);
-    transformer.on('transform', onCorridorTransform);
+    transformer.rotationSnaps(CORRIDOR_ROTATION_SNAPS);
+    transformer.rotationSnapTolerance(5);
 
     return () => {
-      transformer.off('transformstart', onCorridorTransformStart);
-      transformer.off('transform', onCorridorTransform);
+      transformer.rotationSnaps([]);
+      transformer.rotationSnapTolerance(5);
     };
-  }, [selectedAnyCorridor, useAtomicSelectionTransform, updateSmartCorridorPreviewFromStage]);
+  }, [selectedAnyCorridor]);
 
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -1206,6 +1494,32 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   }
 
   function handleStageMouseMove(event: Konva.KonvaEventObject<MouseEvent>) {
+    const seatResize = seatGroupResizeRef.current;
+    if (seatResize) {
+      const pt = getPointerPoint();
+      if (!pt) return;
+      const deltaX = pt.x - seatResize.startWorldPt.x;
+      const deltaY = pt.y - seatResize.startWorldPt.y;
+      let newCols = seatResize.lastCommittedCols;
+      let newRows = seatResize.lastCommittedRows;
+      if (seatResize.handle === 'right' || seatResize.handle === 'bottom-right') {
+        newCols = Math.max(1, Math.min(80, Math.round(
+          (seatResize.startTotalW + deltaX - seatResize.paddingLeft - seatResize.paddingRight + seatResize.gapX) / seatResize.stepX
+        )));
+      }
+      if (seatResize.handle === 'bottom' || seatResize.handle === 'bottom-right') {
+        newRows = Math.max(1, Math.min(50, Math.round(
+          (seatResize.startTotalH + deltaY - seatResize.paddingTop - seatResize.paddingBottom + seatResize.gapY) / seatResize.stepY
+        )));
+      }
+      if (newRows !== seatResize.lastCommittedRows || newCols !== seatResize.lastCommittedCols) {
+        seatResize.lastCommittedRows = newRows;
+        seatResize.lastCommittedCols = newCols;
+        updateSeatGroup(seatResize.groupId, { rows: newRows, columns: newCols });
+      }
+      return;
+    }
+
     if (marqueeDraft && tool === 'select') {
       const point = getPointerPoint();
       if (!point) return;
@@ -1220,6 +1534,12 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   }
 
   function handleStageMouseUp(event: Konva.KonvaEventObject<MouseEvent>) {
+    if (seatGroupResizeRef.current) {
+      seatGroupResizeRef.current = null;
+      if (containerRef.current) containerRef.current.style.cursor = '';
+      return;
+    }
+
     if (marqueeDraft && tool === 'select') {
       const point = getPointerPoint() ?? marqueeDraft.current;
       const box = normalizeBoundsRect(marqueeDraft.start, point);
@@ -1321,8 +1641,22 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
           .filter((object) => object.type === 'CORRIDOR')
           .map((object) => object.id),
       );
-      if (resolvedNodeIds.some((id) => corridorIds.has(id.replace(/^node-/, '')))) {
-        corridorPreviewBaseMapRef.current = currentState.map ? cloneEventMap(currentState.map) : null;
+      const draggingCorridorIds = resolvedNodeIds
+        .map((id) => id.replace(/^node-/, ''))
+        .filter((id) => corridorIds.has(id));
+
+      if (draggingCorridorIds.length > 0) {
+        const base = currentState.map ? cloneEventMap(currentState.map) : null;
+        corridorPreviewBaseMapRef.current = base;
+        corridorPreviewWorkingMapRef.current = base ? cloneEventMap(base) : null;
+        corridorDragCorridorNodeIdsRef.current = draggingCorridorIds.map((id) => `node-${id}`);
+        isCorridorLivePreviewRef.current = true;
+        setActiveUnionDragIds(new Set(draggingCorridorIds));
+
+        const drag = groupDragRef.current;
+        if (base && drag) {
+          corridorDragModeRef.current = resolveCorridorDragMode(base, drag, draggingCorridorIds);
+        }
       }
     },
     [activeLevelId, beginGroupDrag, clearGuides, getSectionGroupNodeIds, individualSeatDragId, levelObjects, setSelection],
@@ -1334,6 +1668,10 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
       const drag = groupDragRef.current;
       if (drag?.origin.has(nodeId)) {
+        if (corridorPreviewBaseMapRef.current) {
+          syncGroupDrag(event);
+          flushCorridorDragPreview();
+        }
         commitGroupDrag();
         return;
       }
@@ -1362,7 +1700,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       onCommit(nx, ny);
       clearSmartCorridorPreview();
     },
-    [clearGuides, clearSmartCorridorPreview, commitGroupDrag],
+    [clearGuides, clearSmartCorridorPreview, commitGroupDrag, flushCorridorDragPreview, syncGroupDrag],
   );
 
   function handleStageDragMove(event: Konva.KonvaEventObject<DragEvent>) {
@@ -1628,7 +1966,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   }
 
   function handleTransformEnd(object: EventMapObjectDTO, node: Konva.Node) {
-    if (useUniformGroupTransform) {
+    if (
+      useUniformGroupTransform ||
+      useGenericTransform ||
+      (object.type === 'CORRIDOR' && useCorridorTransformerPipeline)
+    ) {
       node.scaleX(1);
       node.scaleY(1);
       return;
@@ -1757,11 +2099,8 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       y,
       width: nextWidth,
       height: nextHeight,
-      rotation: object.type === 'CORRIDOR' ? 0 : node.rotation(),
+      rotation: node.rotation(),
     });
-    if (object.type === 'CORRIDOR') {
-      clearSmartCorridorPreview();
-    }
   }
 
   function renderSeatGridPreview() {
@@ -1806,6 +2145,210 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
         })}
       </Group>
     );
+  }
+
+  function renderSeatGroups() {
+    if (levelSeatGroups.length === 0) return null;
+    return levelSeatGroups.map((group) => {
+      const groupSeats = levelSeats.filter((s) => s.groupId === group.id);
+      const isGroupSelected = isItemSelected(selection, { type: 'seatgroup', id: group.id });
+      const stepX = group.seatWidth + group.gapX;
+      const stepY = group.seatHeight + group.gapY;
+      const totalW = group.paddingLeft + group.columns * stepX - group.gapX + group.paddingRight;
+      const totalH = group.paddingTop + group.rows * stepY - group.gapY + group.paddingBottom;
+
+      return (
+        <Group
+          key={group.id}
+          id={`node-seatgroup-${group.id}`}
+          x={group.x}
+          y={group.y}
+          rotation={group.rotation}
+          listening={!placementToolActive}
+          draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !group.locked}
+          onClick={(event) => {
+            event.cancelBubble = true;
+            handleSelectItem({ type: 'seatgroup', id: group.id }, event);
+          }}
+          onDragMove={handleResponsiveDragMove}
+          onDragEnd={(event) => {
+            const nx = event.target.x();
+            const ny = event.target.y();
+            if (Number.isFinite(nx) && Number.isFinite(ny)) {
+              updateSeatGroup(group.id, { x: nx, y: ny });
+            }
+          }}
+        >
+          {/* Group bounds indicator */}
+          <Rect
+            x={0}
+            y={0}
+            width={totalW}
+            height={totalH}
+            fill={isGroupSelected ? 'rgba(37,99,235,0.06)' : 'transparent'}
+            stroke={isGroupSelected ? '#2563eb' : '#7c3aed'}
+            strokeWidth={isGroupSelected ? 1.5 : 1}
+            strokeScaleEnabled={false}
+            dash={isGroupSelected ? undefined : [6, 4]}
+            cornerRadius={6}
+            listening={false}
+          />
+          {/* Group name label */}
+          {group.name ? (
+            <Text
+              x={0}
+              y={-18}
+              text={group.name}
+              fontSize={11}
+              fill={isGroupSelected ? '#2563eb' : '#7c3aed'}
+              fontStyle="500"
+              listening={false}
+            />
+          ) : null}
+          {/* Resize handles */}
+          {isGroupSelected && !readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' ? (
+            <>
+              {/* Right handle — adjusts columns */}
+              <Rect
+                x={totalW - 5 / zoom}
+                y={totalH / 2 - 5 / zoom}
+                width={10 / zoom}
+                height={10 / zoom}
+                fill="white"
+                stroke="#2563eb"
+                strokeWidth={1.5}
+                strokeScaleEnabled={false}
+                cornerRadius={2}
+                hitStrokeWidth={6}
+                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'ew-resize'; }}
+                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
+                onMouseDown={(event) => {
+                  event.cancelBubble = true;
+                  const pt = getPointerPoint();
+                  if (!pt) return;
+                  seatGroupResizeRef.current = {
+                    groupId: group.id, handle: 'right',
+                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
+                    startTotalW: totalW, startTotalH: totalH,
+                    stepX, stepY,
+                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
+                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
+                    gapX: group.gapX, gapY: group.gapY,
+                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
+                  };
+                }}
+              />
+              {/* Bottom handle — adjusts rows */}
+              <Rect
+                x={totalW / 2 - 5 / zoom}
+                y={totalH - 5 / zoom}
+                width={10 / zoom}
+                height={10 / zoom}
+                fill="white"
+                stroke="#2563eb"
+                strokeWidth={1.5}
+                strokeScaleEnabled={false}
+                cornerRadius={2}
+                hitStrokeWidth={6}
+                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'ns-resize'; }}
+                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
+                onMouseDown={(event) => {
+                  event.cancelBubble = true;
+                  const pt = getPointerPoint();
+                  if (!pt) return;
+                  seatGroupResizeRef.current = {
+                    groupId: group.id, handle: 'bottom',
+                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
+                    startTotalW: totalW, startTotalH: totalH,
+                    stepX, stepY,
+                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
+                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
+                    gapX: group.gapX, gapY: group.gapY,
+                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
+                  };
+                }}
+              />
+              {/* Bottom-right handle — adjusts columns and rows */}
+              <Rect
+                x={totalW - 5 / zoom}
+                y={totalH - 5 / zoom}
+                width={10 / zoom}
+                height={10 / zoom}
+                fill="white"
+                stroke="#2563eb"
+                strokeWidth={1.5}
+                strokeScaleEnabled={false}
+                cornerRadius={2}
+                hitStrokeWidth={6}
+                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'nwse-resize'; }}
+                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
+                onMouseDown={(event) => {
+                  event.cancelBubble = true;
+                  const pt = getPointerPoint();
+                  if (!pt) return;
+                  seatGroupResizeRef.current = {
+                    groupId: group.id, handle: 'bottom-right',
+                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
+                    startTotalW: totalW, startTotalH: totalH,
+                    stepX, stepY,
+                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
+                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
+                    gapX: group.gapX, gapY: group.gapY,
+                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
+                  };
+                }}
+              />
+            </>
+          ) : null}
+          {/* Seats */}
+          {groupSeats.map((seat) => {
+            const radius = group.seatWidth / 2;
+            // Convert world-space seat center (may include corridor displacement) to
+            // seatGroup-local space by applying the inverse rotation of the group.
+            const rotRad = -((group.rotation ?? 0) * Math.PI) / 180;
+            const cosR = Math.cos(rotRad);
+            const sinR = Math.sin(rotRad);
+            const dx = seat.x - group.x;
+            const dy = seat.y - group.y;
+            const seatLocalX = dx * cosR - dy * sinR;
+            const seatLocalY = dx * sinR + dy * cosR;
+            const seatSelected = isItemSelected(selection, { type: 'seat', id: seat.id });
+            return (
+              <Group
+                key={seat.id}
+                id={`node-${seat.id}`}
+                x={seatLocalX}
+                y={seatLocalY}
+                listening={!placementToolActive}
+                onClick={(event) => {
+                  event.cancelBubble = true;
+                  handleSelectItem({ type: 'seatgroup', id: group.id }, event);
+                }}
+              >
+                <Circle
+                  radius={radius}
+                  fill={seatFill(seat.status)}
+                  stroke={isGroupSelected || seatSelected ? '#1d4ed8' : '#ffffff'}
+                  strokeWidth={isGroupSelected || seatSelected ? 3 : 2}
+                  strokeScaleEnabled={false}
+                />
+                <Text
+                  x={-radius}
+                  y={-6}
+                  width={radius * 2}
+                  align="center"
+                  text={seat.displayLabel}
+                  fontSize={Math.max(9, radius * 0.65)}
+                  fill="#ffffff"
+                  fontStyle="bold"
+                  listening={false}
+                />
+              </Group>
+            );
+          })}
+        </Group>
+      );
+    });
   }
 
   if (!map || !level) {
@@ -1927,40 +2470,34 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
           <Rect x={0} y={0} width={level.widthPx} height={level.heightPx} fill="#ffffff" stroke="#cbd5e1" strokeWidth={2} />
         </Layer>
 
-        <Layer>
+        <Layer ref={contentLayerRef}>
           {corridorUnionGroups.map((group) => {
-            if (group.objectIds.some((objectId) => selectedCorridorIds.has(objectId))) return null;
+            if (group.objectIds.length < 2) return null;
 
             return (
-            <Group key={`corridor-union-${group.id}`} listening={false}>
-              {group.rects.map((rect, index) => (
-                <Rect
-                  key={`${group.id}-fill-${index}`}
-                  x={rect.x}
-                  y={rect.y}
-                  width={rect.width}
-                  height={rect.height}
-                  fill="#f8fafc"
-                  opacity={0.92}
-                  listening={false}
-                />
-              ))}
-              {group.segments.map((segment, index) => (
-                <Line
-                  key={`${group.id}-segment-${index}`}
-                  points={segment.points}
-                  stroke="#cbd5e1"
-                  strokeWidth={1.5}
-                  strokeScaleEnabled={false}
-                  dash={[8, 6]}
-                  listening={false}
-                />
-              ))}
-            </Group>
+              <Group key={`corridor-union-${group.id}`} listening={false}>
+                {group.mergedPolygons.map((polygon, index) => (
+                  <Line
+                    key={`${group.id}-merged-${index}`}
+                    points={polygonToKonvaPoints(polygon)}
+                    closed
+                    fill="#f8fafc"
+                    stroke="#cbd5e1"
+                    strokeWidth={1.5}
+                    strokeScaleEnabled={false}
+                    dash={[8, 6]}
+                    listening={false}
+                  />
+                ))}
+              </Group>
             );
           })}
 
-          {levelObjects.map((object) => {
+          {displayLevelObjects.map((object) => {
+            // SECTION objects for seatgroups are visually represented by renderSeatGroups().
+            if (object.type === 'SECTION' && object.sectionId != null && seatGroupSectionIds.has(object.sectionId)) {
+              return null;
+            }
             const appearance = getObjectAppearance(object);
             const width = object.width ?? 180;
             const height = object.height ?? 90;
@@ -1968,6 +2505,36 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
             const selected = isObjectSelected(object, selection, levelObjects);
             const opacity = Number(object.data.opacity ?? (object.type === 'SECTION' ? 0.15 : 1));
             const cornerRadius = Number(object.data.cornerRadius ?? (object.type === 'TABLE' ? 999 : shape ? 0 : 8));
+
+            if (object.type === 'CORRIDOR') {
+              const corridorProps = buildCorridorMapObjectProps(object, {
+                selection,
+                levelObjects,
+                selectedCorridorIds,
+                corridorUnionGroups,
+                activeUnionDragIds,
+                isObjectSelected: (entry) => isObjectSelected(entry, selection, levelObjects),
+              });
+              const freezeFromReact = isTransformSessionActive && selectedCorridorIds.has(object.id);
+
+              return (
+                <CorridorMapObject
+                  key={object.id}
+                  {...corridorProps}
+                  freezeFromReact={freezeFromReact}
+                  placementToolActive={placementToolActive}
+                  readOnly={readOnly}
+                  tool={tool}
+                  onSelect={(event) => handleSelectItem({ type: 'object', id: object.id }, event)}
+                  onDragStart={() => handleNodeDragStart(`node-${object.id}`, { type: 'object', id: object.id })}
+                  onDragMove={handleResponsiveDragMove}
+                  onDragEnd={(event) =>
+                    handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
+                  }
+                  onTransformEnd={() => undefined}
+                />
+              );
+            }
 
             if (object.type === 'TEXT') {
               const textMode = getTextMode(object);
@@ -1983,6 +2550,8 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                   id={`node-${object.id}`}
                   x={object.x}
                   y={object.y}
+                  scaleX={1}
+                  scaleY={1}
                   text={String(object.data.text ?? 'Texto')}
                   width={textWidth}
                   height={hasCustomHeight ? object.height ?? undefined : undefined}
@@ -2028,7 +2597,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                 id={`node-${object.id}`}
                 x={object.x}
                 y={object.y}
-                rotation={object.type === 'CORRIDOR' ? 0 : object.rotation}
+                scaleX={1}
+                scaleY={1}
+                rotation={object.rotation}
+                offsetX={0}
+                offsetY={0}
                 name={SNAP_TARGET_NAME}
                 listening={!placementToolActive}
                 draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !object.locked}
@@ -2049,7 +2622,9 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                   handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
                 }
                 onTransformEnd={(event) => {
-                  if (!useAtomicSelectionTransform) handleTransformEnd(object, event.target);
+                  if (!useAtomicSelectionTransform) {
+                    handleTransformEnd(object, event.target);
+                  }
                 }}
               >
                 {shape === 'circle' || shape === 'ellipse' ? (
@@ -2080,58 +2655,19 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                     rotation={30}
                   />
                 ) : (
-                  <>
-                    {object.type === 'CORRIDOR' && selected ? (
-                      <Rect
-                        x={-getCorridorSpacing(object).left}
-                        y={-getCorridorSpacing(object).top}
-                        width={width + getCorridorSpacing(object).left + getCorridorSpacing(object).right}
-                        height={height + getCorridorSpacing(object).top + getCorridorSpacing(object).bottom}
-                        fill="rgba(124, 58, 237, 0.04)"
-                        stroke="rgba(124, 58, 237, 0.35)"
-                        strokeWidth={1}
-                        dash={[6, 6]}
-                        listening={false}
-                      />
-                    ) : null}
                   <Rect
                     width={width}
                     height={height}
                     cornerRadius={cornerRadius}
-                    fill={
-                      object.type === 'CORRIDOR'
-                        ? selected
-                          ? 'rgba(124, 58, 237, 0.08)'
-                          : 'rgba(248, 250, 252, 0.01)'
-                        : appearance.fill
-                    }
-                    opacity={object.type === 'CORRIDOR' ? 1 : opacity}
-                    stroke={
-                      object.type === 'CORRIDOR'
-                        ? selected
-                          ? '#7c3aed'
-                          : undefined
-                        : appearance.stroke
-                    }
-                    strokeWidth={
-                      object.type === 'CORRIDOR'
-                        ? selected
-                          ? 1.5
-                          : 0
-                        : appearance.strokeWidth
-                    }
+                    fill={appearance.fill}
+                    opacity={opacity}
+                    stroke={appearance.stroke}
+                    strokeWidth={appearance.strokeWidth}
                     strokeScaleEnabled={false}
-                    dash={
-                      object.type === 'CORRIDOR'
-                        ? selected
-                          ? [8, 6]
-                          : undefined
-                        : appearance.dash
-                    }
+                    dash={appearance.dash}
                   />
-                  </>
                 )}
-                {selected && object.type !== 'CORRIDOR' ? (
+                {selected ? (
                   <Rect
                     width={width}
                     height={height}
@@ -2147,7 +2683,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
             );
           })}
 
+          {renderSeatGroups()}
+
           {levelSeats.map((seat) => {
+            // Grouped seats are rendered inside renderSeatGroups()
+            if (seat.groupId != null) return null;
             const selected = isItemSelected(selection, { type: 'seat', id: seat.id });
             const radius = (seat.size ?? 24) / 2;
             return (
@@ -2192,18 +2732,21 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
 
           <Transformer
             ref={transformerRef}
-            rotateEnabled={!selectedAnyCorridor}
-            resizeEnabled
-            keepRatio={useUniformGroupTransform}
-            centeredScaling={useUniformGroupTransform}
-            enabledAnchors={selectedTextTransformAnchors}
+            rotateEnabled={!disableRotateForMixedSmartCorridorSelection}
+            resizeEnabled={!disableResizeForMixedSmartCorridorSelection}
+            keepRatio={transformerScaleOptions.keepRatio}
+            centeredScaling={transformerScaleOptions.centeredScaling}
+            flipEnabled={false}
+            enabledAnchors={
+              disableResizeForMixedSmartCorridorSelection ? [] : selectedTextTransformAnchors
+            }
             listening={!placementToolActive}
             anchorDragBoundFunc={(_oldAbs, newAbs, event) => {
               if (
                 readOnly ||
                 tool === 'pan' ||
                 tool === 'zoom' ||
-                useUniformGroupTransform ||
+                transformPipelineActive ||
                 !levelBounds
               ) {
                 return newAbs;

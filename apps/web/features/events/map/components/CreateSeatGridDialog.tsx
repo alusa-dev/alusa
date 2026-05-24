@@ -22,9 +22,13 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
 
   function updateConfig(patch: Partial<SeatGridConfig>) {
     if ('totalSeats' in patch) {
-      const desired = patch.totalSeats ?? 1;
+      const desired = Math.max(1, patch.totalSeats ?? 1);
       setDesiredTotalSeats(desired);
-      onChange(normalizeSeatGridConfig({ ...normalizedConfig, ...patch }));
+      // Auto-expand rows when totalSeats exceeds current columns * rows
+      const currentColumns = normalizedConfig.columns;
+      const neededRows = Math.ceil(desired / currentColumns);
+      const newRows = Math.max(normalizedConfig.rows, neededRows);
+      onChange(normalizeSeatGridConfig({ ...normalizedConfig, rows: newRows, totalSeats: desired }));
     } else {
       const next = normalizeSeatGridConfig({ ...normalizedConfig, ...patch });
       const newCapacity = getSeatGridCapacity(next);
@@ -50,7 +54,7 @@ export function CreateSeatGridDialog({ config, onChange, onCancel, onConfirm }: 
             data-testid="seat-grid-total-seats"
             type="number"
             min={1}
-            max={capacity}
+            max={50 * normalizedConfig.columns}
             value={normalizedConfig.totalSeats}
             onChange={(event) => updateConfig({ totalSeats: numberValue(event.target.value) })}
             className="h-9 w-full rounded-md border border-slate-200 px-3 text-sm text-slate-950 outline-none focus:border-violet-500"

@@ -1,0 +1,49 @@
+import { getMovingEdgesFromAnchor } from './resize-snap-guides';
+
+const CORNER_ANCHORS = new Set([
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+]);
+
+const EDGE_ANCHORS = new Set([
+  'middle-left',
+  'middle-right',
+  'top-center',
+  'bottom-center',
+]);
+
+export type CorridorResizeMode = 'edge' | 'corner';
+
+export function isCornerResizeAnchor(anchor: string): boolean {
+  return CORNER_ANCHORS.has(anchor);
+}
+
+export function isEdgeResizeAnchor(anchor: string): boolean {
+  return EDGE_ANCHORS.has(anchor);
+}
+
+export function resolveCorridorResizeMode(anchor: string): CorridorResizeMode {
+  if (isEdgeResizeAnchor(anchor)) return 'edge';
+  if (isCornerResizeAnchor(anchor)) return 'corner';
+  return 'corner';
+}
+
+/** Multi-select: corners → uniform proportional scale; edges → single-axis group resize. */
+export function shouldUseUniformGroupScale(anchor: string, corridorCount: number): boolean {
+  if (corridorCount < 2) return false;
+  return resolveCorridorResizeMode(anchor) === 'corner';
+}
+
+export {
+  resolveCorridorTransformerScaleOptions,
+  type TransformerScaleOptions,
+  type TransformHandleMode,
+} from './transform-handle-mode';
+
+export function anchorMovesSingleAxis(anchor: string): boolean {
+  const moving = getMovingEdgesFromAnchor(anchor);
+  const axes = Number(Boolean(moving.vertical)) + Number(Boolean(moving.horizontal));
+  return axes === 1;
+}

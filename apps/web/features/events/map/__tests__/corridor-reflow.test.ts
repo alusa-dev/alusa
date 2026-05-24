@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
-import { applyCorridorReflow, resolveCorridorAxis } from '../lib/corridor-reflow';
+import { applyCorridorReflow, applyCorridorPreviewPatch, buildSmartCorridorDragPreview, buildSmartCorridorTransformPreview, cloneEventMap, CORRIDOR_REFLOW_ITERATIONS, extractCorridorDragCommitUpdates, extractGroupDragCommitUpdates, resetCorridorPreviewFromBase, resolveCorridorAxis, resolveCorridorDragMode, updateCorridorSplitAnchorsOnDrag } from '../lib/corridor-reflow';
 import { buildSeatGridPreview } from '../lib/seat-grid';
 import { getSeatBounds, intersectsRect } from '../lib/selection-utils';
+import { effectiveCorridorAxisAtRotation, getCorridorRenderBounds, getCorridorWorldCenter, MIN_CORRIDOR_THICKNESS, readStoredCorridorAxis, resolveSmartCorridorLayout, snapSmartCorridorRotation } from '../lib/smart-corridor-layout';
 
 function createSectionMap(seats: EventSeatDTO[], sectionObject: EventMapObjectDTO): EventMapDTO {
   return {
@@ -34,6 +35,7 @@ function createSectionMap(seats: EventSeatDTO[], sectionObject: EventMapObjectDT
       },
     ],
     objects: [sectionObject],
+    seatGroups: [],
     seats,
     versions: [],
     counts: { levels: 1, sections: 1, seats: seats.length, availableSeats: seats.length },
@@ -66,16 +68,16 @@ function corridor(
   };
 }
 
-function buildSeatGridMap(rows: number, columns: number) {
+function buildSeatGridMap(rows: number, columns: number, spacing = 40, seatSize = 20, origin = { x: 100, y: 100 }) {
   const preview = buildSeatGridPreview(
-    { x: 100, y: 100 },
+    origin,
     {
       totalSeats: rows * columns,
       rows,
       columns,
-      seatSize: 20,
-      horizontalSpacing: 40,
-      verticalSpacing: 40,
+      seatSize,
+      horizontalSpacing: spacing,
+      verticalSpacing: spacing,
       rowPrefix: 'A',
       startNumber: 1,
       numberingDirection: 'left-to-right',
@@ -87,6 +89,9 @@ function buildSeatGridMap(rows: number, columns: number) {
     levelId: 'level-1',
     sectionId: 'section-1',
     objectId: null,
+    groupId: null,
+    rowIndex: draft.rowIndex,
+    columnIndex: draft.columnIndex,
     technicalCode: draft.technicalCode,
     displayLabel: draft.displayLabel,
     rowLabel: draft.rowLabel,
@@ -140,6 +145,23 @@ function corridorBounds(object: EventMapObjectDTO) {
   };
 }
 
+function assertNoSeatIntersectsCorridors(map: EventMapDTO) {
+  const corridors = map.objects.filter((object) => object.type === 'CORRIDOR');
+
+  for (const corridorObject of corridors) {
+    const layout = resolveSmartCorridorLayout(corridorObject);
+
+    for (const seat of map.seats) {
+      const seatBounds = getSeatBounds(seat);
+      const intersectsCore = intersectsRect(seatBounds, layout.coreRect);
+      const intersectsClearance = intersectsRect(seatBounds, layout.clearanceRect);
+
+      expect(intersectsRect(seatBounds, layout.coreRect)).toBe(false);
+      expect(intersectsRect(seatBounds, layout.clearanceRect)).toBe(false);
+    }
+  }
+}
+
 describe('corridor-reflow', () => {
   it('opens a gap for a single corridor and restores seats when it is removed', () => {
     const map = buildSeatGridMap(2, 4);
@@ -167,6 +189,7 @@ describe('corridor-reflow', () => {
 
     const rowA = map.seats.filter((seat) => seat.rowLabel === 'A').sort((a, b) => Number(a.seatNumber) - Number(b.seatNumber));
     const gaps = rowA.slice(1).map((seat, index) => seat.x - rowA[index]!.x);
+
 
     expect(gaps.every((gap) => gap >= 40)).toBe(true);
 
@@ -259,7 +282,7 @@ describe('corridor-reflow', () => {
     expect(gapBeforeRight).toBeGreaterThanOrEqual(30);
   });
 
-  it('auto-fits vertical corridor core inside the opened gap without occupying padding', () => {
+  it('preserves vertical corridor dimensions while snapping inside the opened gap', () => {
     const map = buildSeatGridMap(2, 4);
     map.objects.push(
       corridor('corridor-1', 135, 70, 30, 120, {
@@ -280,16 +303,114 @@ describe('corridor-reflow', () => {
     const gapEnd = col2Bounds.x;
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
 
-    expect(gapEnd - gapStart).toBeGreaterThanOrEqual(8 + 32 + 8);
-    expect(corridorObject.x).toBeCloseTo(gapStart + 8, 1);
-    expect(corridorObject.width).toBeCloseTo(32, 1);
+    expect(gapEnd - gapStart).toBeGreaterThanOrEqual(8 + 30 + 8);
+    expect(corridorObject.x).toBeGreaterThanOrEqual(gapStart + 8 - 0.05);
+    expect(corridorObject.x).toBeLessThanOrEqual(gapEnd - 8 - 30 + 0.05);
+    expect(corridorObject.width).toBeCloseTo(30, 1);
+    expect(corridorObject.height).toBeCloseTo(120, 1);
 
     for (const seat of map.seats) {
       expect(intersectsRect(getSeatBounds(seat), corridorBounds(corridorObject))).toBe(false);
     }
   });
 
-  it('auto-fits horizontal corridor core inside the opened gap and row span', () => {
+  it('keeps render bounds and split anchor aligned after reflow snap', () => {
+    const map = buildSeatGridMap(2, 4);
+    map.objects.push(
+      corridor('corridor-1', 135, 70, 30, 120, {
+        corridorAxis: 'vertical',
+        seatGapLeft: 8,
+        seatGapRight: 8,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
+    const layout = resolveSmartCorridorLayout(corridorObject);
+    const renderBounds = getCorridorRenderBounds(corridorObject);
+
+    expect(renderBounds.x).toBeCloseTo(layout.coreRect.x, 1);
+    expect(renderBounds.y).toBeCloseTo(layout.coreRect.y, 1);
+    expect(Number(corridorObject.data.corridorSplitX)).toBeCloseTo(layout.coreRect.x + layout.coreRect.width / 2, 1);
+    expect(Number(corridorObject.data.corridorSplitY)).toBeCloseTo(layout.coreRect.y + layout.coreRect.height / 2, 1);
+  });
+
+  it('commits drag preview geometry with aligned render bounds and split anchor', () => {
+    const baseMap = buildSeatGridMap(2, 4);
+    baseMap.objects.push(
+      corridor('corridor-1', 135, 70, 30, 120, {
+        corridorAxis: 'vertical',
+        seatGapLeft: 8,
+        seatGapRight: 8,
+      }),
+    );
+
+    const preview = buildSmartCorridorDragPreview(
+      baseMap,
+      {
+        origin: new Map([['node-corridor-1', { x: 135, y: 70 }]]),
+        delta: { x: 48, y: 0 },
+      },
+      ['node-corridor-1'],
+    );
+
+    const { objects } = extractCorridorDragCommitUpdates(baseMap, preview, ['corridor-1']);
+    expect(objects).toHaveLength(1);
+
+    const committed = {
+      ...baseMap.objects.find((object) => object.id === 'corridor-1')!,
+      ...objects[0]!.patch,
+    } as EventMapObjectDTO;
+
+    const renderBounds = getCorridorRenderBounds(committed);
+
+    expect(renderBounds.x).toBeCloseTo(Number(committed.data.corridorSplitX) - committed.width! / 2, 1);
+    expect(renderBounds.y).toBeCloseTo(Number(committed.data.corridorSplitY) - committed.height! / 2, 1);
+  });
+
+  it('reuses preview map buffers across drag frames without cloning the base map', () => {
+    const baseMap = buildSeatGridMap(2, 4);
+    baseMap.objects.push(
+      corridor('corridor-1', 135, 70, 30, 120, {
+        corridorAxis: 'vertical',
+        seatGapLeft: 8,
+        seatGapRight: 8,
+      }),
+    );
+
+    const previewMap = cloneEventMap(baseMap);
+    const dragSession = {
+      origin: new Map([['node-corridor-1', { x: 135, y: 70 }]]),
+      delta: { x: 24, y: 0 },
+    };
+
+    const first = buildSmartCorridorDragPreview(baseMap, dragSession, ['node-corridor-1'], {
+      previewMap,
+      maxIterations: 8,
+      activeCorridorIds: ['corridor-1'],
+    });
+    const second = buildSmartCorridorDragPreview(
+      baseMap,
+      { ...dragSession, delta: { x: 48, y: 0 } },
+      ['node-corridor-1'],
+      {
+        previewMap,
+        maxIterations: 8,
+        activeCorridorIds: ['corridor-1'],
+      },
+    );
+
+    expect(first).toBe(previewMap);
+    expect(second).toBe(previewMap);
+    expect(first.seats.some((seat, index) => seat.x !== baseMap.seats[index]!.x)).toBe(true);
+
+    resetCorridorPreviewFromBase(previewMap, baseMap);
+    expect(previewMap.seats.map((seat) => seat.x)).toEqual(baseMap.seats.map((seat) => seat.x));
+    expect(previewMap.objects.find((object) => object.id === 'corridor-1')!.x).toBe(135);
+  });
+
+  it('perserves horizontal corridor dimensions while snapping inside the opened gap', () => {
     const map = buildSeatGridMap(4, 5);
     map.objects.push(
       corridor('corridor-1', 90, 125, 280, 32, {
@@ -307,15 +428,12 @@ describe('corridor-reflow', () => {
     const gapStart = Math.max(...rowA.map((seat) => getSeatBounds(seat).y + getSeatBounds(seat).height));
     const gapEnd = Math.min(...rowB.map((seat) => getSeatBounds(seat).y));
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
-    const rowABounds = rowA.map((seat) => getSeatBounds(seat));
 
     expect(gapEnd - gapStart).toBeGreaterThanOrEqual(8 + 32 + 8);
-    expect(corridorObject.y).toBeCloseTo(gapStart + 8, 1);
+    expect(corridorObject.y).toBeGreaterThanOrEqual(gapStart + 8 - 0.05);
+    expect(corridorObject.y).toBeLessThanOrEqual(gapEnd - 8 - 32 + 0.05);
     expect(corridorObject.height).toBeCloseTo(32, 1);
-    expect(corridorObject.width).toBeCloseTo(
-      Math.max(...rowABounds.map((bounds) => bounds.x + bounds.width)) - Math.min(...rowABounds.map((bounds) => bounds.x)),
-      1,
-    );
+    expect(corridorObject.width).toBeCloseTo(280, 1);
   });
 
   it('persists inferred corridor axis during reflow migration', () => {
@@ -507,7 +625,7 @@ describe('corridor-reflow', () => {
     expect(map.objects.find((object) => object.id === 'corridor-1')).toEqual(onceCorridor);
   });
 
-  it('normalizes corridor rotation to zero during reflow', () => {
+  it('preserves corridor rotation during reflow', () => {
     const map = buildSeatGridMap(2, 4);
     map.objects.push({
       ...corridor('corridor-1', 135, 70, 30, 120),
@@ -517,7 +635,7 @@ describe('corridor-reflow', () => {
     applyCorridorReflow(map);
 
     const corridorObject = map.objects.find((object) => object.id === 'corridor-1')!;
-    expect(corridorObject.rotation).toBe(0);
+    expect(corridorObject.rotation).toBe(90);
     expect(resolveCorridorAxis(corridorObject)).toBe('vertical');
   });
 
@@ -542,5 +660,258 @@ describe('corridor-reflow', () => {
     expect(rowACol1.x).toBe(baseCol1ByRow.get('A'));
     expect(rowGCol1.x).toBe(baseCol1ByRow.get('G'));
     expect(col2RowC.x).toBeGreaterThan(baseCol2RowC);
+  });
+
+  it('does not collapse smart corridor thickness when opened gap is temporarily insufficient', () => {
+    const map = buildSeatGridMap(10, 10);
+
+    map.objects.push(
+      corridor('corridor-1', 240, 120, 32, 420, {
+        smartCorridor: true,
+        corridorThickness: 32,
+        seatGapLeft: 24,
+        seatGapRight: 24,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const next = map.objects.find((object) => object.id === 'corridor-1')!;
+
+    expect(next.width).toBeGreaterThanOrEqual(32);
+    expect(Number(next.data.corridorThickness)).toBeGreaterThanOrEqual(32);
+    assertNoSeatIntersectsCorridors(map);
+  });
+
+  it('migrates corrupted corridor thickness instead of preserving 1px core', () => {
+    const map = buildSeatGridMap(10, 10);
+
+    map.objects.push(
+      corridor('corridor-1', 240, 120, 1, 420, {
+        smartCorridor: true,
+        corridorThickness: 1,
+        seatGapLeft: 8,
+        seatGapRight: 8,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    const next = map.objects.find((object) => object.id === 'corridor-1')!;
+    expect(next.width).toBeGreaterThanOrEqual(MIN_CORRIDOR_THICKNESS);
+    expect(Number(next.data.corridorThickness)).toBeGreaterThanOrEqual(MIN_CORRIDOR_THICKNESS);
+  });
+
+  it('keeps thickness when two corridors are moved together', () => {
+    const map = buildSeatGridMap(10, 12);
+
+    map.objects.push(
+      corridor('corridor-1', 220, 120, 32, 420, {
+        smartCorridor: true,
+        corridorThickness: 32,
+      }),
+    );
+
+    map.objects.push(
+      corridor('corridor-2', 420, 120, 32, 420, {
+        smartCorridor: true,
+        corridorThickness: 32,
+      }),
+    );
+
+    applyCorridorReflow(map);
+
+    for (const object of map.objects.filter((object) => object.type === 'CORRIDOR')) {
+      const previous = { ...object, data: { ...object.data } };
+      object.x += 42;
+      updateCorridorSplitAnchorsOnDrag(object, { x: object.x }, previous);
+    }
+
+    applyCorridorReflow(map);
+
+    for (const object of map.objects.filter((object) => object.type === 'CORRIDOR')) {
+      expect(object.width).toBeGreaterThanOrEqual(32);
+      expect(Number(object.data.corridorThickness)).toBeGreaterThanOrEqual(32);
+    }
+
+    assertNoSeatIntersectsCorridors(map);
+  });
+
+  it('keeps clearance valid for E2E grid with intersecting vertical and horizontal corridors', () => {
+    const map = buildSeatGridMap(10, 10, 42, 24, { x: 320, y: 180 });
+    const col4 = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '4')!;
+    const col5 = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '5')!;
+    const rowD = map.seats.find((seat) => seat.rowLabel === 'D' && seat.seatNumber === '5')!;
+    const rowE = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '5')!;
+    const verticalGapX = (col4.x + col5.x) / 2;
+    const horizontalGapY = (rowD.y + rowE.y) / 2;
+
+    map.objects.push(corridor('corridor-vertical', verticalGapX - 16, 180 - 20, 32, 420, { smartCorridor: true, corridorThickness: 32 }));
+    map.objects.push(corridor('corridor-horizontal', 320 - 40, horizontalGapY - 16, 520, 32, { smartCorridor: true, corridorThickness: 32 }));
+    applyCorridorReflow(map);
+
+    assertNoSeatIntersectsCorridors(map);
+  });
+
+  it('keeps clearance valid when two vertical corridors are shifted together', () => {
+    const map = buildSeatGridMap(10, 10, 42, 24, { x: 320, y: 180 });
+    const col3 = map.seats.find((seat) => seat.rowLabel === 'A' && seat.seatNumber === '3')!;
+    const col4 = map.seats.find((seat) => seat.rowLabel === 'A' && seat.seatNumber === '4')!;
+    const col7 = map.seats.find((seat) => seat.rowLabel === 'A' && seat.seatNumber === '7')!;
+    const col8 = map.seats.find((seat) => seat.rowLabel === 'A' && seat.seatNumber === '8')!;
+
+    map.objects.push(
+      corridor('corridor-left', (col3.x + col4.x) / 2 - 16, 180 - 20, 32, 420, { smartCorridor: true, corridorThickness: 32 }),
+    );
+    map.objects.push(
+      corridor('corridor-right', (col7.x + col8.x) / 2 - 16, 180 - 20, 32, 420, { smartCorridor: true, corridorThickness: 32 }),
+    );
+    applyCorridorReflow(map);
+
+    for (const object of map.objects.filter((object) => object.type === 'CORRIDOR')) {
+      const previous = { ...object, data: { ...object.data } };
+      object.x += 42;
+      updateCorridorSplitAnchorsOnDrag(object, { x: object.x }, previous);
+    }
+
+    applyCorridorReflow(map);
+    assertNoSeatIntersectsCorridors(map);
+  });
+
+  it('keeps clearance valid when vertical and horizontal corridors are inserted sequentially', () => {
+    const map = buildSeatGridMap(10, 10, 42, 24, { x: 320, y: 180 });
+    const col4 = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '4')!;
+    const col5 = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '5')!;
+    const rowD = map.seats.find((seat) => seat.rowLabel === 'D' && seat.seatNumber === '5')!;
+    const rowE = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '5')!;
+    const verticalGapX = (col4.x + col5.x) / 2;
+    const horizontalGapY = (rowD.y + rowE.y) / 2;
+
+    map.objects.push(
+      corridor('corridor-vertical', verticalGapX - 16, 180 - 20, 32, 420, { smartCorridor: true, corridorThickness: 32 }),
+    );
+    applyCorridorReflow(map);
+    map.objects.push(
+      corridor('corridor-horizontal', 320 - 40, horizontalGapY - 16, 520, 32, { smartCorridor: true, corridorThickness: 32 }),
+    );
+    applyCorridorReflow(map);
+
+    assertNoSeatIntersectsCorridors(map);
+  });
+});
+
+describe('smart corridor rotation contract', () => {
+  it('snaps rotation to quarter turns', () => {
+    expect(snapSmartCorridorRotation(89)).toBe(90);
+    expect(snapSmartCorridorRotation(271)).toBe(270);
+    expect(snapSmartCorridorRotation(-90)).toBe(270);
+  });
+
+  it('derives effective partition axis from stored axis and rotation', () => {
+    expect(effectiveCorridorAxisAtRotation('vertical', 0)).toBe('vertical');
+    expect(effectiveCorridorAxisAtRotation('vertical', 90)).toBe('horizontal');
+    expect(readStoredCorridorAxis(corridor('c1', 0, 0, 30, 120, { corridorAxis: 'vertical' }))).toBe('vertical');
+  });
+
+  it('updates stored axis when corridor is resized across orientations', () => {
+    const previous = corridor('c1', 0, 0, 30, 120, { corridorAxis: 'vertical' });
+    const object = { ...previous, data: { ...previous.data } };
+    Object.assign(object, { width: 280, height: 32 });
+    updateCorridorSplitAnchorsOnDrag(object, { width: 280, height: 32 }, previous);
+    expect(object.data.corridorAxis).toBe('horizontal');
+
+    const horizontalSnapshot = { ...object, data: { ...object.data } };
+    Object.assign(object, { width: 30, height: 120 });
+    updateCorridorSplitAnchorsOnDrag(object, { width: 30, height: 120 }, horizontalSnapshot);
+    expect(object.data.corridorAxis).toBe('vertical');
+  });
+
+  it('builds transform preview with snapped rotation', () => {
+    const map = buildSeatGridMap(4, 2, 40, 40, { x: 100, y: 100 });
+    const corridorId = 'corridor-preview';
+    map.objects.push(corridor(corridorId, 135, 70, 30, 120));
+    const baseMap = cloneEventMap(map);
+    const centerBefore = getCorridorWorldCenter(map.objects.find((entry) => entry.id === corridorId)!);
+
+    const preview = buildSmartCorridorTransformPreview(
+      baseMap,
+      [{ objectId: corridorId, patch: { rotation: 88, x: 135, y: 70 }, mode: 'rotate' }],
+      { maxIterations: CORRIDOR_REFLOW_ITERATIONS, activeCorridorIds: [corridorId] },
+    );
+
+    const previewCorridor = preview.objects.find((entry) => entry.id === corridorId);
+    expect(previewCorridor?.rotation).toBe(90);
+    const centerAfter = getCorridorWorldCenter(previewCorridor!);
+    expect(centerAfter.x).toBeCloseTo(centerBefore.x, 1);
+    expect(centerAfter.y).toBeCloseTo(centerBefore.y, 1);
+  });
+
+  it('preserves corridor center when rotating via transform preview on empty map', () => {
+    const corridorId = 'corridor-empty-rotate';
+    const map = buildSeatGridMap(4, 2, 40, 40, { x: 100, y: 100 });
+    map.objects.push(corridor(corridorId, 200, 160, 32, 160));
+    const baseMap = cloneEventMap(map);
+    const centerBefore = getCorridorWorldCenter(baseMap.objects.find((entry) => entry.id === corridorId)!);
+
+    const preview = buildSmartCorridorTransformPreview(
+      baseMap,
+      [{ objectId: corridorId, patch: { rotation: 90 }, mode: 'rotate' }],
+      { maxIterations: CORRIDOR_REFLOW_ITERATIONS, activeCorridorIds: [corridorId] },
+    );
+
+    const previewCorridor = preview.objects.find((entry) => entry.id === corridorId)!;
+    expect(previewCorridor.rotation).toBe(90);
+    const centerAfter = getCorridorWorldCenter(previewCorridor);
+    expect(centerAfter.x).toBeCloseTo(centerBefore.x, 1);
+    expect(centerAfter.y).toBeCloseTo(centerBefore.y, 1);
+  });
+
+  it('uses rigid drag mode when the full section is selected', () => {
+    const map = buildSeatGridMap(4, 2, 40, 40, { x: 100, y: 100 });
+    const corridorId = 'corridor-rigid';
+    map.objects.push(corridor(corridorId, 135, 70, 30, 120));
+    const baseMap = cloneEventMap(map);
+    const sectionObject = baseMap.objects.find((object) => object.type === 'SECTION');
+    expect(sectionObject).toBeTruthy();
+
+    const origin = new Map<string, { x: number; y: number }>();
+    origin.set(`node-${corridorId}`, { x: 135, y: 70 });
+    if (sectionObject) origin.set(`node-${sectionObject.id}`, { x: sectionObject.x, y: sectionObject.y });
+    for (const seat of baseMap.seats) {
+      origin.set(`node-${seat.id}`, { x: seat.x, y: seat.y });
+    }
+
+    const drag = { origin, delta: { x: 12, y: -8 } };
+    expect(resolveCorridorDragMode(baseMap, drag, [corridorId])).toBe('rigid');
+
+    const preview = buildSmartCorridorDragPreview(baseMap, drag, [`node-${corridorId}`], { mode: 'rigid' });
+    for (const seat of preview.seats) {
+      const baseSeat = baseMap.seats.find((entry) => entry.id === seat.id);
+      expect(baseSeat).toBeTruthy();
+      expect(seat.x).toBeCloseTo(baseSeat!.x + 12, 1);
+      expect(seat.y).toBeCloseTo(baseSeat!.y - 8, 1);
+    }
+  });
+
+  it('merges rigid seat deltas with reflow positions on mixed commit', () => {
+    const map = buildSeatGridMap(4, 2, 40, 40, { x: 100, y: 100 });
+    const corridorId = 'corridor-mixed';
+    map.objects.push(corridor(corridorId, 135, 70, 30, 120));
+    const baseMap = cloneEventMap(map);
+
+    const origin = new Map<string, { x: number; y: number }>();
+    origin.set(`node-${corridorId}`, { x: 135, y: 70 });
+    const firstSeat = baseMap.seats[0]!;
+    origin.set(`node-${firstSeat.id}`, { x: firstSeat.x, y: firstSeat.y });
+
+    const drag = { origin, delta: { x: 10, y: 0 } };
+    const preview = buildSmartCorridorDragPreview(baseMap, drag, [`node-${corridorId}`], {
+      maxIterations: CORRIDOR_REFLOW_ITERATIONS,
+      activeCorridorIds: [corridorId],
+      mode: 'reflow',
+    });
+    const updates = extractGroupDragCommitUpdates(baseMap, preview, drag, [corridorId], 'reflow');
+    expect(updates.seats.some((entry) => entry.id === firstSeat.id)).toBe(true);
+    expect(updates.objects.some((entry) => entry.id === corridorId)).toBe(true);
   });
 });

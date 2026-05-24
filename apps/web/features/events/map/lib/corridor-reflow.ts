@@ -1,5 +1,6 @@
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
 import {
+  clampNumber,
   cloneEventMap,
   CORRIDOR_AXIS_KEY,
   CORRIDOR_AUTO_FIT_KEY,
@@ -10,20 +11,55 @@ import {
   CORRIDOR_THICKNESS_KEY,
   DEFAULT_CORRIDOR_GAP,
   DEFAULT_CORRIDOR_THICKNESS,
+  MIN_CORRIDOR_THICKNESS,
   expandRectWithSpacing,
   getCorridorSpacing,
+  getSmartCorridorCoreRect,
   inferCorridorAxisFromSize,
   inferSmartCorridorAxisFromCoreRect,
   normalizeSmartCorridorObject,
   readCorridorThickness,
+  reconcileCorridorGeometry,
   resolveSmartCorridorLayout,
+  readStoredCorridorAxis,
+  effectiveCorridorAxisAtRotation,
+  snapSmartCorridorRotation,
   SMART_CORRIDOR_KIND_KEY,
+  applyCorridorRotationPreservingCenter,
+  getCorridorWorldCenter,
+  isCorridorRotationOnlyTransform,
   type CorridorSpacing,
   type SmartCorridorAxis,
 } from './smart-corridor-layout';
+import { buildCorridorUnionGroupLookup, getCorridorUnionGroups } from './corridor-union';
 import { getObjectBounds, getSeatBounds, intersectsRect, type BoundsRect } from './selection-utils';
 
 export { cloneEventMap, inferCorridorAxisFromSize };
+
+export const CORRIDOR_REFLOW_ITERATIONS = 25;
+export const CORRIDOR_DRAG_PREVIEW_ITERATIONS = CORRIDOR_REFLOW_ITERATIONS;
+export const CORRIDOR_DRAG_COMMIT_ITERATIONS = CORRIDOR_REFLOW_ITERATIONS;
+
+export type CorridorDragMode = 'reflow' | 'rigid';
+
+export type CorridorReflowOptions = {
+  maxIterations?: number;
+  activeCorridorIds?: string[];
+  /** Corridors that must keep x/y during auto-fit (e.g. rotation-only transform). */
+  freezeAutoFitCorridorIds?: string[];
+};
+
+export type CorridorDragSession = {
+  origin: Map<string, { x: number; y: number }>;
+  delta: { x: number; y: number };
+};
+
+export type SmartCorridorDragPreviewOptions = {
+  previewMap?: EventMapDTO;
+  maxIterations?: number;
+  activeCorridorIds?: string[];
+  mode?: CorridorDragMode;
+};
 
 const SEAT_BASE_LAYOUT_KEY = 'seatBaseLayout';
 const SECTION_BASE_BOUNDS_KEY = 'sectionBaseBounds';
@@ -74,12 +110,12 @@ function rebuildObstacleClearanceRect(obstacle: {
   thickness: number;
   splitCenter: number;
 }): BoundsRect {
-  const { coreRect, spacing, thickness, splitCenter, axis } = obstacle;
+  const { coreRect, spacing, thickness, axis } = obstacle;
 
   if (axis === 'x') {
     const width = thickness + spacing.left + spacing.right;
     return {
-      x: splitCenter - width / 2,
+      x: coreRect.x - spacing.left,
       y: coreRect.y - spacing.top,
       width,
       height: coreRect.height + spacing.top + spacing.bottom,
@@ -89,7 +125,7 @@ function rebuildObstacleClearanceRect(obstacle: {
   const height = thickness + spacing.top + spacing.bottom;
   return {
     x: coreRect.x - spacing.left,
-    y: splitCenter - height / 2,
+    y: coreRect.y - spacing.top,
     width: coreRect.width + spacing.left + spacing.right,
     height,
   };
@@ -102,8 +138,21 @@ function partitionAxisSpan(obstacle: CorridorObstacle) {
   return { start: obstacle.clearanceRect.y, size: obstacle.clearanceRect.height };
 }
 
-function obstaclesShouldMerge(left: CorridorObstacle, right: CorridorObstacle) {
+function obstaclesShouldMerge(
+  left: CorridorObstacle,
+  right: CorridorObstacle,
+  unionGroupByObjectId?: Map<string, string>,
+) {
   if (left.axis !== right.axis) return false;
+
+  if (unionGroupByObjectId) {
+    const leftGroup = left.objectIds.map((id) => unionGroupByObjectId.get(id)).find(Boolean);
+    const rightGroup = right.objectIds.map((id) => unionGroupByObjectId.get(id)).find(Boolean);
+    if (leftGroup && rightGroup && leftGroup === rightGroup) {
+      return intersectsRect(left.clearanceRect, right.clearanceRect);
+    }
+  }
+
   if (Math.abs(left.splitCenter - right.splitCenter) < 2) return true;
 
   const leftSpan = partitionAxisSpan(left);
@@ -127,11 +176,14 @@ function mergeCorridorObstacle(existing: CorridorObstacle, obstacle: CorridorObs
   existing.clearanceRect = rebuildObstacleClearanceRect(existing);
 }
 
-function dedupeObstaclesBySplitCenter(obstacles: CorridorObstacle[]) {
+function dedupeObstaclesBySplitCenter(
+  obstacles: CorridorObstacle[],
+  unionGroupByObjectId?: Map<string, string>,
+) {
   const merged: CorridorObstacle[] = [];
 
   for (const obstacle of obstacles) {
-    const existing = merged.find((entry) => obstaclesShouldMerge(entry, obstacle));
+    const existing = merged.find((entry) => obstaclesShouldMerge(entry, obstacle, unionGroupByObjectId));
 
     if (!existing) {
       merged.push({ ...obstacle });
@@ -255,9 +307,65 @@ function resizeSectionToSeats(sectionObject: EventMapObjectDTO, seats: EventSeat
     Math.max(baseBounds.y + baseBounds.height, seatBounds.maxY + SECTION_REFLOW_PADDING) - sectionObject.y;
 }
 
-function getSeatBoundsFromBase(seat: EventSeatDTO, baseLayout: SeatBaseLayout) {
-  const base = getSeatBasePoint(seat, baseLayout);
-  return getSeatBounds({ ...seat, x: base.x, y: base.y });
+export function toLocal(
+  point: { x: number; y: number },
+  pivot: { x: number; y: number },
+  rotationDegrees: number,
+): { x: number; y: number } {
+  const theta = (rotationDegrees * Math.PI) / 180;
+  const dx = point.x - pivot.x;
+  const dy = point.y - pivot.y;
+  return {
+    x: pivot.x + dx * Math.cos(-theta) - dy * Math.sin(-theta),
+    y: pivot.y + dx * Math.sin(-theta) + dy * Math.cos(-theta),
+  };
+}
+
+export function toGlobal(
+  point: { x: number; y: number },
+  pivot: { x: number; y: number },
+  rotationDegrees: number,
+): { x: number; y: number } {
+  const theta = (rotationDegrees * Math.PI) / 180;
+  const dx = point.x - pivot.x;
+  const dy = point.y - pivot.y;
+  return {
+    x: pivot.x + dx * Math.cos(theta) - dy * Math.sin(theta),
+    y: pivot.y + dx * Math.sin(theta) + dy * Math.cos(theta),
+  };
+}
+
+function getRectCorners(rect: BoundsRect, pivot: { x: number; y: number }, rotationDegrees: number) {
+  const rad = (rotationDegrees * Math.PI) / 180;
+  const rotate = (px: number, py: number) => {
+    const dx = px - pivot.x;
+    const dy = py - pivot.y;
+    return {
+      x: pivot.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+      y: pivot.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+    };
+  };
+  return [
+    rotate(rect.x, rect.y),
+    rotate(rect.x + rect.width, rect.y),
+    rotate(rect.x + rect.width, rect.y + rect.height),
+    rotate(rect.x, rect.y + rect.height),
+  ];
+}
+
+function getAABB(points: Array<{ x: number; y: number }>): BoundsRect {
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
 }
 
 function corridorAffectsSection({
@@ -265,19 +373,36 @@ function corridorAffectsSection({
   sectionSeats,
   baseLayout,
   baseBounds,
+  sectionRotation,
 }: {
   corridor: EventMapObjectDTO;
   sectionSeats: EventSeatDTO[];
   baseLayout: SeatBaseLayout;
   baseBounds: SectionBaseBounds;
+  sectionRotation: number;
 }) {
-  const { clearanceRect } = resolveSmartCorridorLayout(corridor);
+  const layout = resolveSmartCorridorLayout(corridor);
+  const sectionPivot = { x: baseBounds.x, y: baseBounds.y };
 
-  if (intersectsRect(baseBounds, clearanceRect)) {
+  const globalClearanceCorners = getRectCorners(
+    layout.clearanceRect,
+    { x: corridor.x, y: corridor.y },
+    corridor.rotation ?? 0,
+  );
+  const localClearanceRect = getAABB(
+    globalClearanceCorners.map((p) => toLocal(p, sectionPivot, sectionRotation)),
+  );
+
+  if (intersectsRect(baseBounds, localClearanceRect)) {
     return true;
   }
 
-  return sectionSeats.some((seat) => intersectsRect(getSeatBoundsFromBase(seat, baseLayout), clearanceRect));
+  return sectionSeats.some((seat) => {
+    const base = getSeatBasePoint(seat, baseLayout);
+    const localBase = toLocal(base, sectionPivot, sectionRotation);
+    const seatBounds = getSeatBounds({ ...seat, x: localBase.x, y: localBase.y });
+    return intersectsRect(seatBounds, localClearanceRect);
+  });
 }
 
 function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDTO[]) {
@@ -285,8 +410,6 @@ function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDT
   const sectionObjects = map.objects.filter(isSectionObject);
 
   for (const corridor of corridors) {
-    const { clearanceRect } = resolveSmartCorridorLayout(corridor);
-
     for (const sectionObject of sectionObjects) {
       if (sectionObject.levelId !== corridor.levelId || !sectionObject.sectionId) continue;
 
@@ -302,7 +425,15 @@ function collectAffectedSectionIds(map: EventMapDTO, corridors: EventMapObjectDT
 
       const sectionSeats = map.seats.filter((seat) => seat.sectionId === sectionObject.sectionId);
 
-      if (corridorAffectsSection({ corridor, sectionSeats, baseLayout, baseBounds })) {
+      if (
+        corridorAffectsSection({
+          corridor,
+          sectionSeats,
+          baseLayout,
+          baseBounds,
+          sectionRotation: sectionObject.rotation ?? 0,
+        })
+      ) {
         affected.add(sectionObject.sectionId);
       }
     }
@@ -355,6 +486,14 @@ function resolveInitialCorridorSplitCenter(
     return (before + after) / 2;
   }
 
+  if (before === undefined) {
+    return centers[0]! - 100;
+  }
+
+  if (after === undefined) {
+    return centers[centers.length - 1]! + 100;
+  }
+
   return axis === 'x' ? coreRect.x + coreRect.width / 2 : coreRect.y + coreRect.height / 2;
 }
 
@@ -372,6 +511,41 @@ function corridorGeometryMatchesAxis(layout: ReturnType<typeof resolveSmartCorri
   return layout.coreRect.width >= layout.coreRect.height;
 }
 
+function areSeatsUndisplaced(sectionSeats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
+  return sectionSeats.every((seat) => {
+    const base = baseLayout[seat.id];
+    return !base || (Math.abs(seat.x - base.x) < 0.01 && Math.abs(seat.y - base.y) < 0.01);
+  });
+}
+
+function resolveReflowedCorridorSplitCenter(
+  coreRect: BoundsRect,
+  axis: 'x' | 'y',
+  sectionSeats: EventSeatDTO[],
+  baseLayout: SeatBaseLayout,
+) {
+  const filteredSeats = sectionSeats.filter((seat) => {
+    const seatSize = getSeatSize(seat);
+    const base = getSeatBasePoint(seat, baseLayout);
+    if (axis === 'x') {
+      const seatMinY = base.y - seatSize / 2;
+      const seatMaxY = base.y + seatSize / 2;
+      const corrMinY = coreRect.y;
+      const corrMaxY = coreRect.y + coreRect.height;
+      return !(seatMaxY < corrMinY || seatMinY > corrMaxY);
+    } else {
+      const seatMinX = base.x - seatSize / 2;
+      const seatMaxX = base.x + seatSize / 2;
+      const corrMinX = coreRect.x;
+      const corrMaxX = coreRect.x + coreRect.width;
+      return !(seatMaxX < corrMinX || seatMinX > corrMaxX);
+    }
+  });
+
+  const seatsToUse = filteredSeats.length > 0 ? filteredSeats : sectionSeats;
+  return resolveInitialCorridorSplitCenter(coreRect, axis, seatsToUse, baseLayout);
+}
+
 function reconcileCorridorSplitAnchor(
   corridor: EventMapObjectDTO,
   layout: ReturnType<typeof resolveSmartCorridorLayout>,
@@ -386,11 +560,13 @@ function reconcileCorridorSplitAnchor(
   const centers = getSeatAxisCenters(sectionSeats, baseLayout, axis);
   if (centers.length < 2) return;
 
-  const resolved = resolveInitialCorridorSplitCenter(layout.coreRect, axis, sectionSeats, baseLayout);
+  const resolved = resolveReflowedCorridorSplitCenter(layout.coreRect, axis, sectionSeats, baseLayout);
   const storedPair = getPartitionedPairIndex(centers, stored);
   const resolvedPair = getPartitionedPairIndex(centers, resolved);
 
-  if (resolvedPair !== null && storedPair !== resolvedPair) {
+
+
+  if (storedPair !== resolvedPair) {
     corridor.data = { ...corridor.data, [key]: resolved };
   }
 }
@@ -480,34 +656,54 @@ export function updateCorridorSplitAnchorsOnDrag(
     [SMART_CORRIDOR_KIND_KEY]: true,
   };
 
-  const movedX = typeof patch.x === 'number' && previous;
-  const movedY = typeof patch.y === 'number' && previous;
+  const prevX = previous?.data[CORRIDOR_SPLIT_X_KEY];
+  const prevY = previous?.data[CORRIDOR_SPLIT_Y_KEY];
+  const hasPreviousSplit = previous && Number.isFinite(Number(prevX)) && Number.isFinite(Number(prevY));
 
-  if (axis === 'vertical') {
-    const previousSplit = Number(previous?.data[CORRIDOR_SPLIT_X_KEY]);
-    nextData[CORRIDOR_SPLIT_X_KEY] =
-      movedX && Number.isFinite(previousSplit)
-        ? previousSplit + (corridor.x - previous.x)
-        : layout.coreRect.x + layout.coreRect.width / 2;
+  let globalSplit: { x: number; y: number };
+
+  if (hasPreviousSplit) {
+    const prevSplitPoint = { x: Number(prevX), y: Number(prevY) };
+    const prevLocal = toLocal(prevSplitPoint, { x: previous.x, y: previous.y }, previous.rotation ?? 0);
+    const ratioX = (prevLocal.x - previous.x) / (previous.width ?? 1);
+    const ratioY = (prevLocal.y - previous.y) / (previous.height ?? 1);
+
+    const nextLocal = {
+      x: corridor.x + ratioX * (corridor.width ?? 1),
+      y: corridor.y + ratioY * (corridor.height ?? 1),
+    };
+    globalSplit = toGlobal(nextLocal, { x: corridor.x, y: corridor.y }, corridor.rotation ?? 0);
+  } else {
+    const nextLocal = {
+      x: corridor.x + (corridor.width ?? 1) / 2,
+      y: corridor.y + (corridor.height ?? 1) / 2,
+    };
+    globalSplit = toGlobal(nextLocal, { x: corridor.x, y: corridor.y }, corridor.rotation ?? 0);
   }
 
-  if (axis === 'horizontal') {
-    const previousSplit = Number(previous?.data[CORRIDOR_SPLIT_Y_KEY]);
-    nextData[CORRIDOR_SPLIT_Y_KEY] =
-      movedY && Number.isFinite(previousSplit)
-        ? previousSplit + (corridor.y - previous.y)
-        : layout.coreRect.y + layout.coreRect.height / 2;
-  }
+  nextData[CORRIDOR_SPLIT_X_KEY] = globalSplit.x;
+  nextData[CORRIDOR_SPLIT_Y_KEY] = globalSplit.y;
 
   if (typeof patch.width === 'number' || typeof patch.height === 'number') {
-    const nextLayout = resolveSmartCorridorLayout(corridor);
-    nextData[CORRIDOR_THICKNESS_KEY] =
-      nextLayout.axis === 'vertical'
-        ? Math.max(1, nextLayout.coreRect.width)
-        : Math.max(1, nextLayout.coreRect.height);
+    const resizedAxis = inferSmartCorridorAxisFromCoreRect(getSmartCorridorCoreRect(corridor));
+    nextData[CORRIDOR_AXIS_KEY] = resizedAxis;
+    nextData[CORRIDOR_THICKNESS_KEY] = readCorridorThickness(corridor, resizedAxis);
   }
 
-  corridor.rotation = 0;
+  if (typeof patch.rotation === 'number' && previous) {
+    const width = corridor.width ?? previous.width ?? DEFAULT_CORRIDOR_THICKNESS;
+    const height = corridor.height ?? previous.height ?? 280;
+    const center = getCorridorWorldCenter({
+      x: previous.x,
+      y: previous.y,
+      width,
+      height,
+      rotation: previous.rotation ?? 0,
+    });
+    nextData[CORRIDOR_SPLIT_X_KEY] = center.x;
+    nextData[CORRIDOR_SPLIT_Y_KEY] = center.y;
+  }
+
   corridor.data = nextData;
 }
 
@@ -520,7 +716,6 @@ function buildCorridorObstacles(
   const horizontal: CorridorObstacle[] = [];
 
   for (const corridor of corridors) {
-    ensureCorridorSplitAnchors(corridor, sectionSeats, baseLayout);
     const layout = resolveSmartCorridorLayout(corridor);
     const partitionAxis = layout.axis === 'vertical' ? 'x' : 'y';
 
@@ -533,6 +728,7 @@ function buildCorridorObstacles(
       thickness: layout.thickness,
       splitCenter: getCorridorSplitCenter(corridor, layout, partitionAxis),
     };
+    obstacle.clearanceRect = rebuildObstacleClearanceRect(obstacle);
 
     if (layout.axis === 'vertical') {
       vertical.push(obstacle);
@@ -544,9 +740,11 @@ function buildCorridorObstacles(
   vertical.sort((a, b) => a.splitCenter - b.splitCenter);
   horizontal.sort((a, b) => a.splitCenter - b.splitCenter);
 
+  const unionGroupByObjectId = buildCorridorUnionGroupLookup(getCorridorUnionGroups(corridors));
+
   return {
-    vertical: dedupeObstaclesBySplitCenter(vertical),
-    horizontal: dedupeObstaclesBySplitCenter(horizontal),
+    vertical: dedupeObstaclesBySplitCenter(vertical, unionGroupByObjectId),
+    horizontal: dedupeObstaclesBySplitCenter(horizontal, unionGroupByObjectId),
   };
 }
 
@@ -579,17 +777,19 @@ function groupSeatsByColumn(seats: EventSeatDTO[], baseLayout: SeatBaseLayout) {
 }
 
 function rowOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const rowMinY = Math.min(...entries.map((entry) => entry.base.y - getSeatSize(entry.seat) / 2));
-  const rowMaxY = Math.max(...entries.map((entry) => entry.base.y + getSeatSize(entry.seat) / 2));
   const rect = obstacle.clearanceRect;
-  return !(rowMaxY < rect.y || rowMinY > rect.y + rect.height);
+  return entries.some((entry) => {
+    const seatBounds = getSeatBounds({ ...entry.seat, x: entry.base.x, y: entry.base.y });
+    return intersectsRect(seatBounds, rect);
+  });
 }
 
 function columnOverlapsObstacle(entries: SeatEntry[], obstacle: CorridorObstacle) {
-  const colMinX = Math.min(...entries.map((entry) => entry.base.x - getSeatSize(entry.seat) / 2));
-  const colMaxX = Math.max(...entries.map((entry) => entry.base.x + getSeatSize(entry.seat) / 2));
   const rect = obstacle.clearanceRect;
-  return !(colMaxX < rect.x || colMinX > rect.x + rect.width);
+  return entries.some((entry) => {
+    const seatBounds = getSeatBounds({ ...entry.seat, x: entry.base.x, y: entry.base.y });
+    return intersectsRect(seatBounds, rect);
+  });
 }
 
 function buildSeatEntries(seats: EventSeatDTO[], baseLayout: SeatBaseLayout, axis: 'x' | 'y'): SeatEntry[] {
@@ -599,13 +799,53 @@ function buildSeatEntries(seats: EventSeatDTO[], baseLayout: SeatBaseLayout, axi
   });
 }
 
-function assignSeatStacks(entries: SeatEntry[], splitCenters: number[]) {
-  const stacks: SeatEntry[][] = Array.from({ length: splitCenters.length + 1 }, () => []);
+function sortSeatEntriesByLabel(entries: SeatEntry[], axis: 'x' | 'y') {
+  return [...entries].sort((left, right) => {
+    if (axis === 'x') {
+      const leftNum = Number(left.seat.seatNumber);
+      const rightNum = Number(right.seat.seatNumber);
+      if (Number.isFinite(leftNum) && Number.isFinite(rightNum) && leftNum !== rightNum) {
+        return leftNum - rightNum;
+      }
+    } else {
+      const leftRow = left.seat.rowLabel?.trim() ?? '';
+      const rightRow = right.seat.rowLabel?.trim() ?? '';
+      if (leftRow && rightRow && leftRow !== rightRow) {
+        return leftRow.localeCompare(rightRow);
+      }
+    }
+    return left.center - right.center;
+  });
+}
 
-  for (const entry of entries) {
+function enforceMonotonicSeatCenters(entries: SeatEntry[], axis: 'x' | 'y') {
+  const sorted = sortSeatEntriesByLabel(entries, axis);
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1]!;
+    const current = sorted[index]!;
+    const previousCenter = axis === 'x' ? previous.seat.x : previous.seat.y;
+    const currentCenter = axis === 'x' ? current.seat.x : current.seat.y;
+    if (currentCenter <= previousCenter) {
+      const nextCenter = previousCenter + 0.01;
+      if (axis === 'x') {
+        current.seat.x = nextCenter;
+        current.center = nextCenter;
+      } else {
+        current.seat.y = nextCenter;
+        current.center = nextCenter;
+      }
+    }
+  }
+}
+
+function assignSeatStacks(entries: SeatEntry[], splitCenters: number[], axis: 'x' | 'y') {
+  const stacks: SeatEntry[][] = Array.from({ length: splitCenters.length + 1 }, () => []);
+  const orderedEntries = sortSeatEntriesByLabel(entries, axis);
+
+  for (const entry of orderedEntries) {
     let stackIndex = splitCenters.length;
     for (let index = 0; index < splitCenters.length; index += 1) {
-      if (entry.center < splitCenters[index]!) {
+      if (entry.center <= splitCenters[index]!) {
         stackIndex = index;
         break;
       }
@@ -622,46 +862,6 @@ function getSeatBaseEdge(entry: SeatEntry, axis: 'x' | 'y', edge: 'start' | 'end
   return edge === 'start' ? center - size / 2 : center + size / 2;
 }
 
-function getObstacleClearanceSize(obstacle: CorridorObstacle, axis: 'x' | 'y') {
-  return axis === 'x' ? obstacle.clearanceRect.width : obstacle.clearanceRect.height;
-}
-
-function repositionSeatStacks(stacks: SeatEntry[][], obstacles: CorridorObstacle[], axis: 'x' | 'y') {
-  let cursor: number | null = null;
-
-  for (let index = 0; index < stacks.length; index += 1) {
-    const stack = stacks[index]!;
-    const obstacle = obstacles[index];
-
-    if (stack.length === 0) {
-      if (cursor != null && obstacle) {
-        cursor += getObstacleClearanceSize(obstacle, axis);
-      }
-      continue;
-    }
-
-    const stackStart = Math.min(...stack.map((entry) => getSeatBaseEdge(entry, axis, 'start')));
-
-    if (cursor == null) {
-      cursor = stackStart;
-    }
-
-    const delta = cursor - stackStart;
-    for (const entry of stack) {
-      if (axis === 'x') {
-        entry.seat.x = entry.base.x + delta;
-      } else {
-        entry.seat.y = entry.base.y + delta;
-      }
-    }
-
-    if (obstacle) {
-      const movedEnd = Math.max(...stack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')));
-      cursor = movedEnd + getObstacleClearanceSize(obstacle, axis);
-    }
-  }
-}
-
 function applyAxisObstaclesToSeatLines(
   seatLines: EventSeatDTO[][],
   baseLayout: SeatBaseLayout,
@@ -670,18 +870,114 @@ function applyAxisObstaclesToSeatLines(
 ) {
   if (obstacles.length === 0) return;
 
+  const numLines = seatLines.length;
+  const numObstacles = obstacles.length;
+
   const overlaps = axis === 'x' ? rowOverlapsObstacle : columnOverlapsObstacle;
 
-  for (const lineSeats of seatLines) {
+  const lineData = seatLines.map((lineSeats) => {
     const entries = buildSeatEntries(lineSeats, baseLayout, axis);
-    const activeObstacles = obstacles.filter((obstacle) => overlaps(entries, obstacle));
-    if (activeObstacles.length === 0) continue;
+    const active = obstacles.filter((obstacle) => overlaps(entries, obstacle));
+    if (active.length === 0) return null;
 
     const stacks = assignSeatStacks(
       entries,
-      activeObstacles.map((obstacle) => obstacle.splitCenter),
+      active.map((obstacle) => obstacle.splitCenter),
+      axis,
     );
-    repositionSeatStacks(stacks, activeObstacles, axis);
+
+    const numStacks = stacks.length;
+    const starts = new Array(numStacks);
+    const ends = new Array(numStacks);
+    for (let s = 0; s < numStacks; s++) {
+      const stack = stacks[s]!;
+      if (stack.length > 0) {
+        starts[s] = Math.min(...stack.map((entry) => getSeatBaseEdge(entry, axis, 'start')));
+        ends[s] = Math.max(...stack.map((entry) => getSeatBaseEdge(entry, axis, 'end')));
+      }
+    }
+
+    const activeIndices = active.map((obs) => obstacles.findIndex((o) => o === obs));
+
+    return {
+      entries,
+      active,
+      activeIndices,
+      stacks,
+      starts,
+      ends,
+      x_S: new Array(numStacks).fill(0),
+      w_S: new Array(numStacks).fill(1.0),
+    };
+  });
+
+  for (let r = 0; r < numLines; r++) {
+    const data = lineData[r];
+    if (!data) continue;
+
+    const numActive = data.active.length;
+    const numStacks = data.stacks.length;
+
+    for (let i = 0; i < numStacks; i++) {
+      const stack = data.stacks[i]!;
+      if (stack.length === 0) continue;
+
+      let d_min = -Infinity;
+      let d_max = Infinity;
+
+      if (i > 0) {
+        const obs = data.active[i - 1]!;
+        const obsStart = axis === 'x' ? obs.clearanceRect.x : obs.clearanceRect.y;
+        const obsEnd = obsStart + (axis === 'x' ? obs.clearanceRect.width : obs.clearanceRect.height);
+        d_min = obsEnd - data.starts[i];
+      }
+
+      if (i < numActive) {
+        const obs = data.active[i]!;
+        const obsStart = axis === 'x' ? obs.clearanceRect.x : obs.clearanceRect.y;
+        d_max = obsStart - data.ends[i];
+      }
+
+      let d = 0;
+      if (d_min > d_max) {
+        d = (d_min + d_max) / 2;
+      } else {
+        if (d_min > 0) {
+          d = d_min;
+        } else if (d_max < 0) {
+          d = d_max;
+        }
+      }
+
+      if (process.env.DEBUG_REFLOW === 'true') {
+        console.log(`[REFLOW_DEBUG_ITER] row/col: ${r}, stack: ${i}, d_min: ${d_min.toFixed(4)}, d_max: ${d_max.toFixed(4)}, d: ${d.toFixed(4)}`);
+      }
+
+      data.x_S[i] = d;
+    }
+  }
+
+  // Apply displacements to seats
+  for (let r = 0; r < numLines; r++) {
+    const data = lineData[r];
+    if (!data) continue;
+
+    const numStacks = data.stacks.length;
+    for (let i = 0; i < numStacks; i++) {
+      const stack = data.stacks[i]!;
+      if (stack.length === 0) continue;
+      const delta = data.x_S[i];
+      for (const entry of stack) {
+        if (axis === 'x') {
+          entry.seat.x = entry.base.x + delta;
+        } else {
+          entry.seat.y = entry.base.y + delta;
+        }
+      }
+    }
+
+    const lineEntries = lineData[r]?.entries;
+    if (lineEntries) enforceMonotonicSeatCenters(lineEntries, axis);
   }
 }
 
@@ -701,12 +997,21 @@ function getCrossAxisSpan(entries: SeatEntry[], partitionAxis: 'x' | 'y') {
   };
 }
 
+function getRequiredClearanceForAxis(input: {
+  axis: 'x' | 'y';
+  thickness: number;
+  spacing: CorridorSpacing;
+}) {
+  return input.axis === 'x'
+    ? input.spacing.left + input.thickness + input.spacing.right
+    : input.spacing.top + input.thickness + input.spacing.bottom;
+}
+
 function applyCorridorCoreGeometry({
   corridor,
   axis,
   gapStart,
   gapEnd,
-  crossSpan,
   spacing,
   thickness,
 }: {
@@ -721,29 +1026,57 @@ function applyCorridorCoreGeometry({
   const availableGap = gapEnd - gapStart;
   if (availableGap <= 0.001) return;
 
-  const crossSize = crossSpan.max - crossSpan.min;
-  if (crossSize <= 0.001) return;
+  const preservedWidth = corridor.width ?? thickness;
+  const preservedHeight = corridor.height ?? thickness;
+  const normalizedWidth =
+    axis === 'x' ? Math.max(preservedWidth, MIN_CORRIDOR_THICKNESS) : preservedWidth;
+  const normalizedHeight =
+    axis === 'y' ? Math.max(preservedHeight, MIN_CORRIDOR_THICKNESS) : preservedHeight;
+  const normalizedPartitionSize = axis === 'x' ? normalizedWidth : normalizedHeight;
+  const requiredGap =
+    axis === 'x'
+      ? spacing.left + normalizedPartitionSize + spacing.right
+      : spacing.top + normalizedPartitionSize + spacing.bottom;
 
-  if (axis === 'x') {
-    corridor.x = gapStart + spacing.left;
-    corridor.y = crossSpan.min;
-    corridor.width = Math.min(thickness, Math.max(1, availableGap - spacing.left - spacing.right));
-    corridor.height = crossSize;
-  } else {
-    corridor.x = crossSpan.min;
-    corridor.y = gapStart + spacing.top;
-    corridor.width = crossSize;
-    corridor.height = Math.min(thickness, Math.max(1, availableGap - spacing.top - spacing.bottom));
+  const nextData: Record<string, unknown> = { ...corridor.data };
+  delete nextData.corridorLayoutWarning;
+
+  if (availableGap + 0.001 < requiredGap) {
+    nextData.corridorLayoutWarning = 'INSUFFICIENT_GAP';
   }
 
-  corridor.rotation = 0;
-  corridor.data = {
-    ...corridor.data,
-    [SMART_CORRIDOR_KIND_KEY]: true,
-    [CORRIDOR_THICKNESS_KEY]: axis === 'x' ? corridor.width : corridor.height,
-    [CORRIDOR_AXIS_KEY]: axis === 'x' ? 'vertical' : 'horizontal',
-    [CORRIDOR_AUTO_FIT_KEY]: true,
-  };
+  if (axis === 'x') {
+    if (availableGap < requiredGap) {
+      corridor.x = gapStart + (availableGap - normalizedPartitionSize) / 2;
+    } else {
+      const minX = Number.isFinite(gapStart) ? gapStart + spacing.left : -Infinity;
+      const maxX = Number.isFinite(gapEnd) ? gapEnd - spacing.right - normalizedPartitionSize : Infinity;
+      if (Number.isFinite(minX) && Number.isFinite(maxX)) {
+        corridor.x = clampNumber(corridor.x, minX, Math.max(minX, maxX));
+      } else if (Number.isFinite(minX)) {
+        corridor.x = Math.max(corridor.x, minX);
+      } else if (Number.isFinite(maxX)) {
+        corridor.x = Math.min(corridor.x, maxX);
+      }
+    }
+  } else if (availableGap < requiredGap) {
+    corridor.y = gapStart + (availableGap - normalizedPartitionSize) / 2;
+  } else {
+    const minY = Number.isFinite(gapStart) ? gapStart + spacing.top : -Infinity;
+    const maxY = Number.isFinite(gapEnd) ? gapEnd - spacing.bottom - normalizedPartitionSize : Infinity;
+    if (Number.isFinite(minY) && Number.isFinite(maxY)) {
+      corridor.y = clampNumber(corridor.y, minY, Math.max(minY, maxY));
+    } else if (Number.isFinite(minY)) {
+      corridor.y = Math.max(corridor.y, minY);
+    } else if (Number.isFinite(maxY)) {
+      corridor.y = Math.min(corridor.y, maxY);
+    }
+  }
+
+  corridor.width = normalizedWidth;
+  corridor.height = normalizedHeight;
+  corridor.data = nextData;
+  persistSmartCorridorMetadata(corridor);
 }
 
 function syncCorridorCoresToOpenedGaps(
@@ -752,6 +1085,8 @@ function syncCorridorCoresToOpenedGaps(
   obstacles: CorridorObstacle[],
   corridorById: Map<string, EventMapObjectDTO>,
   axis: 'x' | 'y',
+  baseBounds: SectionBaseBounds,
+  freezeAutoFitCorridorIds?: Set<string>,
 ) {
   const lines =
     axis === 'x' ? groupSeatsByRow(sectionSeats, baseLayout) : groupSeatsByColumn(sectionSeats, baseLayout);
@@ -772,20 +1107,35 @@ function syncCorridorCoresToOpenedGaps(
 
     for (const lineSeats of affectedLines) {
       const entries = buildSeatEntries(lineSeats, baseLayout, axis);
-      const stacks = assignSeatStacks(entries, [obstacle.splitCenter]);
+      const stacks = assignSeatStacks(entries, [obstacle.splitCenter], axis);
       const leftStack = stacks[0] ?? [];
       const rightStack = stacks[1] ?? [];
 
-      if (leftStack.length === 0 || rightStack.length === 0) continue;
+      if (leftStack.length === 0 && rightStack.length === 0) continue;
 
-      gapStart = Math.max(
-        gapStart,
-        ...leftStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')),
-      );
-      gapEnd = Math.min(
-        gapEnd,
-        ...rightStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'start')),
-      );
+      if (leftStack.length > 0) {
+        gapStart = Math.max(
+          gapStart,
+          ...leftStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'end')),
+        );
+      } else {
+        const boundary = axis === 'x' 
+          ? baseBounds.x - obstacle.spacing.left 
+          : baseBounds.y - obstacle.spacing.top;
+        gapStart = Math.max(gapStart, boundary);
+      }
+
+      if (rightStack.length > 0) {
+        gapEnd = Math.min(
+          gapEnd,
+          ...rightStack.map((entry) => getSeatAxisEdge(entry.seat, axis, 'start')),
+        );
+      } else {
+        const boundary = axis === 'x' 
+          ? baseBounds.x + baseBounds.width + obstacle.spacing.right 
+          : baseBounds.y + baseBounds.height + obstacle.spacing.bottom;
+        gapEnd = Math.min(gapEnd, boundary);
+      }
 
       const span = getCrossAxisSpan([...leftStack, ...rightStack], axis);
       if (span) {
@@ -794,33 +1144,56 @@ function syncCorridorCoresToOpenedGaps(
       }
     }
 
-    if (!Number.isFinite(gapStart) || !Number.isFinite(gapEnd) || gapEnd <= gapStart) continue;
+    if (!Number.isFinite(gapStart) && !Number.isFinite(gapEnd)) continue;
     if (crossMins.length === 0 || crossMaxs.length === 0) continue;
 
-    const corridor = corridorById.get(obstacle.objectIds[0]!);
-    if (!corridor) continue;
+    // For each corridor in this obstacle, compute individual crossSpan
+    for (const objectId of obstacle.objectIds) {
+      const corridor = corridorById.get(objectId);
+      if (!corridor || freezeAutoFitCorridorIds?.has(objectId)) continue;
 
-    applyCorridorCoreGeometry({
-      corridor,
-      axis,
-      gapStart,
-      gapEnd,
-      crossSpan: { min: Math.min(...crossMins), max: Math.max(...crossMaxs) },
-      spacing: obstacle.spacing,
-      thickness: obstacle.thickness,
-    });
+      const corrLayout = resolveSmartCorridorLayout(corridor);
+      const corrObstacle: CorridorObstacle = {
+        objectIds: [objectId],
+        axis: axis,
+        coreRect: corrLayout.coreRect,
+        clearanceRect: corrLayout.clearanceRect,
+        spacing: corrLayout.spacing,
+        thickness: corrLayout.thickness,
+        splitCenter: getCorridorSplitCenter(corridor, corrLayout, axis),
+      };
 
-    for (const objectId of obstacle.objectIds.slice(1)) {
-      const extra = corridorById.get(objectId);
-      if (!extra) continue;
+      const corrAffectedLines = lines.filter((lineSeats) => {
+        const entries = buildSeatEntries(lineSeats, baseLayout, axis);
+        return entries.length > 0 && overlaps(entries, corrObstacle);
+      });
+
+      const corrCrossMins: number[] = [];
+      const corrCrossMaxs: number[] = [];
+
+      for (const lineSeats of corrAffectedLines) {
+        const entries = buildSeatEntries(lineSeats, baseLayout, axis);
+        const stacks = assignSeatStacks(entries, [obstacle.splitCenter], axis);
+        const leftStack = stacks[0] ?? [];
+        const rightStack = stacks[1] ?? [];
+        const span = getCrossAxisSpan([...leftStack, ...rightStack], axis);
+        if (span) {
+          corrCrossMins.push(span.min);
+          corrCrossMaxs.push(span.max);
+        }
+      }
+
+      const minCross = corrCrossMins.length > 0 ? Math.min(...corrCrossMins) : Math.min(...crossMins);
+      const maxCross = corrCrossMaxs.length > 0 ? Math.max(...corrCrossMaxs) : Math.max(...crossMaxs);
+
       applyCorridorCoreGeometry({
-        corridor: extra,
+        corridor,
         axis,
         gapStart,
         gapEnd,
-        crossSpan: { min: Math.min(...crossMins), max: Math.max(...crossMaxs) },
-        spacing: obstacle.spacing,
-        thickness: obstacle.thickness,
+        crossSpan: { min: minCross, max: maxCross },
+        spacing: corrObstacle.spacing,
+        thickness: corrObstacle.thickness,
       });
     }
   }
@@ -831,6 +1204,8 @@ function applySmartCorridorStackReflow(
   baseLayout: SeatBaseLayout,
   obstacles: { vertical: CorridorObstacle[]; horizontal: CorridorObstacle[] },
   corridorById: Map<string, EventMapObjectDTO>,
+  baseBounds: SectionBaseBounds,
+  freezeAutoFitCorridorIds?: Set<string>,
 ) {
   for (const seat of sectionSeats) {
     const base = baseLayout[seat.id] ?? { x: seat.x, y: seat.y };
@@ -841,14 +1216,33 @@ function applySmartCorridorStackReflow(
   applyAxisObstaclesToSeatLines(groupSeatsByRow(sectionSeats, baseLayout), baseLayout, obstacles.vertical, 'x');
   applyAxisObstaclesToSeatLines(groupSeatsByColumn(sectionSeats, baseLayout), baseLayout, obstacles.horizontal, 'y');
 
-  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.vertical, corridorById, 'x');
-  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.horizontal, corridorById, 'y');
+  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.vertical, corridorById, 'x', baseBounds, freezeAutoFitCorridorIds);
+  syncCorridorCoresToOpenedGaps(sectionSeats, baseLayout, obstacles.horizontal, corridorById, 'y', baseBounds, freezeAutoFitCorridorIds);
 }
 
-export function applyCorridorReflow(map: EventMapDTO) {
-  const corridors = map.objects.filter(isCorridor);
-  const corridorById = new Map(corridors.map((corridor) => [corridor.id, corridor]));
-  const affectedSectionIds = collectAffectedSectionIds(map, corridors);
+function getGlobalCorridorSplitCenter(corridor: EventMapObjectDTO) {
+  const x = Number(corridor.data[CORRIDOR_SPLIT_X_KEY]);
+  const y = Number(corridor.data[CORRIDOR_SPLIT_Y_KEY]);
+  if (Number.isFinite(x) && Number.isFinite(y)) {
+    return { x, y };
+  }
+  const localCenter = {
+    x: corridor.x + (corridor.width ?? 0) / 2,
+    y: corridor.y + (corridor.height ?? 0) / 2,
+  };
+  return toGlobal(localCenter, { x: corridor.x, y: corridor.y }, corridor.rotation ?? 0);
+}
+
+export function applyCorridorReflow(map: EventMapDTO, options?: CorridorReflowOptions) {
+  const maxIterations = options?.maxIterations ?? CORRIDOR_DRAG_COMMIT_ITERATIONS;
+  const freezeAutoFitCorridorIds = new Set(options?.freezeAutoFitCorridorIds ?? []);
+  const allCorridors = map.objects.filter(isCorridor);
+  const scopedCorridors =
+    options?.activeCorridorIds && options.activeCorridorIds.length > 0
+      ? allCorridors.filter((corridor) => options.activeCorridorIds!.includes(corridor.id))
+      : allCorridors;
+  const corridorById = new Map(allCorridors.map((corridor) => [corridor.id, corridor]));
+  const affectedSectionIds = collectAffectedSectionIds(map, scopedCorridors);
   if (affectedSectionIds.size === 0) return;
 
   const sectionObjects = map.objects.filter((object) => isSectionObject(object) && object.sectionId);
@@ -873,17 +1267,166 @@ export function applyCorridorReflow(map: EventMapDTO) {
       height: sectionObject.height ?? 0,
     };
 
-    const sectionCorridors = corridors.filter((corridor) => {
+    const sectionRotation = sectionObject.rotation ?? 0;
+    const sectionPivot = { x: baseBounds.x, y: baseBounds.y };
+
+    const sectionCorridors = allCorridors.filter((corridor) => {
       if (corridor.levelId !== sectionObject.levelId) return false;
-      return corridorAffectsSection({ corridor, sectionSeats, baseLayout, baseBounds });
+      return corridorAffectsSection({ corridor, sectionSeats, baseLayout, baseBounds, sectionRotation });
     });
 
     if (sectionCorridors.length > 0) {
-      const obstacles = buildCorridorObstacles(sectionCorridors, sectionSeats, baseLayout);
-      applySmartCorridorStackReflow(sectionSeats, baseLayout, obstacles, corridorById);
-      writeSeatBaseLayout(sectionObject, baseLayout);
+      // 1. Map seats to local space
+      const originalSeatPositions = new Map<string, { x: number; y: number }>();
+      for (const seat of sectionSeats) {
+        originalSeatPositions.set(seat.id, { x: seat.x, y: seat.y });
+        const localPt = toLocal({ x: seat.x, y: seat.y }, sectionPivot, sectionRotation);
+        seat.x = localPt.x;
+        seat.y = localPt.y;
+      }
+
+      // 2. Map baseLayout to local space
+      const localBaseLayout: SeatBaseLayout = {};
+      for (const [seatId, point] of Object.entries(baseLayout)) {
+        localBaseLayout[seatId] = toLocal(point, sectionPivot, sectionRotation);
+      }
+
+      // 3. Map corridors to local space
+      const localCorridors: EventMapObjectDTO[] = [];
+      const originalCorridors = new Map<string, EventMapObjectDTO>();
+      const localAABBs = new Map<string, BoundsRect>();
+
+      for (const c of sectionCorridors) {
+        originalCorridors.set(c.id, { ...c, data: { ...c.data } });
+
+        const { localCorridor, localReferenceBounds } = mapCorridorToSectionLocal(c, sectionPivot, sectionRotation);
+        localAABBs.set(c.id, localReferenceBounds);
+        localCorridors.push(localCorridor);
+      }
+
+      const localCorridorById = new Map(localCorridors.map((c) => [c.id, c]));
+
+      // 4. Run local reflow
+      const localBaseBounds: SectionBaseBounds = {
+        x: baseBounds.x,
+        y: baseBounds.y,
+        width: baseBounds.width,
+        height: baseBounds.height,
+      };
+
+      // Ensure split anchors are set and stable in local space using undisplaced local coordinates
+      const tempSeatsPos = sectionSeats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }));
+      for (const seat of sectionSeats) {
+        const base = localBaseLayout[seat.id];
+        if (base) {
+          seat.x = base.x;
+          seat.y = base.y;
+        }
+      }
+      for (const localC of localCorridors) {
+        ensureCorridorSplitAnchors(localC, sectionSeats, localBaseLayout);
+      }
+      for (let i = 0; i < sectionSeats.length; i++) {
+        sectionSeats[i]!.x = tempSeatsPos[i]!.x;
+        sectionSeats[i]!.y = tempSeatsPos[i]!.y;
+      }
+
+      for (let iter = 0; iter < maxIterations; iter++) {
+        const localObstacles = buildCorridorObstacles(localCorridors, sectionSeats, localBaseLayout);
+        applySmartCorridorStackReflow(
+          sectionSeats,
+          localBaseLayout,
+          localObstacles,
+          localCorridorById,
+          localBaseBounds,
+          freezeAutoFitCorridorIds,
+        );
+      }
+
+      for (const localC of localCorridors) {
+        reconcileCorridorGeometry(localC);
+      }
+
+      // 5. Map seats back to global space
+      for (const seat of sectionSeats) {
+        const globalPt = toGlobal({ x: seat.x, y: seat.y }, sectionPivot, sectionRotation);
+        seat.x = Number(globalPt.x.toFixed(4));
+        seat.y = Number(globalPt.y.toFixed(4));
+      }
+
+      // 6. Map baseLayout back to global space
+      const globalBaseLayout: SeatBaseLayout = {};
+      for (const [seatId, point] of Object.entries(localBaseLayout)) {
+        const globalPt = toGlobal(point, sectionPivot, sectionRotation);
+        globalBaseLayout[seatId] = {
+          x: Number(globalPt.x.toFixed(4)),
+          y: Number(globalPt.y.toFixed(4)),
+        };
+      }
+      writeSeatBaseLayout(sectionObject, globalBaseLayout);
       writeSectionBaseBounds(sectionObject, baseBounds);
-      resizeSectionToSeats(sectionObject, sectionSeats, baseBounds);
+
+      // 7. Map section boundaries back to global space
+      const localSectionObject = {
+        ...sectionObject,
+        x: localBaseBounds.x,
+        y: localBaseBounds.y,
+        width: localBaseBounds.width,
+        height: localBaseBounds.height,
+      };
+      resizeSectionToSeats(localSectionObject, sectionSeats, localBaseBounds);
+
+      const globalSectionPos = toGlobal({ x: localSectionObject.x, y: localSectionObject.y }, sectionPivot, sectionRotation);
+      sectionObject.x = Number(globalSectionPos.x.toFixed(4));
+      sectionObject.y = Number(globalSectionPos.y.toFixed(4));
+      sectionObject.width = Number(localSectionObject.width.toFixed(4));
+      sectionObject.height = Number(localSectionObject.height.toFixed(4));
+
+      // 8. Map corridors back to global space
+      for (const localC of localCorridors) {
+        const originalC = originalCorridors.get(localC.id);
+        const actualC = corridorById.get(localC.id);
+        const localAABB = localAABBs.get(localC.id);
+        if (!originalC || !actualC || !localAABB) continue;
+
+        // Calculate local displacement delta
+        const deltaX = localC.x - localAABB.x;
+        const deltaY = localC.y - localAABB.y;
+
+        // Calculate the original position in local space
+        const localOriginalPos = toLocal({ x: originalC.x, y: originalC.y }, sectionPivot, sectionRotation);
+
+        // Shift the original position by the displacement delta
+        const localNewPos = {
+          x: localOriginalPos.x + deltaX,
+          y: localOriginalPos.y + deltaY,
+        };
+
+        // Convert the new local position back to global space
+        const globalCorridorPos = toGlobal(localNewPos, sectionPivot, sectionRotation);
+
+        actualC.x = Number(globalCorridorPos.x.toFixed(4));
+        actualC.y = Number(globalCorridorPos.y.toFixed(4));
+        actualC.width = originalC.width;
+        actualC.height = originalC.height;
+        actualC.rotation = originalC.rotation;
+
+        const localSplitPt = {
+          x: Number(localC.data[CORRIDOR_SPLIT_X_KEY]),
+          y: Number(localC.data[CORRIDOR_SPLIT_Y_KEY]),
+        };
+        const globalSplitPt = toGlobal(localSplitPt, sectionPivot, sectionRotation);
+
+        actualC.data = {
+          ...actualC.data,
+          ...localC.data,
+          [CORRIDOR_AXIS_KEY]: readStoredCorridorAxis(originalC),
+          [CORRIDOR_SPLIT_X_KEY]: Number(globalSplitPt.x.toFixed(4)),
+          [CORRIDOR_SPLIT_Y_KEY]: Number(globalSplitPt.y.toFixed(4)),
+        };
+
+        persistSmartCorridorMetadata(actualC);
+      }
     } else if (Object.keys(previousBaseLayout).length > 0) {
       for (const seat of sectionSeats) {
         const base = previousBaseLayout[seat.id];
@@ -905,6 +1448,461 @@ export function applyCorridorReflow(map: EventMapDTO) {
       sectionObject.data = nextData;
     }
   }
+}
+
+function mapCorridorToSectionLocal(
+  corridor: EventMapObjectDTO,
+  sectionPivot: { x: number; y: number },
+  sectionRotation: number,
+): { localCorridor: EventMapObjectDTO; localReferenceBounds: BoundsRect } {
+  const coreRect = getSmartCorridorCoreRect(corridor);
+  const globalCorners = getRectCorners(coreRect, { x: corridor.x, y: corridor.y }, corridor.rotation ?? 0);
+  const localCorners = globalCorners.map((point) => toLocal(point, sectionPivot, sectionRotation));
+  const localReferenceBounds = getAABB(localCorners);
+
+  const effectiveRotation = snapSmartCorridorRotation((corridor.rotation ?? 0) - sectionRotation);
+  const effectiveAxis = effectiveCorridorAxisAtRotation(readStoredCorridorAxis(corridor), effectiveRotation);
+
+  const localCorridor: EventMapObjectDTO = {
+    ...corridor,
+    x: localReferenceBounds.x,
+    y: localReferenceBounds.y,
+    width: localReferenceBounds.width,
+    height: localReferenceBounds.height,
+    rotation: 0,
+    data: {
+      ...corridor.data,
+      [CORRIDOR_AXIS_KEY]: effectiveAxis,
+    },
+  };
+
+  const hasSplitX = Number.isFinite(corridor.data[CORRIDOR_SPLIT_X_KEY]);
+  const hasSplitY = Number.isFinite(corridor.data[CORRIDOR_SPLIT_Y_KEY]);
+  if (hasSplitX && hasSplitY) {
+    const globalSplitPt = {
+      x: Number(corridor.data[CORRIDOR_SPLIT_X_KEY]),
+      y: Number(corridor.data[CORRIDOR_SPLIT_Y_KEY]),
+    };
+    const localSplitPt = toLocal(globalSplitPt, sectionPivot, sectionRotation);
+    localCorridor.data[CORRIDOR_SPLIT_X_KEY] = localSplitPt.x;
+    localCorridor.data[CORRIDOR_SPLIT_Y_KEY] = localSplitPt.y;
+  }
+
+  return { localCorridor, localReferenceBounds };
+}
+
+function getSectionContext(
+  map: EventMapDTO,
+  sectionId: string,
+): {
+  sectionObject: EventMapObjectDTO;
+  sectionSeats: EventSeatDTO[];
+  baseLayout: SeatBaseLayout;
+  baseBounds: SectionBaseBounds;
+} | null {
+  const sectionObject = map.objects.find((object) => object.type === 'SECTION' && object.sectionId === sectionId);
+  if (!sectionObject || !sectionObject.sectionId) return null;
+
+  const sectionSeats = map.seats.filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD');
+  const baseLayout = readSeatBaseLayout(sectionObject);
+  const baseBounds =
+    readSectionBaseBounds(sectionObject) ??
+    ({
+      x: sectionObject.x,
+      y: sectionObject.y,
+      width: sectionObject.width ?? 0,
+      height: sectionObject.height ?? 0,
+    } satisfies SectionBaseBounds);
+
+  return { sectionObject, sectionSeats, baseLayout, baseBounds };
+}
+
+export function resolveCorridorDragMode(
+  baseMap: EventMapDTO,
+  drag: CorridorDragSession,
+  corridorIds: string[],
+): CorridorDragMode {
+  if (corridorIds.length === 0) return 'reflow';
+
+  const originIds = new Set([...drag.origin.keys()].map((nodeId) => nodeId.replace(/^node-/, '')));
+  const corridorSet = new Set(corridorIds);
+  const checkedSections = new Set<string>();
+
+  for (const corridorId of corridorIds) {
+    const corridor = baseMap.objects.find((object) => object.id === corridorId && object.type === 'CORRIDOR');
+    if (!corridor) continue;
+
+    for (const sectionObject of baseMap.objects) {
+      if (sectionObject.type !== 'SECTION' || !sectionObject.sectionId) continue;
+      if (sectionObject.levelId !== corridor.levelId) continue;
+      if (checkedSections.has(sectionObject.sectionId)) continue;
+
+      const context = getSectionContext(baseMap, sectionObject.sectionId);
+      if (!context || context.sectionSeats.length === 0) continue;
+
+      if (
+        !corridorAffectsSection({
+          corridor,
+          sectionSeats: context.sectionSeats,
+          baseLayout: context.baseLayout,
+          baseBounds: context.baseBounds,
+          sectionRotation: sectionObject.rotation ?? 0,
+        })
+      ) {
+        continue;
+      }
+
+      checkedSections.add(sectionObject.sectionId);
+
+      const affectingCorridors = baseMap.objects.filter(
+        (object) =>
+          object.type === 'CORRIDOR' &&
+          corridorAffectsSection({
+            corridor: object,
+            sectionSeats: context.sectionSeats,
+            baseLayout: context.baseLayout,
+            baseBounds: context.baseBounds,
+            sectionRotation: sectionObject.rotation ?? 0,
+          }),
+      );
+
+      const allSeatsSelected = context.sectionSeats.every((seat) => originIds.has(seat.id));
+      const allCorridorsSelected = affectingCorridors.every((entry) => corridorSet.has(entry.id) && originIds.has(entry.id));
+      const sectionFrameSelected = originIds.has(context.sectionObject.id);
+
+      if (allSeatsSelected && allCorridorsSelected && sectionFrameSelected) {
+        return 'rigid';
+      }
+    }
+  }
+
+  return 'reflow';
+}
+
+function applyRigidDragDeltaToPreview(
+  preview: EventMapDTO,
+  drag: CorridorDragSession,
+  skipIds: Set<string> = new Set(),
+) {
+  for (const [nodeId, start] of drag.origin) {
+    const id = nodeId.replace(/^node-/, '');
+    if (skipIds.has(id)) continue;
+
+    const nextX = start.x + drag.delta.x;
+    const nextY = start.y + drag.delta.y;
+
+    const seat = preview.seats.find((entry) => entry.id === id);
+    if (seat) {
+      seat.x = nextX;
+      seat.y = nextY;
+      continue;
+    }
+
+    const object = preview.objects.find((entry) => entry.id === id);
+    if (object) {
+      object.x = nextX;
+      object.y = nextY;
+    }
+  }
+}
+
+function originIdsFromDrag(drag: CorridorDragSession) {
+  return new Set([...drag.origin.keys()].map((nodeId) => nodeId.replace(/^node-/, '')));
+}
+
+export function buildRigidGroupDragPreview(baseMap: EventMapDTO, drag: CorridorDragSession): EventMapDTO {
+  const preview = cloneEventMap(baseMap);
+  applyRigidDragDeltaToPreview(preview, drag);
+  return preview;
+}
+
+export function applyCorridorPreviewPatch(
+  preview: EventMapDTO,
+  baseMap: EventMapDTO,
+  objectId: string,
+  patch: Partial<EventMapObjectDTO>,
+  options?: { mode?: 'rotate' | 'resize' | 'group-rotate' | 'group-resize' },
+) {
+  const object = preview.objects.find((entry) => entry.id === objectId);
+  const previous = baseMap.objects.find((entry) => entry.id === objectId);
+
+  if (!object || !previous || object.type !== 'CORRIDOR') return;
+
+  const normalizedPatch = { ...patch };
+  if (
+    typeof normalizedPatch.rotation === 'number' &&
+    options?.mode !== 'group-rotate' &&
+    options?.mode !== 'group-resize'
+  ) {
+    normalizedPatch.rotation = snapSmartCorridorRotation(normalizedPatch.rotation);
+  }
+
+  const rotationChanged =
+    typeof normalizedPatch.rotation === 'number' &&
+    normalizedPatch.rotation !== snapSmartCorridorRotation(previous.rotation ?? 0);
+  const inferredRotationOnly = rotationChanged && isCorridorRotationOnlyTransform(normalizedPatch, previous);
+  const mode = options?.mode ?? (inferredRotationOnly ? 'rotate' : 'resize');
+
+  const { rotation, x, y, width, height, data, ...rest } = normalizedPatch;
+  Object.assign(object, rest);
+
+  if (typeof width === 'number') object.width = width;
+  if (typeof height === 'number') object.height = height;
+  if (data) object.data = { ...object.data, ...data };
+
+  if (mode === 'group-rotate' || mode === 'group-resize') {
+    if (typeof x === 'number') object.x = x;
+    if (typeof y === 'number') object.y = y;
+    if (typeof width === 'number') object.width = width;
+    if (typeof height === 'number') object.height = height;
+    if (typeof rotation === 'number') object.rotation = snapSmartCorridorRotation(rotation);
+    reconcileCorridorGeometry(object);
+  } else if (mode === 'rotate' && typeof rotation === 'number') {
+    applyCorridorRotationPreservingCenter(object, rotation, previous);
+  } else {
+    if (typeof x === 'number') object.x = x;
+    if (typeof y === 'number') object.y = y;
+    if (typeof rotation === 'number') object.rotation = rotation;
+  }
+
+  updateCorridorSplitAnchorsOnDrag(object, normalizedPatch, previous);
+}
+
+export type CorridorTransformPreviewPatch = {
+  objectId: string;
+  patch: Partial<EventMapObjectDTO>;
+  mode?: 'rotate' | 'resize' | 'group-rotate' | 'group-resize';
+  /** Konva anchor used for this gesture (domain handle fidelity). */
+  anchor?: string;
+};
+
+export function resetCorridorPreviewFromBase(preview: EventMapDTO, base: EventMapDTO) {
+  for (const baseSeat of base.seats) {
+    const seat = preview.seats.find((entry) => entry.id === baseSeat.id);
+    if (!seat) continue;
+    seat.x = baseSeat.x;
+    seat.y = baseSeat.y;
+  }
+
+  for (const baseObject of base.objects) {
+    const object = preview.objects.find((entry) => entry.id === baseObject.id);
+    if (!object) continue;
+    object.x = baseObject.x;
+    object.y = baseObject.y;
+    object.width = baseObject.width;
+    object.height = baseObject.height;
+    object.rotation = baseObject.rotation;
+    object.data = { ...baseObject.data };
+  }
+}
+
+export function buildSmartCorridorDragPreview(
+  baseMap: EventMapDTO,
+  drag: CorridorDragSession,
+  corridorNodeIds: string[],
+  options?: SmartCorridorDragPreviewOptions,
+): EventMapDTO {
+  const corridorIds = corridorNodeIds.map((nodeId) => nodeId.replace(/^node-/, ''));
+  const mode = options?.mode ?? resolveCorridorDragMode(baseMap, drag, corridorIds);
+
+  if (mode === 'rigid') {
+    return buildRigidGroupDragPreview(baseMap, drag);
+  }
+
+  const preview = options?.previewMap ?? cloneEventMap(baseMap);
+  if (options?.previewMap) {
+    resetCorridorPreviewFromBase(preview, baseMap);
+  }
+
+  for (const nodeId of drag.origin.keys()) {
+    const objectId = nodeId.replace(/^node-/, '');
+    const start = drag.origin.get(nodeId);
+    const baseObject = baseMap.objects.find((entry) => entry.id === objectId);
+    if (!start || !baseObject) continue;
+
+    if (baseObject.type === 'CORRIDOR') {
+      applyCorridorPreviewPatch(preview, baseMap, objectId, {
+        x: start.x + drag.delta.x,
+        y: start.y + drag.delta.y,
+        rotation: baseObject.rotation,
+        width: baseObject.width,
+        height: baseObject.height,
+      });
+    } else {
+      const object = preview.objects.find((entry) => entry.id === objectId);
+      if (object) {
+        object.x = start.x + drag.delta.x;
+        object.y = start.y + drag.delta.y;
+      }
+    }
+  }
+
+  applyCorridorReflow(preview, {
+    maxIterations: options?.maxIterations ?? CORRIDOR_REFLOW_ITERATIONS,
+    activeCorridorIds: options?.activeCorridorIds,
+  });
+
+  const originIds = originIdsFromDrag(drag);
+  for (const seat of preview.seats) {
+    if (!originIds.has(seat.id)) continue;
+    const baseSeat = baseMap.seats.find((entry) => entry.id === seat.id);
+    const start = drag.origin.get(`node-${seat.id}`);
+    if (!baseSeat || !start) continue;
+    const reflowChanged =
+      Math.abs(seat.x - baseSeat.x) >= 0.001 || Math.abs(seat.y - baseSeat.y) >= 0.001;
+    if (!reflowChanged) {
+      seat.x = start.x + drag.delta.x;
+      seat.y = start.y + drag.delta.y;
+    }
+  }
+
+  return preview;
+}
+
+export function buildSmartCorridorTransformPreview(
+  baseMap: EventMapDTO,
+  patches: CorridorTransformPreviewPatch[],
+  options?: SmartCorridorDragPreviewOptions,
+): EventMapDTO {
+  const preview = options?.previewMap ?? cloneEventMap(baseMap);
+  if (options?.previewMap) {
+    resetCorridorPreviewFromBase(preview, baseMap);
+  }
+
+  const freezeAutoFitCorridorIds: string[] = [];
+
+  for (const { objectId, patch, mode } of patches) {
+    const previous = baseMap.objects.find((entry) => entry.id === objectId);
+    const resolvedMode =
+      mode ??
+      (previous?.type === 'CORRIDOR' && isCorridorRotationOnlyTransform(patch, previous)
+        ? 'rotate'
+        : 'resize');
+
+    if (
+      resolvedMode === 'rotate' ||
+      resolvedMode === 'resize' ||
+      resolvedMode === 'group-rotate' ||
+      resolvedMode === 'group-resize'
+    ) {
+      freezeAutoFitCorridorIds.push(objectId);
+    }
+
+    applyCorridorPreviewPatch(preview, baseMap, objectId, patch, { mode: resolvedMode });
+  }
+
+  applyCorridorReflow(preview, {
+    maxIterations: options?.maxIterations ?? CORRIDOR_REFLOW_ITERATIONS,
+    activeCorridorIds: options?.activeCorridorIds,
+    freezeAutoFitCorridorIds,
+  });
+  return preview;
+}
+
+export function extractGroupDragCommitUpdates(
+  baseMap: EventMapDTO,
+  preview: EventMapDTO,
+  drag: CorridorDragSession,
+  corridorIds: string[],
+  mode: CorridorDragMode,
+): {
+  objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
+  seats: Array<{ id: string; patch: { x: number; y: number } }>;
+} {
+  const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
+  const seatPatches = new Map<string, { x: number; y: number }>();
+  const corridorSet = new Set(corridorIds);
+  const hasMovement = Math.abs(drag.delta.x) >= 0.001 || Math.abs(drag.delta.y) >= 0.001;
+
+  if (hasMovement) {
+    for (const [nodeId, start] of drag.origin) {
+      const id = nodeId.replace(/^node-/, '');
+      if (corridorSet.has(id)) continue;
+
+      const patch = { x: start.x + drag.delta.x, y: start.y + drag.delta.y };
+
+      if (baseMap.objects.some((object) => object.id === id)) {
+        objects.push({ id, patch });
+      } else if (baseMap.seats.some((seat) => seat.id === id)) {
+        seatPatches.set(id, patch);
+      }
+    }
+  }
+
+  for (const corridorId of corridorIds) {
+    const reflowed = preview.objects.find((entry) => entry.id === corridorId);
+    const previous = baseMap.objects.find((entry) => entry.id === corridorId);
+    if (!reflowed || !previous || reflowed.type !== 'CORRIDOR') continue;
+
+    const existingIndex = objects.findIndex((entry) => entry.id === corridorId);
+    const corridorPatch = {
+      x: reflowed.x,
+      y: reflowed.y,
+      width: reflowed.width,
+      height: reflowed.height,
+      rotation: reflowed.rotation,
+      data: { ...reflowed.data },
+    };
+
+    if (existingIndex >= 0) {
+      objects[existingIndex] = { id: corridorId, patch: corridorPatch };
+    } else {
+      objects.push({ id: corridorId, patch: corridorPatch });
+    }
+  }
+
+  if (mode === 'reflow') {
+    for (const seat of preview.seats) {
+      const previous = baseMap.seats.find((entry) => entry.id === seat.id);
+      if (!previous) continue;
+      if (Math.abs(seat.x - previous.x) < 0.001 && Math.abs(seat.y - previous.y) < 0.001) continue;
+      seatPatches.set(seat.id, { x: seat.x, y: seat.y });
+    }
+  }
+
+  return {
+    objects,
+    seats: [...seatPatches.entries()].map(([id, patch]) => ({ id, patch })),
+  };
+}
+
+export function extractCorridorDragCommitUpdates(
+  baseMap: EventMapDTO,
+  preview: EventMapDTO,
+  corridorIds: string[],
+): {
+  objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
+  seats: Array<{ id: string; patch: { x: number; y: number } }>;
+} {
+  const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
+  const seats: Array<{ id: string; patch: { x: number; y: number } }> = [];
+
+  for (const corridorId of corridorIds) {
+    const reflowed = preview.objects.find((entry) => entry.id === corridorId);
+    const previous = baseMap.objects.find((entry) => entry.id === corridorId);
+    if (!reflowed || !previous || reflowed.type !== 'CORRIDOR') continue;
+
+    objects.push({
+      id: corridorId,
+      patch: {
+        x: reflowed.x,
+        y: reflowed.y,
+        width: reflowed.width,
+        height: reflowed.height,
+        rotation: reflowed.rotation,
+        data: { ...reflowed.data },
+      },
+    });
+  }
+
+  for (const seat of preview.seats) {
+    const previous = baseMap.seats.find((entry) => entry.id === seat.id);
+    if (!previous) continue;
+    if (Math.abs(seat.x - previous.x) < 0.001 && Math.abs(seat.y - previous.y) < 0.001) continue;
+    seats.push({ id: seat.id, patch: { x: seat.x, y: seat.y } });
+  }
+
+  return { objects, seats };
 }
 
 export function translateSectionCorridorBase(map: EventMapDTO, sectionId: string, delta: { x: number; y: number }) {
@@ -973,9 +1971,11 @@ export function translateSeatCorridorBase(
 export {
   DEFAULT_CORRIDOR_GAP,
   DEFAULT_CORRIDOR_THICKNESS,
+  MIN_CORRIDOR_THICKNESS,
   expandRectWithSpacing,
   getCorridorSpacing,
   inferSmartCorridorAxisFromCoreRect,
   readCorridorThickness,
+  reconcileCorridorGeometry,
   resolveSmartCorridorLayout,
 };

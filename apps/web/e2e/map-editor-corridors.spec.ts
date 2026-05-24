@@ -234,23 +234,11 @@ async function seedScenario(page: Page): Promise<Scenario> {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers de localização do painel de propriedades do corredor
-// PanelField usa <Label>(sem for) + <input> irmão → getByLabel NÃO funciona.
-// PanelSection usa <section>, usado para escopo.
+// Smart corridors: apenas "Espaçamento dos assentos" (sem seção Corredor/Orientação/AutoFit).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getCorridorSection(page: Page) {
-  // Seção "Corredor" no painel de propriedades
-  return page.locator('section').filter({ has: page.locator('h3', { hasText: 'Corredor' }) }).first();
-}
-
 function getSpacingSection(page: Page) {
-  // Seção "Espaçamento dos assentos"
   return page.locator('section').filter({ has: page.locator('h3', { hasText: 'Espaçamento' }) }).first();
-}
-
-async function selectCorridorAxis(page: Page, value: 'vertical' | 'horizontal') {
-  const section = getCorridorSection(page);
-  await section.locator('select').first().selectOption(value);
 }
 
 async function setGapInput(page: Page, side: 'Superior' | 'Direita' | 'Inferior' | 'Esquerda', value: number) {
@@ -574,7 +562,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await expect(page.getByRole('menuitem', { name: /corredor/i })).toBeVisible();
     });
 
-    test('drag no canvas cria objeto do tipo CORRIDOR e exibe painel de propriedades', async ({ page }) => {
+    test('drag no canvas cria objeto do tipo CORRIDOR e exibe painel de espaçamento', async ({ page }) => {
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -582,23 +570,14 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Drag vertical: estreito (10% da largura) e alto (50% da altura)
       await dragOnCanvas(page, box, 0.55, 0.15, 0.62, 0.80);
 
-      // Painel de propriedades deve mostrar seção "Corredor"
-      const panel = page.getByRole('complementary').or(page.locator('[data-testid="map-properties-panel"]'));
-      const corridorSection = page.getByText(/corredor/i).last();
-      await expect(corridorSection).toBeVisible({ timeout: 8_000 });
-
-      // Campos de orientação e autoFit
-      await expect(getCorridorSection(page).locator('select').first()).toBeVisible();
-      await expect(page.getByRole('checkbox', { name: /ajustar ao gap/i })).toBeVisible();
-
-      // Campos de espaçamento (labels sem for → busca por texto na seção)
       const spacingSection = getSpacingSection(page);
-      await expect(spacingSection.locator('input').nth(0)).toBeVisible(); // Superior
-      await expect(spacingSection.locator('input').nth(1)).toBeVisible(); // Direita
-      await expect(spacingSection.locator('input').nth(2)).toBeVisible(); // Inferior
-      await expect(spacingSection.locator('input').nth(3)).toBeVisible(); // Esquerda
+      await expect(spacingSection).toBeVisible({ timeout: 8_000 });
+      await expect(spacingSection.locator('input').nth(0)).toBeVisible();
+      await expect(spacingSection.locator('input').nth(1)).toBeVisible();
+      await expect(spacingSection.locator('input').nth(2)).toBeVisible();
+      await expect(spacingSection.locator('input').nth(3)).toBeVisible();
 
-      test.info().annotations.push({ type: 'info', description: 'Painel do corredor carregado corretamente' });
+      test.info().annotations.push({ type: 'info', description: 'Painel de espaçamento do corredor carregado corretamente' });
     });
 
     test('corredor vertical cria gap horizontal ampliado em todas as linhas', async ({ page }) => {
@@ -607,9 +586,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await activateCorridorTool(page);
       // Drag no centro vertical do canvas (entre colunas ~6 e 7 visualmente)
       await dragOnCanvas(page, box, 0.53, 0.10, 0.60, 0.88);
-
-      // Define orientação = Vertical explicitamente via painel
-      await selectCorridorAxis(page, 'vertical');
 
       await saveMap(page);
 
@@ -655,7 +631,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
 
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.53, 0.10, 0.60, 0.88);
-      await selectCorridorAxis(page, 'vertical');
       await saveMap(page);
 
       const snap = await getMapSnapshot(page, scenario);
@@ -697,8 +672,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Drag horizontal: largo e baixo
       await dragOnCanvas(page, box, 0.10, 0.48, 0.88, 0.56);
 
-      await selectCorridorAxis(page, 'horizontal');
-
       await saveMap(page);
 
       const snap = await getMapSnapshot(page, scenario);
@@ -722,7 +695,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
 
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.48, 0.88, 0.56);
-      await selectCorridorAxis(page, 'horizontal');
       await saveMap(page);
 
       const snap = await getMapSnapshot(page, scenario);
@@ -760,7 +732,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Primeiro corredor (entre colunas ~3-4)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.32, 0.10, 0.38, 0.88);
-      await selectCorridorAxis(page, 'vertical');
 
       // Deselecionar
       await page.keyboard.press('Escape');
@@ -768,7 +739,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Segundo corredor (entre colunas ~8-9)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.68, 0.10, 0.74, 0.88);
-      await selectCorridorAxis(page, 'vertical');
 
       await saveMap(page);
 
@@ -808,13 +778,11 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Primeiro corredor (entre linhas ~B-C)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.28, 0.88, 0.35);
-      await selectCorridorAxis(page, 'horizontal');
       await page.keyboard.press('Escape');
 
       // Segundo corredor (entre linhas ~F-G)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.62, 0.88, 0.69);
-      await selectCorridorAxis(page, 'horizontal');
 
       await saveMap(page);
 
@@ -854,13 +822,11 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Corredor vertical no centro
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
-      await selectCorridorAxis(page, 'vertical');
       await page.keyboard.press('Escape');
 
       // Corredor horizontal no centro (CRUZA o vertical)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.48, 0.88, 0.54);
-      await selectCorridorAxis(page, 'horizontal');
 
       await saveMap(page);
 
@@ -888,13 +854,11 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Corredor vertical
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
-      await selectCorridorAxis(page, 'vertical');
       await page.keyboard.press('Escape');
 
       // Corredor horizontal (cruza)
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.48, 0.88, 0.54);
-      await selectCorridorAxis(page, 'horizontal');
 
       await saveMap(page);
 
@@ -929,7 +893,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
 
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
-      await selectCorridorAxis(page, 'vertical');
 
       // Define gap assimétrico: esquerda=40, direita=8
       await setGapInput(page, 'Esquerda', 40);
@@ -975,7 +938,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
 
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
-      await selectCorridorAxis(page, 'vertical');
       await saveMap(page);
 
       // Recarrega o editor
@@ -1005,7 +967,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
 
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
-      await selectCorridorAxis(page, 'vertical');
       await saveMap(page);
 
       await page.reload();
@@ -1157,8 +1118,8 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
 
-      // Aguarda painel do corredor
-      await expect(getCorridorSection(page).locator('select').first()).toBeVisible({ timeout: 8_000 });
+      const spacingSection = getSpacingSection(page);
+      await expect(spacingSection).toBeVisible({ timeout: 8_000 });
 
       const issues: string[] = [];
 
@@ -1178,7 +1139,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       panelOverflow.forEach((msg) => issues.push(msg));
 
       // Campos de espaçamento visíveis (PanelField sem for → busca por label text)
-      const spacingSection = getSpacingSection(page);
       const labelNames = ['Superior', 'Direita', 'Inferior', 'Esquerda'];
       for (let idx = 0; idx < labelNames.length; idx++) {
         const el = spacingSection.locator('input').nth(idx);
@@ -1300,10 +1260,11 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Bloco 10: Corredor rotacionado 90°
+  // Bloco 10: Corredor rotacionado — coberto por event-map-smart-corridors.spec.ts
+  // Smart corridors normalizam rotation=0; rotação manual não é mais suportada.
   // ──────────────────────────────────────────────────────────────────────────
 
-  test.describe('Corredor rotacionado', () => {
+  test.describe.skip('Corredor rotacionado (legado — UI removida)', () => {
     let scenario: Scenario;
 
     test.beforeEach(async ({ page }) => {
@@ -1316,7 +1277,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Cria um corredor inicialmente horizontal
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.10, 0.48, 0.88, 0.54);
-      await selectCorridorAxis(page, 'horizontal');
 
       // Rotaciona 90° via painel de dimensões
       // PanelField não usa for/htmlFor → busca pela seção "Dimensão"

@@ -9,6 +9,7 @@ import type {
   EventMapObjectDTO,
   EventMapSectionDTO,
   EventSeatDTO,
+  EventSeatGroupDTO,
 } from '../api/event-map-service';
 import {
   getNextLevelSortOrder,
@@ -21,6 +22,8 @@ import { withAutoObjectLabel, withDuplicateObjectLabel } from '../lib/object-nam
 import {
   buildSeatGridPreview,
   getSeatGridPreviewBounds,
+  getSeatGridRowLabel,
+  normalizeSeatGridConfig,
   SEAT_GRID_SECTION_PADDING,
   type SeatGridConfig,
 } from '../lib/seat-grid';
@@ -36,7 +39,22 @@ import {
   validateGroupCandidates,
 } from '../lib/object-groups';
 
-import { applyCorridorReflow, inferCorridorAxisFromSize, persistCorridorMetadataOnly, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag } from '../lib/corridor-reflow';
+import {
+  applyCorridorReflow,
+  inferCorridorAxisFromSize,
+  persistCorridorMetadataOnly,
+  reconcileCorridorGeometry,
+  translateSeatCorridorBase,
+  translateSectionCorridorBase,
+  updateCorridorSplitAnchorsOnDrag,
+} from '../lib/corridor-reflow';
+import {
+  DEFAULT_CORRIDOR_THICKNESS,
+  MIN_CORRIDOR_THICKNESS,
+  applyCorridorRotationPreservingCenter,
+  isCorridorRotationOnlyTransform,
+  snapSmartCorridorRotation,
+} from '../lib/smart-corridor-layout';
 import { computeArtboardFitView } from '../lib/viewport-utils';
 import {
   getSelectableItems,
@@ -104,11 +122,15 @@ type EventMapEditorState = {
   deleteObject: (id: string) => void;
   addRowAt: (point: { x: number; y: number }, quantity?: number) => void;
   addSeatGridAt: (point: { x: number; y: number }, config: Partial<SeatGridConfig>) => void;
+  updateSeatGroup: (id: string, patch: Partial<EventSeatGroupDTO>) => void;
+  deleteSeatGroup: (id: string) => void;
   updateObject: (id: string, patch: Partial<EventMapObjectDTO>) => void;
   updateObjects: (updates: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>) => void;
   updateMapItems: (updates: {
     objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
     seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+    skipSeatBaseLayoutTranslation?: boolean;
+    skipCorridorReflow?: boolean;
   }) => void;
   updateSeat: (id: string, patch: Partial<EventSeatDTO>) => void;
   updateSection: (id: string, patch: Partial<EventMapSectionDTO>) => void;
@@ -155,6 +177,21 @@ function cloneAndNormalizeMap(map: EventMapDTO): EventMapDTO {
       ? { ...object, data: sanitizeTextObjectData(normalizeTextData(object.data)) }
       : object,
   );
+  return next;
+}
+
+function mapHasCorridors(map: EventMapDTO) {
+  return map.objects.some((object) => object.type === 'CORRIDOR');
+}
+
+function cloneNormalizeAndReflowMap(map: EventMapDTO): EventMapDTO {
+  const next = cloneAndNormalizeMap(map);
+
+  if (mapHasCorridors(next)) {
+    applyCorridorReflow(next);
+    updateCounts(next);
+  }
+
   return next;
 }
 
@@ -234,6 +271,27 @@ function hasCorridorGeometryPatch(patch: Partial<EventMapObjectDTO>) {
   );
 }
 
+function corridorReflowOptionsForPatch(
+  object: EventMapObjectDTO | undefined,
+  patch: Partial<EventMapObjectDTO>,
+) {
+  if (object?.type !== 'CORRIDOR') return undefined;
+
+  if (isCorridorRotationOnlyTransform(patch, object)) {
+    return { freezeAutoFitCorridorIds: [object.id] };
+  }
+
+  const sizeChanged =
+    (typeof patch.width === 'number' && object.width != null && Math.abs(patch.width - object.width) > 0.001) ||
+    (typeof patch.height === 'number' && object.height != null && Math.abs(patch.height - object.height) > 0.001);
+
+  if (sizeChanged) {
+    return { freezeAutoFitCorridorIds: [object.id] };
+  }
+
+  return undefined;
+}
+
 function hasCorridorMetadataPatch(patch: Partial<EventMapObjectDTO>) {
   if (!patch.data) return false;
   return (
@@ -265,6 +323,14 @@ function applyObjectPatchWithCorridorMetadata(
       };
 
   if (next.type === 'CORRIDOR' && hasCorridorGeometryPatch(patch)) {
+    if (isCorridorRotationOnlyTransform(patch, previous) && typeof patch.rotation === 'number') {
+      applyCorridorRotationPreservingCenter(next, patch.rotation, previous);
+    } else {
+      if (typeof patch.rotation === 'number') {
+        next.rotation = snapSmartCorridorRotation(patch.rotation);
+      }
+      reconcileCorridorGeometry(next);
+    }
     updateCorridorSplitAnchorsOnDrag(next, patch, previous);
     return next;
   }
@@ -293,7 +359,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   zoomScrubbedThisHold: false,
   inlineTextEditorActive: false,
   loadMap: (map, options) => {
-    const normalized = cloneAndNormalizeMap(map);
+    const normalized = cloneNormalizeAndReflowMap(map);
     const activeLevelId = getDefaultActiveLevelId(normalized.levels);
     const state = get();
 
@@ -447,6 +513,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           levelId: level.id,
           sectionId: section.id,
           objectId: null,
+          groupId: null,
+          rowIndex: null,
+          columnIndex: null,
           technicalCode: `${section.name.replace(/\s+/g, '-').toUpperCase()}-${seatNumber}`,
           displayLabel: seatNumber,
           rowLabel: null,
@@ -511,13 +580,18 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       if (config.type === 'CORRIDOR') {
         const width = typeof objectWidth === 'number' ? objectWidth : config.width;
         const height = typeof objectHeight === 'number' ? objectHeight : config.height;
+        const axis = inferCorridorAxisFromSize(width, height);
+        const rawThickness = axis === 'vertical' ? width : height;
         objectData.smartCorridor = true;
         objectData.seatGapTop = 8;
         objectData.seatGapRight = 8;
         objectData.seatGapBottom = 8;
         objectData.seatGapLeft = 8;
-        objectData.corridorThickness = Math.min(width, height);
-        objectData.corridorAxis = inferCorridorAxisFromSize(width, height);
+        objectData.corridorThickness =
+          rawThickness >= MIN_CORRIDOR_THICKNESS
+            ? Math.min(rawThickness, 240)
+            : DEFAULT_CORRIDOR_THICKNESS;
+        objectData.corridorAxis = axis;
         objectData.corridorAutoFit = true;
       }
 
@@ -565,6 +639,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           levelId: level.id,
           sectionId: section.id,
           objectId: null,
+          groupId: null,
+          rowIndex: null,
+          columnIndex: null,
           technicalCode: `${rowLabel}${number}`,
           displayLabel: `${rowLabel}${number}`,
           rowLabel,
@@ -597,8 +674,12 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       const color = DEFAULT_COLORS[map.sections.length % DEFAULT_COLORS.length];
       const sectionId = createLocalId('section');
       const objectId = createLocalId('object');
+      const groupId = createLocalId('seatgroup');
       const sectionName = `Setor ${map.sections.length + 1}`;
       const sectionCode = sectionName.replace(/\s+/g, '-').toUpperCase();
+      const normalized = normalizeSeatGridConfig(config);
+      const gapX = Math.max(0, normalized.horizontalSpacing - normalized.seatSize);
+      const gapY = Math.max(0, normalized.verticalSpacing - normalized.seatSize);
 
       map.sections.push({
         id: sectionId,
@@ -628,6 +709,36 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         sortOrder: map.objects.length,
       });
 
+      map.seatGroups = map.seatGroups ?? [];
+      // group.x/y is the top-left corner: buildSeatGridPreview stores seat centers at origin+col*step,
+      // but getSeatLocalPosition adds seatWidth/2 from the group origin — so offset by -seatSize/2
+      const seatGroup: EventSeatGroupDTO = {
+        id: groupId,
+        levelId: level.id,
+        name: sectionName,
+        x: point.x - normalized.seatSize / 2,
+        y: point.y - normalized.seatSize / 2,
+        rotation: 0,
+        rows: normalized.rows,
+        columns: normalized.columns,
+        seatWidth: normalized.seatSize,
+        seatHeight: normalized.seatSize,
+        gapX,
+        gapY,
+        paddingTop: 0,
+        paddingRight: 0,
+        paddingBottom: 0,
+        paddingLeft: 0,
+        numbering: {
+          format: 'number',
+          rowPrefix: normalized.rowPrefix,
+          startNumber: normalized.startNumber,
+          direction: normalized.numberingDirection,
+        },
+        locked: false,
+      };
+      map.seatGroups.push(seatGroup);
+
       for (const draft of seats) {
         const id = createLocalId('seat');
         map.seats.push({
@@ -635,6 +746,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           levelId: level.id,
           sectionId,
           objectId: null,
+          groupId,
+          rowIndex: draft.rowIndex,
+          columnIndex: draft.columnIndex,
           technicalCode: `${sectionCode}-${draft.technicalCode}`,
           displayLabel: draft.displayLabel,
           rowLabel: draft.rowLabel,
@@ -661,6 +775,131 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         future: [],
       };
     }),
+  updateSeatGroup: (id, patch) =>
+    set((state) => {
+      if (!state.map) return state;
+      const map = cloneMap(state.map);
+      const past = withHistory(state);
+      const groupIndex = (map.seatGroups ?? []).findIndex((g) => g.id === id);
+      if (groupIndex === -1) return state;
+      const prev = map.seatGroups[groupIndex]!;
+      const next = { ...prev, ...patch };
+      map.seatGroups[groupIndex] = next;
+
+      const rowsChanged = typeof patch.rows === 'number' && patch.rows !== prev.rows;
+      const colsChanged = typeof patch.columns === 'number' && patch.columns !== prev.columns;
+
+      if (rowsChanged || colsChanged) {
+        // Remove seats outside the new bounds
+        map.seats = map.seats.filter((seat) => {
+          if (seat.groupId !== id) return true;
+          return (seat.rowIndex ?? 0) < next.rows && (seat.columnIndex ?? 0) < next.columns;
+        });
+
+        // Determine numbering params from stored config
+        const numbering = next.numbering as Record<string, unknown>;
+        const rowPrefix = String(numbering.rowPrefix ?? 'A');
+        const startNumber = Number(numbering.startNumber ?? 1);
+        const direction = numbering.direction === 'right-to-left' ? 'right-to-left' : 'left-to-right';
+
+        // Find the sectionId from existing seats in this group
+        const existingSeat = map.seats.find((s) => s.groupId === id);
+        const sectionId = existingSeat?.sectionId ?? null;
+        const section = sectionId ? map.sections.find((s) => s.id === sectionId) : null;
+        const sectionCode = section?.name?.replace(/\s+/g, '-').toUpperCase() ?? 'SECTION';
+
+        // Build set of existing rowIndex/columnIndex pairs
+        const existingPairs = new Set(
+          map.seats.filter((s) => s.groupId === id).map((s) => `${s.rowIndex ?? 0}:${s.columnIndex ?? 0}`),
+        );
+
+        const stepX = next.seatWidth + next.gapX;
+        const stepY = next.seatHeight + next.gapY;
+
+        for (let rowIndex = 0; rowIndex < next.rows; rowIndex++) {
+          for (let colIndex = 0; colIndex < next.columns; colIndex++) {
+            if (existingPairs.has(`${rowIndex}:${colIndex}`)) continue;
+            const visualColIndex = direction === 'right-to-left' ? next.columns - colIndex - 1 : colIndex;
+            const rowLabel = getSeatGridRowLabel(rowIndex, rowPrefix);
+            const seatNumber = String(startNumber + visualColIndex);
+            const displayLabel = `${rowLabel}${seatNumber}`;
+            map.seats.push({
+              id: createLocalId('seat'),
+              levelId: next.levelId,
+              sectionId,
+              objectId: null,
+              groupId: id,
+              rowIndex,
+              columnIndex: colIndex,
+              technicalCode: `${sectionCode}-${displayLabel}`,
+              displayLabel,
+              rowLabel,
+              seatNumber,
+              status: 'AVAILABLE',
+              accessible: false,
+              publicVisible: true,
+              x: next.x + next.paddingLeft + colIndex * stepX + next.seatWidth / 2,
+              y: next.y + next.paddingTop + rowIndex * stepY + next.seatHeight / 2,
+              size: next.seatWidth,
+              rotation: 0,
+            });
+          }
+        }
+      }
+
+      // Recompute seat positions when x/y/spacing params change
+      if (
+        typeof patch.x === 'number' ||
+        typeof patch.y === 'number' ||
+        typeof patch.seatWidth === 'number' ||
+        typeof patch.seatHeight === 'number' ||
+        typeof patch.gapX === 'number' ||
+        typeof patch.gapY === 'number' ||
+        typeof patch.paddingTop === 'number' ||
+        typeof patch.paddingLeft === 'number'
+      ) {
+        const stepX = next.seatWidth + next.gapX;
+        const stepY = next.seatHeight + next.gapY;
+        map.seats = map.seats.map((seat) => {
+          if (seat.groupId !== id) return seat;
+          const row = seat.rowIndex ?? 0;
+          const col = seat.columnIndex ?? 0;
+          return {
+            ...seat,
+            x: next.x + next.paddingLeft + col * stepX + next.seatWidth / 2,
+            y: next.y + next.paddingTop + row * stepY + next.seatHeight / 2,
+          };
+        });
+      }
+
+      updateCounts(map);
+      applyCorridorReflow(map);
+      return { map, isDirty: true, past, future: [] };
+    }),
+  deleteSeatGroup: (id) =>
+    set((state) => {
+      if (!state.map) return state;
+      const map = cloneMap(state.map);
+      const past = withHistory(state);
+      // Track which sections may become empty after removing this group's seats
+      const removedSeatSectionIds = new Set(
+        map.seats
+          .filter((s) => s.groupId === id)
+          .map((s) => s.sectionId)
+          .filter((sid): sid is string => !!sid),
+      );
+      map.seatGroups = (map.seatGroups ?? []).filter((g) => g.id !== id);
+      map.seats = map.seats.filter((s) => s.groupId !== id);
+      // Remove sections (and their boundary objects) that are now completely empty of seats
+      for (const sectionId of removedSeatSectionIds) {
+        if (!map.seats.some((s) => s.sectionId === sectionId)) {
+          map.objects = map.objects.filter((o) => !o.sectionId || o.sectionId !== sectionId);
+          map.sections = map.sections.filter((s) => s.id !== sectionId);
+        }
+      }
+      updateCounts(map);
+      return { map, selection: [], isDirty: true, past, future: [] };
+    }),
   updateObject: (id, patch) =>
     set((state) => {
       if (!state.map) return state;
@@ -682,7 +921,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         return applyObjectPatchWithCorridorMetadata(object, patch);
       });
       if (sectionDelta) translateSectionCorridorBase(map, sectionDelta.sectionId, sectionDelta.delta);
-      applyCorridorReflow(map);
+      applyCorridorReflow(map, corridorReflowOptionsForPatch(target, patch));
       return { map, isDirty: true, past, future: [] };
     }),
   updateObjects: (updates) =>
@@ -714,10 +953,22 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       for (const entry of sectionDeltas) {
         translateSectionCorridorBase(map, entry.sectionId, entry.delta);
       }
-      applyCorridorReflow(map);
+
+      const rotationOnlyCorridorIds = updates
+        .map((entry) => {
+          const object = state.map?.objects.find((candidate) => candidate.id === entry.id);
+          if (object?.type !== 'CORRIDOR' || !isCorridorRotationOnlyTransform(entry.patch, object)) return null;
+          return object.id;
+        })
+        .filter((id): id is string => Boolean(id));
+
+      applyCorridorReflow(
+        map,
+        rotationOnlyCorridorIds.length > 0 ? { freezeAutoFitCorridorIds: rotationOnlyCorridorIds } : undefined,
+      );
       return { map, isDirty: true, past, future: [] };
     }),
-  updateMapItems: ({ objects = [], seats = [] }) =>
+  updateMapItems: ({ objects = [], seats = [], skipSeatBaseLayoutTranslation = false, skipCorridorReflow = false }) =>
     set((state) => {
       if (!state.map || (objects.length === 0 && seats.length === 0)) return state;
       const map = cloneMap(state.map);
@@ -751,22 +1002,24 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       }
 
       if (seatPatchById.size > 0) {
-        const seatBaseDeltas: Array<{ seatId: string; sectionId: string; delta: { x: number; y: number } }> = [];
-        for (const seat of map.seats) {
-          const patch = seatPatchById.get(seat.id);
-          if (!patch) continue;
-          const nextX = typeof patch.x === 'number' ? patch.x : seat.x;
-          const nextY = typeof patch.y === 'number' ? patch.y : seat.y;
-          const sectionDelta = sectionDeltaById.get(seat.sectionId) ?? { x: 0, y: 0 };
-          const residualDelta = {
-            x: nextX - seat.x - sectionDelta.x,
-            y: nextY - seat.y - sectionDelta.y,
-          };
-          if (Math.abs(residualDelta.x) >= 0.001 || Math.abs(residualDelta.y) >= 0.001) {
-            seatBaseDeltas.push({ seatId: seat.id, sectionId: seat.sectionId, delta: residualDelta });
+        if (!skipSeatBaseLayoutTranslation) {
+          const seatBaseDeltas: Array<{ seatId: string; sectionId: string; delta: { x: number; y: number } }> = [];
+          for (const seat of map.seats) {
+            const patch = seatPatchById.get(seat.id);
+            if (!patch) continue;
+            const nextX = typeof patch.x === 'number' ? patch.x : seat.x;
+            const nextY = typeof patch.y === 'number' ? patch.y : seat.y;
+            const sectionDelta = sectionDeltaById.get(seat.sectionId) ?? { x: 0, y: 0 };
+            const residualDelta = {
+              x: nextX - seat.x - sectionDelta.x,
+              y: nextY - seat.y - sectionDelta.y,
+            };
+            if (Math.abs(residualDelta.x) >= 0.001 || Math.abs(residualDelta.y) >= 0.001) {
+              seatBaseDeltas.push({ seatId: seat.id, sectionId: seat.sectionId, delta: residualDelta });
+            }
           }
+          translateSeatCorridorBase(map, seatBaseDeltas);
         }
-        translateSeatCorridorBase(map, seatBaseDeltas);
 
         map.seats = map.seats.map((seat) => {
           const patch = seatPatchById.get(seat.id);
@@ -775,7 +1028,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         updateCounts(map);
       }
 
-      applyCorridorReflow(map);
+      if (!skipCorridorReflow) {
+        applyCorridorReflow(map);
+      }
 
       return { map, isDirty: true, past, future: [] };
     }),
@@ -924,6 +1179,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       map.seats = map.seats.filter((seat) => seat.sectionId !== id);
       map.objects = map.objects.filter((object) => object.sectionId !== id);
       map.sections = map.sections.filter((section) => section.id !== id);
+      // Remove seatGroups that have no remaining seats
+      const usedGroupIds = new Set(map.seats.map((s) => s.groupId).filter((gid): gid is string => !!gid));
+      map.seatGroups = (map.seatGroups ?? []).filter((g) => usedGroupIds.has(g.id));
       updateCounts(map);
       return {
         map,
@@ -943,6 +1201,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       map.seats = map.seats.filter((seat) => seat.levelId !== id);
       map.objects = map.objects.filter((object) => object.levelId !== id);
       map.sections = map.sections.filter((section) => section.levelId !== id);
+      map.seatGroups = (map.seatGroups ?? []).filter((g) => g.levelId !== id);
       map.levels = map.levels.filter((entry) => entry.id !== id);
       applyMapLevels(map);
       updateCounts(map);
@@ -977,7 +1236,28 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
           map.objects = map.objects.filter((object) => object.sectionId !== item.id);
           map.sections = map.sections.filter((section) => section.id !== item.id);
         }
+
+        if (item.type === 'seatgroup') {
+          const removedSeatSectionIds = new Set(
+            map.seats
+              .filter((s) => s.groupId === item.id)
+              .map((s) => s.sectionId)
+              .filter((sid): sid is string => !!sid),
+          );
+          map.seatGroups = (map.seatGroups ?? []).filter((g) => g.id !== item.id);
+          map.seats = map.seats.filter((s) => s.groupId !== item.id);
+          for (const sectionId of removedSeatSectionIds) {
+            if (!map.seats.some((s) => s.sectionId === sectionId)) {
+              map.objects = map.objects.filter((o) => !o.sectionId || o.sectionId !== sectionId);
+              map.sections = map.sections.filter((s) => s.id !== sectionId);
+            }
+          }
+        }
       }
+
+      // Remove any seatGroups left without seats (e.g. after individual seat deletion)
+      const usedGroupIds = new Set(map.seats.map((s) => s.groupId).filter((gid): gid is string => !!gid));
+      map.seatGroups = (map.seatGroups ?? []).filter((g) => usedGroupIds.has(g.id));
 
       map.objects = sanitizeGroupMembership(map.objects);
       updateCounts(map);
@@ -1184,7 +1464,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     }),
   markSaved: (map) =>
     set((state) => {
-      const nextMap = map ? cloneAndNormalizeMap(map) : state.map;
+      const nextMap = map ? cloneNormalizeAndReflowMap(map) : state.map;
       const activeStillExists = nextMap?.levels.some((level) => level.id === state.activeLevelId) ?? false;
       return {
         map: nextMap,
@@ -1198,12 +1478,13 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
   toPayload: () => {
     const map = get().map;
     if (!map) return null;
-    const normalized = cloneAndNormalizeMap(map);
+    const normalized = cloneNormalizeAndReflowMap(map);
     return {
       name: normalized.name,
       levels: normalized.levels,
       sections: normalized.sections.map(({ lot: _lot, ...section }) => section),
       objects: normalized.objects,
+      seatGroups: normalized.seatGroups ?? [],
       seats: normalized.seats,
     };
   },

@@ -25,6 +25,7 @@ const eventMapInclude = {
     orderBy: [{ createdAt: 'asc' as const }],
   },
   objects: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
+  seatGroups: { orderBy: [{ createdAt: 'asc' as const }] },
   seats: { orderBy: [{ technicalCode: 'asc' as const }] },
   versions: { select: { id: true, version: true, status: true, createdAt: true }, orderBy: { version: 'desc' as const } },
 } satisfies Prisma.EventMapInclude;
@@ -210,6 +211,9 @@ function mapEventMap(record: EventMapRecord) {
       levelId: seat.levelId,
       sectionId: seat.sectionId,
       objectId: seat.objectId,
+      groupId: seat.groupId,
+      rowIndex: seat.rowIndex,
+      columnIndex: seat.columnIndex,
       technicalCode: seat.technicalCode,
       displayLabel: seat.displayLabel,
       rowLabel: seat.rowLabel,
@@ -227,6 +231,26 @@ function mapEventMap(record: EventMapRecord) {
       version: version.version,
       status: version.status,
       createdAt: version.createdAt.toISOString(),
+    })),
+    seatGroups: record.seatGroups.map((group) => ({
+      id: group.id,
+      levelId: group.levelId,
+      name: group.name,
+      x: toNumber(group.x),
+      y: toNumber(group.y),
+      rotation: toNumber(group.rotation),
+      rows: group.rows,
+      columns: group.columns,
+      seatWidth: toNumber(group.seatWidth),
+      seatHeight: toNumber(group.seatHeight),
+      gapX: toNumber(group.gapX),
+      gapY: toNumber(group.gapY),
+      paddingTop: toNumber(group.paddingTop),
+      paddingRight: toNumber(group.paddingRight),
+      paddingBottom: toNumber(group.paddingBottom),
+      paddingLeft: toNumber(group.paddingLeft),
+      numbering: group.numbering as Record<string, unknown>,
+      locked: group.locked,
     })),
     counts: {
       levels: record.levels.length,
@@ -368,6 +392,7 @@ export async function updateEventMapDraft(
     await assertLotsBelongToEvent(tx, ctx, eventId, input);
 
     await tx.eventSeat.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
+    await tx.eventSeatGroup.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapObject.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapSection.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
     await tx.eventMapLevel.deleteMany({ where: { contaId: ctx.contaId, eventMapId: mapId } });
@@ -430,6 +455,33 @@ export async function updateEventMapDraft(
       });
     }
 
+    if (input.seatGroups.length > 0) {
+      await tx.eventSeatGroup.createMany({
+        data: input.seatGroups.map((group) => ({
+          id: group.id,
+          contaId: ctx.contaId,
+          eventMapId: mapId,
+          levelId: group.levelId,
+          name: group.name,
+          x: decimal(group.x),
+          y: decimal(group.y),
+          rotation: decimal(group.rotation),
+          rows: group.rows,
+          columns: group.columns,
+          seatWidth: decimal(group.seatWidth),
+          seatHeight: decimal(group.seatHeight),
+          gapX: decimal(group.gapX),
+          gapY: decimal(group.gapY),
+          paddingTop: decimal(group.paddingTop),
+          paddingRight: decimal(group.paddingRight),
+          paddingBottom: decimal(group.paddingBottom),
+          paddingLeft: decimal(group.paddingLeft),
+          numbering: toInputJson(group.numbering),
+          locked: group.locked,
+        })),
+      });
+    }
+
     if (input.seats.length > 0) {
       await tx.eventSeat.createMany({
         data: input.seats.map((seat) => ({
@@ -439,6 +491,9 @@ export async function updateEventMapDraft(
           levelId: seat.levelId,
           sectionId: seat.sectionId,
           objectId: seat.objectId,
+          groupId: seat.groupId,
+          rowIndex: seat.rowIndex,
+          columnIndex: seat.columnIndex,
           technicalCode: seat.technicalCode,
           displayLabel: seat.displayLabel,
           rowLabel: seat.rowLabel,
@@ -465,6 +520,7 @@ export async function updateEventMapDraft(
         levels: input.levels.length,
         sections: input.sections.length,
         objects: input.objects.length,
+        seatGroups: input.seatGroups.length,
         seats: input.seats.length,
       },
     });
@@ -570,6 +626,7 @@ export async function duplicateEventMap(
     const levelIdMap = new Map<string, string>();
     const sectionIdMap = new Map<string, string>();
     const objectIdMap = new Map<string, string>();
+    const groupIdMap = new Map<string, string>();
 
     const created = await tx.eventMap.create({
       data: {
@@ -584,6 +641,7 @@ export async function duplicateEventMap(
     for (const level of source.levels) levelIdMap.set(level.id, createLocalId('level'));
     for (const section of source.sections) sectionIdMap.set(section.id, createLocalId('section'));
     for (const object of source.objects) objectIdMap.set(object.id, createLocalId('object'));
+    for (const group of source.seatGroups) groupIdMap.set(group.id, createLocalId('seatgroup'));
 
     if (source.levels.length > 0) {
       await tx.eventMapLevel.createMany({
@@ -640,6 +698,33 @@ export async function duplicateEventMap(
       });
     }
 
+    if (source.seatGroups.length > 0) {
+      await tx.eventSeatGroup.createMany({
+        data: source.seatGroups.map((group) => ({
+          id: groupIdMap.get(group.id)!,
+          contaId: ctx.contaId,
+          eventMapId: created.id,
+          levelId: levelIdMap.get(group.levelId)!,
+          name: group.name,
+          x: group.x,
+          y: group.y,
+          rotation: group.rotation,
+          rows: group.rows,
+          columns: group.columns,
+          seatWidth: group.seatWidth,
+          seatHeight: group.seatHeight,
+          gapX: group.gapX,
+          gapY: group.gapY,
+          paddingTop: group.paddingTop,
+          paddingRight: group.paddingRight,
+          paddingBottom: group.paddingBottom,
+          paddingLeft: group.paddingLeft,
+          numbering: toInputJson(group.numbering as Record<string, unknown>),
+          locked: group.locked,
+        })),
+      });
+    }
+
     if (source.seats.length > 0) {
       await tx.eventSeat.createMany({
         data: source.seats.map((seat) => ({
@@ -649,6 +734,9 @@ export async function duplicateEventMap(
           levelId: levelIdMap.get(seat.levelId)!,
           sectionId: sectionIdMap.get(seat.sectionId)!,
           objectId: seat.objectId ? objectIdMap.get(seat.objectId) ?? null : null,
+          groupId: seat.groupId ? groupIdMap.get(seat.groupId) ?? null : null,
+          rowIndex: seat.rowIndex,
+          columnIndex: seat.columnIndex,
           technicalCode: seat.technicalCode,
           displayLabel: seat.displayLabel,
           rowLabel: seat.rowLabel,

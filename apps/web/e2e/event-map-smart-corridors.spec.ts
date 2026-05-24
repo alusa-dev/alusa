@@ -200,17 +200,24 @@ test.describe('Event map smart corridors', () => {
     );
 
     const before = geometrySnapshot((await getEditorGeometry(page)).seats);
-    await dragOnCanvas(
-      page,
-      { x: gapLeft.x, y: GRID.origin.y + 120 },
-      { x: gapLeft.x + 42, y: GRID.origin.y + 120 },
-      16,
-    );
+    const corridorsBeforeDrag = await getEditorGeometry(page);
+    const leftCorridor = corridorsBeforeDrag.corridors[0]!;
+    const dragFrom = {
+      x: leftCorridor.coreRect.x + leftCorridor.coreRect.width / 2,
+      y: leftCorridor.coreRect.y + leftCorridor.coreRect.height / 2,
+    };
+    await dragOnCanvas(page, dragFrom, { x: dragFrom.x + 42, y: dragFrom.y }, 16);
     const after = geometrySnapshot((await getEditorGeometry(page)).seats);
 
     expect(after).not.toEqual(before);
+    const geometry = await getEditorGeometry(page);
+    for (const corridor of geometry.corridors) {
+      expect(corridor.rotation).toBe(0);
+      expect(corridor.coreRect.width).toBeGreaterThanOrEqual(8);
+      expect(Number(corridor.data.corridorThickness)).toBeGreaterThanOrEqual(8);
+    }
     await expectNoOverlaps(page);
-    expect((await getEditorGeometry(page)).corridors).toHaveLength(2);
+    expect(geometry.corridors).toHaveLength(2);
   });
 
   test('intersected corridors move as a group without layout drift', async ({ page }) => {
@@ -316,6 +323,80 @@ test.describe('Event map smart corridors', () => {
     const reloaded = roundGeometry(await getEditorGeometry(page));
     expect(reloaded.seats).toHaveLength(snapshot.seats.length);
     expect(reloaded.corridors).toHaveLength(snapshot.corridors.length);
+    for (const corridor of reloaded.corridors) {
+      expect(Number(corridor.data.corridorThickness)).toBeGreaterThanOrEqual(8);
+      expect(corridor.rotation).toBe(0);
+    }
+    await expectNoOverlaps(page);
+  });
+
+  test('persists spacing and keeps layout valid after save, reload and corridor move', async ({ page }) => {
+    test.slow();
+    const { scenario, geometry } = await setupEditorWithGrid(page, 'persist-move');
+    const gap = columnGapCenter(geometry.seats, 4, 5, 'A');
+
+    await createCorridor(
+      page,
+      { x: gap.x - 16, y: GRID.origin.y - 20 },
+      { x: gap.x + 16, y: GRID.origin.y + GRID.verticalSpacing * 9 + 20 },
+    );
+    await setCorridorSpacing(page, { left: 24, right: 24, top: 24, bottom: 24 });
+    await saveMap(page);
+    await page.reload();
+    await openEventMapEditor(page, scenario);
+
+    await dragCorridorByIndex(page, 0, { x: 42, y: 0 });
+    const updated = await getEditorGeometry(page);
+    expect(Number(updated.corridors[0]?.data.seatGapLeft)).toBe(24);
+    expect(Number(updated.corridors[0]?.data.corridorThickness)).toBeGreaterThanOrEqual(8);
+    await expectNoOverlaps(page);
+  });
+
+  test('two corridors moved together persist without overlap after save and reload', async ({ page }) => {
+    test.slow();
+    const { scenario, geometry: baseGeometry } = await setupEditorWithGrid(page, 'persist-multi');
+    const gapLeft = columnGapCenter(baseGeometry.seats, 3, 4, 'A');
+    const gapRight = columnGapCenter(baseGeometry.seats, 7, 8, 'A');
+
+    await createCorridor(
+      page,
+      { x: gapLeft.x - 16, y: GRID.origin.y - 20 },
+      { x: gapLeft.x + 16, y: GRID.origin.y + GRID.verticalSpacing * 9 + 20 },
+    );
+    await createCorridor(
+      page,
+      { x: gapRight.x - 16, y: GRID.origin.y - 20 },
+      { x: gapRight.x + 16, y: GRID.origin.y + GRID.verticalSpacing * 9 + 20 },
+    );
+
+    await marqueeSelect(
+      page,
+      { x: gapLeft.x - 80, y: GRID.origin.y - 60 },
+      { x: gapRight.x + 80, y: GRID.origin.y + 420 },
+    );
+    const corridorsBeforeDrag = await getEditorGeometry(page);
+    const leftCorridor = corridorsBeforeDrag.corridors[0]!;
+    const dragFrom = {
+      x: leftCorridor.coreRect.x + leftCorridor.coreRect.width / 2,
+      y: leftCorridor.coreRect.y + leftCorridor.coreRect.height / 2,
+    };
+    await dragOnCanvas(
+      page,
+      dragFrom,
+      { x: dragFrom.x + 42, y: dragFrom.y },
+      16,
+    );
+    await saveMap(page);
+    await page.reload();
+    await openEventMapEditor(page, scenario);
+
+    const geometry = await getEditorGeometry(page);
+    expect(geometry.corridors).toHaveLength(2);
+    for (const corridor of geometry.corridors) {
+      expect(corridor.rotation).toBe(0);
+      expect(corridor.coreRect.width).toBeGreaterThanOrEqual(8);
+      expect(Number(corridor.data.corridorThickness)).toBeGreaterThanOrEqual(8);
+    }
     await expectNoOverlaps(page);
   });
 
@@ -373,7 +454,7 @@ test.describe('Event map smart corridors', () => {
   });
 
   test('marquee resize with corridors keeps layout stable or blocks safely', async ({ page }) => {
-    test.fixme(true, 'TODO: validate product rule for mixed marquee resize with corridors before asserting success');
+    test.slow();
     const { geometry } = await setupEditorWithGrid(page, 'marquee-resize');
     const gap = columnGapCenter(geometry.seats, 4, 5, 'A');
 
@@ -383,6 +464,9 @@ test.describe('Event map smart corridors', () => {
       { x: gap.x + 16, y: GRID.origin.y + GRID.verticalSpacing * 9 + 20 },
     );
 
+    await expectNoOverlaps(page);
+    const before = geometrySnapshot((await getEditorGeometry(page)).seats);
+
     const seats = await getEditorGeometry(page);
     const minX = Math.min(...seats.seats.map((seat) => seat.bounds.x));
     const minY = Math.min(...seats.seats.map((seat) => seat.bounds.y));
@@ -390,6 +474,19 @@ test.describe('Event map smart corridors', () => {
     const maxY = Math.max(...seats.seats.map((seat) => seat.bounds.y + seat.bounds.height));
 
     await marqueeSelect(page, { x: minX - 20, y: minY - 20 }, { x: maxX + 20, y: maxY + 20 });
+
+    const afterSelect = geometrySnapshot((await getEditorGeometry(page)).seats);
+    expect(afterSelect).toEqual(before);
+
+    const corridor = seats.corridors[0]!;
+    const dragFrom = {
+      x: corridor.coreRect.x + corridor.coreRect.width / 2,
+      y: corridor.coreRect.y + corridor.coreRect.height / 2,
+    };
+    await dragOnCanvas(page, dragFrom, { x: dragFrom.x + 42, y: dragFrom.y }, 12);
+
+    const afterDrag = geometrySnapshot((await getEditorGeometry(page)).seats);
+    expect(afterDrag).not.toEqual(before);
     await expectNoOverlaps(page);
   });
 });

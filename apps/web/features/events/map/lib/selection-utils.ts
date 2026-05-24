@@ -3,6 +3,7 @@ import { getTextMode, measureTextWidth } from './text-object';
 export type MapSelectionItem =
   | { type: 'object'; id: string }
   | { type: 'seat'; id: string }
+  | { type: 'seatgroup'; id: string }
   | { type: 'section'; id: string }
   | { type: 'level'; id: string };
 

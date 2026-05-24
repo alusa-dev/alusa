@@ -254,7 +254,7 @@ export async function dragCorridorByIndex(
     await page.mouse.move(x, y);
 
     if (options?.assertDuringDrag && options.baselineSeats && step > 2 && step < 16) {
-      const current = await getEditorGeometry(page);
+      const current = await page.evaluate(() => window.__ALUSA_EVENT_MAP_EDITOR_E2E__!.getRenderGeometry());
       const moved = current.seats.some((seat) => {
         const baseline = options.baselineSeats!.find((entry) => entry.id === seat.id);
         return baseline && (Math.abs(seat.x - baseline.x) > 0.5 || Math.abs(seat.y - baseline.y) > 0.5);
