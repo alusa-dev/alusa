@@ -1,4 +1,4 @@
-import type Konva from 'konva';
+import Konva from 'konva';
 
 export type TransformNodeSnapshot = {
   id: string;
@@ -18,7 +18,8 @@ export function captureTransformNodeSnapshots(stage: Konva.Stage, nodeIds: strin
     const node = stage.findOne(`#${nodeId}`);
     if (!node) continue;
 
-    const body = node.findOne('.corridor-body') as Konva.Rect | undefined;
+    const container = node as Konva.Container;
+    const body = container.findOne('.corridor-body') as Konva.Rect | undefined;
     snapshots.push({
       id: nodeId,
       x: node.x(),
@@ -44,7 +45,8 @@ export function restoreTransformNodeSnapshots(stage: Konva.Stage, snapshots: Tra
     node.scaleX(snapshot.scaleX);
     node.scaleY(snapshot.scaleY);
 
-    const body = node.findOne('.corridor-body') as Konva.Rect | undefined;
+    const container = node as Konva.Container;
+    const body = container.findOne('.corridor-body') as Konva.Rect | undefined;
     if (body && typeof snapshot.bodyWidth === 'number' && typeof snapshot.bodyHeight === 'number') {
       body.width(snapshot.bodyWidth);
       body.height(snapshot.bodyHeight);

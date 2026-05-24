@@ -1,4 +1,4 @@
-import type Konva from 'konva';
+import Konva from 'konva';
 
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../api/event-map-service';
 import {

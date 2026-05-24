@@ -816,6 +816,9 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         const stepX = next.seatWidth + next.gapX;
         const stepY = next.seatHeight + next.gapY;
 
+        if (!sectionId) {
+          // New seats require an existing section context from the group.
+        } else {
         for (let rowIndex = 0; rowIndex < next.rows; rowIndex++) {
           for (let colIndex = 0; colIndex < next.columns; colIndex++) {
             if (existingPairs.has(`${rowIndex}:${colIndex}`)) continue;
@@ -844,6 +847,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
               rotation: 0,
             });
           }
+        }
         }
       }
 

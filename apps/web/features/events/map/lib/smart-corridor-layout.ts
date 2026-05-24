@@ -182,10 +182,12 @@ export function isCorridorRotationOnlyTransform(
 
   const widthSame =
     patch.width === undefined ||
+    patch.width == null ||
     previous.width == null ||
     Math.abs(patch.width - previous.width) < 0.001;
   const heightSame =
     patch.height === undefined ||
+    patch.height == null ||
     previous.height == null ||
     Math.abs(patch.height - previous.height) < 0.001;
   const xSame =

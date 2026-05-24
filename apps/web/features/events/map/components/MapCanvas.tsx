@@ -58,7 +58,7 @@ import {
   TEXT_EDITOR_PLACEHOLDER,
   type TextEditorState,
 } from '../lib/text-editor-layout';
-import { SNAP_TARGET_NAME, computeUnionBoundsFromNodes, getNodeBounds, isSnapModifierActive } from '../lib/snap-guides';
+import { SNAP_TARGET_NAME, computeUnionBoundsFromNodes, getNodeBounds, isSnapModifierActive, type LevelBounds } from '../lib/snap-guides';
 import {
   buildTextFontStyle,
   clampFontSizeValue,
@@ -342,7 +342,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selectedSeatIds: [] as string[],
     selectedNodeIds: [] as string[],
     transformKind: null as ReturnType<typeof resolveTransformRouting>['kind'],
-    levelBounds: null as { x: number; y: number; width: number; height: number } | null,
+    levelBounds: null as LevelBounds | null,
   });
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
   const zoomScrubRef = useRef<ZoomScrubState | null>(null);
@@ -815,6 +815,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const useCorridorTransformerPipeline = transformRouting.kind === 'corridor';
   const useGenericTransform = transformRouting.kind === 'generic';
 
+  const isSingleSelectionTransform = selectedNodeIds.length <= 1;
   const transformPipelineActive = transformRouting.kind !== null;
 
   transformContextRef.current = {
@@ -2585,7 +2586,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                     handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
                   }
                   onTransformEnd={(event) => {
-                    if (!useAtomicSelectionTransform) handleTransformEnd(object, event.target);
+                    if (isSingleSelectionTransform) handleTransformEnd(object, event.target);
                   }}
                 />
               );
@@ -2622,7 +2623,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
                   handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
                 }
                 onTransformEnd={(event) => {
-                  if (!useAtomicSelectionTransform) {
+                  if (isSingleSelectionTransform) {
                     handleTransformEnd(object, event.target);
                   }
                 }}
