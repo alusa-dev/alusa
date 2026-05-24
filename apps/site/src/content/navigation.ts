@@ -1,5 +1,8 @@
 import type { FooterGroupDto, RouteDto } from '@/lib/site-dtos';
 
+export const appBaseUrl = 'https://app.alusa.app';
+export const appLoginUrl = `${appBaseUrl}/auth/login`;
+
 export const primaryNavigation = [
   { label: 'Produto', href: '#modulos' },
   { label: 'Financeiro', href: '#financeiro' },
@@ -35,7 +38,7 @@ export const footerGroups = [
   {
     title: 'Acesso',
     links: [
-      { label: 'Login', href: 'https://www.alusa.app/auth/login' },
+      { label: 'Login', href: appLoginUrl },
       { label: 'Criar conta', href: 'mailto:contato@alusa.app' }
     ]
   }

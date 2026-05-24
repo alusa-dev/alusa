@@ -55,9 +55,10 @@ describe('asaas-env webhook url', () => {
     expect(resolveWebhookUrl()).toBe('https://public.example.com/api/webhooks/asaas');
   });
 
-  it('canonicaliza o apex alusa.app para www.alusa.app', () => {
-    expect(canonicalizePublicBaseUrl('https://alusa.app')).toBe('https://www.alusa.app');
-    expect(canonicalizePublicBaseUrl('https://alusa.app/')).toBe('https://www.alusa.app');
+  it('canonicaliza dominios publicos do site para app.alusa.app', () => {
+    expect(canonicalizePublicBaseUrl('https://alusa.app')).toBe('https://app.alusa.app');
+    expect(canonicalizePublicBaseUrl('https://alusa.app/')).toBe('https://app.alusa.app');
+    expect(canonicalizePublicBaseUrl('https://www.alusa.app')).toBe('https://app.alusa.app');
 
     process.env.NODE_ENV = 'production';
     delete process.env.VITEST;
@@ -65,6 +66,6 @@ describe('asaas-env webhook url', () => {
     delete process.env.VITEST_POOL_ID;
     process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL = 'https://alusa.app';
 
-    expect(resolveWebhookUrl()).toBe('https://www.alusa.app/api/webhooks/asaas');
+    expect(resolveWebhookUrl()).toBe('https://app.alusa.app/api/webhooks/asaas');
   });
 });

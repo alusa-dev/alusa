@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Menu, X } from '@/components/icons/icons';
-import { primaryNavigation } from '@/content/navigation';
+import { appLoginUrl, primaryNavigation } from '@/content/navigation';
 import { trackSiteEvent } from '@/lib/analytics';
 import { ButtonLink } from '@/components/ui/ButtonLink';
 import { Logo } from '@/components/ui/Logo';
@@ -37,7 +37,7 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-2 lg:flex">
-          <ButtonLink href="https://www.alusa.app/auth/login" variant="ghost" tone="dark" className="h-10 px-4 text-white">
+          <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" className="h-10 px-4 text-white">
             Entrar
           </ButtonLink>
           <ButtonLink
@@ -78,7 +78,7 @@ export function SiteHeader() {
             </Link>
           ))}
           <div className="grid gap-2 pt-3 sm:grid-cols-2">
-            <ButtonLink href="https://www.alusa.app/auth/login" variant="secondary" tone="dark">
+            <ButtonLink href={appLoginUrl} variant="secondary" tone="dark">
               Entrar
             </ButtonLink>
             <ButtonLink href="mailto:contato@alusa.app" variant="primary" tone="dark" event="sales_cta_clicked">
