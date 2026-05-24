@@ -3,7 +3,8 @@ import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-erro
 export type WebhookBaseUrlSource = 'ASAAS_WEBHOOK_PUBLIC_BASE_URL' | 'NEXT_PUBLIC_APP_URL';
 
 const PUBLIC_HOST_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
-  'alusa.app': 'www.alusa.app',
+  'alusa.app': 'app.alusa.app',
+  'www.alusa.app': 'app.alusa.app',
 };
 
 export function canonicalizePublicHostname(hostname: string): string {
