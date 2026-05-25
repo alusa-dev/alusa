@@ -56,6 +56,12 @@
 	}
 }
 
+/* Reveal do site marketing — garante animação mesmo com utilitários Tailwind */
+[data-area='public'] [data-site-reveal] {
+	transition-property: transform, opacity;
+	will-change: transform, opacity;
+}
+
 @tailwind components;
 @tailwind utilities;
 
@@ -1871,19 +1877,19 @@ nav,
 	transition: var(--theme-transition-all);
 }
 
-/* aplica às crianças quando data-theme alterna (fade simultâneo) */
-[data-theme] *,
-[data-theme] *::before,
-[data-theme] *::after {
+/* aplica às crianças quando data-theme alterna (fade simultâneo) — exceto site marketing */
+[data-theme] *:not(:where([data-area='public'], [data-area='public'] *)),
+[data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::before,
+[data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::after {
 	transition: var(--theme-transition-all);
 }
 
 /* Evitar transição durante a pintura inicial (antes de habilitar no body) */
 html:not(.theme-ready),
 body:not(.theme-ready),
-html:not(.theme-ready) [data-theme] *,
-html:not(.theme-ready) [data-theme] *::before,
-html:not(.theme-ready) [data-theme] *::after {
+html:not(.theme-ready) [data-theme] *:not(:where([data-area='public'], [data-area='public'] *)),
+html:not(.theme-ready) [data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::before,
+html:not(.theme-ready) [data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::after {
 	transition: none !important;
 }
 
@@ -1898,9 +1904,9 @@ html:not(.theme-ready) [data-theme] *::after {
 	.sidebar-surface-bg,
 	.sidebar-text,
 	.sidebar-active,
-	[data-theme] *,
-	[data-theme] *::before,
-	[data-theme] *::after {
+	[data-theme] *:not(:where([data-area='public'], [data-area='public'] *)),
+	[data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::before,
+	[data-theme] *:not(:where([data-area='public'], [data-area='public'] *))::after {
 		transition: none !important;
 	}
 }
