@@ -12,7 +12,7 @@ export default async function HomePage() {
   }
 
   if (userCount !== null) {
-    redirect(userCount > 0 ? '/auth/login' : '/auth/register');
+    redirect(userCount > 0 ? '/dashboard' : '/auth/register');
   }
 
   return (

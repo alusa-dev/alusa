@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-const siteUrl = 'https://alusa.app';
+import { siteUrl } from '@/lib/urls';
 
 export const siteMetadata = {
   name: 'Alusa',

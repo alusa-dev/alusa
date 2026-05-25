@@ -1,7 +1,7 @@
 import type { FooterGroupDto, RouteDto } from '@/lib/site-dtos';
+import { appLoginUrl } from '@/lib/urls';
 
-export const appBaseUrl = 'https://app.alusa.app';
-export const appLoginUrl = `${appBaseUrl}/auth/login`;
+export { appLoginUrl, appUrl } from '@/lib/urls';
 
 export const primaryNavigation = [
   { label: 'Produto', href: '#modulos' },
