@@ -1,6 +1,31 @@
+'use client';
+
 import Link from 'next/link';
+import { SiteSectionLink } from '@/features/site/components/navigation/SiteSectionLink';
 import { footerGroups } from '@/features/site/content/navigation';
 import { Logo } from '@/features/site/components/ui/Logo';
+import { isSiteSectionNavItem, siteNavItemKey } from '@/features/site/lib/nav-items';
+import type { SiteNavItem } from '@/features/site/lib/site-dtos';
+
+function FooterLink({ link }: { link: SiteNavItem }) {
+  if (isSiteSectionNavItem(link)) {
+    return (
+      <SiteSectionLink
+        sectionId={link.sectionId}
+        analyticsLabel={link.label}
+        className="text-sm font-medium text-white/68 transition-colors hover:text-white"
+      >
+        {link.label}
+      </SiteSectionLink>
+    );
+  }
+
+  return (
+    <Link href={link.href} className="text-sm font-medium text-white/68 transition-colors hover:text-white">
+      {link.label}
+    </Link>
+  );
+}
 
 export function SiteFooter() {
   return (
@@ -21,13 +46,8 @@ export function SiteFooter() {
               <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-white/95">{group.title}</h2>
               <ul className="mt-6 space-y-3.5">
                 {group.links.map((link) => (
-                  <li key={`${group.title}-${link.label}-${link.href}`}>
-                    <Link
-                      href={link.href}
-                      className="text-sm font-medium text-white/68 transition-colors hover:text-white"
-                    >
-                      {link.label}
-                    </Link>
+                  <li key={`${group.title}-${link.label}-${siteNavItemKey(link)}`}>
+                    <FooterLink link={link} />
                   </li>
                 ))}
               </ul>

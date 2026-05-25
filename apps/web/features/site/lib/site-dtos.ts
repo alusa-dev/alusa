@@ -1,13 +1,24 @@
 import type { SiteIcon } from '@/features/site/components/icons/icons';
+import type { SiteSectionId } from '@/features/site/lib/sections';
 
-export type RouteDto = {
+export type SiteHrefLink = {
   readonly label: string;
   readonly href: string;
 };
 
-export type CtaDto = RouteDto & {
-  readonly variant: 'primary' | 'secondary' | 'ghost';
+export type SiteSectionLinkDto = {
+  readonly label: string;
+  readonly sectionId: SiteSectionId;
 };
+
+export type SiteNavItem = SiteHrefLink | SiteSectionLinkDto;
+
+export type RouteDto = SiteNavItem;
+
+export type CtaDto = {
+  readonly label: string;
+  readonly variant: 'primary' | 'secondary' | 'ghost';
+} & ({ readonly href: string } | { readonly sectionId: SiteSectionId });
 
 export type CapabilityDto = {
   readonly title: string;

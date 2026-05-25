@@ -3,11 +3,42 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Menu, X } from '@/features/site/components/icons/icons';
+import { SiteSectionLink } from '@/features/site/components/navigation/SiteSectionLink';
 import { appLoginUrl, primaryNavigation } from '@/features/site/content/navigation';
-import { trackSiteEvent } from '@/features/site/lib/analytics';
+import { isSiteSectionNavItem, siteNavItemKey } from '@/features/site/lib/nav-items';
+import { scrollToSiteTop } from '@/features/site/lib/scroll-to-section';
 import { ButtonLink } from '@/features/site/components/ui/ButtonLink';
 import { Logo } from '@/features/site/components/ui/Logo';
 import { cn } from '@/features/site/lib/cn';
+
+function PrimaryNavItem({
+  item,
+  className,
+  onNavigate,
+}: {
+  item: (typeof primaryNavigation)[number];
+  className: string;
+  onNavigate?: () => void;
+}) {
+  if (isSiteSectionNavItem(item)) {
+    return (
+      <SiteSectionLink
+        sectionId={item.sectionId}
+        analyticsLabel={item.label}
+        className={className}
+        onNavigate={onNavigate}
+      >
+        {item.label}
+      </SiteSectionLink>
+    );
+  }
+
+  return (
+    <Link href={item.href} onClick={onNavigate} className={className}>
+      {item.label}
+    </Link>
+  );
+}
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
@@ -17,6 +48,12 @@ export function SiteHeader() {
       <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between gap-6 px-6 sm:px-8">
         <Link
           href="/"
+          onClick={(event) => {
+            if (window.location.pathname === '/') {
+              event.preventDefault();
+              scrollToSiteTop();
+            }
+          }}
           className="flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
           aria-label="Alusa"
         >
@@ -25,14 +62,11 @@ export function SiteHeader() {
 
         <nav className="hidden items-center gap-8 lg:flex" aria-label="Principal">
           {primaryNavigation.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => trackSiteEvent('nav_item_clicked', { href: item.href, label: item.label })}
+            <PrimaryNavItem
+              key={`${item.label}-${siteNavItemKey(item)}`}
+              item={item}
               className="text-sm font-medium text-white transition-opacity hover:opacity-70"
-            >
-              {item.label}
-            </Link>
+            />
           ))}
         </nav>
 
@@ -65,17 +99,12 @@ export function SiteHeader() {
       <div className={cn('border-t border-white/10 bg-[#430D88] lg:hidden', open ? 'block' : 'hidden')}>
         <nav className="mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
           {primaryNavigation.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={() => {
-                setOpen(false);
-                trackSiteEvent('nav_item_clicked', { href: item.href, label: item.label });
-              }}
-              className="rounded-lg px-3 py-2.5 text-base font-medium text-white/70 hover:bg-white/10 hover:text-white"
-            >
-              {item.label}
-            </Link>
+            <PrimaryNavItem
+              key={`mobile-${item.label}-${siteNavItemKey(item)}`}
+              item={item}
+              onNavigate={() => setOpen(false)}
+              className="rounded-lg px-3 py-2.5 text-left text-base font-medium text-white/70 hover:bg-white/10 hover:text-white"
+            />
           ))}
           <div className="grid gap-2 pt-3 sm:grid-cols-2">
             <ButtonLink href={appLoginUrl} variant="secondary" tone="dark">

@@ -6,6 +6,7 @@ import { ScrollReveal } from '@/features/site/components/motion/ScrollReveal';
 import { Plus, X } from '@/features/site/components/icons/icons';
 import { homePage } from '@/features/site/content/home';
 import { cn } from '@/features/site/lib/cn';
+import { SITE_SECTION_SCROLL_MARGIN_CLASS } from '@/features/site/lib/sections';
 
 function FaqAccordion() {
   const { items } = homePage.faq;
@@ -71,7 +72,10 @@ export function FaqSection() {
     faqTitleQuestionEnd >= 0 ? faqTitleFirstLine.slice(faqTitleQuestionEnd + 1) : '';
 
   return (
-    <section id="contato" className="relative overflow-hidden border-t border-alusa-grid-line-light bg-white py-section sm:py-section-lg">
+    <section
+      id="contato"
+      className={`relative overflow-hidden border-t border-alusa-grid-line-light bg-white py-section sm:py-section-lg ${SITE_SECTION_SCROLL_MARGIN_CLASS}`}
+    >
       <VerticalGridLines />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:items-start lg:gap-14 xl:gap-16">

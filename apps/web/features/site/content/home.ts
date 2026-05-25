@@ -20,7 +20,7 @@ export const homePage = {
       'A Alusa unifica operação acadêmica e financeira para sua equipe ganhar velocidade, previsibilidade e mais controle no dia a dia.',
     ctas: [
       { label: 'Agendar demonstração', href: 'mailto:contato@alusa.app', variant: 'primary' },
-      { label: 'Conhecer plataforma', href: '#modulos', variant: 'secondary' }
+      { label: 'Conhecer plataforma', sectionId: 'modulos', variant: 'secondary' }
     ]
   },
   proof: {

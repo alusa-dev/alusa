@@ -12,6 +12,20 @@ type ScrollRevealProps = {
   onMount?: boolean;
 };
 
+function scheduleReveal(onReveal: () => void): () => void {
+  let outer = 0;
+  let inner = 0;
+
+  outer = window.requestAnimationFrame(() => {
+    inner = window.requestAnimationFrame(onReveal);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(outer);
+    window.cancelAnimationFrame(inner);
+  };
+}
+
 export function ScrollReveal({ children, className, delay = 0, onMount = false }: ScrollRevealProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -19,20 +33,32 @@ export function ScrollReveal({ children, className, delay = 0, onMount = false }
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setReduceMotion(media.matches);
+    const handleMotionPreference = () => {
+      setReduceMotion(media.matches);
+      if (media.matches) {
+        setVisible(true);
+      }
+    };
+
+    handleMotionPreference();
+    media.addEventListener('change', handleMotionPreference);
 
     if (media.matches) {
-      setVisible(true);
-      return;
+      return () => media.removeEventListener('change', handleMotionPreference);
     }
 
     if (onMount) {
-      const frame = requestAnimationFrame(() => setVisible(true));
-      return () => cancelAnimationFrame(frame);
+      const cancel = scheduleReveal(() => setVisible(true));
+      return () => {
+        cancel();
+        media.removeEventListener('change', handleMotionPreference);
+      };
     }
 
     const element = ref.current;
-    if (!element) return;
+    if (!element) {
+      return () => media.removeEventListener('change', handleMotionPreference);
+    }
 
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -41,20 +67,24 @@ export function ScrollReveal({ children, className, delay = 0, onMount = false }
           observer.disconnect();
         }
       },
-      { threshold: 0.12, rootMargin: '0px 0px -6% 0px' }
+      { threshold: 0.08, rootMargin: '0px 0px -4% 0px' },
     );
 
     observer.observe(element);
-    return () => observer.disconnect();
+
+    return () => {
+      observer.disconnect();
+      media.removeEventListener('change', handleMotionPreference);
+    };
   }, [onMount]);
 
   return (
     <div
       ref={ref}
       className={cn(
-        !reduceMotion && 'transition-[transform,opacity] duration-700 ease-out will-change-[transform,opacity]',
+        !reduceMotion && 'transition-[transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[transform,opacity]',
         visible || reduceMotion ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0',
-        className
+        className,
       )}
       style={reduceMotion ? undefined : { transitionDelay: `${delay}ms` }}
     >

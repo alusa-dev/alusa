@@ -24,11 +24,14 @@ export function HeroSection() {
           <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center justify-start">
             {homePage.hero.ctas.map((cta, i) => (
               <ButtonLink
-                key={cta.href}
-                href={cta.href}
+                key={cta.label}
+                href={'href' in cta ? cta.href : undefined}
+                sectionId={'sectionId' in cta ? cta.sectionId : undefined}
                 variant={i === 0 ? 'primary' : 'secondary'}
                 tone="dark"
-                event={cta.href.startsWith('mailto:') ? 'sales_cta_clicked' : 'hero_cta_clicked'}
+                event={
+                  'href' in cta && cta.href.startsWith('mailto:') ? 'sales_cta_clicked' : 'hero_cta_clicked'
+                }
                 className={cn(
                   'h-12 w-full rounded-full text-sm font-medium sm:w-auto sm:min-w-[12rem]',
                   i === 0 ? 'bg-white text-[#430D88] shadow-none' : 'border border-white/20 text-white'

@@ -3,13 +3,17 @@ import { VerticalGridLines } from '@/features/site/components/layout/VerticalGri
 import { PreviewSlideIn } from '@/features/site/components/motion/PreviewSlideIn';
 import { ScrollReveal } from '@/features/site/components/motion/ScrollReveal';
 import { ChargesPreviewCard } from '@/features/site/components/visual/ChargesPreviewCard';
+import { SITE_SECTION_SCROLL_MARGIN_CLASS } from '@/features/site/lib/sections';
 
 export function PlatformSection() {
   const { financial } = homePage;
   const [financialTitleFirstLine, financialTitleSecondLine] = financial.title.split('\n');
 
   return (
-    <section id="financeiro" className="relative bg-[#430D88] py-section text-white sm:py-section-lg">
+    <section
+      id="financeiro"
+      className={`relative bg-[#430D88] py-section text-white sm:py-section-lg ${SITE_SECTION_SCROLL_MARGIN_CLASS}`}
+    >
       <VerticalGridLines />
       <div className="relative z-10 mx-auto grid max-w-7xl items-center gap-12 px-6 sm:px-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(520px,1.1fr)] lg:gap-14">
         <ScrollReveal className="max-w-[760px]">

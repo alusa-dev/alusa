@@ -1,10 +1,11 @@
 import { VerticalGridLines } from '@/features/site/components/layout/VerticalGridLines';
 import { ScrollReveal } from '@/features/site/components/motion/ScrollReveal';
 import { homePage } from '@/features/site/content/home';
+import { SITE_SECTION_SCROLL_MARGIN_CLASS } from '@/features/site/lib/sections';
 
 export function ProductSection() {
   return (
-    <section id="modulos" className="relative bg-white py-section sm:py-section-lg">
+    <section id="modulos" className={`relative bg-white py-section sm:py-section-lg ${SITE_SECTION_SCROLL_MARGIN_CLASS}`}>
       <VerticalGridLines />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
         <ScrollReveal className="max-w-2xl">

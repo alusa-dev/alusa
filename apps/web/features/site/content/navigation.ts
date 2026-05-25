@@ -1,45 +1,45 @@
-import type { FooterGroupDto, RouteDto } from '@/features/site/lib/site-dtos';
+import type { FooterGroupDto, SiteNavItem } from '@/features/site/lib/site-dtos';
 import { appLoginUrl } from '@/features/site/lib/urls';
 
 export { appLoginUrl, appUrl } from '@/features/site/lib/urls';
 
 export const primaryNavigation = [
-  { label: 'Produto', href: '#modulos' },
-  { label: 'Financeiro', href: '#financeiro' },
+  { label: 'Produto', sectionId: 'modulos' },
+  { label: 'Financeiro', sectionId: 'financeiro' },
   { label: 'Demonstração', href: 'mailto:contato@alusa.app' },
-  { label: 'Contato', href: '#contato' }
-] as const satisfies readonly RouteDto[];
+  { label: 'Contato', sectionId: 'contato' },
+] as const satisfies readonly SiteNavItem[];
 
 export const footerGroups = [
   {
     title: 'Plataforma',
     links: [
-      { label: 'Funcionalidades', href: '#modulos' },
-      { label: 'Financeiro', href: '#financeiro' },
-      { label: 'Portal', href: '#modulos' },
-      { label: 'Gestão', href: '#modulos' }
-    ]
+      { label: 'Funcionalidades', sectionId: 'modulos' },
+      { label: 'Financeiro', sectionId: 'financeiro' },
+      { label: 'Portal', sectionId: 'modulos' },
+      { label: 'Gestão', sectionId: 'modulos' },
+    ],
   },
   {
     title: 'Empresa',
     links: [
-      { label: 'Sobre', href: '#contato' },
-      { label: 'Contato', href: '#contato' },
-      { label: 'Demonstração', href: 'mailto:contato@alusa.app' }
-    ]
+      { label: 'Sobre', sectionId: 'contato' },
+      { label: 'Contato', sectionId: 'contato' },
+      { label: 'Demonstração', href: 'mailto:contato@alusa.app' },
+    ],
   },
   {
     title: 'Legal',
     links: [
-      { label: 'Privacidade', href: '#contato' },
-      { label: 'Termos', href: '#contato' }
-    ]
+      { label: 'Privacidade', sectionId: 'contato' },
+      { label: 'Termos', sectionId: 'contato' },
+    ],
   },
   {
     title: 'Acesso',
     links: [
       { label: 'Login', href: appLoginUrl },
-      { label: 'Criar conta', href: 'mailto:contato@alusa.app' }
-    ]
-  }
+      { label: 'Criar conta', href: 'mailto:contato@alusa.app' },
+    ],
+  },
 ] as const satisfies readonly FooterGroupDto[];
