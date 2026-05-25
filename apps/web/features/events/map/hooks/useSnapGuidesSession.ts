@@ -1,19 +1,10 @@
+import { getSnapReleaseThreshold, getSnapThreshold, isSnapModifierActive, resolveAnchorResizeSnap } from '@alusa/domain';
+import type { BoundingBox, LevelBounds } from '@alusa/domain';
+import type { SnapGuidesLayerHandle } from '../components/SnapGuidesLayer';
+import { applySnapResult, createSnapGuideStopCache, getSnapLayer, resolveSnapGuides } from '../canvas/konva-snap-adapter';
+
 import { useCallback, useRef, type RefObject } from 'react';
 import type Konva from 'konva';
-
-import type { SnapGuidesLayerHandle } from '../components/SnapGuidesLayer';
-import { createSnapGuideStopCache } from '../lib/snap-guide-cache';
-import { resolveAnchorResizeSnap } from '../lib/resize-snap-guides';
-import {
-  applySnapResult,
-  getSnapLayer,
-  getSnapReleaseThreshold,
-  getSnapThreshold,
-  isSnapModifierActive,
-  resolveSnapGuides,
-  type BoundingBox,
-  type LevelBounds,
-} from '../lib/snap-guides';
 
 type GroupDragState = {
   anchorNodeId: string;

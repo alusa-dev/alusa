@@ -1,4 +1,10 @@
 'use client';
+import { formatDateTime } from '../../events-service';
+import type { SchoolEventDTO } from '../../events-service';
+import { createEventMap, deleteEventMap, duplicateEventMap, listEventMaps } from '../api/event-map-service';
+import type { EventMapDTO } from '../api/event-map-service';
+
+import { cn } from '@/lib/utils';
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -14,17 +20,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
-
-import type { SchoolEventDTO } from '../../events-service';
-import { formatDateTime } from '../../events-service';
-import {
-  createEventMap,
-  deleteEventMap,
-  duplicateEventMap,
-  listEventMaps,
-  type EventMapDTO,
-} from '../api/event-map-service';
 
 const eventMapQueryKeys = {
   maps: (eventId: string) => ['events', 'maps', eventId] as const,

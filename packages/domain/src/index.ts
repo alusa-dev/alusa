@@ -82,5 +82,6 @@ export * from './events/map/map-rules.js';
 // DTOs formais do domínio
 export * from './dtos/index.js';
 
-// Engine pura de layout de mapas
-export * from './map-layout/index.js';
+// Nova engine decoplada do mapa de eventos
+export * from './map-engine/index.js';
+

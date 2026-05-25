@@ -1,4 +1,7 @@
 'use client';
+import type { MapTool } from '../store/event-map-editor-store';
+
+import { cn } from '@/lib/utils';
 
 import type { ComponentType } from 'react';
 import {
@@ -32,9 +35,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
-
-import type { MapTool } from '../store/event-map-editor-store';
 
 type ToolbarTool = {
   id: MapTool;

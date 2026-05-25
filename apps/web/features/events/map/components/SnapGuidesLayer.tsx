@@ -1,11 +1,11 @@
 'use client';
+import { SNAP_GUIDE_COLOR, SPACING_GUIDE_COLOR } from '@alusa/domain';
+import type { SnapGuideLine, SpacingGuideVisual } from '@alusa/domain';
+import { areActiveGuideVisualsEqual } from '../canvas/snap-guide-visuals';
+import type { ActiveGuideVisuals } from '../canvas/snap-guide-visuals';
 
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { Group, Line } from 'react-konva';
-
-import { areActiveGuideVisualsEqual, type ActiveGuideVisuals } from '../lib/snap-guide-visuals';
-import { SNAP_GUIDE_COLOR, type SnapGuideLine } from '../lib/snap-guides';
-import { SPACING_GUIDE_COLOR, type SpacingGuideVisual } from '../lib/spacing-guides';
 
 export type SnapGuidesLayerHandle = {
   setGuides: (guides: SnapGuideLine[], spacingGuides: SpacingGuideVisual[]) => void;

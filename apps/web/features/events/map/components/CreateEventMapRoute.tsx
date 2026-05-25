@@ -1,12 +1,11 @@
 'use client';
+import { createEventMap } from '../api/event-map-service';
+import { MapEditorLoading } from './MapEditorLoading';
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { toast } from '@/components/ui/toast';
-
-import { createEventMap } from '../api/event-map-service';
-import { MapEditorLoading } from './MapEditorLoading';
 
 export function CreateEventMapRoute({ eventId }: { eventId: string }) {
   const router = useRouter();

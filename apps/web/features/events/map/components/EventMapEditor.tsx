@@ -1,29 +1,9 @@
 'use client';
-
-import dynamic from 'next/dynamic';
-import { useEffect, useRef } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-
-import { toast } from '@/components/ui/toast';
-
+import { getSelectableItems, mergeEventMapWithLocalDraft, validateGroupCandidates } from '@alusa/domain';
+import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../canvas/event-map-e2e-bridge';
+import { clearEventMapLocalDraft, readEventMapLocalDraft, writeEventMapLocalDraft } from '../browser/local-draft-storage';
 import { listTicketLots } from '../../events-service';
-import {
-  getEventMap,
-  publishEventMap,
-  saveEventMapDraft,
-} from '../api/event-map-service';
-import {
-  clearEventMapLocalDraft,
-  mergeEventMapWithLocalDraft,
-  readEventMapLocalDraft,
-  writeEventMapLocalDraft,
-} from '../lib/event-map-local-draft';
-import { validateGroupCandidates } from '../lib/object-groups';
-import { getSelectableItems } from '../lib/selection-utils';
-import {
-  registerEventMapE2EBridge,
-  unregisterEventMapE2EBridge,
-} from '../lib/event-map-e2e-bridge';
+import { getEventMap, publishEventMap, saveEventMapDraft } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import { FloatingMapToolbar } from './FloatingMapToolbar';
 import { MapAreasPanel } from './MapAreasPanel';
@@ -32,6 +12,12 @@ import { MapEditorHeader } from './MapEditorHeader';
 import { MapEditorLoading } from './MapEditorLoading';
 import { MapLayersPanel } from './MapLayersPanel';
 import { MapPropertiesPanel } from './MapPropertiesPanel';
+
+import dynamic from 'next/dynamic';
+import { useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+
+import { toast } from '@/components/ui/toast';
 
 const MapCanvas = dynamic(() => import('./MapCanvas').then((mod) => mod.MapCanvas), {
   ssr: false,

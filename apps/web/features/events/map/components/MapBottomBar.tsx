@@ -1,10 +1,9 @@
 'use client';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { Maximize2, Minus, Plus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 export function MapBottomBar() {
   const map = useEventMapEditorStore((state) => state.map);

@@ -1,90 +1,10 @@
 'use client';
+import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, snapSmartCorridorRotation, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
+import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, EventSeatGroupDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, SeatGridConfig } from '@alusa/domain';
 
 import { create } from 'zustand';
 
-import type {
-  EventMapDTO,
-  EventMapDraftPayload,
-  EventMapLevelDTO,
-  EventMapObjectDTO,
-  EventMapSectionDTO,
-  EventSeatDTO,
-  EventSeatGroupDTO,
-} from '../api/event-map-service';
-import {
-  getNextLevelSortOrder,
-  isPlateiaBaseLevel,
-  MAP_AREA_HEIGHT_PX,
-  MAP_AREA_WIDTH_PX,
-  normalizeMapLevels,
-} from '../lib/level-utils';
-import { withAutoObjectLabel, withDuplicateObjectLabel } from '../lib/object-naming';
-import {
-  buildSeatGridPreview,
-  getSeatGridPreviewBounds,
-  getSeatGridRowLabel,
-  normalizeSeatGridConfig,
-  SEAT_GRID_SECTION_PADDING,
-  type SeatGridConfig,
-} from '../lib/seat-grid';
-import { getTextModeFromCreation, normalizeTextData } from '../lib/text-object';
-import { sanitizeTextObjectData } from '../lib/text-object.schema';
-import {
-  expandObjectSelectionItems,
-  getNextGroupDisplayName,
-  getObjectGroupId,
-  getObjectGroupLabel,
-  sanitizeGroupMembership,
-  setObjectGroupData,
-  validateGroupCandidates,
-} from '../lib/object-groups';
-
-import {
-  applyCorridorReflow,
-  inferCorridorAxisFromSize,
-  persistCorridorMetadataOnly,
-  reconcileCorridorGeometry,
-  translateSeatCorridorBase,
-  translateSectionCorridorBase,
-  updateCorridorSplitAnchorsOnDrag,
-} from '../lib/corridor-reflow';
-import {
-  DEFAULT_CORRIDOR_THICKNESS,
-  MIN_CORRIDOR_THICKNESS,
-  applyCorridorRotationPreservingCenter,
-  isCorridorRotationOnlyTransform,
-  snapSmartCorridorRotation,
-} from '../lib/smart-corridor-layout';
-import { computeArtboardFitView } from '../lib/viewport-utils';
-import {
-  getSelectableItems,
-  normalizeSelection,
-  replaceSelection,
-  toggleSelectionItem,
-  type MapSelection,
-  type MapSelectionItem,
-} from '../lib/selection-utils';
-
-export type MapTool =
-  | 'select'
-  | 'pan'
-  | 'zoom'
-  | 'section'
-  | 'row'
-  | 'seat'
-  | 'table'
-  | 'stage'
-  | 'text'
-  | 'blocked'
-  | 'corridor'
-  | 'booth'
-  | 'general'
-  | 'shape-square'
-  | 'shape-circle'
-  | 'shape-ellipse'
-  | 'shape-triangle';
-
-export type { MapSelection, MapSelectionItem };
+export type { MapSelection, MapSelectionItem, MapTool };
 
 type EventMapEditorState = {
   map: EventMapDTO | null;
@@ -95,8 +15,18 @@ type EventMapEditorState = {
   pan: { x: number; y: number };
   viewportSize: { width: number; height: number };
   isDirty: boolean;
-  past: EventMapDTO[];
-  future: EventMapDTO[];
+  past: Array<{
+    execute: MapCommand;
+    undo: MapCommand;
+    executeSelection?: MapSelection;
+    undoSelection?: MapSelection;
+  }>;
+  future: Array<{
+    execute: MapCommand;
+    undo: MapCommand;
+    executeSelection?: MapSelection;
+    undoSelection?: MapSelection;
+  }>;
   zoomToolPinned: boolean;
   temporaryZoomPreviousTool: MapTool | null;
   zoomScrubbedThisHold: boolean;
@@ -195,8 +125,178 @@ function cloneNormalizeAndReflowMap(map: EventMapDTO): EventMapDTO {
   return next;
 }
 
-function withHistory(state: EventMapEditorState) {
-  return state.map ? [...state.past.slice(-24), cloneMap(state.map)] : state.past;
+function buildRedoUpdateItems(
+  map: EventMapDTO,
+  nextMap: EventMapDTO,
+): MapCommand {
+  const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
+  const seats: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
+  const sections: Array<{ id: string; patch: Partial<EventMapSectionDTO> }> = [];
+  const levels: Array<{ id: string; patch: Partial<EventMapLevelDTO> }> = [];
+
+  for (const next of nextMap.objects) {
+    const prev = map.objects.find((o) => o.id === next.id);
+    if (!prev) continue;
+    const patch: Partial<EventMapObjectDTO> = {};
+    let changed = false;
+    for (const key of ['x', 'y', 'width', 'height', 'rotation', 'locked', 'hidden', 'sortOrder'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = next[key];
+        changed = true;
+      }
+    }
+    if (JSON.stringify(prev.data) !== JSON.stringify(next.data)) {
+      patch.data = next.data;
+      changed = true;
+    }
+    if (changed) {
+      objects.push({ id: next.id, patch });
+    }
+  }
+
+  for (const next of nextMap.seats) {
+    const prev = map.seats.find((s) => s.id === next.id);
+    if (!prev) continue;
+    const patch: Partial<EventSeatDTO> = {};
+    let changed = false;
+    for (const key of ['x', 'y', 'size', 'rotation', 'status', 'accessible', 'publicVisible', 'technicalCode', 'displayLabel', 'rowLabel', 'seatNumber', 'objectId', 'groupId'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = next[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      seats.push({ id: next.id, patch });
+    }
+  }
+
+  for (const next of nextMap.sections) {
+    const prev = map.sections.find((s) => s.id === next.id);
+    if (!prev) continue;
+    const patch: Partial<EventMapSectionDTO> = {};
+    let changed = false;
+    for (const key of ['name', 'color', 'capacity', 'status', 'notes', 'lotId'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = next[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      sections.push({ id: next.id, patch });
+    }
+  }
+
+  for (const next of nextMap.levels) {
+    const prev = map.levels.find((l) => l.id === next.id);
+    if (!prev) continue;
+    const patch: Partial<EventMapLevelDTO> = {};
+    let changed = false;
+    for (const key of ['name', 'sortOrder', 'widthPx', 'heightPx', 'unit', 'scale'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = next[key];
+        changed = true;
+      }
+    }
+    if (changed) {
+      levels.push({ id: next.id, patch });
+    }
+  }
+
+  return {
+    type: 'UPDATE_ITEMS',
+    payload: {
+      objects,
+      seats,
+      sections,
+      levels,
+      skipCorridorReflow: true,
+      skipSeatBaseLayoutTranslation: true,
+    },
+  };
+}
+
+function buildRedoCommand(
+  command: MapCommand,
+  map: EventMapDTO,
+  nextMap: EventMapDTO,
+): MapCommand {
+  const createdObjects = nextMap.objects.filter((no) => !map.objects.some((o) => o.id === no.id));
+  const createdSeats = nextMap.seats.filter((ns) => !map.seats.some((s) => s.id === ns.id));
+  const createdSections = nextMap.sections.filter((ns) => !map.sections.some((s) => s.id === ns.id));
+  const createdLevels = nextMap.levels.filter((nl) => !map.levels.some((l) => l.id === nl.id));
+  const createdSeatGroups = (nextMap.seatGroups ?? []).filter((ng) => !(map.seatGroups ?? []).some((g) => g.id === ng.id));
+
+  if (
+    createdObjects.length > 0 ||
+    createdSeats.length > 0 ||
+    createdSections.length > 0 ||
+    createdLevels.length > 0 ||
+    createdSeatGroups.length > 0
+  ) {
+    return {
+      type: 'RESTORE_DELETED_ITEMS',
+      payload: {
+        objects: createdObjects,
+        seats: createdSeats,
+        sections: createdSections,
+        levels: createdLevels,
+        seatGroups: createdSeatGroups,
+      },
+    };
+  }
+
+  if (
+    command.type === 'DELETE_SELECTION' ||
+    command.type === 'DELETE_LEVEL' ||
+    command.type === 'DELETE_SEAT_GROUP'
+  ) {
+    return command;
+  }
+
+  return buildRedoUpdateItems(map, nextMap);
+}
+
+function commitCommandResult(
+  state: EventMapEditorState,
+  command: MapCommand,
+  res: ReturnType<typeof executeMapCommand>,
+) {
+  const hasMapChanged = res.map !== state.map;
+  let nextPast = state.past;
+  if (hasMapChanged && res.undoCommand) {
+    const redoCommand = buildRedoCommand(command, state.map!, res.map);
+    nextPast = [
+      ...state.past.slice(-24),
+      {
+        execute: redoCommand,
+        undo: res.undoCommand,
+        executeSelection: res.selection ?? state.selection,
+        undoSelection: state.selection,
+      },
+    ];
+  }
+  return {
+    ...(hasMapChanged ? { map: res.map, isDirty: true, past: nextPast, future: [] } : {}),
+    selection: res.selection ?? state.selection,
+    ...(res.activeLevelId ? { activeLevelId: res.activeLevelId } : {}),
+  };
+}
+
+function runCommand(
+  state: EventMapEditorState,
+  command: MapCommand,
+): Partial<EventMapEditorState> {
+  if (!state.map) return {};
+  const res = executeMapCommand(
+    state.map,
+    command,
+    {
+      activeLevelId: state.activeLevelId,
+      selection: state.selection,
+      runtime: { createId: createLocalId },
+    },
+  );
+  return commitCommandResult(state, command, res);
 }
 
 function getDefaultActiveLevelId(levels: EventMapLevelDTO[]) {
@@ -485,973 +585,123 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
       return { zoom: fit.zoom, pan: fit.pan };
     }),
   addObjectAt: (tool, point, size) => {
+    const id = createLocalId(tool === 'section' ? 'section' : tool === 'seat' ? 'seat' : 'object');
     let createdId: string | null = null;
-
     set((state) => {
-      const map = state.map ? cloneMap(state.map) : null;
-      const level = getActiveLevel(map, state.activeLevelId);
-      if (!map || !level) return state;
-      const past = withHistory(state);
-
-      if (tool === 'section') {
-        const section = createDefaultSection(
-          map,
-          level.id,
-          point,
-          size?.width && size?.height ? { width: size.width, height: size.height } : undefined,
-        );
-        createdId = section.id;
-        updateCounts(map);
-        return { map, selection: replaceSelection({ type: 'section', id: section.id }), tool: 'select', isDirty: true, past, future: [] };
-      }
-
-      if (tool === 'seat') {
-        const section = ensureSection(map, level.id, point);
-        const seatNumber = String(map.seats.filter((seat) => seat.sectionId === section.id).length + 1);
-        const seat: EventSeatDTO = {
-          id: createLocalId('seat'),
-          levelId: level.id,
-          sectionId: section.id,
-          objectId: null,
-          groupId: null,
-          rowIndex: null,
-          columnIndex: null,
-          technicalCode: `${section.name.replace(/\s+/g, '-').toUpperCase()}-${seatNumber}`,
-          displayLabel: seatNumber,
-          rowLabel: null,
-          seatNumber,
-          status: 'AVAILABLE',
-          accessible: false,
-          publicVisible: true,
-          x: point.x,
-          y: point.y,
-          size: 24,
-          rotation: 0,
-        };
-        map.seats.push(seat);
-        createdId = seat.id;
-        updateCounts(map);
-        return { map, selection: replaceSelection({ type: 'seat', id: seat.id }), tool: 'select', isDirty: true, past, future: [] };
-      }
-
-      const configByTool: Partial<
-        Record<MapTool, { type: EventMapObjectDTO['type']; width: number; height: number; data: Record<string, unknown> }>
-      > = {
-        table: { type: 'TABLE' as const, width: 120, height: 90, data: { fill: '#f8fafc' } },
-        stage: { type: 'STAGE' as const, width: 360, height: 110, data: { fill: '#111827' } },
-        text: { type: 'TEXT' as const, width: 0, height: 0, data: { text: '' } },
-        blocked: { type: 'BLOCKED_AREA' as const, width: 220, height: 100, data: { fill: '#e2e8f0' } },
-        corridor: {
-          type: 'CORRIDOR' as const,
-          width: 32,
-          height: 280,
-          data: {
-            fill: '#f8fafc',
-            smartCorridor: true,
-            seatGapTop: 8,
-            seatGapRight: 8,
-            seatGapBottom: 8,
-            seatGapLeft: 8,
-            corridorThickness: 32,
-          },
+      if (!state.map) return state;
+      const cmd: MapCommand = { type: 'ADD_OBJECT', payload: { id, tool, point, size } };
+      const res = executeMapCommand(
+        state.map,
+        cmd,
+        {
+          activeLevelId: state.activeLevelId,
+          selection: state.selection,
+          runtime: { createId: createLocalId },
         },
-        booth: { type: 'BOOTH' as const, width: 180, height: 120, data: { fill: '#fff7ed' } },
-        general: { type: 'GENERAL_AREA' as const, width: 280, height: 160, data: { fill: '#ecfeff' } },
-        'shape-square': { type: 'GENERAL_AREA' as const, width: 130, height: 130, data: { fill: '#ffffff', shape: 'square' } },
-        'shape-circle': { type: 'GENERAL_AREA' as const, width: 130, height: 130, data: { fill: '#ffffff', shape: 'circle' } },
-        'shape-ellipse': { type: 'GENERAL_AREA' as const, width: 180, height: 110, data: { fill: '#ffffff', shape: 'ellipse' } },
-        'shape-triangle': { type: 'GENERAL_AREA' as const, width: 150, height: 130, data: { fill: '#ffffff', shape: 'triangle' } },
-      };
-      const config = configByTool[tool];
-
-      if (!config) return state;
-
-      const textMode = config.type === 'TEXT' ? getTextModeFromCreation(size?.width ?? null, size?.height ?? null) : undefined;
-      const objectWidth = config.type === 'TEXT' && !size?.width ? null : size?.width ?? config.width;
-      const objectHeight = config.type === 'TEXT' && !size?.height ? null : size?.height ?? config.height;
-      const objectData: Record<string, unknown> =
-        config.type === 'TEXT'
-          ? normalizeTextData({
-              ...withAutoObjectLabel(config.data, tool, map.objects),
-              textMode,
-            })
-          : withAutoObjectLabel(config.data, tool, map.objects);
-
-      if (config.type === 'CORRIDOR') {
-        const width = typeof objectWidth === 'number' ? objectWidth : config.width;
-        const height = typeof objectHeight === 'number' ? objectHeight : config.height;
-        const axis = inferCorridorAxisFromSize(width, height);
-        const rawThickness = axis === 'vertical' ? width : height;
-        objectData.smartCorridor = true;
-        objectData.seatGapTop = 8;
-        objectData.seatGapRight = 8;
-        objectData.seatGapBottom = 8;
-        objectData.seatGapLeft = 8;
-        objectData.corridorThickness =
-          rawThickness >= MIN_CORRIDOR_THICKNESS
-            ? Math.min(rawThickness, 240)
-            : DEFAULT_CORRIDOR_THICKNESS;
-        objectData.corridorAxis = axis;
-        objectData.corridorAutoFit = true;
-      }
-
-      const object: EventMapObjectDTO = {
-        id: createLocalId('object'),
-        levelId: level.id,
-        sectionId: null,
-        type: config.type,
-        data: objectData,
-        x: point.x,
-        y: point.y,
-        width: objectWidth,
-        height: objectHeight,
-        rotation: 0,
-        locked: false,
-        hidden: false,
-        sortOrder: map.objects.length,
-      };
-      map.objects.push(object);
-      createdId = object.id;
-      if (object.type === 'CORRIDOR') applyCorridorReflow(map);
-      updateCounts(map);
-      return { map, selection: replaceSelection({ type: 'object', id: object.id }), tool: 'select', isDirty: true, past, future: [] };
+      );
+      createdId = res.createdId ?? null;
+      return commitCommandResult(state, cmd, res);
     });
-
     return createdId;
   },
-  addRowAt: (point, quantity = 12) =>
-    set((state) => {
-      const map = state.map ? cloneMap(state.map) : null;
-      const level = getActiveLevel(map, state.activeLevelId);
-      if (!map || !level) return state;
-      const past = withHistory(state);
-      const section = ensureSection(map, level.id, point);
-      const rowIndex = new Set(map.seats.map((seat) => seat.rowLabel).filter(Boolean)).size;
-      const rowLabel = String.fromCharCode(65 + Math.min(rowIndex, 25));
-      const spacing = 34;
-      const startX = point.x;
-      const startY = point.y;
-
-      for (let index = 0; index < quantity; index += 1) {
-        const number = String(index + 1);
-        map.seats.push({
-          id: createLocalId('seat'),
-          levelId: level.id,
-          sectionId: section.id,
-          objectId: null,
-          groupId: null,
-          rowIndex: null,
-          columnIndex: null,
-          technicalCode: `${rowLabel}${number}`,
-          displayLabel: `${rowLabel}${number}`,
-          rowLabel,
-          seatNumber: number,
-          status: 'AVAILABLE',
-          accessible: false,
-          publicVisible: true,
-          x: startX + index * spacing,
-          y: startY,
-          size: 24,
-          rotation: 0,
-        });
-      }
-
-      updateCounts(map);
-      return { map, selection: replaceSelection({ type: 'section', id: section.id }), tool: 'select', isDirty: true, past, future: [] };
-    }),
-  addSeatGridAt: (point, config) =>
-    set((state) => {
-      const map = state.map ? cloneMap(state.map) : null;
-      const level = getActiveLevel(map, state.activeLevelId);
-      if (!map || !level) return state;
-
-      const seats = buildSeatGridPreview(point, config);
-      if (seats.length === 0) return state;
-      const sectionBounds = getSeatGridPreviewBounds(seats, SEAT_GRID_SECTION_PADDING);
-      if (!sectionBounds) return state;
-
-      const past = withHistory(state);
-      const color = DEFAULT_COLORS[map.sections.length % DEFAULT_COLORS.length];
-      const sectionId = createLocalId('section');
-      const objectId = createLocalId('object');
-      const groupId = createLocalId('seatgroup');
-      const sectionName = `Setor ${map.sections.length + 1}`;
-      const sectionCode = sectionName.replace(/\s+/g, '-').toUpperCase();
-      const normalized = normalizeSeatGridConfig(config);
-      const gapX = Math.max(0, normalized.horizontalSpacing - normalized.seatSize);
-      const gapY = Math.max(0, normalized.verticalSpacing - normalized.seatSize);
-
-      map.sections.push({
-        id: sectionId,
-        levelId: level.id,
-        lotId: null,
-        lot: null,
-        name: sectionName,
-        color,
-        capacity: seats.length,
-        status: 'ACTIVE',
-        notes: null,
-      });
-
-      map.objects.push({
-        id: objectId,
-        levelId: level.id,
-        sectionId,
-        type: 'SECTION',
-        data: { label: sectionName, fill: color, opacity: 0.1, cornerRadius: 10 },
-        x: sectionBounds.x,
-        y: sectionBounds.y,
-        width: sectionBounds.width,
-        height: sectionBounds.height,
-        rotation: 0,
-        locked: false,
-        hidden: false,
-        sortOrder: map.objects.length,
-      });
-
-      map.seatGroups = map.seatGroups ?? [];
-      // group.x/y is the top-left corner: buildSeatGridPreview stores seat centers at origin+col*step,
-      // but getSeatLocalPosition adds seatWidth/2 from the group origin — so offset by -seatSize/2
-      const seatGroup: EventSeatGroupDTO = {
-        id: groupId,
-        levelId: level.id,
-        name: sectionName,
-        x: point.x - normalized.seatSize / 2,
-        y: point.y - normalized.seatSize / 2,
-        rotation: 0,
-        rows: normalized.rows,
-        columns: normalized.columns,
-        seatWidth: normalized.seatSize,
-        seatHeight: normalized.seatSize,
-        gapX,
-        gapY,
-        paddingTop: 0,
-        paddingRight: 0,
-        paddingBottom: 0,
-        paddingLeft: 0,
-        numbering: {
-          format: 'number',
-          rowPrefix: normalized.rowPrefix,
-          startNumber: normalized.startNumber,
-          direction: normalized.numberingDirection,
-        },
-        locked: false,
-      };
-      map.seatGroups.push(seatGroup);
-
-      for (const draft of seats) {
-        const id = createLocalId('seat');
-        map.seats.push({
-          id,
-          levelId: level.id,
-          sectionId,
-          objectId: null,
-          groupId,
-          rowIndex: draft.rowIndex,
-          columnIndex: draft.columnIndex,
-          technicalCode: `${sectionCode}-${draft.technicalCode}`,
-          displayLabel: draft.displayLabel,
-          rowLabel: draft.rowLabel,
-          seatNumber: draft.seatNumber,
-          status: 'AVAILABLE',
-          accessible: false,
-          publicVisible: true,
-          x: draft.x,
-          y: draft.y,
-          size: draft.size,
-          rotation: 0,
-        });
-      }
-
-      applyCorridorReflow(map);
-      updateCounts(map);
-
-      return {
-        map,
-        selection: replaceSelection({ type: 'section', id: sectionId }),
-        tool: 'select',
-        isDirty: true,
-        past,
-        future: [],
-      };
-    }),
-  updateSeatGroup: (id, patch) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const groupIndex = (map.seatGroups ?? []).findIndex((g) => g.id === id);
-      if (groupIndex === -1) return state;
-      const prev = map.seatGroups[groupIndex]!;
-      const next = { ...prev, ...patch };
-      map.seatGroups[groupIndex] = next;
-
-      const rowsChanged = typeof patch.rows === 'number' && patch.rows !== prev.rows;
-      const colsChanged = typeof patch.columns === 'number' && patch.columns !== prev.columns;
-
-      if (rowsChanged || colsChanged) {
-        // Remove seats outside the new bounds
-        map.seats = map.seats.filter((seat) => {
-          if (seat.groupId !== id) return true;
-          return (seat.rowIndex ?? 0) < next.rows && (seat.columnIndex ?? 0) < next.columns;
-        });
-
-        // Determine numbering params from stored config
-        const numbering = next.numbering as Record<string, unknown>;
-        const rowPrefix = String(numbering.rowPrefix ?? 'A');
-        const startNumber = Number(numbering.startNumber ?? 1);
-        const direction = numbering.direction === 'right-to-left' ? 'right-to-left' : 'left-to-right';
-
-        // Find the sectionId from existing seats in this group
-        const existingSeat = map.seats.find((s) => s.groupId === id);
-        const sectionId = existingSeat?.sectionId ?? null;
-        const section = sectionId ? map.sections.find((s) => s.id === sectionId) : null;
-        const sectionCode = section?.name?.replace(/\s+/g, '-').toUpperCase() ?? 'SECTION';
-
-        // Build set of existing rowIndex/columnIndex pairs
-        const existingPairs = new Set(
-          map.seats.filter((s) => s.groupId === id).map((s) => `${s.rowIndex ?? 0}:${s.columnIndex ?? 0}`),
-        );
-
-        const stepX = next.seatWidth + next.gapX;
-        const stepY = next.seatHeight + next.gapY;
-
-        if (!sectionId) {
-          // New seats require an existing section context from the group.
-        } else {
-        for (let rowIndex = 0; rowIndex < next.rows; rowIndex++) {
-          for (let colIndex = 0; colIndex < next.columns; colIndex++) {
-            if (existingPairs.has(`${rowIndex}:${colIndex}`)) continue;
-            const visualColIndex = direction === 'right-to-left' ? next.columns - colIndex - 1 : colIndex;
-            const rowLabel = getSeatGridRowLabel(rowIndex, rowPrefix);
-            const seatNumber = String(startNumber + visualColIndex);
-            const displayLabel = `${rowLabel}${seatNumber}`;
-            map.seats.push({
-              id: createLocalId('seat'),
-              levelId: next.levelId,
-              sectionId,
-              objectId: null,
-              groupId: id,
-              rowIndex,
-              columnIndex: colIndex,
-              technicalCode: `${sectionCode}-${displayLabel}`,
-              displayLabel,
-              rowLabel,
-              seatNumber,
-              status: 'AVAILABLE',
-              accessible: false,
-              publicVisible: true,
-              x: next.x + next.paddingLeft + colIndex * stepX + next.seatWidth / 2,
-              y: next.y + next.paddingTop + rowIndex * stepY + next.seatHeight / 2,
-              size: next.seatWidth,
-              rotation: 0,
-            });
-          }
-        }
-        }
-      }
-
-      // Recompute seat positions when x/y/spacing params change
-      if (
-        typeof patch.x === 'number' ||
-        typeof patch.y === 'number' ||
-        typeof patch.seatWidth === 'number' ||
-        typeof patch.seatHeight === 'number' ||
-        typeof patch.gapX === 'number' ||
-        typeof patch.gapY === 'number' ||
-        typeof patch.paddingTop === 'number' ||
-        typeof patch.paddingLeft === 'number'
-      ) {
-        const stepX = next.seatWidth + next.gapX;
-        const stepY = next.seatHeight + next.gapY;
-        map.seats = map.seats.map((seat) => {
-          if (seat.groupId !== id) return seat;
-          const row = seat.rowIndex ?? 0;
-          const col = seat.columnIndex ?? 0;
-          return {
-            ...seat,
-            x: next.x + next.paddingLeft + col * stepX + next.seatWidth / 2,
-            y: next.y + next.paddingTop + row * stepY + next.seatHeight / 2,
-          };
-        });
-      }
-
-      updateCounts(map);
-      applyCorridorReflow(map);
-      return { map, isDirty: true, past, future: [] };
-    }),
-  deleteSeatGroup: (id) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      // Track which sections may become empty after removing this group's seats
-      const removedSeatSectionIds = new Set(
-        map.seats
-          .filter((s) => s.groupId === id)
-          .map((s) => s.sectionId)
-          .filter((sid): sid is string => !!sid),
-      );
-      map.seatGroups = (map.seatGroups ?? []).filter((g) => g.id !== id);
-      map.seats = map.seats.filter((s) => s.groupId !== id);
-      // Remove sections (and their boundary objects) that are now completely empty of seats
-      for (const sectionId of removedSeatSectionIds) {
-        if (!map.seats.some((s) => s.sectionId === sectionId)) {
-          map.objects = map.objects.filter((o) => !o.sectionId || o.sectionId !== sectionId);
-          map.sections = map.sections.filter((s) => s.id !== sectionId);
-        }
-      }
-      updateCounts(map);
-      return { map, selection: [], isDirty: true, past, future: [] };
-    }),
-  updateObject: (id, patch) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const target = map.objects.find((object) => object.id === id);
-      const sectionDelta =
-        target?.type === 'SECTION' && target.sectionId
-          ? {
-              sectionId: target.sectionId,
-              delta: {
-                x: typeof patch.x === 'number' ? patch.x - target.x : 0,
-                y: typeof patch.y === 'number' ? patch.y - target.y : 0,
-              },
-            }
-          : null;
-      map.objects = map.objects.map((object) => {
-        if (object.id !== id) return object;
-        return applyObjectPatchWithCorridorMetadata(object, patch);
-      });
-      if (sectionDelta) translateSectionCorridorBase(map, sectionDelta.sectionId, sectionDelta.delta);
-      applyCorridorReflow(map, corridorReflowOptionsForPatch(target, patch));
-      return { map, isDirty: true, past, future: [] };
-    }),
-  updateObjects: (updates) =>
-    set((state) => {
-      if (!state.map || updates.length === 0) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const patchById = new Map(updates.map((entry) => [entry.id, entry.patch]));
-      const sectionDeltas: Array<{ sectionId: string; delta: { x: number; y: number } }> = [];
-
-      for (const object of map.objects) {
-        const patch = patchById.get(object.id);
-        if (!patch || object.type !== 'SECTION' || !object.sectionId) continue;
-        const nextX = typeof patch.x === 'number' ? patch.x : object.x;
-        const nextY = typeof patch.y === 'number' ? patch.y : object.y;
-        const dx = nextX - object.x;
-        const dy = nextY - object.y;
-        if (Math.abs(dx) >= 0.001 || Math.abs(dy) >= 0.001) {
-          sectionDeltas.push({ sectionId: object.sectionId, delta: { x: dx, y: dy } });
-        }
-      }
-
-      map.objects = map.objects.map((object) => {
-        const patch = patchById.get(object.id);
-        if (!patch) return object;
-        return applyObjectPatchWithCorridorMetadata(object, patch);
-      });
-
-      for (const entry of sectionDeltas) {
-        translateSectionCorridorBase(map, entry.sectionId, entry.delta);
-      }
-
-      const rotationOnlyCorridorIds = updates
-        .map((entry) => {
-          const object = state.map?.objects.find((candidate) => candidate.id === entry.id);
-          if (object?.type !== 'CORRIDOR' || !isCorridorRotationOnlyTransform(entry.patch, object)) return null;
-          return object.id;
-        })
-        .filter((id): id is string => Boolean(id));
-
-      applyCorridorReflow(
-        map,
-        rotationOnlyCorridorIds.length > 0 ? { freezeAutoFitCorridorIds: rotationOnlyCorridorIds } : undefined,
-      );
-      return { map, isDirty: true, past, future: [] };
-    }),
-  updateMapItems: ({ objects = [], seats = [], skipSeatBaseLayoutTranslation = false, skipCorridorReflow = false }) =>
-    set((state) => {
-      if (!state.map || (objects.length === 0 && seats.length === 0)) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const objectPatchById = new Map(objects.map((entry) => [entry.id, entry.patch]));
-      const seatPatchById = new Map(seats.map((entry) => [entry.id, entry.patch]));
-      const sectionDeltaById = new Map<string, { x: number; y: number }>();
-
-      if (objectPatchById.size > 0) {
-        for (const object of map.objects) {
-          const patch = objectPatchById.get(object.id);
-          if (!patch || object.type !== 'SECTION' || !object.sectionId) continue;
-          const nextX = typeof patch.x === 'number' ? patch.x : object.x;
-          const nextY = typeof patch.y === 'number' ? patch.y : object.y;
-          const dx = nextX - object.x;
-          const dy = nextY - object.y;
-          if (Math.abs(dx) >= 0.001 || Math.abs(dy) >= 0.001) {
-            sectionDeltaById.set(object.sectionId, { x: dx, y: dy });
-          }
-        }
-
-        map.objects = map.objects.map((object) => {
-          const patch = objectPatchById.get(object.id);
-          if (!patch) return object;
-          return applyObjectPatchWithCorridorMetadata(object, patch);
-        });
-
-        for (const [sectionId, delta] of sectionDeltaById) {
-          translateSectionCorridorBase(map, sectionId, delta);
-        }
-      }
-
-      if (seatPatchById.size > 0) {
-        if (!skipSeatBaseLayoutTranslation) {
-          const seatBaseDeltas: Array<{ seatId: string; sectionId: string; delta: { x: number; y: number } }> = [];
-          for (const seat of map.seats) {
-            const patch = seatPatchById.get(seat.id);
-            if (!patch) continue;
-            const nextX = typeof patch.x === 'number' ? patch.x : seat.x;
-            const nextY = typeof patch.y === 'number' ? patch.y : seat.y;
-            const sectionDelta = sectionDeltaById.get(seat.sectionId) ?? { x: 0, y: 0 };
-            const residualDelta = {
-              x: nextX - seat.x - sectionDelta.x,
-              y: nextY - seat.y - sectionDelta.y,
-            };
-            if (Math.abs(residualDelta.x) >= 0.001 || Math.abs(residualDelta.y) >= 0.001) {
-              seatBaseDeltas.push({ seatId: seat.id, sectionId: seat.sectionId, delta: residualDelta });
-            }
-          }
-          translateSeatCorridorBase(map, seatBaseDeltas);
-        }
-
-        map.seats = map.seats.map((seat) => {
-          const patch = seatPatchById.get(seat.id);
-          return patch ? { ...seat, ...patch } : seat;
-        });
-        updateCounts(map);
-      }
-
-      if (!skipCorridorReflow) {
-        applyCorridorReflow(map);
-      }
-
-      return { map, isDirty: true, past, future: [] };
-    }),
   deleteObject: (id) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.objects = sanitizeGroupMembership(map.objects.filter((object) => object.id !== id));
-      applyCorridorReflow(map);
-      return {
-        map,
-        selection: state.selection.filter((item) => !(item.type === 'object' && item.id === id)),
-        isDirty: true,
-        past,
-        future: [],
-      };
-    }),
+    set((state) => runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'object', id }] } })),
+  addRowAt: (point, quantity = 12) =>
+    set((state) => runCommand(state, { type: 'ADD_ROW', payload: { point, quantity } })),
+  addSeatGridAt: (point, config) =>
+    set((state) => runCommand(state, { type: 'ADD_SEAT_GRID', payload: { point, config } })),
+  updateSeatGroup: (id, patch) =>
+    set((state) => runCommand(state, { type: 'UPDATE_SEAT_GROUP', payload: { id, patch } })),
+  deleteSeatGroup: (id) =>
+    set((state) => runCommand(state, { type: 'DELETE_SEAT_GROUP', payload: { id } })),
+  updateObject: (id, patch) =>
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: [{ id, patch }] } })),
+  updateObjects: (updates) =>
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: updates } })),
+  updateMapItems: ({ objects = [], seats = [], skipSeatBaseLayoutTranslation, skipCorridorReflow }) =>
+    set((state) =>
+      runCommand(state, {
+        type: 'UPDATE_ITEMS',
+        payload: {
+          objects,
+          seats,
+          skipSeatBaseLayoutTranslation,
+          skipCorridorReflow,
+        },
+      }),
+    ),
   updateSeat: (id, patch) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const target = map.seats.find((seat) => seat.id === id);
-      if (target) {
-        const nextX = typeof patch.x === 'number' ? patch.x : target.x;
-        const nextY = typeof patch.y === 'number' ? patch.y : target.y;
-        translateSeatCorridorBase(map, [
-          {
-            seatId: target.id,
-            sectionId: target.sectionId,
-            delta: { x: nextX - target.x, y: nextY - target.y },
-          },
-        ]);
-      }
-      map.seats = map.seats.map((seat) => (seat.id === id ? { ...seat, ...patch } : seat));
-      applyCorridorReflow(map);
-      updateCounts(map);
-      return { map, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { seats: [{ id, patch }] } })),
   updateSection: (id, patch) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.sections = map.sections.map((section) => (section.id === id ? { ...section, ...patch } : section));
-      if (patch.name || patch.color) {
-        map.objects = map.objects.map((object) =>
-          object.sectionId === id
-            ? {
-                ...object,
-                data: {
-                  ...object.data,
-                  ...(patch.name ? { label: patch.name } : {}),
-                  ...(patch.color ? { fill: patch.color } : {}),
-                },
-              }
-            : object,
-        );
-      }
-      return { map, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { sections: [{ id, patch }] } })),
   updateLevel: (id, patch) =>
-    set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.levels = map.levels.map((level) => {
-        if (level.id !== id) return level;
-        const { widthPx: _widthPx, heightPx: _heightPx, unit: _unit, sortOrder: _sortOrder, ...allowedPatch } = patch;
-        if (isPlateiaBaseLevel(level)) {
-          return {
-            ...level,
-            ...allowedPatch,
-            widthPx: MAP_AREA_WIDTH_PX,
-            heightPx: MAP_AREA_HEIGHT_PX,
-            unit: 'px',
-          };
-        }
-        return {
-          ...level,
-          ...allowedPatch,
-          widthPx: MAP_AREA_WIDTH_PX,
-          heightPx: MAP_AREA_HEIGHT_PX,
-          unit: 'px',
-        };
-      });
-      applyMapLevels(map);
-      return { map, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { levels: [{ id, patch }] } })),
   addLevel: (name) =>
     set((state) => {
-      if (!state.map) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const levelCount = normalizeMapLevels(map.levels).length;
-      const level: EventMapLevelDTO = {
-        id: createLocalId('level'),
-        name: name?.trim() || `Ambiente ${levelCount + 1}`,
-        sortOrder: getNextLevelSortOrder(map.levels),
-        widthPx: MAP_AREA_WIDTH_PX,
-        heightPx: MAP_AREA_HEIGHT_PX,
-        unit: 'px',
-        scale: null,
-      };
-      map.levels.push(level);
-      applyMapLevels(map);
-      return {
-        map,
-        activeLevelId: level.id,
-        selection: replaceSelection({ type: 'level', id: level.id }),
-        isDirty: true,
-        past,
-        future: [],
-      };
+      const levelId = createLocalId('level');
+      return runCommand(state, { type: 'ADD_LEVEL', payload: { levelId, name } });
     }),
   toggleObjectVisibility: (id) =>
     set((state) => {
       if (!state.map) return state;
       const target = state.map.objects.find((object) => object.id === id);
       if (!target) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.objects = map.objects.map((object) => (object.id === id ? { ...object, hidden: !object.hidden } : object));
-      return { map, isDirty: true, past, future: [] };
+      return runCommand(state, {
+        type: 'UPDATE_ITEMS',
+        payload: { objects: [{ id, patch: { hidden: !target.hidden } }] },
+      });
     }),
   toggleSectionVisibility: (id) =>
     set((state) => {
       if (!state.map) return state;
       const linked = state.map.objects.find((object) => object.sectionId === id);
       const nextHidden = linked ? !linked.hidden : true;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.objects = map.objects.map((object) => (object.sectionId === id ? { ...object, hidden: nextHidden } : object));
-      map.seats = map.seats.map((seat) => (seat.sectionId === id ? { ...seat, publicVisible: !nextHidden } : seat));
-      updateCounts(map);
-      return { map, isDirty: true, past, future: [] };
+      const associatedSeats = state.map.seats
+        .filter((seat) => seat.sectionId === id)
+        .map((seat) => ({ id: seat.id, patch: { publicVisible: !nextHidden } }));
+      const associatedObjects = state.map.objects
+        .filter((object) => object.sectionId === id)
+        .map((object) => ({ id: object.id, patch: { hidden: nextHidden } }));
+      return runCommand(state, {
+        type: 'UPDATE_ITEMS',
+        payload: { objects: associatedObjects, seats: associatedSeats },
+      });
     }),
   deleteSection: (id) =>
-    set((state) => {
-      if (!state.map) return state;
-      const hasSoldSeat = state.map.seats.some((seat) => seat.sectionId === id && seat.status === 'SOLD');
-      if (hasSoldSeat) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.seats = map.seats.filter((seat) => seat.sectionId !== id);
-      map.objects = map.objects.filter((object) => object.sectionId !== id);
-      map.sections = map.sections.filter((section) => section.id !== id);
-      // Remove seatGroups that have no remaining seats
-      const usedGroupIds = new Set(map.seats.map((s) => s.groupId).filter((gid): gid is string => !!gid));
-      map.seatGroups = (map.seatGroups ?? []).filter((g) => usedGroupIds.has(g.id));
-      updateCounts(map);
-      return {
-        map,
-        selection: state.selection.filter((item) => !(item.type === 'section' && item.id === id)),
-        isDirty: true,
-        past,
-        future: [],
-      };
-    }),
+    set((state) => runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: [{ type: 'section', id }] } })),
   deleteLevel: (id) =>
-    set((state) => {
-      if (!state.map) return state;
-      const level = state.map.levels.find((entry) => entry.id === id);
-      if (!level || isPlateiaBaseLevel(level)) return state;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      map.seats = map.seats.filter((seat) => seat.levelId !== id);
-      map.objects = map.objects.filter((object) => object.levelId !== id);
-      map.sections = map.sections.filter((section) => section.levelId !== id);
-      map.seatGroups = (map.seatGroups ?? []).filter((g) => g.levelId !== id);
-      map.levels = map.levels.filter((entry) => entry.id !== id);
-      applyMapLevels(map);
-      updateCounts(map);
-      const activeLevelId = state.activeLevelId === id ? getDefaultActiveLevelId(map.levels) : state.activeLevelId;
-      const selection = state.selection.filter((item) => !(item.type === 'level' && item.id === id));
-      return { map, activeLevelId, selection, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'DELETE_LEVEL', payload: { levelId: id } })),
   deleteSelection: () =>
-    set((state) => {
-      const items = expandObjectSelectionItems(getSelectableItems(state.selection), state.map?.objects ?? []);
-      if (!state.map || items.length === 0) return state;
-
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-
-      for (const item of items) {
-        if (item.type === 'seat') {
-          const seat = map.seats.find((entry) => entry.id === item.id);
-          if (seat?.status === 'SOLD') return state;
-          map.seats = map.seats.filter((entry) => entry.id !== item.id);
-        }
-
-        if (item.type === 'object') {
-          map.objects = map.objects.filter((entry) => entry.id !== item.id);
-          applyCorridorReflow(map);
-        }
-
-        if (item.type === 'section') {
-          const hasSoldSeat = map.seats.some((seat) => seat.sectionId === item.id && seat.status === 'SOLD');
-          if (hasSoldSeat) return state;
-          map.seats = map.seats.filter((seat) => seat.sectionId !== item.id);
-          map.objects = map.objects.filter((object) => object.sectionId !== item.id);
-          map.sections = map.sections.filter((section) => section.id !== item.id);
-        }
-
-        if (item.type === 'seatgroup') {
-          const removedSeatSectionIds = new Set(
-            map.seats
-              .filter((s) => s.groupId === item.id)
-              .map((s) => s.sectionId)
-              .filter((sid): sid is string => !!sid),
-          );
-          map.seatGroups = (map.seatGroups ?? []).filter((g) => g.id !== item.id);
-          map.seats = map.seats.filter((s) => s.groupId !== item.id);
-          for (const sectionId of removedSeatSectionIds) {
-            if (!map.seats.some((s) => s.sectionId === sectionId)) {
-              map.objects = map.objects.filter((o) => !o.sectionId || o.sectionId !== sectionId);
-              map.sections = map.sections.filter((s) => s.id !== sectionId);
-            }
-          }
-        }
-      }
-
-      // Remove any seatGroups left without seats (e.g. after individual seat deletion)
-      const usedGroupIds = new Set(map.seats.map((s) => s.groupId).filter((gid): gid is string => !!gid));
-      map.seatGroups = (map.seatGroups ?? []).filter((g) => usedGroupIds.has(g.id));
-
-      map.objects = sanitizeGroupMembership(map.objects);
-      updateCounts(map);
-      return { map, selection: [], isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'DELETE_SELECTION', payload: { selection: state.selection } })),
   duplicateSelection: () =>
-    set((state) => {
-      const items = getSelectableItems(state.selection);
-      if (!state.map || items.length === 0) return state;
-
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const created: MapSelectionItem[] = [];
-      const groupIdMap = new Map<string, string>();
-      const groupLabelMap = new Map<string, string>();
-
-      for (const item of items) {
-        if (item.type === 'object') {
-          const object = map.objects.find((entry) => entry.id === item.id);
-          if (!object || object.locked) continue;
-          if (object.sectionId && object.type === 'SECTION') continue;
-          const oldGroupId = getObjectGroupId(object);
-          let nextGroupId: string | null = null;
-          let nextGroupLabel: string | null = null;
-          if (oldGroupId) {
-            if (!groupIdMap.has(oldGroupId)) {
-              groupIdMap.set(oldGroupId, createLocalId('group'));
-              groupLabelMap.set(
-                oldGroupId,
-                getNextGroupDisplayName(map.objects, getObjectGroupLabel(object)),
-              );
-            }
-            nextGroupId = groupIdMap.get(oldGroupId) ?? null;
-            nextGroupLabel = groupLabelMap.get(oldGroupId) ?? null;
-          }
-          const copy: EventMapObjectDTO = {
-            ...object,
-            id: createLocalId('object'),
-            x: object.x + 28,
-            y: object.y + 28,
-            sortOrder: map.objects.length,
-            data: setObjectGroupData(withDuplicateObjectLabel(object, map.objects), nextGroupId, nextGroupLabel),
-          };
-          map.objects.push(copy);
-          created.push({ type: 'object', id: copy.id });
-        }
-
-        if (item.type === 'seat') {
-          const seat = map.seats.find((entry) => entry.id === item.id);
-          if (!seat) continue;
-          const copy = {
-            ...seat,
-            id: createLocalId('seat'),
-            technicalCode: `${seat.technicalCode}-C`,
-            displayLabel: `${seat.displayLabel}C`,
-            x: seat.x + 34,
-            y: seat.y,
-            status: 'AVAILABLE' as const,
-          };
-          map.seats.push(copy);
-          created.push({ type: 'seat', id: copy.id });
-        }
-      }
-
-      if (created.length === 0) return state;
-      if (created.some((item) => {
-        if (item.type !== 'object') return false;
-        return map.objects.some((object) => object.id === item.id && object.type === 'CORRIDOR');
-      })) {
-        applyCorridorReflow(map);
-      }
-      updateCounts(map);
-      return { map, selection: created, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'DUPLICATE_SELECTION', payload: { selection: state.selection } })),
   groupSelection: () =>
-    set((state) => {
-      if (!state.map) return state;
-
-      const validation = validateGroupCandidates(getSelectableItems(state.selection), state.map.objects);
-      if (!validation.ok) return state;
-
-      const candidates = validation.candidates;
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const groupId = createLocalId('group');
-      const groupLabel = getNextGroupDisplayName(map.objects);
-      const memberIds = new Set(candidates.map((object) => object.id));
-
-      map.objects = map.objects.map((object) =>
-        memberIds.has(object.id)
-          ? { ...object, data: setObjectGroupData(object.data, groupId, groupLabel) }
-          : object,
-      );
-      map.objects = sanitizeGroupMembership(map.objects);
-
-      return {
-        map,
-        selection: candidates.map((object) => ({ type: 'object' as const, id: object.id })),
-        isDirty: true,
-        past,
-        future: [],
-      };
-    }),
+    set((state) => runCommand(state, { type: 'GROUP_SELECTION', payload: { selection: state.selection } })),
   ungroupSelection: () =>
-    set((state) => {
-      const items = getSelectableItems(state.selection).filter((item) => item.type === 'object');
-      if (!state.map || items.length === 0) return state;
-
-      const groupIds = new Set<string>();
-      for (const item of items) {
-        const object = state.map.objects.find((entry) => entry.id === item.id);
-        const groupId = object ? getObjectGroupId(object) : null;
-        if (groupId) groupIds.add(groupId);
-      }
-      if (groupIds.size === 0) return state;
-
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-
-      map.objects = map.objects.map((object) => {
-        const groupId = getObjectGroupId(object);
-        if (groupId && groupIds.has(groupId)) {
-          return { ...object, data: setObjectGroupData(object.data, null, null) };
-        }
-        return object;
-      });
-
-      return { map, isDirty: true, past, future: [] };
-    }),
-  nudgeSelection: ({ x: dx, y: dy }) =>
-    set((state) => {
-      const items = expandObjectSelectionItems(getSelectableItems(state.selection), state.map?.objects ?? []);
-      if (!state.map || items.length === 0 || (dx === 0 && dy === 0)) return state;
-
-      const map = cloneMap(state.map);
-      const past = withHistory(state);
-      const movedSectionIds = new Set(items.filter((item) => item.type === 'section').map((item) => item.id));
-
-      for (const item of items) {
-        if (item.type !== 'section') continue;
-
-        const linkedObject = map.objects.find((object) => object.sectionId === item.id);
-        if (linkedObject && !linkedObject.locked) {
-          linkedObject.x += dx;
-          linkedObject.y += dy;
-        }
-        translateSectionCorridorBase(map, item.id, { x: dx, y: dy });
-
-        for (const seat of map.seats) {
-          if (seat.sectionId === item.id && seat.status !== 'SOLD') {
-            seat.x += dx;
-            seat.y += dy;
-          }
-        }
-      }
-
-      for (const item of items) {
-        if (item.type === 'object') {
-          const object = map.objects.find((entry) => entry.id === item.id);
-          if (!object || object.locked) continue;
-          if (object.sectionId && movedSectionIds.has(object.sectionId)) continue;
-
-          const patched = applyObjectPatchWithCorridorMetadata(object, {
-            x: object.x + dx,
-            y: object.y + dy,
-          });
-          Object.assign(object, patched);
-        }
-
-        if (item.type === 'seat') {
-          const seat = map.seats.find((entry) => entry.id === item.id);
-          if (!seat || seat.status === 'SOLD') continue;
-          if (seat.sectionId && movedSectionIds.has(seat.sectionId)) continue;
-          seat.x += dx;
-          seat.y += dy;
-        }
-      }
-
-      applyCorridorReflow(map);
-      updateCounts(map);
-      return { map, isDirty: true, past, future: [] };
-    }),
+    set((state) => runCommand(state, { type: 'UNGROUP_SELECTION', payload: { selection: state.selection } })),
+  nudgeSelection: (delta) =>
+    set((state) => runCommand(state, { type: 'NUDGE_SELECTION', payload: { delta } })),
   undo: () =>
     set((state) => {
-      const previous = state.past.at(-1);
-      if (!previous || !state.map) return state;
+      const last = state.past.at(-1);
+      if (!last || !state.map) return state;
+
+      const res = executeMapCommand(
+        state.map,
+        last.undo,
+        {
+          activeLevelId: state.activeLevelId,
+          selection: last.undoSelection ?? state.selection,
+          runtime: { createId: createLocalId },
+        },
+      );
+
       return {
-        map: previous,
+        map: res.map,
+        selection: last.undoSelection ?? res.selection ?? state.selection,
+        ...(res.activeLevelId ? { activeLevelId: res.activeLevelId } : {}),
         past: state.past.slice(0, -1),
-        future: [cloneMap(state.map), ...state.future].slice(0, 24),
+        future: [last, ...state.future].slice(0, 24),
         isDirty: true,
       };
     }),
@@ -1459,9 +709,22 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     set((state) => {
       const next = state.future[0];
       if (!next || !state.map) return state;
+
+      const res = executeMapCommand(
+        state.map,
+        next.execute,
+        {
+          activeLevelId: state.activeLevelId,
+          selection: next.executeSelection ?? state.selection,
+          runtime: { createId: createLocalId },
+        },
+      );
+
       return {
-        map: next,
-        past: [...state.past, cloneMap(state.map)].slice(-24),
+        map: res.map,
+        selection: next.executeSelection ?? res.selection ?? state.selection,
+        ...(res.activeLevelId ? { activeLevelId: res.activeLevelId } : {}),
+        past: [...state.past, next].slice(-24),
         future: state.future.slice(1),
         isDirty: true,
       };

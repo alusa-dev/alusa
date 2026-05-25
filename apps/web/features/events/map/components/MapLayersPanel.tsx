@@ -1,16 +1,13 @@
 'use client';
-
-import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronRight, Eye, EyeOff, Group, Layers3, Trash2 } from 'lucide-react';
+import { isItemSelected, replaceSelection, resolveGroupSelectionItem, sortLevelPanelChildren } from '@alusa/domain';
+import type { EventMapDTO } from '../api/event-map-service';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import { MapObjectPreview, MapSectionPreview } from './MapObjectPreview';
 
 import { cn } from '@/lib/utils';
 
-import type { EventMapDTO } from '../api/event-map-service';
-import { sortLevelPanelChildren } from '../lib/level-utils';
-import { resolveGroupSelectionItem } from '../lib/object-groups';
-import { isItemSelected, replaceSelection } from '../lib/selection-utils';
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
-import { MapObjectPreview, MapSectionPreview } from './MapObjectPreview';
+import { useMemo, useState, type ReactNode } from 'react';
+import { ChevronRight, Eye, EyeOff, Group, Layers3, Trash2 } from 'lucide-react';
 
 function isSectionHidden(map: EventMapDTO, sectionId: string) {
   const linked = map.objects.find((object) => object.sectionId === sectionId);

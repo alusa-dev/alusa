@@ -1,4 +1,11 @@
 'use client';
+import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, TEXT_MODE_LABELS, applyTextModePatch, getPrimarySelection, getSelectableItems, getTextDecorationParts, getTextMode, snapSmartCorridorRotation } from '@alusa/domain';
+import type { TextMode } from '@alusa/domain';
+import type { TicketLotDTO } from '../../events-service';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
+
+import { cn } from '@/lib/utils';
 
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
@@ -10,24 +17,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-
-import type { TicketLotDTO } from '../../events-service';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
-import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX } from '../lib/level-utils';
-import { snapSmartCorridorRotation } from '../lib/smart-corridor-layout';
-import {
-  applyTextModePatch,
-  getTextDecorationParts,
-  getTextMode,
-  TEXT_MODE_LABELS,
-  type TextMode,
-} from '../lib/text-object';
-import {
-  getPrimarySelection,
-  getSelectableItems,
-} from '../lib/selection-utils';
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 const FIELD_CLASS = 'h-9 rounded-lg border-slate-200 bg-white text-sm shadow-none';
 const COLOR_INPUT_CLASS = 'h-9 w-11 shrink-0 rounded-lg border border-slate-200 bg-white p-1';

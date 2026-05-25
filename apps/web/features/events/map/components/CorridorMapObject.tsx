@@ -1,15 +1,12 @@
 'use client';
+import { SNAP_TARGET_NAME, shouldRenderIndividualCorridorBody } from '@alusa/domain';
+import type { CorridorUnionGroup, MapSelectionItem } from '@alusa/domain';
+import { getCorridorCanvasAppearance } from '../canvas/corridor-canvas';
+import type { EventMapObjectDTO } from '../api/event-map-service';
 
 import { memo } from 'react';
 import Konva from 'konva';
 import { Group, Rect } from 'react-konva';
-
-import type { EventMapObjectDTO } from '../api/event-map-service';
-import type { MapSelectionItem } from '../lib/selection-utils';
-import type { CorridorUnionGroup } from '../lib/corridor-union';
-import { getCorridorCanvasAppearance } from '../lib/corridor-canvas';
-import { shouldRenderIndividualCorridorBody } from '../lib/corridor-union';
-import { SNAP_TARGET_NAME } from '../lib/snap-guides';
 
 type CorridorMapObjectProps = {
   object: EventMapObjectDTO;

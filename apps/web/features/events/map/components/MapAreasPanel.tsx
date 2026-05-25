@@ -1,12 +1,10 @@
 'use client';
-
-import { Map, Plus, Trash2 } from 'lucide-react';
+import { isPlateiaBaseLevel, replaceSelection, sortLevelsForPanel } from '@alusa/domain';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { cn } from '@/lib/utils';
 
-import { isPlateiaBaseLevel, sortLevelsForPanel } from '../lib/level-utils';
-import { replaceSelection } from '../lib/selection-utils';
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import { Map, Plus, Trash2 } from 'lucide-react';
 
 export function MapAreasPanel() {
   const map = useEventMapEditorStore((state) => state.map);

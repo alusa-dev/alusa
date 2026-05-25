@@ -1,6 +1,6 @@
-import { cn } from '@/lib/utils';
-
 import type { EventMapObjectDTO } from '../api/event-map-service';
+
+import { cn } from '@/lib/utils';
 
 function getPreviewStyle(object: EventMapObjectDTO) {
   if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827' };

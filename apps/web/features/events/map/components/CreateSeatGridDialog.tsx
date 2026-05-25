@@ -1,8 +1,8 @@
 'use client';
+import { getSeatGridCapacity, normalizeSeatGridConfig } from '@alusa/domain';
+import type { SeatGridConfig } from '@alusa/domain';
 
 import { useState } from 'react';
-import type { SeatGridConfig } from '../lib/seat-grid';
-import { getSeatGridCapacity, normalizeSeatGridConfig } from '../lib/seat-grid';
 
 type CreateSeatGridDialogProps = {
   config: SeatGridConfig;

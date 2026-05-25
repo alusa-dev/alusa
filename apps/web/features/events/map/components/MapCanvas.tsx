@@ -1,110 +1,37 @@
 'use client';
+import { CORRIDOR_REFLOW_ITERATIONS, DEFAULT_SEAT_GRID_CONFIG, MIN_OBJECT_SIZE, SEAT_GRID_SECTION_PADDING, SNAP_TARGET_NAME, buildSeatGridPreview, buildSmartCorridorDragPreview, buildSmartCorridorTransformPreview, buildTextFontStyle, clampFontSize, clampFontSizeValue, clampObjectSize, cloneEventMap, expandObjectSelectionItems, extractCorridorDragCommitUpdates, extractGroupDragCommitUpdates, getCorridorUnionGroups, getObjectBounds, getSeatBounds, getSeatGridPreviewBounds, getSelectableItems, getTextDimensionsForMode, getTextMode, getTextModeFromCreation, getTextResizeAnchors, getTextWrap, intersectsRect, isCornerResizeAnchor, isHorizontalResizeAnchor, isItemSelected, isObjectInSelectedGroup, isSameSelectionItem, isSnapModifierActive, isTextBoxMode, isVerticalResizeAnchor, normalizeBoundsRect, normalizeTextData, replaceSelection, resolveCorridorDragMode, resolveDragTarget, resolveGroupSelectionItem, selectionHasMixedTextAndShapes, suggestNextSeatGridConfig } from '@alusa/domain';
+import type { CorridorDragMode, LevelBounds, MapSelectionItem, SeatGridConfig, TextMode } from '@alusa/domain';
+import { applyMapTransformLivePreview, beginMapTransformSession, buildMapTransformCommit, resetMapTransformTransformer } from '../canvas/map-transform-session';
+import type { MapTransformSession } from '../canvas/map-transform-session';
+import { buildCorridorTransformCommitPatches } from '../canvas/corridor-transform-session';
+import { DEFAULT_TRANSFORMER_SCALE_OPTIONS, resolveCorridorTransformerScaleOptions, resolveGenericTransformerScaleOptions, resolveUniformTransformerScaleOptions } from '../canvas/transform-handle-mode';
+import type { TransformerScaleOptions } from '../canvas/transform-handle-mode';
+import { corridorPatchesToDomainOperations } from '../canvas/corridor-domain-transform-bridge';
+import { recordCorridorDomainOperations, setEventMapE2ERenderMapProvider } from '../canvas/event-map-e2e-bridge';
+import { resolveTransformRouting } from '../canvas/transform-routing';
+import { captureTransformNodeSnapshots, restoreTransformNodeSnapshots } from '../canvas/transform-cancel';
+import type { TransformNodeSnapshot } from '../canvas/transform-cancel';
+import { applyCorridorPreviewToStage, restoreCorridorStageFromMap } from '../canvas/corridor-preview-stage';
+import { polygonToKonvaPoints } from '../canvas/corridor-domain-bridge';
+import { resolveCorridorObjectsForRender } from '../canvas/corridor-union-live';
+import { applyCorridorNodeFromModel, syncCorridorNodesFromMap } from '../canvas/corridor-canvas';
+import { TEXT_EDITOR_PLACEHOLDER, buildTextEditorState, getTextEditorDimensions } from '../canvas/text-editor-layout';
+import type { TextEditorState } from '../canvas/text-editor-layout';
+import { computeUnionBoundsFromNodes, getNodeBounds } from '../canvas/konva-snap-adapter';
+import { getKonvaTextDecoration } from '../canvas/text-style-adapter';
+import { computeWheelZoom, useCanvasViewportSize, useZoomScrubSession } from '../canvas/sessions/use-canvas-viewport-session';
+import { useTextEditorSession } from '../canvas/sessions/use-text-editor-session';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import { useSnapGuidesSession } from '../hooks/useSnapGuidesSession';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
+import type { MapTool } from '../store/event-map-editor-store';
+import { CreateSeatGridDialog } from './CreateSeatGridDialog';
+import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
+import { SnapGuidesLayer } from './SnapGuidesLayer';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Konva from 'konva';
 import { Circle, Ellipse, Group, Layer, Line, Rect, RegularPolygon, Stage, Text, Transformer } from 'react-konva';
-
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
-import { useSnapGuidesSession } from '../hooks/useSnapGuidesSession';
-import {
-  applyScrubZoom,
-  computeScrubDelta,
-} from '../lib/zoom-scrub';
-import {
-  buildSmartCorridorDragPreview,
-  buildSmartCorridorTransformPreview,
-  cloneEventMap,
-  CORRIDOR_REFLOW_ITERATIONS,
-  extractCorridorDragCommitUpdates,
-  extractGroupDragCommitUpdates,
-  resolveCorridorDragMode,
-  type CorridorDragMode,
-} from '../lib/corridor-reflow';
-import {
-  beginMapTransformSession,
-  applyMapTransformLivePreview,
-  buildMapTransformCommit,
-  resetMapTransformTransformer,
-  type MapTransformSession,
-} from '../lib/map-transform-session';
-import { buildCorridorTransformCommitPatches } from '../lib/corridor-transform-session';
-import {
-  DEFAULT_TRANSFORMER_SCALE_OPTIONS,
-  resolveCorridorTransformerScaleOptions,
-  resolveGenericTransformerScaleOptions,
-  resolveUniformTransformerScaleOptions,
-  type TransformerScaleOptions,
-} from '../lib/transform-handle-mode';
-import { corridorPatchesToDomainOperations } from '../lib/corridor-domain-transform-bridge';
-import { recordCorridorDomainOperations } from '../lib/event-map-e2e-bridge';
-import { resolveTransformRouting } from '../lib/transform-routing';
-import {
-  captureTransformNodeSnapshots,
-  restoreTransformNodeSnapshots,
-  type TransformNodeSnapshot,
-} from '../lib/transform-cancel';
-import { applyCorridorPreviewToStage, restoreCorridorStageFromMap } from '../lib/corridor-preview-stage';
-import { setEventMapE2ERenderMapProvider } from '../lib/event-map-e2e-bridge';
-import { getCorridorUnionGroups } from '../lib/corridor-union';
-import { polygonToKonvaPoints } from '../lib/corridor-domain-bridge';
-import { resolveCorridorObjectsForRender } from '../lib/corridor-union-live';
-import {
-  applyCorridorNodeFromModel,
-  syncCorridorNodesFromMap,
-} from '../lib/corridor-canvas';
-import {
-  buildTextEditorState,
-  getTextEditorDimensions,
-  TEXT_EDITOR_PLACEHOLDER,
-  type TextEditorState,
-} from '../lib/text-editor-layout';
-import { SNAP_TARGET_NAME, computeUnionBoundsFromNodes, getNodeBounds, isSnapModifierActive, type LevelBounds } from '../lib/snap-guides';
-import {
-  buildTextFontStyle,
-  clampFontSizeValue,
-  getKonvaTextDecoration,
-  getTextDimensionsForMode,
-  getTextMode,
-  getTextModeFromCreation,
-  getTextResizeAnchors,
-  getTextWrap,
-  isCornerResizeAnchor,
-  isHorizontalResizeAnchor,
-  isTextBoxMode,
-  isVerticalResizeAnchor,
-  normalizeTextData,
-  type TextMode,
-} from '../lib/text-object';
-import { expandObjectSelectionItems, isObjectInSelectedGroup, resolveDragTarget, resolveGroupSelectionItem, selectionHasMixedTextAndShapes } from '../lib/object-groups';
-import {
-  getObjectBounds,
-  getSeatBounds,
-  getSelectableItems,
-  intersectsRect,
-  isItemSelected,
-  isSameSelectionItem,
-  normalizeBoundsRect,
-  replaceSelection,
-  type MapSelectionItem,
-} from '../lib/selection-utils';
-import {
-  buildSeatGridPreview,
-  DEFAULT_SEAT_GRID_CONFIG,
-  getSeatGridPreviewBounds,
-  SEAT_GRID_SECTION_PADDING,
-  suggestNextSeatGridConfig,
-  type SeatGridConfig,
-} from '../lib/seat-grid';
-import type { MapTool } from '../store/event-map-editor-store';
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
-import {
-  clampFontSize,
-  clampObjectSize,
-  MIN_OBJECT_SIZE,
-} from '../lib/uniform-group-transform';
-import { CreateSeatGridDialog } from './CreateSeatGridDialog';
-import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
-import { SnapGuidesLayer } from './SnapGuidesLayer';
 
 type MarqueeDraft = {
   start: { x: number; y: number };
@@ -297,24 +224,11 @@ function getCreationShape(tool: MapTool) {
   return null;
 }
 
-function isTypingTarget(target: EventTarget | null) {
-  if (!(target instanceof HTMLElement)) return false;
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
-}
-
-type ZoomScrubState = {
-  origin: { x: number; y: number };
-  anchor: { x: number; y: number };
-  startZoom: number;
-  startPan: { x: number; y: number };
-};
-
 export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const contentLayerRef = useRef<Konva.Layer | null>(null);
   const transformerRef = useRef<Konva.Transformer | null>(null);
-  const [size, setSize] = useState({ width: 1200, height: 800 });
   const [isPanning, setIsPanning] = useState(false);
   const [creationDraft, setCreationDraft] = useState<CreationDraft | null>(null);
   const [seatGridDraft, setSeatGridDraft] = useState<SeatGridDraft | null>(null);
@@ -345,12 +259,10 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     levelBounds: null as LevelBounds | null,
   });
   const committedGroupDragNodeIdsRef = useRef<Set<string>>(new Set());
-  const zoomScrubRef = useRef<ZoomScrubState | null>(null);
   const [isTransformSessionActive, setIsTransformSessionActive] = useState(false);
   const [transformerScaleOptions, setTransformerScaleOptions] = useState<TransformerScaleOptions>(
     DEFAULT_TRANSFORMER_SCALE_OPTIONS,
   );
-  const [isZoomScrubbing, setIsZoomScrubbing] = useState(false);
   const [corridorVisualRevision, setCorridorVisualRevision] = useState(0);
   const [activeUnionDragIds, setActiveUnionDragIds] = useState<Set<string>>(() => new Set());
   const bumpCorridorVisualRevision = useCallback(() => {
@@ -437,6 +349,14 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   );
 
   const setViewportSize = useEventMapEditorStore((state) => state.setViewportSize);
+  const size = useCanvasViewportSize({ containerRef, setViewportSize });
+  const isZoomScrubbing = useZoomScrubSession({
+    enabled: tool === 'zoom',
+    containerRef,
+    stageRef,
+    setZoom,
+    setPan,
+  });
 
   useEffect(() => {
     if (tool !== 'seat' || readOnly) {
@@ -444,201 +364,21 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     }
   }, [readOnly, tool]);
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver(([entry]) => {
-      if (!entry) return;
-      const nextSize = {
-        width: Math.max(320, Math.floor(entry.contentRect.width)),
-        height: Math.max(320, Math.floor(entry.contentRect.height)),
-      };
-      setSize(nextSize);
-      setViewportSize(nextSize);
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [setViewportSize]);
-
-  useEffect(() => {
-    if (tool !== 'zoom') {
-      zoomScrubRef.current = null;
-      setIsZoomScrubbing(false);
-      return;
-    }
-
-    const container = containerRef.current;
-    const stage = stageRef.current;
-    if (!container || !stage) return;
-
-    function onMouseDown(event: MouseEvent) {
-      if (event.button !== 0) return;
-
-      const rect = stage!.container().getBoundingClientRect();
-      const { zoom: startZoom, pan: startPan } = useEventMapEditorStore.getState();
-
-      zoomScrubRef.current = {
-        origin: { x: event.clientX, y: event.clientY },
-        anchor: { x: event.clientX - rect.left, y: event.clientY - rect.top },
-        startZoom,
-        startPan: { ...startPan },
-      };
-      setIsZoomScrubbing(true);
-      event.preventDefault();
-    }
-
-    function onMouseMove(event: MouseEvent) {
-      const drag = zoomScrubRef.current;
-      if (!drag) return;
-
-      const scrubDelta = computeScrubDelta(
-        { x: event.clientX, y: event.clientY },
-        drag.origin,
-      );
-      if (Math.abs(scrubDelta) > 2) {
-        useEventMapEditorStore.getState().markZoomScrubbedThisHold();
-      }
-
-      const result = applyScrubZoom({
-        origin: drag.origin,
-        current: { x: event.clientX, y: event.clientY },
-        startZoom: drag.startZoom,
-        startPan: drag.startPan,
-        anchor: drag.anchor,
-      });
-
-      setZoom(result.zoom);
-      setPan(result.pan);
-    }
-
-    function endScrub(event: MouseEvent) {
-      const drag = zoomScrubRef.current;
-      if (drag) {
-        const scrubDelta = computeScrubDelta(
-          { x: event.clientX, y: event.clientY },
-          drag.origin,
-        );
-        if (Math.abs(scrubDelta) > 2) {
-          useEventMapEditorStore.getState().restoreTemporaryZoomTool();
-        }
-      }
-      zoomScrubRef.current = null;
-      setIsZoomScrubbing(false);
-    }
-
-    container.addEventListener('mousedown', onMouseDown, true);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', endScrub);
-
-    return () => {
-      container.removeEventListener('mousedown', onMouseDown, true);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', endScrub);
-    };
-  }, [setPan, setZoom, tool]);
-
-  useEffect(() => {
-    if (!textEditor) {
-      textEditorFocusKeyRef.current = null;
-      textEditSnapshotRef.current = null;
-      return;
-    }
-    const textarea = textEditorRef.current;
-    if (!textarea) return;
-    const focusKey = `${textEditor.objectId ?? 'new'}:${textEditor.left}:${textEditor.top}:${textEditor.textMode}`;
-    if (textEditorFocusKeyRef.current === focusKey) return;
-    textEditorFocusKeyRef.current = focusKey;
-    textarea.focus();
-    if (textEditor.objectId && textEditor.value) textarea.select();
-  }, [textEditor?.objectId, textEditor?.left, textEditor?.top, textEditor?.textMode, textEditor?.value]);
-
-  useEffect(() => {
-    if (!textEditor) return;
-    const stage = stageRef.current;
-    const container = containerRef.current;
-    if (!stage || !container) return;
-
-    const node = textEditor.objectId ? stage.findOne(`#node-${textEditor.objectId}`) : null;
-    setTextEditor((current) => {
-      if (!current) return current;
-      return buildTextEditorState({
-        objectId: current.objectId,
-        value: current.value,
-        mapX: current.mapX,
-        mapY: current.mapY,
-        mapWidth: current.mapWidth,
-        mapHeight: current.mapHeight,
-        textMode: current.textMode,
-        rotation: current.rotation,
-        baseFontSize: current.baseFontSize,
-        fontFamily: current.fontFamily,
-        fontWeight: current.fontWeight,
-        letterSpacing: current.letterSpacing,
-        color: current.color,
-        lineHeight: current.lineHeight,
-        textAlign: current.textAlign,
-        stage,
-        container,
-        zoom,
-        pan,
-        node: node instanceof Konva.Text ? node : null,
-      });
-    });
-  }, [pan.x, pan.y, zoom, textEditor?.objectId, textEditor?.value, textEditor?.textMode]);
-
-  useEffect(() => {
-    if (readOnly || textEditor) return;
-
-    function onEnterEdit(event: KeyboardEvent) {
-      if (event.key !== 'Enter' || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (isTypingTarget(event.target)) return;
-
-      const store = useEventMapEditorStore.getState();
-      if (store.tool !== 'select') return;
-      const selectable = getSelectableItems(store.selection);
-      if (selectable.length !== 1 || selectable[0]?.type !== 'object') return;
-      const object = store.map?.objects.find((entry) => entry.id === selectable[0]?.id);
-      if (!object || object.type !== 'TEXT' || object.locked) return;
-
-      event.preventDefault();
-      const stage = stageRef.current;
-      const container = containerRef.current;
-      const node = stage?.findOne(`#node-${object.id}`);
-      if (!stage || !container || !(node instanceof Konva.Text)) return;
-
-      textEditSnapshotRef.current = String(object.data.text ?? '');
-      const groupItems = resolveGroupSelectionItem({ type: 'object', id: object.id }, levelObjects);
-      setSelection(groupItems.length > 1 ? groupItems : replaceSelection({ type: 'object', id: object.id }));
-      setInlineTextEditorActive(true);
-      setTextEditor(
-        buildTextEditorState({
-          objectId: object.id,
-          value: String(object.data.text ?? ''),
-          mapX: object.x,
-          mapY: object.y,
-          mapWidth: typeof object.width === 'number' ? object.width : null,
-          mapHeight: typeof object.height === 'number' ? object.height : null,
-          textMode: getTextMode(object),
-          rotation: object.rotation ?? 0,
-          baseFontSize: Number(object.data.fontSize ?? 22),
-          fontFamily: String(object.data.fontFamily ?? 'Inter, sans-serif'),
-          fontWeight: String(object.data.fontWeight ?? 'normal'),
-          letterSpacing: Number(object.data.letterSpacing ?? 0),
-          color: String(object.data.fill ?? '#0f172a'),
-          lineHeight: Number(object.data.lineHeight ?? 1.2),
-          textAlign: String(object.data.align ?? 'left') as TextEditorState['textAlign'],
-          stage,
-          container,
-          zoom,
-          pan,
-          node,
-        }),
-      );
-    }
-
-    window.addEventListener('keydown', onEnterEdit);
-    return () => window.removeEventListener('keydown', onEnterEdit);
-  }, [levelObjects, pan, readOnly, setSelection, textEditor, zoom]);
+  useTextEditorSession({
+    readOnly,
+    textEditor,
+    setTextEditor,
+    textEditorRef,
+    textEditorFocusKeyRef,
+    textEditSnapshotRef,
+    stageRef,
+    containerRef,
+    zoom,
+    pan,
+    levelObjects,
+    setSelection,
+    setInlineTextEditorActive,
+  });
 
   const selectedNodeIds = useMemo(() => {
     if (!map || selection.length === 0) return [];
@@ -1720,7 +1460,15 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   function handleWheel(event: Konva.KonvaEventObject<WheelEvent>) {
     event.evt.preventDefault();
     const direction = event.evt.deltaY > 0 ? -1 : 1;
-    setZoom(zoom + direction * 0.08);
+    const stage = event.target.getStage();
+    const pointer = stage?.getPointerPosition();
+    if (!pointer) {
+      setZoom(zoom + direction * 0.08);
+      return;
+    }
+    const next = computeWheelZoom({ anchor: pointer, pan, zoom, direction });
+    setZoom(next.zoom);
+    setPan(next.pan);
   }
 
   function openTextEditor(object: EventMapObjectDTO, node: Konva.Text) {

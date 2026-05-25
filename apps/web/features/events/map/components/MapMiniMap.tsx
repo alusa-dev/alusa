@@ -1,8 +1,7 @@
 'use client';
+import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { useMemo } from 'react';
-
-import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 export function MapMiniMap() {
   const map = useEventMapEditorStore((state) => state.map);
