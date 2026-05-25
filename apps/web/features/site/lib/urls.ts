@@ -1,3 +1,3 @@
 export const siteUrl = 'https://alusa.app';
 export const appUrl = siteUrl;
-export const appLoginUrl = `${siteUrl}/auth/login`;
+export const appLoginUrl = '/auth/login';

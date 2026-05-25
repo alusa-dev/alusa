@@ -10,6 +10,7 @@ export const AUTH_LIGHT_THEME_PATH_PREFIXES = [
 
 /** Rotas no grupo (auth) que não passam por `/auth/...`. */
 export const AUTH_LIGHT_THEME_ROOT_PATHS = [
+  '/',
   '/login',
   '/register',
   '/forgot-password',

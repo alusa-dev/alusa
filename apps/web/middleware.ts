@@ -96,6 +96,35 @@ function logMiddlewareRedirect(pathname: string, reason: string, status: number)
   console.info('[middleware:redirect]', { pathname, reason, status });
 }
 
+const protectedPagePrefixes = [
+  '/dashboard',
+  '/admin/',
+  '/alunos/',
+  '/colaboradores/',
+  '/configuracoes/',
+  '/conta/',
+  '/ajuda',
+  '/modalidades/',
+  '/planos/',
+  '/professores/',
+  '/matriculas/',
+  '/antecipacoes/',
+  '/portal/',
+  '/vendas/',
+  '/finance/',
+  '/financeiro/',
+] as const;
+
+function isProtectedPagePath(pathname: string): boolean {
+  return protectedPagePrefixes.some((prefix) => {
+    if (prefix.endsWith('/')) {
+      return pathname.startsWith(prefix);
+    }
+
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
+}
+
 function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
   const signInUrl = new URL('/auth/login', req.nextUrl.origin);
   signInUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
@@ -230,6 +259,19 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  const host = req.headers.get('host')?.split(':')[0]?.toLowerCase();
+  if (host === 'www.alusa.app') {
+    const apexUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, 'https://alusa.app');
+    logMiddlewareRedirect(req.nextUrl.pathname, 'www_to_apex', 308);
+    return NextResponse.redirect(apexUrl, 308);
+  }
+
+  if (host === 'app.alusa.app') {
+    const apexUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, 'https://alusa.app');
+    logMiddlewareRedirect(req.nextUrl.pathname, 'app_subdomain_to_apex', 308);
+    return NextResponse.redirect(apexUrl, 308);
+  }
+
   const pathname = req.nextUrl.pathname;
 
   if (pathname.startsWith('/api/')) {
@@ -257,11 +299,16 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
+  if (!isProtectedPagePath(pathname)) {
+    return NextResponse.next();
+  }
+
   return handleProtectedPage(req);
 }
 
 export const config = {
   matcher: [
+    '/',
     '/developer',
     '/developer/:path*',
     '/dashboard',
@@ -284,5 +331,6 @@ export const config = {
     '/financeiro/:path*',
     '/finance/:path*',
     '/api/:path*',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],
 };

@@ -15,6 +15,41 @@
 	}
 }
 
+/* Site marketing — escopo público (data-area="public") */
+[data-area='public'] {
+	color-scheme: light;
+	--alusa-purple: #5b3df5;
+	--alusa-purple-hover: #4a2fe0;
+	--alusa-purple-dark: #430d88;
+	--alusa-purple-deeper: #140a3d;
+	--alusa-footer: #140528;
+	--alusa-purple-muted: #3d2d8a;
+	--alusa-on-purple: #ffffff;
+	--alusa-on-purple-muted: rgba(255, 255, 255, 0.72);
+	--alusa-on-purple-subtle: rgba(255, 255, 255, 0.52);
+	background: #ffffff;
+	color: var(--alusa-purple-deeper);
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+[data-area='public'] ::selection {
+	background: rgba(91, 61, 245, 0.22);
+	color: var(--alusa-purple-deeper);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	[data-area='public'] *,
+	[data-area='public'] *::before,
+	[data-area='public'] *::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		scroll-behavior: auto !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
 @tailwind components;
 @tailwind utilities;
 
