@@ -33,4 +33,4 @@ Variáveis de URL em produção devem usar `https://alusa.app`:
 
 ### Legado
 
-`apps/site` e o projeto Vercel `alusa-site` estão obsoletos após o cutover. Não fazer deploy manual em `alusa-site`.
+O pacote `apps/site` e o projeto Vercel `alusa-site` foram removidos após o cutover unificado.

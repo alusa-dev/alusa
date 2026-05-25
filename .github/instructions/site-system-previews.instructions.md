@@ -1,5 +1,5 @@
 ---
-applyTo: 'apps/site/src/components/visual/**,apps/site/src/components/sections/**'
+applyTo: 'apps/web/features/site/components/visual/**,apps/web/features/site/components/sections/**'
 ---
 
 ## Regra: previews de componentes reais do sistema Alusa
@@ -66,15 +66,14 @@ Todo preview deve separar tres camadas:
 
 ## Regras de implementacao
 
-- Criar previews reutilizaveis em `apps/site/src/components/visual`.
+- Criar previews reutilizaveis em `apps/web/features/site/components/visual`.
 - A secao deve apenas posicionar o preview; a estrutura visual do mock deve ficar encapsulada no componente de preview.
 - Nao misturar dados/copy da landing page com detalhes internos do preview, exceto quando a secao realmente controlar o conteudo.
 - Manter os dados mockados pequenos e tipados com `readonly` quando forem constantes.
 - Rodar antes de concluir:
 
 ```bash
-pnpm --filter @alusa/site typecheck
-pnpm --filter @alusa/site lint
+pnpm --filter @alusa/web build
 ```
 
 ## Exemplos de referencia

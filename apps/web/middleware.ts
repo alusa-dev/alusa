@@ -266,12 +266,6 @@ export default async function middleware(req: NextRequest) {
     return NextResponse.redirect(apexUrl, 308);
   }
 
-  if (host === 'app.alusa.app') {
-    const apexUrl = new URL(req.nextUrl.pathname + req.nextUrl.search, 'https://alusa.app');
-    logMiddlewareRedirect(req.nextUrl.pathname, 'app_subdomain_to_apex', 308);
-    return NextResponse.redirect(apexUrl, 308);
-  }
-
   const pathname = req.nextUrl.pathname;
 
   if (pathname.startsWith('/api/')) {
