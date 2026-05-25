@@ -2,6 +2,36 @@ import type { SiteSectionId } from '@/features/site/lib/sections';
 
 export const SITE_REVEAL_EVENT = 'alusa:site-reveal';
 
+export type SiteRevealVariant = 'fade-up' | 'fade-up-hero' | 'slide-in-right';
+
+export const SITE_REVEAL_PRESETS: Record<
+  SiteRevealVariant,
+  {
+    hidden: string;
+    visible: string;
+    transition: string;
+  }
+> = {
+  'fade-up': {
+    hidden: 'translate-y-8 opacity-0',
+    visible: 'translate-y-0 opacity-100',
+    transition:
+      'transition-[transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[transform,opacity]',
+  },
+  'fade-up-hero': {
+    hidden: 'translate-y-5 opacity-0',
+    visible: 'translate-y-0 opacity-100',
+    transition:
+      'transition-[transform,opacity] duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] will-change-[transform,opacity]',
+  },
+  'slide-in-right': {
+    hidden: 'translate-x-10 opacity-0 sm:translate-x-14 lg:translate-x-20',
+    visible: 'translate-x-0 opacity-100',
+    transition:
+      'transition-[transform,opacity] duration-[900ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[transform,opacity]',
+  },
+};
+
 export function prefersReducedMotion(): boolean {
   if (typeof window === 'undefined') return false;
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;

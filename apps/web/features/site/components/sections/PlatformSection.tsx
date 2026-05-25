@@ -27,7 +27,7 @@ export function PlatformSection() {
           </p>
         </ScrollReveal>
 
-        <PreviewSlideIn className="lg:-mr-36">
+        <PreviewSlideIn delay={140} className="lg:-mr-36">
           <ChargesPreviewCard />
         </PreviewSlideIn>
       </div>

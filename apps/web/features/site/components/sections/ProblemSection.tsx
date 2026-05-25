@@ -25,7 +25,7 @@ export function ProblemSection() {
           </div>
         </div>
 
-        <PreviewSlideIn className="hidden justify-end lg:flex lg:h-full lg:pt-16">
+        <PreviewSlideIn delay={120} className="hidden justify-end lg:flex lg:h-full lg:pt-16">
           <div className="h-[480px] w-full overflow-hidden rounded-tl-[2.5rem] border border-[#e6e4ea] bg-[#f2f2f2] shadow-2xl shadow-alusa-purple/10 lg:h-full lg:min-h-[720px]">
             <DashboardMock />
           </div>

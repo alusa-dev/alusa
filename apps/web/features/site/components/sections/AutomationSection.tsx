@@ -7,6 +7,7 @@ import { homePage } from '@/features/site/content/home';
 
 import { VerticalGridLines } from '@/features/site/components/layout/VerticalGridLines';
 import { ScrollReveal } from '@/features/site/components/motion/ScrollReveal';
+import { cn } from '@/features/site/lib/cn';
 
 const LEFT_STAGGER = ['translate-x-4', '-translate-x-3', 'translate-x-2'] as const;
 const RIGHT_STAGGER = ['-translate-x-4', 'translate-x-3', '-translate-x-2'] as const;
@@ -103,19 +104,18 @@ export function AutomationSection() {
       />
       <VerticalGridLines />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
-        <ScrollReveal className="mx-auto grid w-full max-w-7xl items-center gap-12 py-4 sm:py-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,42rem)_minmax(0,1fr)] lg:gap-6 lg:py-8 xl:gap-8">
-          <ul
-            className="hidden flex-col items-end gap-6 lg:flex lg:gap-8 xl:gap-10"
-            aria-label="Recursos de automação — coluna esquerda"
-          >
-            {leftBullets.map((bullet, index) => (
-              <li key={bullet} className={LEFT_STAGGER[index] ?? ''}>
-                <AutomationPill label={bullet} />
-              </li>
-            ))}
-          </ul>
+        <div className="mx-auto grid w-full max-w-7xl items-center gap-12 py-4 sm:py-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,42rem)_minmax(0,1fr)] lg:gap-6 lg:py-8 xl:gap-8">
+          <ScrollReveal delay={120} className="hidden lg:flex lg:flex-col lg:items-end lg:gap-8 xl:gap-10">
+            <ul aria-label="Recursos de automação — coluna esquerda">
+              {leftBullets.map((bullet, index) => (
+                <li key={bullet} className={cn('mb-6 last:mb-0 xl:mb-10 xl:last:mb-0', LEFT_STAGGER[index] ?? '')}>
+                  <AutomationPill label={bullet} />
+                </li>
+              ))}
+            </ul>
+          </ScrollReveal>
 
-          <div className="mx-auto flex w-full min-w-0 flex-col items-center text-center lg:max-w-[42rem]">
+          <ScrollReveal className="mx-auto flex w-full min-w-0 flex-col items-center text-center lg:max-w-[42rem]">
             <h2 className="font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight text-alusa-purple-deeper">
               {titleFirstLine}
               <br />
@@ -128,30 +128,31 @@ export function AutomationSection() {
                 </span>
               ))}
             </p>
-          </div>
+          </ScrollReveal>
 
-          <ul
-            className="hidden flex-col items-start gap-6 lg:flex lg:gap-8 xl:gap-10"
-            aria-label="Recursos de automação — coluna direita"
-          >
-            {rightBullets.map((bullet, index) => (
-              <li key={bullet} className={RIGHT_STAGGER[index] ?? ''}>
-                <AutomationPill label={bullet} />
-              </li>
-            ))}
-          </ul>
+          <ScrollReveal delay={120} className="hidden lg:flex lg:flex-col lg:items-start lg:gap-8 xl:gap-10">
+            <ul aria-label="Recursos de automação — coluna direita">
+              {rightBullets.map((bullet, index) => (
+                <li key={bullet} className={cn('mb-6 last:mb-0 xl:mb-10 xl:last:mb-0', RIGHT_STAGGER[index] ?? '')}>
+                  <AutomationPill label={bullet} />
+                </li>
+              ))}
+            </ul>
+          </ScrollReveal>
 
-          <ul
-            className="col-span-full flex flex-wrap justify-center gap-3 sm:gap-4 lg:hidden"
-            aria-label="Recursos de automação"
-          >
-            {automation.bullets.map((bullet) => (
-              <li key={bullet}>
-                <AutomationPill label={bullet} />
-              </li>
-            ))}
-          </ul>
-        </ScrollReveal>
+          <ScrollReveal delay={120} className="col-span-full lg:hidden">
+            <ul
+              className="flex flex-wrap justify-center gap-3 sm:gap-4"
+              aria-label="Recursos de automação"
+            >
+              {automation.bullets.map((bullet) => (
+                <li key={bullet}>
+                  <AutomationPill label={bullet} />
+                </li>
+              ))}
+            </ul>
+          </ScrollReveal>
+        </div>
       </div>
     </section>
   );

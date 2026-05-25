@@ -10,7 +10,7 @@ export function HeroSection() {
     <section className="relative overflow-hidden bg-[var(--alusa-purple-dark)] text-white">
       <VerticalGridLines />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8 flex min-h-[75vh] flex-col justify-center py-20 lg:py-32">
-        <ScrollReveal onMount className="max-w-4xl py-12">
+        <ScrollReveal hero onMount className="max-w-4xl py-12">
           <h1 className="mt-8 font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight text-white mb-5">
             {homePage.hero.title}
             <br />
@@ -44,7 +44,7 @@ export function HeroSection() {
         </ScrollReveal>
 
         {/* Floating Loop Proof Strip */}
-        <ScrollReveal onMount delay={180} className="absolute bottom-12 left-0 right-0 z-20 md:bottom-16">
+        <ScrollReveal hero onMount delay={280} className="absolute bottom-12 left-0 right-0 z-20 md:bottom-16">
           <ProofStrip />
         </ScrollReveal>
       </div>
