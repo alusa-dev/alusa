@@ -1,9 +1,7 @@
 import { isSiteSectionId, type SiteSectionId } from '@/features/site/lib/sections';
+import { afterScrollEnd, prefersReducedMotion, revealSectionContent } from '@/features/site/lib/motion';
 
-function prefersReducedMotion(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
+export { prefersReducedMotion };
 
 export function cleanSiteUrlPath(): void {
   if (typeof window === 'undefined') return;
@@ -25,6 +23,11 @@ export function scrollToSiteSection(sectionId: SiteSectionId): boolean {
   });
 
   cleanSiteUrlPath();
+
+  afterScrollEnd(() => {
+    revealSectionContent(sectionId);
+  });
+
   return true;
 }
 
