@@ -29,6 +29,7 @@ export function SiteReveal({
     <div
       ref={ref}
       data-site-reveal
+      {...(onMount ? { 'data-on-mount': '' } : {})}
       className={cn(
         !reduceMotion && preset.transition,
         hidden ? preset.hidden : preset.visible,

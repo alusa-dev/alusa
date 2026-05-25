@@ -10,15 +10,16 @@ type UseSiteRevealOptions = {
 
 export function useSiteReveal({ onMount = false }: UseSiteRevealOptions = {}) {
   const ref = useRef<HTMLDivElement>(null);
-  const [armed, setArmed] = useState(false);
+  // onMount: começa oculto no SSR/hidratação para a entrada ser visível ao abrir/recarregar.
+  const [armed, setArmed] = useState(onMount);
   const [visible, setVisible] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
 
   const reveal = useCallback(() => {
     scheduleReveal(() => {
       setVisible(true);
-    });
-  }, []);
+    }, onMount ? 3 : 2);
+  }, [onMount]);
 
   useLayoutEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -39,7 +40,9 @@ export function useSiteReveal({ onMount = false }: UseSiteRevealOptions = {}) {
       return () => media.removeEventListener('change', syncMotionPreference);
     }
 
-    setArmed(true);
+    if (!onMount) {
+      setArmed(true);
+    }
 
     const element = ref.current;
     if (!element) {

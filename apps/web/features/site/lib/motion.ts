@@ -38,17 +38,25 @@ export function prefersReducedMotion(): boolean {
 }
 
 /** Garante um frame pintado no estado inicial antes do reveal. */
-export function scheduleReveal(onReveal: () => void): () => void {
-  let outer = 0;
-  let inner = 0;
+export function scheduleReveal(onReveal: () => void, frames = 2): () => void {
+  let cancelled = false;
+  let frame = 0;
+  let pending = onReveal;
 
-  outer = window.requestAnimationFrame(() => {
-    inner = window.requestAnimationFrame(onReveal);
-  });
+  const tick = (remaining: number) => {
+    if (cancelled) return;
+    if (remaining <= 0) {
+      pending();
+      return;
+    }
+    frame = window.requestAnimationFrame(() => tick(remaining - 1));
+  };
+
+  frame = window.requestAnimationFrame(() => tick(frames - 1));
 
   return () => {
-    window.cancelAnimationFrame(outer);
-    window.cancelAnimationFrame(inner);
+    cancelled = true;
+    window.cancelAnimationFrame(frame);
   };
 }
 
