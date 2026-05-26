@@ -12,6 +12,9 @@ import {
   isKnownEvent,
   isHandledEvent,
   getEventsByCategory,
+  getWebhookEventPolicies,
+  getWebhookEventPolicy,
+  shouldAlertUnknownWebhookEvent,
 } from '../asaas-event-registry';
 import { PROVISIONED_WEBHOOK_EVENTS } from '../webhook-provisioning-events';
 
@@ -310,6 +313,50 @@ describe('Asaas Event Registry', () => {
 
     it('todos os eventos handled devem ser provisionados no webhook da subconta', () => {
       expect(PROVISIONED_WEBHOOK_EVENTS).toEqual(getHandledEvents());
+    });
+
+    it('todos os eventos registrados devem ter política operacional canônica', () => {
+      const policies = getWebhookEventPolicies();
+
+      expect(policies).toHaveLength(Object.keys(ASAAS_EVENT_REGISTRY).length);
+      expect(policies).toMatchSnapshot();
+
+      for (const policy of policies) {
+        expect(policy.event).toBeTruthy();
+        expect(policy.category).toBeTruthy();
+        expect(policy.handlingMode).toBeTruthy();
+        expect(policy.criticality).toBeTruthy();
+        expect(policy.mustProvision).toBe(isHandledEvent(policy.event));
+      }
+    });
+
+    it('eventos financeiros críticos mudam estado e devem ser provisionados', () => {
+      expect(getWebhookEventPolicy('PAYMENT_CONFIRMED')).toMatchObject({
+        category: 'PAYMENT',
+        handlingMode: 'STATE_CHANGE',
+        criticality: 'CRITICAL',
+        mustProvision: true,
+        requiresReconciliation: true,
+      });
+
+      expect(getWebhookEventPolicy('SUBSCRIPTION_DELETED')).toMatchObject({
+        category: 'SUBSCRIPTION',
+        handlingMode: 'STATE_CHANGE',
+        criticality: 'CRITICAL',
+        mustProvision: true,
+        requiresReconciliation: true,
+      });
+    });
+
+    it('evento desconhecido deve virar alerta operacional', () => {
+      expect(getWebhookEventPolicy('ASAAS_NEW_CRITICAL_EVENT')).toMatchObject({
+        category: 'AUDIT_ONLY',
+        handlingMode: 'UNKNOWN_ALERT',
+        criticality: 'HIGH',
+        mustProvision: false,
+        requiresReconciliation: true,
+      });
+      expect(shouldAlertUnknownWebhookEvent('ASAAS_NEW_CRITICAL_EVENT')).toBe(true);
     });
   });
 });

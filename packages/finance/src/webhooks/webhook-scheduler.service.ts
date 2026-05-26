@@ -16,6 +16,7 @@
 import { prisma } from '@alusa/database';
 
 import { processAsaasWebhookQueueWithInbox } from './process-webhook-queue-with-inbox';
+import { drainFinanceWebhookSideEffectOutbox } from './finance-side-effect-outbox.service';
 import { checkWebhookHealth } from './webhook-health.service';
 import { getWebhookConfigDriftStatus, repairWebhookConfigDrift } from './webhook-config-drift.service';
 import {
@@ -27,6 +28,7 @@ import {
   reconcileWithAsaas,
 } from './webhook-reconciliation.service';
 import { evaluateWebhookSLOs, type WebhookSLOResult } from './webhook-observability.service';
+import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -44,6 +46,12 @@ export interface WebhookSchedulerResult {
   totalDurationMs: number;
   steps: SchedulerStepResult[];
   hasErrors: boolean;
+  skippedDueToLock?: boolean;
+  lock?: {
+    jobName: string;
+    workerId: string | null;
+    lockedUntil?: Date | null;
+  };
   retentionAlert: { level: string; lagSeconds: number; backlog: number } | null;
   slo: WebhookSLOResult | null;
 }
@@ -65,6 +73,8 @@ export interface WebhookSchedulerOptions {
   enableReconciliation?: boolean;
   /** Janela em horas para reconciliação (default: 24) */
   reconciliationWindowHours?: number;
+  /** TTL do lock de job em milissegundos */
+  lockTtlMs?: number;
 }
 
 export interface WebhookMaintenanceResult {
@@ -75,6 +85,7 @@ export interface WebhookMaintenanceResult {
   driftsRepaired: number;
   health: Awaited<ReturnType<typeof checkWebhookHealth>>;
   errors: Array<{ contaId: string; error: string }>;
+  skippedDueToLock?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -114,6 +125,50 @@ async function timed<T>(
 export async function runWebhookScheduler(
   options: WebhookSchedulerOptions = {},
 ): Promise<WebhookSchedulerResult> {
+  const lockName = `webhook-scheduler:${options.contaId ?? 'global'}`;
+  const locked = await withWebhookJobLock(
+    lockName,
+    () => runWebhookSchedulerUnlocked(options),
+    {
+      ttlMs: options.lockTtlMs ?? 10 * 60 * 1000,
+      metadata: {
+        contaId: options.contaId ?? null,
+        drainLimit: options.drainLimit ?? null,
+      },
+    },
+  );
+
+  if (!locked.acquired) {
+    const now = new Date();
+    return {
+      executedAt: now,
+      completedAt: now,
+      totalDurationMs: 0,
+      steps: [],
+      hasErrors: false,
+      skippedDueToLock: true,
+      lock: {
+        jobName: locked.jobName,
+        workerId: locked.workerId,
+        lockedUntil: locked.lockedUntil,
+      },
+      retentionAlert: null,
+      slo: null,
+    };
+  }
+
+  return {
+    ...locked.result,
+    lock: {
+      jobName: locked.jobName,
+      workerId: locked.workerId,
+    },
+  };
+}
+
+async function runWebhookSchedulerUnlocked(
+  options: WebhookSchedulerOptions = {},
+): Promise<WebhookSchedulerResult> {
   const executedAt = new Date();
   const steps: SchedulerStepResult[] = [];
   const drainLimit = Math.min(1000, Math.max(1, options.drainLimit ?? 200));
@@ -139,6 +194,15 @@ export async function runWebhookScheduler(
     }),
   );
   steps.push(drainStep);
+
+  // ── Step 2.1: Processar outbox de side effects ────────────────────────
+  const { step: sideEffectsStep } = await timed('drain_side_effects', () =>
+    drainFinanceWebhookSideEffectOutbox({
+      contaId: options.contaId,
+      limit: Math.max(50, Math.min(drainLimit, 500)),
+    }),
+  );
+  steps.push(sideEffectsStep);
 
   // ── Step 3: Marcar webhooks exauridos (DLQ) ────────────────────────────
   const { step: dlqStep } = await timed('mark_exhausted', () =>
@@ -297,6 +361,47 @@ export async function runWebhookScheduler(
 }
 
 export async function runWebhookHealthAndDriftMaintenance(options: {
+  contaId?: string;
+  autoRepair?: boolean;
+} = {}): Promise<WebhookMaintenanceResult> {
+  const lockName = `webhook-maintenance:${options.contaId ?? 'global'}`;
+  const locked = await withWebhookJobLock(
+    lockName,
+    () => runWebhookHealthAndDriftMaintenanceUnlocked(options),
+    {
+      ttlMs: 10 * 60 * 1000,
+      metadata: {
+        contaId: options.contaId ?? null,
+        autoRepair: options.autoRepair ?? true,
+      },
+    },
+  );
+
+  if (!locked.acquired) {
+    const now = new Date();
+    return {
+      executedAt: now,
+      completedAt: now,
+      accountsChecked: 0,
+      driftsFound: 0,
+      driftsRepaired: 0,
+      health: {
+        checkedAccounts: 0,
+        interruptedFound: 0,
+        recoveredSuccessfully: 0,
+        recoveryFailed: 0,
+        errors: [{ contaId: options.contaId ?? 'ALL', error: 'JOB_LOCKED' }],
+        executedAt: now,
+      } as Awaited<ReturnType<typeof checkWebhookHealth>>,
+      errors: [{ contaId: options.contaId ?? 'ALL', error: 'JOB_LOCKED' }],
+      skippedDueToLock: true,
+    };
+  }
+
+  return locked.result;
+}
+
+async function runWebhookHealthAndDriftMaintenanceUnlocked(options: {
   contaId?: string;
   autoRepair?: boolean;
 } = {}): Promise<WebhookMaintenanceResult> {

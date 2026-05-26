@@ -20,7 +20,7 @@ export const maxDuration = 60;
  * - skipDriftCheck: "true" para pular drift detection
  * - skipArchive: "true" para pular archiving
  */
-export async function POST(req: Request) {
+async function run(req: Request) {
   try {
     const url = new URL(req.url);
     const tenantScope = await resolveTenantScope(req, {
@@ -50,4 +50,12 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(req: Request) {
+  return run(req);
+}
+
+export async function POST(req: Request) {
+  return run(req);
 }

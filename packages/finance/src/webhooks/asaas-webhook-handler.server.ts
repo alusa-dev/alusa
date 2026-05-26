@@ -26,6 +26,8 @@ import {
 } from './asaas-webhook-auth';
 import { redactWebhookLogObject } from './webhook-redaction';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
+import { shouldAlertUnknownWebhookEvent } from './asaas-event-registry';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 
 type AttemptLogEntry = {
   at: string;
@@ -568,6 +570,23 @@ async function processAsaasWebhookForRecord(params: {
     // Alertas de observabilidade para eventos sem handler
     alertIfUnhandledCritical(event);
     alertIfUnknownEvent(event);
+    if (shouldAlertUnknownWebhookEvent(event)) {
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'WEBHOOK',
+        entityId: params.webhookId,
+        asaasId: payload.id ?? null,
+        issueType: 'WEBHOOK_DROPPED_RISK',
+        severity: 'HIGH',
+        localStatus: 'UNKNOWN_EVENT',
+        remoteStatus: event,
+        metadata: {
+          event,
+          eventId: payload.id ?? null,
+          source: 'asaas-webhook-handler',
+        },
+      });
+    }
 
     return {
       ok: true,

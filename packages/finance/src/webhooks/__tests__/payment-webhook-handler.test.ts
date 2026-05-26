@@ -222,7 +222,6 @@ describe('handlePaymentWebhook', () => {
       expect.objectContaining({
         where: { id: 'cobranca_legacy' },
         data: expect.objectContaining({
-          status: 'A_VENCER',
           asaasStatus: 'PENDING',
           asaasValue: 80,
           asaasNetValue: 80,

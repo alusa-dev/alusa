@@ -20,6 +20,7 @@ import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import type {
   ChargeStatus,
   LiquidacaoStatus,
@@ -1305,6 +1306,25 @@ async function handlePaymentWebhookCore(
       });
 
       await refreshReadModel({ chargeId: placeholderCharge.id });
+
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'CHARGE',
+        entityId: placeholderCharge.id,
+        asaasId: payload.payment.id,
+        issueType: 'PAYMENT_NEEDS_REVIEW',
+        severity: 'HIGH',
+        localStatus: 'NEEDS_REVIEW',
+        remoteStatus: normalizedStatus || null,
+        metadata: {
+          event: payload.event,
+          subscription: payload.payment.subscription ?? null,
+          installment: payload.payment.installment ?? null,
+          installmentNumber: payload.payment.installmentNumber ?? null,
+          externalReference: paymentExternalReference ?? null,
+          source: 'payment-webhook-handler',
+        },
+      });
 
       console.warn('Cobrança não encontrada para payment.id:', payload.payment.id, {
         subscription: payload.payment.subscription,

@@ -6,12 +6,21 @@ vi.mock('next-auth', () => ({
 
 vi.mock('@alusa/finance', () => ({
   getWebhookConfigDriftStatus: vi.fn(),
+  recordFinanceAdminAction: vi.fn(),
   repairWebhookConfigDrift: vi.fn(),
 }));
 
 import { getServerSession } from 'next-auth';
-import { getWebhookConfigDriftStatus, repairWebhookConfigDrift } from '@alusa/finance';
+import { getWebhookConfigDriftStatus, recordFinanceAdminAction, repairWebhookConfigDrift } from '@alusa/finance';
 import { GET, POST } from '@/app/api/admin/webhooks/config/route';
+
+function repairRequest(body: unknown = { reason: 'reparar webhook remoto divergente' }) {
+  return new Request('http://localhost/api/admin/webhooks/config', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
 
 describe('admin webhook config route', () => {
   beforeEach(() => {
@@ -49,16 +58,33 @@ describe('admin webhook config route', () => {
       after: null,
     } as never);
 
-    const response = await POST();
+    const response = await POST(repairRequest());
     if (!response) throw new Error('Resposta ausente');
 
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.success).toBe(true);
+    expect(recordFinanceAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'c1',
+        action: 'finance.webhook.config_repair.requested',
+        reason: 'reparar webhook remoto divergente',
+        actor: { type: 'ADMIN', id: 'u1' },
+      }),
+    );
     expect(repairWebhookConfigDrift).toHaveBeenCalledWith({
       contaId: 'c1',
-      actor: { type: 'USER', id: 'u1' },
+      actor: { type: 'ADMIN', id: 'u1' },
     });
+  });
+
+  it('exige justificativa auditável para repair', async () => {
+    const response = await POST(repairRequest({}));
+    if (!response) throw new Error('Resposta ausente');
+
+    expect(response.status).toBe(400);
+    expect(recordFinanceAdminAction).not.toHaveBeenCalled();
+    expect(repairWebhookConfigDrift).not.toHaveBeenCalled();
   });
 
   it('bloqueia usuário sem permissão', async () => {

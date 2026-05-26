@@ -1,5 +1,6 @@
 import { prisma } from '@alusa/database';
 
+import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
 import { detectWebhookGaps, reconcileWithAsaas } from '../webhooks/webhook-reconciliation.service';
 
 export interface ReconcileFinanceWebhooksJobOptions {
@@ -23,6 +24,7 @@ export interface ReconcileFinanceWebhooksJobResult {
   accountsFailed: number;
   results: ReconcileFinanceWebhooksAccountResult[];
   generatedAt: Date;
+  skippedDueToLock?: boolean;
 }
 
 async function resolveTargetContaIds(contaId?: string, maxAccounts = 20): Promise<string[]> {
@@ -48,6 +50,36 @@ async function resolveTargetContaIds(contaId?: string, maxAccounts = 20): Promis
 export async function reconcileFinanceWebhooksJob(
   options: ReconcileFinanceWebhooksJobOptions = {},
 ): Promise<ReconcileFinanceWebhooksJobResult> {
+  const lockName = `reconcile-finance-webhooks:${options.contaId ?? 'global'}`;
+  const locked = await withWebhookJobLock(
+    lockName,
+    () => reconcileFinanceWebhooksJobUnlocked(options),
+    {
+      ttlMs: 20 * 60 * 1000,
+      metadata: {
+        contaId: options.contaId ?? null,
+        windowHours: options.windowHours ?? null,
+        limit: options.limit ?? null,
+      },
+    },
+  );
+
+  if (!locked.acquired) {
+    return {
+      accountsProcessed: 0,
+      accountsFailed: 0,
+      results: [],
+      generatedAt: new Date(),
+      skippedDueToLock: true,
+    };
+  }
+
+  return locked.result;
+}
+
+async function reconcileFinanceWebhooksJobUnlocked(
+  options: ReconcileFinanceWebhooksJobOptions = {},
+): Promise<ReconcileFinanceWebhooksJobResult> {
   const windowHours = Math.max(1, Math.min(24 * 30, options.windowHours ?? 24));
   const limit = Math.max(1, Math.min(1000, options.limit ?? 100));
   const maxAccounts = Math.max(1, Math.min(50, options.maxAccounts ?? 20));
@@ -70,6 +102,7 @@ export async function reconcileFinanceWebhooksJob(
         includeGaps
           ? detectWebhookGaps(targetContaId, {
               windowDays: Math.max(1, Math.ceil(windowHours / 24)),
+              persistIssues: !dryRun,
             })
           : Promise.resolve(null),
       ]);

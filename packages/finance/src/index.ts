@@ -791,6 +791,7 @@ export type {
 } from './use-cases/admin/test-asaas-connection';
 export { reconnectAsaasAccount } from './use-cases/admin/reconnect-asaas-account';
 export type { ReconnectAsaasResult } from './use-cases/admin/reconnect-asaas-account';
+export { recordFinanceAdminAction } from './use-cases/admin/finance-admin-audit';
 export { saveManualSubaccountApiKey } from './use-cases/admin/save-manual-subaccount-api-key';
 export type {
   SaveManualSubaccountApiKeyResult,
@@ -870,6 +871,8 @@ export type {
 // Webhook Event Registry
 export {
   ASAAS_EVENT_REGISTRY,
+  getWebhookEventPolicies,
+  getWebhookEventPolicy,
   isKnownEvent,
   isHandledEvent,
   getEventDefinition,
@@ -878,11 +881,16 @@ export {
   getUnhandledEvents,
   getCriticalEvents,
   getRegistryStats,
+  shouldAlertUnknownWebhookEvent,
 } from './webhooks/asaas-event-registry';
 export type {
   EventImpactLevel,
   EventCategory,
   AsaasEventDefinition,
+  WebhookEventPolicy,
+  WebhookEventHandlingMode,
+  WebhookEventPolicyCategory,
+  WebhookEventCriticality,
 } from './webhooks/asaas-event-registry';
 
 // Reconciliation
@@ -895,6 +903,25 @@ export {
   dateToISO,
   isoToDate,
 } from './reconciliation/asaas-sync';
+export {
+  getFinanceReconciliationIssueSummary,
+  listFinanceReconciliationIssues,
+  resolveFinanceReconciliationIssue,
+  upsertFinanceReconciliationIssue,
+} from './reconciliation/finance-reconciliation-issue.service';
+export type {
+  ListFinanceReconciliationIssuesOptions,
+  UpsertFinanceReconciliationIssueInput,
+} from './reconciliation/finance-reconciliation-issue.service';
+export {
+  acquireWebhookJobLock,
+  releaseWebhookJobLock,
+  withWebhookJobLock,
+} from './foundation/webhook-job-lock.service';
+export type {
+  WebhookJobLockAcquireResult,
+  WebhookJobLockOptions,
+} from './foundation/webhook-job-lock.service';
 
 // Foundation (Fase 0)
 export { credentialVault } from './foundation/credential-vault';

@@ -10,6 +10,8 @@ const {
   mockUpdateWebhook,
   mockRemoveWebhookBackoff,
   mockAuditRecord,
+  mockIssueUpsert,
+  mockIssueUpdateMany,
   mockResolveWebhookNotificationEmail,
 } = vi.hoisted(() => ({
   mockFindFirst: vi.fn(),
@@ -21,6 +23,8 @@ const {
   mockUpdateWebhook: vi.fn(),
   mockRemoveWebhookBackoff: vi.fn(),
   mockAuditRecord: vi.fn().mockResolvedValue(undefined),
+  mockIssueUpsert: vi.fn().mockResolvedValue({ id: 'issue_1' }),
+  mockIssueUpdateMany: vi.fn().mockResolvedValue({ count: 1 }),
   mockResolveWebhookNotificationEmail: vi.fn(),
 }));
 
@@ -30,6 +34,10 @@ vi.mock('@alusa/database', () => ({
       findFirst: mockFindFirst,
       findUnique: mockFindUnique,
       update: mockUpdateAccount,
+    },
+    financeReconciliationIssue: {
+      upsert: mockIssueUpsert,
+      updateMany: mockIssueUpdateMany,
     },
   },
   loadAsaasCredentials: mockLoadCreds,

@@ -39,6 +39,34 @@ export interface AsaasEventDefinition {
   requiresSync: boolean;
 }
 
+export type WebhookEventPolicyCategory =
+  | 'PAYMENT'
+  | 'SUBSCRIPTION'
+  | 'TRANSFER'
+  | 'ACCOUNT_STATUS'
+  | 'BALANCE'
+  | 'ACCESS_TOKEN'
+  | 'ANTICIPATION'
+  | 'AUDIT_ONLY'
+  | 'UNUSED';
+
+export type WebhookEventHandlingMode =
+  | 'STATE_CHANGE'
+  | 'AUDIT_ONLY'
+  | 'NOT_USED'
+  | 'UNKNOWN_ALERT';
+
+export type WebhookEventCriticality = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
+
+export type WebhookEventPolicy = {
+  event: string;
+  category: WebhookEventPolicyCategory;
+  handlingMode: WebhookEventHandlingMode;
+  criticality: WebhookEventCriticality;
+  mustProvision: boolean;
+  requiresReconciliation: boolean;
+};
+
 /**
  * Registry completo de eventos Asaas
  */
@@ -1051,6 +1079,80 @@ export function getCriticalEvents(): string[] {
   return Object.entries(ASAAS_EVENT_REGISTRY)
     .filter(([, def]) => def.impactLevel === 'critical')
     .map(([event]) => event);
+}
+
+function toPolicyCategory(category: EventCategory): WebhookEventPolicyCategory {
+  if (
+    category === 'PAYMENT' ||
+    category === 'SUBSCRIPTION' ||
+    category === 'TRANSFER' ||
+    category === 'ACCOUNT_STATUS' ||
+    category === 'BALANCE' ||
+    category === 'ACCESS_TOKEN' ||
+    category === 'ANTICIPATION'
+  ) {
+    return category;
+  }
+
+  if (category === 'INTERNAL_TRANSFER' || category === 'INVOICE' || category === 'BILL') {
+    return 'AUDIT_ONLY';
+  }
+
+  return 'UNUSED';
+}
+
+function toCriticality(level: EventImpactLevel): WebhookEventCriticality {
+  switch (level) {
+    case 'critical':
+      return 'CRITICAL';
+    case 'high':
+      return 'HIGH';
+    case 'medium':
+      return 'MEDIUM';
+    case 'low':
+      return 'LOW';
+    case 'info':
+      return 'INFO';
+  }
+}
+
+export function getWebhookEventPolicy(event: string): WebhookEventPolicy {
+  const definition = ASAAS_EVENT_REGISTRY[event];
+  if (!definition) {
+    return {
+      event,
+      category: 'AUDIT_ONLY',
+      handlingMode: 'UNKNOWN_ALERT',
+      criticality: 'HIGH',
+      mustProvision: false,
+      requiresReconciliation: true,
+    };
+  }
+
+  const isAuditOnly = definition.handled && !definition.requiresSync && definition.impactLevel === 'info';
+  return {
+    event,
+    category: toPolicyCategory(definition.category),
+    handlingMode: definition.handled
+      ? isAuditOnly
+        ? 'AUDIT_ONLY'
+        : 'STATE_CHANGE'
+      : 'NOT_USED',
+    criticality: toCriticality(definition.impactLevel),
+    mustProvision: definition.handled,
+    requiresReconciliation: definition.requiresSync || ['critical', 'high'].includes(definition.impactLevel),
+  };
+}
+
+export function getWebhookEventPolicies(): WebhookEventPolicy[] {
+  return Object.keys(ASAAS_EVENT_REGISTRY)
+    .sort()
+    .map((event) => getWebhookEventPolicy(event));
+}
+
+export function shouldAlertUnknownWebhookEvent(event: string): boolean {
+  const policy = getWebhookEventPolicy(event);
+  return policy.handlingMode === 'UNKNOWN_ALERT' || policy.criticality === 'CRITICAL' || policy.criticality === 'HIGH';
 }
 
 /**

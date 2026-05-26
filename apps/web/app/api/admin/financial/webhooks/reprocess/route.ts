@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { processAsaasWebhookQueueWithInbox, syncPaymentStateFromAsaas } from '@alusa/finance';
+import {
+  processAsaasWebhookQueueWithInbox,
+  recordFinanceAdminAction,
+  syncPaymentStateFromAsaas,
+} from '@alusa/finance';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -27,9 +31,23 @@ export async function POST(req: NextRequest) {
       limit?: number;
       asaasPaymentId?: string;
       eventName?: string;
+      reason?: string;
     };
+    const reason = body.reason?.trim();
+    if (!reason || reason.length < 8) {
+      return json(400, { error: 'JUSTIFICATIVA_OBRIGATORIA' });
+    }
 
     if (body.asaasPaymentId) {
+      await recordFinanceAdminAction({
+        contaId: user.contaId,
+        action: 'finance.webhooks.reconcile_payment.manual',
+        entity: { type: 'Payment', id: body.asaasPaymentId },
+        reason,
+        actor: { type: 'ADMIN', id: user.id },
+        metadata: { eventName: body.eventName ?? null },
+      });
+
       const result = await syncPaymentStateFromAsaas({
         contaId: user.contaId,
         asaasPaymentId: body.asaasPaymentId,
@@ -42,6 +60,14 @@ export async function POST(req: NextRequest) {
 
       return json(200, { ok: true, mode: 'payment', result });
     }
+
+    await recordFinanceAdminAction({
+      contaId: user.contaId,
+      action: 'finance.webhooks.reprocess_queue.manual',
+      reason,
+      actor: { type: 'ADMIN', id: user.id },
+      metadata: { limit: body.limit ?? 50, statuses: ['ERRO'] },
+    });
 
     const result = await processAsaasWebhookQueueWithInbox({
       contaId: user.contaId,

@@ -440,6 +440,41 @@ enum FinanceWebhookSideEffectStatus {
   FAILED
 }
 
+enum FinanceReconciliationEntityType {
+  PAYMENT
+  CHARGE
+  SUBSCRIPTION
+  INSTALLMENT_PLAN
+  TRANSFER
+  WEBHOOK
+  ASAAS_ACCOUNT
+}
+
+enum FinanceReconciliationIssueType {
+  PAYMENT_STATUS_DRIFT
+  PAYMENT_MISSING_LOCAL_ENTITY
+  PAYMENT_NEEDS_REVIEW
+  SUBSCRIPTION_STATUS_DRIFT
+  TRANSFER_STATUS_DRIFT
+  WEBHOOK_LAG
+  WEBHOOK_DROPPED_RISK
+  WEBHOOK_CONFIG_DRIFT
+}
+
+enum FinanceReconciliationIssueSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum FinanceReconciliationIssueStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
 // Status de sincronização com integração financeira
 enum IntegrationSyncStatus {
   PENDENTE_SINCRONISMO
@@ -747,6 +782,7 @@ model Conta {
   descontos                      Desconto[]
   webhooks                       WebhookAsaas[]
   webhooksArchive                WebhookAsaasArchive[]
+  financeReconciliationIssues    FinanceReconciliationIssue[]
   financeWebhookSideEffectOutbox FinanceWebhookSideEffectOutbox[]
   logsFinanceiros                LogFinanceiro[]
   logsIntegracao                 LogIntegracao[]
@@ -2087,6 +2123,48 @@ model WebhookAsaasRejection {
   @@index([recebidoEm], name: "idx_webhookasaas_rejection_recebido")
 }
 
+model FinanceReconciliationIssue {
+  id           String                             @id @default(cuid())
+  contaId      String
+  entityType   FinanceReconciliationEntityType
+  entityId     String?
+  asaasId      String?
+  issueType    FinanceReconciliationIssueType
+  severity     FinanceReconciliationIssueSeverity
+  status       FinanceReconciliationIssueStatus   @default(OPEN)
+  dedupeKey    String
+  localStatus  String?
+  remoteStatus String?
+  detectedAt   DateTime                           @default(now())
+  lastSeenAt   DateTime                           @default(now())
+  resolvedAt   DateTime?
+  resolution   String?
+  metadata     Json?
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, dedupeKey], name: "uq_fin_recon_issue_conta_dedupe")
+  @@index([contaId, status, severity, detectedAt], name: "idx_fin_recon_issue_dashboard")
+  @@index([contaId, issueType, status], name: "idx_fin_recon_issue_type_status")
+  @@index([contaId, entityType, entityId], name: "idx_fin_recon_issue_entity")
+  @@index([contaId, asaasId], name: "idx_fin_recon_issue_asaas")
+  @@index([status, severity, detectedAt], name: "idx_fin_recon_issue_global_status")
+}
+
+model WebhookJobLock {
+  jobName         String    @id
+  lockedAt        DateTime
+  lockedUntil     DateTime
+  workerId        String
+  lastHeartbeatAt DateTime?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([lockedUntil], name: "idx_webhook_job_lock_until")
+  @@index([workerId], name: "idx_webhook_job_lock_worker")
+}
+
 model FinanceWebhookSideEffectOutbox {
   id            String                         @id @default(cuid())
   contaId       String
@@ -2453,13 +2531,13 @@ model EventMap {
   publishedAt        DateTime?
   archivedAt         DateTime?
 
-  conta    Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event    SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  versions EventMapVersion[]
-  levels   EventMapLevel[]
-  objects  EventMapObject[]
-  sections EventMapSection[]
-  seats    EventSeat[]
+  conta      Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event      SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  versions   EventMapVersion[]
+  levels     EventMapLevel[]
+  objects    EventMapObject[]
+  sections   EventMapSection[]
+  seats      EventSeat[]
   seatGroups EventSeatGroup[]
 
   @@index([contaId], name: "idx_event_map_conta")
@@ -2496,11 +2574,11 @@ model EventMapLevel {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  conta    Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  map      EventMap          @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
-  objects  EventMapObject[]
-  sections EventMapSection[]
-  seats    EventSeat[]
+  conta      Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map        EventMap          @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  objects    EventMapObject[]
+  sections   EventMapSection[]
+  seats      EventSeat[]
   seatGroups EventSeatGroup[]
 
   @@index([contaId, eventMapId], name: "idx_event_map_level_conta_map")
@@ -2530,10 +2608,10 @@ model EventSeatGroup {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  conta  Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  map    EventMap      @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
-  level  EventMapLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
-  seats  EventSeat[]
+  conta Conta         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map   EventMap      @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  level EventMapLevel @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  seats EventSeat[]
 
   @@index([contaId, eventMapId, levelId], name: "idx_event_seat_group_conta_map_level")
 }

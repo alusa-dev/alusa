@@ -14,25 +14,13 @@ vi.mock('@/lib/auth-options', () => ({
 }));
 
 vi.mock('@alusa/finance', () => ({
-  processAsaasWebhookQueue: vi.fn(),
+  processAsaasWebhookQueueWithInbox: vi.fn(),
+  recordFinanceAdminAction: vi.fn(),
   syncPaymentStateFromAsaas: vi.fn(),
 }));
 
-const {
-  mockEmitBillingNotificationCandidate,
-  mockEmitBillingNotifications,
-} = vi.hoisted(() => ({
-  mockEmitBillingNotificationCandidate: vi.fn(),
-  mockEmitBillingNotifications: vi.fn(),
-}));
-
-vi.mock('@/lib/notifications/emit-billing-notifications', () => ({
-  emitBillingNotificationCandidate: mockEmitBillingNotificationCandidate,
-  emitBillingNotifications: mockEmitBillingNotifications,
-}));
-
 import { getServerSession } from 'next-auth';
-import { processAsaasWebhookQueue, syncPaymentStateFromAsaas } from '@alusa/finance';
+import { processAsaasWebhookQueueWithInbox, recordFinanceAdminAction, syncPaymentStateFromAsaas } from '@alusa/finance';
 import { POST } from '@/app/api/admin/financial/webhooks/reprocess/route';
 
 function request(body: unknown) {
@@ -68,23 +56,29 @@ describe('POST /api/admin/financial/webhooks/reprocess', () => {
     vi.mocked(getServerSession).mockResolvedValue({
       user: { id: 'u1', contaId: 'c1', role: 'ADMIN' },
     } as never);
-    vi.mocked(processAsaasWebhookQueue).mockResolvedValue({
+    vi.mocked(processAsaasWebhookQueueWithInbox).mockResolvedValue({
       processedPayments: [],
       processed: 1,
     } as never);
 
-    const res = await POST(request({ limit: 20 }));
+    const res = await POST(request({ limit: 20, reason: 'reprocessar webhook com erro' }));
     expect(res.status).toBe(200);
 
     const json = await res.json();
     expect(json).toMatchObject({ ok: true, mode: 'queue' });
-    expect(processAsaasWebhookQueue).toHaveBeenCalledWith({
+    expect(recordFinanceAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'c1',
+        action: 'finance.webhooks.reprocess_queue.manual',
+        reason: 'reprocessar webhook com erro',
+      }),
+    );
+    expect(processAsaasWebhookQueueWithInbox).toHaveBeenCalledWith({
       contaId: 'c1',
       limit: 20,
       statuses: ['ERRO'],
       source: 'REPROCESS',
     });
-    expect(mockEmitBillingNotifications).toHaveBeenCalled();
   });
 
   it('reconcilia pagamento específico quando asaasPaymentId é informado', async () => {
@@ -97,23 +91,28 @@ describe('POST /api/admin/financial/webhooks/reprocess', () => {
       appliedEvent: 'PAYMENT_CONFIRMED',
     } as never);
 
-    const res = await POST(request({ asaasPaymentId: 'pay_1', eventName: 'PAYMENT_CONFIRMED' }));
+    const res = await POST(request({
+      asaasPaymentId: 'pay_1',
+      eventName: 'PAYMENT_CONFIRMED',
+      reason: 'reconciliar pagamento manualmente',
+    }));
     expect(res.status).toBe(200);
 
     const json = await res.json();
     expect(json).toMatchObject({ ok: true, mode: 'payment' });
+    expect(recordFinanceAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'c1',
+        action: 'finance.webhooks.reconcile_payment.manual',
+        entity: { type: 'Payment', id: 'pay_1' },
+        reason: 'reconciliar pagamento manualmente',
+      }),
+    );
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
       contaId: 'c1',
       asaasPaymentId: 'pay_1',
       eventName: 'PAYMENT_CONFIRMED',
     });
-    expect(mockEmitBillingNotificationCandidate).toHaveBeenCalledWith(
-      {
-        event: 'PAYMENT_CONFIRMED',
-        asaasPaymentId: 'pay_1',
-      },
-      'ASAAS_SYNC',
-    );
   });
 
   it('retorna 422 quando a reconciliação pontual falha', async () => {
@@ -125,7 +124,18 @@ describe('POST /api/admin/financial/webhooks/reprocess', () => {
       error: 'SYNC_FAILED',
     } as never);
 
-    const res = await POST(request({ asaasPaymentId: 'pay_1' }));
+    const res = await POST(request({ asaasPaymentId: 'pay_1', reason: 'reconciliar pagamento manualmente' }));
     expect(res.status).toBe(422);
+  });
+
+  it('exige justificativa auditável para ação manual', async () => {
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'u1', contaId: 'c1', role: 'ADMIN' },
+    } as never);
+
+    const res = await POST(request({ limit: 20 }));
+    expect(res.status).toBe(400);
+    expect(processAsaasWebhookQueueWithInbox).not.toHaveBeenCalled();
+    expect(syncPaymentStateFromAsaas).not.toHaveBeenCalled();
   });
 });

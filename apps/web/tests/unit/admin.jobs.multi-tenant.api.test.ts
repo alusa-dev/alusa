@@ -14,6 +14,7 @@ vi.mock('@/lib/auth-options', () => ({
 
 vi.mock('@alusa/finance', () => ({
   detectWebhookGaps: vi.fn(),
+  reconcileFinanceWebhooksJob: vi.fn(),
   reconcileWithAsaas: vi.fn(),
   reconcileAsaasAccountsJob: vi.fn(),
   processAsaasWebhookQueue: vi.fn(),
@@ -37,6 +38,7 @@ import {
   detectWebhookGaps,
   processAsaasWebhookQueue,
   reconcileAsaasAccountsJob,
+  reconcileFinanceWebhooksJob,
   reconcileWithAsaas,
   runWebhookHealthAndDriftMaintenance,
   syncPaymentStateFromAsaas,
@@ -68,6 +70,12 @@ describe('admin jobs multi-tenant isolation', () => {
     } as never);
 
     vi.mocked(reconcileWithAsaas).mockResolvedValue({ ok: true } as never);
+    vi.mocked(reconcileFinanceWebhooksJob).mockResolvedValue({
+      processedAccounts: 1,
+      results: [{ contaId: 'conta-2', reconcile: { ok: true }, gaps: null }],
+      errors: [],
+      skippedDueToLock: false,
+    } as never);
     vi.mocked(detectWebhookGaps).mockResolvedValue(null as never);
     vi.mocked(reconcileAsaasAccountsJob).mockResolvedValue({ processed: 1 } as never);
     vi.mocked(processAsaasWebhookQueue).mockResolvedValue({ processed: 1 } as never);
@@ -105,11 +113,13 @@ describe('admin jobs multi-tenant isolation', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(reconcileWithAsaas).toHaveBeenCalledWith({
+    expect(reconcileFinanceWebhooksJob).toHaveBeenCalledWith({
       contaId: 'conta-2',
       windowHours: 24,
-      limit: 200,
+      limit: 100,
       dryRun: false,
+      includeGaps: true,
+      maxAccounts: 1,
     });
   });
 

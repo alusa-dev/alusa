@@ -12,9 +12,66 @@ import {
 } from '../use-cases/asaas-account/expected-webhook-config.server';
 import { resolveWebhookNotificationEmail } from '../use-cases/asaas-account/webhook-notification-email.server';
 import { buildWebhookAuthTokenRotationData } from './asaas-webhook-auth';
+import {
+  buildFinanceReconciliationIssueDedupeKey,
+  resolveFinanceReconciliationIssueByDedupe,
+  upsertFinanceReconciliationIssue,
+} from '../reconciliation/finance-reconciliation-issue.service';
 
 const MAX_WEBHOOK_PAGES = 10;
 const PAGE_SIZE = 100;
+
+function hasWebhookConfigDrift(status: WebhookConfigDriftStatus): boolean {
+  return (
+    status.drift.remoteMissing ||
+    status.drift.urlMismatch ||
+    status.drift.disabled ||
+    status.drift.interrupted ||
+    status.drift.missingAuthToken ||
+    status.drift.sendTypeMismatch ||
+    status.drift.eventsMismatch ||
+    status.drift.localHashMismatch ||
+    status.drift.penalized
+  );
+}
+
+async function recordWebhookConfigDriftIssue(status: WebhookConfigDriftStatus): Promise<void> {
+  await upsertFinanceReconciliationIssue({
+    contaId: status.contaId,
+    entityType: 'ASAAS_ACCOUNT',
+    entityId: status.asaasAccountId,
+    asaasId: status.asaasAccountId,
+    issueType: 'WEBHOOK_CONFIG_DRIFT',
+    severity: status.drift.interrupted || status.drift.remoteMissing || status.drift.disabled ? 'CRITICAL' : 'HIGH',
+    localStatus: null,
+    remoteStatus: status.remote.interrupted ? 'INTERRUPTED' : status.remote.enabled ? 'ENABLED' : 'DISABLED',
+    metadata: {
+      drift: status.drift,
+      remote: status.remote,
+      expected: {
+        url: status.expected.url,
+        sendType: status.expected.sendType,
+        eventsCount: status.expected.events.length,
+      },
+      source: 'webhook-config-drift.service',
+    },
+  });
+}
+
+async function resolveWebhookConfigDriftIssue(status: WebhookConfigDriftStatus): Promise<void> {
+  const dedupeKey = buildFinanceReconciliationIssueDedupeKey({
+    entityType: 'ASAAS_ACCOUNT',
+    entityId: status.asaasAccountId,
+    asaasId: status.asaasAccountId,
+    issueType: 'WEBHOOK_CONFIG_DRIFT',
+  });
+
+  await resolveFinanceReconciliationIssueByDedupe({
+    contaId: status.contaId,
+    dedupeKey,
+    resolution: 'Webhook remoto verificado sem drift.',
+  });
+}
 
 async function listAllWebhooks(apiKey: string): Promise<AsaasWebhookConfig[]> {
   const all: AsaasWebhookConfig[] = [];
@@ -205,13 +262,14 @@ export async function repairWebhookConfigDrift(params: {
       return { repaired: false, reason: 'CREDENTIALS_MISSING', before: null, after: null };
     }
 
-    const hasDrift = Object.entries(before.drift)
-      .filter(([key]) => key !== 'missingEvents' && key !== 'extraEvents')
-      .some(([, value]) => value === true);
+    const hasDrift = hasWebhookConfigDrift(before);
 
     if (!hasDrift && before.drift.missingEvents.length === 0 && before.drift.extraEvents.length === 0) {
+      await resolveWebhookConfigDriftIssue(before);
       return { repaired: false, reason: 'NO_DRIFT', before, after: before };
     }
+
+    await recordWebhookConfigDriftIssue(before);
 
     if (!before.canRepair || !before.remote.webhookId) {
       const credentials = await loadAsaasCredentials(params.contaId);
@@ -262,6 +320,10 @@ export async function repairWebhookConfigDrift(params: {
         },
         actor: params.actor,
       });
+
+      if (after && !hasWebhookConfigDrift(after) && after.drift.missingEvents.length === 0 && after.drift.extraEvents.length === 0) {
+        await resolveWebhookConfigDriftIssue(after);
+      }
 
       return { repaired: true, reason: 'REPAIRED', before, after };
     }
@@ -327,6 +389,10 @@ export async function repairWebhookConfigDrift(params: {
       },
       actor: params.actor,
     });
+
+    if (after && !hasWebhookConfigDrift(after) && after.drift.missingEvents.length === 0 && after.drift.extraEvents.length === 0) {
+      await resolveWebhookConfigDriftIssue(after);
+    }
 
     return { repaired: true, reason: 'REPAIRED', before, after };
   } catch (error) {

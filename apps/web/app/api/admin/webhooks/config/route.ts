@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { getWebhookConfigDriftStatus, repairWebhookConfigDrift } from '@alusa/finance';
+import { getWebhookConfigDriftStatus, recordFinanceAdminAction, repairWebhookConfigDrift } from '@alusa/finance';
 
 async function requireAdminSession() {
   const session = await getServerSession(authOptions);
@@ -45,7 +45,7 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const auth = await requireAdminSession();
     if ('error' in auth) return auth.error;
@@ -55,9 +55,22 @@ export async function POST() {
       return NextResponse.json({ success: false, error: 'Não autorizado' }, { status: 401 });
     }
 
+    const body = (await req.json().catch(() => ({}))) as { reason?: string };
+    const reason = body.reason?.trim();
+    if (!reason || reason.length < 8) {
+      return NextResponse.json({ success: false, error: 'Justificativa obrigatória' }, { status: 400 });
+    }
+
+    await recordFinanceAdminAction({
+      contaId,
+      action: 'finance.webhook.config_repair.requested',
+      reason,
+      actor: { type: 'ADMIN', id: auth.session.user.id },
+    });
+
     const result = await repairWebhookConfigDrift({
       contaId,
-      actor: { type: 'USER', id: auth.session.user.id },
+      actor: { type: 'ADMIN', id: auth.session.user.id },
     });
 
     return NextResponse.json({

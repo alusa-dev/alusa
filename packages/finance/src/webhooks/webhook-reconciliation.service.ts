@@ -22,6 +22,7 @@ import { mapAsaasToChargeStatus } from '../core';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -49,6 +50,8 @@ export interface ReconciliationOptions {
   chargeLimit?: number;
   /** Se true, apenas detecta gaps sem reprocessar */
   dryRun?: boolean;
+  /** Se true, materializa gaps no read model operacional */
+  persistIssues?: boolean;
 }
 
 export interface QueueMetricsOptions {
@@ -278,11 +281,51 @@ export async function detectWebhookGaps(
     })
   );
 
+  const subscriptionsWithGap = subscriptionsWithWebhookInfo.filter(
+    (s) => !s.lastWebhookAt || s.lastWebhookAt < oneDayAgo
+  );
+
+  if (options.persistIssues) {
+    await Promise.all([
+      ...chargesWithGap.map((charge) =>
+        upsertFinanceReconciliationIssue({
+          contaId,
+          entityType: 'CHARGE',
+          entityId: charge.id,
+          asaasId: charge.asaasPaymentId,
+          issueType: 'WEBHOOK_LAG',
+          severity: 'HIGH',
+          localStatus: charge.status,
+          remoteStatus: null,
+          metadata: {
+            dueDate: charge.dueDate?.toISOString() ?? null,
+            lastWebhookAt: charge.lastWebhookAt?.toISOString() ?? null,
+            source: 'detectWebhookGaps',
+          },
+        }),
+      ),
+      ...subscriptionsWithGap.map((subscription) =>
+        upsertFinanceReconciliationIssue({
+          contaId,
+          entityType: 'SUBSCRIPTION',
+          entityId: subscription.id,
+          asaasId: subscription.asaasSubscriptionId,
+          issueType: 'WEBHOOK_LAG',
+          severity: 'MEDIUM',
+          localStatus: subscription.status,
+          remoteStatus: null,
+          metadata: {
+            lastWebhookAt: subscription.lastWebhookAt?.toISOString() ?? null,
+            source: 'detectWebhookGaps',
+          },
+        }),
+      ),
+    ]);
+  }
+
   return {
     chargesWithMissingFinalStatus: chargesWithGap,
-    subscriptionsWithMissingEvents: subscriptionsWithWebhookInfo.filter(
-      (s) => !s.lastWebhookAt || s.lastWebhookAt < oneDayAgo
-    ),
+    subscriptionsWithMissingEvents: subscriptionsWithGap,
   };
 }
 
@@ -980,6 +1023,21 @@ export async function reconcileWithAsaas(
       if (remoteLocalStatus !== charge.status) {
         paymentDrift += 1;
         if (!dryRun) {
+          await upsertFinanceReconciliationIssue({
+            contaId: options.contaId,
+            entityType: 'CHARGE',
+            entityId: charge.id,
+            asaasId: charge.asaasPaymentId,
+            issueType: 'PAYMENT_STATUS_DRIFT',
+            severity: 'HIGH',
+            localStatus: charge.status,
+            remoteStatus: remoteLocalStatus,
+            metadata: {
+              asaasStatus: remote.status,
+              externalReference: charge.externalReference,
+              source: 'reconcileWithAsaas',
+            },
+          });
           const event = PAYMENT_EVENT_BY_STATUS[remote.status] ?? 'PAYMENT_UPDATED';
           await handlePaymentWebhook(options.contaId, {
             event,
@@ -1026,6 +1084,21 @@ export async function reconcileWithAsaas(
       if (nextStatus !== sub.status) {
         subscriptionDrift += 1;
         if (!dryRun) {
+          await upsertFinanceReconciliationIssue({
+            contaId: options.contaId,
+            entityType: 'SUBSCRIPTION',
+            entityId: sub.id,
+            asaasId: sub.asaasSubscriptionId,
+            issueType: 'SUBSCRIPTION_STATUS_DRIFT',
+            severity: 'HIGH',
+            localStatus: sub.status,
+            remoteStatus: nextStatus,
+            metadata: {
+              asaasStatus: remote.status,
+              deleted: remote.deleted ?? null,
+              source: 'reconcileWithAsaas',
+            },
+          });
           const event = chooseSyntheticSubscriptionEvent({
             status: remote.status,
             deleted: remote.deleted,
@@ -1087,6 +1160,23 @@ export async function reconcileWithAsaas(
 
       if (localCount !== remotePayments.totalCount) {
         installmentDrift += 1;
+        if (!dryRun) {
+          await upsertFinanceReconciliationIssue({
+            contaId: options.contaId,
+            entityType: 'INSTALLMENT_PLAN',
+            entityId: plan.id,
+            asaasId: plan.asaasInstallmentId,
+            issueType: 'PAYMENT_STATUS_DRIFT',
+            severity: 'MEDIUM',
+            localStatus: String(localCount),
+            remoteStatus: String(remotePayments.totalCount),
+            metadata: {
+              source: 'reconcileWithAsaas',
+              drift: 'INSTALLMENT_PAYMENT_COUNT',
+              planSource: plan.source,
+            },
+          });
+        }
       }
     } catch (error) {
       errors.push(`installment:${plan.asaasInstallmentId}:${error instanceof Error ? error.message : String(error)}`);
@@ -1246,6 +1336,22 @@ export async function reconcileBilateral(
             driftType: 'MISSING_LOCAL',
             externalReference: payment.externalReference ?? null,
           });
+          if (!dryRun) {
+            await upsertFinanceReconciliationIssue({
+              contaId: options.contaId,
+              entityType: 'PAYMENT',
+              entityId: null,
+              asaasId: payment.id,
+              issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+              severity: 'HIGH',
+              localStatus: null,
+              remoteStatus: payment.status,
+              metadata: {
+                externalReference: payment.externalReference ?? null,
+                source: 'reconcileBilateral',
+              },
+            });
+          }
           continue;
         }
 
@@ -1260,8 +1366,22 @@ export async function reconcileBilateral(
             driftType: 'STATUS_MISMATCH',
             externalReference: payment.externalReference ?? null,
           });
-
           if (!dryRun) {
+            await upsertFinanceReconciliationIssue({
+              contaId: options.contaId,
+              entityType: 'CHARGE',
+              entityId: localCharge.id,
+              asaasId: payment.id,
+              issueType: 'PAYMENT_STATUS_DRIFT',
+              severity: 'HIGH',
+              localStatus: localCharge.status,
+              remoteStatus: expectedLocalStatus,
+              metadata: {
+                asaasStatus: payment.status,
+                externalReference: payment.externalReference ?? null,
+                source: 'reconcileBilateral',
+              },
+            });
             try {
               const event = PAYMENT_EVENT_BY_STATUS[payment.status] ?? 'PAYMENT_UPDATED';
               await handlePaymentWebhook(options.contaId, {

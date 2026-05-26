@@ -5,19 +5,11 @@
   "buildCommand": "cd ../.. && find packages -name '*.tsbuildinfo' -delete && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/web --force",
   "crons": [
     {
-      "path": "/api/jobs/process-finance-webhooks",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/jobs/provision-asaas-subaccounts",
+      "path": "/api/jobs/webhook-scheduler?drainLimit=200&skipArchive=true&skipHealthCheck=true&skipDriftCheck=true",
       "schedule": "*/2 * * * *"
     },
     {
-      "path": "/api/jobs/asaas-health-check",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/api/jobs/reconcile-finance-accounts",
+      "path": "/api/jobs/provision-asaas-subaccounts",
       "schedule": "*/30 * * * *"
     },
     {
@@ -27,6 +19,10 @@
     {
       "path": "/api/jobs/webhook-maintenance",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/jobs/reconcile-finance-accounts",
+      "schedule": "15 */2 * * *"
     },
     {
       "path": "/api/jobs/auto-close-agenda-events",
