@@ -9,6 +9,20 @@ import type {
   NotificationView,
 } from '../types';
 
+class NotificationRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'NotificationRequestError';
+    this.status = status;
+  }
+}
+
+function isAuthNotificationError(error: unknown) {
+  return error instanceof NotificationRequestError && (error.status === 401 || error.status === 403);
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => null)) as T | null;
   if (!response.ok) {
@@ -20,7 +34,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
             ? data.error
             : 'Não foi possível concluir a operação.'
         : 'Não foi possível concluir a operação.';
-    throw new Error(message);
+    throw new NotificationRequestError(message, response.status);
   }
   if (!data) {
     throw new Error('Resposta inválida do servidor.');
@@ -29,6 +43,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 const notificationListRequests = new Map<string, Promise<NotificationListResponse>>();
+
+export const NOTIFICATION_INBOX_ROLES = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
 function fetchNotificationList(url: string) {
   const existing = notificationListRequests.get(url);
@@ -143,6 +159,12 @@ export function useNotificationsFeed(params?: {
       setUnreadCount(data.unreadCount);
       setTotalCount(data.totalCount);
     } catch (error) {
+      if (isAuthNotificationError(error)) {
+        setItems([]);
+        setUnreadCount(0);
+        setTotalCount(0);
+        return;
+      }
       console.error('[Notifications][load]', error);
       toast.error(error instanceof Error ? error.message : 'Não foi possível carregar as notificações.');
     } finally {
@@ -178,6 +200,7 @@ export function useNotificationsFeed(params?: {
         await parseResponse<{ success: boolean }>(response);
         applyLocalAction(notificationId, action);
       } catch (error) {
+        if (isAuthNotificationError(error)) return;
         console.error('[Notifications][update]', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível atualizar a notificação.');
         await load(true);
@@ -207,6 +230,7 @@ export function useNotificationsFeed(params?: {
       );
       setUnreadCount(0);
     } catch (error) {
+      if (isAuthNotificationError(error)) return;
       console.error('[Notifications][markAllAsRead]', error);
       toast.error(error instanceof Error ? error.message : 'Não foi possível marcar as notificações como lidas.');
       await load(true);
@@ -225,6 +249,7 @@ export function useNotificationsFeed(params?: {
         await parseResponse<{ success: boolean }>(response);
         applyLocalDelete(notificationId);
       } catch (error) {
+        if (isAuthNotificationError(error)) return;
         console.error('[Notifications][delete]', error);
         toast.error(error instanceof Error ? error.message : 'Não foi possível excluir a notificação.');
         await load(true);

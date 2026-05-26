@@ -91,6 +91,19 @@ export default [
   {
     files: ['apps/web/lib/**/*.{ts,tsx}'],
     languageOptions: { parserOptions: { project: null } }
-  }
-  // (Opcional futuramente) adicionar override tipado para src somente
+  },
+  {
+    files: ['apps/web/features/events/map/canvas/**/*.{ts,tsx}'],
+    ignores: ['apps/web/features/events/map/canvas/__tests__/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'MemberExpression[object.name="Math"][property.name=/^(sin|cos|tan|asin|acos|atan|atan2)$/]',
+          message:
+            'Trigonometria pertence ao map-engine (@alusa/domain). Use worldToParentLocal, toLocal/toGlobal ou adapters.',
+        },
+      ],
+    },
+  },
 ];

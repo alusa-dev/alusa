@@ -6,26 +6,16 @@ import {
   getBoxEdge,
   type BoundingBox,
   type LevelBounds,
-  type SnapEdge,
   type SnapGuideLine,
   type SnappingEdges,
 } from './snap-guides.js';
 import { MIN_OBJECT_SIZE } from './uniform-group-transform.js';
 
-export type ResizeAnchor =
-  | 'top-left'
-  | 'top-center'
-  | 'top-right'
-  | 'middle-left'
-  | 'middle-right'
-  | 'bottom-left'
-  | 'bottom-center'
-  | 'bottom-right';
-
-export type MovingResizeEdges = {
-  vertical?: SnapEdge;
-  horizontal?: SnapEdge;
-};
+import {
+  getFixedPointFromAnchor,
+  getMovingEdgesFromAnchor,
+  type MovingResizeEdges,
+} from './anchor.js';
 
 export type NormalizedResizeBox = BoundingBox & {
   flippedX: boolean;
@@ -70,57 +60,6 @@ export function restoreResizeBoxSigns(
   }
 
   return { x, y, width, height };
-}
-
-export function getMovingEdgesFromAnchor(anchor: string): MovingResizeEdges {
-  switch (anchor) {
-    case 'top-left':
-      return { vertical: 'start', horizontal: 'start' };
-    case 'top-center':
-      return { horizontal: 'start' };
-    case 'top-right':
-      return { vertical: 'end', horizontal: 'start' };
-    case 'middle-left':
-      return { vertical: 'start' };
-    case 'middle-right':
-      return { vertical: 'end' };
-    case 'bottom-left':
-      return { vertical: 'start', horizontal: 'end' };
-    case 'bottom-center':
-      return { horizontal: 'end' };
-    case 'bottom-right':
-      return { vertical: 'end', horizontal: 'end' };
-    default:
-      return {};
-  }
-}
-
-export function getFixedPointFromAnchor(box: BoundingBox, anchor: string) {
-  const right = box.x + box.width;
-  const bottom = box.y + box.height;
-  const centerX = box.x + box.width / 2;
-  const centerY = box.y + box.height / 2;
-
-  switch (anchor) {
-    case 'top-left':
-      return { x: right, y: bottom };
-    case 'top-center':
-      return { x: centerX, y: bottom };
-    case 'top-right':
-      return { x: box.x, y: bottom };
-    case 'middle-left':
-      return { x: right, y: centerY };
-    case 'middle-right':
-      return { x: box.x, y: centerY };
-    case 'bottom-left':
-      return { x: right, y: box.y };
-    case 'bottom-center':
-      return { x: centerX, y: box.y };
-    case 'bottom-right':
-      return { x: box.x, y: box.y };
-    default:
-      return { x: right, y: bottom };
-  }
 }
 
 export function buildSnappingEdgesForResize(
@@ -281,3 +220,5 @@ export function resolveResizeSnapGuides({
 export function buildFullSnappingEdgesFromRect(box: BoundingBox) {
   return buildSnappingEdgesFromRect(box, { x: box.x, y: box.y });
 }
+
+export { getFixedPointFromAnchor, getMovingEdgesFromAnchor, type MovingResizeEdges, type ResizeAnchor } from './anchor.js';

@@ -1,5 +1,6 @@
 import type { EventSeatDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
-import type { BoundsRect } from '../selection/selection-utils.js';
+import type { BoundsRect } from '../geometry/bounds.js';
+import { parentLocalToWorld, worldToParentLocal } from '../geometry/transform-compose.js';
 
 export type SeatGroupTightBounds = BoundsRect & {
   effectiveRows: number;
@@ -7,18 +8,8 @@ export type SeatGroupTightBounds = BoundsRect & {
   seatCount: number;
 };
 
-function rotatePoint(point: { x: number; y: number }, degrees: number) {
-  const radians = (degrees * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  return {
-    x: point.x * cos - point.y * sin,
-    y: point.x * sin + point.y * cos,
-  };
-}
-
 function getSeatLocalCenter(group: EventSeatGroupDTO, seat: EventSeatDTO) {
-  return rotatePoint({ x: seat.x - group.x, y: seat.y - group.y }, -(group.rotation ?? 0));
+  return worldToParentLocal({ x: seat.x, y: seat.y }, group);
 }
 
 function getConfiguredSeatGroupBounds(group: EventSeatGroupDTO): SeatGroupTightBounds {
@@ -87,10 +78,7 @@ export function getSeatGroupWorldBounds(
     { x: bounds.x + bounds.width, y: bounds.y },
     { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
     { x: bounds.x, y: bounds.y + bounds.height },
-  ].map((corner) => {
-    const rotated = rotatePoint(corner, group.rotation ?? 0);
-    return { x: group.x + rotated.x, y: group.y + rotated.y };
-  });
+  ].map((corner) => parentLocalToWorld(corner, group));
 
   const minX = Math.min(...corners.map((corner) => corner.x));
   const minY = Math.min(...corners.map((corner) => corner.y));

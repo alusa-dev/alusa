@@ -1,174 +1,53 @@
 'use client';
-import { CORRIDOR_REFLOW_ITERATIONS, DEFAULT_SEAT_GRID_CONFIG, MIN_OBJECT_SIZE, SEAT_GRID_SECTION_PADDING, SNAP_TARGET_NAME, buildLevelRenderStack, buildSeatGridPreview, buildSmartCorridorDragPreview, buildTextFontStyle, clampFontSize, clampFontSizeValue, clampObjectSize, cloneEventMap, extractGroupDragCommitUpdates, getCorridorUnionGroups, getSeatGridPreviewBounds, getSeatGroupTightBounds, getSelectableItems, getTextDimensionsForMode, getTextMode, getTextModeFromCreation, getTextResizeAnchors, getTextWrap, isCornerResizeAnchor, isHorizontalResizeAnchor, isItemSelected, isSnapModifierActive, isTextBoxMode, isVerticalResizeAnchor, normalizeBoundsRect, normalizeTextData, replaceSelection, resolveCorridorDragMode, resolveDragTarget, resolveGroupSelectionItem, selectionHasMixedTextAndShapes, suggestNextSeatGridConfig } from '@alusa/domain';
-import type { LevelBounds, LevelRenderStackItem, MapSelectionItem, SeatGridConfig, TextMode } from '@alusa/domain';
-import type { MapTransformSession } from '../canvas/map-transform-session';
-import { DEFAULT_TRANSFORMER_SCALE_OPTIONS } from '../canvas/transform-handle-mode';
-import type { TransformerScaleOptions } from '../canvas/transform-handle-mode';
-import { setEventMapE2ERenderMapProvider } from '../canvas/event-map-e2e-bridge';
-import { resolveTransformRouting } from '../canvas/transform-routing';
-import type { TransformNodeSnapshot } from '../canvas/transform-cancel';
-import { polygonToKonvaPoints } from '../canvas/corridor-domain-bridge';
-import { resolveCorridorObjectsForRender } from '../canvas/corridor-union-live';
-import { TEXT_EDITOR_PLACEHOLDER, buildTextEditorState, getTextEditorDimensions } from '../canvas/text-editor-layout';
-import type { TextEditorState } from '../canvas/text-editor-layout';
-import { computeUnionBoundsFromNodes, getNodeBounds } from '../canvas/konva-snap-adapter';
-import { getKonvaTextDecoration } from '../canvas/text-style-adapter';
-import { computeWheelZoom, useCanvasViewportSize, useZoomScrubSession } from '../canvas/sessions/use-canvas-viewport-session';
+
+import type { LevelBounds } from '@alusa/domain';
+import { replaceSelection } from '@alusa/domain';
+import { isPlacementTool, type CreationDraft, type MarqueeDraft, type SeatGridDraft } from '../canvas/render/map-creation-draft';
+import type { MapTransformSession } from '../canvas/transform/map-transform-session';
+import { DEFAULT_TRANSFORMER_SCALE_OPTIONS } from '../canvas/transform/transform-handle-mode';
+import type { TransformerScaleOptions } from '../canvas/transform/transform-handle-mode';
+import { setEventMapE2ERenderMapProvider } from '../browser/event-map-e2e-bridge';
+import { resolveTransformRouting } from '../canvas/transform/transform-routing';
+import type { TransformNodeSnapshot } from '../canvas/adapters/konva-transform-adapter';
+import type { TextEditorState } from '../canvas/render/text-editor-layout';
+import {
+  resolveMapCanvasCursor,
+  useCanvasViewportSize,
+  useMapStageViewportHandlers,
+  useZoomScrubSession,
+} from '../canvas/sessions/use-canvas-viewport-session';
+import { applyCanvasTransformPayload } from '../canvas/commit/apply-canvas-transform';
+import { buildObjectTransformCommit } from '../canvas/commit/map-object-transform-commit';
+import { buildSeatGroupTransformCommit } from '../canvas/commit/seat-group-transform-commit';
+import {
+  buildMapCanvasRenderHandlers,
+  buildMapCanvasRenderState,
+  buildTextEditorOverlayDimensions,
+  getMapPointerPoint,
+} from '../canvas/render/map-canvas-render-model';
 import { useCorridorPreviewSession } from '../canvas/sessions/use-corridor-preview-session';
 import { useDragSession } from '../canvas/sessions/use-drag-session';
 import { useKeyboardSession } from '../canvas/sessions/use-keyboard-session';
+import { useMapCanvasStore } from '../canvas/sessions/use-map-canvas-store';
+import { useMapLevelViewModel } from '../canvas/sessions/use-map-level-view-model';
+import { useMapNodeDragSession } from '../canvas/sessions/use-map-node-drag-session';
+import { useMapStagePointerSession } from '../canvas/sessions/use-map-stage-pointer-session';
+import { useMapTextEditorCommit } from '../canvas/sessions/use-map-text-editor-commit';
+import { useMapTextEditorOpen } from '../canvas/sessions/use-map-text-editor-open';
+import { useMapTransformRouting } from '../canvas/sessions/use-map-transform-routing';
+import { useSeatGroupResizeSession } from '../canvas/sessions/use-seat-group-resize-session';
 import { useSelectionSession } from '../canvas/sessions/use-selection-session';
-import { useSnapSession } from '../canvas/sessions/use-snap-session';
+import { useSnapGuidesSession } from '../canvas/sessions/use-snap-guides-session';
 import { useTextEditorSession } from '../canvas/sessions/use-text-editor-session';
 import { useTransformSession } from '../canvas/sessions/use-transform-session';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import type { EventMapObjectDTO, EventSeatGroupDTO } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
-import type { MapTool } from '../store/event-map-editor-store';
 import { CreateSeatGridDialog } from './CreateSeatGridDialog';
-import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
-import { SnapGuidesLayer } from './SnapGuidesLayer';
+import { MapCanvasStage } from './MapCanvasStage';
+import { MapInlineTextEditor } from './MapInlineTextEditor';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
-import { Circle, Ellipse, Group, Layer, Line, Rect, RegularPolygon, Stage, Text, Transformer } from 'react-konva';
-
-type MarqueeDraft = {
-  start: { x: number; y: number };
-  current: { x: number; y: number };
-};
-
-type SeatGroupResizeHandle = 'right' | 'bottom' | 'bottom-right';
-type SeatGroupResizeState = {
-  groupId: string;
-  handle: SeatGroupResizeHandle;
-  startWorldPt: { x: number; y: number };
-  startRows: number;
-  startColumns: number;
-  startTotalW: number;
-  startTotalH: number;
-  stepX: number;
-  stepY: number;
-  paddingLeft: number;
-  paddingRight: number;
-  paddingTop: number;
-  paddingBottom: number;
-  gapX: number;
-  gapY: number;
-  lastCommittedRows: number;
-  lastCommittedCols: number;
-};
-
-const RESIZE_ANCHORS = [
-  'top-left',
-  'top-right',
-  'bottom-left',
-  'bottom-right',
-  'middle-left',
-  'middle-right',
-  'top-center',
-  'bottom-center',
-] as const;
-
-type CreationDraft = {
-  tool: MapTool;
-  start: { x: number; y: number };
-  current: { x: number; y: number };
-};
-
-type SeatGridDraft = {
-  origin: { x: number; y: number };
-  config: SeatGridConfig;
-};
-
-function seatFill(status: EventSeatDTO['status']) {
-  if (status === 'SOLD') return '#94a3b8';
-  if (status === 'HELD') return '#f59e0b';
-  if (status === 'BLOCKED' || status === 'UNAVAILABLE') return '#e2e8f0';
-  if (status === 'COMPLIMENTARY') return '#8b5cf6';
-  return '#10b981';
-}
-
-function objectStyle(object: EventMapObjectDTO) {
-  if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', text: '#ffffff' };
-  if (object.type === 'BLOCKED_AREA') return { fill: '#e2e8f0', stroke: '#94a3b8', text: '#475569' };
-  if (object.type === 'CORRIDOR') return { fill: '#f8fafc', stroke: '#cbd5e1', text: '#64748b' };
-  if (object.type === 'TABLE') return { fill: '#fefce8', stroke: '#ca8a04', text: '#854d0e' };
-  if (object.type === 'BOOTH') return { fill: '#fff7ed', stroke: '#ea580c', text: '#9a3412' };
-  if (object.type === 'GENERAL_AREA' && object.data.shape) return { fill: String(object.data.fill ?? '#ffffff'), stroke: '#64748b', text: '#334155' };
-  if (object.type === 'GENERAL_AREA') return { fill: '#ecfeff', stroke: '#0891b2', text: '#155e75' };
-  return { fill: String(object.data.fill ?? '#f8fafc'), stroke: '#cbd5e1', text: '#334155' };
-}
-
-function getObjectStrokeDash(object: EventMapObjectDTO) {
-  const strokeStyle = object.data.strokeStyle;
-  if (strokeStyle === 'dashed') return [10, 6];
-  if (strokeStyle === 'dotted') return [2, 6];
-  if (object.type === 'CORRIDOR') return [8, 6];
-  return undefined;
-}
-
-function isObjectAppearanceEnabled(value: unknown, fallback = true) {
-  return value === undefined || value === null ? fallback : Boolean(value);
-}
-
-function getObjectAppearance(object: EventMapObjectDTO) {
-  const style = objectStyle(object);
-  const fillEnabled = isObjectAppearanceEnabled(object.data.fillEnabled);
-  const strokeEnabled = isObjectAppearanceEnabled(object.data.strokeEnabled);
-  const strokeWidthEnabled = isObjectAppearanceEnabled(object.data.strokeWidthEnabled);
-  const strokeWidth = Number(object.data.strokeWidth ?? 1.5);
-  const effectiveStrokeWidth = strokeEnabled && strokeWidthEnabled ? strokeWidth : 0;
-
-  return {
-    fill: fillEnabled ? String(object.data.fill ?? style.fill) : undefined,
-    stroke: strokeEnabled && effectiveStrokeWidth > 0 ? String(object.data.stroke ?? style.stroke) : undefined,
-    strokeWidth: effectiveStrokeWidth,
-    dash: strokeEnabled && strokeWidthEnabled ? getObjectStrokeDash(object) : undefined,
-  };
-}
-
-function isCreationTool(tool: MapTool) {
-  return !['select', 'pan', 'zoom', 'row'].includes(tool);
-}
-
-function isPlacementTool(tool: MapTool) {
-  return isCreationTool(tool) || tool === 'row';
-}
-
-function isProportionalTool(tool: MapTool) {
-  return tool === 'shape-square' || tool === 'shape-circle';
-}
-
-function getCreationBox(draft: CreationDraft) {
-  const rawWidth = draft.current.x - draft.start.x;
-  const rawHeight = draft.current.y - draft.start.y;
-
-  if (isProportionalTool(draft.tool)) {
-    const size = Math.max(Math.abs(rawWidth), Math.abs(rawHeight));
-    const width = rawWidth < 0 ? -size : size;
-    const height = rawHeight < 0 ? -size : size;
-    return {
-      x: width < 0 ? draft.start.x + width : draft.start.x,
-      y: height < 0 ? draft.start.y + height : draft.start.y,
-      width: Math.abs(width),
-      height: Math.abs(height),
-    };
-  }
-
-  return {
-    x: Math.min(draft.start.x, draft.current.x),
-    y: Math.min(draft.start.y, draft.current.y),
-    width: Math.abs(rawWidth),
-    height: Math.abs(rawHeight),
-  };
-}
-
-function getCreationShape(tool: MapTool) {
-  if (tool === 'shape-circle') return 'circle';
-  if (tool === 'shape-ellipse') return 'ellipse';
-  if (tool === 'shape-triangle') return 'triangle';
-  return null;
-}
 
 export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -184,13 +63,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   const textEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const textEditorFocusKeyRef = useRef<string | null>(null);
   const textEditSnapshotRef = useRef<string | null>(null);
-  const seatGroupResizeRef = useRef<SeatGroupResizeState | null>(null);
-  const {
-    groupDragRef,
-    committedGroupDragNodeIdsRef,
-    beginGroupDrag,
-    syncGroupDrag,
-  } = useDragSession({ stageRef });
   const mapTransformSessionRef = useRef<MapTransformSession | null>(null);
   const transformReflowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transformCancelSnapshotsRef = useRef<TransformNodeSnapshot[]>([]);
@@ -209,21 +81,11 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
   );
   const [corridorVisualRevision, setCorridorVisualRevision] = useState(0);
   const [activeUnionDragIds, setActiveUnionDragIds] = useState<Set<string>>(() => new Set());
-  const bumpCorridorVisualRevision = useCallback(() => {
-    setCorridorVisualRevision((value) => value + 1);
-  }, []);
-  const {
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
-    corridorDragCorridorNodeIdsRef,
-    corridorDragModeRef,
-    isCorridorLivePreviewRef,
-    isCorridorTransformActiveRef,
-    clearSmartCorridorPreview,
-    scheduleCorridorDragPreview,
-    flushCorridorDragPreview,
-    isSmartCorridorPreviewDrag,
-  } = useCorridorPreviewSession({
+  const lastTransformCommitRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  const { groupDragRef, committedGroupDragNodeIdsRef, beginGroupDrag, syncGroupDrag } = useDragSession({ stageRef });
+  const bumpCorridorVisualRevision = useCallback(() => setCorridorVisualRevision((value) => value + 1), []);
+  const corridorPreview = useCorridorPreviewSession({
     stageRef,
     contentLayerRef,
     groupDragRef,
@@ -234,122 +96,94 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     setActiveUnionDragIds,
     bumpCorridorVisualRevision,
   });
-  // After any transform, store committed {x,y} so the redundant dragend is skipped.
-  // Works for resize (dragend fires with same position) AND rotation (dragend may not fire at all).
-  const lastTransformCommitRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
-  const map = useEventMapEditorStore((state) => state.map);
-  const renderMap = map;
-  const tool = useEventMapEditorStore((state) => state.tool);
-  const selection = useEventMapEditorStore((state) => state.selection);
-  const activeLevelId = useEventMapEditorStore((state) => state.activeLevelId);
-  const zoom = useEventMapEditorStore((state) => state.zoom);
-  const pan = useEventMapEditorStore((state) => state.pan);
-  const setPan = useEventMapEditorStore((state) => state.setPan);
-  const setZoom = useEventMapEditorStore((state) => state.setZoom);
-  const setSelection = useEventMapEditorStore((state) => state.setSelection);
-  const addObjectAt = useEventMapEditorStore((state) => state.addObjectAt);
-  const addRowAt = useEventMapEditorStore((state) => state.addRowAt);
-  const addSeatGridAt = useEventMapEditorStore((state) => state.addSeatGridAt);
-  const updateObject = useEventMapEditorStore((state) => state.updateObject);
-  const updateObjects = useEventMapEditorStore((state) => state.updateObjects);
-  const updateMapItems = useEventMapEditorStore((state) => state.updateMapItems);
-  const deleteObject = useEventMapEditorStore((state) => state.deleteObject);
-  const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
-  const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
-  const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
-  const setInlineTextEditorActive = useEventMapEditorStore((state) => state.setInlineTextEditorActive);
-
-  const level = useMemo(
-    () => renderMap?.levels.find((item) => item.id === activeLevelId) ?? renderMap?.levels[0] ?? null,
-    [renderMap, activeLevelId],
-  );
-  const levelBounds = useMemo(
-    () => (level ? { width: level.widthPx, height: level.heightPx } : null),
-    [level],
-  );
-  const levelObjects = useMemo(
-    () => renderMap?.objects.filter((object) => object.levelId === level?.id && !object.hidden) ?? [],
-    [renderMap, level?.id],
-  );
-  const displayLevelObjects = useMemo(() => {
-    const livePreview = isCorridorLivePreviewRef.current || isTransformSessionActive;
-    if (!livePreview) return levelObjects;
-    return resolveCorridorObjectsForRender(stageRef.current, levelObjects, true);
-  }, [levelObjects, corridorVisualRevision, isTransformSessionActive]);
-  const levelSeats = useMemo(
-    () => renderMap?.seats.filter((seat) => seat.levelId === level?.id && seat.publicVisible) ?? [],
-    [renderMap, level?.id],
-  );
-  const levelSeatGroups = useMemo(
-    () => renderMap?.seatGroups?.filter((g) => g.levelId === level?.id) ?? [],
-    [renderMap, level?.id],
-  );
-  const corridorUnionGroups = useMemo(() => {
-    const corridors = displayLevelObjects.filter((object) => object.type === 'CORRIDOR');
-    return getCorridorUnionGroups(corridors, 1);
-  }, [displayLevelObjects]);
-  const renderStack = useMemo(() => {
-    if (!map || !level) return [];
-    return buildLevelRenderStack({ ...map, objects: displayLevelObjects }, level.id);
-  }, [displayLevelObjects, level, map]);
-  const selectedCorridorIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const item of selection) {
-      if (item.type !== 'object') continue;
-      const object = levelObjects.find((entry) => entry.id === item.id);
-      if (object?.type === 'CORRIDOR') ids.add(object.id);
-    }
-    return ids;
-  }, [selection, levelObjects]);
-  const seatGridPreviewSeats = useMemo(
-    () => (seatGridDraft ? buildSeatGridPreview(seatGridDraft.origin, seatGridDraft.config) : []),
-    [seatGridDraft],
-  );
-
-  const setViewportSize = useEventMapEditorStore((state) => state.setViewportSize);
-  const size = useCanvasViewportSize({ containerRef, setViewportSize });
-  const isZoomScrubbing = useZoomScrubSession({
-    enabled: tool === 'zoom',
-    containerRef,
-    stageRef,
-    setZoom,
+  const store = useMapCanvasStore();
+  const {
+    map,
+    tool,
+    selection,
+    activeLevelId,
+    zoom,
+    pan,
     setPan,
+    setZoom,
+    setSelection,
+    addObjectAt,
+    addRowAt,
+    addSeatGridAt,
+    updateObject,
+    deleteObject,
+    updateSeat,
+    updateSeatGroup,
+    setInlineTextEditorActive,
+    setViewportSize,
+  } = store;
+
+  const { commitTextEditor, handleTextEditorKeyDown } = useMapTextEditorCommit({
+    textEditor,
+    textEditSnapshotRef,
+    map,
+    setTextEditor,
+    setInlineTextEditorActive,
+    addObjectAt,
+    updateObject,
+    deleteObject,
   });
 
+  const getPointerPoint = useCallback(
+    () => getMapPointerPoint(stageRef, pan, zoom),
+    [pan, zoom],
+  );
+
+  const { beginSeatGroupResize, handleSeatGroupResizeMove, endSeatGroupResize } = useSeatGroupResizeSession({
+    containerRef,
+    getPointerPoint,
+    updateSeatGroup,
+  });
+
+  const levelView = useMapLevelViewModel({
+    map,
+    activeLevelId,
+    selection,
+    seatGridDraft,
+    stageRef,
+    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
+    isTransformSessionActive,
+    corridorVisualRevision,
+  });
+
+  const {
+    level,
+    levelBounds,
+    levelObjects,
+    displayLevelObjects,
+    levelSeats,
+    levelSeatGroups,
+    corridorUnionGroups,
+    renderStack,
+    selectedCorridorIds,
+    seatGridPreviewSeats,
+  } = levelView;
+
+  const size = useCanvasViewportSize({ containerRef, setViewportSize });
+  const isZoomScrubbing = useZoomScrubSession({ enabled: tool === 'zoom', containerRef, stageRef, setZoom, setPan });
+
   useEffect(() => {
-    if (tool !== 'seat' || readOnly) {
-      setSeatGridDraft(null);
-    }
+    if (tool !== 'seat' || readOnly) setSeatGridDraft(null);
   }, [readOnly, tool]);
 
   useTextEditorSession({
-    readOnly,
     textEditor,
     setTextEditor,
     textEditorRef,
     textEditorFocusKeyRef,
-    textEditSnapshotRef,
     stageRef,
     containerRef,
     zoom,
     pan,
-    levelObjects,
-    setSelection,
-    setInlineTextEditorActive,
   });
 
-  const {
-    selectedNodeIds,
-    selectedObjectIds,
-    selectedSeatIds,
-    selectedSeatGroupIds,
-    selectedAnyCorridor,
-    selectionContainsSeatsOrSections,
-    handleSelectItem,
-    getMarqueeSelection,
-    isObjectSelected,
-  } = useSelectionSession({
+  const selectionSession = useSelectionSession({
     map,
     selection,
     levelObjects,
@@ -359,70 +193,35 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     clearIndividualSeatDrag: () => setIndividualSeatDragId(null),
   });
 
-  useEffect(() => {
-    setEventMapE2ERenderMapProvider(
-      () =>
-        corridorPreviewWorkingMapRef.current ??
-        useEventMapEditorStore.getState().map,
-    );
-    return () => setEventMapE2ERenderMapProvider(null);
-  }, [map]);
-
-  const mixedTextAndShapes = useMemo(() => {
-    if (!map || selectedObjectIds.length < 2) return false;
-    return selectionHasMixedTextAndShapes(map.objects, selectedObjectIds);
-  }, [map, selectedObjectIds]);
-
-  const selectedTextCount = useMemo(() => {
-    if (!map || selectedObjectIds.length === 0) return 0;
-    return selectedObjectIds.filter((id) => map.objects.some((object) => object.id === id && object.type === 'TEXT')).length;
-  }, [map, selectedObjectIds]);
-
-  const transformRouting = useMemo(
-    () =>
-      resolveTransformRouting({
-        selectedNodeCount: selectedNodeIds.length,
-        selectedObjectIds,
-        objects: map?.objects ?? [],
-        mixedTextAndShapes,
-        selectedTextCount,
-        selectionContainsSeatsOrSections,
-      }),
-    [
-      map?.objects,
-      mixedTextAndShapes,
-      selectedNodeIds.length,
-      selectedObjectIds,
-      selectedTextCount,
-      selectionContainsSeatsOrSections,
-    ],
-  );
-
-  const useUniformGroupTransform = transformRouting.kind === 'uniform';
-  const useCorridorTransformerPipeline = transformRouting.kind === 'corridor';
-  const useGenericTransform = transformRouting.kind === 'generic';
-
-  const isSingleSelectionTransform = selectedNodeIds.length <= 1;
-  const transformPipelineActive = transformRouting.kind !== null;
-
-  transformContextRef.current = {
+  const {
+    selectedNodeIds,
     selectedObjectIds,
     selectedSeatIds,
     selectedSeatGroupIds,
+    selectionContainsSeatsOrSections,
+    handleSelectItem,
+    getMarqueeSelection,
+    isObjectSelected,
+  } = selectionSession;
+
+  useEffect(() => {
+    setEventMapE2ERenderMapProvider(
+      () => corridorPreview.corridorPreviewWorkingMapRef.current ?? useEventMapEditorStore.getState().map,
+    );
+    return () => setEventMapE2ERenderMapProvider(null);
+  }, [map, corridorPreview.corridorPreviewWorkingMapRef]);
+
+  const transformRouting = useMapTransformRouting({
+    map,
+    levelObjects,
     selectedNodeIds,
-    transformKind: transformRouting.kind,
+    selectedObjectIds,
+    selectedSeatIds,
+    selectedSeatGroupIds,
+    selectionContainsSeatsOrSections,
     levelBounds,
-  };
-
-  const disableResizeForMixedSmartCorridorSelection = transformRouting.transformDisabled;
-  const disableRotateForMixedSmartCorridorSelection = transformRouting.transformDisabled;
-
-  const selectedTextTransformAnchors = useMemo(() => {
-    if (selectedObjectIds.length !== 1) return [...RESIZE_ANCHORS];
-    const object = levelObjects.find((entry) => entry.id === selectedObjectIds[0]);
-    if (!object || object.type !== 'TEXT') return [...RESIZE_ANCHORS];
-    return [...getTextResizeAnchors(getTextMode(object))];
-  }, [levelObjects, selectedObjectIds]);
+    transformContextRef,
+  });
 
   useKeyboardSession({
     stageRef,
@@ -433,9 +232,9 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     transformCancelSnapshotsRef,
     transformCancelledRef,
     transformReflowTimerRef,
-    isCorridorTransformActiveRef,
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
+    isCorridorTransformActiveRef: corridorPreview.isCorridorTransformActiveRef,
+    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
+    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
     setIsTransformSessionActive,
     setTransformerScaleOptions,
     getCommittedState: useCallback(
@@ -453,7 +252,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     stageRef,
     contentLayerRef,
     transformerRef,
-    transformPipelineActive,
+    transformPipelineActive: transformRouting.transformPipelineActive,
     map,
     levelId: level?.id,
     levelObjects,
@@ -463,104 +262,17 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     transformReflowTimerRef,
     transformCancelSnapshotsRef,
     transformCancelledRef,
-    corridorPreviewBaseMapRef,
-    corridorPreviewWorkingMapRef,
-    isCorridorLivePreviewRef,
-    isCorridorTransformActiveRef,
+    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
+    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
+    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
+    isCorridorTransformActiveRef: corridorPreview.isCorridorTransformActiveRef,
     lastTransformCommitRef,
     setIsTransformSessionActive,
     setTransformerScaleOptions,
-    updateObjects,
-    updateMapItems,
     bumpCorridorVisualRevision,
   });
 
-  const getSectionGroupNodeIds = useCallback(
-    (sectionId: string) => {
-      const linkedObject = levelObjects.find((object) => object.sectionId === sectionId && object.type === 'SECTION');
-      const seatNodeIds = levelSeats
-        .filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD')
-        .map((seat) => `node-${seat.id}`);
-
-      return linkedObject ? [`node-${linkedObject.id}`, ...seatNodeIds] : seatNodeIds;
-    },
-    [levelObjects, levelSeats],
-  );
-
-  const commitGroupDrag = useCallback(() => {
-    const drag = groupDragRef.current;
-    groupDragRef.current = null;
-    if (!drag) return;
-    committedGroupDragNodeIdsRef.current = new Set(drag.origin.keys());
-
-    const baseMap = corridorPreviewBaseMapRef.current;
-    const corridorNodeIds = [...drag.origin.keys()].filter((nodeId) => {
-      const id = nodeId.replace(/^node-/, '');
-      return map?.objects.some((object) => object.id === id && object.type === 'CORRIDOR');
-    });
-    const movingCorridor = corridorNodeIds.length > 0;
-
-    if (movingCorridor && baseMap) {
-      flushCorridorDragPreview();
-
-      const corridorIds = corridorNodeIds.map((nodeId) => nodeId.replace(/^node-/, ''));
-      const dragMode = corridorDragModeRef.current || resolveCorridorDragMode(baseMap, drag, corridorIds);
-      const preview = buildSmartCorridorDragPreview(baseMap, drag, corridorNodeIds, {
-        previewMap: corridorPreviewWorkingMapRef.current ?? undefined,
-        maxIterations: CORRIDOR_REFLOW_ITERATIONS,
-        activeCorridorIds: corridorIds,
-        mode: dragMode,
-      });
-      const { objects, seats } = extractGroupDragCommitUpdates(
-        baseMap,
-        preview,
-        drag,
-        corridorIds,
-        dragMode,
-      );
-
-      if (objects.length > 0 || seats.length > 0) {
-        updateMapItems({
-          objects,
-          seats,
-          skipSeatBaseLayoutTranslation: dragMode === 'reflow',
-          skipCorridorReflow: true,
-        });
-      }
-      clearSmartCorridorPreview();
-      return;
-    }
-
-    const { delta } = drag;
-    const objectUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
-    const seatUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
-    const seatGroupUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
-
-    for (const [nodeId, start] of drag.origin) {
-      const isSeatGroupNode = nodeId.startsWith('node-seatgroup-');
-      const id = isSeatGroupNode ? nodeId.replace('node-seatgroup-', '') : nodeId.replace('node-', '');
-      const nx = start.x + delta.x;
-      const ny = start.y + delta.y;
-
-      if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) continue;
-
-      if (isSeatGroupNode && map?.seatGroups?.some((group) => group.id === id)) {
-        seatGroupUpdates.push({ id, patch: { x: nx, y: ny } });
-      } else if (map?.objects.some((object) => object.id === id)) {
-        objectUpdates.push({ id, patch: { x: nx, y: ny } });
-      } else if (map?.seats.some((seat) => seat.id === id)) {
-        seatUpdates.push({ id, patch: { x: nx, y: ny } });
-      }
-    }
-
-    if (objectUpdates.length > 0 || seatUpdates.length > 0 || seatGroupUpdates.length > 0) {
-      updateMapItems({ objects: objectUpdates, seats: seatUpdates, seatGroups: seatGroupUpdates });
-    }
-    clearSmartCorridorPreview();
-  }, [clearSmartCorridorPreview, flushCorridorDragPreview, map?.objects, map?.seatGroups, map?.seats, updateMapItems]);
-
-  const { guidesLayerRef, clearGuides, handleDragMove: handleSnapDragMove, handleAnchorDragBound } =
-    useSnapSession({
+  const snapSession = useSnapGuidesSession({
     enabled: !readOnly && tool !== 'pan',
     levelBounds,
     zoom,
@@ -569,1282 +281,163 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     syncGroupDrag,
   });
 
-  const handleResponsiveDragMove = useCallback(
-    (event: Konva.KonvaEventObject<DragEvent>) => {
-      if (isSmartCorridorPreviewDrag(event)) {
-        if (corridorDragModeRef.current === 'rigid') {
-          handleSnapDragMove(event);
-          scheduleCorridorDragPreview();
-          return;
-        }
+  const nodeDrag = useMapNodeDragSession({
+    activeLevelId,
+    levelObjects,
+    levelSeats,
+    map,
+    groupDragRef,
+    committedGroupDragNodeIdsRef,
+    beginGroupDrag,
+    syncGroupDrag,
+    flushCorridorDragPreview: corridorPreview.flushCorridorDragPreview,
+    clearSmartCorridorPreview: corridorPreview.clearSmartCorridorPreview,
+    corridorPreviewBaseMapRef: corridorPreview.corridorPreviewBaseMapRef,
+    corridorPreviewWorkingMapRef: corridorPreview.corridorPreviewWorkingMapRef,
+    corridorDragCorridorNodeIdsRef: corridorPreview.corridorDragCorridorNodeIdsRef,
+    corridorDragModeRef: corridorPreview.corridorDragModeRef,
+    isCorridorLivePreviewRef: corridorPreview.isCorridorLivePreviewRef,
+    setActiveUnionDragIds,
+    lastTransformCommitRef,
+    setSelection,
+    individualSeatDragId,
+    setIndividualSeatDragId,
+    clearGuides: snapSession.clearGuides,
+    handleSnapDragMove: snapSession.handleDragMove,
+    isSmartCorridorPreviewDrag: corridorPreview.isSmartCorridorPreviewDrag,
+    scheduleCorridorDragPreview: corridorPreview.scheduleCorridorDragPreview,
+  });
 
-        clearGuides();
-        syncGroupDrag(event);
-        scheduleCorridorDragPreview();
-        return;
-      }
+  const { openTextEditor, openNewTextEditor } = useMapTextEditorOpen({
+    readOnly,
+    textEditSnapshotRef,
+    stageRef,
+    containerRef,
+    zoom,
+    pan,
+    levelObjects,
+    tool,
+    textEditor,
+    setSelection,
+    setInlineTextEditorActive,
+    setTextEditor,
+  });
 
-      handleSnapDragMove(event);
-    },
-    [
-      clearGuides,
-      handleSnapDragMove,
-      isSmartCorridorPreviewDrag,
-      scheduleCorridorDragPreview,
-      syncGroupDrag,
-    ],
-  );
+  const stagePointer = useMapStagePointerSession({
+    readOnly,
+    tool,
+    map,
+    levelId: level?.id,
+    getPointerPoint,
+    addObjectAt,
+    addRowAt,
+    setSelection,
+    setIndividualSeatDragId,
+    getMarqueeSelection,
+    openNewTextEditor,
+    handleSeatGroupResizeMove,
+    endSeatGroupResize,
+    creationDraft,
+    setCreationDraft,
+    marqueeDraft,
+    setMarqueeDraft,
+    seatGridDraft,
+    setSeatGridDraft,
+  });
+
+  const viewportHandlers = useMapStageViewportHandlers({ setPan, setZoom, zoom, pan, setIsPanning });
 
   useEffect(() => {
     const transformer = transformerRef.current;
     if (!transformer) return;
-
-    const onTransformStart = () => {
-      clearGuides();
-    };
-
-    const onTransformEnd = () => {
-      clearGuides();
-    };
-
+    const onTransformStart = () => snapSession.clearGuides();
+    const onTransformEnd = () => snapSession.clearGuides();
     transformer.on('transformstart', onTransformStart);
     transformer.on('transformend', onTransformEnd);
     return () => {
       transformer.off('transformstart', onTransformStart);
       transformer.off('transformend', onTransformEnd);
     };
-  }, [clearGuides]);
+  }, [snapSession.clearGuides]);
 
-  function getPointerPoint() {
-    const stage = stageRef.current;
-    const pointer = stage?.getPointerPosition();
-    if (!pointer) return null;
-    return {
-      x: (pointer.x - pan.x) / zoom,
-      y: (pointer.y - pan.y) / zoom,
-    };
-  }
-
-  function handleStageMouseDown(event: Konva.KonvaEventObject<MouseEvent>) {
-    if (readOnly) return;
-
-    const placementActive = isPlacementTool(tool);
-    const point = getPointerPoint();
-    if (!point) return;
-
-    if (placementActive) {
-      if (tool === 'row') {
-        addRowAt(point, 12);
-        return;
-      }
-
-      if (tool === 'seat') {
-        setCreationDraft(null);
-        setSeatGridDraft({
-          origin: point,
-          config: suggestNextSeatGridConfig(map?.seats ?? [], level?.id, DEFAULT_SEAT_GRID_CONFIG),
-        });
-        return;
-      }
-
-      if (isCreationTool(tool)) {
-        setCreationDraft({ tool, start: point, current: point });
-      }
-      return;
-    }
-
-    if (event.target !== event.target.getStage()) return;
-
-    if (tool === 'select') {
-      setIndividualSeatDragId(null);
-      setMarqueeDraft({ start: point, current: point });
-      return;
-    }
-
-    setIndividualSeatDragId(null);
-    setSelection(level ? [{ type: 'level', id: level.id }] : []);
-  }
-
-  function handleStageMouseMove(event: Konva.KonvaEventObject<MouseEvent>) {
-    const seatResize = seatGroupResizeRef.current;
-    if (seatResize) {
-      const pt = getPointerPoint();
-      if (!pt) return;
-      const deltaX = pt.x - seatResize.startWorldPt.x;
-      const deltaY = pt.y - seatResize.startWorldPt.y;
-      let newCols = seatResize.lastCommittedCols;
-      let newRows = seatResize.lastCommittedRows;
-      if (seatResize.handle === 'right' || seatResize.handle === 'bottom-right') {
-        newCols = Math.max(1, Math.min(80, Math.round(
-          (seatResize.startTotalW + deltaX - seatResize.paddingLeft - seatResize.paddingRight + seatResize.gapX) / seatResize.stepX
-        )));
-      }
-      if (seatResize.handle === 'bottom' || seatResize.handle === 'bottom-right') {
-        newRows = Math.max(1, Math.min(50, Math.round(
-          (seatResize.startTotalH + deltaY - seatResize.paddingTop - seatResize.paddingBottom + seatResize.gapY) / seatResize.stepY
-        )));
-      }
-      if (newRows !== seatResize.lastCommittedRows || newCols !== seatResize.lastCommittedCols) {
-        seatResize.lastCommittedRows = newRows;
-        seatResize.lastCommittedCols = newCols;
-        updateSeatGroup(seatResize.groupId, { rows: newRows, columns: newCols });
-      }
-      return;
-    }
-
-    if (marqueeDraft && tool === 'select') {
-      const point = getPointerPoint();
-      if (!point) return;
-      setMarqueeDraft((draft) => (draft ? { ...draft, current: point } : null));
-      return;
-    }
-
-    if (!creationDraft) return;
-    const point = getPointerPoint();
-    if (!point) return;
-    setCreationDraft((draft) => (draft ? { ...draft, current: point } : null));
-  }
-
-  function handleStageMouseUp(event: Konva.KonvaEventObject<MouseEvent>) {
-    if (seatGroupResizeRef.current) {
-      seatGroupResizeRef.current = null;
-      if (containerRef.current) containerRef.current.style.cursor = '';
-      return;
-    }
-
-    if (marqueeDraft && tool === 'select') {
-      const point = getPointerPoint() ?? marqueeDraft.current;
-      const box = normalizeBoundsRect(marqueeDraft.start, point);
-      setMarqueeDraft(null);
-
-      if (box.width >= 4 || box.height >= 4) {
-        const items = getMarqueeSelection(box);
-        setSelection(items.length > 0 ? items : level ? [{ type: 'level', id: level.id }] : []);
-      } else {
-        setSelection(level ? [{ type: 'level', id: level.id }] : []);
-      }
-      return;
-    }
-
-    if (!creationDraft) return;
-    const point = getPointerPoint();
-    if (!point) return;
-
-    const draft = { ...creationDraft, current: point };
-    const box = getCreationBox(draft);
-    setCreationDraft(null);
-
-    if (draft.tool === 'text') {
-      if (box.width >= 6 && box.height >= 6) {
-        openNewTextEditor({
-          x: box.x,
-          y: box.y,
-          width: Math.max(20, box.width),
-          height: Math.max(20, box.height),
-          textMode: 'area',
-        });
-      } else if (box.width >= 6) {
-        openNewTextEditor({
-          x: box.x,
-          y: box.y,
-          width: Math.max(20, box.width),
-          height: null,
-          textMode: 'fixed-width',
-        });
-      } else {
-        openNewTextEditor({
-          x: draft.start.x,
-          y: draft.start.y,
-          width: null,
-          height: null,
-          textMode: 'auto',
-        });
-      }
-      return;
-    }
-
-    if (box.width < 6 || box.height < 6) {
-      addObjectAt(draft.tool, draft.start);
-      return;
-    }
-
-    addObjectAt(draft.tool, { x: box.x, y: box.y }, { width: Math.max(20, box.width), height: Math.max(20, box.height) });
-  }
-
-  const handleNodeDragStart = useCallback(
-    (nodeId: string, item?: MapSelectionItem) => {
-      clearGuides();
-      const currentState = useEventMapEditorStore.getState();
-      const currentSelection = currentState.selection;
-      const currentObjects =
-        currentState.map?.objects.filter((object) => object.levelId === activeLevelId && !object.hidden) ?? levelObjects;
-      const dragTarget = resolveDragTarget(nodeId, item, currentSelection, currentObjects);
-      const draggedSeat = item?.type === 'seat' ? currentState.map?.seats.find((seat) => seat.id === item.id) : null;
-      const shouldDragSeatSection =
-        item?.type === 'seat' &&
-        item.id !== individualSeatDragId &&
-        Boolean(draggedSeat?.sectionId);
-      const sectionNodeIds =
-        item?.type === 'section'
-          ? getSectionGroupNodeIds(item.id)
-          : shouldDragSeatSection && draggedSeat?.sectionId
-            ? getSectionGroupNodeIds(draggedSeat.sectionId)
-            : [];
-      const resolvedNodeIds = sectionNodeIds.length > 0 ? sectionNodeIds : dragTarget.nodeIds;
-      const resolvedSelectionItems =
-        item?.type === 'section'
-          ? [item]
-          : shouldDragSeatSection && draggedSeat?.sectionId
-            ? [{ type: 'section' as const, id: draggedSeat.sectionId }]
-            : dragTarget.selectionItems;
-      const selectableSelection = getSelectableItems(currentSelection);
-      const selectionChanged =
-        resolvedSelectionItems.length !== selectableSelection.length ||
-        !resolvedSelectionItems.every((entry) => isItemSelected(currentSelection, entry));
-
-      if (selectionChanged) {
-        setSelection(resolvedSelectionItems);
-      }
-
-      beginGroupDrag(nodeId, resolvedNodeIds);
-
-      const corridorIds = new Set(
-        (currentState.map?.objects ?? [])
-          .filter((object) => object.type === 'CORRIDOR')
-          .map((object) => object.id),
+  const handleTransformEnd = useCallback(
+    (object: EventMapObjectDTO, node: Konva.Node) => {
+      applyCanvasTransformPayload(
+        buildObjectTransformCommit({
+          object,
+          node,
+          transformer: transformerRef.current,
+          routing: {
+            useUniformGroupTransform: transformRouting.useUniformGroupTransform,
+            useGenericTransform: transformRouting.useGenericTransform,
+            useCorridorTransformerPipeline: transformRouting.useCorridorTransformerPipeline,
+          },
+          lastTransformCommitRef,
+        }),
       );
-      const draggingCorridorIds = resolvedNodeIds
-        .map((id) => id.replace(/^node-/, ''))
-        .filter((id) => corridorIds.has(id));
-
-      if (draggingCorridorIds.length > 0) {
-        const base = currentState.map ? cloneEventMap(currentState.map) : null;
-        corridorPreviewBaseMapRef.current = base;
-        corridorPreviewWorkingMapRef.current = base ? cloneEventMap(base) : null;
-        corridorDragCorridorNodeIdsRef.current = draggingCorridorIds.map((id) => `node-${id}`);
-        isCorridorLivePreviewRef.current = true;
-        setActiveUnionDragIds(new Set(draggingCorridorIds));
-
-        const drag = groupDragRef.current;
-        if (base && drag) {
-          corridorDragModeRef.current = resolveCorridorDragMode(base, drag, draggingCorridorIds);
-        }
-      }
     },
-    [activeLevelId, beginGroupDrag, clearGuides, getSectionGroupNodeIds, individualSeatDragId, levelObjects, setSelection],
+    [
+      transformRouting.useCorridorTransformerPipeline,
+      transformRouting.useGenericTransform,
+      transformRouting.useUniformGroupTransform,
+    ],
   );
 
-  const handleNodeDragEnd = useCallback(
-    (nodeId: string, event: Konva.KonvaEventObject<DragEvent>, onCommit: (x: number, y: number) => void) => {
-      clearGuides();
-
-      const drag = groupDragRef.current;
-      if (drag?.origin.has(nodeId)) {
-        if (corridorPreviewBaseMapRef.current) {
-          syncGroupDrag(event);
-          flushCorridorDragPreview();
-        }
-        commitGroupDrag();
-        return;
-      }
-
-      if (committedGroupDragNodeIdsRef.current.has(nodeId)) {
-        committedGroupDragNodeIdsRef.current.delete(nodeId);
-        clearSmartCorridorPreview();
-        return;
-      }
-
-      groupDragRef.current = null;
-      const entityId = nodeId.replace('node-', '');
-      const nx = event.target.x();
-      const ny = event.target.y();
-      if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
-        groupDragRef.current = null;
-        clearSmartCorridorPreview();
-        return;
-      }
-      const last = lastTransformCommitRef.current.get(entityId);
-      if (last && Math.abs(last.x - nx) < 0.5 && Math.abs(last.y - ny) < 0.5) {
-        lastTransformCommitRef.current.delete(entityId);
-        clearSmartCorridorPreview();
-        return;
-      }
-      onCommit(nx, ny);
-      clearSmartCorridorPreview();
+  const handleSeatGroupTransformEnd = useCallback(
+    (group: EventSeatGroupDTO, node: Konva.Node) => {
+      applyCanvasTransformPayload(buildSeatGroupTransformCommit({ group, node, lastTransformCommitRef }));
     },
-    [clearGuides, clearSmartCorridorPreview, commitGroupDrag, flushCorridorDragPreview, syncGroupDrag],
+    [],
   );
-
-  function handleStageDragMove(event: Konva.KonvaEventObject<DragEvent>) {
-    const stage = event.target.getStage();
-    if (!stage || event.target !== stage) return;
-    setPan({ x: stage.x(), y: stage.y() });
-  }
-
-  function handleStageDragEnd(event: Konva.KonvaEventObject<DragEvent>) {
-    const stage = event.target.getStage();
-    if (!stage || event.target !== stage) return;
-    setIsPanning(false);
-    setPan({ x: stage.x(), y: stage.y() });
-  }
-
-  function handleWheel(event: Konva.KonvaEventObject<WheelEvent>) {
-    event.evt.preventDefault();
-    const direction = event.evt.deltaY > 0 ? -1 : 1;
-    const stage = event.target.getStage();
-    const pointer = stage?.getPointerPosition();
-    if (!pointer) {
-      setZoom(zoom + direction * 0.08);
-      return;
-    }
-    const next = computeWheelZoom({ anchor: pointer, pan, zoom, direction });
-    setZoom(next.zoom);
-    setPan(next.pan);
-  }
-
-  function openTextEditor(object: EventMapObjectDTO, node: Konva.Text) {
-    if (readOnly) return;
-    const stage = stageRef.current;
-    const container = containerRef.current;
-    if (!stage || !container) return;
-
-    const textMode = getTextMode(object);
-    textEditSnapshotRef.current = String(object.data.text ?? '');
-
-    const groupItems = resolveGroupSelectionItem({ type: 'object', id: object.id }, levelObjects);
-    setSelection(groupItems.length > 1 ? groupItems : replaceSelection({ type: 'object', id: object.id }));
-    setInlineTextEditorActive(true);
-    setTextEditor(
-      buildTextEditorState({
-        objectId: object.id,
-        value: String(object.data.text ?? ''),
-        mapX: object.x,
-        mapY: object.y,
-        mapWidth: typeof object.width === 'number' ? object.width : null,
-        mapHeight: typeof object.height === 'number' ? object.height : null,
-        textMode,
-        rotation: object.rotation ?? 0,
-        baseFontSize: Number(object.data.fontSize ?? 22),
-        fontFamily: String(object.data.fontFamily ?? 'Inter, sans-serif'),
-        fontWeight: String(object.data.fontWeight ?? 'normal'),
-        letterSpacing: Number(object.data.letterSpacing ?? 0),
-        color: String(object.data.fill ?? '#0f172a'),
-        lineHeight: Number(object.data.lineHeight ?? 1.2),
-        textAlign: String(object.data.align ?? 'left') as TextEditorState['textAlign'],
-        stage,
-        container,
-        zoom,
-        pan,
-        node,
-      }),
-    );
-  }
-
-  function openNewTextEditor(box: {
-    x: number;
-    y: number;
-    width: number | null;
-    height: number | null;
-    textMode: TextMode;
-  }) {
-    const stage = stageRef.current;
-    const container = containerRef.current;
-    if (!stage || !container) return;
-
-    textEditSnapshotRef.current = null;
-    setSelection([]);
-    setInlineTextEditorActive(true);
-    setTextEditor(
-      buildTextEditorState({
-        objectId: null,
-        value: '',
-        mapX: box.x,
-        mapY: box.y,
-        mapWidth: box.width,
-        mapHeight: box.height,
-        textMode: box.textMode,
-        rotation: 0,
-        baseFontSize: 22,
-        fontFamily: 'Inter, sans-serif',
-        fontWeight: 'normal',
-        letterSpacing: 0,
-        color: '#0f172a',
-        lineHeight: 1.2,
-        textAlign: 'left',
-        stage,
-        container,
-        zoom,
-        pan,
-      }),
-    );
-  }
-
-  function commitTextEditor() {
-    if (!textEditor) return;
-    if (!textEditor.value.trim()) {
-      if (textEditor.objectId) deleteObject(textEditor.objectId);
-      setInlineTextEditorActive(false);
-      setTextEditor(null);
-      return;
-    }
-
-    const dims = getTextDimensionsForMode(textEditor.textMode, textEditor.mapWidth, textEditor.mapHeight);
-    const nextData = normalizeTextData({
-      text: textEditor.value,
-      label: textEditor.value,
-      textMode: textEditor.textMode,
-      fontSize: textEditor.baseFontSize,
-      fontFamily: textEditor.fontFamily,
-      fill: textEditor.color,
-      lineHeight: textEditor.lineHeight,
-      align: textEditor.textAlign,
-    });
-
-    if (!textEditor.objectId) {
-      const createdId = addObjectAt(
-        'text',
-        { x: textEditor.mapX, y: textEditor.mapY },
-        textEditor.textMode === 'auto'
-          ? undefined
-          : textEditor.textMode === 'fixed-width'
-            ? { width: dims.width ?? 160 }
-            : { width: dims.width ?? 160, height: dims.height ?? 60 },
-      );
-      if (!createdId) {
-        setInlineTextEditorActive(false);
-        setTextEditor(null);
-        return;
-      }
-      updateObject(createdId, {
-        width: dims.width,
-        height: dims.height,
-        data: nextData,
-      });
-      setInlineTextEditorActive(false);
-      setTextEditor(null);
-      return;
-    }
-
-    updateObject(textEditor.objectId, {
-      width: dims.width,
-      height: dims.height,
-      data: {
-        ...(map?.objects.find((object) => object.id === textEditor.objectId)?.data ?? {}),
-        ...nextData,
-      },
-    });
-    setInlineTextEditorActive(false);
-    setTextEditor(null);
-  }
-
-  function renderCreationPreview() {
-    if (!creationDraft) return null;
-    const box = getCreationBox(creationDraft);
-    if (box.width < 2 || box.height < 2) return null;
-
-    if (creationDraft.tool === 'text') {
-      return (
-        <>
-          <Rect
-            x={box.x}
-            y={box.y}
-            width={box.width}
-            height={box.height}
-            fill="rgba(109, 40, 217, 0.06)"
-            stroke="#6d28d9"
-            strokeWidth={1.5}
-            dash={[6, 4]}
-            listening={false}
-          />
-          <Text
-            x={box.x + 8}
-            y={box.y + 8}
-            text="Texto"
-            fontSize={14}
-            fill="#6d28d9"
-            listening={false}
-          />
-        </>
-      );
-    }
-
-    const shape = getCreationShape(creationDraft.tool);
-    const stroke = '#6d28d9';
-    const fill = 'rgba(109, 40, 217, 0.08)';
-
-    if (shape === 'circle' || shape === 'ellipse') {
-      return (
-        <Ellipse
-          x={box.x + box.width / 2}
-          y={box.y + box.height / 2}
-          radiusX={box.width / 2}
-          radiusY={box.height / 2}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={1.5}
-          dash={[6, 4]}
-          listening={false}
-        />
-      );
-    }
-
-    if (shape === 'triangle') {
-      return (
-        <RegularPolygon
-          x={box.x + box.width / 2}
-          y={box.y + box.height / 2}
-          sides={3}
-          radius={Math.min(box.width, box.height) / 2}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={1.5}
-          dash={[6, 4]}
-          rotation={30}
-          listening={false}
-        />
-      );
-    }
-
-    return <Rect x={box.x} y={box.y} width={box.width} height={box.height} fill={fill} stroke={stroke} strokeWidth={1.5} dash={[6, 4]} listening={false} />;
-  }
 
   const placementToolActive = isPlacementTool(tool);
-
-  const cursor =
-    tool === 'zoom'
-      ? isZoomScrubbing
-        ? 'grabbing'
-        : 'zoom-in'
-      : tool === 'pan'
-        ? isPanning
-          ? 'grabbing'
-          : 'grab'
-        : tool === 'text'
-          ? 'text'
-          : isCreationTool(tool) || tool === 'row'
-            ? 'crosshair'
-            : 'default';
-
-  function renderMarqueePreview() {
-    if (!marqueeDraft) return null;
-    const box = normalizeBoundsRect(marqueeDraft.start, marqueeDraft.current);
-    if (box.width < 2 && box.height < 2) return null;
-
-    return (
-      <Rect
-        x={box.x}
-        y={box.y}
-        width={box.width}
-        height={box.height}
-        fill="rgba(37, 99, 235, 0.08)"
-        stroke="#2563eb"
-        strokeWidth={1}
-        dash={[4, 4]}
-        listening={false}
-      />
-    );
-  }
-
-  function handleTransformEnd(object: EventMapObjectDTO, node: Konva.Node) {
-    if (
-      useUniformGroupTransform ||
-      useGenericTransform ||
-      (object.type === 'CORRIDOR' && useCorridorTransformerPipeline)
-    ) {
-      node.scaleX(1);
-      node.scaleY(1);
-      return;
-    }
-
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-
-    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
-      node.scaleX(1);
-      node.scaleY(1);
-      return;
-    }
-
-    if (object.type === 'TEXT') {
-      const mode = getTextMode(object);
-      const anchor = transformerRef.current?.getActiveAnchor() ?? '';
-      const currentFontSize = Number(object.data.fontSize ?? 22);
-      node.scaleX(1);
-      node.scaleY(1);
-      const x = node.x();
-      const y = node.y();
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-
-      lastTransformCommitRef.current.set(object.id, { x, y });
-      const rotation = node.rotation();
-
-      if (mode === 'auto' || isCornerResizeAnchor(anchor) || !anchor) {
-        const uniformScale = Math.max(Math.abs(scaleY), Math.abs(scaleX));
-        updateObject(object.id, {
-          x,
-          y,
-          width: null,
-          height: null,
-          rotation,
-          data: {
-            ...object.data,
-            textMode: 'auto',
-            fontSize: clampFontSize(currentFontSize * uniformScale),
-          },
-        });
-        return;
-      }
-
-      if (mode === 'fixed-width') {
-        if (isHorizontalResizeAnchor(anchor)) {
-          updateObject(object.id, {
-            x,
-            y,
-            width: Math.max(MIN_OBJECT_SIZE, (object.width ?? node.width() ?? 160) * scaleX),
-            height: null,
-            rotation,
-            data: { ...object.data, textMode: 'fixed-width' },
-          });
-          return;
-        }
-
-        const uniformScale = Math.max(Math.abs(scaleY), Math.abs(scaleX));
-        updateObject(object.id, {
-          x,
-          y,
-          width: Math.max(MIN_OBJECT_SIZE, (object.width ?? node.width() ?? 160) * scaleX),
-          height: null,
-          rotation,
-          data: {
-            ...object.data,
-            textMode: 'fixed-width',
-            fontSize: clampFontSize(currentFontSize * uniformScale),
-          },
-        });
-        return;
-      }
-
-      if (isHorizontalResizeAnchor(anchor)) {
-        updateObject(object.id, {
-          x,
-          y,
-          width: Math.max(MIN_OBJECT_SIZE, (object.width ?? node.width() ?? 160) * scaleX),
-          height: object.height,
-          rotation,
-          data: { ...object.data, textMode: 'area' },
-        });
-        return;
-      }
-
-      if (isVerticalResizeAnchor(anchor)) {
-        updateObject(object.id, {
-          x,
-          y,
-          width: object.width,
-          height: Math.max(MIN_OBJECT_SIZE, (object.height ?? node.height() ?? 60) * scaleY),
-          rotation,
-          data: { ...object.data, textMode: 'area' },
-        });
-        return;
-      }
-
-      const uniformScale = Math.max(Math.abs(scaleY), Math.abs(scaleX));
-      updateObject(object.id, {
-        x,
-        y,
-        width: Math.max(MIN_OBJECT_SIZE, (object.width ?? node.width() ?? 160) * scaleX),
-        height: Math.max(MIN_OBJECT_SIZE, (object.height ?? node.height() ?? 60) * scaleY),
-        rotation,
-        data: {
-          ...object.data,
-          textMode: 'area',
-          fontSize: clampFontSize(currentFontSize * uniformScale),
-        },
-      });
-      return;
-    }
-
-    const nextWidth = Math.max(MIN_OBJECT_SIZE, (object.width ?? 100) * scaleX);
-    const nextHeight = Math.max(MIN_OBJECT_SIZE, (object.height ?? 60) * scaleY);
-    node.scaleX(1);
-    node.scaleY(1);
-    const x = node.x();
-    const y = node.y();
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(nextWidth) || !Number.isFinite(nextHeight)) {
-      return;
-    }
-    lastTransformCommitRef.current.set(object.id, { x, y });
-    updateObject(object.id, {
-      x,
-      y,
-      width: nextWidth,
-      height: nextHeight,
-      rotation: node.rotation(),
-    });
-  }
-
-  function handleSeatGroupTransformEnd(group: EventSeatGroupDTO, node: Konva.Node) {
-    const scaleX = node.scaleX();
-    const scaleY = node.scaleY();
-    const x = node.x();
-    const y = node.y();
-    const rotation = node.rotation();
-
-    node.scaleX(1);
-    node.scaleY(1);
-
-    if (![scaleX, scaleY, x, y, rotation].every(Number.isFinite)) return;
-
-    lastTransformCommitRef.current.set(`seatgroup-${group.id}`, { x, y });
-    updateSeatGroup(group.id, {
-      x,
-      y,
-      rotation,
-      seatWidth: Math.max(8, group.seatWidth * Math.abs(scaleX || 1)),
-      seatHeight: Math.max(8, group.seatHeight * Math.abs(scaleY || 1)),
-      gapX: Math.max(0, group.gapX * Math.abs(scaleX || 1)),
-      gapY: Math.max(0, group.gapY * Math.abs(scaleY || 1)),
-      paddingLeft: Math.max(0, group.paddingLeft * Math.abs(scaleX || 1)),
-      paddingRight: Math.max(0, group.paddingRight * Math.abs(scaleX || 1)),
-      paddingTop: Math.max(0, group.paddingTop * Math.abs(scaleY || 1)),
-      paddingBottom: Math.max(0, group.paddingBottom * Math.abs(scaleY || 1)),
-    });
-  }
-
-  function renderCorridorUnionItem(item: Extract<LevelRenderStackItem, { kind: 'corridorUnion' }>) {
-    const group = corridorUnionGroups.find((entry) => entry.id === item.id);
-    if (!group || group.objectIds.length < 2) return null;
-
-    return (
-      <Group key={`corridor-union-${group.id}`} listening={false}>
-        {group.mergedPolygons.map((polygon, index) => (
-          <Line
-            key={`${group.id}-merged-${index}`}
-            points={polygonToKonvaPoints(polygon)}
-            closed
-            fill="#f8fafc"
-            stroke="#cbd5e1"
-            strokeWidth={1.5}
-            strokeScaleEnabled={false}
-            dash={[8, 6]}
-            listening={false}
-          />
-        ))}
-      </Group>
-    );
-  }
-
-  function renderMapObject(object: EventMapObjectDTO) {
-    const appearance = getObjectAppearance(object);
-    const width = object.width ?? 180;
-    const height = object.height ?? 90;
-    const shape = typeof object.data.shape === 'string' ? object.data.shape : null;
-    const selected = isObjectSelected(object);
-    const opacity = Number(object.data.opacity ?? (object.type === 'SECTION' ? 0.15 : 1));
-    const cornerRadius = Number(object.data.cornerRadius ?? (object.type === 'TABLE' ? 999 : shape ? 0 : 8));
-
-    if (object.type === 'CORRIDOR') {
-      const corridorProps = buildCorridorMapObjectProps(object, {
-        selection,
-        levelObjects,
-        selectedCorridorIds,
-        corridorUnionGroups,
-        activeUnionDragIds,
-        isObjectSelected: (entry) => isObjectSelected(entry),
-      });
-      const freezeFromReact = isTransformSessionActive && selectedCorridorIds.has(object.id);
-
-      return (
-        <CorridorMapObject
-          key={object.id}
-          {...corridorProps}
-          freezeFromReact={freezeFromReact}
-          placementToolActive={placementToolActive}
-          readOnly={readOnly}
-          tool={tool}
-          onSelect={(event) => handleSelectItem({ type: 'object', id: object.id }, event)}
-          onDragStart={() => handleNodeDragStart(`node-${object.id}`, { type: 'object', id: object.id })}
-          onDragMove={handleResponsiveDragMove}
-          onDragEnd={(event) =>
-            handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
-          }
-          onTransformEnd={(event) => {
-            if (isSingleSelectionTransform) handleTransformEnd(object, event.target);
-          }}
-        />
-      );
-    }
-
-    if (object.type === 'TEXT') {
-      const textMode = getTextMode(object);
-      const textStrokeWidth = Number(object.data.strokeWidth ?? 0);
-      const textStroke = String(object.data.stroke ?? '#000000');
-      const textWidth = isTextBoxMode(object) ? object.width ?? undefined : undefined;
-      const hasCustomHeight = textMode === 'area' && typeof object.height === 'number' && object.height > 0;
-      const fontSize = clampFontSizeValue(Number(object.data.fontSize ?? 22));
-      const lineHeight = Number(object.data.lineHeight ?? 1.2);
-      return (
-        <Text
-          key={object.id}
-          id={`node-${object.id}`}
-          x={object.x}
-          y={object.y}
-          scaleX={1}
-          scaleY={1}
-          text={String(object.data.text ?? 'Texto')}
-          width={textWidth}
-          height={hasCustomHeight ? object.height ?? undefined : undefined}
-          fontFamily={String(object.data.fontFamily ?? 'Inter, sans-serif')}
-          fontSize={fontSize}
-          fontStyle={buildTextFontStyle(object.data)}
-          textDecoration={getKonvaTextDecoration(object.data)}
-          align={String(object.data.align ?? 'left') as Konva.TextConfig['align']}
-          verticalAlign={String(object.data.verticalAlign ?? 'top') as Konva.TextConfig['verticalAlign']}
-          lineHeight={lineHeight}
-          letterSpacing={Number(object.data.letterSpacing ?? 0)}
-          fill={String(object.data.fill ?? '#0f172a')}
-          opacity={Number(object.data.opacity ?? 1)}
-          stroke={textStrokeWidth > 0 ? textStroke : undefined}
-          strokeWidth={textStrokeWidth}
-          strokeScaleEnabled={false}
-          wrap={getTextWrap(textMode)}
-          rotation={object.rotation}
-          name={SNAP_TARGET_NAME}
-          listening={!placementToolActive}
-          draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !object.locked}
-          onClick={(event) => handleSelectItem({ type: 'object', id: object.id }, event)}
-          onDblClick={(event) => {
-            event.cancelBubble = true;
-            openTextEditor(object, event.target as Konva.Text);
-          }}
-          visible={textEditor?.objectId !== object.id}
-          onDragStart={() => handleNodeDragStart(`node-${object.id}`, { type: 'object', id: object.id })}
-          onDragMove={handleResponsiveDragMove}
-          onDragEnd={(event) =>
-            handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
-          }
-          onTransformEnd={(event) => {
-            if (isSingleSelectionTransform) handleTransformEnd(object, event.target);
-          }}
-        />
-      );
-    }
-
-    return (
-      <Group
-        key={object.id}
-        id={`node-${object.id}`}
-        x={object.x}
-        y={object.y}
-        scaleX={1}
-        scaleY={1}
-        rotation={object.rotation}
-        offsetX={0}
-        offsetY={0}
-        name={SNAP_TARGET_NAME}
-        listening={!placementToolActive}
-        draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !object.locked}
-        onClick={(event) =>
-          handleSelectItem(
-            object.sectionId ? { type: 'section', id: object.sectionId } : { type: 'object', id: object.id },
-            event,
-          )
-        }
-        onDragStart={() =>
-          handleNodeDragStart(
-            `node-${object.id}`,
-            object.sectionId ? { type: 'section', id: object.sectionId } : { type: 'object', id: object.id },
-          )
-        }
-        onDragMove={handleResponsiveDragMove}
-        onDragEnd={(event) =>
-          handleNodeDragEnd(`node-${object.id}`, event, (x, y) => updateObject(object.id, { x, y }))
-        }
-        onTransformEnd={(event) => {
-          if (isSingleSelectionTransform) {
-            handleTransformEnd(object, event.target);
-          }
-        }}
-      >
-        {shape === 'circle' || shape === 'ellipse' ? (
-          <Ellipse
-            x={width / 2}
-            y={height / 2}
-            radiusX={width / 2}
-            radiusY={height / 2}
-            fill={appearance.fill}
-            opacity={opacity}
-            stroke={appearance.stroke}
-            strokeWidth={appearance.strokeWidth}
-            strokeScaleEnabled={false}
-            dash={appearance.dash}
-          />
-        ) : shape === 'triangle' ? (
-          <RegularPolygon
-            x={width / 2}
-            y={height / 2}
-            sides={3}
-            radius={Math.min(width, height) / 2}
-            fill={appearance.fill}
-            opacity={opacity}
-            stroke={appearance.stroke}
-            strokeWidth={appearance.strokeWidth}
-            strokeScaleEnabled={false}
-            dash={appearance.dash}
-            rotation={30}
-          />
-        ) : (
-          <Rect
-            width={width}
-            height={height}
-            cornerRadius={cornerRadius}
-            fill={appearance.fill}
-            opacity={opacity}
-            stroke={appearance.stroke}
-            strokeWidth={appearance.strokeWidth}
-            strokeScaleEnabled={false}
-            dash={appearance.dash}
-          />
-        )}
-        {selected ? (
-          <Rect
-            width={width}
-            height={height}
-            fill="transparent"
-            stroke="#2563eb"
-            strokeWidth={1.5}
-            strokeScaleEnabled={false}
-            dash={[4, 4]}
-            listening={false}
-          />
-        ) : null}
-      </Group>
-    );
-  }
-
-  function renderLooseSeat(seat: EventSeatDTO) {
-    const selected = isItemSelected(selection, { type: 'seat', id: seat.id });
-    const radius = (seat.size ?? 24) / 2;
-    return (
-      <Group
-        key={seat.id}
-        id={`node-${seat.id}`}
-        x={seat.x}
-        y={seat.y}
-        rotation={seat.rotation}
-        name={SNAP_TARGET_NAME}
-        listening={!placementToolActive}
-        draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && seat.status !== 'SOLD'}
-        onClick={(event) => handleSelectItem({ type: 'seat', id: seat.id }, event)}
-        onDblClick={(event) => {
-          event.cancelBubble = true;
-          setIndividualSeatDragId(seat.id);
-          setSelection(replaceSelection({ type: 'seat', id: seat.id }));
-        }}
-        onDragStart={() => handleNodeDragStart(`node-${seat.id}`, { type: 'seat', id: seat.id })}
-        onDragMove={handleResponsiveDragMove}
-        onDragEnd={(event) =>
-          handleNodeDragEnd(`node-${seat.id}`, event, (x, y) => updateSeat(seat.id, { x, y }))
-        }
-      >
-        <Circle radius={radius} fill={seatFill(seat.status)} stroke={selected ? '#1d4ed8' : '#ffffff'} strokeWidth={selected ? 4 : 2} />
-        <Text
-          x={-radius}
-          y={-6}
-          width={radius * 2}
-          align="center"
-          text={seat.displayLabel}
-          fontSize={Math.max(9, radius * 0.65)}
-          fill="#ffffff"
-          fontStyle="bold"
-          listening={false}
-        />
-      </Group>
-    );
-  }
-
-  function renderLevelStackItem(item: LevelRenderStackItem) {
-    if (item.kind === 'corridorUnion') return renderCorridorUnionItem(item);
-    if (item.kind === 'seatGroup') {
-      const group = levelSeatGroups.find((entry) => entry.id === item.id);
-      return group ? renderSeatGroup(group) : null;
-    }
-    if (item.kind === 'seat') {
-      const seat = levelSeats.find((entry) => entry.id === item.id);
-      return seat ? renderLooseSeat(seat) : null;
-    }
-
-    const object = displayLevelObjects.find((entry) => entry.id === item.id);
-    return object ? renderMapObject(object) : null;
-  }
-
-  function renderSeatGridPreview() {
-    if (!seatGridDraft || seatGridPreviewSeats.length === 0) return null;
-
-    const bounds = getSeatGridPreviewBounds(seatGridPreviewSeats, SEAT_GRID_SECTION_PADDING);
-
-    return (
-      <Group listening={false}>
-        {bounds ? (
-          <Rect
-            x={bounds.x}
-            y={bounds.y}
-            width={bounds.width}
-            height={bounds.height}
-            cornerRadius={10}
-            fill="rgba(124, 58, 237, 0.05)"
-            stroke="#7c3aed"
-            strokeWidth={1}
-            strokeScaleEnabled={false}
-            dash={[6, 6]}
-          />
-        ) : null}
-        {seatGridPreviewSeats.map((seat) => {
-          const radius = seat.size / 2;
-          return (
-            <Group key={`${seat.rowIndex}-${seat.columnIndex}`} x={seat.x} y={seat.y} opacity={0.78}>
-              <Circle radius={radius} fill="#7c3aed" stroke="#ffffff" strokeWidth={2} strokeScaleEnabled={false} />
-              <Text
-                x={-radius}
-                y={-6}
-                width={radius * 2}
-                align="center"
-                text={seat.displayLabel}
-                fontSize={Math.max(8, radius * 0.55)}
-                fill="#ffffff"
-                fontStyle="bold"
-                listening={false}
-              />
-            </Group>
-          );
-        })}
-      </Group>
-    );
-  }
-
-  function renderSeatGroup(group: EventSeatGroupDTO) {
-      const groupSeats = levelSeats.filter((s) => s.groupId === group.id);
-      const isGroupSelected = isItemSelected(selection, { type: 'seatgroup', id: group.id });
-      const stepX = group.seatWidth + group.gapX;
-      const stepY = group.seatHeight + group.gapY;
-      const bounds = getSeatGroupTightBounds(group, levelSeats);
-      const totalX = bounds.x;
-      const totalY = bounds.y;
-      const totalW = bounds.width;
-      const totalH = bounds.height;
-
-      return (
-        <Group
-          key={group.id}
-          id={`node-seatgroup-${group.id}`}
-          x={group.x}
-          y={group.y}
-          scaleX={1}
-          scaleY={1}
-          rotation={group.rotation}
-          name={SNAP_TARGET_NAME}
-          listening={!placementToolActive}
-          draggable={!readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' && !group.locked}
-          onClick={(event) => {
-            event.cancelBubble = true;
-            handleSelectItem({ type: 'seatgroup', id: group.id }, event);
-          }}
-          onDragStart={() => handleNodeDragStart(`node-seatgroup-${group.id}`, { type: 'seatgroup', id: group.id })}
-          onDragMove={handleResponsiveDragMove}
-          onDragEnd={(event) =>
-            handleNodeDragEnd(`node-seatgroup-${group.id}`, event, (x, y) => updateSeatGroup(group.id, { x, y }))
-          }
-          onTransformEnd={(event) => handleSeatGroupTransformEnd(group, event.target)}
-        >
-          {/* Group bounds indicator */}
-          <Rect
-            x={totalX}
-            y={totalY}
-            width={totalW}
-            height={totalH}
-            fill={isGroupSelected ? 'rgba(37,99,235,0.06)' : 'transparent'}
-            stroke={isGroupSelected ? '#2563eb' : '#7c3aed'}
-            strokeWidth={isGroupSelected ? 1.5 : 1}
-            strokeScaleEnabled={false}
-            dash={isGroupSelected ? undefined : [6, 4]}
-            cornerRadius={6}
-            listening={false}
-          />
-          {/* Group name label */}
-          {group.name ? (
-            <Text
-              x={totalX}
-              y={totalY - 18}
-              text={group.name}
-              fontSize={11}
-              fill={isGroupSelected ? '#2563eb' : '#7c3aed'}
-              fontStyle="500"
-              listening={false}
-            />
-          ) : null}
-          {/* Resize handles */}
-          {isGroupSelected && !readOnly && !placementToolActive && tool !== 'pan' && tool !== 'zoom' ? (
-            <>
-              {/* Right handle — adjusts columns */}
-              <Rect
-                x={totalX + totalW - 5 / zoom}
-                y={totalY + totalH / 2 - 5 / zoom}
-                width={10 / zoom}
-                height={10 / zoom}
-                fill="white"
-                stroke="#2563eb"
-                strokeWidth={1.5}
-                strokeScaleEnabled={false}
-                cornerRadius={2}
-                hitStrokeWidth={6}
-                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'ew-resize'; }}
-                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
-                onMouseDown={(event) => {
-                  event.cancelBubble = true;
-                  const pt = getPointerPoint();
-                  if (!pt) return;
-                  seatGroupResizeRef.current = {
-                    groupId: group.id, handle: 'right',
-                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
-                    startTotalW: totalW, startTotalH: totalH,
-                    stepX, stepY,
-                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
-                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
-                    gapX: group.gapX, gapY: group.gapY,
-                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
-                  };
-                }}
-              />
-              {/* Bottom handle — adjusts rows */}
-              <Rect
-                x={totalX + totalW / 2 - 5 / zoom}
-                y={totalY + totalH - 5 / zoom}
-                width={10 / zoom}
-                height={10 / zoom}
-                fill="white"
-                stroke="#2563eb"
-                strokeWidth={1.5}
-                strokeScaleEnabled={false}
-                cornerRadius={2}
-                hitStrokeWidth={6}
-                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'ns-resize'; }}
-                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
-                onMouseDown={(event) => {
-                  event.cancelBubble = true;
-                  const pt = getPointerPoint();
-                  if (!pt) return;
-                  seatGroupResizeRef.current = {
-                    groupId: group.id, handle: 'bottom',
-                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
-                    startTotalW: totalW, startTotalH: totalH,
-                    stepX, stepY,
-                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
-                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
-                    gapX: group.gapX, gapY: group.gapY,
-                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
-                  };
-                }}
-              />
-              {/* Bottom-right handle — adjusts columns and rows */}
-              <Rect
-                x={totalX + totalW - 5 / zoom}
-                y={totalY + totalH - 5 / zoom}
-                width={10 / zoom}
-                height={10 / zoom}
-                fill="white"
-                stroke="#2563eb"
-                strokeWidth={1.5}
-                strokeScaleEnabled={false}
-                cornerRadius={2}
-                hitStrokeWidth={6}
-                onMouseEnter={() => { if (containerRef.current) containerRef.current.style.cursor = 'nwse-resize'; }}
-                onMouseLeave={() => { if (containerRef.current) containerRef.current.style.cursor = ''; }}
-                onMouseDown={(event) => {
-                  event.cancelBubble = true;
-                  const pt = getPointerPoint();
-                  if (!pt) return;
-                  seatGroupResizeRef.current = {
-                    groupId: group.id, handle: 'bottom-right',
-                    startWorldPt: pt, startRows: group.rows, startColumns: group.columns,
-                    startTotalW: totalW, startTotalH: totalH,
-                    stepX, stepY,
-                    paddingLeft: group.paddingLeft, paddingRight: group.paddingRight,
-                    paddingTop: group.paddingTop, paddingBottom: group.paddingBottom,
-                    gapX: group.gapX, gapY: group.gapY,
-                    lastCommittedRows: group.rows, lastCommittedCols: group.columns,
-                  };
-                }}
-              />
-            </>
-          ) : null}
-          {/* Seats */}
-          {groupSeats.map((seat) => {
-            const radius = group.seatWidth / 2;
-            // Convert world-space seat center (may include corridor displacement) to
-            // seatGroup-local space by applying the inverse rotation of the group.
-            const rotRad = -((group.rotation ?? 0) * Math.PI) / 180;
-            const cosR = Math.cos(rotRad);
-            const sinR = Math.sin(rotRad);
-            const dx = seat.x - group.x;
-            const dy = seat.y - group.y;
-            const seatLocalX = dx * cosR - dy * sinR;
-            const seatLocalY = dx * sinR + dy * cosR;
-            const seatSelected = isItemSelected(selection, { type: 'seat', id: seat.id });
-            return (
-              <Group
-                key={seat.id}
-                id={`node-${seat.id}`}
-                x={seatLocalX}
-                y={seatLocalY}
-                listening={!placementToolActive}
-                onClick={(event) => {
-                  event.cancelBubble = true;
-                  handleSelectItem({ type: 'seatgroup', id: group.id }, event);
-                }}
-              >
-                <Circle
-                  radius={radius}
-                  fill={seatFill(seat.status)}
-                  stroke={isGroupSelected || seatSelected ? '#1d4ed8' : '#ffffff'}
-                  strokeWidth={isGroupSelected || seatSelected ? 3 : 2}
-                  strokeScaleEnabled={false}
-                />
-                <Text
-                  x={-radius}
-                  y={-6}
-                  width={radius * 2}
-                  align="center"
-                  text={seat.displayLabel}
-                  fontSize={Math.max(9, radius * 0.65)}
-                  fill="#ffffff"
-                  fontStyle="bold"
-                  listening={false}
-                />
-              </Group>
-            );
-          })}
-        </Group>
-      );
-  }
+  const cursor = resolveMapCanvasCursor({ tool, isPanning, isZoomScrubbing });
 
   if (!map || !level) {
     return <div ref={containerRef} className="h-full min-h-0 flex-1 bg-slate-100" />;
   }
 
-  const textEditorDimensions = textEditor
-    ? getTextEditorDimensions({
-        textMode: textEditor.textMode,
-        value: textEditor.value,
-        fontSize: textEditor.fontSize,
-        fontFamily: textEditor.fontFamily,
-        fontWeight: textEditor.fontWeight,
-        letterSpacing: textEditor.letterSpacing,
-        lineHeight: textEditor.lineHeight,
-        width: textEditor.width,
-        height: textEditor.height,
-        minHeight: textEditor.minHeight,
-      })
-    : null;
+  const canvasRenderState = buildMapCanvasRenderState({
+    renderStack,
+    displayLevelObjects,
+    levelSeats,
+    levelSeatGroups,
+    corridorUnionGroups,
+    selection,
+    selectedCorridorIds,
+    activeUnionDragIds,
+    levelObjects,
+    textEditorObjectId: textEditor?.objectId ?? null,
+    placementToolActive,
+    readOnly,
+    tool,
+    zoom,
+    isTransformSessionActive,
+    isSingleSelectionTransform: transformRouting.isSingleSelectionTransform,
+    containerRef,
+    getPointerPoint,
+  });
+
+  const canvasRenderHandlers = buildMapCanvasRenderHandlers({
+    isObjectSelected,
+    onSelect: (event, item) => handleSelectItem(item, event),
+    onDoubleClickSelectIndividualSeat: (seatId) => {
+      setIndividualSeatDragId(seatId);
+      setSelection(replaceSelection({ type: 'seat', id: seatId }));
+    },
+    onDragStart: nodeDrag.handleNodeDragStart,
+    onDragMove: nodeDrag.handleResponsiveDragMove,
+    onDragEnd: nodeDrag.handleNodeDragEnd,
+    onObjectTransformEnd: handleTransformEnd,
+    onSeatGroupTransformEnd: handleSeatGroupTransformEnd,
+    onUpdateObjectPosition: (objectId, x, y) => updateObject(objectId, { x, y }),
+    onUpdateSeatPosition: (seatId, x, y) => updateSeat(seatId, { x, y }),
+    onUpdateSeatGroupPosition: (groupId, x, y) => updateSeatGroup(groupId, { x, y }),
+    onOpenTextEditor: openTextEditor,
+    onSeatGroupResizeStart: beginSeatGroupResize,
+  });
+
+  const textEditorDimensions = buildTextEditorOverlayDimensions(textEditor);
 
   return (
     <div
@@ -1854,62 +447,13 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
       style={{ cursor }}
     >
       {textEditor ? (
-        <textarea
-          data-testid="map-text-editor"
-          ref={textEditorRef}
-          value={textEditor.value}
-          onChange={(event) => {
-            const value = event.target.value;
-            setTextEditor((current) => (current ? { ...current, value } : current));
-          }}
+        <MapInlineTextEditor
+          textEditor={textEditor}
+          textEditorRef={textEditorRef}
+          textEditorDimensions={textEditorDimensions}
+          onChange={(value) => setTextEditor((current) => (current ? { ...current, value } : current))}
           onBlur={commitTextEditor}
-          placeholder={textEditor.value ? undefined : TEXT_EDITOR_PLACEHOLDER}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              event.preventDefault();
-              if (textEditor.objectId && textEditSnapshotRef.current !== null) {
-                updateObject(textEditor.objectId, {
-                  data: {
-                    ...(map?.objects.find((object) => object.id === textEditor.objectId)?.data ?? {}),
-                    text: textEditSnapshotRef.current,
-                    label: textEditSnapshotRef.current,
-                  },
-                });
-              }
-              setInlineTextEditorActive(false);
-              setTextEditor(null);
-              return;
-            }
-            if (textEditor.textMode === 'auto' && event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              commitTextEditor();
-              return;
-            }
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-              event.preventDefault();
-              commitTextEditor();
-            }
-          }}
-          style={{
-            left: textEditor.left,
-            top: textEditor.top,
-            width: textEditorDimensions?.width,
-            height: textEditorDimensions?.height,
-            minHeight: textEditor.minHeight,
-            fontSize: textEditor.fontSize,
-            fontFamily: textEditor.fontFamily,
-            fontWeight: textEditor.fontWeight === 'bold' ? 700 : 400,
-            letterSpacing: textEditor.letterSpacing,
-            lineHeight: textEditor.lineHeight,
-            color: textEditor.color,
-            textAlign: textEditor.textAlign,
-            transform: textEditor.transform,
-            transformOrigin: 'left top',
-            whiteSpace: textEditor.textMode === 'auto' ? 'pre' : 'pre-wrap',
-          }}
-          wrap={textEditor.textMode === 'auto' ? 'off' : 'soft'}
-          rows={1}
-          className="absolute z-30 resize-none overflow-hidden whitespace-pre border-0 bg-transparent p-0 outline-none ring-0"
+          onKeyDown={handleTextEditorKeyDown}
         />
       ) : null}
       {seatGridDraft ? (
@@ -1923,93 +467,40 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
           }}
         />
       ) : null}
-      <Stage
-        ref={stageRef}
-        width={size.width}
-        height={size.height}
-        x={pan.x}
-        y={pan.y}
-        scaleX={zoom}
-        scaleY={zoom}
-        draggable={!readOnly && tool === 'pan'}
-        onDragStart={(event) => {
-          if (event.target === event.target.getStage()) setIsPanning(true);
-        }}
-        onDragMove={handleStageDragMove}
-        onDragEnd={handleStageDragEnd}
-        onMouseDown={handleStageMouseDown}
-        onMouseMove={handleStageMouseMove}
-        onMouseUp={handleStageMouseUp}
-        onWheel={handleWheel}
-      >
-        <Layer listening={false}>
-          <Rect x={0} y={0} width={level.widthPx} height={level.heightPx} fill="#ffffff" stroke="#cbd5e1" strokeWidth={2} />
-        </Layer>
-
-        <Layer ref={contentLayerRef}>
-          {renderStack.map(renderLevelStackItem)}
-
-          {renderSeatGridPreview()}
-
-          <Transformer
-            ref={transformerRef}
-            rotateEnabled={!disableRotateForMixedSmartCorridorSelection}
-            resizeEnabled={!disableResizeForMixedSmartCorridorSelection}
-            keepRatio={transformerScaleOptions.keepRatio}
-            centeredScaling={transformerScaleOptions.centeredScaling}
-            flipEnabled={false}
-            enabledAnchors={
-              disableResizeForMixedSmartCorridorSelection ? [] : selectedTextTransformAnchors
-            }
-            listening={!placementToolActive}
-            anchorDragBoundFunc={(_oldAbs, newAbs, event) => {
-              if (
-                readOnly ||
-                tool === 'pan' ||
-                tool === 'zoom' ||
-                transformPipelineActive ||
-                !levelBounds
-              ) {
-                return newAbs;
-              }
-
-              const transformer = transformerRef.current;
-              const anchor = transformer?.getActiveAnchor() ?? '';
-              if (!anchor || anchor === 'rotater') {
-                return newAbs;
-              }
-
-              const contentLayer = transformer?.getLayer();
-              if (!contentLayer) {
-                return newAbs;
-              }
-
-              const nodes = transformer?.nodes() ?? [];
-              const referenceBox =
-                nodes.length === 1
-                  ? getNodeBounds(nodes[0])
-                  : computeUnionBoundsFromNodes(nodes);
-
-              return handleAnchorDragBound(newAbs, {
-                anchor,
-                contentLayer,
-                skipIds: selectedNodeIds,
-                referenceBox,
-                snapDisabled: isSnapModifierActive(event),
-              });
-            }}
-            boundBoxFunc={(oldBox, newBox) => {
-              if (Math.abs(newBox.width) < MIN_OBJECT_SIZE || Math.abs(newBox.height) < MIN_OBJECT_SIZE) {
-                return oldBox;
-              }
-              return newBox;
-            }}
-          />
-          {renderCreationPreview()}
-          {renderMarqueePreview()}
-          <SnapGuidesLayer ref={guidesLayerRef} zoom={zoom} />
-        </Layer>
-      </Stage>
+      <MapCanvasStage
+        stageRef={stageRef}
+        contentLayerRef={contentLayerRef}
+        guidesLayerRef={snapSession.guidesLayerRef}
+        transformerRef={transformerRef}
+        size={size}
+        level={level}
+        pan={pan}
+        zoom={zoom}
+        readOnly={readOnly}
+        tool={tool}
+        renderState={canvasRenderState}
+        renderHandlers={canvasRenderHandlers}
+        creationDraft={creationDraft}
+        marqueeDraft={marqueeDraft}
+        seatGridDraft={seatGridDraft}
+        seatGridPreviewSeats={seatGridPreviewSeats}
+        disableRotateForMixedSmartCorridorSelection={transformRouting.disableRotateForMixedSmartCorridorSelection}
+        disableResizeForMixedSmartCorridorSelection={transformRouting.disableResizeForMixedSmartCorridorSelection}
+        transformerScaleOptions={transformerScaleOptions}
+        selectedTextTransformAnchors={transformRouting.selectedTextTransformAnchors}
+        placementToolActive={placementToolActive}
+        transformPipelineActive={transformRouting.transformPipelineActive}
+        levelBounds={levelBounds}
+        selectedNodeIds={selectedNodeIds}
+        handleAnchorDragBound={snapSession.handleAnchorDragBound}
+        onStagePanStart={viewportHandlers.handleStagePanStart}
+        onStageDragMove={viewportHandlers.handleStageDragMove}
+        onStageDragEnd={viewportHandlers.handleStageDragEnd}
+        onMouseDown={stagePointer.handleStageMouseDown}
+        onMouseMove={stagePointer.handleStageMouseMove}
+        onMouseUp={stagePointer.handleStageMouseUp}
+        onWheel={viewportHandlers.handleWheel}
+      />
     </div>
   );
 }

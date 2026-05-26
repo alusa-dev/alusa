@@ -9,10 +9,10 @@ import {
 import type { CorridorDragMode } from '@alusa/domain';
 import type { EventMapDTO } from '../../api/event-map-service';
 import { useEventMapEditorStore } from '../../store/event-map-editor-store';
-import { applyCorridorPreviewToStage, restoreCorridorStageFromMap } from '../corridor-preview-stage';
-import { DEFAULT_TRANSFORMER_SCALE_OPTIONS } from '../transform-handle-mode';
-import type { TransformerScaleOptions } from '../transform-handle-mode';
-import type { MapTransformSession } from '../map-transform-session';
+import { applyCorridorPreviewToStage, restoreCorridorStageFromMap } from '../corridor/corridor-preview-stage';
+import { DEFAULT_TRANSFORMER_SCALE_OPTIONS } from '../transform/transform-handle-mode';
+import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
+import type { MapTransformSession } from '../transform/map-transform-session';
 
 import { useCallback, useRef } from 'react';
 import type { MutableRefObject, RefObject } from 'react';

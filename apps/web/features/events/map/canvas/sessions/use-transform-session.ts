@@ -8,29 +8,32 @@ import {
   getObjectBounds,
 } from '@alusa/domain';
 import type { LevelBounds } from '@alusa/domain';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
+import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
 import { useEventMapEditorStore } from '../../store/event-map-editor-store';
-import { buildCorridorTransformCommitPatches } from '../corridor-transform-session';
-import { corridorPatchesToDomainOperations } from '../corridor-domain-transform-bridge';
-import { recordCorridorDomainOperations } from '../event-map-e2e-bridge';
+import { applyCanvasTransformPayload } from '../commit/apply-canvas-transform';
+import { buildCorridorTransformCommitPatches } from '../corridor/corridor-transform-session';
+import { corridorPatchesToDomainOperations } from '@alusa/domain';
+import { recordCorridorDomainOperations } from '../../browser/event-map-e2e-bridge';
 import {
   applyMapTransformLivePreview,
   beginMapTransformSession,
   buildMapTransformCommit,
   resetMapTransformTransformer,
-} from '../map-transform-session';
-import type { MapTransformSession } from '../map-transform-session';
-import { applyCorridorPreviewToStage } from '../corridor-preview-stage';
-import { syncCorridorNodesFromMap } from '../corridor-canvas';
-import { captureTransformNodeSnapshots } from '../transform-cancel';
-import type { TransformNodeSnapshot } from '../transform-cancel';
+} from '../transform/map-transform-session';
+import type { MapTransformSession } from '../transform/map-transform-session';
+import { applyCorridorPreviewToStage } from '../corridor/corridor-preview-stage';
+import { syncCorridorNodesFromMap } from '../corridor/corridor-canvas';
+import {
+  captureTransformNodeSnapshots,
+  type TransformNodeSnapshot,
+} from '../adapters/konva-transform-adapter';
 import {
   DEFAULT_TRANSFORMER_SCALE_OPTIONS,
   resolveCorridorTransformerScaleOptions,
   resolveGenericTransformerScaleOptions,
   resolveUniformTransformerScaleOptions,
-} from '../transform-handle-mode';
-import type { TransformerScaleOptions } from '../transform-handle-mode';
+} from '../transform/transform-handle-mode';
+import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
 
 import { useEffect } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
@@ -46,8 +49,6 @@ type TransformContextRef = MutableRefObject<{
   transformKind: TransformKind;
   levelBounds: LevelBounds | null;
 }>;
-
-type ItemUpdate<TPatch> = { id: string; patch: TPatch };
 
 type TransformSessionInput = {
   stageRef: RefObject<Konva.Stage | null>;
@@ -70,14 +71,6 @@ type TransformSessionInput = {
   lastTransformCommitRef: MutableRefObject<Map<string, { x: number; y: number }>>;
   setIsTransformSessionActive: (active: boolean) => void;
   setTransformerScaleOptions: (options: TransformerScaleOptions) => void;
-  updateObjects: (updates: Array<ItemUpdate<Partial<EventMapObjectDTO>>>) => void;
-  updateMapItems: (updates: {
-    objects?: Array<ItemUpdate<Partial<EventMapObjectDTO>>>;
-    seats?: Array<ItemUpdate<Partial<EventSeatDTO>>>;
-    seatGroups?: Array<ItemUpdate<Partial<EventSeatGroupDTO>>>;
-    skipSeatBaseLayoutTranslation?: boolean;
-    skipCorridorReflow?: boolean;
-  }) => void;
   bumpCorridorVisualRevision: () => void;
 };
 
@@ -102,8 +95,6 @@ export function useTransformSession({
   lastTransformCommitRef,
   setIsTransformSessionActive,
   setTransformerScaleOptions,
-  updateObjects,
-  updateMapItems,
   bumpCorridorVisualRevision,
 }: TransformSessionInput) {
   useEffect(() => {
@@ -261,25 +252,17 @@ export function useTransformSession({
       }
 
       if (session?.kind === 'uniform' && commit.objectUpdates.length > 0) {
-        if (commit.seatGroupUpdates.length > 0 || commit.seatUpdates.length > 0) {
-          updateMapItems({
-            objects: commit.objectUpdates,
-            seats: commit.seatUpdates,
-            seatGroups: commit.seatGroupUpdates,
-          });
-        } else {
-          updateObjects(commit.objectUpdates.map((entry) => ({ id: entry.id, patch: entry.patch })));
-        }
-      } else if (session?.kind === 'generic' && commit.objectUpdates.length > 0) {
-        if (commit.seatGroupUpdates.length > 0 || commit.seatUpdates.length > 0) {
-          updateMapItems({
-            objects: commit.objectUpdates,
-            seats: commit.seatUpdates,
-            seatGroups: commit.seatGroupUpdates,
-          });
-        } else {
-          updateObjects(commit.objectUpdates.map((entry) => ({ id: entry.id, patch: entry.patch })));
-        }
+        applyCanvasTransformPayload({
+          objects: commit.objectUpdates,
+          seats: commit.seatUpdates,
+          seatGroups: commit.seatGroupUpdates,
+        });
+      } else if (session?.kind === 'generic' && (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0)) {
+        applyCanvasTransformPayload({
+          objects: commit.objectUpdates,
+          seats: commit.seatUpdates,
+          seatGroups: commit.seatGroupUpdates,
+        });
       } else if (session?.kind === 'corridor' && corridorIds.length > 0) {
         const baseMap = corridorPreviewBaseMapRef.current ?? cloneEventMap(currentMap);
         const patches = commit.corridorPatches;
@@ -306,18 +289,29 @@ export function useTransformSession({
             corridorIds,
           );
 
-          updateMapItems({
-            objects: [...commit.objectUpdates, ...corridorObjects],
-            seats: reflowedSeats.length > 0 ? reflowedSeats : commit.seatUpdates,
-            seatGroups: commit.seatGroupUpdates,
-            skipSeatBaseLayoutTranslation: reflowedSeats.length > 0,
-            skipCorridorReflow: corridorIds.length > 0,
-          });
+          applyCanvasTransformPayload(
+            {
+              objects: [...commit.objectUpdates, ...corridorObjects],
+              seats: reflowedSeats.length > 0 ? reflowedSeats : commit.seatUpdates,
+              seatGroups: commit.seatGroupUpdates,
+              skipSeatBaseLayoutTranslation: reflowedSeats.length > 0,
+              skipCorridorReflow: corridorIds.length > 0,
+            },
+            { forceCorridor: true },
+          );
         } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0) {
-          updateMapItems({ objects: commit.objectUpdates, seats: commit.seatUpdates, seatGroups: commit.seatGroupUpdates });
+          applyCanvasTransformPayload({
+            objects: commit.objectUpdates,
+            seats: commit.seatUpdates,
+            seatGroups: commit.seatGroupUpdates,
+          });
         }
       } else if (commit.objectUpdates.length > 0 || commit.seatUpdates.length > 0 || commit.seatGroupUpdates.length > 0) {
-        updateMapItems({ objects: commit.objectUpdates, seats: commit.seatUpdates, seatGroups: commit.seatGroupUpdates });
+        applyCanvasTransformPayload({
+          objects: commit.objectUpdates,
+          seats: commit.seatUpdates,
+          seatGroups: commit.seatGroupUpdates,
+        });
       }
 
       if (session) resetMapTransformTransformer(session, transformer);
@@ -378,8 +372,6 @@ export function useTransformSession({
     transformPipelineActive,
     transformReflowTimerRef,
     transformerRef,
-    updateMapItems,
-    updateObjects,
   ]);
 
   useEffect(() => {

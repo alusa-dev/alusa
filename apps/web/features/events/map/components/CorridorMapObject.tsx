@@ -1,7 +1,7 @@
 'use client';
 import { SNAP_TARGET_NAME, shouldRenderIndividualCorridorBody } from '@alusa/domain';
 import type { CorridorUnionGroup, MapSelectionItem } from '@alusa/domain';
-import { getCorridorCanvasAppearance } from '../canvas/corridor-canvas';
+import { getCorridorCanvasAppearance } from '../canvas/render/map-object-appearance';
 import type { EventMapObjectDTO } from '../api/event-map-service';
 
 import { memo } from 'react';

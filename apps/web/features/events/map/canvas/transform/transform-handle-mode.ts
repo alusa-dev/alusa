@@ -1,5 +1,10 @@
-import { isCornerResizeAnchor, isEdgeResizeAnchor, resolveCorridorResizeMode, shouldUseUniformGroupScale } from './corridor-resize-mode';
-import type { CorridorResizeMode } from './corridor-resize-mode';
+import {
+  corridorIsCornerResizeAnchor,
+  corridorIsEdgeResizeAnchor,
+  resolveCorridorResizeMode,
+  shouldUseUniformGroupScale,
+  type CorridorResizeMode,
+} from '../corridor/corridor-resize-mode';
 
 export type TransformHandleMode =
   | 'rotate'
@@ -17,9 +22,9 @@ export type TransformerScaleOptions = {
 
 export function resolveHandleMode(anchor: string, corridorCount: number): TransformHandleMode {
   if (anchor === 'rotater') return 'rotate';
-  if (corridorCount >= 2 && isCornerResizeAnchor(anchor)) return 'corner-group';
-  if (isEdgeResizeAnchor(anchor)) return 'edge';
-  if (isCornerResizeAnchor(anchor)) return 'corner';
+  if (corridorCount >= 2 && corridorIsCornerResizeAnchor(anchor)) return 'corner-group';
+  if (corridorIsEdgeResizeAnchor(anchor)) return 'edge';
+  if (corridorIsCornerResizeAnchor(anchor)) return 'corner';
   return 'corner';
 }
 
@@ -59,3 +64,5 @@ export const DEFAULT_TRANSFORMER_SCALE_OPTIONS: TransformerScaleOptions = {
   handleMode: 'corner',
   resizeMode: null,
 };
+
+export type { CorridorResizeMode };

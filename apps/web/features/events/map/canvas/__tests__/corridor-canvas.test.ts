@@ -1,6 +1,13 @@
-import { getCorridorWorldCenter } from '@alusa/domain';
-import { applyCorridorNodeFromModel, applyLiveCorridorResizeToNode, applyLiveCorridorRotationToNode, buildCorridorGeometryAfterResize, buildCorridorGeometryAfterRotation, buildCorridorTransformCommitPatch, getCorridorCanvasAppearance, readCorridorPatchFromKonvaNode, resolveCorridorTransformSession } from '../corridor-canvas';
-import { eventMapObjectToCorridorPolygon, polygonBounds } from '../corridor-domain-bridge';
+import { eventMapObjectToCorridorPolygon, getCorridorWorldCenter, polygonBounds } from '@alusa/domain';
+import {
+  applyCorridorNodeFromModel,
+  buildCorridorGeometryAfterResize,
+  buildCorridorGeometryAfterRotation,
+  normalizeCorridorNodeAfterTransform,
+  readCorridorPatchFromKonvaNode,
+  resolveCorridorTransformSession,
+} from '../corridor/corridor-canvas';
+import { getCorridorCanvasAppearance } from '../render/map-object-appearance';
 import type { EventMapObjectDTO } from '../../api/event-map-service';
 
 import { describe, expect, it } from 'vitest';
@@ -149,38 +156,19 @@ describe('corridor-canvas', () => {
     expect(geometry.height).toBeCloseTo(90, 4);
   });
 
-  it('buildCorridorTransformCommitPatch preserves free rotation around the corridor center', () => {
+  it('buildCorridorGeometryAfterRotation preserves free rotation around the corridor center', () => {
     const object = corridorObject({ x: 100, y: 120, width: 380, height: 170, rotation: 0 });
     const centerBefore = getCorridorWorldCenter(object);
-    const node = mockCorridorNode({
-      x: 150,
-      y: 80,
-      rotation: 87,
-      bodyWidth: 380,
-      bodyHeight: 170,
-    });
 
-    const { patch, mode } = buildCorridorTransformCommitPatch(node as never, object, {
-      mode: 'rotate',
-      anchor: 'rotater',
-    });
-    expect(mode).toBe('rotate');
-    expect(patch.rotation).toBe(87);
-    expect(patch.x).toBeTypeOf('number');
+    const geometry = buildCorridorGeometryAfterRotation(object, 87, { snap: false });
+    expect(geometry.rotation).toBe(87);
 
-    const geometry = buildCorridorGeometryAfterRotation(object, patch.rotation ?? 0, { snap: false });
-    const centerAfter = getCorridorWorldCenter({
-      x: geometry.x,
-      y: geometry.y,
-      width: geometry.width,
-      height: geometry.height,
-      rotation: geometry.rotation,
-    });
+    const centerAfter = getCorridorWorldCenter(geometry);
     expect(centerAfter.x).toBeCloseTo(centerBefore.x, 1);
     expect(centerAfter.y).toBeCloseTo(centerBefore.y, 1);
   });
 
-  it('applyLiveCorridorResizeToNode normalizes node attrs without moving the fixed edge', () => {
+  it('normalizeCorridorNodeAfterTransform normalizes node attrs without moving the fixed edge', () => {
     const object = corridorObject({ x: 434.48, y: 311.01, width: 329.71, height: 148.81 });
     const node = mockCorridorNode({
       x: 353.16,
@@ -191,14 +179,15 @@ describe('corridor-canvas', () => {
       scaleY: 1,
     });
 
-    applyLiveCorridorResizeToNode(node as never, object, 'middle-right');
+    const geometry = buildCorridorGeometryAfterResize(object, node as never, 'middle-right');
+    normalizeCorridorNodeAfterTransform(node as never, geometry);
     expect(node.state.x).toBeCloseTo(434.48, 4);
     expect(node.state.bodyWidth).toBeCloseTo(257.001892, 3);
     expect(node.state.scaleX).toBe(1);
     expect(node.state.scaleY).toBe(1);
   });
 
-  it('applyLiveCorridorRotationToNode preserves center without snapping during drag', () => {
+  it('normalizeCorridorNodeAfterTransform preserves center on rotation preview', () => {
     const object = corridorObject({ width: 380, height: 170 });
     const centerBefore = getCorridorWorldCenter(object);
     const node = mockCorridorNode({
@@ -209,7 +198,8 @@ describe('corridor-canvas', () => {
       bodyHeight: 170,
     });
 
-    applyLiveCorridorRotationToNode(node as never, object, 45);
+    const geometry = buildCorridorGeometryAfterRotation(object, 45, { snap: false });
+    normalizeCorridorNodeAfterTransform(node as never, geometry);
     expect(node.state.rotation).toBe(45);
 
     const centerAfter = getCorridorWorldCenter({

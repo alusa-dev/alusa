@@ -254,4 +254,80 @@ describe('map command reducer', () => {
       payload: { objects: [{ id: 'object-1', patch: { rotation: 0 } }] },
     });
   });
+
+  it('normalizes RESIZE_OBJECTS into UPDATE_ITEMS with seat groups', () => {
+    const result = executeMapCommand(createSeatGroupMap(), {
+      type: 'RESIZE_OBJECTS',
+      payload: {
+        seatGroups: [{ id: 'group-1', patch: { seatWidth: 28, seatHeight: 28 } }],
+      },
+    }, {
+      activeLevelId: 'level-1',
+      selection: [{ type: 'seatgroup', id: 'group-1' }],
+    });
+
+    expect(result.map.seatGroups[0]?.seatWidth).toBe(28);
+    expect(result.patches[0]?.type).toBe('UPDATE_ITEMS');
+  });
+
+  it('normalizes TRANSFORM_CORRIDOR with skip reflow flags', () => {
+    const map = createMap();
+    map.objects[0] = {
+      ...map.objects[0]!,
+      type: 'CORRIDOR',
+      width: 32,
+      height: 180,
+      rotation: 45,
+      data: { smartCorridor: true, corridorAxis: 'vertical' },
+    };
+
+    const result = executeMapCommand(map, {
+      type: 'TRANSFORM_CORRIDOR',
+      payload: {
+        objects: [{ id: 'object-1', patch: { rotation: 90, x: 12, y: 18 } }],
+        skipCorridorReflow: true,
+      },
+    }, {
+      activeLevelId: 'level-1',
+      selection: [{ type: 'object', id: 'object-1' }],
+    });
+
+    expect(result.map.objects[0]).toMatchObject({ rotation: 90, x: 12, y: 18 });
+    expect(result.patches[0]?.type).toBe('UPDATE_ITEMS');
+    expect(result.undoCommand?.type).toBe('UPDATE_ITEMS');
+  });
+
+  it('normalizes ROTATE_OBJECTS for rotation-only object updates', () => {
+    const map = createMap();
+    const result = executeMapCommand(map, {
+      type: 'ROTATE_OBJECTS',
+      payload: {
+        objects: [{ id: 'object-1', patch: { x: 10, y: 20, rotation: 45 } }],
+      },
+    }, {
+      activeLevelId: 'level-1',
+      selection: [{ type: 'object', id: 'object-1' }],
+    });
+
+    expect(result.map.objects[0]?.rotation).toBe(45);
+    expect(result.patches[0]?.type).toBe('UPDATE_ITEMS');
+  });
+
+  it('normalizes MOVE_OBJECTS with shared delta', () => {
+    const map = createMap();
+    const result = executeMapCommand(map, {
+      type: 'MOVE_OBJECTS',
+      payload: {
+        objectIds: ['object-1'],
+        seatIds: [],
+        delta: { x: 10, y: 5 },
+      },
+    }, {
+      activeLevelId: 'level-1',
+      selection: [{ type: 'object', id: 'object-1' }],
+    });
+
+    expect(result.map.objects[0]).toMatchObject({ x: 20, y: 25 });
+    expect(result.patches[0]?.type).toBe('UPDATE_ITEMS');
+  });
 });

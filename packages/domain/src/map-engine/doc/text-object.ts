@@ -1,6 +1,17 @@
 import type { EventMapObjectDTO } from '../types/event-map-types.js';
+import {
+  getTextResizeAnchors,
+  isCornerAnchor,
+  isHorizontalEdgeAnchor,
+  isVerticalEdgeAnchor,
+  TEXT_AREA_ANCHORS,
+  TEXT_CORNER_ANCHORS,
+  TEXT_FIXED_WIDTH_ANCHORS,
+} from '../geometry/anchor.js';
 
 export type TextMode = 'auto' | 'fixed-width' | 'area';
+
+export { TEXT_AREA_ANCHORS, TEXT_CORNER_ANCHORS, TEXT_FIXED_WIDTH_ANCHORS, getTextResizeAnchors };
 
 export const TEXT_MODE_LABELS: Record<TextMode, string> = {
   auto: 'Auto',
@@ -11,30 +22,6 @@ export const TEXT_MODE_LABELS: Record<TextMode, string> = {
 export const MIN_FONT_SIZE = 6;
 export const MAX_FONT_SIZE = 512;
 export const DEFAULT_FONT_SIZE = 22;
-
-export const TEXT_CORNER_ANCHORS = [
-  'top-left',
-  'top-right',
-  'bottom-left',
-  'bottom-right',
-] as const;
-
-export const TEXT_FIXED_WIDTH_ANCHORS = [
-  ...TEXT_CORNER_ANCHORS,
-  'middle-left',
-  'middle-right',
-] as const;
-
-export const TEXT_AREA_ANCHORS = [
-  'top-left',
-  'top-center',
-  'top-right',
-  'middle-left',
-  'middle-right',
-  'bottom-left',
-  'bottom-center',
-  'bottom-right',
-] as const;
 
 export function clampFontSizeValue(value: number) {
   if (!Number.isFinite(value)) return DEFAULT_FONT_SIZE;
@@ -97,22 +84,16 @@ export function getLegacyUniformTextMode(mode: TextMode): 'single-line' | 'multi
   return mode === 'area' ? 'multiline' : 'single-line';
 }
 
-export function getTextResizeAnchors(mode: TextMode): readonly string[] {
-  if (mode === 'auto') return TEXT_CORNER_ANCHORS;
-  if (mode === 'fixed-width') return TEXT_FIXED_WIDTH_ANCHORS;
-  return TEXT_AREA_ANCHORS;
-}
-
 export function isCornerResizeAnchor(anchor: string) {
-  return (TEXT_CORNER_ANCHORS as readonly string[]).includes(anchor);
+  return isCornerAnchor(anchor);
 }
 
 export function isHorizontalResizeAnchor(anchor: string) {
-  return anchor === 'middle-left' || anchor === 'middle-right';
+  return isHorizontalEdgeAnchor(anchor);
 }
 
 export function isVerticalResizeAnchor(anchor: string) {
-  return anchor === 'top-center' || anchor === 'bottom-center';
+  return isVerticalEdgeAnchor(anchor);
 }
 
 export function getTextDecorationParts(data: Record<string, unknown>) {

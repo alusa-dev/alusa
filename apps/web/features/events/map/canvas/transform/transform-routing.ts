@@ -1,6 +1,7 @@
-import type { EventMapObjectDTO } from '../api/event-map-service';
+import type { EventMapObjectDTO } from '../../api/event-map-service';
 
-export type MapTransformKind = 'corridor' | 'uniform' | 'generic' | null;
+export type MapTransformRoutingKind = 'corridor' | 'uniform' | 'generic' | null;
+export type MapTransformSessionKind = Exclude<MapTransformRoutingKind, null>;
 
 export type TransformRoutingInput = {
   selectedNodeCount: number;
@@ -12,7 +13,7 @@ export type TransformRoutingInput = {
 };
 
 export type TransformRoutingResult = {
-  kind: MapTransformKind;
+  kind: MapTransformRoutingKind;
   corridorIds: string[];
   /** Block resize/rotate handles entirely. */
   transformDisabled: boolean;

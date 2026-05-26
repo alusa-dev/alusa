@@ -1,13 +1,13 @@
 import { getMovingEdgesFromAnchor } from '@alusa/domain';
 
-const CORNER_ANCHORS = new Set([
+const CORRIDOR_CORNER_ANCHORS = new Set([
   'top-left',
   'top-right',
   'bottom-left',
   'bottom-right',
 ]);
 
-const EDGE_ANCHORS = new Set([
+const CORRIDOR_EDGE_ANCHORS = new Set([
   'middle-left',
   'middle-right',
   'top-center',
@@ -16,17 +16,17 @@ const EDGE_ANCHORS = new Set([
 
 export type CorridorResizeMode = 'edge' | 'corner';
 
-export function isCornerResizeAnchor(anchor: string): boolean {
-  return CORNER_ANCHORS.has(anchor);
+export function corridorIsCornerResizeAnchor(anchor: string): boolean {
+  return CORRIDOR_CORNER_ANCHORS.has(anchor);
 }
 
-export function isEdgeResizeAnchor(anchor: string): boolean {
-  return EDGE_ANCHORS.has(anchor);
+export function corridorIsEdgeResizeAnchor(anchor: string): boolean {
+  return CORRIDOR_EDGE_ANCHORS.has(anchor);
 }
 
 export function resolveCorridorResizeMode(anchor: string): CorridorResizeMode {
-  if (isEdgeResizeAnchor(anchor)) return 'edge';
-  if (isCornerResizeAnchor(anchor)) return 'corner';
+  if (corridorIsEdgeResizeAnchor(anchor)) return 'edge';
+  if (corridorIsCornerResizeAnchor(anchor)) return 'corner';
   return 'corner';
 }
 
@@ -35,12 +35,6 @@ export function shouldUseUniformGroupScale(anchor: string, corridorCount: number
   if (corridorCount < 2) return false;
   return resolveCorridorResizeMode(anchor) === 'corner';
 }
-
-export {
-  resolveCorridorTransformerScaleOptions,
-  type TransformerScaleOptions,
-  type TransformHandleMode,
-} from './transform-handle-mode';
 
 export function anchorMovesSingleAxis(anchor: string): boolean {
   const moving = getMovingEdgesFromAnchor(anchor);

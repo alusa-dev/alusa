@@ -1,4 +1,15 @@
-import { getTextMode, measureTextWidth } from '../doc/text-object.js';
+export type { BoundsRect } from '../geometry/bounds.js';
+export {
+  getSeatBounds,
+  intersectsRect,
+  normalizeBoundsRect,
+  unionBounds,
+  expandRect,
+  clampRectToLevel,
+  boundsFromPoints,
+  centerOf,
+} from '../geometry/bounds.js';
+export { getObjectBounds } from '../layout/object-bounds.js';
 
 export type MapSelectionItem =
   | { type: 'object'; id: string }
@@ -55,68 +66,3 @@ export function replaceSelection(item: MapSelectionItem): MapSelection {
   return [item];
 }
 
-export type BoundsRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export function normalizeBoundsRect(start: { x: number; y: number }, current: { x: number; y: number }): BoundsRect {
-  return {
-    x: Math.min(start.x, current.x),
-    y: Math.min(start.y, current.y),
-    width: Math.abs(current.x - start.x),
-    height: Math.abs(current.y - start.y),
-  };
-}
-
-export function intersectsRect(a: BoundsRect, b: BoundsRect) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-export function getObjectBounds(object: {
-  x: number;
-  y: number;
-  width: number | null;
-  height: number | null;
-  type: string;
-  data?: Record<string, unknown>;
-}) {
-  if (object.type === 'TEXT') {
-    const fontSize = Number(object.data?.fontSize ?? 22);
-    const lineHeight = Number(object.data?.lineHeight ?? 1.2);
-    const text = String(object.data?.text ?? 'Texto');
-    const lineCount = Math.max(1, text.split('\n').length);
-    const mode = getTextMode({
-      width: object.width,
-      height: object.height,
-      data: object.data ?? {},
-    });
-    const width =
-      object.width ??
-      (mode === 'auto'
-        ? measureTextWidth(text, fontSize, {
-            fontFamily: String(object.data?.fontFamily ?? 'Inter, sans-serif'),
-            fontWeight: String(object.data?.fontWeight ?? 'normal'),
-            letterSpacing: Number(object.data?.letterSpacing ?? 0),
-          })
-        : Math.max(24, Math.min(480, text.length * fontSize * 0.55)));
-    const height = object.height ?? Math.max(fontSize * lineHeight, fontSize * lineHeight * lineCount);
-    return { x: object.x, y: object.y, width, height };
-  }
-
-  const width = object.width ?? 180;
-  const height = object.height ?? 90;
-  return { x: object.x, y: object.y, width, height };
-}
-
-export function getSeatBounds(seat: { x: number; y: number; size?: number | null }) {
-  const size = seat.size ?? 24;
-  return {
-    x: seat.x - size / 2,
-    y: seat.y - size / 2,
-    width: size,
-    height: size,
-  };
-}

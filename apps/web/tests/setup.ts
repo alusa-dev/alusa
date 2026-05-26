@@ -13,8 +13,10 @@ const migrationState = globalThis as typeof globalThis & {
   __ALUSA_TEST_MIGRATIONS__?: Promise<void>;
 };
 
-// ⚠️ VALIDAÇÃO: Garante que está usando banco de teste
-if (!process.env.DATABASE_URL?.includes('alusa_test')) {
+const skipDatabaseSetup = process.env.MAP_CANVAS_UNIT === '1';
+
+// ⚠️ VALIDAÇÃO: Garante que está usando banco de teste (exceto testes puros de canvas)
+if (!skipDatabaseSetup && !process.env.DATABASE_URL?.includes('alusa_test')) {
   throw new Error(
     '❌ ERRO CRÍTICO: DATABASE_URL não está apontando para o banco de teste!\n' +
       'Esperado: URL de banco contendo alusa_test\n' +
@@ -26,7 +28,9 @@ if (!process.env.DATABASE_URL?.includes('alusa_test')) {
   );
 }
 
-console.log('✅ Usando banco de teste:', process.env.DATABASE_URL?.replace(/:[^:]*@/, ':***@'));
+if (!skipDatabaseSetup) {
+  console.log('✅ Usando banco de teste:', process.env.DATABASE_URL?.replace(/:[^:]*@/, ':***@'));
+}
 
 // Alguns testes dependem de criptografia (AES-256-GCM) via ENCRYPTION_KEY.
 // Mantém compatível com .env.test, mas fornece fallback para não quebrar a suite local/CI.
@@ -109,4 +113,6 @@ async function ensureMigrations() {
 }
 
 // Aplica migrações antes de iniciar os testes
-await ensureMigrations();
+if (!skipDatabaseSetup) {
+  await ensureMigrations();
+}

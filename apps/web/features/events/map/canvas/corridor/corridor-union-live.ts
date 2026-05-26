@@ -1,4 +1,4 @@
-import type { EventMapObjectDTO } from '../api/event-map-service';
+import type { EventMapObjectDTO } from '../../api/event-map-service';
 import { readCorridorNodeScaledSize } from './corridor-canvas';
 
 import type Konva from 'konva';
@@ -33,12 +33,4 @@ export function resolveCorridorObjectsForUnion(
     if (object.type !== 'CORRIDOR') return object;
     return resolveLiveCorridorObject(stage, object);
   });
-}
-
-export function resolveCorridorObjectsForRender(
-  stage: Konva.Stage | null,
-  objects: EventMapObjectDTO[],
-  livePreview: boolean,
-): EventMapObjectDTO[] {
-  return resolveCorridorObjectsForUnion(stage, objects, livePreview);
 }

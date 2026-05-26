@@ -1,5 +1,5 @@
 import { buildGuideStops } from '@alusa/domain';
-import { createSnapGuideStopCache } from '../konva-snap-adapter';
+import { createSnapGuideStopCache } from '../adapters/konva-snap-adapter';
 
 import { describe, expect, it } from 'vitest';
 

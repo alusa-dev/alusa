@@ -1,5 +1,5 @@
 import { measureTextWidth } from '@alusa/domain';
-import { TEXT_EDITOR_PLACEHOLDER, getTextEditorDimensions } from '../text-editor-layout';
+import { TEXT_EDITOR_PLACEHOLDER, getTextEditorDimensions } from '../render/text-editor-layout';
 
 import { describe, expect, it } from 'vitest';
 

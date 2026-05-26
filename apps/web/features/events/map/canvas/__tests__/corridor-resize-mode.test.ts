@@ -1,12 +1,18 @@
-import { isCornerResizeAnchor, isEdgeResizeAnchor, resolveCorridorResizeMode, resolveCorridorTransformerScaleOptions, shouldUseUniformGroupScale } from '../corridor-resize-mode';
+import {
+  corridorIsCornerResizeAnchor,
+  corridorIsEdgeResizeAnchor,
+  resolveCorridorResizeMode,
+  shouldUseUniformGroupScale,
+} from '../corridor/corridor-resize-mode';
+import { resolveCorridorTransformerScaleOptions } from '../transform/transform-handle-mode';
 
 import { describe, expect, it } from 'vitest';
 
 describe('corridor-resize-mode', () => {
   it('classifies edge and corner anchors', () => {
-    expect(isEdgeResizeAnchor('middle-right')).toBe(true);
-    expect(isCornerResizeAnchor('middle-right')).toBe(false);
-    expect(isCornerResizeAnchor('top-left')).toBe(true);
+    expect(corridorIsEdgeResizeAnchor('middle-right')).toBe(true);
+    expect(corridorIsCornerResizeAnchor('middle-right')).toBe(false);
+    expect(corridorIsCornerResizeAnchor('top-left')).toBe(true);
     expect(resolveCorridorResizeMode('middle-right')).toBe('edge');
     expect(resolveCorridorResizeMode('bottom-right')).toBe('corner');
   });

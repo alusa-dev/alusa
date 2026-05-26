@@ -1,10 +1,12 @@
 'use client';
 
 import type { RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type Konva from 'konva';
-import { applyScrubZoom, computePanForZoomAnchor, computeScrubDelta, clampZoom } from '../zoom-scrub';
+import { isCreationTool } from '../render/map-creation-draft';
+import { applyScrubZoom, computePanForZoomAnchor, computeScrubDelta, clampZoom } from '../render/zoom-scrub';
 import { useEventMapEditorStore } from '../../store/event-map-editor-store';
+import type { MapTool } from '../../store/event-map-editor-store';
 
 type ViewportSize = {
   width: number;
@@ -166,5 +168,82 @@ export function computeWheelZoom({
   return {
     zoom: nextZoom,
     pan: computePanForZoomAnchor(anchor, pan, zoom, nextZoom),
+  };
+}
+
+export function resolveMapCanvasCursor({
+  tool,
+  isPanning,
+  isZoomScrubbing,
+}: {
+  tool: MapTool;
+  isPanning: boolean;
+  isZoomScrubbing: boolean;
+}) {
+  if (tool === 'zoom') return isZoomScrubbing ? 'grabbing' : 'zoom-in';
+  if (tool === 'pan') return isPanning ? 'grabbing' : 'grab';
+  if (tool === 'text') return 'text';
+  if (isCreationTool(tool) || tool === 'row') return 'crosshair';
+  return 'default';
+}
+
+export function useMapStageViewportHandlers({
+  setPan,
+  setZoom,
+  zoom,
+  pan,
+  setIsPanning,
+}: {
+  setPan: (pan: Pan) => void;
+  setZoom: (zoom: number) => void;
+  zoom: number;
+  pan: Pan;
+  setIsPanning: (value: boolean) => void;
+}) {
+  const handleStageDragMove = useCallback(
+    (event: Konva.KonvaEventObject<DragEvent>) => {
+      const stage = event.target.getStage();
+      if (!stage || event.target !== stage) return;
+      setPan({ x: stage.x(), y: stage.y() });
+    },
+    [setPan],
+  );
+
+  const handleStageDragEnd = useCallback(
+    (event: Konva.KonvaEventObject<DragEvent>) => {
+      const stage = event.target.getStage();
+      if (!stage || event.target !== stage) return;
+      setIsPanning(false);
+      setPan({ x: stage.x(), y: stage.y() });
+    },
+    [setIsPanning, setPan],
+  );
+
+  const handleWheel = useCallback(
+    (event: Konva.KonvaEventObject<WheelEvent>) => {
+      event.evt.preventDefault();
+      const direction = event.evt.deltaY > 0 ? -1 : 1;
+      const stage = event.target.getStage();
+      const pointer = stage?.getPointerPosition();
+      if (!pointer) {
+        setZoom(zoom + direction * 0.08);
+        return;
+      }
+      const next = computeWheelZoom({ anchor: pointer, pan, zoom, direction });
+      setZoom(next.zoom);
+      setPan(next.pan);
+    },
+    [pan, setPan, setZoom, zoom],
+  );
+
+  const handleStagePanStart = useCallback((event: Konva.KonvaEventObject<DragEvent>) => {
+    if (event.target === event.target.getStage()) setIsPanning(true);
+  }, [setIsPanning]);
+
+  return {
+    handleStageDragMove,
+    handleStageDragEnd,
+    handleWheel,
+    handleStagePanStart,
   };
 }

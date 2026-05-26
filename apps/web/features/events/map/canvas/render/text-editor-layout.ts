@@ -1,5 +1,5 @@
-import { measureTextWidth } from '@alusa/domain';
-import type { TextMode } from '@alusa/domain';
+import { getTextMode, measureTextWidth, type TextMode } from '@alusa/domain';
+import type { EventMapObjectDTO } from '../../api/event-map-service';
 
 import type Konva from 'konva';
 
@@ -52,6 +52,47 @@ export type BuildTextEditorStateParams = {
   pan: { x: number; y: number };
   node?: Konva.Text | null;
 };
+
+export function buildTextEditorStateForObject({
+  object,
+  stage,
+  container,
+  zoom,
+  pan,
+  node,
+}: {
+  object: EventMapObjectDTO;
+  stage: Konva.Stage;
+  container: HTMLElement;
+  zoom: number;
+  pan: { x: number; y: number };
+  node?: Konva.Text | null;
+}): TextEditorState {
+  const textMode = getTextMode(object);
+
+  return buildTextEditorState({
+    objectId: object.id,
+    value: String(object.data.text ?? ''),
+    mapX: object.x,
+    mapY: object.y,
+    mapWidth: typeof object.width === 'number' ? object.width : null,
+    mapHeight: typeof object.height === 'number' ? object.height : null,
+    textMode,
+    rotation: object.rotation ?? 0,
+    baseFontSize: Number(object.data.fontSize ?? 22),
+    fontFamily: String(object.data.fontFamily ?? 'Inter, sans-serif'),
+    fontWeight: String(object.data.fontWeight ?? 'normal'),
+    letterSpacing: Number(object.data.letterSpacing ?? 0),
+    color: String(object.data.fill ?? '#0f172a'),
+    lineHeight: Number(object.data.lineHeight ?? 1.2),
+    textAlign: String(object.data.align ?? 'left') as TextEditorState['textAlign'],
+    stage,
+    container,
+    zoom,
+    pan,
+    node,
+  });
+}
 
 export function buildTextEditorState(params: BuildTextEditorStateParams): TextEditorState {
   const layout = computeTextEditorLayout({

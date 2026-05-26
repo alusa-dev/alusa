@@ -1,4 +1,4 @@
-import { resolveTransformRouting } from '../transform-routing';
+import { resolveTransformRouting } from '../transform/transform-routing';
 
 import { describe, expect, it } from 'vitest';
 

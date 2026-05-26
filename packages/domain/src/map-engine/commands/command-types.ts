@@ -37,7 +37,11 @@ export type MapCommand =
   | {
       type: 'RESIZE_OBJECTS';
       payload: {
-        objects: Array<{ id: string; patch: Partial<Pick<EventMapObjectDTO, 'x' | 'y' | 'width' | 'height' | 'rotation'>> }>;
+        objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
+        seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
+        skipSeatBaseLayoutTranslation?: boolean;
+        skipCorridorReflow?: boolean;
       };
     }
   | {
@@ -118,6 +122,7 @@ export type MapCommand =
       payload: {
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
         skipSeatBaseLayoutTranslation?: boolean;
         skipCorridorReflow?: boolean;
       };

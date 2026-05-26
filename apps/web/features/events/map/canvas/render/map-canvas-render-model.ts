@@ -1,8 +1,8 @@
 import type { CorridorUnionGroup, LevelRenderStackItem, MapSelection, MapSelectionItem } from '@alusa/domain';
 import type { RefObject } from 'react';
 import type Konva from 'konva';
-import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
-import type { SeatGroupResizeStartState } from '../components/SeatGroupResizeHandles';
+import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
+import type { SeatGroupResizeStartState } from '../../components/SeatGroupResizeHandles';
 import { getTextEditorDimensions } from './text-editor-layout';
 import type { TextEditorState } from './text-editor-layout';
 

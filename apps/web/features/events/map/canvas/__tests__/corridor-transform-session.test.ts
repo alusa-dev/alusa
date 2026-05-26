@@ -1,4 +1,4 @@
-import { applyCorridorTransformLivePreview, beginCorridorTransformToolSession, buildCorridorTransformCommitPatches, resetCorridorTransformer } from '../corridor-transform-session';
+import { applyCorridorTransformLivePreview, beginCorridorTransformToolSession, buildCorridorTransformCommitPatches, resetCorridorTransformer } from '../corridor/corridor-transform-session';
 import type { EventMapObjectDTO } from '../../api/event-map-service';
 
 import { describe, expect, it } from 'vitest';

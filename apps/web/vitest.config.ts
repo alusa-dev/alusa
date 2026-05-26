@@ -6,14 +6,11 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     passWithNoTests: true,
-    // ⚠️ IMPORTANTE: Define NODE_ENV=test para garantir uso do banco de teste
     env: {
       NODE_ENV: 'test',
     },
-    // Coverage habilitado somente em CI para evitar crashes intermitentes no Windows local
     coverage: { enabled: process.env.CI === 'true', provider: 'v8' },
     sequence: { concurrent: false },
-    // Usa processos fork em vez de threads para evitar segfault no Windows (Node 22)
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
     deps: {
@@ -28,7 +25,7 @@ export default defineConfig({
       'app/**/__tests__/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],
-    setupFiles: [path.resolve(__dirname, 'tests', 'setup.ts')],
+    setupFiles: [path.resolve(__dirname, 'tests', 'setup-entry.ts')],
   },
   css: { postcss: { plugins: [] } },
   resolve: {

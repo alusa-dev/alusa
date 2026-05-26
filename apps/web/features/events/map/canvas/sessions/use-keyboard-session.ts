@@ -4,16 +4,19 @@ import { useEffect } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
 import type Konva from 'konva';
 import type { EventMapDTO, EventMapObjectDTO } from '../../api/event-map-service';
-import { syncCorridorNodesFromMap } from '../corridor-canvas';
-import { resetMapTransformTransformer } from '../map-transform-session';
-import type { MapTransformSession } from '../map-transform-session';
-import { restoreTransformNodeSnapshots } from '../transform-cancel';
-import type { TransformNodeSnapshot } from '../transform-cancel';
+import { syncCorridorNodesFromMap } from '../corridor/corridor-canvas';
+import { resetMapTransformTransformer } from '../transform/map-transform-session';
+import type { MapTransformSession } from '../transform/map-transform-session';
+import {
+  captureTransformNodeSnapshots,
+  restoreTransformNodeSnapshots,
+  type TransformNodeSnapshot,
+} from '../adapters/konva-transform-adapter';
 import {
   DEFAULT_TRANSFORMER_SCALE_OPTIONS,
   resolveGenericTransformerScaleOptions,
-} from '../transform-handle-mode';
-import type { TransformerScaleOptions } from '../transform-handle-mode';
+} from '../transform/transform-handle-mode';
+import type { TransformerScaleOptions } from '../transform/transform-handle-mode';
 
 const ROTATION_SNAPS_15 = [
   0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285,

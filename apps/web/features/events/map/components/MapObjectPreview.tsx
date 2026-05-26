@@ -1,29 +1,7 @@
 import type { EventMapObjectDTO } from '../api/event-map-service';
+import { getObjectPreviewBorderStyle, getObjectPreviewStyle } from '../canvas/render/map-object-appearance';
 
 import { cn } from '@/lib/utils';
-
-function getPreviewStyle(object: EventMapObjectDTO) {
-  if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827' };
-  if (object.type === 'BLOCKED_AREA') return { fill: '#e2e8f0', stroke: '#94a3b8' };
-  if (object.type === 'CORRIDOR') return { fill: '#f8fafc', stroke: '#cbd5e1' };
-  if (object.type === 'TABLE') return { fill: '#fefce8', stroke: '#ca8a04' };
-  if (object.type === 'BOOTH') return { fill: '#fff7ed', stroke: '#ea580c' };
-  if (object.type === 'GENERAL_AREA' && object.data.shape) {
-    return { fill: String(object.data.fill ?? '#ffffff'), stroke: String(object.data.stroke ?? '#64748b') };
-  }
-  if (object.type === 'GENERAL_AREA') return { fill: '#ecfeff', stroke: '#0891b2' };
-  if (object.type === 'TEXT') return { fill: String(object.data.fill ?? '#0f172a'), stroke: '#cbd5e1' };
-  if (object.type === 'SECTION') return { fill: String(object.data.fill ?? '#6d28d9'), stroke: String(object.data.fill ?? '#6d28d9') };
-  return { fill: String(object.data.fill ?? '#f8fafc'), stroke: String(object.data.stroke ?? '#cbd5e1') };
-}
-
-function getPreviewBorderStyle(object: EventMapObjectDTO) {
-  const strokeStyle = object.data.strokeStyle;
-  if (strokeStyle === 'dashed') return 'dashed';
-  if (strokeStyle === 'dotted') return 'dotted';
-  if (object.type === 'CORRIDOR') return 'dashed';
-  return 'solid';
-}
 
 function getPreviewRadius(object: EventMapObjectDTO, shape: string | null) {
   if (object.type === 'TABLE') return '9999px';
@@ -42,10 +20,10 @@ export function MapObjectPreview({
   className?: string;
   size?: number;
 }) {
-  const style = getPreviewStyle(object);
+  const style = getObjectPreviewStyle(object);
   const shape = typeof object.data.shape === 'string' ? object.data.shape : null;
   const opacity = Number(object.data.opacity ?? (object.type === 'SECTION' ? 0.85 : 1));
-  const borderStyle = getPreviewBorderStyle(object);
+  const borderStyle = getObjectPreviewBorderStyle(object);
   const borderRadius = getPreviewRadius(object, shape);
 
   if (object.type === 'TEXT') {

@@ -4,32 +4,31 @@ import {
   extractGroupDragCommitUpdates,
   resolveCorridorDragMode,
 } from '@alusa/domain';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
-import type { GroupDragState } from './sessions/use-drag-session';
+import type { EventMapDTO } from '../../api/event-map-service';
+import type { GroupDragState } from '../sessions/use-drag-session';
+import type { TransformCommitPayload } from './build-canvas-transform-command';
 
-export type GroupDragCommitParams = {
+export type GroupDragCommitResult = {
+  kind: 'corridor' | 'generic' | 'noop';
+  payload: TransformCommitPayload | null;
+  forceCorridor?: boolean;
+};
+
+export type BuildGroupDragCommitParams = {
   drag: GroupDragState;
   map: EventMapDTO | null;
   baseMap: EventMapDTO | null;
   previewWorkingMap: EventMapDTO | null;
   corridorDragMode: ReturnType<typeof resolveCorridorDragMode> | null;
-  updateMapItems: (updates: {
-    objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
-    seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
-    seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
-    skipSeatBaseLayoutTranslation?: boolean;
-    skipCorridorReflow?: boolean;
-  }) => void;
 };
 
-export function commitGroupDragSession({
+export function buildGroupDragCommit({
   drag,
   map,
   baseMap,
   previewWorkingMap,
   corridorDragMode,
-  updateMapItems,
-}: GroupDragCommitParams): 'corridor' | 'generic' | 'noop' {
+}: BuildGroupDragCommitParams): GroupDragCommitResult {
   const corridorNodeIds = [...drag.origin.keys()].filter((nodeId) => {
     const id = nodeId.replace(/^node-/, '');
     return map?.objects.some((object) => object.id === id && object.type === 'CORRIDOR');
@@ -48,14 +47,18 @@ export function commitGroupDragSession({
     const { objects, seats } = extractGroupDragCommitUpdates(baseMap, preview, drag, corridorIds, dragMode);
 
     if (objects.length > 0 || seats.length > 0) {
-      updateMapItems({
-        objects,
-        seats,
-        skipSeatBaseLayoutTranslation: dragMode === 'reflow',
-        skipCorridorReflow: true,
-      });
+      return {
+        kind: 'corridor',
+        forceCorridor: true,
+        payload: {
+          objects,
+          seats,
+          skipSeatBaseLayoutTranslation: dragMode === 'reflow',
+          skipCorridorReflow: true,
+        },
+      };
     }
-    return 'corridor';
+    return { kind: 'corridor', payload: null, forceCorridor: true };
   }
 
   const { delta } = drag;
@@ -81,9 +84,15 @@ export function commitGroupDragSession({
   }
 
   if (objectUpdates.length > 0 || seatUpdates.length > 0 || seatGroupUpdates.length > 0) {
-    updateMapItems({ objects: objectUpdates, seats: seatUpdates, seatGroups: seatGroupUpdates });
-    return 'generic';
+    return {
+      kind: 'generic',
+      payload: {
+        objects: objectUpdates,
+        seats: seatUpdates,
+        seatGroups: seatGroupUpdates,
+      },
+    };
   }
 
-  return 'noop';
+  return { kind: 'noop', payload: null };
 }

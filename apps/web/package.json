@@ -21,6 +21,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:unit": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest run",
+    "test:unit:map-canvas": "MAP_CANVAS_UNIT=1 vitest run features/events/map/canvas/__tests__ features/events/map/store/__tests__/corridor-group-transform-store.test.ts",
     "test:unit:watch": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest watch",
     "test:e2e": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- playwright test",
     "test": "dotenv -e ../../.env.test -- node ../../scripts/validate-db-env.mjs test && dotenv -e ../../.env.test -- vitest run",

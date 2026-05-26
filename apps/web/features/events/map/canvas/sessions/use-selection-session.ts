@@ -2,15 +2,12 @@
 
 import {
   expandObjectSelectionItems,
-  getObjectBounds,
-  getSeatBounds,
-  getSeatGroupWorldBounds,
-  intersectsRect,
+  hitTestRect,
   isItemSelected,
   isObjectInSelectedGroup,
   isSameSelectionItem,
-  normalizeBoundsRect,
   resolveGroupSelectionItem,
+  type BoundsRect,
 } from '@alusa/domain';
 import type { MapSelectionItem } from '@alusa/domain';
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
@@ -30,53 +27,6 @@ type SelectionSessionInput = {
 
 export function isAdditiveSelect(event: Konva.KonvaEventObject<MouseEvent>) {
   return event.evt.shiftKey || event.evt.metaKey || event.evt.ctrlKey;
-}
-
-function findItemsInMarquee(
-  box: ReturnType<typeof normalizeBoundsRect>,
-  objects: EventMapObjectDTO[],
-  seats: EventSeatDTO[],
-  seatGroups: EventSeatGroupDTO[],
-): MapSelectionItem[] {
-  const items: MapSelectionItem[] = [];
-  const seen = new Set<string>();
-
-  for (const object of objects) {
-    if (object.locked) continue;
-    const bounds = getObjectBounds(object);
-    if (!intersectsRect(box, bounds)) continue;
-
-    const item: MapSelectionItem =
-      object.sectionId && object.type === 'SECTION'
-        ? { type: 'section', id: object.sectionId }
-        : { type: 'object', id: object.id };
-    const key = `${item.type}:${item.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push(item);
-  }
-
-  for (const seat of seats) {
-    if (seat.groupId != null) continue;
-    if (seat.status === 'SOLD') continue;
-    if (!intersectsRect(box, getSeatBounds(seat))) continue;
-    const key = `seat:${seat.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push({ type: 'seat', id: seat.id });
-  }
-
-  for (const group of seatGroups) {
-    if (group.locked) continue;
-    const bounds = getSeatGroupWorldBounds(group, seats);
-    if (!intersectsRect(box, bounds)) continue;
-    const key = `seatgroup:${group.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    items.push({ type: 'seatgroup', id: group.id });
-  }
-
-  return items;
 }
 
 export function useSelectionSession({
@@ -172,9 +122,13 @@ export function useSelectionSession({
   );
 
   const getMarqueeSelection = useCallback(
-    (box: ReturnType<typeof normalizeBoundsRect>) =>
+    (box: BoundsRect) =>
       expandObjectSelectionItems(
-        findItemsInMarquee(box, levelObjects, levelSeats, levelSeatGroups),
+        hitTestRect(box, {
+          objects: levelObjects,
+          seats: levelSeats,
+          seatGroups: levelSeatGroups,
+        }),
         levelObjects,
       ),
     [levelObjects, levelSeats, levelSeatGroups],

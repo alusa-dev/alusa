@@ -1,9 +1,14 @@
-import { applyCorridorRotationPreservingCenter, normalizeRotation } from '@alusa/domain';
-import type { BoundingBox, CorridorTransformGeometry, ResizeAnchor } from '@alusa/domain';
-import type { EventMapObjectDTO } from '../api/event-map-service';
-import { eventMapObjectToCorridorPolygon, polygonBounds } from './corridor-domain-bridge';
-import { buildCorridorTransformSnapshot } from './corridor-group-transform';
-import { computeCorridorResizeGeometry } from './corridor-group-resize';
+import {
+  applyCorridorRotationPreservingCenter,
+  buildCorridorTransformSnapshot,
+  computeCorridorResizeGeometry,
+  normalizeRotation,
+  polygonBounds,
+  eventMapObjectToCorridorPolygon,
+  type CorridorTransformGeometry,
+  type ResizeAnchor,
+} from '@alusa/domain';
+import type { EventMapObjectDTO } from '../../api/event-map-service';
 
 import type Konva from 'konva';
 
@@ -21,13 +26,6 @@ export type CorridorTransformPatch = {
   mode: CorridorTransformMode;
 };
 
-export type CorridorCanvasAppearance = {
-  fill: string;
-  stroke: string;
-  strokeWidth: number;
-  dash: number[];
-};
-
 const RESIZE_ANCHORS = new Set<string>([
   'top-left',
   'top-center',
@@ -43,33 +41,6 @@ export function isCorridorResizeAnchor(anchor: string): anchor is ResizeAnchor {
   return RESIZE_ANCHORS.has(anchor);
 }
 
-export function getCorridorCanvasAppearance(selected: boolean, isSiblingOfSelected: boolean): CorridorCanvasAppearance {
-  if (selected) {
-    return {
-      fill: 'rgba(124, 58, 237, 0.06)',
-      stroke: '#7c3aed',
-      strokeWidth: 1.5,
-      dash: [8, 6],
-    };
-  }
-
-  if (isSiblingOfSelected) {
-    return {
-      fill: 'rgba(248, 250, 252, 0.92)',
-      stroke: '#cbd5e1',
-      strokeWidth: 1.5,
-      dash: [4, 4],
-    };
-  }
-
-  return {
-    fill: '#f8fafc',
-    stroke: '#cbd5e1',
-    strokeWidth: 1.5,
-    dash: [8, 6],
-  };
-}
-
 function isKonvaGroup(node: Konva.Node): node is Konva.Group {
   return typeof (node as Konva.Group).findOne === 'function';
 }
@@ -80,15 +51,6 @@ function syncCorridorBodySize(node: Konva.Node, width: number, height: number) {
   if (!bodyRect) return;
   bodyRect.width(width);
   bodyRect.height(height);
-}
-
-export function corridorObjectToBox(object: EventMapObjectDTO): BoundingBox {
-  return {
-    x: object.x,
-    y: object.y,
-    width: Math.max(MIN_CORRIDOR_NODE_SIZE, object.width ?? MIN_CORRIDOR_NODE_SIZE),
-    height: Math.max(MIN_CORRIDOR_NODE_SIZE, object.height ?? MIN_CORRIDOR_NODE_SIZE),
-  };
 }
 
 /** Read scaled body size from the live Konva node (not the frozen transform-start base). */
@@ -120,11 +82,6 @@ export function resolveCorridorTransformSession(activeAnchor: string): CorridorT
   };
 }
 
-/** @deprecated Use resolveCorridorTransformSession */
-export function resolveCorridorTransformMode(activeAnchor: string): CorridorTransformMode {
-  return resolveCorridorTransformSession(activeAnchor).mode;
-}
-
 export function buildCorridorGeometryAfterResize(
   baseObject: EventMapObjectDTO,
   node: Konva.Node,
@@ -143,101 +100,13 @@ export function buildCorridorGeometryAfterResize(
   };
 }
 
-/** Unified geometry entry point for corridor transform commit. */
-export function computeCorridorTransformGeometry(
-  baseObject: EventMapObjectDTO,
+/** Read corridor geometry after resize/rotate using anchor-aware fixed-point math. */
+export function readCorridorPatchFromKonvaNode(
   node: Konva.Node,
-  anchor: string,
+  baseObject: EventMapObjectDTO,
+  anchor = 'bottom-right',
 ): CorridorTransformGeometry {
   return buildCorridorGeometryAfterResize(baseObject, node, anchor);
-}
-
-export function buildCorridorGeometryAfterRotation(
-  baseObject: EventMapObjectDTO,
-  rotation: number,
-  options?: { snap?: boolean },
-): CorridorTransformGeometry {
-  const draft: EventMapObjectDTO = {
-    ...baseObject,
-    data: { ...baseObject.data },
-  };
-  applyCorridorRotationPreservingCenter(draft, rotation, baseObject, options);
-  return {
-    x: draft.x,
-    y: draft.y,
-    width: Math.max(MIN_CORRIDOR_NODE_SIZE, draft.width ?? MIN_CORRIDOR_NODE_SIZE),
-    height: Math.max(MIN_CORRIDOR_NODE_SIZE, draft.height ?? MIN_CORRIDOR_NODE_SIZE),
-    rotation: draft.rotation ?? 0,
-  };
-}
-
-/** @deprecated Use corridor-transform-session pipeline — kept for unit tests. */
-export function applyLiveCorridorResizeToNode(
-  node: Konva.Node,
-  baseObject: EventMapObjectDTO,
-  anchor: string,
-) {
-  const geometry = buildCorridorGeometryAfterResize(baseObject, node, anchor);
-  normalizeCorridorNodeAfterTransform(node, geometry);
-}
-
-/** @deprecated Use corridor-transform-session pipeline — kept for unit tests. */
-export function applyLiveCorridorRotationToNode(
-  node: Konva.Node,
-  baseObject: EventMapObjectDTO,
-  rotation: number,
-) {
-  const geometry = buildCorridorGeometryAfterRotation(baseObject, rotation, { snap: false });
-  normalizeCorridorNodeAfterTransform(node, geometry);
-}
-
-/** @deprecated Use buildCorridorTransformCommitPatches from corridor-transform-session. */
-export function buildCorridorTransformCommitPatch(
-  node: Konva.Node,
-  baseObject: EventMapObjectDTO,
-  session: Pick<CorridorTransformSession, 'mode' | 'anchor'>,
-): CorridorTransformPatch {
-  if (session.mode === 'rotate') {
-    const geometry = buildCorridorGeometryAfterRotation(baseObject, node.rotation(), { snap: false });
-    return { mode: 'rotate', patch: geometry };
-  }
-
-  const geometry = buildCorridorGeometryAfterResize(baseObject, node, session.anchor);
-  return {
-    mode: 'resize',
-    patch: {
-      x: geometry.x,
-      y: geometry.y,
-      width: geometry.width,
-      height: geometry.height,
-      rotation: geometry.rotation,
-    },
-  };
-}
-
-/** @deprecated Heuristic replaced by explicit session mode from transformer anchor. */
-export function inferCorridorTransformMode(
-  node: Konva.Node,
-  baseObject: EventMapObjectDTO,
-  explicitMode?: CorridorTransformMode | null,
-): CorridorTransformMode {
-  if (explicitMode) return explicitMode;
-
-  const scaleX = Math.abs(node.scaleX() || 1);
-  const scaleY = Math.abs(node.scaleY() || 1);
-  const sizeChanged =
-    Math.abs(scaleX - 1) > 0.001 ||
-    Math.abs(scaleY - 1) > 0.001;
-
-  if (sizeChanged) return 'resize';
-
-  const rawRotation = normalizeRotation(node.rotation());
-  const baseRotation = normalizeRotation(baseObject.rotation ?? 0);
-  if (Math.abs(rawRotation - baseRotation) > 0.001) {
-    return 'rotate';
-  }
-
-  return 'resize';
 }
 
 /** Apply model geometry to the corridor Konva group (top-left pivot, Konva default). */
@@ -253,15 +122,6 @@ export function applyCorridorNodeFromModel(node: Konva.Node, object: EventMapObj
   node.scaleX(1);
   node.scaleY(1);
   syncCorridorBodySize(node, width, height);
-}
-
-/** Read corridor geometry after resize/rotate using anchor-aware fixed-point math. */
-export function readCorridorPatchFromKonvaNode(
-  node: Konva.Node,
-  baseObject: EventMapObjectDTO,
-  anchor = 'bottom-right',
-): CorridorTransformGeometry {
-  return buildCorridorGeometryAfterResize(baseObject, node, anchor);
 }
 
 /** Reset imperative Konva attrs after reading a transform (Konva docs pattern). */
@@ -292,4 +152,24 @@ export function syncCorridorNodesFromMap(
     if (!node) continue;
     applyCorridorNodeFromModel(node, object);
   }
+}
+
+/** Build rotation geometry preserving corridor center (domain policy). */
+export function buildCorridorGeometryAfterRotation(
+  baseObject: EventMapObjectDTO,
+  rotation: number,
+  options?: { snap?: boolean },
+): CorridorTransformGeometry {
+  const draft: EventMapObjectDTO = {
+    ...baseObject,
+    data: { ...baseObject.data },
+  };
+  applyCorridorRotationPreservingCenter(draft, rotation, baseObject, options);
+  return {
+    x: draft.x,
+    y: draft.y,
+    width: Math.max(MIN_CORRIDOR_NODE_SIZE, draft.width ?? MIN_CORRIDOR_NODE_SIZE),
+    height: Math.max(MIN_CORRIDOR_NODE_SIZE, draft.height ?? MIN_CORRIDOR_NODE_SIZE),
+    rotation: draft.rotation ?? 0,
+  };
 }

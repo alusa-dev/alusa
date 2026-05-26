@@ -5,6 +5,7 @@ import {
   isFiniteBoundingBox,
   resolveSnapGuides as resolveSnapGuidesFromGeometry,
   type BoundingBox,
+  type CorridorPolygonPoint,
   type LayerSnapGeometry,
   type LevelBounds,
   type ResolveSnapGuidesOptions,
@@ -13,6 +14,10 @@ import {
   type SnapGuideLine,
 } from '@alusa/domain';
 import type Konva from 'konva';
+
+export function polygonToKonvaPoints(polygon: CorridorPolygonPoint[]): number[] {
+  return polygon.flatMap((point) => [point.x, point.y]);
+}
 
 export type SnapGuideStopCacheEntry = {
   skipKey: string;

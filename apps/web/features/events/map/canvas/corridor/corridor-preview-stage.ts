@@ -1,4 +1,5 @@
-import type { EventMapDTO } from '../api/event-map-service';
+import { worldToParentLocal } from '@alusa/domain';
+import type { EventMapDTO } from '../../api/event-map-service';
 import { applyCorridorNodeFromModel } from './corridor-canvas';
 
 import type Konva from 'konva';
@@ -24,12 +25,12 @@ function syncNodeSize(node: Konva.Node, width?: number, height?: number) {
 function setSeatNodePosition(node: Konva.Node, worldX: number, worldY: number) {
   const parent = node.parent;
   if (parent && parent.className !== 'Layer') {
-    const pRot = (parent.rotation() * Math.PI) / 180;
-    const dx = worldX - parent.x();
-    const dy = worldY - parent.y();
-    const localX = dx * Math.cos(-pRot) - dy * Math.sin(-pRot);
-    const localY = dx * Math.sin(-pRot) + dy * Math.cos(-pRot);
-    node.position({ x: localX, y: localY });
+    node.position(
+      worldToParentLocal(
+        { x: worldX, y: worldY },
+        { x: parent.x(), y: parent.y(), rotation: parent.rotation() },
+      ),
+    );
   } else {
     node.position({ x: worldX, y: worldY });
   }

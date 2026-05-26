@@ -1,18 +1,18 @@
 import type { EventMapObjectDTO } from '../types/event-map-types.js';
 
-import { getObjectBounds } from '../selection/selection-utils.js';
+import { getObjectBounds } from '../layout/object-bounds.js';
 import {
   clampFontSizeValue,
   getLegacyUniformTextMode,
   getTextMode,
   MIN_FONT_SIZE,
 } from '../doc/text-object.js';
+import { clampUniformScale, MAX_UNIFORM_SCALE, MIN_UNIFORM_SCALE } from './scale.js';
 
 export { isMultilineTextObject } from '../doc/text-object.js';
+export { MAX_UNIFORM_SCALE, MIN_UNIFORM_SCALE, clampUniformScale };
 
 export const MIN_OBJECT_SIZE = 8;
-export const MIN_UNIFORM_SCALE = 0.05;
-export const MAX_UNIFORM_SCALE = 20;
 
 export function clampObjectSize(value: number) {
   return Math.max(MIN_OBJECT_SIZE, value);
@@ -20,10 +20,6 @@ export function clampObjectSize(value: number) {
 
 export function clampFontSize(value: number) {
   return clampFontSizeValue(value);
-}
-
-export function clampUniformScale(value: number) {
-  return Math.max(MIN_UNIFORM_SCALE, Math.min(MAX_UNIFORM_SCALE, value));
 }
 
 export type ObjectTransformSnapshot = {

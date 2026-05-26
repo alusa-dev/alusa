@@ -8,13 +8,13 @@ import { Bell } from '@/components/icons/icons';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import UserMenu from './UserMenu';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
-import { useNotificationsFeed } from '@/features/notificacoes/hooks/use-notifications-feed';
+import { useNotificationsFeed, NOTIFICATION_INBOX_ROLES } from '@/features/notificacoes/hooks/use-notifications-feed';
 import { HeaderSearch } from '@/features/global-search/components/HeaderSearch';
 import { useTheme } from '@/components/theme/ThemeProvider';
 
 export default function CardHeader(): JSX.Element {
   const router = useRouter();
-  const { data } = useSession();
+  const { data, status: sessionStatus } = useSession();
   // Preferir a store (atualizada pela layout) para evitar flash de avatar/nome após atualizacoes
   const storeUser = useUserStore((state: UserState) => state.user);
   const user: User | null = (storeUser ?? (data?.user as User) ?? null) as User | null;
@@ -23,8 +23,12 @@ export default function CardHeader(): JSX.Element {
   
   // Buscar notificações do portal
   const { notifications, totalNotifications, loading: portalNotificationsLoading } = usePortalNotifications();
-  const userRole = (user as { role?: string })?.role;
+  const userRole = (user as { role?: string })?.role?.toUpperCase();
   const isPortalUser = userRole === 'ALUNO' || userRole === 'RESPONSAVEL';
+  const inboxNotificationsEnabled =
+    sessionStatus === 'authenticated' &&
+    !isPortalUser &&
+    Boolean(userRole && NOTIFICATION_INBOX_ROLES.has(userRole));
   const {
     items: inboxItems,
     unreadCount,
@@ -35,7 +39,7 @@ export default function CardHeader(): JSX.Element {
   } = useNotificationsFeed({
     limit: 5,
     autoRefreshMs: 60000,
-    enabled: !isPortalUser,
+    enabled: inboxNotificationsEnabled,
   });
 
   const initials = useMemo(() => {

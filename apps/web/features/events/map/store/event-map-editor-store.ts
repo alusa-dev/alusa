@@ -63,6 +63,12 @@ type EventMapEditorState = {
     skipSeatBaseLayoutTranslation?: boolean;
     skipCorridorReflow?: boolean;
   }) => void;
+  applyTransform: (
+    command: Extract<
+      MapCommand,
+      { type: 'TRANSFORM_CORRIDOR' | 'RESIZE_OBJECTS' | 'ROTATE_OBJECTS' | 'MOVE_OBJECTS' }
+    >,
+  ) => void;
   updateSeat: (id: string, patch: Partial<EventSeatDTO>) => void;
   updateSection: (id: string, patch: Partial<EventMapSectionDTO>) => void;
   updateLevel: (id: string, patch: Partial<EventMapLevelDTO>) => void;
@@ -654,6 +660,7 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         },
       }),
     ),
+  applyTransform: (command) => set((state) => runCommand(state, command)),
   updateSeat: (id, patch) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { seats: [{ id, patch }] } })),
   updateSection: (id, patch) =>

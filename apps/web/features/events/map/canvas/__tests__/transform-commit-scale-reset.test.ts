@@ -1,4 +1,4 @@
-import { beginMapTransformSession, buildMapTransformCommit } from '../map-transform-session';
+import { beginMapTransformSession, buildMapTransformCommit } from '../transform/map-transform-session';
 import type { EventMapDTO } from '../../api/event-map-service';
 
 import { describe, expect, it } from 'vitest';

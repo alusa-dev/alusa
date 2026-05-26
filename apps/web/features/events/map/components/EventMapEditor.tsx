@@ -1,6 +1,6 @@
 'use client';
 import { getSelectableItems, mergeEventMapWithLocalDraft, validateGroupCandidates } from '@alusa/domain';
-import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../canvas/event-map-e2e-bridge';
+import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../browser/event-map-e2e-bridge';
 import { clearEventMapLocalDraft, readEventMapLocalDraft, writeEventMapLocalDraft } from '../browser/local-draft-storage';
 import { listTicketLots } from '../../events-service';
 import { getEventMap, publishEventMap, saveEventMapDraft } from '../api/event-map-service';

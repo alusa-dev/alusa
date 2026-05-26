@@ -1,4 +1,4 @@
-import { applyScrubZoom, computeScrubDelta, computeScrubZoom } from '../zoom-scrub';
+import { applyScrubZoom, computeScrubDelta, computeScrubZoom } from '../render/zoom-scrub';
 
 import { describe, expect, it } from 'vitest';
 
