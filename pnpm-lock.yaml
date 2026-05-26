@@ -417,12 +417,6 @@ importers:
       '@alusa/asaas':
         specifier: workspace:*
         version: link:../asaas
-      '@alusa/database':
-        specifier: workspace:*
-        version: link:../database
-      '@alusa/shared':
-        specifier: workspace:*
-        version: link:../shared
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
@@ -526,6 +520,9 @@ importers:
       '@alusa/domain':
         specifier: workspace:*
         version: link:../domain
+      '@alusa/finance':
+        specifier: workspace:*
+        version: link:../finance
       '@alusa/shared':
         specifier: workspace:*
         version: link:../shared
