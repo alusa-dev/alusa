@@ -84,6 +84,8 @@ async function upsertLocalExternalConnection(params: {
   const oldStatus = existingAsaasAccount?.status ?? null;
   const nextStatus: FinancialOnboardingStatus = 'APPROVED';
   const nextWebhookHash = params.webhookAuthTokenHash ?? existingAsaasAccount?.webhookAuthTokenHash ?? undefined;
+  const nextWebhookStatus = params.onboardingStatus === 'READY' ? 'ACTIVE' : 'PENDING';
+  const nextOperationalStatus = params.onboardingStatus === 'READY' ? 'OPERATIONAL' : 'WEBHOOK_REQUIRED';
 
   const profileCompanyName = resolveCompanyName(params.schoolName, params.cpfCnpj);
 
@@ -127,8 +129,8 @@ async function upsertLocalExternalConnection(params: {
         provisionedAt: now,
         apiKeyEncrypted: params.apiKeyEncrypted,
         apiKeyStatus: 'CONNECTED',
-        webhookStatus: 'ACTIVE',
-        operationalStatus: 'OPERATIONAL',
+        webhookStatus: nextWebhookStatus,
+        operationalStatus: nextOperationalStatus,
         asaasAccountEmail: params.asaasEmail,
         webhookAuthTokenHash: nextWebhookHash,
         ...(canSetExternalReference ? { externalReference: desiredExternalReference } : {}),
@@ -140,8 +142,8 @@ async function upsertLocalExternalConnection(params: {
         provisionedAt: existingAsaasAccount?.provisionedAt ?? now,
         apiKeyEncrypted: params.apiKeyEncrypted,
         apiKeyStatus: 'CONNECTED',
-        webhookStatus: 'ACTIVE',
-        operationalStatus: 'OPERATIONAL',
+        webhookStatus: nextWebhookStatus,
+        operationalStatus: nextOperationalStatus,
         asaasAccountEmail: params.asaasEmail,
         webhookAuthTokenHash: nextWebhookHash,
         ...(canSetExternalReference ? { externalReference: desiredExternalReference } : {}),

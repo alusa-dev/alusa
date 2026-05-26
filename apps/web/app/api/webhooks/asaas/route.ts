@@ -39,7 +39,11 @@ function isStrictHttpRejectionsEnabled(): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
-function resolveWebhookResponseStatus(resultStatus: number | undefined): number {
+function resolveWebhookResponseStatus(result: { status?: number; persisted?: boolean }): number {
+  if (result.persisted) return 200;
+
+  const resultStatus = result.status;
+  if (typeof resultStatus === 'number' && resultStatus >= 500) return resultStatus;
   if (!isStrictHttpRejectionsEnabled()) return 200;
   if (resultStatus === 400 || resultStatus === 401 || resultStatus === 403) return resultStatus;
   return 200;
@@ -175,17 +179,17 @@ export async function POST(req: NextRequest) {
         }));
       });
     }
-    // Sempre retornar 200 após processamento.
-    // Erros de lógica ficam em WebhookAsaas.status='ERRO' com reprocessamento interno.
-    // Retornar 5xx faria o Asaas reenviar indefinidamente para erros permanentes.
+    // Depois de persistido, falhas de processamento viram retry/DLQ interno.
+    // Antes da persistência, falhas técnicas precisam retornar 5xx para o Asaas reenviar.
     return NextResponse.json(
       {
         success: result.success,
         message: result.message,
         error: result.error,
+        persisted: result.persisted,
         mode: useAsyncQueue ? 'QUEUE' : 'SYNC',
       },
-      { status: resolveWebhookResponseStatus(result.status) },
+      { status: resolveWebhookResponseStatus(result) },
     );
   } catch (error) {
     if (error instanceof Error && error.message.includes('ASAAS_WEBHOOK_AUTH_TOKEN_SECRET')) {
@@ -195,20 +199,19 @@ export async function POST(req: NextRequest) {
           error: 'ENV_NOT_CONFIGURED',
           message: error.message,
         },
-        { status: 200 },
+        { status: 503 },
       );
     }
 
     console.error('[Asaas Webhook][POST]', redactWebhookLogObject({
       error: error instanceof Error ? error : String(error),
     }));
-    // 200 para evitar retries do Asaas — erros persistem no banco para reprocessamento
     return NextResponse.json(
       {
         success: false,
         error: 'ERRO_INTERNO',
       },
-      { status: 200 },
+      { status: 500 },
     );
   }
 }

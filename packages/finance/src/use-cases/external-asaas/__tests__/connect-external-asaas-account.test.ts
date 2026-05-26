@@ -174,4 +174,38 @@ describe('connectExternalAsaasAccount', () => {
       }),
     );
   });
+
+  it('não marca conta externa como operacional quando o webhook remoto fica pendente', async () => {
+    createWebhookMock.mockRejectedValueOnce(new Error('webhook unavailable'));
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      cpfCnpj: '12.345.678/0001-99',
+      phone: '(11) 99999-9999',
+      apiKey: '$aact_hmlg_valid_external_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        status: 'WEBHOOK_PENDING',
+        webhookAction: 'pending',
+      }),
+    );
+
+    expect(asaasAccountUpsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          webhookStatus: 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+        }),
+        update: expect.objectContaining({
+          webhookStatus: 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+        }),
+      }),
+    );
+  });
 });

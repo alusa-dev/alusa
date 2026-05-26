@@ -85,7 +85,6 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
           asaasAccountId: true,
           apiKeyEncrypted: true,
           apiKeyStatus: true,
-          webhookAuthTokenHash: true,
           webhookStatus: true,
           operationalStatus: true,
           status: true,
@@ -95,28 +94,23 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
   });
 
   const account = profile?.asaasAccount ?? null;
-  const effectiveWebhookStatus =
-    account?.webhookStatus === 'NOT_CONFIGURED' && account.webhookAuthTokenHash
-      ? 'ACTIVE'
-      : account?.webhookStatus ?? null;
   const derived = deriveOperationalStatus({
     asaasAccountId: account?.asaasAccountId ?? null,
     apiKeyEncrypted: account?.apiKeyEncrypted ?? null,
     apiKeyStatus: account?.apiKeyStatus ?? null,
-    webhookStatus: effectiveWebhookStatus,
+    webhookStatus: account?.webhookStatus ?? null,
     status: account?.status ?? null,
   });
 
   if (
     account &&
-    (account.operationalStatus !== derived || account.webhookStatus !== effectiveWebhookStatus) &&
+    account.operationalStatus !== derived &&
     typeof prisma.asaasAccount.update === 'function'
   ) {
     await prisma.asaasAccount.update({
       where: { id: account.id },
       data: {
         operationalStatus: derived as never,
-        webhookStatus: effectiveWebhookStatus as never,
         lastHealthCheckAt: new Date(),
       },
       select: { id: true },
@@ -129,12 +123,12 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
     asaasAccountId: account?.asaasAccountId ?? null,
     status: account?.status ?? null,
     apiKeyStatus: account?.apiKeyStatus ?? null,
-    webhookStatus: effectiveWebhookStatus,
+    webhookStatus: account?.webhookStatus ?? null,
     operationalStatus: derived,
     hasSubaccountId: Boolean(account?.asaasAccountId),
     hasApiKey: Boolean(account?.apiKeyEncrypted),
     apiKeyConnected: account?.apiKeyStatus === 'CONNECTED',
-    webhookActive: effectiveWebhookStatus === 'ACTIVE',
+    webhookActive: account?.webhookStatus === 'ACTIVE',
     kycRejected: account?.status === 'REJECTED',
     regulatoryBlocked: false,
   };

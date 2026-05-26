@@ -73,6 +73,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: false,
       status: 403,
+      persisted: false,
       error: 'Assinatura inválida',
     });
 
@@ -92,6 +93,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: false,
       status: 401,
+      persisted: false,
       error: 'Assinatura inválida',
     });
 
@@ -108,6 +110,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: false,
       status: 401,
+      persisted: false,
       error: 'Assinatura inválida',
     });
 
@@ -124,6 +127,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: false,
       status: 403,
+      persisted: false,
       error: 'Assinatura inválida',
     });
 
@@ -140,6 +144,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: false,
       status: 401,
+      persisted: false,
       error: 'Assinatura inválida',
     });
 
@@ -162,6 +167,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: true,
       status: 200,
+      persisted: true,
       message: 'ok',
     });
 
@@ -181,6 +187,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: true,
       status: 200,
+      persisted: true,
       message: 'ok',
     });
 
@@ -217,6 +224,7 @@ describe('POST /api/webhooks/asaas', () => {
     vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
       success: true,
       status: 200,
+      persisted: true,
       message: 'ok',
     });
     mockEmitBillingNotificationCandidate.mockRejectedValueOnce(new Error('notify failed'));
@@ -235,5 +243,43 @@ describe('POST /api/webhooks/asaas', () => {
 
     const json = await res.json();
     expect(json).toMatchObject({ success: true, message: 'ok' });
+  });
+
+  it('retorna 500 quando há falha técnica antes de persistir o webhook', async () => {
+    vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
+      success: false,
+      status: 500,
+      persisted: false,
+      error: 'Falha ao persistir webhook',
+    });
+
+    const req = createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      signatureHeader: { name: 'asaas-access-token', value: 'valid-token-with-enough-length' },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+  });
+
+  it('retorna 200 quando o evento foi persistido e o processamento falhou', async () => {
+    vi.mocked(handleAsaasWebhookEvent).mockResolvedValue({
+      success: false,
+      status: 500,
+      persisted: true,
+      webhookId: 'wh_local_1',
+      error: 'handler failed',
+    });
+
+    const req = createRequest({
+      body: { event: 'PAYMENT_RECEIVED', payment: { id: 'pay_123' } },
+      signatureHeader: { name: 'asaas-access-token', value: 'valid-token-with-enough-length' },
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json).toMatchObject({ success: false, persisted: true, error: 'handler failed' });
   });
 });

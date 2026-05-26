@@ -163,6 +163,7 @@ export type HandleAsaasWebhookEventParams = {
 export type QueueWebhookResult = {
   success: boolean;
   status: number;
+  persisted: boolean;
   message?: string;
   error?: string;
   webhookId?: string;
@@ -597,18 +598,18 @@ export async function enqueueAsaasWebhookEvent(
     payload = JSON.parse(params.rawBody) as AsaasWebhookBody;
   } catch {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'JSON inválido', event: null, eventId: null });
-    return { success: false, status: 400, error: 'JSON inválido' };
+    return { success: false, status: 400, persisted: false, error: 'JSON inválido' };
   }
 
   const event = payload.event;
   if (!event) {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Evento não especificado', event: null, eventId: payload.id ?? null });
-    return { success: false, status: 400, error: 'Evento não especificado' };
+    return { success: false, status: 400, persisted: false, error: 'Evento não especificado' };
   }
 
   if (!params.accessToken) {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token ausente', event, eventId: payload.id ?? null });
-    return { success: false, status: 401, error: 'Assinatura inválida' };
+    return { success: false, status: 401, persisted: false, error: 'Assinatura inválida' };
   }
 
   const auth = await authenticateAsaasWebhookToken(params.accessToken);
@@ -619,7 +620,7 @@ export async function enqueueAsaasWebhookEvent(
       eventId: payload.id ?? null,
     });
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token inválido', event, eventId: payload.id ?? null });
-    return { success: false, status: 403, error: 'Assinatura inválida' };
+    return { success: false, status: 403, persisted: false, error: 'Assinatura inválida' };
   }
   const contaId = auth.contaId;
 
@@ -635,6 +636,7 @@ export async function enqueueAsaasWebhookEvent(
     return {
       success: true,
       status: 200,
+      persisted: true,
       message: 'Evento já processado',
       webhookId: existing.id,
       contaId,
@@ -647,6 +649,7 @@ export async function enqueueAsaasWebhookEvent(
     return {
       success: true,
       status: 200,
+      persisted: true,
       message: 'Evento já enfileirado',
       webhookId: existing.id,
       contaId,
@@ -704,10 +707,10 @@ export async function enqueueAsaasWebhookEvent(
         if (concurrent) {
           webhookId = concurrent.id;
         } else {
-          return { success: false, status: 500, error: 'Falha ao enfileirar webhook' };
+          return { success: false, status: 500, persisted: false, error: 'Falha ao enfileirar webhook' };
         }
       } else {
-        return { success: false, status: 500, error: 'Falha ao enfileirar webhook' };
+        return { success: false, status: 500, persisted: false, error: 'Falha ao enfileirar webhook' };
       }
     }
   }
@@ -726,6 +729,7 @@ export async function enqueueAsaasWebhookEvent(
   return {
     success: true,
     status: 200,
+    persisted: true,
     message: 'Evento enfileirado',
     webhookId,
     contaId,
@@ -946,8 +950,13 @@ export async function reprocessErroredAsaasWebhooks(params: {
 export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventParams): Promise<{
   success: boolean;
   status: number;
+  persisted: boolean;
   message?: string;
   error?: string;
+  webhookId?: string;
+  contaId?: string;
+  event?: string;
+  eventId?: string | null;
 }> {
   let payload: AsaasWebhookBody;
 
@@ -955,13 +964,13 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
     payload = JSON.parse(params.rawBody) as AsaasWebhookBody;
   } catch {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'JSON inválido', event: null, eventId: null });
-    return { success: false, status: 400, error: 'JSON inválido' };
+    return { success: false, status: 400, persisted: false, error: 'JSON inválido' };
   }
 
   const event = payload.event;
   if (!event) {
     await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Evento não especificado', event: null, eventId: payload.id ?? null });
-    return { success: false, status: 400, error: 'Evento não especificado' };
+    return { success: false, status: 400, persisted: false, error: 'Evento não especificado' };
   }
 
   // Prioridade: authToken por tenant (ADR-009 / Fase 2)
@@ -974,7 +983,7 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
         eventId: payload.id ?? null,
       });
       await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token inválido', event, eventId: payload.id ?? null });
-      return { success: false, status: 403, error: 'Assinatura inválida' };
+      return { success: false, status: 403, persisted: false, error: 'Assinatura inválida' };
     }
 
     const contaId = auth.contaId;
@@ -987,19 +996,47 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
       : await prisma.webhookAsaas.findFirst({ where: { contaId, payloadHash } });
 
     if (existing?.status === 'PROCESSADO') {
-      return { success: true, status: 200, message: 'Evento já processado' };
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento já processado',
+        webhookId: existing.id,
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
     }
 
     if (existing?.status === 'PROCESSANDO') {
-      return { success: true, status: 200, message: 'Evento em processamento' };
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento em processamento',
+        webhookId: existing.id,
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
     }
 
     const maxAttempts = getMaxReprocessAttempts();
     if (existing && existing.tentativas >= maxAttempts) {
-      return { success: true, status: 200, message: 'Evento ignorado (limite de tentativas excedido)' };
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento ignorado (limite de tentativas excedido)',
+        webhookId: existing.id,
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
     }
 
     const now = new Date();
+    let createdNewWebhookRecord = false;
 
     const webhookRecord = existing
       ? await (async () => {
@@ -1023,25 +1060,73 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
 
           return prisma.webhookAsaas.findUnique({ where: { id: existing.id } });
         })()
-      : await prisma.webhookAsaas.create({
-          data: {
-            contaId,
-            evento: event,
-            eventId: eventId ?? null,
-            payloadHash,
-            payload: payload as unknown as object,
-            status: 'PROCESSANDO',
-            tentativas: 1,
-            ultimaTentativaEm: now,
-            // Campos de correlação para rastreio
-            asaasPaymentId: getPayloadAsaasPaymentId(payload),
-            asaasSubscriptionId: getPayloadAsaasSubscriptionId(payload),
-            asaasTransferId: getPayloadAsaasTransferId(payload),
-          },
-        });
+      : await (async () => {
+          try {
+            const created = await prisma.webhookAsaas.create({
+              data: {
+                contaId,
+                evento: event,
+                eventId: eventId ?? null,
+                payloadHash,
+                payload: payload as unknown as object,
+                status: 'PROCESSANDO',
+                tentativas: 1,
+                ultimaTentativaEm: now,
+                // Campos de correlação para rastreio
+                asaasPaymentId: getPayloadAsaasPaymentId(payload),
+                asaasSubscriptionId: getPayloadAsaasSubscriptionId(payload),
+                asaasTransferId: getPayloadAsaasTransferId(payload),
+              },
+            });
+            createdNewWebhookRecord = true;
+            return created;
+          } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'P2002') {
+              return eventId
+                ? prisma.webhookAsaas.findUnique({ where: { uq_webhookasaas_conta_event: { contaId, eventId } } })
+                : prisma.webhookAsaas.findFirst({ where: { contaId, payloadHash } });
+            }
+
+            throw error;
+          }
+        })();
 
     if (!webhookRecord) {
-      return { success: true, status: 200, message: 'Evento em processamento' };
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento em processamento',
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
+    }
+
+    if (!existing && !createdNewWebhookRecord && webhookRecord.status === 'PROCESSADO') {
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento já processado',
+        webhookId: webhookRecord.id,
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
+    }
+
+    if (!existing && !createdNewWebhookRecord && webhookRecord.status === 'PROCESSANDO') {
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento em processamento',
+        webhookId: webhookRecord.id,
+        contaId,
+        event,
+        eventId: eventId ?? null,
+      };
     }
 
     const processedResult = await processAsaasWebhookForRecord({
@@ -1089,8 +1174,13 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
     return {
       success: processedResult.ok,
       status: processedResult.httpStatus,
+      persisted: true,
       message: processedResult.message,
       error: processedResult.error,
+      webhookId: webhookRecord.id,
+      contaId,
+      event,
+      eventId: eventId ?? null,
     };
   }
 
@@ -1101,5 +1191,5 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
     eventId: payload.id ?? null,
   });
   await persistRejectedWebhook({ contaId: null, rawBody: params.rawBody, reason: 'Token ausente', event, eventId: payload.id ?? null });
-  return { success: false, status: 401, error: 'Assinatura inválida' };
+  return { success: false, status: 401, persisted: false, error: 'Assinatura inválida' };
 }
