@@ -7,9 +7,9 @@ import {
   updateAluno,
   deleteAluno,
   getAluno,
-  AsaasCustomerEnsureError,
   buildAlunoArchivePlan,
 } from '@alusa/lib';
+import { AsaasCustomerEnsureError } from '@alusa/finance';
 import { getPaymentsProviderForConta } from '@/src/server/finance/payments-provider.factory';
 import {
   executeAlunoArchivePlan,

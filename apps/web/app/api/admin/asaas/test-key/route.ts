@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { AsaasHttpError, getMyAccountCommercialInfo, getMyAccountStatus } from '@alusa/asaas';
+import {
+  AsaasHttpError,
+  asaasGetMyAccountCommercialInfo,
+  asaasGetMyAccountStatus,
+} from '@alusa/finance';
 
 import { authOptions } from '@/lib/auth-options';
 
@@ -34,8 +38,8 @@ export async function POST(request: Request) {
     }
 
     const [status, commercialInfo] = await Promise.all([
-      getMyAccountStatus({ apiKey }),
-      getMyAccountCommercialInfo({ apiKey }).catch(() => null),
+      asaasGetMyAccountStatus({ apiKey }),
+      asaasGetMyAccountCommercialInfo({ apiKey }).catch(() => null),
     ]);
 
     if (!status?.id) {

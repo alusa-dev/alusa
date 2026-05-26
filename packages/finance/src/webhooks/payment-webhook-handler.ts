@@ -1,5 +1,6 @@
 import { prisma } from '@alusa/database';
-import { isBillingV2FlagEnabled, type AsaasPaymentStatus } from '@alusa/asaas-gateway';
+import type { PaymentStatus } from '@alusa/asaas';
+import { isBillingV2FlagEnabled } from '../foundation/billing-v2-flags';
 import { resolvePaymentToLocalEntity } from './payment-resolver';
 import {
   canApplyChargeStatusTransition,
@@ -34,7 +35,7 @@ export type PaymentWebhookPayload = {
   event: string;
   payment: {
     id: string;
-    status: AsaasPaymentStatus;
+    status: PaymentStatus;
     value: number;
     netValue: number;
     originalValue?: number | null;
@@ -1391,7 +1392,7 @@ async function handlePaymentWebhookCore(
     const statusDecision = computeNextCobrancaStatus({
       currentStatus,
       eventName: payload.event,
-      asaasPaymentStatus: normalizedAsaasStatus as AsaasPaymentStatus,
+      asaasPaymentStatus: normalizedAsaasStatus as PaymentStatus,
       billingType: payload.payment.billingType ?? null,
       dueDate: (payload.payment as { dueDate?: string }).dueDate ?? null,
       paymentDate: payload.payment.creditDate ?? null,

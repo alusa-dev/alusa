@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { ZodError } from 'zod';
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasHttpError } from '@alusa/finance';
 
 import { authOptions } from '@/lib/auth-options';
 import {

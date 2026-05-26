@@ -13,7 +13,7 @@ import {
   getAsaasWebhookTokenHashPrefix,
   redactWebhookLogObject,
 } from '@alusa/finance';
-import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
+import type { AsaasWebhookPayload } from '@alusa/finance';
 import { emitBillingNotificationCandidate } from '@/lib/notifications/emit-billing-notifications';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
 

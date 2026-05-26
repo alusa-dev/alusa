@@ -12,15 +12,12 @@ vi.mock('@/src/prisma', () => ({
   },
 }));
 
-vi.mock('@alusa/asaas', () => ({
-  getAsaasBaseUrlFromEnvOrThrow: vi.fn(),
-}));
-
 vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
 }));
 
 vi.mock('@alusa/finance', () => ({
+  getAsaasBaseUrlFromEnvOrThrow: vi.fn(),
   getAsaasReadIntentStats: vi.fn(),
   getWebhookQueueMetrics: vi.fn(),
   getWebhookHealthStatus: vi.fn(),
@@ -31,7 +28,7 @@ vi.mock('@alusa/finance', () => ({
 
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/src/prisma';
-import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/asaas';
+import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/finance';
 import { loadAsaasCredentials } from '@alusa/database';
 import {
   getAsaasReadIntentStats,

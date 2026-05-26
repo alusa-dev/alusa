@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
-import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/asaas';
+import { getAsaasBaseUrlFromEnvOrThrow } from '@alusa/finance';
 import {
   getAsaasReadIntentStats,
   getKycAsaasReadCacheStats,

@@ -9,7 +9,7 @@ import {
   readPaymentFullPreflight,
   updatePayment,
 } from '@alusa/finance';
-import type { CreatePaymentInput } from '@alusa/asaas';
+import type { AsaasCreatePaymentInput } from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import {
   cobrancaRouteParamsDTOSchema,
@@ -121,7 +121,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     // O DTO já normaliza aliases legados para o enum persistido.
     const formaPagamentoKey = formaPagamento;
     const billingType =
-      FORMA_PAGAMENTO_TO_ASAAS[formaPagamentoKey as keyof typeof FORMA_PAGAMENTO_TO_ASAAS] as CreatePaymentInput['billingType'] | undefined;
+      FORMA_PAGAMENTO_TO_ASAAS[formaPagamentoKey as keyof typeof FORMA_PAGAMENTO_TO_ASAAS] as AsaasCreatePaymentInput['billingType'] | undefined;
 
     if (!billingType) {
       return NextResponse.json(
@@ -154,7 +154,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         );
       }
 
-      const payload: Partial<CreatePaymentInput> = {
+      const payload: Partial<AsaasCreatePaymentInput> = {
         billingType,
         value: Number(currentPayment.value ?? cobranca.valor),
         dueDate: currentPayment.dueDate ?? cobranca.vencimento.toISOString().slice(0, 10),

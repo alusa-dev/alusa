@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
-import { getMyAccountCommercialInfo } from '@alusa/asaas';
+import { asaasGetMyAccountCommercialInfo } from '@alusa/finance';
 import { getKycSummary } from '@alusa/finance';
 import { loadAsaasCredentials } from '@alusa/database';
 import { contaFinanceOnboardingResultDTOSchema } from '@/features/conta/dtos';
@@ -76,7 +76,7 @@ export async function GET() {
     const commercialInfo = await (async () => {
       if (!creds?.apiKey) return null;
       try {
-        return await getMyAccountCommercialInfo({ apiKey: creds.apiKey });
+        return await asaasGetMyAccountCommercialInfo({ apiKey: creds.apiKey });
       } catch {
         return null;
       }

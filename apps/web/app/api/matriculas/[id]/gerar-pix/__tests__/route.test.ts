@@ -35,11 +35,11 @@ vi.mock('@alusa/lib', async () => {
 
   return {
     ...actual,
-    ensureAsaasCustomerForPayer: ensureAsaasCustomerForPayerMock,
   };
 });
 
 vi.mock('@alusa/finance', () => ({
+  ensureAsaasCustomerForPayer: ensureAsaasCustomerForPayerMock,
   createAsaasCustomer: vi.fn(async () => ({ success: true, data: { id: 'cust_1' } })),
   createAsaasPayment: vi.fn(async () => ({ success: false, error: 'KYC_NAO_APROVADO' })),
   formatDate: vi.fn(() => '2026-01-01'),

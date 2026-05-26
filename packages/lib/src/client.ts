@@ -19,3 +19,4 @@ export * from './hooks/useIsClient';
 export * from './math';
 // utils de convite seguros para client
 export { buildInviteUrl } from './invite/build-invite-url';
+export { formatNotificationWarningsForUi } from './notifications/format-notification-warnings-for-ui';

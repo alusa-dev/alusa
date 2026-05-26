@@ -5,6 +5,70 @@ import { registerAsaasHooksIntegration as initializeAsaasHooksIntegration } from
 // ═══════════════════════════════════════════════════════════════════════════
 export * from './core';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Integration contracts — Asaas (fachada para apps/web e packages/lib)
+// @see docs/adr-asaas-layer-boundaries.md
+// ─────────────────────────────────────────────────────────────────────────────
+export type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
+export {
+  parseExternalReference as parseExternalReferenceV1,
+  buildExternalReference as buildExternalReferenceV1,
+} from '@alusa/asaas-gateway';
+export {
+  ASAAS_PAID_STATUSES,
+  ASAAS_FAILED_STATUSES,
+  ASAAS_PENDING_STATUSES,
+  isAsaasPaidStatus,
+  isAsaasFailedStatus,
+  isAsaasPendingStatus,
+} from './mappers/asaas-status-groups';
+export {
+  ASAAS_SUBSCRIPTION_STATUS,
+  isAsaasSubscriptionActive,
+  type AsaasSubscriptionStatus,
+} from './mappers/asaas-subscription-status';
+export {
+  BillingV2Flags,
+  isBillingV2FlagEnabled,
+  getBillingV2Flags,
+  type BillingV2FlagName,
+} from './foundation/billing-v2-flags';
+export { AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
+export {
+  getAsaasBaseUrlFromEnvOrThrow,
+  getAsaasBaseUrlForApiKeyOrThrow,
+} from '@alusa/asaas';
+export {
+  ensureAsaasCustomerForPayer,
+  loadAndValidateSubaccountKey,
+  AsaasCustomerEnsureError,
+  type EnsureAsaasCustomerPayer,
+  type EnsureAsaasCustomerError,
+  type EnsureAsaasCustomerResult,
+  type LoadKeyResult,
+} from './use-cases/ensure-asaas-customer-for-payer';
+export { deleteAsaasCustomerForTenant } from './use-cases/delete-asaas-customer-for-tenant';
+export {
+  syncAlunoInativacaoToAsaas,
+  syncAlunoToAsaasProvider,
+} from './use-cases/aluno-asaas-lifecycle';
+export {
+  createCustomer as asaasCreateCustomer,
+  getCustomer as asaasGetCustomer,
+  listCustomers as asaasListCustomers,
+  getMyAccountCommercialInfo as asaasGetMyAccountCommercialInfo,
+  getMyAccountStatus as asaasGetMyAccountStatus,
+  listSubaccounts as asaasListSubaccounts,
+} from '@alusa/asaas';
+export type {
+  AsaasPayment,
+  CreatePaymentInput as AsaasCreatePaymentInput,
+  BillingType as AsaasBillingType,
+  Cycle,
+  PaymentStatus as AsaasPaymentStatus,
+  SubscriptionStatus as AsaasRawSubscriptionStatus,
+} from '@alusa/asaas';
+
 // Customer Service
 export { canInactivateCustomer, inactivateCustomerIfSafe } from './customer/asaas-customer.service';
 export type {
@@ -62,7 +126,7 @@ export type {
 export { mapAsaasStatusToInternal, getStatusBadgeConfig } from './mappers/status-mapper';
 export { resolveLiquidacaoFromAsaasPayment } from './mappers/liquidacao-from-asaas';
 export type { ResolveLiquidacaoFromAsaasInput } from './mappers/liquidacao-from-asaas';
-export { resolveCobrancaDisplayStatus, isCobrancaStatusTerminal } from './mappers/cobranca-display-status';
+export { resolveCobrancaDisplayStatus, isCobrancaStatusTerminal, calculateCobrancaDynamicStatus, calculateDynamicStatus } from './mappers/cobranca-display-status';
 export type { CobrancaDisplayStatus } from './mappers/cobranca-display-status';
 
 export {

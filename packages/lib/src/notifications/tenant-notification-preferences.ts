@@ -77,18 +77,4 @@ export function channelsFromSelection(
   };
 }
 
-export function formatNotificationWarningsForUi(
-  warnings: Array<{ channel: string; message: string; code?: string }>,
-): string[] {
-  return warnings.map((warning) => {
-    const channelLabel =
-      warning.channel === 'whatsapp'
-        ? 'WhatsApp'
-        : warning.channel === 'sms'
-          ? 'SMS'
-          : warning.channel === 'email'
-            ? 'E-mail'
-            : warning.channel;
-    return `${channelLabel}: ${warning.message}`;
-  });
-}
+export { formatNotificationWarningsForUi } from './format-notification-warnings-for-ui';

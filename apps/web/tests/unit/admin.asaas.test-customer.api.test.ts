@@ -25,16 +25,16 @@ vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
 }));
 
-vi.mock('@alusa/asaas', () => ({
-  listCustomers: vi.fn(),
-  createCustomer: vi.fn(),
-  getCustomer: vi.fn(),
+vi.mock('@alusa/finance', () => ({
+  asaasListCustomers: vi.fn(),
+  asaasCreateCustomer: vi.fn(),
+  asaasGetCustomer: vi.fn(),
 }));
 
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/src/prisma';
 import { loadAsaasCredentials } from '@alusa/database';
-import { getCustomer, listCustomers } from '@alusa/asaas';
+import { asaasGetCustomer, asaasListCustomers } from '@alusa/finance';
 import { GET } from '@/app/api/admin/asaas/test-customer/route';
 
 function makeRequest(url: string) {
@@ -65,10 +65,10 @@ describe('GET /api/admin/asaas/test-customer', () => {
       asaasCredential: { apiKeyEncrypted: 'encrypted' },
     } as never);
     vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'asaas-key' } as never);
-    vi.mocked(listCustomers).mockResolvedValue({
+    vi.mocked(asaasListCustomers).mockResolvedValue({
       data: [{ id: 'cus_1', deleted: false }],
     } as never);
-    vi.mocked(getCustomer).mockResolvedValue({ id: 'cus_1' } as never);
+    vi.mocked(asaasGetCustomer).mockResolvedValue({ id: 'cus_1' } as never);
 
     const response = await GET(
       makeRequest('http://localhost/api/admin/asaas/test-customer?contaId=conta-1'),

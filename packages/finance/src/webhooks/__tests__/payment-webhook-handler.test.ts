@@ -6,7 +6,7 @@ const { mockUpdateFinanceStatusFromPayment } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('@alusa/asaas-gateway', () => {
+vi.mock('../../foundation/billing-v2-flags', () => {
   return {
     isBillingV2FlagEnabled: vi.fn(() => false),
   };
@@ -78,7 +78,7 @@ describe('handlePaymentWebhook', () => {
     vi.resetAllMocks();
     mockUpdateFinanceStatusFromPayment.mockResolvedValue({ success: true });
 
-    const { isBillingV2FlagEnabled } = await import('@alusa/asaas-gateway');
+    const { isBillingV2FlagEnabled } = await import('../../foundation/billing-v2-flags');
     const { prisma } = await import('@alusa/database');
     vi.mocked(isBillingV2FlagEnabled).mockReturnValue(false);
     vi.mocked(prisma.$transaction).mockImplementation(

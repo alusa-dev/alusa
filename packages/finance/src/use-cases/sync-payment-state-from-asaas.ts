@@ -1,4 +1,4 @@
-import type { AsaasPaymentStatus } from '@alusa/asaas-gateway';
+import type { PaymentStatus as AsaasRawPaymentStatus } from '@alusa/asaas';
 import { emitBillingNotificationCandidate } from '@alusa/lib';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
@@ -69,7 +69,7 @@ export async function syncPaymentStateFromAsaas(
     event: appliedEvent,
     payment: {
       id: payment.id,
-      status: payment.status as AsaasPaymentStatus,
+      status: payment.status as AsaasRawPaymentStatus,
       value: Number(payment.value ?? 0),
       netValue: Number(payment.netValue ?? payment.value ?? 0),
       originalValue: payment.originalValue ?? null,

@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@alusa/lib/prisma';
-import { calculateDynamicStatus } from '@/lib/asaas-status-mapper';
+import { calculateCobrancaDynamicStatus } from '@alusa/finance';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { invalidateChargesCache } from '@/lib/cache/invalidation';
@@ -144,7 +144,7 @@ export async function GET(req: NextRequest) {
     const cobrancasComStatusAtualizado = cobrancas.map((cobranca) => ({
       ...cobranca,
       // Calcular status dinâmico mantendo imutabilidade de status finais
-      statusCalculado: calculateDynamicStatus(cobranca.status, cobranca.vencimento),
+      statusCalculado: calculateCobrancaDynamicStatus(cobranca.status, cobranca.vencimento),
       // Informações derivadas úteis para UI
       diasAteVencimento: Math.floor(
         (new Date(cobranca.vencimento).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24),

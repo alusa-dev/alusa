@@ -4,8 +4,8 @@
  * Permite que um correlationId gerado no ingress (webhook, API route)
  * seja acessível por qualquer serviço downstream sem prop-drilling.
  */
-import { AsyncLocalStorage } from 'async_hooks';
-import { randomUUID } from 'crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 
 interface CorrelationContext {
   correlationId: string;

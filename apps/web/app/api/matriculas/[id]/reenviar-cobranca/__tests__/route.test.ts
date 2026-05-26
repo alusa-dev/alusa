@@ -38,11 +38,11 @@ vi.mock('@alusa/finance', () => ({
   getAsaasPaymentDetails: getAsaasPaymentDetailsMock,
   formatDate: vi.fn(() => '2026-01-01'),
   mapAsaasPaymentStatusToCobranca: vi.fn(() => 'A_VENCER'),
+  ensureAsaasCustomerForPayer: vi.fn(),
   KycNotApprovedError: class KycNotApprovedError extends Error {},
 }));
 
 vi.mock('@alusa/lib', () => ({
-  ensureAsaasCustomerForPayer: vi.fn(),
   calcIdade: vi.fn(() => 25),
 }));
 

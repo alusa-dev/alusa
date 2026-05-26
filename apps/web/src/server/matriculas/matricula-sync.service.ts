@@ -8,7 +8,7 @@ import {
   getSubscription,
   pauseAssinatura,
 } from '@alusa/finance';
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasHttpError } from '@alusa/finance';
 
 export class ManualSyncError extends Error {
   readonly statusCode: number;

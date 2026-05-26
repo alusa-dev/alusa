@@ -69,6 +69,7 @@ const nextConfig = {
     '@sentry/opentelemetry',
     '@sentry/react',
     '@sentry/browser',
+    '@alusa/finance',
   ],
   transpilePackages: ['@alusa/lib', '@alusa/ui', 'konva'],
   experimental: {
@@ -112,19 +113,30 @@ const nextConfig = {
       },
     ];
   },
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};
     config.resolve.alias['@alusa/asaas'] = resolvePath(__dirname, '../../packages/asaas/dist/index.js');
-    const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist/lib/src');
+    const libDistSrc = resolvePath(__dirname, '../../packages/lib/dist');
     config.resolve.alias['@alusa/lib/cpf-cnpj'] = resolvePath(libDistSrc, 'utils/cpf-cnpj.js');
+    config.resolve.alias['@alusa/lib/date-only'] = resolvePath(libDistSrc, 'utils/date-only.js');
+    config.resolve.alias['@alusa/lib/errors/asaas-customer-ensure-error'] = resolvePath(
+      libDistSrc,
+      'errors/asaas-customer-ensure-error.js',
+    );
     config.resolve.alias['@alusa/lib/client'] = resolvePath(libDistSrc, 'client.js');
     config.resolve.alias['@alusa/lib/events/map'] = resolvePath(libDistSrc, 'events/map');
     config.resolve.alias['@alusa/lib/events'] = resolvePath(libDistSrc, 'events');
     config.resolve.alias['@alusa/lib/prisma'] = resolvePath(libDistSrc, 'prisma.js');
     config.resolve.alias['@alusa/lib/server'] = resolvePath(libDistSrc, 'server.js');
     config.resolve.alias['@alusa/lib'] = resolvePath(libDistSrc, 'index.js');
+    if (!isServer) {
+      config.resolve.alias['@alusa/finance$'] = resolvePath(
+        __dirname,
+        'lib/stubs/server-only-finance.ts',
+      );
+    }
     // konva: externaliza canvas (não disponível no Edge/SSR).
     config.externals = [...(Array.isArray(config.externals) ? config.externals : []), { canvas: 'canvas' }];
     return config;

@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { createAsaasPayment, formatDate, getAsaasPaymentDetails, KycNotApprovedError } from '@alusa/finance';
-import { ensureAsaasCustomerForPayer } from '@alusa/lib';
+import { ensureAsaasCustomerForPayer } from '@alusa/finance';
 import { matriculaGerarPixResultDTOSchema, matriculaRouteParamsDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaGerarPixResultToDTO } from '@/features/cadastro/matriculas/mappers';
 
@@ -18,7 +18,7 @@ export async function POST(
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(params);
+    const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await params);
     const { contaId } = session.user;
 
     // Buscar matrícula com cobrança de taxa - MULTI-TENANT

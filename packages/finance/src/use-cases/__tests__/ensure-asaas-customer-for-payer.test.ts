@@ -1,8 +1,8 @@
 import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 
-import { ensureAsaasCustomerForPayer } from './ensure-asaas-customer';
-import { encryptSecret } from '../../security/encryption';
+import { ensureAsaasCustomerForPayer } from '../ensure-asaas-customer-for-payer';
+import { encryptSecret } from '@alusa/database';
 
 const {
   listCustomersMock,
@@ -32,8 +32,8 @@ vi.mock('@alusa/asaas', async (importOriginal) => {
   };
 });
 
-vi.mock('../../services/integracoes/asaas-notifications.service', () => ({
-  applyAsaasNotificationPreferencesToCustomer: applyNotificationPreferencesMock,
+vi.mock('../../services/customer-notification-bridge', () => ({
+  syncCustomerNotificationChannelsFromTenantPreferences: applyNotificationPreferencesMock,
 }));
 
 const prisma = new PrismaClient();

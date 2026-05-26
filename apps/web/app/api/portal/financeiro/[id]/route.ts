@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { AsaasEnvError, getPayment, isAsaasEnabled } from '@alusa/finance';
-import type { AsaasPayment } from '@alusa/asaas';
+import type { AsaasPayment } from '@alusa/finance';
 import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
 import {
   portalFinanceiroDetailDTOSchema,

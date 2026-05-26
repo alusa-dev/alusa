@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/src/prisma';
-import { createCustomer, getCustomer, listCustomers } from '@alusa/asaas';
+import {
+  AsaasHttpError,
+  asaasCreateCustomer,
+  asaasGetCustomer,
+  asaasListCustomers,
+} from '@alusa/finance';
 import { loadAsaasCredentials } from '@alusa/database';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import {
@@ -60,7 +65,7 @@ export async function GET(request: NextRequest) {
     }
 
     const steps: string[] = [];
-    const list = await listCustomers({
+    const list = await asaasListCustomers({
       apiKey: credentials.apiKey,
       cpfCnpj: TEST_CPF,
       limit: 1,
@@ -71,7 +76,7 @@ export async function GET(request: NextRequest) {
     const externalReference = `sandbox-test:${contaId}`;
 
     if (!customer) {
-      customer = await createCustomer({
+      customer = await asaasCreateCustomer({
         apiKey: credentials.apiKey,
         idempotencyKey: externalReference,
         data: {
@@ -85,7 +90,7 @@ export async function GET(request: NextRequest) {
       steps.push('CREATE_CUSTOMER');
     }
 
-    const verified = await getCustomer({
+    const verified = await asaasGetCustomer({
       apiKey: credentials.apiKey,
       customerId: customer.id,
     });

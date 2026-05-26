@@ -19,7 +19,7 @@ import {
   auditLogService,
 } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
-import type { CreatePaymentInput } from '@alusa/asaas';
+import type { AsaasCreatePaymentInput } from '@alusa/finance';
 import {
   cobrancaDetailResultDTOSchema,
   cobrancaMutationResultDTOSchema,
@@ -184,7 +184,7 @@ function buildAsaasPaymentUpdatePayload(params: {
     desconto?: unknown;
     normalizedDescontoTipo?: string | undefined;
   };
-}): Partial<CreatePaymentInput> {
+}): Partial<AsaasCreatePaymentInput> {
   const {
     currentPayment,
     changes: {
@@ -201,7 +201,7 @@ function buildAsaasPaymentUpdatePayload(params: {
     },
   } = params;
 
-  const payload: Partial<CreatePaymentInput> = {
+  const payload: Partial<AsaasCreatePaymentInput> = {
     billingType: currentPayment.billingType ?? 'UNDEFINED',
     value: valor !== undefined ? Number(valor) : Number(currentPayment.value ?? 0),
     dueDate:

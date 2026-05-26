@@ -1,4 +1,4 @@
-import { formatNotificationWarningsForUi } from '@alusa/lib';
+import { formatNotificationWarningsForUi } from '@alusa/lib/client';
 import { toast, CustomToast } from '@/components/ui/toast';
 
 export type NotificationSyncWarningLike = {

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSessionUser } from '@/lib/auth/session';
-import { loadAndValidateSubaccountKey } from '@alusa/lib';
-import { AsaasHttpError, getCustomer } from '@alusa/asaas';
+import { loadAndValidateSubaccountKey, AsaasHttpError, asaasGetCustomer } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -67,7 +66,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const customer = await getCustomer({
+    const customer = await asaasGetCustomer({
       apiKey: keyResult.apiKey,
       customerId,
       headers: {

@@ -1,4 +1,4 @@
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasHttpError } from '@alusa/finance';
 
 function extractAsaasErrorMessage(error: AsaasHttpError): string | null {
   const responseBody = error.responseBody;

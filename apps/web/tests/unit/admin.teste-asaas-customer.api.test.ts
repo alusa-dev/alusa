@@ -9,21 +9,25 @@ vi.mock('@/lib/auth/session', () => ({
   getSessionUser: vi.fn(),
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/finance', () => ({
   loadAndValidateSubaccountKey: vi.fn(),
+  asaasGetCustomer: vi.fn(),
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status: number;
+    responseBody?: unknown;
+    response?: unknown;
+    constructor(message: string, status: number, payload?: { errors?: unknown; responseBody?: unknown; response?: unknown }) {
+      super(message);
+      this.name = 'AsaasHttpError';
+      this.status = status;
+      this.responseBody = payload;
+      this.response = payload;
+    }
+  },
 }));
 
-vi.mock('@alusa/asaas', async () => {
-  const actual = await vi.importActual<typeof import('@alusa/asaas')>('@alusa/asaas');
-  return {
-    ...actual,
-    getCustomer: vi.fn(),
-  };
-});
-
 import { getSessionUser } from '@/lib/auth/session';
-import { loadAndValidateSubaccountKey } from '@alusa/lib';
-import { AsaasHttpError, getCustomer } from '@alusa/asaas';
+import { AsaasHttpError, asaasGetCustomer, loadAndValidateSubaccountKey } from '@alusa/finance';
 import { POST } from '@/app/api/admin/teste-asaas/customer/route';
 
 const buildPostRequest = (body: unknown): NextRequest =>
@@ -129,7 +133,7 @@ describe('POST /api/admin/teste-asaas/customer', () => {
       apiKey: 'test-api-key-placeholder',
       source: 'ASAAS_ACCOUNT',
     });
-    vi.mocked(getCustomer).mockResolvedValueOnce({ id: 'cus_12345678', name: 'Teste' } as never);
+    vi.mocked(asaasGetCustomer).mockResolvedValueOnce({ id: 'cus_12345678', name: 'Teste' } as never);
 
     const res = await POST(buildPostRequest({ customerId: 'cus_12345678' }));
     expect(res.status).toBe(200);
@@ -149,7 +153,7 @@ describe('POST /api/admin/teste-asaas/customer', () => {
       source: 'ASAAS_ACCOUNT',
     });
 
-    vi.mocked(getCustomer).mockRejectedValueOnce(
+    vi.mocked(asaasGetCustomer).mockRejectedValueOnce(
       new AsaasHttpError('Not found', 404, { errors: [{ description: 'Not found' }] }),
     );
 

@@ -20,7 +20,7 @@
  */
 
 import type { StatusCobranca, ChargeStatus } from '@prisma/client';
-import type { AsaasPaymentStatus } from '@alusa/asaas-gateway';
+import type { PaymentStatus as AsaasPaymentStatus } from '@alusa/asaas';
 import type { PaymentStatus } from '@alusa/shared';
 import { mapAsaasStatusToInternal } from './status-mapper';
 

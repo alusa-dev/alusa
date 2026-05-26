@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import type { Status } from '@prisma/client';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
-import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput, AsaasCustomerEnsureError } from '@alusa/lib';
+import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput } from '@alusa/lib';
+import { AsaasCustomerEnsureError } from '@alusa/finance';
 import {
   createAlunoInputDTOSchema,
   alunoDetailDTOSchema,

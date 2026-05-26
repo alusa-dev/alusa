@@ -9,7 +9,7 @@ import {
   getPayment,
   updatePayment,
 } from '@alusa/finance';
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasHttpError } from '@alusa/finance';
 import { validatePausa, validateReativacao, validarCapacidade } from '@alusa/domain';
 import type { TurmaCapacidadeInfo } from '@alusa/domain';
 

@@ -20,9 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@alusa/asaas": "workspace:*",
-    "@alusa/database": "workspace:*",
-    "@alusa/shared": "workspace:*"
+    "@alusa/asaas": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",

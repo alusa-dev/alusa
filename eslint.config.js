@@ -87,6 +87,96 @@ export default [
       'no-restricted-imports': 'off',
     },
   },
+  {
+    files: ['apps/web/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@alusa/asaas',
+              message: 'Use @alusa/finance como fachada de integração Asaas.',
+            },
+            {
+              name: '@alusa/asaas-gateway',
+              message: 'Contratos Asaas devem vir de @alusa/finance.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/lib/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@alusa/asaas',
+              message: 'Orquestração Asaas pertence a @alusa/finance.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/lib/src/alunos/sync-aluno-asaas.ts.disabled'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
+  {
+    files: ['packages/asaas-gateway/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@alusa/database',
+              message: 'Gateway não acessa banco.',
+            },
+            {
+              name: '@alusa/finance',
+              message: 'Gateway não depende da camada de negócio.',
+            },
+            {
+              name: '@prisma/client',
+              message: 'Gateway não acessa Prisma.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/asaas/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@alusa/database',
+              message: 'Cliente HTTP puro — sem persistência.',
+            },
+            {
+              name: '@alusa/finance',
+              message: 'Cliente HTTP puro — sem dependência invertida.',
+            },
+            {
+              name: '@prisma/client',
+              message: 'Cliente HTTP puro — sem Prisma.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Override sem type-aware para libs internas adicionadas recentemente (evita erro de project include)
   {
     files: ['apps/web/lib/**/*.{ts,tsx}'],

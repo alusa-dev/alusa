@@ -4,6 +4,7 @@ import './zod-error-map';
 export * from './hooks/useIsClient';
 export * from './math';
 export * from './alunos/aluno.schema';
+export { digits, nullifyEmpty } from './alunos/map-flatten';
 export * from './alunos/aluno.service';
 // Aluno Archive Policy
 export * from './alunos/policies';

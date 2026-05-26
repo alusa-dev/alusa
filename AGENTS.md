@@ -47,6 +47,7 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 - Regras puras de domínio devem ficar em `packages/domain`.
 - Casos de uso financeiros devem ficar em `packages/finance`.
 - Cliente HTTP e contratos de integração com Asaas devem ficar em `packages/asaas` ou `packages/asaas-gateway`.
+- Fronteiras de camada: [docs/adr-asaas-layer-boundaries.md](docs/adr-asaas-layer-boundaries.md).
 - Serviços compartilhados, schemas e utilitários devem ficar em `packages/lib` ou `packages/shared`, conforme responsabilidade.
 - Utilitários de banco e Prisma devem ficar em `packages/database`.
 - Componentes reutilizáveis de interface devem ficar em `packages/ui`.

@@ -1,5 +1,5 @@
 import { FormaPagamento } from '@prisma/client';
-import type { BillingType } from '@alusa/asaas';
+import type { AsaasBillingType } from '@alusa/finance';
 
 import { mapFormaPagamentoToBillingType } from './recurring-billing';
 
@@ -44,7 +44,7 @@ export function resolveWizardPaymentSelection(input: {
 }
 
 export function isSupportedAsaasBillingType(
-  billingType: BillingType | null | undefined,
-): billingType is Exclude<BillingType, 'UNDEFINED'> {
+  billingType: AsaasBillingType | null | undefined,
+): billingType is Exclude<AsaasBillingType, 'UNDEFINED'> {
   return billingType === 'BOLETO' || billingType === 'PIX' || billingType === 'CREDIT_CARD';
 }

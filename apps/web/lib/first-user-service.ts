@@ -1,7 +1,12 @@
 import { ExternalAsaasOnboardingStatus, FinanceIntegrationMode, Role, type Usuario } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { listSubaccounts } from '@alusa/asaas';
-import { isAtLeastAgeYears, isValidCpfCnpjDigits, isValidDateOnly, normalizeCpfCnpjDigits, parseDateOnlyToUtcDate } from '@alusa/lib';
+import { asaasListSubaccounts } from '@alusa/finance';
+import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import {
+  isAtLeastAgeYears,
+  isValidDateOnly,
+  parseDateOnlyToUtcDate,
+} from '@alusa/lib/date-only';
 import { hashPassword, passwordPolicyMessage, passwordPolicyRegex } from '@/lib/auth-password';
 import prisma from '@/lib/prisma';
 
@@ -80,7 +85,7 @@ export async function checkFirstUserRegistrationAvailability(
   }
 
   try {
-    const response = await listSubaccounts({
+    const response = await asaasListSubaccounts({
       apiKey: masterApiKey,
       email: normalizedEmail,
       limit: 1,

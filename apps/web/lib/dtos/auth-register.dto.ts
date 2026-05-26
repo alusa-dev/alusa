@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { isAtLeastAgeYears, isValidCpfCnpjDigits, isValidDateOnly, normalizeCpfCnpjDigits } from '@alusa/lib';
+import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
+import { isAtLeastAgeYears, isValidDateOnly } from '@alusa/lib/date-only';
 
 const passwordMinLength = Number(process.env.PASSWORD_MIN_LENGTH || 8);
 const passwordMessage =

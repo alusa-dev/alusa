@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
 import { createAsaasPayment, formatDate, getAsaasPaymentDetails, KycNotApprovedError, mapAsaasPaymentStatusToCobranca } from '@alusa/finance';
-import { ensureAsaasCustomerForPayer } from '@alusa/lib';
+import { ensureAsaasCustomerForPayer } from '@alusa/finance';
 import { StatusCobranca } from '@prisma/client';
 import { calcIdade } from '@alusa/lib';
 import {
@@ -33,7 +33,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(params);
+    const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await params);
 
     // Busca a matrícula e suas cobranças pendentes
     const matricula = await prisma.matricula.findFirst({

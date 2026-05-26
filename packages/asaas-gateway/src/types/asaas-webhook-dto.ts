@@ -3,7 +3,7 @@
  * Tipos dos payloads recebidos nos webhooks
  */
 
-import type { AsaasPaymentStatus } from './asaas-payment-status';
+import type { PaymentStatus } from '@alusa/asaas';
 import type { AsaasSubscriptionStatus } from './asaas-subscription-status';
 
 /**
@@ -15,7 +15,7 @@ export interface AsaasWebhookPayment {
   value: number;
   netValue: number;
   originalValue?: number;
-  status: AsaasPaymentStatus;
+  status: PaymentStatus;
   dueDate: string;
   paymentDate?: string | null;
   clientPaymentDate?: string | null;

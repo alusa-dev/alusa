@@ -3,32 +3,40 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "dist/lib/src/index.js",
-  "types": "dist/lib/src/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/lib/src/index.d.ts",
-      "default": "./dist/lib/src/index.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./client": {
-      "types": "./dist/lib/src/client.d.ts",
-      "default": "./dist/lib/src/client.js"
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
     },
     "./cpf-cnpj": {
-      "types": "./dist/lib/src/utils/cpf-cnpj.d.ts",
-      "default": "./dist/lib/src/utils/cpf-cnpj.js"
+      "types": "./dist/utils/cpf-cnpj.d.ts",
+      "default": "./dist/utils/cpf-cnpj.js"
+    },
+    "./date-only": {
+      "types": "./dist/utils/date-only.d.ts",
+      "default": "./dist/utils/date-only.js"
+    },
+    "./errors/asaas-customer-ensure-error": {
+      "types": "./dist/errors/asaas-customer-ensure-error.d.ts",
+      "default": "./dist/errors/asaas-customer-ensure-error.js"
     },
     "./prisma": {
-      "types": "./dist/lib/src/prisma.d.ts",
-      "default": "./dist/lib/src/prisma.js"
+      "types": "./dist/prisma.d.ts",
+      "default": "./dist/prisma.js"
     },
     "./server": {
-      "types": "./dist/lib/src/server.d.ts",
-      "default": "./dist/lib/src/server.js"
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "test": "vitest run"
@@ -36,6 +44,7 @@
   "dependencies": {
     "@alusa/asaas": "workspace:*",
     "@alusa/domain": "workspace:*",
+    "@alusa/finance": "workspace:*",
     "@alusa/shared": "workspace:*",
     "@aws-sdk/client-s3": "^3.1040.0",
     "axios": "^1.12.2",

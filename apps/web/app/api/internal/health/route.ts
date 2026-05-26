@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
-import { getAsaasBaseUrlFromEnvOrThrow, AsaasBaseUrlError } from '@alusa/asaas';
+import { getAsaasBaseUrlFromEnvOrThrow, AsaasBaseUrlError } from '@alusa/finance';
 
 import { prisma } from '@/src/prisma';
 import { internalHealthResultDTOSchema } from '@/features/system/dtos';

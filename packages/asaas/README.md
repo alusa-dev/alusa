@@ -64,3 +64,5 @@ Este pacote é consumido exclusivamente por `packages/finance`, que adiciona:
 - Feature flags
 - Mapeamento de status
 - Persistência
+
+Ver também [docs/adr-asaas-layer-boundaries.md](../../docs/adr-asaas-layer-boundaries.md).

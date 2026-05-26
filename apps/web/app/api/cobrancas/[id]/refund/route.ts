@@ -10,7 +10,7 @@ import {
   auditLogService,
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasHttpError } from '@alusa/finance';
 import { randomUUID } from 'crypto';
 import {
   cobrancaActionResultDTOSchema,

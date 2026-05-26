@@ -1,5 +1,5 @@
 import { FormaPagamento, PeriodicidadePlano } from '@prisma/client';
-import type { BillingType, Cycle } from '@alusa/asaas';
+import type { AsaasBillingType, Cycle } from '@alusa/finance';
 
 function startOfToday(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -66,7 +66,7 @@ export function mapPeriodicidadeToCycle(periodicidade: PeriodicidadePlano): Cycl
 
 export function mapFormaPagamentoToBillingType(
   formaPagamento?: FormaPagamento | null,
-): BillingType | null {
+): AsaasBillingType | null {
   switch (formaPagamento) {
     case FormaPagamento.BOLETO:
       return 'BOLETO';
