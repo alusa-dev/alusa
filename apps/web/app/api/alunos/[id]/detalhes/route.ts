@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { getAsaasNotificationPreferences } from '@alusa/lib/services/integracoes/asaas-notifications.service';
+import { getAsaasNotificationPreferences } from '@alusa/finance';
 import { prisma } from '@/lib/prisma';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
 

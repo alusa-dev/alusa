@@ -12,13 +12,13 @@ import {
   getAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
   applyPreferencesToAllCustomers,
-} from '@alusa/lib';
+} from '@alusa/finance';
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
-vi.mock('@alusa/lib', () => ({
+vi.mock('@alusa/finance', () => ({
   getAsaasNotificationPreferences: vi.fn(),
   saveAsaasNotificationPreferences: vi.fn(),
   applyPreferencesToAllCustomers: vi.fn(),

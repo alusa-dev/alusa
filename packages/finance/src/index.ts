@@ -493,6 +493,23 @@ export {
   syncCustomerNotificationChannels,
 } from './services/customer-notification.service';
 export {
+  ensureAsaasNotificationPreferences,
+  getAsaasNotificationPreferences,
+  saveAsaasNotificationPreferences,
+  getAsaasCustomerNotificationPreferences,
+  saveAsaasCustomerNotificationPreferences,
+  applyAsaasNotificationPreferencesToCustomer,
+  listCustomerIdsWithAsaas,
+  applyPreferencesToAllCustomers,
+} from './services/asaas-notification-preferences.service';
+export type {
+  NotificationChannels,
+  NotificationPreferenceDTO,
+  NotificationPreferenceInput,
+  CustomerNotificationPreferenceDTO,
+  CustomerNotificationPreferenceInput,
+} from './services/asaas-notification-preferences.service';
+export {
   syncCustomerNotificationsForUserSelection,
   channelPreferencesFromWizardSelection,
 } from './services/sync-customer-notifications-at-charge';

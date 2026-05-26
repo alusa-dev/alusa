@@ -58,8 +58,6 @@ export * from './utils/cpf-cnpj';
 export * from './utils/date-only';
 // Integrações / Credenciais
 export * from './services/integracoes/asaas-credentials-service';
-export * from './services/integracoes/asaas-notifications.service';
-export * from './services/asaas/ensure-asaas-customer';
 // Sincronização de Matrículas
 // TODO: Fase 2 - refatorar matricula-sync para usar @alusa/asaas
 // export {

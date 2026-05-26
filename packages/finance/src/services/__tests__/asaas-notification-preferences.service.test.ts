@@ -15,19 +15,20 @@ const prismaMock = {
   $transaction: vi.fn(),
 };
 
-vi.mock('../../../prisma', () => ({
+vi.mock('@alusa/database', () => ({
   prisma: prismaMock,
+  decryptSecret: vi.fn((value: string | null | undefined) => value ?? null),
 }));
 
-vi.mock('../../../security/encryption', () => ({
-  decryptSecret: vi.fn((value: string | null | undefined) => value ?? null),
+vi.mock('@alusa/lib', () => ({
+  loadTenantNotificationEventPreferences: vi.fn().mockResolvedValue([]),
 }));
 
 const {
   applyAsaasNotificationPreferencesToCustomer,
   ensureAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
-} = await import('../asaas-notifications.service');
+} = await import('../asaas-notification-preferences.service');
 
 function buildPreference(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,7 +49,7 @@ function buildPreference(overrides: Record<string, unknown> = {}) {
   };
 }
 
-describe('asaas-notifications.service', () => {
+describe('asaas-notification-preferences.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => Promise<unknown>) =>
@@ -149,20 +150,22 @@ describe('asaas-notifications.service', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch');
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: [
-        {
-          id: 'not-1',
-          event: 'PAYMENT_CREATED',
-          scheduleOffset: 0,
-          enabled: true,
-          emailEnabledForProvider: false,
-          smsEnabledForProvider: false,
-          emailEnabledForCustomer: true,
-          smsEnabledForCustomer: true,
-          whatsappEnabledForCustomer: false,
-          phoneCallEnabledForCustomer: false,
-        },
-      ] }),
+      json: async () => ({
+        data: [
+          {
+            id: 'not-1',
+            event: 'PAYMENT_CREATED',
+            scheduleOffset: 0,
+            enabled: true,
+            emailEnabledForProvider: false,
+            smsEnabledForProvider: false,
+            emailEnabledForCustomer: true,
+            smsEnabledForCustomer: true,
+            whatsappEnabledForCustomer: false,
+            phoneCallEnabledForCustomer: false,
+          },
+        ],
+      }),
     } as Response);
     fetchMock.mockResolvedValueOnce({
       ok: true,

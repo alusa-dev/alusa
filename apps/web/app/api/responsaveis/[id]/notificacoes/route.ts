@@ -5,7 +5,7 @@ import {
   getAsaasCustomerNotificationPreferences,
   saveAsaasCustomerNotificationPreferences,
   type CustomerNotificationPreferenceInput,
-} from '@alusa/lib';
+} from '@alusa/finance';
 
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';

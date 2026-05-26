@@ -3,12 +3,8 @@ import type {
   AsaasNotificationPreference,
 } from '@prisma/client';
 import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
-import { decryptSecret } from '../../security/encryption';
-import { PrismaClient } from '@prisma/client';
-import { prisma as sharedPrisma } from '../../prisma';
-import { loadTenantNotificationEventPreferences } from '../../notifications/tenant-notification-preferences';
-
-const prisma: PrismaClient = sharedPrisma as unknown as PrismaClient;
+import { decryptSecret, prisma } from '@alusa/database';
+import { loadTenantNotificationEventPreferences } from '@alusa/lib';
 
 async function loadDecryptedAsaasCredentials(contaId: string) {
   const [profile, conta] = await Promise.all([

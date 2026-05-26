@@ -6,7 +6,7 @@ import {
   getAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
   type NotificationPreferenceInput,
-} from '@alusa/lib';
+} from '@alusa/finance';
 import {
   asaasNotificationPreferencesResultDTOSchema,
   saveAsaasNotificationPreferencesResultDTOSchema,
