@@ -520,9 +520,6 @@ importers:
       '@alusa/domain':
         specifier: workspace:*
         version: link:../domain
-      '@alusa/finance':
-        specifier: workspace:*
-        version: link:../finance
       '@alusa/shared':
         specifier: workspace:*
         version: link:../shared
