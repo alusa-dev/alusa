@@ -290,4 +290,4 @@ await updateFinanceStatusFromPayment({
 ## Referências
 
 - [Asaas Webhooks Docs](https://docs.asaas.com)
-- [docs/Doc Asaas/](../../../docs/Doc%20Asaas/)
+- [Documentação oficial Asaas](https://docs.asaas.com)

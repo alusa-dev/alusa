@@ -118,9 +118,8 @@ Integrações financeiras (ex.: **:contentReference[oaicite:0]{index=0}**) **nã
   - status sincronizado
   - timestamp da última sync
 
-📌 Fonte da verdade Asaas:
-`docs/Doc Asaas/`  
-Use MCP apenas para confirmar detalhes oficiais quando necessário.
+📌 Fonte da verdade Asaas: **MCP Asaas** e https://docs.asaas.com  
+Use MCP para confirmar detalhes oficiais quando necessário.
 
 ---
 

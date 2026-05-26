@@ -1,5 +1,5 @@
 'use client';
-import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, snapSmartCorridorRotation, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
+import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeRotation, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
 import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, EventSeatGroupDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, SeatGridConfig } from '@alusa/domain';
 
 import { create } from 'zustand';
@@ -59,6 +59,7 @@ type EventMapEditorState = {
   updateMapItems: (updates: {
     objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
     seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+    seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
     skipSeatBaseLayoutTranslation?: boolean;
     skipCorridorReflow?: boolean;
   }) => void;
@@ -131,6 +132,7 @@ function buildRedoUpdateItems(
 ): MapCommand {
   const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
   const seats: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
+  const seatGroups: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }> = [];
   const sections: Array<{ id: string; patch: Partial<EventMapSectionDTO> }> = [];
   const levels: Array<{ id: string; patch: Partial<EventMapLevelDTO> }> = [];
 
@@ -167,6 +169,26 @@ function buildRedoUpdateItems(
     }
     if (changed) {
       seats.push({ id: next.id, patch });
+    }
+  }
+
+  for (const next of nextMap.seatGroups ?? []) {
+    const prev = (map.seatGroups ?? []).find((g) => g.id === next.id);
+    if (!prev) continue;
+    const patch: Partial<EventSeatGroupDTO> = {};
+    let changed = false;
+    for (const key of ['x', 'y', 'rotation', 'rows', 'columns', 'seatWidth', 'seatHeight', 'gapX', 'gapY', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'locked', 'name'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = next[key];
+        changed = true;
+      }
+    }
+    if (JSON.stringify(prev.numbering) !== JSON.stringify(next.numbering)) {
+      patch.numbering = next.numbering;
+      changed = true;
+    }
+    if (changed) {
+      seatGroups.push({ id: next.id, patch });
     }
   }
 
@@ -207,6 +229,7 @@ function buildRedoUpdateItems(
     payload: {
       objects,
       seats,
+      seatGroups,
       sections,
       levels,
       skipCorridorReflow: true,
@@ -424,10 +447,10 @@ function applyObjectPatchWithCorridorMetadata(
 
   if (next.type === 'CORRIDOR' && hasCorridorGeometryPatch(patch)) {
     if (isCorridorRotationOnlyTransform(patch, previous) && typeof patch.rotation === 'number') {
-      applyCorridorRotationPreservingCenter(next, patch.rotation, previous);
+      applyCorridorRotationPreservingCenter(next, patch.rotation, previous, { snap: false });
     } else {
       if (typeof patch.rotation === 'number') {
-        next.rotation = snapSmartCorridorRotation(patch.rotation);
+        next.rotation = normalizeRotation(patch.rotation);
       }
       reconcileCorridorGeometry(next);
     }
@@ -618,13 +641,14 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: [{ id, patch }] } })),
   updateObjects: (updates) =>
     set((state) => runCommand(state, { type: 'UPDATE_ITEMS', payload: { objects: updates } })),
-  updateMapItems: ({ objects = [], seats = [], skipSeatBaseLayoutTranslation, skipCorridorReflow }) =>
+  updateMapItems: ({ objects = [], seats = [], seatGroups = [], skipSeatBaseLayoutTranslation, skipCorridorReflow }) =>
     set((state) =>
       runCommand(state, {
         type: 'UPDATE_ITEMS',
         payload: {
           objects,
           seats,
+          seatGroups,
           skipSeatBaseLayoutTranslation,
           skipCorridorReflow,
         },

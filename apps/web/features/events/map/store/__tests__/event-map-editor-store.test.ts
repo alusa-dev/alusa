@@ -92,6 +92,79 @@ function createMap(): EventMapDTO {
   };
 }
 
+function createMapWithSeatGroup(): EventMapDTO {
+  const map = createMap();
+  return {
+    ...map,
+    seatGroups: [
+      {
+        id: 'group-1',
+        levelId: 'level-1',
+        name: 'Grid 1',
+        x: 100,
+        y: 120,
+        rotation: 0,
+        rows: 1,
+        columns: 2,
+        seatWidth: 20,
+        seatHeight: 20,
+        gapX: 10,
+        gapY: 10,
+        paddingTop: 4,
+        paddingRight: 4,
+        paddingBottom: 4,
+        paddingLeft: 4,
+        numbering: { rowPrefix: 'A', startNumber: 1, direction: 'left-to-right' },
+        locked: false,
+      },
+    ],
+    seats: [
+      ...map.seats,
+      {
+        id: 'seat-g1',
+        levelId: 'level-1',
+        sectionId: 'section-1',
+        objectId: null,
+        groupId: 'group-1',
+        rowIndex: 0,
+        columnIndex: 0,
+        technicalCode: 'SETOR-1-A1',
+        displayLabel: 'A1',
+        rowLabel: 'A',
+        seatNumber: '1',
+        status: 'AVAILABLE',
+        accessible: false,
+        publicVisible: true,
+        x: 114,
+        y: 134,
+        size: 20,
+        rotation: 0,
+      },
+      {
+        id: 'seat-g2',
+        levelId: 'level-1',
+        sectionId: 'section-1',
+        objectId: null,
+        groupId: 'group-1',
+        rowIndex: 0,
+        columnIndex: 1,
+        technicalCode: 'SETOR-1-A2',
+        displayLabel: 'A2',
+        rowLabel: 'A',
+        seatNumber: '2',
+        status: 'AVAILABLE',
+        accessible: false,
+        publicVisible: true,
+        x: 144,
+        y: 134,
+        size: 20,
+        rotation: 0,
+      },
+    ],
+    counts: { ...map.counts, seats: 3, availableSeats: 3 },
+  };
+}
+
 describe('event-map-editor-store history', () => {
   it('undoes and redoes mixed group movement as one history entry', () => {
     const store = useEventMapEditorStore;
@@ -116,6 +189,31 @@ describe('event-map-editor-store history', () => {
     store.getState().redo();
     expect(store.getState().map?.objects.map((object) => object.x)).toEqual([120, 260]);
     expect(store.getState().map?.seats[0]?.x).toBe(420);
+  });
+
+  it('undoes and redoes mixed movement with a seat group as one history entry', () => {
+    const store = useEventMapEditorStore;
+    store.getState().loadMap(createMapWithSeatGroup());
+
+    store.getState().updateMapItems({
+      objects: [{ id: 'object-1', patch: { x: 140, y: 150 } }],
+      seatGroups: [{ id: 'group-1', patch: { x: 150, y: 160 } }],
+    });
+
+    expect(store.getState().past).toHaveLength(1);
+    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 140, y: 150 });
+    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 150, y: 160 });
+    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 164, y: 174 });
+
+    store.getState().undo();
+    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 100, y: 100 });
+    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 100, y: 120 });
+    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 114, y: 134 });
+
+    store.getState().redo();
+    expect(store.getState().map?.objects.find((object) => object.id === 'object-1')).toMatchObject({ x: 140, y: 150 });
+    expect(store.getState().map?.seatGroups[0]).toMatchObject({ x: 150, y: 160 });
+    expect(store.getState().map?.seats.find((seat) => seat.id === 'seat-g1')).toMatchObject({ x: 164, y: 174 });
   });
 
   it('creates new map areas with area-oriented labels', () => {
@@ -649,7 +747,7 @@ describe('event-map-editor-store history', () => {
     ]);
   });
 
-  it('reflows seats when duplicating a rotated corridor', () => {
+  it('reflows seats when duplicating a freely rotated corridor', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap(createMap());
 
@@ -670,7 +768,7 @@ describe('event-map-editor-store history', () => {
     expect(corridorId).toBeTruthy();
     if (!corridorId) return;
 
-    store.getState().updateObject(corridorId, { rotation: 90 });
+    store.getState().updateObject(corridorId, { rotation: 37 });
     store.getState().setSelection({ type: 'object', id: corridorId });
     store.getState().duplicateSelection();
 
@@ -678,7 +776,7 @@ describe('event-map-editor-store history', () => {
     expect(duplicated).toBeTruthy();
     if (!duplicated) return;
 
-    expect(duplicated).toMatchObject({ rotation: 90 });
+    expect(duplicated).toMatchObject({ rotation: 37 });
     expect(Number.isFinite(duplicated.x)).toBe(true);
     expect(Number.isFinite(duplicated.y)).toBe(true);
     expect(duplicated.width).toBe(120);

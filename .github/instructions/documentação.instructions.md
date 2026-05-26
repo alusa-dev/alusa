@@ -25,12 +25,13 @@ Siga **estritamente** estas regras.
 ➡️ **Correções, refactors e novas features nunca devem gerar documentação automaticamente.**
 
 ### Asaas / Whitelabel
-- A **única fonte da verdade** para regras, payloads, eventos e fluxos do **:contentReference[oaicite:0]{index=0}** é:
-  - `docs/Doc Asaas/` (todos os `.md` nessa pasta)
+- A **fonte da verdade** para regras, payloads, eventos e fluxos do **Asaas** é:
+  - **MCP Asaas** (documentação oficial OpenAPI e execução de requests)
+  - https://docs.asaas.com
 - Em caso de dúvida sobre Asaas:
-  1. Priorize `docs/Doc Asaas/`
+  1. Consulte o **MCP Asaas**
   2. Se faltar contexto, **pergunte objetivamente** (sandbox vs produção, endpoint, evento, objetivo)
-  3. Quando aplicável, use MCP **somente** para confirmar dados oficiais
+  3. Use API key mestra ou de subconta conforme o cenário (skill **asaas**)
 
 ---
 

@@ -46,7 +46,7 @@ import {
 import {
   applyCorridorRotationPreservingCenter,
   isCorridorRotationOnlyTransform,
-  snapSmartCorridorRotation,
+  normalizeRotation,
   DEFAULT_CORRIDOR_THICKNESS,
   MIN_CORRIDOR_THICKNESS,
   reconcileCorridorGeometry,
@@ -174,10 +174,10 @@ function applyObjectPatchWithCorridorMetadata(
 
   if (next.type === 'CORRIDOR' && hasCorridorGeometryPatch(patch)) {
     if (isCorridorRotationOnlyTransform(patch, previous) && typeof patch.rotation === 'number') {
-      applyCorridorRotationPreservingCenter(next, patch.rotation, previous);
+      applyCorridorRotationPreservingCenter(next, patch.rotation, previous, { snap: false });
     } else {
       if (typeof patch.rotation === 'number') {
-        next.rotation = snapSmartCorridorRotation(patch.rotation);
+        next.rotation = normalizeRotation(patch.rotation);
       }
       reconcileCorridorGeometry(next);
     }
@@ -191,6 +191,147 @@ function applyObjectPatchWithCorridorMetadata(
   }
 
   return next;
+}
+
+function rotatePoint(point: { x: number; y: number }, degrees: number) {
+  const radians = (degrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  };
+}
+
+function transformSeatGroupSeat(seat: EventSeatDTO, prev: EventSeatGroupDTO, next: EventSeatGroupDTO): EventSeatDTO {
+  const prevLocal = rotatePoint({ x: seat.x - prev.x, y: seat.y - prev.y }, -(prev.rotation ?? 0));
+  const nextWorld = rotatePoint(prevLocal, next.rotation ?? 0);
+  return {
+    ...seat,
+    x: next.x + nextWorld.x,
+    y: next.y + nextWorld.y,
+    rotation: (seat.rotation ?? 0) + ((next.rotation ?? 0) - (prev.rotation ?? 0)),
+  };
+}
+
+function applySeatGroupPatch(
+  nextMap: EventMapDTO,
+  id: string,
+  patch: Partial<EventSeatGroupDTO>,
+  runtime?: MapEngineRuntime,
+) {
+  const groupIndex = (nextMap.seatGroups ?? []).findIndex((g) => g.id === id);
+  if (groupIndex === -1) return false;
+
+  const prev = nextMap.seatGroups[groupIndex]!;
+  const next = { ...prev, ...patch };
+  nextMap.seatGroups[groupIndex] = next;
+
+  const rowsChanged = typeof patch.rows === 'number' && patch.rows !== prev.rows;
+  const colsChanged = typeof patch.columns === 'number' && patch.columns !== prev.columns;
+
+  if (rowsChanged || colsChanged) {
+    nextMap.seats = nextMap.seats.filter((seat) => {
+      if (seat.groupId !== id) return true;
+      return (seat.rowIndex ?? 0) < next.rows && (seat.columnIndex ?? 0) < next.columns;
+    });
+
+    const numbering = next.numbering as Record<string, unknown>;
+    const rowPrefix = String(numbering.rowPrefix ?? 'A');
+    const startNumber = Number(numbering.startNumber ?? 1);
+    const direction = numbering.direction === 'right-to-left' ? 'right-to-left' : 'left-to-right';
+
+    const existingSeat = nextMap.seats.find((s) => s.groupId === id);
+    const sectionId = existingSeat?.sectionId ?? null;
+    const section = sectionId ? nextMap.sections.find((s) => s.id === sectionId) : null;
+    const sectionCode = section?.name?.replace(/\s+/g, '-').toUpperCase() ?? 'SECTION';
+
+    const existingPairs = new Set(
+      nextMap.seats.filter((s) => s.groupId === id).map((s) => `${s.rowIndex ?? 0}:${s.columnIndex ?? 0}`),
+    );
+
+    const stepX = next.seatWidth + next.gapX;
+    const stepY = next.seatHeight + next.gapY;
+
+    if (sectionId) {
+      for (let rowIndex = 0; rowIndex < next.rows; rowIndex++) {
+        for (let colIndex = 0; colIndex < next.columns; colIndex++) {
+          if (existingPairs.has(`${rowIndex}:${colIndex}`)) continue;
+          const visualColIndex = direction === 'right-to-left' ? next.columns - colIndex - 1 : colIndex;
+          const rowLabel = getSeatGridRowLabel(rowIndex, rowPrefix);
+          const seatNumber = String(startNumber + visualColIndex);
+          const displayLabel = `${rowLabel}${seatNumber}`;
+          nextMap.seats.push({
+            id: createLocalId('seat', runtime),
+            levelId: next.levelId,
+            sectionId,
+            objectId: null,
+            groupId: id,
+            rowIndex,
+            columnIndex: colIndex,
+            technicalCode: `${sectionCode}-${displayLabel}`,
+            displayLabel,
+            rowLabel,
+            seatNumber,
+            status: 'AVAILABLE',
+            accessible: false,
+            publicVisible: true,
+            x: next.x + next.paddingLeft + colIndex * stepX + next.seatWidth / 2,
+            y: next.y + next.paddingTop + rowIndex * stepY + next.seatHeight / 2,
+            size: next.seatWidth,
+            rotation: 0,
+          });
+        }
+      }
+    }
+  }
+
+  const layoutChanged =
+    typeof patch.seatWidth === 'number' ||
+    typeof patch.seatHeight === 'number' ||
+    typeof patch.gapX === 'number' ||
+    typeof patch.gapY === 'number' ||
+    typeof patch.paddingTop === 'number' ||
+    typeof patch.paddingLeft === 'number' ||
+    typeof patch.paddingRight === 'number' ||
+    typeof patch.paddingBottom === 'number' ||
+    rowsChanged ||
+    colsChanged;
+
+  if (layoutChanged) {
+    const stepX = next.seatWidth + next.gapX;
+    const stepY = next.seatHeight + next.gapY;
+    nextMap.seats = nextMap.seats.map((seat) => {
+      if (seat.groupId !== id) return seat;
+      const row = seat.rowIndex ?? 0;
+      const col = seat.columnIndex ?? 0;
+      const local = {
+        x: next.paddingLeft + col * stepX + next.seatWidth / 2,
+        y: next.paddingTop + row * stepY + next.seatHeight / 2,
+      };
+      const rotated = rotatePoint(local, next.rotation ?? 0);
+      return {
+        ...seat,
+        x: next.x + rotated.x,
+        y: next.y + rotated.y,
+        size: next.seatWidth,
+      };
+    });
+    return true;
+  }
+
+  const transformChanged =
+    typeof patch.x === 'number' ||
+    typeof patch.y === 'number' ||
+    typeof patch.rotation === 'number';
+
+  if (transformChanged) {
+    nextMap.seats = nextMap.seats.map((seat) =>
+      seat.groupId === id ? transformSeatGroupSeat(seat, prev, next) : seat,
+    );
+  }
+
+  return true;
 }
 
 export type CommandResult = {
@@ -549,18 +690,20 @@ export function executeMapCommand(
       const {
         objects = [],
         seats = [],
+        seatGroups = [],
         sections = [],
         levels = [],
         skipSeatBaseLayoutTranslation = false,
         skipCorridorReflow = false,
       } = normalizedCommand.payload;
 
-      if (objects.length === 0 && seats.length === 0 && sections.length === 0 && levels.length === 0) {
+      if (objects.length === 0 && seats.length === 0 && seatGroups.length === 0 && sections.length === 0 && levels.length === 0) {
         return commandResult({ map, selection, createdId, activeLevelId });
       }
 
       const objectPatchById = new Map(objects.map((entry) => [entry.id, entry.patch]));
       const seatPatchById = new Map(seats.map((entry) => [entry.id, entry.patch]));
+      const seatGroupPatchById = new Map(seatGroups.map((entry) => [entry.id, entry.patch]));
       const sectionPatchById = new Map(sections.map((entry) => [entry.id, entry.patch]));
       const levelPatchById = new Map(levels.map((entry) => [entry.id, entry.patch]));
 
@@ -613,7 +756,15 @@ export function executeMapCommand(
           }
           translateSeatCorridorBase(nextMap, seatBaseDeltas);
         }
+      }
 
+      if (seatGroupPatchById.size > 0) {
+        for (const [id, patch] of seatGroupPatchById) {
+          applySeatGroupPatch(nextMap, id, patch, runtime);
+        }
+      }
+
+      if (seatPatchById.size > 0) {
         nextMap.seats = nextMap.seats.map((seat) => {
           const patch = seatPatchById.get(seat.id);
           return patch ? { ...seat, ...patch } : seat;
@@ -1053,97 +1204,10 @@ export function executeMapCommand(
 
     case 'UPDATE_SEAT_GROUP': {
       const { id, patch } = normalizedCommand.payload;
-      const groupIndex = (nextMap.seatGroups ?? []).findIndex((g) => g.id === id);
-      if (groupIndex === -1) break;
-      const prev = nextMap.seatGroups[groupIndex]!;
-      const next = { ...prev, ...patch };
-      nextMap.seatGroups[groupIndex] = next;
-
-      const rowsChanged = typeof patch.rows === 'number' && patch.rows !== prev.rows;
-      const colsChanged = typeof patch.columns === 'number' && patch.columns !== prev.columns;
-
-      if (rowsChanged || colsChanged) {
-        nextMap.seats = nextMap.seats.filter((seat) => {
-          if (seat.groupId !== id) return true;
-          return (seat.rowIndex ?? 0) < next.rows && (seat.columnIndex ?? 0) < next.columns;
-        });
-
-        const numbering = next.numbering as Record<string, unknown>;
-        const rowPrefix = String(numbering.rowPrefix ?? 'A');
-        const startNumber = Number(numbering.startNumber ?? 1);
-        const direction = numbering.direction === 'right-to-left' ? 'right-to-left' : 'left-to-right';
-
-        const existingSeat = nextMap.seats.find((s) => s.groupId === id);
-        const sectionId = existingSeat?.sectionId ?? null;
-        const section = sectionId ? nextMap.sections.find((s) => s.id === sectionId) : null;
-        const sectionCode = section?.name?.replace(/\s+/g, '-').toUpperCase() ?? 'SECTION';
-
-        const existingPairs = new Set(
-          nextMap.seats.filter((s) => s.groupId === id).map((s) => `${s.rowIndex ?? 0}:${s.columnIndex ?? 0}`),
-        );
-
-        const stepX = next.seatWidth + next.gapX;
-        const stepY = next.seatHeight + next.gapY;
-
-        if (sectionId) {
-          for (let rowIndex = 0; rowIndex < next.rows; rowIndex++) {
-            for (let colIndex = 0; colIndex < next.columns; colIndex++) {
-              if (existingPairs.has(`${rowIndex}:${colIndex}`)) continue;
-              const visualColIndex = direction === 'right-to-left' ? next.columns - colIndex - 1 : colIndex;
-              const rowLabel = getSeatGridRowLabel(rowIndex, rowPrefix);
-              const seatNumber = String(startNumber + visualColIndex);
-              const displayLabel = `${rowLabel}${seatNumber}`;
-              nextMap.seats.push({
-                id: createLocalId('seat', runtime),
-                levelId: next.levelId,
-                sectionId,
-                objectId: null,
-                groupId: id,
-                rowIndex,
-                columnIndex: colIndex,
-                technicalCode: `${sectionCode}-${displayLabel}`,
-                displayLabel,
-                rowLabel,
-                seatNumber,
-                status: 'AVAILABLE',
-                accessible: false,
-                publicVisible: true,
-                x: next.x + next.paddingLeft + colIndex * stepX + next.seatWidth / 2,
-                y: next.y + next.paddingTop + rowIndex * stepY + next.seatHeight / 2,
-                size: next.seatWidth,
-                rotation: 0,
-              });
-            }
-          }
-        }
+      if (applySeatGroupPatch(nextMap, id, patch, runtime)) {
+        updateCounts(nextMap);
+        applyCorridorReflow(nextMap);
       }
-
-      if (
-        typeof patch.x === 'number' ||
-        typeof patch.y === 'number' ||
-        typeof patch.seatWidth === 'number' ||
-        typeof patch.seatHeight === 'number' ||
-        typeof patch.gapX === 'number' ||
-        typeof patch.gapY === 'number' ||
-        typeof patch.paddingTop === 'number' ||
-        typeof patch.paddingLeft === 'number'
-      ) {
-        const stepX = next.seatWidth + next.gapX;
-        const stepY = next.seatHeight + next.gapY;
-        nextMap.seats = nextMap.seats.map((seat) => {
-          if (seat.groupId !== id) return seat;
-          const row = seat.rowIndex ?? 0;
-          const col = seat.columnIndex ?? 0;
-          return {
-            ...seat,
-            x: next.x + next.paddingLeft + col * stepX + next.seatWidth / 2,
-            y: next.y + next.paddingTop + row * stepY + next.seatHeight / 2,
-          };
-        });
-      }
-
-      updateCounts(nextMap);
-      applyCorridorReflow(nextMap);
       break;
     }
 
@@ -1394,6 +1458,7 @@ function buildUndoUpdateItems(
 ): MapCommand {
   const objects: Array<{ id: string; patch: Partial<EventMapObjectDTO> }> = [];
   const seats: Array<{ id: string; patch: Partial<EventSeatDTO> }> = [];
+  const seatGroups: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }> = [];
   const sections: Array<{ id: string; patch: Partial<EventMapSectionDTO> }> = [];
   const levels: Array<{ id: string; patch: Partial<EventMapLevelDTO> }> = [];
 
@@ -1430,6 +1495,26 @@ function buildUndoUpdateItems(
     }
     if (changed) {
       seats.push({ id: prev.id, patch });
+    }
+  }
+
+  for (const prev of map.seatGroups ?? []) {
+    const next = (nextMap.seatGroups ?? []).find((g) => g.id === prev.id);
+    if (!next) continue;
+    const patch: Partial<EventSeatGroupDTO> = {};
+    let changed = false;
+    for (const key of ['x', 'y', 'rotation', 'rows', 'columns', 'seatWidth', 'seatHeight', 'gapX', 'gapY', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'locked', 'name'] as const) {
+      if (prev[key] !== next[key]) {
+        (patch as any)[key] = prev[key];
+        changed = true;
+      }
+    }
+    if (JSON.stringify(prev.numbering) !== JSON.stringify(next.numbering)) {
+      patch.numbering = prev.numbering;
+      changed = true;
+    }
+    if (changed) {
+      seatGroups.push({ id: prev.id, patch });
     }
   }
 
@@ -1470,6 +1555,7 @@ function buildUndoUpdateItems(
     payload: {
       objects,
       seats,
+      seatGroups,
       sections,
       levels,
       skipCorridorReflow: true,

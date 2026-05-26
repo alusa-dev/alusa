@@ -149,7 +149,7 @@ describe('corridor-canvas', () => {
     expect(geometry.height).toBeCloseTo(90, 4);
   });
 
-  it('buildCorridorTransformCommitPatch returns rotation-only patch for rotate mode', () => {
+  it('buildCorridorTransformCommitPatch preserves free rotation around the corridor center', () => {
     const object = corridorObject({ x: 100, y: 120, width: 380, height: 170, rotation: 0 });
     const centerBefore = getCorridorWorldCenter(object);
     const node = mockCorridorNode({
@@ -165,10 +165,10 @@ describe('corridor-canvas', () => {
       anchor: 'rotater',
     });
     expect(mode).toBe('rotate');
-    expect(patch).toEqual({ rotation: 90 });
-    expect(patch.x).toBeUndefined();
+    expect(patch.rotation).toBe(87);
+    expect(patch.x).toBeTypeOf('number');
 
-    const geometry = buildCorridorGeometryAfterRotation(object, patch.rotation ?? 0);
+    const geometry = buildCorridorGeometryAfterRotation(object, patch.rotation ?? 0, { snap: false });
     const centerAfter = getCorridorWorldCenter({
       x: geometry.x,
       y: geometry.y,

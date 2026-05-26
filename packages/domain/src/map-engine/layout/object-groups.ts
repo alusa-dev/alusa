@@ -236,9 +236,11 @@ export function resolveDragTarget(
   objects: EventMapObjectDTO[],
 ) {
   const expandedSelection = expandObjectSelectionItems(getSelectableItems(selection), objects);
-  const expandedNodeIds = expandedSelection.flatMap((entry) =>
-    entry.type === 'object' || entry.type === 'seat' ? [`node-${entry.id}`] : [],
-  );
+  const expandedNodeIds = expandedSelection.flatMap((entry) => {
+    if (entry.type === 'object' || entry.type === 'seat') return [`node-${entry.id}`];
+    if (entry.type === 'seatgroup') return [`node-seatgroup-${entry.id}`];
+    return [];
+  });
 
   if (item && expandedNodeIds.includes(nodeId) && expandedNodeIds.length > 1) {
     return { selectionItems: expandedSelection, nodeIds: expandedNodeIds };
@@ -255,7 +257,9 @@ export function resolveDragTarget(
   }
 
   const selectionItems =
-    item && (item.type === 'object' || item.type === 'seat') ? [item] : getSelectableItems(selection);
+    item && (item.type === 'object' || item.type === 'seat' || item.type === 'seatgroup')
+      ? [item]
+      : getSelectableItems(selection);
 
   return { selectionItems, nodeIds: [nodeId] };
 }

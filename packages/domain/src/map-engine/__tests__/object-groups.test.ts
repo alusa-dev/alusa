@@ -82,6 +82,24 @@ describe('object-groups', () => {
     ]);
   });
 
+  it('preserves seat group nodes when resolving mixed drag targets', () => {
+    const result = resolveDragTarget(
+      'node-seatgroup-group-1',
+      { type: 'seatgroup', id: 'group-1' },
+      [
+        { type: 'seatgroup', id: 'group-1' },
+        { type: 'object', id: 'a' },
+      ],
+      [object('a')],
+    );
+
+    expect(result.nodeIds).toEqual(['node-seatgroup-group-1', 'node-a']);
+    expect(result.selectionItems).toEqual([
+      { type: 'seatgroup', id: 'group-1' },
+      { type: 'object', id: 'a' },
+    ]);
+  });
+
   it('validates group candidates and rejects mixed levels', () => {
     const objects = [object('a'), { ...object('b'), levelId: 'level-2' }];
     expect(validateGroupCandidates([{ type: 'object', id: 'a' }, { type: 'object', id: 'b' }], objects)).toEqual({

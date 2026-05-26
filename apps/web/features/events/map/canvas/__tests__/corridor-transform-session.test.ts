@@ -166,20 +166,20 @@ describe('corridor-transform-session', () => {
     expect(node.findOne().width()).toBe(32);
   });
 
-  it('builds rotate commit patches from transformer delta', () => {
+  it('builds free rotate commit patches from transformer delta', () => {
     const object = corridor('c1', 100, 120, 32, 280);
     const node = mockCorridorNode({ id: 'c1', x: 100, y: 120, width: 32, height: 280 });
     const stage = mockStage([node]);
     const transformer = mockTransformer({ anchor: 'rotater' });
 
     const session = beginCorridorTransformToolSession(baseMap([object]), ['c1'], transformer as never, stage as never);
-    transformer.rotation(90);
-    node.rotation(90);
+    transformer.rotation(37);
+    node.rotation(37);
 
     const patches = buildCorridorTransformCommitPatches(session!, { stage: stage as never, transformer: transformer as never });
 
     expect(patches).toHaveLength(1);
-    expect(patches[0]!.patch.rotation).toBe(90);
+    expect(patches[0]!.patch.rotation).toBe(37);
   });
 
   it('builds single resize commit patches from live scale on transformend', () => {

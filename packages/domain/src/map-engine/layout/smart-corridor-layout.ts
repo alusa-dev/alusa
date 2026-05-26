@@ -47,7 +47,7 @@ export function normalizeRotation(rotation: number) {
   return Math.abs(normalized) < 0.001 ? 0 : normalized;
 }
 
-/** Smart corridors only support quarter-turn rotations. */
+/** Optional quarter-turn snap for callers that explicitly enable rotation snapping. */
 export function snapSmartCorridorRotation(rotation: number) {
   const normalized = normalizeRotation(rotation);
   return Math.round(normalized / 90) * 90 % 360;
@@ -90,9 +90,9 @@ export function corridorWorldCenterToTopLeft(
   options?: { snap?: boolean },
 ) {
   const rotation =
-    options?.snap === false
-      ? normalizeRotation(rotationDegrees)
-      : snapSmartCorridorRotation(rotationDegrees);
+    options?.snap === true
+      ? snapSmartCorridorRotation(rotationDegrees)
+      : normalizeRotation(rotationDegrees);
   const radians = (rotation * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
@@ -112,14 +112,14 @@ export function corridorModelFromCenterTransform(
   height: number,
   rotation: number,
 ): CorridorTransformGeometry {
-  const snapped = snapSmartCorridorRotation(rotation);
-  const topLeft = corridorWorldCenterToTopLeft(centerX, centerY, width, height, snapped);
+  const normalized = normalizeRotation(rotation);
+  const topLeft = corridorWorldCenterToTopLeft(centerX, centerY, width, height, normalized, { snap: false });
   return {
     x: topLeft.x,
     y: topLeft.y,
     width,
     height,
-    rotation: snapped,
+    rotation: normalized,
   };
 }
 
@@ -158,17 +158,17 @@ export function applyCorridorRotationPreservingCenter(
     height,
     rotation: ref.rotation ?? 0,
   });
-  const snapped =
-    options?.snap === false
-      ? normalizeRotation(nextRotation)
-      : snapSmartCorridorRotation(nextRotation);
-  const topLeft = corridorWorldCenterToTopLeft(center.x, center.y, width, height, snapped, options);
+  const normalized =
+    options?.snap === true
+      ? snapSmartCorridorRotation(nextRotation)
+      : normalizeRotation(nextRotation);
+  const topLeft = corridorWorldCenterToTopLeft(center.x, center.y, width, height, normalized, options);
 
   corridor.width = width;
   corridor.height = height;
   corridor.x = topLeft.x;
   corridor.y = topLeft.y;
-  corridor.rotation = snapped;
+  corridor.rotation = normalized;
 }
 
 export function isCorridorRotationOnlyTransform(
@@ -177,8 +177,8 @@ export function isCorridorRotationOnlyTransform(
 ) {
   if (typeof patch.rotation !== 'number') return false;
 
-  const nextRotation = snapSmartCorridorRotation(patch.rotation);
-  if (nextRotation === snapSmartCorridorRotation(previous.rotation ?? 0)) return false;
+  const nextRotation = normalizeRotation(patch.rotation);
+  if (nextRotation === normalizeRotation(previous.rotation ?? 0)) return false;
 
   const widthSame =
     patch.width === undefined ||
@@ -208,8 +208,9 @@ export function effectiveCorridorAxisAtRotation(
   storedAxis: SmartCorridorAxis,
   rotationDegrees: number,
 ): SmartCorridorAxis {
-  const snapped = snapSmartCorridorRotation(rotationDegrees);
-  if (snapped === 90 || snapped === 270) {
+  const normalized = normalizeRotation(rotationDegrees);
+  const nearestQuarter = Math.round(normalized / 90) % 4;
+  if (nearestQuarter === 1 || nearestQuarter === 3) {
     return storedAxis === 'vertical' ? 'horizontal' : 'vertical';
   }
   return storedAxis;
@@ -287,7 +288,7 @@ export function getSmartCorridorCoreRect(corridor: EventMapObjectDTO): BoundsRec
 }
 
 export function normalizeSmartCorridorObject(corridor: EventMapObjectDTO) {
-  corridor.rotation = snapSmartCorridorRotation(corridor.rotation ?? 0);
+  corridor.rotation = normalizeRotation(corridor.rotation ?? 0);
 
   if (corridor.data[SMART_CORRIDOR_KIND_KEY]) {
     const rawThickness = corridor.data[CORRIDOR_THICKNESS_KEY];

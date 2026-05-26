@@ -52,6 +52,7 @@ export type MapCommand =
       payload: {
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
         sections?: Array<{ id: string; patch: Partial<EventMapSectionDTO> }>;
         levels?: Array<{ id: string; patch: Partial<EventMapLevelDTO> }>;
         skipSeatBaseLayoutTranslation?: boolean;

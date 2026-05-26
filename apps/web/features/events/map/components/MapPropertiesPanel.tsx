@@ -1,5 +1,5 @@
 'use client';
-import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, TEXT_MODE_LABELS, applyTextModePatch, getPrimarySelection, getSelectableItems, getTextDecorationParts, getTextMode, snapSmartCorridorRotation } from '@alusa/domain';
+import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, TEXT_MODE_LABELS, applyTextModePatch, getPrimarySelection, getSelectableItems, getTextDecorationParts, getTextMode, normalizeRotation } from '@alusa/domain';
 import type { TextMode } from '@alusa/domain';
 import type { TicketLotDTO } from '../../events-service';
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
@@ -319,15 +319,15 @@ function ObjectProperties({
             <Input
               data-testid={object.type === 'CORRIDOR' ? 'corridor-rotation' : undefined}
               type="number"
-              step={object.type === 'CORRIDOR' ? 90 : 1}
+              step={1}
               value={numberValue(object.rotation, 0)}
               disabled={disabled}
               onChange={(event) =>
                 onUpdate({
-                  rotation:
-                    object.type === 'CORRIDOR'
-                      ? snapSmartCorridorRotation(toNumber(event.target.value, object.rotation ?? 0))
-                      : toNumber(event.target.value, object.rotation ?? 0),
+	                  rotation:
+	                    object.type === 'CORRIDOR'
+	                      ? normalizeRotation(toNumber(event.target.value, object.rotation ?? 0))
+	                      : toNumber(event.target.value, object.rotation ?? 0),
                 })
               }
               className={FIELD_CLASS}

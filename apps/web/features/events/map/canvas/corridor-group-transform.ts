@@ -57,7 +57,7 @@ export function getCorridorGroupPivot(objects: EventMapObjectDTO[]): CorridorGro
   };
 }
 
-/** Snap group rotation to quarter-turns and return the matching orbit delta. */
+/** Optional quarter-turn snap for modifier-driven corridor rotation. */
 export function resolveSnappedCorridorGroupRotation(
   baseRotation: number,
   rotationDeltaDeg: number,
@@ -76,15 +76,15 @@ export function computeCorridorGroupRotationGeometry(
   rotationDeltaDeg: number,
   options?: { snap?: boolean },
 ): CorridorTransformGeometry {
-  const snapped =
-    options?.snap === false
-      ? {
+  const resolved =
+    options?.snap === true
+      ? resolveSnappedCorridorGroupRotation(snapshot.rotation, rotationDeltaDeg)
+      : {
           rotation: normalizeRotation(snapshot.rotation + rotationDeltaDeg),
           effectiveDeltaDeg: rotationDeltaDeg,
-        }
-      : resolveSnappedCorridorGroupRotation(snapshot.rotation, rotationDeltaDeg);
-  const rotation = snapped.rotation;
-  const orbitDeltaDeg = snapped.effectiveDeltaDeg;
+        };
+  const rotation = resolved.rotation;
+  const orbitDeltaDeg = resolved.effectiveDeltaDeg;
 
   const rad = (orbitDeltaDeg * Math.PI) / 180;
   const cos = Math.cos(rad);

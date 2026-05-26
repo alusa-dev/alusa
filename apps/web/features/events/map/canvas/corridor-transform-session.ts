@@ -1,4 +1,4 @@
-import { snapSmartCorridorRotation } from '@alusa/domain';
+import { normalizeRotation } from '@alusa/domain';
 import type { BoundingBox, CorridorTransformPreviewPatch, LevelBounds } from '@alusa/domain';
 import type { EventMapDTO, EventMapObjectDTO } from '../api/event-map-service';
 import { applyCorridorNodeFromModel, buildCorridorGeometryAfterRotation, normalizeCorridorNodeAfterTransform, resolveCorridorTransformSession } from './corridor-canvas';
@@ -202,13 +202,13 @@ function buildResizeCommitPatches(
           )
         : rawGeometry;
 
-    const snappedRotation = snapSmartCorridorRotation(node.rotation());
+    const normalizedRotation = normalizeRotation(node.rotation());
     normalizeCorridorNodeAfterTransform(node, {
       ...geometry,
-      rotation: snappedRotation,
+      rotation: normalizedRotation,
     });
 
-    if (![geometry.x, geometry.y, geometry.width, geometry.height, snappedRotation].every(Number.isFinite)) {
+    if (![geometry.x, geometry.y, geometry.width, geometry.height, normalizedRotation].every(Number.isFinite)) {
       continue;
     }
 
@@ -219,7 +219,7 @@ function buildResizeCommitPatches(
         y: geometry.y,
         width: geometry.width,
         height: geometry.height,
-        rotation: snappedRotation,
+        rotation: normalizedRotation,
       },
       mode: session.snapshots.length >= 2 ? 'group-resize' : 'resize',
       anchor: session.anchor,
@@ -246,7 +246,7 @@ export function buildCorridorTransformCommitPatches(
         centerY: session.snapshots[0]!.centerY,
       };
       const updates = buildCorridorGroupRotationUpdates(session.snapshots, pivot, rotationDelta, {
-        snap: true,
+        snap: false,
       });
 
       for (const update of updates) {
@@ -275,8 +275,8 @@ export function buildCorridorTransformCommitPatches(
       if (!node) continue;
       const baseObject = session.baseCorridors.find((entry) => entry.id === snapshot.id);
       if (!baseObject) continue;
-      const rotation = snapSmartCorridorRotation(node.rotation());
-      const geometry = buildCorridorGeometryAfterRotation(baseObject, rotation, { snap: true });
+      const rotation = normalizeRotation(node.rotation());
+      const geometry = buildCorridorGeometryAfterRotation(baseObject, rotation, { snap: false });
       normalizeCorridorNodeAfterTransform(node, geometry);
       patches.push({
         objectId: snapshot.id,

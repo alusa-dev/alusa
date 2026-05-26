@@ -50,6 +50,23 @@
     },
     "cloudflare-api": {
       "url": "https://mcp.cloudflare.com/mcp"
+    },
+    "vercel-api": {
+      "url": "https://mcp.vercel.com"
+    },
+    "hostinger-api": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env",
+        "--",
+        "hostinger-api-mcp"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "DEBUG": "false"
+      }
     }
   }
 }

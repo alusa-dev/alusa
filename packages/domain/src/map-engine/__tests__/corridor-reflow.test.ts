@@ -822,7 +822,7 @@ describe('smart corridor rotation contract', () => {
     expect(object.data.corridorAxis).toBe('vertical');
   });
 
-  it('builds transform preview with snapped rotation', () => {
+  it('builds transform preview with free rotation', () => {
     const map = buildSeatGridMap(4, 2, 40, 40, { x: 100, y: 100 });
     const corridorId = 'corridor-preview';
     map.objects.push(corridor(corridorId, 135, 70, 30, 120));
@@ -836,7 +836,7 @@ describe('smart corridor rotation contract', () => {
     );
 
     const previewCorridor = preview.objects.find((entry) => entry.id === corridorId);
-    expect(previewCorridor?.rotation).toBe(90);
+    expect(previewCorridor?.rotation).toBe(88);
     const centerAfter = getCorridorWorldCenter(previewCorridor!);
     expect(centerAfter.x).toBeCloseTo(centerBefore.x, 1);
     expect(centerAfter.y).toBeCloseTo(centerBefore.y, 1);

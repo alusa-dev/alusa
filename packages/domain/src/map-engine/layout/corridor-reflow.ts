@@ -23,7 +23,7 @@ import {
   resolveSmartCorridorLayout,
   readStoredCorridorAxis,
   effectiveCorridorAxisAtRotation,
-  snapSmartCorridorRotation,
+  normalizeRotation,
   SMART_CORRIDOR_KIND_KEY,
   applyCorridorRotationPreservingCenter,
   getCorridorWorldCenter,
@@ -1431,7 +1431,7 @@ function mapCorridorToSectionLocal(
   const localCorners = globalCorners.map((point) => toLocal(point, sectionPivot, sectionRotation));
   const localReferenceBounds = getAABB(localCorners);
 
-  const effectiveRotation = snapSmartCorridorRotation((corridor.rotation ?? 0) - sectionRotation);
+  const effectiveRotation = normalizeRotation((corridor.rotation ?? 0) - sectionRotation);
   const effectiveAxis = effectiveCorridorAxisAtRotation(readStoredCorridorAxis(corridor), effectiveRotation);
 
   const localCorridor: EventMapObjectDTO = {
@@ -1600,17 +1600,13 @@ export function applyCorridorPreviewPatch(
   if (!object || !previous || object.type !== 'CORRIDOR') return;
 
   const normalizedPatch = { ...patch };
-  if (
-    typeof normalizedPatch.rotation === 'number' &&
-    options?.mode !== 'group-rotate' &&
-    options?.mode !== 'group-resize'
-  ) {
-    normalizedPatch.rotation = snapSmartCorridorRotation(normalizedPatch.rotation);
+  if (typeof normalizedPatch.rotation === 'number') {
+    normalizedPatch.rotation = normalizeRotation(normalizedPatch.rotation);
   }
 
   const rotationChanged =
     typeof normalizedPatch.rotation === 'number' &&
-    normalizedPatch.rotation !== snapSmartCorridorRotation(previous.rotation ?? 0);
+    normalizedPatch.rotation !== normalizeRotation(previous.rotation ?? 0);
   const inferredRotationOnly = rotationChanged && isCorridorRotationOnlyTransform(normalizedPatch, previous);
   const mode = options?.mode ?? (inferredRotationOnly ? 'rotate' : 'resize');
 
@@ -1626,10 +1622,10 @@ export function applyCorridorPreviewPatch(
     if (typeof y === 'number') object.y = y;
     if (typeof width === 'number') object.width = width;
     if (typeof height === 'number') object.height = height;
-    if (typeof rotation === 'number') object.rotation = snapSmartCorridorRotation(rotation);
+    if (typeof rotation === 'number') object.rotation = normalizeRotation(rotation);
     reconcileCorridorGeometry(object);
   } else if (mode === 'rotate' && typeof rotation === 'number') {
-    applyCorridorRotationPreservingCenter(object, rotation, previous);
+    applyCorridorRotationPreservingCenter(object, rotation, previous, { snap: false });
   } else {
     if (typeof x === 'number') object.x = x;
     if (typeof y === 'number') object.y = y;

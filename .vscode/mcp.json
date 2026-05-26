@@ -43,6 +43,18 @@
 		"cloudflare": {
 			"type": "http",
 			"url": "https://mcp.cloudflare.com/mcp"
+		},
+		"vercel": {
+			"type": "http",
+			"url": "https://mcp.vercel.com"
+		},
+		"hostinger-api": {
+			"type": "stdio",
+			"command": "hostinger-api-mcp",
+			"env": {
+				"DEBUG": "false",
+				"API_TOKEN": "${input:HOSTINGER_API_TOKEN}"
+			}
 		}
 	},
 	"inputs": [
@@ -50,6 +62,12 @@
 			"id": "CONTEXT7_API_KEY",
 			"type": "promptString",
 			"description": "API key for authentication",
+			"password": true
+		},
+		{
+			"id": "HOSTINGER_API_TOKEN",
+			"type": "promptString",
+			"description": "Hostinger API token (hPanel → Account → API)",
 			"password": true
 		}
 	]

@@ -1,4 +1,4 @@
-import { applyCorridorRotationPreservingCenter, normalizeRotation, snapSmartCorridorRotation } from '@alusa/domain';
+import { applyCorridorRotationPreservingCenter, normalizeRotation } from '@alusa/domain';
 import type { BoundingBox, CorridorTransformGeometry, ResizeAnchor } from '@alusa/domain';
 import type { EventMapObjectDTO } from '../api/event-map-service';
 import { eventMapObjectToCorridorPolygon, polygonBounds } from './corridor-domain-bridge';
@@ -139,7 +139,7 @@ export function buildCorridorGeometryAfterResize(
 
   return {
     ...geometry,
-    rotation: snapSmartCorridorRotation(node.rotation()),
+    rotation: normalizeRotation(node.rotation()),
   };
 }
 
@@ -198,8 +198,8 @@ export function buildCorridorTransformCommitPatch(
   session: Pick<CorridorTransformSession, 'mode' | 'anchor'>,
 ): CorridorTransformPatch {
   if (session.mode === 'rotate') {
-    const rotation = snapSmartCorridorRotation(node.rotation());
-    return { mode: 'rotate', patch: { rotation } };
+    const geometry = buildCorridorGeometryAfterRotation(baseObject, node.rotation(), { snap: false });
+    return { mode: 'rotate', patch: geometry };
   }
 
   const geometry = buildCorridorGeometryAfterResize(baseObject, node, session.anchor);
@@ -232,8 +232,8 @@ export function inferCorridorTransformMode(
   if (sizeChanged) return 'resize';
 
   const rawRotation = normalizeRotation(node.rotation());
-  const baseRotation = snapSmartCorridorRotation(baseObject.rotation ?? 0);
-  if (Math.abs(snapSmartCorridorRotation(rawRotation) - baseRotation) > 0.001) {
+  const baseRotation = normalizeRotation(baseObject.rotation ?? 0);
+  if (Math.abs(rawRotation - baseRotation) > 0.001) {
     return 'rotate';
   }
 
@@ -244,7 +244,7 @@ export function inferCorridorTransformMode(
 export function applyCorridorNodeFromModel(node: Konva.Node, object: EventMapObjectDTO) {
   const width = Math.max(MIN_CORRIDOR_NODE_SIZE, object.width ?? MIN_CORRIDOR_NODE_SIZE);
   const height = Math.max(MIN_CORRIDOR_NODE_SIZE, object.height ?? MIN_CORRIDOR_NODE_SIZE);
-  const rotation = snapSmartCorridorRotation(object.rotation ?? 0);
+  const rotation = normalizeRotation(object.rotation ?? 0);
 
   node.position({ x: object.x, y: object.y });
   node.rotation(rotation);
