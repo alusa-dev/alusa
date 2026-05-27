@@ -5,7 +5,7 @@ import {
   isHorizontalResizeAnchor,
   isVerticalResizeAnchor,
 } from '../doc/text-object.js';
-import { MIN_OBJECT_SIZE } from '../geometry/uniform-group-transform.js';
+import { MIN_OBJECT_SIZE } from '../operations/transform/uniform-transform.js';
 import type { EventMapObjectDTO } from '../types/event-map-types.js';
 
 export type TextTransformInput = {

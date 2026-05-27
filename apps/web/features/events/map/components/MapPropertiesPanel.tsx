@@ -473,7 +473,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
   const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
   const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
   const inlineTextEditorActive = useEventMapEditorStore((state) => state.inlineTextEditorActive);
-  const disabled = status !== 'DRAFT';
+  const disabled = status === 'ARCHIVED';
 
   const selected = useMemo(() => {
     if (!map || selection.length === 0) return null;

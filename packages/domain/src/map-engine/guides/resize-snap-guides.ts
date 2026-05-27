@@ -9,13 +9,13 @@ import {
   type SnapGuideLine,
   type SnappingEdges,
 } from './snap-guides.js';
-import { MIN_OBJECT_SIZE } from './uniform-group-transform.js';
+import { MIN_OBJECT_SIZE } from '../operations/transform/uniform-transform.js';
 
 import {
   getFixedPointFromAnchor,
   getMovingEdgesFromAnchor,
   type MovingResizeEdges,
-} from './anchor.js';
+} from '../geometry/anchor.js';
 
 export type NormalizedResizeBox = BoundingBox & {
   flippedX: boolean;
@@ -221,4 +221,4 @@ export function buildFullSnappingEdgesFromRect(box: BoundingBox) {
   return buildSnappingEdgesFromRect(box, { x: box.x, y: box.y });
 }
 
-export { getFixedPointFromAnchor, getMovingEdgesFromAnchor, type MovingResizeEdges, type ResizeAnchor } from './anchor.js';
+export { getFixedPointFromAnchor, getMovingEdgesFromAnchor, type MovingResizeEdges, type ResizeAnchor } from '../geometry/anchor.js';

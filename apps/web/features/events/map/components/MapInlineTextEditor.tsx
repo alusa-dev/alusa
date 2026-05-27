@@ -46,6 +46,8 @@ export function MapInlineTextEditor({
         transform: textEditor.transform,
         transformOrigin: 'left top',
         whiteSpace: textEditor.textMode === 'auto' ? 'pre' : 'pre-wrap',
+        paddingLeft: 8,
+        paddingRight: 8,
       }}
       wrap={textEditor.textMode === 'auto' ? 'off' : 'soft'}
       rows={1}

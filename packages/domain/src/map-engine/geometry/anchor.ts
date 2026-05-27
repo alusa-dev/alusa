@@ -1,4 +1,4 @@
-import type { BoundingBox } from './snap-guides.js';
+import type { BoundingBox } from '../guides/snap-guides.js';
 import type { TextMode } from '../doc/text-object.js';
 import type { EventMapObjectDTO } from '../types/event-map-types.js';
 

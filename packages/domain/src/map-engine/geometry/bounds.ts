@@ -1,4 +1,4 @@
-import type { LevelBounds } from './snap-guides.js';
+import type { LevelBounds } from '../guides/snap-guides.js';
 
 export type BoundsRect = {
   x: number;

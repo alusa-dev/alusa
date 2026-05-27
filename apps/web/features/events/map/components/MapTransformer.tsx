@@ -17,7 +17,6 @@ type MapTransformerProps = {
   placementToolActive: boolean;
   readOnly: boolean;
   tool: string;
-  transformPipelineActive: boolean;
   levelBounds: { width: number; height: number } | null;
   selectedNodeIds: string[];
   handleAnchorDragBound: (
@@ -41,7 +40,6 @@ export function MapTransformer({
   placementToolActive,
   readOnly,
   tool,
-  transformPipelineActive,
   levelBounds,
   selectedNodeIds,
   handleAnchorDragBound,
@@ -57,7 +55,7 @@ export function MapTransformer({
       enabledAnchors={disableResizeForMixedSmartCorridorSelection ? [] : [...selectedTextTransformAnchors]}
       listening={!placementToolActive}
       anchorDragBoundFunc={(_oldAbs, newAbs, event) => {
-        if (readOnly || tool === 'pan' || tool === 'zoom' || transformPipelineActive || !levelBounds) {
+        if (readOnly || tool === 'pan' || tool === 'zoom' || !levelBounds) {
           return newAbs;
         }
 

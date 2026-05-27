@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, Edit3, Layers3, Map, Plus, Trash2 } from 'lucide-react';
+import { Copy, Edit3, ExternalLink, Layers3, Map, Plus, Trash2 } from 'lucide-react';
 
 import {
   EVENT_MAP_STATUS_LABELS,
@@ -168,19 +168,31 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                   <Copy className="h-3.5 w-3.5" />
                   Usar como template
                 </Button>
-                {map.status === 'DRAFT' ? (
+                {map.status === 'PUBLISHED' && map.publicUrl ? (
+                  <Button asChild variant="outline" size="sm" className="border-slate-200 bg-white text-slate-700">
+                    <Link href={map.publicUrl} target="_blank">
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Link público
+                    </Link>
+                  </Button>
+                ) : null}
+                {map.status !== 'ARCHIVED' ? (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
                     onClick={() => {
-                      if (window.confirm('Excluir este rascunho de mapa?')) deleteMutation.mutate(map.id);
+                      const message =
+                        map.status === 'DRAFT'
+                          ? 'Excluir este rascunho de mapa?'
+                          : 'Arquivar este mapa publicado? O link público será desativado.';
+                      if (window.confirm(message)) deleteMutation.mutate(map.id);
                     }}
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    Excluir
+                    {map.status === 'DRAFT' ? 'Excluir' : 'Arquivar'}
                   </Button>
                 ) : null}
               </div>

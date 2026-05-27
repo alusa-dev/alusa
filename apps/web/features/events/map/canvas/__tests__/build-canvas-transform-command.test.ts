@@ -57,13 +57,20 @@ describe('buildCanvasTransformCommand', () => {
     });
   });
 
-  it('classifies rotation-only updates as ROTATE_OBJECTS', () => {
+  it('classifies rotation-only updates as ROTATE_SELECTION', () => {
     const map = baseMap();
     const command = buildCanvasTransformCommand(
       { objects: [{ id: 'obj-1', patch: { x: 10, y: 20, rotation: 45 } }] },
       map,
     );
-    expect(command?.type).toBe('ROTATE_OBJECTS');
+    expect(command).toEqual({
+      type: 'ROTATE_SELECTION',
+      payload: {
+        selection: [{ type: 'object', id: 'obj-1' }],
+        angleDelta: 45,
+        mode: 'free',
+      },
+    });
   });
 
   it('uses TRANSFORM_CORRIDOR when forced', () => {

@@ -3,6 +3,10 @@ import type { MapCommand } from '../commands/command-types.js';
 import type { MapEngineRuntime } from '../ports/runtime-ports.js';
 import type { MapSelection } from '../selection/selection-utils.js';
 import { normalizeTextData } from '../doc/text-object.js';
+import { rotateSelection } from '../operations/transform/rotate-selection.js';
+import { moveSelection } from '../operations/transform/move-selection.js';
+import { resizeSelection } from '../operations/transform/resize-selection.js';
+import { selectionFromRotationPatchIds } from '../operations/transform/rotate-selection.js';
 import {
   handleAddLevel,
   handleAddObject,
@@ -41,36 +45,90 @@ function normalizeMapCommand(command: MapCommand, map: EventMapDTO): MapCommand 
 
     case 'MOVE_OBJECTS': {
       const { delta, objectIds = [], seatIds = [] } = command.payload;
+      const selection = [
+        ...objectIds.map((id) => ({ type: 'object' as const, id })),
+        ...seatIds.map((id) => ({ type: 'seat' as const, id })),
+      ];
+      const movement = moveSelection({ map, selection, delta });
       return {
         type: 'UPDATE_ITEMS',
         payload: {
-          objects: objectIds
-            .map((id) => {
-              const object = map.objects.find((entry) => entry.id === id);
-              return object ? { id, patch: { x: object.x + delta.x, y: object.y + delta.y } } : null;
-            })
-            .filter((entry): entry is { id: string; patch: { x: number; y: number } } => entry !== null),
-          seats: seatIds
-            .map((id) => {
-              const seat = map.seats.find((entry) => entry.id === id);
-              return seat ? { id, patch: { x: seat.x + delta.x, y: seat.y + delta.y } } : null;
-            })
-            .filter((entry): entry is { id: string; patch: { x: number; y: number } } => entry !== null),
+          objects: movement.patches.objects,
+          seats: movement.patches.seats,
+          seatGroups: movement.patches.seatGroups,
+          skipSeatBaseLayoutTranslation: true,
         },
       };
     }
 
-    case 'RESIZE_OBJECTS':
+    case 'MOVE_SELECTION': {
+      const movement = moveSelection({
+        map,
+        selection: command.payload.selection,
+        delta: command.payload.delta,
+      });
       return {
         type: 'UPDATE_ITEMS',
         payload: {
+          objects: movement.patches.objects,
+          seats: movement.patches.seats,
+          seatGroups: movement.patches.seatGroups,
+          skipSeatBaseLayoutTranslation: true,
+        },
+      };
+    }
+
+    case 'RESIZE_SELECTION': {
+      const resized = resizeSelection({
+        map,
+        selection: command.payload.selection,
+        scaleX: command.payload.scaleX,
+        scaleY: command.payload.scaleY,
+        pivot: command.payload.pivot,
+        patches: {
+          objects: command.payload.objects,
+          seats: command.payload.seats,
+          seatGroups: command.payload.seatGroups,
+        },
+      });
+      return {
+        type: 'UPDATE_ITEMS',
+        payload: {
+          objects: resized.patches.objects,
+          seats: resized.patches.seats,
+          seatGroups: resized.patches.seatGroups,
+          skipSeatBaseLayoutTranslation: command.payload.skipSeatBaseLayoutTranslation ?? true,
+          skipCorridorReflow: command.payload.skipCorridorReflow,
+        },
+      };
+    }
+
+    case 'RESIZE_OBJECTS': {
+      const selection = selectionFromRotationPatchIds({
+        objects: command.payload.objects ?? [],
+        seats: command.payload.seats ?? [],
+        seatGroups: command.payload.seatGroups ?? [],
+      });
+      const resized = resizeSelection({
+        map,
+        selection,
+        patches: {
           objects: command.payload.objects ?? [],
           seats: command.payload.seats ?? [],
           seatGroups: command.payload.seatGroups ?? [],
+        },
+      });
+      return {
+        type: 'UPDATE_ITEMS',
+        payload: {
+          objects: resized.patches.objects,
+          seats: resized.patches.seats,
+          seatGroups: resized.patches.seatGroups,
           skipSeatBaseLayoutTranslation: command.payload.skipSeatBaseLayoutTranslation,
           skipCorridorReflow: command.payload.skipCorridorReflow,
         },
       };
+    }
 
     case 'ROTATE_OBJECTS':
       return {
@@ -80,6 +138,27 @@ function normalizeMapCommand(command: MapCommand, map: EventMapDTO): MapCommand 
           seats: command.payload.seats,
         },
       };
+
+    case 'ROTATE_SELECTION': {
+      const rotation = rotateSelection({
+        map,
+        selection: command.payload.selection,
+        angleDelta: command.payload.angleDelta,
+        pivot: command.payload.pivot,
+        mode: command.payload.mode,
+        snapStepDegrees: command.payload.snapStepDegrees,
+      });
+      return {
+        type: 'UPDATE_ITEMS',
+        payload: {
+          objects: rotation.patches.objects,
+          seats: rotation.patches.seats,
+          seatGroups: rotation.patches.seatGroups,
+          skipCorridorReflow: true,
+          skipSeatBaseLayoutTranslation: true,
+        },
+      };
+    }
 
     case 'GROUP_OBJECTS':
       return { type: 'GROUP_SELECTION', payload: command.payload };
@@ -322,10 +401,14 @@ export function executeMapCommand(
     case 'DUPLICATE_SELECTION': {
       const addedSeats = state.nextMap.seats.filter((ns) => !map.seats.some((s) => s.id === ns.id));
       const addedObjects = state.nextMap.objects.filter((no) => !map.objects.some((o) => o.id === no.id));
+      const addedSections = state.nextMap.sections.filter((ns) => !map.sections.some((s) => s.id === ns.id));
+      const addedSeatGroups = (state.nextMap.seatGroups ?? []).filter((ng) => !(map.seatGroups ?? []).some((g) => g.id === ng.id));
 
       const selectionToDelete: MapSelection = [
+        ...addedSections.map((s) => ({ type: 'section' as const, id: s.id })),
         ...addedSeats.map((s) => ({ type: 'seat' as const, id: s.id })),
         ...addedObjects.map((o) => ({ type: 'object' as const, id: o.id })),
+        ...addedSeatGroups.map((g) => ({ type: 'seatgroup' as const, id: g.id })),
       ];
       undoCommand = {
         type: 'DELETE_SELECTION',
@@ -337,16 +420,18 @@ export function executeMapCommand(
     }
     case 'GROUP_SELECTION':
     case 'UNGROUP_SELECTION': {
-      const candidateIds = new Set(
-        normalizedCommand.payload.selection.filter((item) => item.type === 'object').map((item) => item.id),
-      );
       undoCommand = {
         type: 'RESTORE_OBJECT_GROUPS',
         payload: {
-          objects: map.objects.filter((o) => candidateIds.has(o.id)).map((o) => ({
-            id: o.id,
-            prevData: { ...o.data },
-          })),
+          objects: map.objects
+            .filter((object) => {
+              const next = state.nextMap.objects.find((candidate) => candidate.id === object.id);
+              return next && JSON.stringify(next.data) !== JSON.stringify(object.data);
+            })
+            .map((object) => ({
+              id: object.id,
+              prevData: { ...object.data },
+            })),
         },
       };
       break;

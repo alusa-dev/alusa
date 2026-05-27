@@ -38,6 +38,11 @@ export function resetNodeScale(node: Konva.Node) {
   node.scaleY(1);
 }
 
+function findChildShape(node: Konva.Node, selector: string) {
+  if (!(node instanceof Konva.Container)) return undefined;
+  return node.findOne(selector) as Konva.Rect | undefined;
+}
+
 export function readNodeScale(node: Konva.Node) {
   return {
     scaleX: node.scaleX(),
@@ -56,8 +61,7 @@ export function captureTransformNodeSnapshots(stage: Konva.Stage, nodeIds: strin
     const node = stage.findOne(`#${nodeId}`);
     if (!node) continue;
 
-    const container = node as Konva.Container;
-    const body = container.findOne('.corridor-body') as Konva.Rect | undefined;
+    const body = findChildShape(node, '.corridor-body');
     snapshots.push({
       id: nodeId,
       x: node.x(),
@@ -83,8 +87,7 @@ export function restoreTransformNodeSnapshots(stage: Konva.Stage, snapshots: Tra
     node.scaleX(snapshot.scaleX);
     node.scaleY(snapshot.scaleY);
 
-    const container = node as Konva.Container;
-    const body = container.findOne('.corridor-body') as Konva.Rect | undefined;
+    const body = findChildShape(node, '.corridor-body');
     if (body && typeof snapshot.bodyWidth === 'number' && typeof snapshot.bodyHeight === 'number') {
       body.width(snapshot.bodyWidth);
       body.height(snapshot.bodyHeight);
@@ -194,7 +197,9 @@ export function readObjectTransformCommitFromNodes(
   stage: Konva.Stage,
   session: ObjectTransformSession,
   selectedIds?: string[],
+  options?: { scaleMode?: 'uniform' | 'independent' },
 ) {
+  const scaleMode = options?.scaleMode ?? 'uniform';
   const objectIds = selectedIds ?? [...session.snapshots.keys()];
   const updates: Array<{ id: string; patch: ReturnType<typeof computeUniformTransformPatch> }> = [];
 
@@ -226,7 +231,9 @@ export function readObjectTransformCommitFromNodes(
       continue;
     }
 
-    const scale = clampUniformScale(Math.max(Math.abs(node.scaleX()), Math.abs(node.scaleY()), MIN_UNIFORM_SCALE));
+    const scaleX = Math.max(Math.abs(node.scaleX()), MIN_UNIFORM_SCALE);
+    const scaleY = Math.max(Math.abs(node.scaleY()), MIN_UNIFORM_SCALE);
+    const scale = clampUniformScale(Math.max(scaleX, scaleY, MIN_UNIFORM_SCALE));
     resetNodeScale(node);
     updates.push({
       id: objectId,
@@ -234,8 +241,8 @@ export function readObjectTransformCommitFromNodes(
         x: node.x(),
         y: node.y(),
         rotation: node.rotation(),
-        width: clampObjectSize(snapshot.width * scale),
-        height: clampObjectSize(snapshot.height * scale),
+        width: clampObjectSize(snapshot.width * (scaleMode === 'independent' ? scaleX : scale)),
+        height: clampObjectSize(snapshot.height * (scaleMode === 'independent' ? scaleY : scale)),
       },
     });
   }

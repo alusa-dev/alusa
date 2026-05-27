@@ -89,6 +89,7 @@ export function useSnapGuidesSession({
           targetKind: 'multi',
         });
         applySnapResult(nodes, result);
+        syncGroupDrag(event);
         activeDragSnapRef.current = hasActiveGuides(result);
         guidesLayerRef.current?.setGuides(result.guides, result.spacingGuides);
         return;

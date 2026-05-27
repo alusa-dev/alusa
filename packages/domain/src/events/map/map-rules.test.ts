@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canEditEventMapDraft,
+  decideEventMapDeletion,
+  isPublicEventMapVisible,
+  validatePublicSeatSelection,
   validateEventMapStatusTransition,
   validatePublishableEventMap,
 } from './map-rules';
@@ -45,5 +49,44 @@ describe('event map rules', () => {
         ]),
       );
     }
+  });
+
+  it('allows editing a published map as a draft without changing the public version', () => {
+    expect(canEditEventMapDraft('DRAFT')).toBe(true);
+    expect(canEditEventMapDraft('PUBLISHED')).toBe(true);
+    expect(canEditEventMapDraft('ARCHIVED')).toBe(false);
+  });
+
+  it('archives published maps instead of hard deleting historical public versions', () => {
+    expect(decideEventMapDeletion({ status: 'DRAFT', versionsCount: 0, ordersCount: 0 })).toEqual({
+      action: 'DELETE',
+    });
+    expect(decideEventMapDeletion({ status: 'PUBLISHED', versionsCount: 1, ordersCount: 0 }).action).toBe('ARCHIVE');
+    expect(decideEventMapDeletion({ status: 'DRAFT', versionsCount: 1, ordersCount: 2 }).action).toBe('ARCHIVE');
+  });
+
+  it('validates public seat selections against visibility and availability', () => {
+    const result = validatePublicSeatSelection({
+      requestedSeatIds: ['seat-1', 'seat-1', 'seat-2'],
+      seats: [
+        { id: 'seat-1', status: 'AVAILABLE' },
+        { id: 'seat-2', status: 'AVAILABLE' },
+      ],
+      maxSeats: 4,
+    });
+
+    expect(result).toEqual({ ok: true, seatIds: ['seat-1', 'seat-2'] });
+    expect(
+      validatePublicSeatSelection({
+        requestedSeatIds: ['seat-1'],
+        seats: [{ id: 'seat-1', status: 'SOLD' }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('only exposes maps with an active public version', () => {
+    expect(isPublicEventMapVisible({ status: 'PUBLISHED', publicEnabled: true, publishedVersionId: 'v1' })).toBe(true);
+    expect(isPublicEventMapVisible({ status: 'DRAFT', publicEnabled: true, publishedVersionId: 'v1' })).toBe(false);
+    expect(isPublicEventMapVisible({ status: 'PUBLISHED', publicEnabled: false, publishedVersionId: 'v1' })).toBe(false);
   });
 });

@@ -46,6 +46,45 @@ function mapWithSeatGroup(): EventMapDTO {
   };
 }
 
+function mapWithTwoShapes(): EventMapDTO {
+  return {
+    ...mapWithSeatGroup(),
+    seatGroups: [],
+    objects: [
+      {
+        id: 'object-1',
+        levelId: 'level-1',
+        sectionId: null,
+        type: 'GENERAL_AREA',
+        data: {},
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 80,
+        rotation: 0,
+        locked: false,
+        hidden: false,
+        sortOrder: 0,
+      },
+      {
+        id: 'object-2',
+        levelId: 'level-1',
+        sectionId: null,
+        type: 'GENERAL_AREA',
+        data: {},
+        x: 160,
+        y: 20,
+        width: 120,
+        height: 60,
+        rotation: 0,
+        locked: false,
+        hidden: false,
+        sortOrder: 1,
+      },
+    ],
+  };
+}
+
 function mockNode() {
   const state = { x: 130, y: 150, rotation: 37, scaleX: 1.5, scaleY: 2 };
   return {
@@ -59,6 +98,33 @@ function mockNode() {
     scaleY: (value?: number) => {
       if (typeof value === 'number') state.scaleY = value;
       return state.scaleY;
+    },
+  };
+}
+
+function mockShapeNode(attrs: { x: number; y: number; rotation?: number; scaleX?: number; scaleY?: number }) {
+  const state = {
+    x: attrs.x,
+    y: attrs.y,
+    rotation: attrs.rotation ?? 0,
+    scaleX: attrs.scaleX ?? 1,
+    scaleY: attrs.scaleY ?? 1,
+  };
+  return {
+    x: () => state.x,
+    y: () => state.y,
+    rotation: () => state.rotation,
+    scaleX: (value?: number) => {
+      if (typeof value === 'number') state.scaleX = value;
+      return state.scaleX;
+    },
+    scaleY: (value?: number) => {
+      if (typeof value === 'number') state.scaleY = value;
+      return state.scaleY;
+    },
+    setScale: (scaleX: number, scaleY: number) => {
+      state.scaleX = scaleX;
+      state.scaleY = scaleY;
     },
   };
 }
@@ -102,5 +168,42 @@ describe('transform commit scale reset', () => {
     ]);
     expect(node.scaleX()).toBe(1);
     expect(node.scaleY()).toBe(1);
+  });
+
+  it('commits generic multi-shape resize with independent x/y scale', () => {
+    const map = mapWithTwoShapes();
+    const first = mockShapeNode({ x: 0, y: 10 });
+    const second = mockShapeNode({ x: 220, y: 15 });
+    const stage = {
+      findOne: (selector: string) => {
+        if (selector === '#node-object-1') return first;
+        if (selector === '#node-object-2') return second;
+        return null;
+      },
+    };
+    const transformer = { getActiveAnchor: () => 'middle-right', forceUpdate: () => undefined, rotation: () => 0 };
+
+    const session = beginMapTransformSession({
+      kind: 'generic',
+      map,
+      corridorIds: [],
+      selectedObjectIds: ['object-1', 'object-2'],
+      selectedSeatIds: [],
+      selectedSeatGroupIds: [],
+      stage: stage as never,
+      transformer: transformer as never,
+    });
+
+    first.setScale(1.8, 0.75);
+    second.setScale(1.8, 0.75);
+
+    const commit = buildMapTransformCommit(session!, { stage: stage as never, transformer: transformer as never }, map);
+
+    expect(commit.objectUpdates).toEqual([
+      { id: 'object-1', patch: expect.objectContaining({ width: 180, height: 60 }) },
+      { id: 'object-2', patch: expect.objectContaining({ width: 216, height: 45 }) },
+    ]);
+    expect(first.scaleX()).toBe(1);
+    expect(first.scaleY()).toBe(1);
   });
 });

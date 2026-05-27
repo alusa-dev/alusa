@@ -12,7 +12,7 @@ import {
   MAP_AREA_HEIGHT_PX,
   MAP_AREA_WIDTH_PX,
   normalizeMapLevels,
-} from '../../geometry/level-utils.js';
+} from '../../doc/levels.js';
 import { withAutoObjectLabel } from '../../layout/object-naming.js';
 import {
   buildSeatGridPreview,

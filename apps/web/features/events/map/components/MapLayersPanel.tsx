@@ -140,7 +140,7 @@ export function MapLayersPanel() {
     () => map?.levels.find((level) => level.id === activeLevelId) ?? map?.levels[0] ?? null,
     [activeLevelId, map?.levels],
   );
-  const disabled = map?.status !== 'DRAFT';
+  const disabled = map?.status === 'ARCHIVED';
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const visibleLayerRows = useMemo(() => {
     if (!map || !activeLevel) return 0;

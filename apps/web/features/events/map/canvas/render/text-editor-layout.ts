@@ -4,6 +4,7 @@ import type { EventMapObjectDTO } from '../../api/event-map-service';
 import type Konva from 'konva';
 
 export const TEXT_EDITOR_PLACEHOLDER = 'Digite aqui…';
+const TEXT_EDITOR_INLINE_PADDING_PX = 16;
 
 export type TextEditorState = {
   objectId: string | null;
@@ -222,9 +223,9 @@ export function computeTextEditorLayout(input: TextEditorLayoutInput): TextEdito
     : autoHeight;
 
   const layout: TextEditorLayout = {
-    left: stageBox.left - containerBox.left + absoluteX,
+    left: stageBox.left - containerBox.left + absoluteX - TEXT_EDITOR_INLINE_PADDING_PX / 2,
     top: stageBox.top - containerBox.top + absoluteY,
-    width: isBoxMode ? boxWidth : 'auto',
+    width: isBoxMode ? boxWidth + TEXT_EDITOR_INLINE_PADDING_PX : 'auto',
     height: input.textMode === 'area' ? boxHeight : 'auto',
     minHeight: Math.max(scaledFontSize * input.lineHeight, boxHeight),
     fontSize: scaledFontSize,
@@ -274,7 +275,7 @@ export function getTextEditorDimensions(
       fontFamily: editor.fontFamily,
       fontWeight: editor.fontWeight,
       letterSpacing: editor.letterSpacing,
-    }),
-    height: Math.max(editor.minHeight, lineCount * editor.fontSize * editor.lineHeight),
+    }) + TEXT_EDITOR_INLINE_PADDING_PX,
+    height: Math.max(editor.minHeight, lineCount * editor.fontSize * editor.lineHeight) + 2,
   };
 }

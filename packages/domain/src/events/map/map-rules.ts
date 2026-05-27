@@ -1,6 +1,8 @@
 export type EventTicketMode = 'NONE' | 'SIMPLE' | 'NUMBERED_SEATS';
 export type EventMapStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
 export type EventSeatStatus = 'AVAILABLE' | 'HELD' | 'SOLD' | 'BLOCKED' | 'COMPLIMENTARY' | 'UNAVAILABLE';
+export type EventMapPublicSeatStatus = 'AVAILABLE' | 'HELD' | 'SOLD' | 'BLOCKED' | 'UNAVAILABLE';
+export type EventMapDeletionAction = 'DELETE' | 'ARCHIVE' | 'BLOCK';
 
 export type EventMapTransitionResult =
   | { ok: true }
@@ -22,6 +24,15 @@ export type PublishableMapInput = {
 export type PublishValidationResult =
   | { ok: true }
   | { ok: false; errors: string[] };
+
+export type PublicSeatSelectionResult =
+  | { ok: true; seatIds: string[] }
+  | { ok: false; reason: string };
+
+export type EventMapDeletionDecision =
+  | { action: 'DELETE' }
+  | { action: 'ARCHIVE'; reason: string }
+  | { action: 'BLOCK'; reason: string };
 
 export function validateEventMapStatusTransition(
   current: EventMapStatus,
@@ -69,4 +80,74 @@ export function validatePublishableEventMap(input: PublishableMapInput): Publish
   }
 
   return errors.length > 0 ? { ok: false, errors } : { ok: true };
+}
+
+export function canEditEventMapDraft(status: EventMapStatus) {
+  return status === 'DRAFT' || status === 'PUBLISHED';
+}
+
+export function describeEventMapEditMode(status: EventMapStatus) {
+  if (status === 'PUBLISHED') {
+    return 'Este mapa está publicado. Alterações salvas ficam no rascunho ativo e só aparecem no link público após publicar novamente.';
+  }
+  if (status === 'ARCHIVED') return 'Mapa arquivado não aceita edição.';
+  return 'Mapa em rascunho aceita edição completa antes da primeira publicação.';
+}
+
+export function decideEventMapDeletion(input: {
+  status: EventMapStatus;
+  versionsCount: number;
+  ordersCount: number;
+}): EventMapDeletionDecision {
+  if (input.status === 'ARCHIVED') {
+    return { action: 'BLOCK', reason: 'Mapa arquivado já está fora de operação.' };
+  }
+
+  if (input.ordersCount > 0) {
+    return {
+      action: 'ARCHIVE',
+      reason: 'Mapa com pedidos ou tickets emitidos deve ser arquivado para preservar histórico.',
+    };
+  }
+
+  if (input.status === 'PUBLISHED' || input.versionsCount > 0) {
+    return {
+      action: 'ARCHIVE',
+      reason: 'Mapa publicado deve ser arquivado para preservar o link e versões anteriores.',
+    };
+  }
+
+  return { action: 'DELETE' };
+}
+
+export function validatePublicSeatSelection(input: {
+  requestedSeatIds: string[];
+  seats: Array<{ id: string; status: EventMapPublicSeatStatus; publicVisible?: boolean }>;
+  maxSeats?: number;
+}): PublicSeatSelectionResult {
+  const uniqueSeatIds = [...new Set(input.requestedSeatIds.map((seatId) => seatId.trim()).filter(Boolean))];
+  if (uniqueSeatIds.length === 0) return { ok: false, reason: 'Selecione pelo menos um assento.' };
+  if (input.maxSeats && uniqueSeatIds.length > input.maxSeats) {
+    return { ok: false, reason: `Selecione no máximo ${input.maxSeats} assentos por compra.` };
+  }
+
+  const seatsById = new Map(input.seats.map((seat) => [seat.id, seat]));
+  const missing = uniqueSeatIds.filter((seatId) => !seatsById.has(seatId));
+  if (missing.length > 0) return { ok: false, reason: 'Um ou mais assentos não existem neste mapa publicado.' };
+
+  const unavailable = uniqueSeatIds.filter((seatId) => {
+    const seat = seatsById.get(seatId);
+    return !seat || seat.publicVisible === false || seat.status !== 'AVAILABLE';
+  });
+  if (unavailable.length > 0) return { ok: false, reason: 'Um ou mais assentos já não estão disponíveis.' };
+
+  return { ok: true, seatIds: uniqueSeatIds };
+}
+
+export function isPublicEventMapVisible(input: {
+  status: EventMapStatus;
+  publicEnabled: boolean;
+  publishedVersionId?: string | null;
+}) {
+  return input.status === 'PUBLISHED' && input.publicEnabled && Boolean(input.publishedVersionId);
 }

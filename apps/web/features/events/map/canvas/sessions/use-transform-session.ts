@@ -152,7 +152,7 @@ export function useTransformSession({
           { syncCorridorGeometry: false },
         );
         contentLayerRef.current?.batchDraw();
-      }, 100);
+      }, 40);
     }
 
     function onTransformStart() {

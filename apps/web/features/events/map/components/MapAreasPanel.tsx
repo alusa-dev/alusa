@@ -13,7 +13,7 @@ export function MapAreasPanel() {
   const setSelection = useEventMapEditorStore((state) => state.setSelection);
   const addLevel = useEventMapEditorStore((state) => state.addLevel);
   const deleteLevel = useEventMapEditorStore((state) => state.deleteLevel);
-  const disabled = map?.status !== 'DRAFT';
+  const disabled = map?.status === 'ARCHIVED';
 
   if (!map) return null;
 

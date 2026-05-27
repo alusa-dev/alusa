@@ -4,7 +4,7 @@ import type { CanvasTransformCommand } from './transform-commit-types';
 
 export type TransformCommitPayload = TransformCommandPayload;
 
-/** Classify generic transform payload into RESIZE_OBJECTS, ROTATE_OBJECTS, or MOVE_OBJECTS. */
+/** Classify generic transform payload into semantic transform commands. */
 export function buildCanvasTransformCommand(
   payload: TransformCommitPayload,
   map: EventMapDTO | null,

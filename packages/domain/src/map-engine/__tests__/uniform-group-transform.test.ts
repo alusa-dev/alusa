@@ -72,6 +72,18 @@ describe('uniform-group-transform', () => {
     expect(textPatch.height).toBeNull();
   });
 
+  it('rotates around the visual center of the whole selection', () => {
+    const left = getObjectTransformSnapshot({ ...shape('left'), x: 100, y: 100, width: 40, height: 40 });
+    const right = getObjectTransformSnapshot({ ...shape('right'), x: 220, y: 100, width: 40, height: 40 });
+    const bounds = getSnapshotsUnionBounds([left, right]);
+
+    const leftPatch = computeUniformTransformPatch(left, bounds.centerX, bounds.centerY, 1, 90);
+    const rightPatch = computeUniformTransformPatch(right, bounds.centerX, bounds.centerY, 1, 90);
+
+    expect(leftPatch).toMatchObject({ x: 200, y: 40, rotation: 90 });
+    expect(rightPatch).toMatchObject({ x: 200, y: 160, rotation: 90 });
+  });
+
   it('builds batch updates for all members', () => {
     const snapshots = new Map([
       ['shape', getObjectTransformSnapshot(shape('shape'))],

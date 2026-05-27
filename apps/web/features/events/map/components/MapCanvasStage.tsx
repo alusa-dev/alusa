@@ -38,7 +38,6 @@ type MapCanvasStageProps = {
   transformerScaleOptions: TransformerScaleOptions;
   selectedTextTransformAnchors: readonly string[];
   placementToolActive: boolean;
-  transformPipelineActive: boolean;
   levelBounds: LevelBounds | null;
   selectedNodeIds: string[];
   handleAnchorDragBound: (
@@ -82,7 +81,6 @@ export function MapCanvasStage({
   transformerScaleOptions,
   selectedTextTransformAnchors,
   placementToolActive,
-  transformPipelineActive,
   levelBounds,
   selectedNodeIds,
   handleAnchorDragBound,
@@ -128,7 +126,6 @@ export function MapCanvasStage({
           placementToolActive={placementToolActive}
           readOnly={readOnly}
           tool={tool}
-          transformPipelineActive={transformPipelineActive}
           levelBounds={levelBounds}
           selectedNodeIds={selectedNodeIds}
           handleAnchorDragBound={handleAnchorDragBound}

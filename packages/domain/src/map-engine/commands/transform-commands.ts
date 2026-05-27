@@ -4,6 +4,8 @@ import type {
   EventSeatDTO,
   EventSeatGroupDTO,
 } from '../types/event-map-types.js';
+import { selectionFromRotationPatchIds } from '../operations/transform/rotate-selection.js';
+import { shortestRotationDelta } from '../geometry/rotation.js';
 
 export type TransformCommandPayload = {
   objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
@@ -27,6 +29,14 @@ export type ClassifiedTransformCommand =
       payload: {
         objects: Array<{ id: string; patch: Partial<Pick<EventMapObjectDTO, 'x' | 'y' | 'rotation'>> }>;
         seats: Array<{ id: string; patch: Partial<Pick<EventSeatDTO, 'x' | 'y' | 'rotation'>> }>;
+      };
+    }
+  | {
+      type: 'ROTATE_SELECTION';
+      payload: {
+        selection: ReturnType<typeof selectionFromRotationPatchIds>;
+        angleDelta: number;
+        mode: 'free';
       };
     }
   | {
@@ -58,6 +68,14 @@ export function isRotationOnlySeatPatch(seat: EventSeatDTO, patch: Partial<Event
   return patch.rotation !== undefined || patch.x !== undefined || patch.y !== undefined;
 }
 
+export function isRotationOnlySeatGroupPatch(group: EventSeatGroupDTO, patch: Partial<EventSeatGroupDTO>) {
+  for (const key of ['rows', 'columns', 'seatWidth', 'seatHeight', 'gapX', 'gapY', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'locked', 'name'] as const) {
+    if (patch[key] !== undefined && patch[key] !== group[key]) return false;
+  }
+  if (patch.numbering !== undefined && JSON.stringify(patch.numbering) !== JSON.stringify(group.numbering)) return false;
+  return patch.rotation !== undefined || patch.x !== undefined || patch.y !== undefined;
+}
+
 export function isTranslationOnlyObjectPatch(object: EventMapObjectDTO, patch: Partial<EventMapObjectDTO>) {
   if (object.type === 'TEXT' || patch.data !== undefined) return false;
   if (patch.rotation !== undefined && !nearlyEqual(patch.rotation, object.rotation ?? 0)) return false;
@@ -70,16 +88,6 @@ export function isTranslationOnlySeatPatch(seat: EventSeatDTO, patch: Partial<Ev
   if (patch.rotation !== undefined && !nearlyEqual(patch.rotation, seat.rotation ?? 0)) return false;
   if (patch.size !== undefined && !nearlyEqual(patch.size, seat.size)) return false;
   return patch.x !== undefined || patch.y !== undefined;
-}
-
-function pickRotatePatch<T extends { x?: number; y?: number; rotation?: number }>(
-  patch: Partial<T>,
-): Partial<Pick<T, 'x' | 'y' | 'rotation'>> {
-  const next: Partial<Pick<T, 'x' | 'y' | 'rotation'>> = {};
-  if (patch.x !== undefined) next.x = patch.x;
-  if (patch.y !== undefined) next.y = patch.y;
-  if (patch.rotation !== undefined) next.rotation = patch.rotation;
-  return next;
 }
 
 function inferSharedTranslationDelta(
@@ -139,19 +147,6 @@ export function classifyTransformPayload(
     };
   }
 
-  if (seatGroups.length > 0) {
-    return {
-      type: 'RESIZE_OBJECTS',
-      payload: {
-        objects,
-        seats,
-        seatGroups,
-        skipSeatBaseLayoutTranslation: payload.skipSeatBaseLayoutTranslation,
-        skipCorridorReflow: payload.skipCorridorReflow,
-      },
-    };
-  }
-
   const objectEntries = objects
     .map((entry) => {
       const object = map?.objects.find((candidate) => candidate.id === entry.id);
@@ -166,19 +161,63 @@ export function classifyTransformPayload(
     })
     .filter((entry): entry is { seat: EventSeatDTO; patch: Partial<EventSeatDTO> } => entry !== null);
 
+  const seatGroupEntries = seatGroups
+    .map((entry) => {
+      const group = map?.seatGroups?.find((candidate) => candidate.id === entry.id);
+      return group ? { group, patch: entry.patch } : null;
+    })
+    .filter((entry): entry is { group: EventSeatGroupDTO; patch: Partial<EventSeatGroupDTO> } => entry !== null);
+
   const allRotationOnly =
     objectEntries.length === objects.length &&
     seatEntries.length === seats.length &&
+    seatGroupEntries.length === seatGroups.length &&
     objectEntries.every(({ object, patch }) => isRotationOnlyObjectPatch(object, patch)) &&
     seatEntries.every(({ seat, patch }) => isRotationOnlySeatPatch(seat, patch)) &&
-    objectEntries.some(({ patch }) => patch.rotation !== undefined);
+    seatGroupEntries.every(({ group, patch }) => isRotationOnlySeatGroupPatch(group, patch)) &&
+    (objectEntries.some(({ patch }) => patch.rotation !== undefined) ||
+      seatEntries.some(({ patch }) => patch.rotation !== undefined) ||
+      seatGroupEntries.some(({ patch }) => patch.rotation !== undefined));
 
   if (allRotationOnly) {
+    const rotationSource =
+      objectEntries.find(({ patch }) => patch.rotation !== undefined) ??
+      seatEntries.find(({ patch }) => patch.rotation !== undefined) ??
+      seatGroupEntries.find(({ patch }) => patch.rotation !== undefined);
+    const baseRotation =
+      rotationSource && 'object' in rotationSource
+        ? rotationSource.object.rotation
+        : rotationSource && 'seat' in rotationSource
+          ? rotationSource.seat.rotation
+          : rotationSource && 'group' in rotationSource
+            ? rotationSource.group.rotation
+            : 0;
+    const nextRotation = rotationSource?.patch.rotation ?? baseRotation;
+    const angleDelta = shortestRotationDelta(baseRotation ?? 0, nextRotation);
+
     return {
-      type: 'ROTATE_OBJECTS',
+      type: 'ROTATE_SELECTION',
       payload: {
-        objects: objectEntries.map(({ object, patch }) => ({ id: object.id, patch: pickRotatePatch(patch) })),
-        seats: seatEntries.map(({ seat, patch }) => ({ id: seat.id, patch: pickRotatePatch(patch) })),
+        selection: selectionFromRotationPatchIds({
+          objects: objectEntries.map(({ object }) => ({ id: object.id })),
+          seats: seatEntries.map(({ seat }) => ({ id: seat.id })),
+          seatGroups: seatGroupEntries.map(({ group }) => ({ id: group.id })),
+        }),
+        angleDelta,
+        mode: 'free',
+      },
+    };
+  }
+
+  if (seatGroups.length > 0) {
+    return {
+      type: 'RESIZE_OBJECTS',
+      payload: {
+        objects,
+        seats,
+        seatGroups,
+        skipSeatBaseLayoutTranslation: payload.skipSeatBaseLayoutTranslation,
+        skipCorridorReflow: payload.skipCorridorReflow,
       },
     };
   }

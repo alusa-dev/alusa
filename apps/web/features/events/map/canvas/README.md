@@ -20,7 +20,7 @@ Camada de execução visual do Map Creator. **Não contém matemática de transf
 Transformer / drag end
   → commit/* (buildObjectTransformCommit | buildSeatGroupTransformCommit | buildGroupDragCommit)
   → applyCanvasTransformPayload / applyCanvasTransformCommit
-  → buildCanvasTransformCommand (ROTATE | MOVE | RESIZE | TRANSFORM_CORRIDOR)
+  → buildCanvasTransformCommand (ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS | TRANSFORM_CORRIDOR)
   → @alusa/domain executeMapCommand
   → resync corridor nodes
 ```
@@ -34,7 +34,7 @@ Transformer event
   → sessions/use-transform-session
   → transform/map-transform-session + corridor/corridor-transform-session
   → adapters/konva-transform-adapter (preview)
-  → store.applyTransform(ROTATE | MOVE | RESIZE | TRANSFORM_CORRIDOR)
+  → store.applyTransform(ROTATE_SELECTION | MOVE_SELECTION/MOVE_OBJECTS | RESIZE_SELECTION/RESIZE_OBJECTS | TRANSFORM_CORRIDOR)
   → @alusa/domain executeMapCommand
   → resync corridor nodes
 ```

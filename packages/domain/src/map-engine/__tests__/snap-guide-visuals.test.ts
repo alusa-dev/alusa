@@ -1,5 +1,5 @@
-import type { SnapGuideLine } from '../geometry/snap-guides.js';
-import { areActiveGuideVisualsEqual, resolveActiveGuideVisuals } from '../geometry/snap-guide-visuals.js';
+import type { SnapGuideLine } from '../guides/snap-guides.js';
+import { areActiveGuideVisualsEqual, resolveActiveGuideVisuals } from '../guides/snap-guide-visuals.js';
 
 import { describe, expect, it } from 'vitest';
 

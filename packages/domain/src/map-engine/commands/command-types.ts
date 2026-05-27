@@ -35,8 +35,29 @@ export type MapCommand =
       };
     }
   | {
+      type: 'MOVE_SELECTION';
+      payload: {
+        selection: MapSelection;
+        delta: { x: number; y: number };
+      };
+    }
+  | {
       type: 'RESIZE_OBJECTS';
       payload: {
+        objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
+        seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
+        seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
+        skipSeatBaseLayoutTranslation?: boolean;
+        skipCorridorReflow?: boolean;
+      };
+    }
+  | {
+      type: 'RESIZE_SELECTION';
+      payload: {
+        selection: MapSelection;
+        scaleX?: number;
+        scaleY?: number;
+        pivot?: { x: number; y: number } | null;
         objects?: Array<{ id: string; patch: Partial<EventMapObjectDTO> }>;
         seats?: Array<{ id: string; patch: Partial<EventSeatDTO> }>;
         seatGroups?: Array<{ id: string; patch: Partial<EventSeatGroupDTO> }>;
@@ -49,6 +70,16 @@ export type MapCommand =
       payload: {
         objects?: Array<{ id: string; patch: Partial<Pick<EventMapObjectDTO, 'x' | 'y' | 'rotation'>> }>;
         seats?: Array<{ id: string; patch: Partial<Pick<EventSeatDTO, 'x' | 'y' | 'rotation'>> }>;
+      };
+    }
+  | {
+      type: 'ROTATE_SELECTION';
+      payload: {
+        selection: MapSelection;
+        angleDelta: number;
+        pivot?: { x: number; y: number } | null;
+        mode?: 'free' | 'snap';
+        snapStepDegrees?: number;
       };
     }
   | {

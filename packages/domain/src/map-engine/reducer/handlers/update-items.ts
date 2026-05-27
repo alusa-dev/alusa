@@ -15,7 +15,7 @@ import {
 import {
   MAP_AREA_HEIGHT_PX,
   MAP_AREA_WIDTH_PX,
-} from '../../geometry/level-utils.js';
+} from '../../doc/levels.js';
 import { applyObjectPatchWithCorridorMetadata } from './corridor.js';
 import { applySeatGroupPatch } from './seat-group.js';
 import {

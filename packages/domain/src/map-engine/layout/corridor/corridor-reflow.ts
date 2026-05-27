@@ -40,6 +40,7 @@ import {
 export const CORRIDOR_REFLOW_ITERATIONS = 25;
 export const CORRIDOR_DRAG_PREVIEW_ITERATIONS = CORRIDOR_REFLOW_ITERATIONS;
 export const CORRIDOR_DRAG_COMMIT_ITERATIONS = CORRIDOR_REFLOW_ITERATIONS;
+const CLEARANCE_SAFETY_GAP = 0.25;
 
 export type CorridorReflowOptions = {
   maxIterations?: number;
@@ -396,13 +397,13 @@ function applyAxisObstaclesToSeatLines(
         const obs = data.active[i - 1]!;
         const obsStart = axis === 'x' ? obs.clearanceRect.x : obs.clearanceRect.y;
         const obsEnd = obsStart + (axis === 'x' ? obs.clearanceRect.width : obs.clearanceRect.height);
-        d_min = obsEnd - data.starts[i];
+        d_min = obsEnd + CLEARANCE_SAFETY_GAP - data.starts[i];
       }
 
       if (i < numActive) {
         const obs = data.active[i]!;
         const obsStart = axis === 'x' ? obs.clearanceRect.x : obs.clearanceRect.y;
-        d_max = obsStart - data.ends[i];
+        d_max = obsStart - CLEARANCE_SAFETY_GAP - data.ends[i];
       }
 
       let d = 0;
@@ -492,8 +493,8 @@ function applyCorridorCoreGeometry({
   const normalizedPartitionSize = axis === 'x' ? normalizedWidth : normalizedHeight;
   const requiredGap =
     axis === 'x'
-      ? spacing.left + normalizedPartitionSize + spacing.right
-      : spacing.top + normalizedPartitionSize + spacing.bottom;
+      ? spacing.left + CLEARANCE_SAFETY_GAP + normalizedPartitionSize + spacing.right + CLEARANCE_SAFETY_GAP
+      : spacing.top + CLEARANCE_SAFETY_GAP + normalizedPartitionSize + spacing.bottom + CLEARANCE_SAFETY_GAP;
 
   const nextData: Record<string, unknown> = { ...corridor.data };
   delete nextData.corridorLayoutWarning;
@@ -506,8 +507,10 @@ function applyCorridorCoreGeometry({
     if (availableGap < requiredGap) {
       corridor.x = gapStart + (availableGap - normalizedPartitionSize) / 2;
     } else {
-      const minX = Number.isFinite(gapStart) ? gapStart + spacing.left : -Infinity;
-      const maxX = Number.isFinite(gapEnd) ? gapEnd - spacing.right - normalizedPartitionSize : Infinity;
+      const minX = Number.isFinite(gapStart) ? gapStart + spacing.left + CLEARANCE_SAFETY_GAP : -Infinity;
+      const maxX = Number.isFinite(gapEnd)
+        ? gapEnd - spacing.right - CLEARANCE_SAFETY_GAP - normalizedPartitionSize
+        : Infinity;
       if (Number.isFinite(minX) && Number.isFinite(maxX)) {
         corridor.x = clampNumber(corridor.x, minX, Math.max(minX, maxX));
       } else if (Number.isFinite(minX)) {
@@ -519,8 +522,10 @@ function applyCorridorCoreGeometry({
   } else if (availableGap < requiredGap) {
     corridor.y = gapStart + (availableGap - normalizedPartitionSize) / 2;
   } else {
-    const minY = Number.isFinite(gapStart) ? gapStart + spacing.top : -Infinity;
-    const maxY = Number.isFinite(gapEnd) ? gapEnd - spacing.bottom - normalizedPartitionSize : Infinity;
+    const minY = Number.isFinite(gapStart) ? gapStart + spacing.top + CLEARANCE_SAFETY_GAP : -Infinity;
+    const maxY = Number.isFinite(gapEnd)
+      ? gapEnd - spacing.bottom - CLEARANCE_SAFETY_GAP - normalizedPartitionSize
+      : Infinity;
     if (Number.isFinite(minY) && Number.isFinite(maxY)) {
       corridor.y = clampNumber(corridor.y, minY, Math.max(minY, maxY));
     } else if (Number.isFinite(minY)) {

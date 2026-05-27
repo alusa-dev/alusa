@@ -100,6 +100,9 @@ export type EventMapDTO = {
   name: string;
   status: EventMapStatus;
   publishedVersionId: string | null;
+  publicSlug?: string | null;
+  publicEnabled?: boolean;
+  publicUrl?: string | null;
   createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -110,7 +113,14 @@ export type EventMapDTO = {
   objects: EventMapObjectDTO[];
   seatGroups: EventSeatGroupDTO[];
   seats: EventSeatDTO[];
-  versions: Array<{ id: string; version: number; status: EventMapStatus; createdAt: string }>;
+  versions: Array<{
+    id: string;
+    version: number;
+    status: EventMapStatus;
+    seatCount: number;
+    publishedAt: string;
+    createdAt: string;
+  }>;
   counts: {
     levels: number;
     sections: number;
@@ -146,4 +156,3 @@ export type MapTool =
   | 'shape-circle'
   | 'shape-ellipse'
   | 'shape-triangle';
-

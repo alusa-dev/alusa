@@ -121,6 +121,11 @@ export function applyMapTransformLivePreview(
   }
 
   if (session.objectTransform) {
+    if (session.kind === 'generic') {
+      transformer.forceUpdate();
+      return;
+    }
+
     const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) =>
       readNodeScale(stage, objectId),
     );
@@ -143,15 +148,27 @@ export function buildMapTransformCommit(
   if (session.kind === 'corridor' && session.corridor) {
     corridorPatches = buildCorridorTransformCommitPatches(session.corridor, ctx, ctx.snap);
   } else if (session.objectTransform) {
-    const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) =>
-      readNodeScale(stage, objectId),
-    );
-    applyObjectTransformLivePreview({ session: session.objectTransform, stage, transformer, scale });
-    const selectedIds =
-      session.kind === 'uniform' ? session.selectedObjectIds : [...session.objectTransform.snapshots.keys()];
-    const updates = readObjectTransformCommitFromNodes(stage, session.objectTransform, selectedIds);
-    for (const entry of updates) {
-      objectUpdates.push({ id: entry.id, patch: entry.patch });
+    if (session.kind === 'generic') {
+      const updates = readObjectTransformCommitFromNodes(
+        stage,
+        session.objectTransform,
+        [...session.objectTransform.snapshots.keys()],
+        { scaleMode: 'independent' },
+      );
+      for (const entry of updates) {
+        objectUpdates.push({ id: entry.id, patch: entry.patch });
+      }
+    } else {
+      const scale = resolveLiveObjectTransformScale(session.objectTransform, (objectId) =>
+        readNodeScale(stage, objectId),
+      );
+      applyObjectTransformLivePreview({ session: session.objectTransform, stage, transformer, scale });
+      const selectedIds =
+        session.kind === 'uniform' ? session.selectedObjectIds : [...session.objectTransform.snapshots.keys()];
+      const updates = readObjectTransformCommitFromNodes(stage, session.objectTransform, selectedIds);
+      for (const entry of updates) {
+        objectUpdates.push({ id: entry.id, patch: entry.patch });
+      }
     }
   }
 

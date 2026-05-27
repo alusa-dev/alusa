@@ -1,5 +1,5 @@
-import type { BoundsRect } from './bounds.js';
-import { getSeatBounds, intersectsRect, normalizeBoundsRect } from './bounds.js';
+import type { BoundsRect } from '../geometry/bounds.js';
+import { getSeatBounds, intersectsRect, normalizeBoundsRect } from '../geometry/bounds.js';
 import { getObjectBounds } from '../layout/object-bounds.js';
 import { getSeatGroupWorldBounds } from '../layout/seat-group-bounds.js';
 import type { MapSelectionItem } from '../selection/selection-utils.js';

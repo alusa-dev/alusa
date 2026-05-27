@@ -237,6 +237,34 @@ enum EventSeatStatus {
   UNAVAILABLE
 }
 
+enum EventMapPublicSeatStatus {
+  AVAILABLE
+  HELD
+  SOLD
+  BLOCKED
+  UNAVAILABLE
+}
+
+enum EventMapReservationStatus {
+  HELD
+  EXPIRED
+  CONSUMED
+  CANCELLED
+}
+
+enum EventMapOrderStatus {
+  CONFIRMED
+  CANCELLED
+  REFUNDED
+}
+
+enum EventTicketStatus {
+  VALID
+  USED
+  CANCELLED
+  REISSUED
+}
+
 enum EventTicketSaleStatus {
   PENDING
   PAID
@@ -831,6 +859,12 @@ model Conta {
   eventMapSections               EventMapSection[]
   eventSeats                     EventSeat[]
   eventSeatGroups                EventSeatGroup[]
+  eventMapPublicSeats            EventMapPublicSeat[]
+  eventMapReservations           EventMapReservation[]
+  eventMapReservationSeats       EventMapReservationSeat[]
+  eventMapOrders                 EventMapOrder[]
+  eventMapOrderItems             EventMapOrderItem[]
+  eventTickets                   EventTicket[]
   eventTicketLots                EventTicketLot[]
   eventTicketSales               EventTicketSale[]
   eventCostumes                  EventCostume[]
@@ -1043,6 +1077,7 @@ model Usuario {
   restockOrdersCreated      RestockOrder[]           @relation("RestockOrderCreatedBy")
   schoolEventsResponsible   SchoolEvent[]            @relation("SchoolEventResponsibleUser")
   schoolEventsCreated       SchoolEvent[]            @relation("SchoolEventCreatedBy")
+  eventMapVersionsPublished EventMapVersion[]        @relation("EventMapVersionPublishedBy")
   eventTicketSalesCreated   EventTicketSale[]        @relation("EventTicketSaleCreatedBy")
   eventAssignmentsDelivered EventCostumeAssignment[] @relation("EventCostumeAssignmentDeliveredBy")
   eventFinancialEntries     EventFinancialEntry[]    @relation("EventFinancialEntryCreatedBy")
@@ -2475,6 +2510,10 @@ model SchoolEvent {
   responsibleUser  Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
   createdBy        Usuario?                 @relation("SchoolEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   maps             EventMap[]
+  mapPublicSeats   EventMapPublicSeat[]
+  mapReservations  EventMapReservation[]
+  mapOrders        EventMapOrder[]
+  mapTickets       EventTicket[]
   ticketLots       EventTicketLot[]
   ticketSales      EventTicketSale[]
   costumes         EventCostume[]
@@ -2525,6 +2564,8 @@ model EventMap {
   name               String
   status             EventMapStatus @default(DRAFT)
   publishedVersionId String?
+  publicSlug         String?        @unique
+  publicEnabled      Boolean        @default(false)
   createdByUserId    String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
@@ -2539,23 +2580,34 @@ model EventMap {
   sections   EventMapSection[]
   seats      EventSeat[]
   seatGroups EventSeatGroup[]
+  publicSeats  EventMapPublicSeat[]
+  reservations EventMapReservation[]
+  orders       EventMapOrder[]
 
   @@index([contaId], name: "idx_event_map_conta")
   @@index([contaId, eventId, status], name: "idx_event_map_conta_event_status")
+  @@index([contaId, publicSlug], name: "idx_event_map_conta_public_slug")
   @@index([contaId, updatedAt], name: "idx_event_map_conta_updated")
 }
 
 model EventMapVersion {
-  id         String         @id @default(cuid())
-  contaId    String
-  eventMapId String
-  version    Int
-  status     EventMapStatus
-  snapshot   Json
-  createdAt  DateTime       @default(now())
+  id                String         @id @default(cuid())
+  contaId           String
+  eventMapId        String
+  version           Int
+  status            EventMapStatus
+  snapshot          Json
+  seatCount         Int            @default(0)
+  publishedByUserId String?
+  publishedAt       DateTime       @default(now())
+  createdAt         DateTime       @default(now())
 
-  conta Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  map   EventMap @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  conta       Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map         EventMap              @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  publishedBy Usuario?              @relation("EventMapVersionPublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  publicSeats EventMapPublicSeat[]
+  reservations EventMapReservation[]
+  orders       EventMapOrder[]
 
   @@unique([eventMapId, version], name: "uq_event_map_version_map_version")
   @@index([contaId, eventMapId], name: "idx_event_map_version_conta_map")
@@ -2700,6 +2752,164 @@ model EventSeat {
   @@unique([contaId, eventMapId, technicalCode], name: "uq_event_seat_conta_map_code")
   @@index([contaId, eventMapId, status], name: "idx_event_seat_conta_map_status")
   @@index([contaId, sectionId], name: "idx_event_seat_conta_section")
+}
+
+model EventMapPublicSeat {
+  id             String                   @id @default(cuid())
+  contaId        String
+  eventId        String
+  eventMapId     String
+  versionId      String
+  originalSeatId String
+  levelId        String?
+  sectionId      String?
+  sectionName    String
+  lotId          String?
+  lotName        String?
+  unitPrice      Decimal                  @default(0) @db.Decimal(12, 2)
+  technicalCode  String
+  displayLabel   String
+  rowLabel       String?
+  seatNumber     String?
+  status         EventMapPublicSeatStatus @default(AVAILABLE)
+  accessible     Boolean                  @default(false)
+  publicVisible  Boolean                  @default(true)
+  x              Decimal                  @db.Decimal(12, 2)
+  y              Decimal                  @db.Decimal(12, 2)
+  size           Decimal?                 @db.Decimal(8, 2)
+  rotation       Decimal                  @default(0) @db.Decimal(8, 2)
+  metadata       Json?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  conta            Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event            SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  map              EventMap                  @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  version          EventMapVersion           @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  reservationSeats EventMapReservationSeat[]
+  orderItems       EventMapOrderItem[]
+
+  @@unique([contaId, versionId, originalSeatId], name: "uq_event_map_public_seat_conta_version_original")
+  @@unique([contaId, versionId, technicalCode], name: "uq_event_map_public_seat_conta_version_code")
+  @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_public_seat_conta_map_version_status")
+  @@index([contaId, eventId, status], name: "idx_event_map_public_seat_conta_event_status")
+}
+
+model EventMapReservation {
+  id          String                    @id @default(cuid())
+  contaId     String
+  eventId     String
+  eventMapId  String
+  versionId   String
+  holdToken   String                    @unique
+  status      EventMapReservationStatus @default(HELD)
+  buyerName   String?
+  buyerEmail  String?
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  cancelledAt DateTime?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  conta   Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event   SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  map     EventMap                  @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  version EventMapVersion           @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  seats   EventMapReservationSeat[]
+  order   EventMapOrder?
+
+  @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_reservation_conta_map_version_status")
+  @@index([contaId, expiresAt, status], name: "idx_event_map_reservation_conta_expires_status")
+}
+
+model EventMapReservationSeat {
+  id            String   @id @default(cuid())
+  contaId       String
+  reservationId String
+  publicSeatId  String
+  createdAt     DateTime @default(now())
+
+  conta       Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  reservation EventMapReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  publicSeat  EventMapPublicSeat  @relation(fields: [publicSeatId], references: [id], onDelete: Cascade)
+
+  @@unique([reservationId, publicSeatId], name: "uq_event_map_reservation_seat_reservation_public_seat")
+  @@index([contaId, publicSeatId], name: "idx_event_map_reservation_seat_conta_public_seat")
+}
+
+model EventMapOrder {
+  id            String              @id @default(cuid())
+  contaId       String
+  eventId       String
+  eventMapId    String
+  versionId     String
+  reservationId String?             @unique
+  buyerName     String
+  buyerEmail    String
+  buyerDocument String?
+  totalAmount   Decimal             @default(0) @db.Decimal(12, 2)
+  status        EventMapOrderStatus @default(CONFIRMED)
+  accessToken   String              @unique
+  confirmedAt   DateTime            @default(now())
+  cancelledAt   DateTime?
+  refundedAt    DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  conta       Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  map         EventMap             @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  version     EventMapVersion      @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  reservation EventMapReservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+  items       EventMapOrderItem[]
+  tickets     EventTicket[]
+
+  @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
+  @@index([contaId, eventId, createdAt], name: "idx_event_map_order_conta_event_created")
+}
+
+model EventMapOrderItem {
+  id                String   @id @default(cuid())
+  contaId           String
+  orderId           String
+  publicSeatId      String
+  lotId             String?
+  unitPriceSnapshot Decimal  @default(0) @db.Decimal(12, 2)
+  sectionName       String
+  seatLabel         String
+  technicalCode     String
+  createdAt         DateTime @default(now())
+
+  conta      Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  order      EventMapOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  publicSeat EventMapPublicSeat @relation(fields: [publicSeatId], references: [id], onDelete: Restrict)
+  ticket     EventTicket?
+
+  @@unique([orderId, publicSeatId], name: "uq_event_map_order_item_order_public_seat")
+  @@index([contaId, publicSeatId], name: "idx_event_map_order_item_conta_public_seat")
+}
+
+model EventTicket {
+  id              String            @id @default(cuid())
+  contaId         String
+  eventId         String
+  eventMapOrderId String
+  orderItemId     String            @unique
+  ticketCode      String            @unique
+  status          EventTicketStatus @default(VALID)
+  issuedAt        DateTime          @default(now())
+  usedAt          DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  conta     Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  order     EventMapOrder     @relation(fields: [eventMapOrderId], references: [id], onDelete: Cascade)
+  orderItem EventMapOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, eventId, status], name: "idx_event_ticket_conta_event_status")
+  @@index([contaId, eventMapOrderId], name: "idx_event_ticket_conta_order")
 }
 
 model EventTicketSale {

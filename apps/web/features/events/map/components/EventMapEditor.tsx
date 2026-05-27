@@ -73,7 +73,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   }, [eventId, loadMap, mapId, mapQuery.data]);
 
   useEffect(() => {
-    if (!map || map.id !== mapId || map.status !== 'DRAFT' || !isDirty) return;
+    if (!map || map.id !== mapId || map.status === 'ARCHIVED' || !isDirty) return;
 
     const timeout = window.setTimeout(() => {
       const payload = toPayload();
@@ -124,7 +124,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   });
 
   async function handlePublish() {
-    if (map?.status === 'DRAFT' && isDirty) {
+    if (map?.status !== 'ARCHIVED' && isDirty) {
       await saveMutation.mutateAsync();
     }
     await publishMutation.mutateAsync();
@@ -149,7 +149,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
         }
         return;
       }
-      if (store.map?.status !== 'DRAFT') return;
+      if (store.map?.status === 'ARCHIVED') return;
       if (event.code === 'Space') {
         event.preventDefault();
         if (!spacePanPreviousToolRef.current) {
@@ -258,7 +258,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
     return <MapEditorLoading />;
   }
 
-  const readOnly = map.status !== 'DRAFT';
+  const readOnly = map.status === 'ARCHIVED';
 
   return (
     <main

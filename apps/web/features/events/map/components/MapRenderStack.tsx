@@ -153,6 +153,7 @@ export function MapRenderStack({
               containerRef={state.containerRef}
               getPointerPoint={state.getPointerPoint}
               onSelect={handlers.onSelect}
+              onDoubleClickSelectIndividual={handlers.onDoubleClickSelectIndividualSeat}
               onDragStart={handlers.onDragStart}
               onDragMove={handlers.onDragMove}
               onDragEnd={handlers.onDragEnd}

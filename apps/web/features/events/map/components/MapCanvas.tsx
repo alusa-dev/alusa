@@ -489,7 +489,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
         transformerScaleOptions={transformerScaleOptions}
         selectedTextTransformAnchors={transformRouting.selectedTextTransformAnchors}
         placementToolActive={placementToolActive}
-        transformPipelineActive={transformRouting.transformPipelineActive}
         levelBounds={levelBounds}
         selectedNodeIds={selectedNodeIds}
         handleAnchorDragBound={snapSession.handleAnchorDragBound}

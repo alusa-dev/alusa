@@ -21,6 +21,7 @@ export type SeatGroupNodeProps = {
   containerRef: RefObject<HTMLDivElement | null>;
   getPointerPoint: () => { x: number; y: number } | null;
   onSelect: (event: Konva.KonvaEventObject<MouseEvent>, item: MapSelectionItem) => void;
+  onDoubleClickSelectIndividual: (seatId: string) => void;
   onDragStart: (nodeId: string, item: MapSelectionItem) => void;
   onDragMove: (event: Konva.KonvaEventObject<DragEvent>) => void;
   onDragEnd: (nodeId: string, event: Konva.KonvaEventObject<DragEvent>, onCommit: (x: number, y: number) => void) => void;
@@ -40,6 +41,7 @@ export function SeatGroupNode({
   containerRef,
   getPointerPoint,
   onSelect,
+  onDoubleClickSelectIndividual,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -145,6 +147,10 @@ export function SeatGroupNode({
             onClick={(event) => {
               event.cancelBubble = true;
               onSelect(event, { type: 'seatgroup', id: group.id });
+            }}
+            onDblClick={(event) => {
+              event.cancelBubble = true;
+              onDoubleClickSelectIndividual(seat.id);
             }}
           >
             <Circle

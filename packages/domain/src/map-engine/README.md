@@ -19,9 +19,18 @@ Engine canonica do Map Creator.
 ```txt
 packages/domain/src/map-engine/
   geometry/
-    bounds.ts, anchor.ts, hit-test.ts
+    bounds.ts, anchor.ts
     rotation.ts, translation.ts, scale.ts, transform-compose.ts
-    snap-guides.ts, resize-snap-guides.ts, ...
+    polygon-geometry.ts, viewport-utils.ts
+  doc/
+    levels.ts, text-object.ts, event-map-local-draft.ts
+  guides/
+    snap-guides.ts, snap-guide-visuals.ts
+    spacing-guides.ts, resize-snap-guides.ts
+  selection/
+    selection-utils.ts, hit-test.ts
+  operations/
+    transform/uniform-transform.ts
   layout/
     object-bounds.ts, text-transform.ts, seat-group-transform.ts
     corridor/                    # reflow, previews, split-anchors, extract-commit
@@ -52,9 +61,10 @@ O documento retornado pela engine e a fonte da verdade apos cada commit.
 Transform commits (transform, drag, resize) usam commands semanticos via `applyTransform`:
 
 - `TRANSFORM_CORRIDOR` — corredor + reflow (transform e drag)
-- `ROTATE_OBJECTS` — rotacao pura de objetos/assentos
-- `MOVE_OBJECTS` — translacao pura (drag generico)
-- `RESIZE_OBJECTS` — escala, texto, seat groups e patches mistos
+- `ROTATE_SELECTION` — rotacao canonica de selecao (objetos, textos, setores, assentos, grupos e corredores)
+- `ROTATE_OBJECTS` — compatibilidade para patches antigos de rotacao pura
+- `MOVE_SELECTION` / `MOVE_OBJECTS` — translacao pura por selecao, preservando grupos e seat groups como fonte da verdade
+- `RESIZE_SELECTION` / `RESIZE_OBJECTS` — escala, texto, seat groups e patches mistos com filtro de patches invalidos
 
 Geometria E2E: `e2e/event-map-e2e-geometry.ts` (`buildEventMapE2EGeometry`).
 Bridge browser: `apps/web/.../browser/event-map-e2e-bridge.ts`.

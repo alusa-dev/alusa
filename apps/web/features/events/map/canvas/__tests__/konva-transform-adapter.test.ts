@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { readSeatGroupTransformFromNode, readSeatTransformFromNode, resetNodeScale } from '../adapters/konva-transform-adapter';
+import {
+  captureTransformNodeSnapshots,
+  readObjectTransformCommitFromNodes,
+  readSeatGroupTransformFromNode,
+  readSeatTransformFromNode,
+  resetNodeScale,
+} from '../adapters/konva-transform-adapter';
 
 function mockNode(attrs: {
   x: number;
@@ -68,5 +74,56 @@ describe('konva-transform-adapter', () => {
       gapX: 16,
       gapY: 16,
     });
+  });
+
+  it('captures snapshots for leaf nodes without assuming a Konva container', () => {
+    const node = mockNode({ x: 10, y: 20, rotation: 5, scaleX: 1.2, scaleY: 0.8 });
+    const stage = {
+      findOne: vi.fn((selector: string) => (selector === '#node-object-1' ? node : null)),
+    };
+
+    expect(captureTransformNodeSnapshots(stage as never, ['node-object-1'])).toEqual([
+      {
+        id: 'node-object-1',
+        x: 10,
+        y: 20,
+        rotation: 5,
+        scaleX: 1.2,
+        scaleY: 0.8,
+        bodyWidth: undefined,
+        bodyHeight: undefined,
+      },
+    ]);
+  });
+
+  it('can bake independent x/y scale for native multi-object resize', () => {
+    const node = mockNode({ x: 30, y: 40, rotation: 0, scaleX: 2, scaleY: 0.5 });
+    const stage = {
+      findOne: vi.fn((selector: string) => (selector === '#node-object-1' ? node : null)),
+    };
+    const session = {
+      snapshots: new Map([
+        [
+          'object-1',
+          {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 80,
+            rotation: 0,
+            type: 'GENERAL_AREA',
+          },
+        ],
+      ]),
+      initialBounds: { x: 10, y: 20, width: 100, height: 80, centerX: 60, centerY: 60 },
+      initialRotation: 0,
+      excludeCorridors: false,
+    };
+
+    const updates = readObjectTransformCommitFromNodes(stage as never, session, ['object-1'], {
+      scaleMode: 'independent',
+    });
+
+    expect(updates[0]?.patch).toMatchObject({ x: 30, y: 40, width: 200, height: 40 });
   });
 });

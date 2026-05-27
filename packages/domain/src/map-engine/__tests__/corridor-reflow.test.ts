@@ -794,6 +794,69 @@ describe('corridor-reflow', () => {
 
     assertNoSeatIntersectsCorridors(map);
   });
+
+  it('keeps fractional pointer-created corridors outside clearance after rounding', () => {
+    const map = buildSeatGridMap(10, 10, 42, 24, { x: 320, y: 180 });
+
+    map.objects.push(
+      corridor('corridor-vertical', 450.2885, 158.6538, 31.730769230769226, 418.2692307692307, {
+        smartCorridor: true,
+        corridorAxis: 'vertical',
+        corridorThickness: 31.730769230769226,
+      }),
+    );
+    map.objects.push(
+      corridor('corridor-horizontal', 278.6538, 310.0962, 458.6538461538462, 31.730769230769226, {
+        smartCorridor: true,
+        corridorAxis: 'horizontal',
+        corridorThickness: 31.730769230769226,
+      }),
+    );
+
+    applyCorridorReflow(map);
+    assertNoSeatIntersectsCorridors(map);
+
+    const horizontal = map.objects.find((object) => object.id === 'corridor-horizontal')!;
+    const horizontalLayout = resolveSmartCorridorLayout(horizontal);
+    const rowESeat = map.seats.find((seat) => seat.rowLabel === 'E' && seat.seatNumber === '5')!;
+    expect(getSeatBounds(rowESeat).y).toBeGreaterThan(horizontalLayout.clearanceRect.y + horizontalLayout.clearanceRect.height);
+  });
+
+  it('keeps clearance safety when two fractional corridors move together', () => {
+    const map = buildSeatGridMap(10, 10, 42, 24, { x: 320, y: 180 });
+
+    map.objects.push(
+      corridor('corridor-left', 365.2308, 158.6538, 31.730769230769226, 418.2692307692307, {
+        smartCorridor: true,
+        corridorAxis: 'vertical',
+        corridorThickness: 31.730769230769226,
+      }),
+    );
+    map.objects.push(
+      corridor('corridor-right', 533.2308, 158.6538, 31.73076923076917, 418.2692307692307, {
+        smartCorridor: true,
+        corridorAxis: 'vertical',
+        corridorThickness: 31.73076923076917,
+      }),
+    );
+    applyCorridorReflow(map);
+
+    const baseMap = cloneEventMap(map);
+    const preview = buildSmartCorridorDragPreview(
+      baseMap,
+      {
+        origin: new Map([
+          ['node-corridor-left', { x: baseMap.objects.find((object) => object.id === 'corridor-left')!.x, y: 158.6538 }],
+          ['node-corridor-right', { x: baseMap.objects.find((object) => object.id === 'corridor-right')!.x, y: 158.6538 }],
+        ]),
+        delta: { x: 42, y: 0 },
+      },
+      ['node-corridor-left', 'node-corridor-right'],
+      { activeCorridorIds: ['corridor-left', 'corridor-right'] },
+    );
+
+    assertNoSeatIntersectsCorridors(preview);
+  });
 });
 
 describe('smart corridor rotation contract', () => {
@@ -907,7 +970,9 @@ describe('smart corridor rotation contract', () => {
       mode: 'reflow',
     });
     const updates = extractGroupDragCommitUpdates(baseMap, preview, drag, [corridorId], 'reflow');
-    expect(updates.seats.some((entry) => entry.id === firstSeat.id)).toBe(true);
+    const firstSeatUpdate = updates.seats.find((entry) => entry.id === firstSeat.id);
+    expect(firstSeatUpdate?.patch.x).toBeCloseTo(firstSeat.x + 10, 1);
+    expect(firstSeatUpdate?.patch.y).toBeCloseTo(firstSeat.y, 1);
     expect(updates.objects.some((entry) => entry.id === corridorId)).toBe(true);
   });
 });

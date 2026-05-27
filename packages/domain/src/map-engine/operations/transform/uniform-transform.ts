@@ -1,15 +1,16 @@
-import type { EventMapObjectDTO } from '../types/event-map-types.js';
+import type { EventMapObjectDTO } from '../../types/event-map-types.js';
 
-import { getObjectBounds } from '../layout/object-bounds.js';
+import { getObjectBounds } from '../../layout/object-bounds.js';
 import {
   clampFontSizeValue,
   getLegacyUniformTextMode,
   getTextMode,
   MIN_FONT_SIZE,
-} from '../doc/text-object.js';
-import { clampUniformScale, MAX_UNIFORM_SCALE, MIN_UNIFORM_SCALE } from './scale.js';
+} from '../../doc/text-object.js';
+import { rotatePoint } from '../../geometry/rotation.js';
+import { clampUniformScale, MAX_UNIFORM_SCALE, MIN_UNIFORM_SCALE } from '../../geometry/scale.js';
 
-export { isMultilineTextObject } from '../doc/text-object.js';
+export { isMultilineTextObject } from '../../doc/text-object.js';
 export { MAX_UNIFORM_SCALE, MIN_UNIFORM_SCALE, clampUniformScale };
 
 export const MIN_OBJECT_SIZE = 8;
@@ -100,8 +101,22 @@ export function computeUniformTransformPatch(
   options?: { clampDimensions?: boolean },
 ) {
   const clampDimensions = options?.clampDimensions ?? false;
-  let dx = snapshot.x - anchorX;
-  let dy = snapshot.y - anchorY;
+  const nextRotation = snapshot.rotation + rotationDeltaDeg;
+  const rawWidth = snapshot.width * scale;
+  const rawHeight = snapshot.height * scale;
+  const newWidth = clampDimensions ? clampObjectSize(rawWidth) : rawWidth;
+  const newHeight = clampDimensions ? clampObjectSize(rawHeight) : rawHeight;
+  const currentLocalCenter = rotatePoint(
+    { x: snapshot.width / 2, y: snapshot.height / 2 },
+    { x: 0, y: 0 },
+    snapshot.rotation,
+  );
+  const currentCenter = {
+    x: snapshot.x + currentLocalCenter.x,
+    y: snapshot.y + currentLocalCenter.y,
+  };
+  let dx = currentCenter.x - anchorX;
+  let dy = currentCenter.y - anchorY;
 
   if (rotationDeltaDeg !== 0) {
     const rad = (rotationDeltaDeg * Math.PI) / 180;
@@ -113,13 +128,17 @@ export function computeUniformTransformPatch(
     dy = rotatedY;
   }
 
-  const newX = anchorX + dx * scale;
-  const newY = anchorY + dy * scale;
-  const rawWidth = snapshot.width * scale;
-  const rawHeight = snapshot.height * scale;
-  const newWidth = clampDimensions ? clampObjectSize(rawWidth) : rawWidth;
-  const newHeight = clampDimensions ? clampObjectSize(rawHeight) : rawHeight;
-  const newRotation = snapshot.rotation + rotationDeltaDeg;
+  const nextCenter = {
+    x: anchorX + dx * scale,
+    y: anchorY + dy * scale,
+  };
+  const nextLocalCenter = rotatePoint(
+    { x: newWidth / 2, y: newHeight / 2 },
+    { x: 0, y: 0 },
+    nextRotation,
+  );
+  const newX = nextCenter.x - nextLocalCenter.x;
+  const newY = nextCenter.y - nextLocalCenter.y;
 
   if (snapshot.type === 'TEXT') {
     const nextFontSize = clampDimensions
@@ -131,7 +150,7 @@ export function computeUniformTransformPatch(
         y: newY,
         width: newWidth,
         height: newHeight,
-        rotation: newRotation,
+        rotation: nextRotation,
         data: { fontSize: nextFontSize },
       };
     }
@@ -141,7 +160,7 @@ export function computeUniformTransformPatch(
       y: newY,
       width: null as number | null,
       height: null as number | null,
-      rotation: newRotation,
+      rotation: nextRotation,
       data: { fontSize: nextFontSize },
     };
   }
@@ -151,7 +170,7 @@ export function computeUniformTransformPatch(
     y: newY,
     width: newWidth,
     height: newHeight,
-    rotation: newRotation,
+    rotation: nextRotation,
   };
 }
 

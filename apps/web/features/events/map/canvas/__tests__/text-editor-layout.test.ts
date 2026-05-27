@@ -42,7 +42,7 @@ describe('text-editor-layout', () => {
       letterSpacing: 0,
     });
 
-    expect(dimensions.width).toBe(placeholderWidth);
+    expect(dimensions.width).toBe(placeholderWidth + 16);
     expect(dimensions.width).toBeGreaterThan(22);
   });
 

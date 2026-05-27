@@ -127,7 +127,23 @@ export const duplicateEventMapSchema = z.object({
   name: requiredText('Informe o nome do novo mapa.').optional(),
 });
 
+export const publicSeatReservationSchema = z.object({
+  seatIds: z.array(idSchema).min(1, 'Selecione pelo menos um assento.').max(12, 'Selecione no máximo 12 assentos por compra.'),
+  buyerName: z.string().trim().max(120).optional().nullable(),
+  buyerEmail: z.string().trim().email('Informe um e-mail válido.').max(180).optional().nullable(),
+});
+
+export const publicCheckoutSchema = z.object({
+  reservationId: idSchema,
+  holdToken: idSchema,
+  buyerName: requiredText('Informe o nome do comprador.', 120),
+  buyerEmail: z.string().trim().email('Informe um e-mail válido.').max(180),
+  buyerDocument: z.string().trim().max(32).optional().nullable(),
+});
+
 export type CreateEventMapInput = z.infer<typeof createEventMapSchema>;
 export type UpdateEventMapDraftInput = z.infer<typeof updateEventMapDraftSchema>;
 export type DuplicateEventMapInput = z.infer<typeof duplicateEventMapSchema>;
 export type EventSeatGroupInput = z.infer<typeof eventSeatGroupSchema>;
+export type PublicSeatReservationInput = z.infer<typeof publicSeatReservationSchema>;
+export type PublicCheckoutInput = z.infer<typeof publicCheckoutSchema>;

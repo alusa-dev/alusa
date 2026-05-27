@@ -164,15 +164,10 @@ export function buildSmartCorridorDragPreview(
   const originIds = originIdsFromDrag(drag);
   for (const seat of preview.seats) {
     if (!originIds.has(seat.id)) continue;
-    const baseSeat = baseMap.seats.find((entry) => entry.id === seat.id);
     const start = drag.origin.get(`node-${seat.id}`);
-    if (!baseSeat || !start) continue;
-    const reflowChanged =
-      Math.abs(seat.x - baseSeat.x) >= 0.001 || Math.abs(seat.y - baseSeat.y) >= 0.001;
-    if (!reflowChanged) {
-      seat.x = start.x + drag.delta.x;
-      seat.y = start.y + drag.delta.y;
-    }
+    if (!start) continue;
+    seat.x = start.x + drag.delta.x;
+    seat.y = start.y + drag.delta.y;
   }
 
   return preview;

@@ -1,6 +1,10 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
+  canEditEventMapDraft,
+  decideEventMapDeletion,
+  isPublicEventMapVisible,
+  validatePublicSeatSelection,
   validateEventMapStatusTransition,
   validatePublishableEventMap,
 } from '@alusa/domain/events';
@@ -10,6 +14,8 @@ import { EventsError, type EventsContext } from '../events.service';
 import type {
   CreateEventMapInput,
   DuplicateEventMapInput,
+  PublicCheckoutInput,
+  PublicSeatReservationInput,
   UpdateEventMapDraftInput,
 } from './event-map.schema';
 
@@ -27,7 +33,10 @@ const eventMapInclude = {
   objects: { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }] },
   seatGroups: { orderBy: [{ createdAt: 'asc' as const }] },
   seats: { orderBy: [{ technicalCode: 'asc' as const }] },
-  versions: { select: { id: true, version: true, status: true, createdAt: true }, orderBy: { version: 'desc' as const } },
+  versions: {
+    select: { id: true, version: true, status: true, seatCount: true, publishedAt: true, createdAt: true },
+    orderBy: { version: 'desc' as const },
+  },
 } satisfies Prisma.EventMapInclude;
 
 type EventMapRecord = Prisma.EventMapGetPayload<{ include: typeof eventMapInclude }>;
@@ -57,6 +66,23 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
 
 function createLocalId(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID()}`;
+}
+
+function createPublicToken(prefix: string) {
+  return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
+}
+
+function publicMapPath(publicSlug: string | null | undefined) {
+  return publicSlug ? `/m/${publicSlug}` : null;
+}
+
+function toPublicSeatStatus(status: string): EventMapPublicSeatStatus {
+  if (status === 'SOLD') return 'SOLD';
+  if (status === 'HELD') return 'HELD';
+  if (status === 'BLOCKED') return 'BLOCKED';
+  if (status === 'UNAVAILABLE') return 'UNAVAILABLE';
+  if (status === 'COMPLIMENTARY') return 'UNAVAILABLE';
+  return 'AVAILABLE';
 }
 
 async function recordMapAudit(
@@ -113,14 +139,7 @@ async function getEventForMapOrThrow(db: DbClient, contaId: string, eventId: str
 }
 
 function assertMapEditable(map: { status: string }) {
-  if (map.status === 'PUBLISHED') {
-    throw new EventsError(
-      'MAPA_PUBLICADO',
-      'Mapa publicado não pode ser editado diretamente. Duplique o mapa para criar um novo rascunho.',
-      409,
-    );
-  }
-  if (map.status === 'ARCHIVED') {
+  if (!canEditEventMapDraft(map.status as 'DRAFT' | 'PUBLISHED' | 'ARCHIVED')) {
     throw new EventsError('MAPA_ARQUIVADO', 'Mapa arquivado não pode ser editado.', 409);
   }
 }
@@ -157,6 +176,9 @@ function mapEventMap(record: EventMapRecord) {
     name: record.name,
     status: record.status,
     publishedVersionId: record.publishedVersionId,
+    publicSlug: record.publicSlug,
+    publicEnabled: record.publicEnabled,
+    publicUrl: publicMapPath(record.publicSlug),
     createdByUserId: record.createdByUserId,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -196,7 +218,7 @@ function mapEventMap(record: EventMapRecord) {
       levelId: object.levelId,
       sectionId: object.sectionId,
       type: object.type,
-      data: object.data,
+      data: (object.data ?? {}) as Record<string, unknown>,
       x: toNumber(object.x),
       y: toNumber(object.y),
       width: object.width == null ? null : toNumber(object.width),
@@ -230,6 +252,8 @@ function mapEventMap(record: EventMapRecord) {
       id: version.id,
       version: version.version,
       status: version.status,
+      seatCount: version.seatCount,
+      publishedAt: version.publishedAt.toISOString(),
       createdAt: version.createdAt.toISOString(),
     })),
     seatGroups: record.seatGroups.map((group) => ({
@@ -249,7 +273,7 @@ function mapEventMap(record: EventMapRecord) {
       paddingRight: toNumber(group.paddingRight),
       paddingBottom: toNumber(group.paddingBottom),
       paddingLeft: toNumber(group.paddingLeft),
-      numbering: group.numbering as Record<string, unknown>,
+      numbering: (group.numbering ?? {}) as Record<string, unknown>,
       locked: group.locked,
     })),
     counts: {
@@ -552,7 +576,16 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
     }
 
     const nextVersion = (map.versions[0]?.version ?? 0) + 1;
-    const snapshot = mapEventMap(map);
+    const publicSlug = map.publicSlug ?? createPublicToken('map');
+    const snapshot = { ...mapEventMap(map), publicSlug, publicEnabled: true, publicUrl: publicMapPath(publicSlug) };
+    const soldCodes = new Set(
+      (
+        await tx.eventMapPublicSeat.findMany({
+          where: { contaId: ctx.contaId, eventMapId: mapId, status: 'SOLD' },
+          select: { technicalCode: true },
+        })
+      ).map((seat) => seat.technicalCode),
+    );
 
     const version = await tx.eventMapVersion.create({
       data: {
@@ -561,8 +594,48 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
         version: nextVersion,
         status: 'PUBLISHED',
         snapshot: toInputJson(snapshot),
+        seatCount: map.seats.filter((seat) => seat.publicVisible).length,
+        publishedByUserId: ctx.userId,
       },
     });
+
+    if (map.seats.length > 0) {
+      const sectionsById = new Map(map.sections.map((section) => [section.id, section]));
+      await tx.eventMapPublicSeat.createMany({
+        data: map.seats
+          .filter((seat) => seat.publicVisible)
+          .map((seat) => {
+            const section = sectionsById.get(seat.sectionId);
+            const baseStatus = toPublicSeatStatus(seat.status);
+            return {
+              id: createLocalId('publicseat'),
+              contaId: ctx.contaId,
+              eventId,
+              eventMapId: mapId,
+              versionId: version.id,
+              originalSeatId: seat.id,
+              levelId: seat.levelId,
+              sectionId: seat.sectionId,
+              sectionName: section?.name ?? 'Setor',
+              lotId: section?.lotId ?? null,
+              lotName: section?.lot?.name ?? null,
+              unitPrice: decimal(section?.lot ? toMoney(section.lot.unitPrice) : 0),
+              technicalCode: seat.technicalCode,
+              displayLabel: seat.displayLabel,
+              rowLabel: seat.rowLabel,
+              seatNumber: seat.seatNumber,
+              status: soldCodes.has(seat.technicalCode) ? 'SOLD' : baseStatus,
+              accessible: seat.accessible,
+              publicVisible: seat.publicVisible,
+              x: seat.x,
+              y: seat.y,
+              size: seat.size,
+              rotation: seat.rotation,
+              metadata: toInputJson({ objectId: seat.objectId, groupId: seat.groupId }),
+            };
+          }),
+      });
+    }
 
     await tx.eventMap.update({
       where: { id: mapId },
@@ -570,6 +643,8 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
         status: 'PUBLISHED',
         publishedAt: new Date(),
         publishedVersionId: version.id,
+        publicSlug,
+        publicEnabled: true,
       },
     });
 
@@ -580,7 +655,7 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
       entityId: mapId,
       eventId,
       before: { status: map.status },
-      after: { status: 'PUBLISHED', version: nextVersion },
+      after: { status: 'PUBLISHED', version: nextVersion, publicSlug },
     });
 
     return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId));
@@ -589,16 +664,40 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
 
 export async function deleteEventMap(ctx: EventsContext, eventId: string, mapId: string) {
   return prisma.$transaction(async (tx) => {
-    const map = await tx.eventMap.findFirst({ where: { id: mapId, contaId: ctx.contaId, eventId } });
+    const map = await tx.eventMap.findFirst({
+      where: { id: mapId, contaId: ctx.contaId, eventId },
+      include: { versions: { select: { id: true } } },
+    });
     if (!map) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
 
-    if (map.status === 'PUBLISHED') {
-      throw new EventsError('MAPA_PUBLICADO', 'Mapa publicado não pode ser excluído. Arquive ou duplique para criar uma nova versão.', 409);
+    const ordersCount = await tx.eventMapOrder.count({ where: { contaId: ctx.contaId, eventMapId: mapId } });
+    const decision = decideEventMapDeletion({
+      status: map.status,
+      versionsCount: map.versions.length,
+      ordersCount,
+    });
+
+    if (decision.action === 'BLOCK') {
+      throw new EventsError('MAPA_NAO_EXCLUIVEL', decision.reason, 409);
     }
 
-    const soldSeats = await tx.eventSeat.count({ where: { contaId: ctx.contaId, eventMapId: mapId, status: 'SOLD' } });
-    if (soldSeats > 0) {
-      throw new EventsError('MAPA_COM_VENDAS', 'Mapa com assentos vendidos não pode ser excluído.', 409);
+    if (decision.action === 'ARCHIVE') {
+      const archived = await tx.eventMap.update({
+        where: { id: mapId },
+        data: { status: 'ARCHIVED', publicEnabled: false, archivedAt: new Date() },
+      });
+      await recordMapAudit(tx, {
+        contaId: ctx.contaId,
+        actorUserId: ctx.userId,
+        action: 'events.map.archive',
+        entityId: mapId,
+        eventId,
+        before: map,
+        after: archived,
+        metadata: { reason: decision.reason },
+      });
+
+      return { ok: true, action: 'ARCHIVE' as const };
     }
 
     await tx.eventMap.delete({ where: { id: mapId } });
@@ -611,7 +710,7 @@ export async function deleteEventMap(ctx: EventsContext, eventId: string, mapId:
       before: map,
     });
 
-    return { ok: true };
+    return { ok: true, action: 'DELETE' as const };
   });
 }
 
@@ -765,3 +864,454 @@ export async function duplicateEventMap(
     return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, created.id));
   });
 }
+
+async function getPublicMapShellOrThrow(db: DbClient, publicSlug: string) {
+  const map = await db.eventMap.findFirst({
+    where: {
+      publicSlug,
+      status: 'PUBLISHED',
+      publicEnabled: true,
+      publishedVersionId: { not: null },
+    },
+    include: {
+      event: {
+        select: {
+          id: true,
+          contaId: true,
+          name: true,
+          startsAt: true,
+          endsAt: true,
+          locationName: true,
+          locationAddress: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  if (!map || !isPublicEventMapVisible(map)) {
+    throw new EventsError('MAPA_PUBLICO_NAO_ENCONTRADO', 'Mapa público não encontrado ou indisponível.', 404);
+  }
+
+  return map;
+}
+
+type EventMapPublicSeatRecord = Prisma.EventMapPublicSeatGetPayload<Prisma.EventMapPublicSeatDefaultArgs>;
+type EventMapOrderItemRecord = Prisma.EventMapOrderItemGetPayload<Prisma.EventMapOrderItemDefaultArgs>;
+type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
+
+function mapPublicSeat(seat: EventMapPublicSeatRecord) {
+  return {
+    id: seat.id,
+    originalSeatId: seat.originalSeatId,
+    levelId: seat.levelId,
+    sectionId: seat.sectionId,
+    sectionName: seat.sectionName,
+    lotId: seat.lotId,
+    lotName: seat.lotName,
+    unitPrice: toMoney(seat.unitPrice),
+    technicalCode: seat.technicalCode,
+    displayLabel: seat.displayLabel,
+    rowLabel: seat.rowLabel,
+    seatNumber: seat.seatNumber,
+    status: seat.status,
+    accessible: seat.accessible,
+    publicVisible: seat.publicVisible,
+    x: toNumber(seat.x),
+    y: toNumber(seat.y),
+    size: seat.size == null ? null : toNumber(seat.size),
+    rotation: toNumber(seat.rotation),
+  };
+}
+
+function snapshotRecord(snapshot: Prisma.JsonValue) {
+  return typeof snapshot === 'object' && snapshot !== null && !Array.isArray(snapshot)
+    ? (snapshot as Record<string, unknown>)
+    : {};
+}
+
+async function expirePublicReservations(db: DbClient, contaId: string, now = new Date()) {
+  const expired = await db.eventMapReservation.findMany({
+    where: { contaId, status: 'HELD', expiresAt: { lt: now } },
+    include: { seats: { select: { publicSeatId: true } } },
+  });
+  if (expired.length === 0) return;
+
+  const expiredSeatIds = [...new Set(expired.flatMap((reservation) => reservation.seats.map((seat) => seat.publicSeatId)))];
+  if (expiredSeatIds.length > 0) {
+    await db.eventMapPublicSeat.updateMany({
+      where: { contaId, id: { in: expiredSeatIds }, status: 'HELD' },
+      data: { status: 'AVAILABLE' },
+    });
+  }
+  await db.eventMapReservation.updateMany({
+    where: { contaId, id: { in: expired.map((reservation) => reservation.id) }, status: 'HELD' },
+    data: { status: 'EXPIRED' },
+  });
+}
+
+async function syncPublicLotQuantity(tx: Prisma.TransactionClient, contaId: string, lotId: string) {
+  const [aggregate, lot] = await Promise.all([
+    tx.eventTicketSale.aggregate({
+      where: { contaId, lotId, status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] } },
+      _sum: { quantity: true },
+    }),
+    tx.eventTicketLot.findFirst({ where: { id: lotId, contaId } }),
+  ]);
+  if (!lot) return;
+
+  const quantitySold = aggregate._sum.quantity ?? 0;
+  const nextStatus =
+    lot.status === 'ACTIVE' && quantitySold >= lot.quantityTotal
+      ? 'SOLD_OUT'
+      : lot.status === 'SOLD_OUT' && quantitySold < lot.quantityTotal
+        ? 'ACTIVE'
+        : lot.status;
+
+  await tx.eventTicketLot.update({
+    where: { id: lotId },
+    data: { quantitySold, status: nextStatus },
+  });
+}
+
+export async function getPublicEventMap(publicSlug: string) {
+  const map = await getPublicMapShellOrThrow(prisma, publicSlug);
+  const version = await prisma.eventMapVersion.findFirst({
+    where: { id: map.publishedVersionId!, contaId: map.contaId, eventMapId: map.id },
+  });
+  if (!version) throw new EventsError('VERSAO_PUBLICA_NAO_ENCONTRADA', 'Versão pública não encontrada.', 404);
+
+  await expirePublicReservations(prisma, map.contaId);
+
+  const seats = await prisma.eventMapPublicSeat.findMany({
+    where: { contaId: map.contaId, versionId: version.id, publicVisible: true },
+    orderBy: [{ sectionName: 'asc' }, { rowLabel: 'asc' }, { seatNumber: 'asc' }, { displayLabel: 'asc' }],
+  });
+  const snapshot = snapshotRecord(version.snapshot);
+
+  return {
+    publicSlug: map.publicSlug!,
+    publicUrl: publicMapPath(map.publicSlug),
+    mapId: map.id,
+    versionId: version.id,
+    version: version.version,
+    name: map.name,
+    publishedAt: version.publishedAt.toISOString(),
+    event: {
+      id: map.event.id,
+      name: map.event.name,
+      startsAt: map.event.startsAt.toISOString(),
+      endsAt: map.event.endsAt?.toISOString() ?? null,
+      locationName: map.event.locationName,
+      locationAddress: map.event.locationAddress,
+      status: map.event.status,
+    },
+    levels: Array.isArray(snapshot.levels) ? snapshot.levels : [],
+    sections: Array.isArray(snapshot.sections) ? snapshot.sections : [],
+    objects: Array.isArray(snapshot.objects) ? snapshot.objects : [],
+    seatGroups: Array.isArray(snapshot.seatGroups) ? snapshot.seatGroups : [],
+    seats: seats.map(mapPublicSeat),
+    counts: {
+      seats: seats.length,
+      availableSeats: seats.filter((seat) => seat.status === 'AVAILABLE').length,
+      soldSeats: seats.filter((seat) => seat.status === 'SOLD').length,
+      heldSeats: seats.filter((seat) => seat.status === 'HELD').length,
+    },
+  };
+}
+
+export type PublicEventMapDTO = Awaited<ReturnType<typeof getPublicEventMap>>;
+
+export async function reservePublicEventMapSeats(publicSlug: string, input: PublicSeatReservationInput) {
+  return prisma.$transaction(async (tx) => {
+    const map = await getPublicMapShellOrThrow(tx, publicSlug);
+    await expirePublicReservations(tx, map.contaId);
+
+    const versionId = map.publishedVersionId!;
+    const seats = await tx.eventMapPublicSeat.findMany({
+      where: { contaId: map.contaId, versionId, id: { in: input.seatIds } },
+    });
+    const selection = validatePublicSeatSelection({
+      requestedSeatIds: input.seatIds,
+      seats: seats.map((seat) => ({ id: seat.id, status: seat.status, publicVisible: seat.publicVisible })),
+      maxSeats: 12,
+    });
+    if (!selection.ok) throw new EventsError('ASSENTOS_INDISPONIVEIS', selection.reason, 409);
+
+    const lockedRows = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "EventMapPublicSeat"
+      WHERE "contaId" = ${map.contaId}
+        AND "versionId" = ${versionId}
+        AND id IN (${Prisma.join(selection.seatIds)})
+        AND status = 'AVAILABLE'
+      FOR UPDATE
+    `;
+    if (lockedRows.length !== selection.seatIds.length) {
+      throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos acabaram de ser reservados.', 409);
+    }
+
+    const updatedSeats = await tx.eventMapPublicSeat.updateMany({
+      where: { contaId: map.contaId, versionId, id: { in: selection.seatIds }, status: 'AVAILABLE' },
+      data: { status: 'HELD' },
+    });
+    if (updatedSeats.count !== selection.seatIds.length) {
+      throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos acabaram de ficar indisponíveis.', 409);
+    }
+
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const reservation = await tx.eventMapReservation.create({
+      data: {
+        contaId: map.contaId,
+        eventId: map.eventId,
+        eventMapId: map.id,
+        versionId,
+        holdToken: createPublicToken('hold'),
+        buyerName: input.buyerName ?? null,
+        buyerEmail: input.buyerEmail ?? null,
+        expiresAt,
+      },
+    });
+
+    await tx.eventMapReservationSeat.createMany({
+      data: selection.seatIds.map((seatId) => ({
+        id: createLocalId('reservationseat'),
+        contaId: map.contaId,
+        reservationId: reservation.id,
+        publicSeatId: seatId,
+      })),
+    });
+
+    const selectedSeats = seats.filter((seat) => selection.seatIds.includes(seat.id));
+    return {
+      reservationId: reservation.id,
+      holdToken: reservation.holdToken,
+      expiresAt: reservation.expiresAt.toISOString(),
+      seats: selectedSeats.map((seat) => ({ ...mapPublicSeat(seat), status: 'HELD' as const })),
+      totalAmount: selectedSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0),
+    };
+  });
+}
+
+export type PublicSeatReservationDTO = Awaited<ReturnType<typeof reservePublicEventMapSeats>>;
+
+export async function completePublicEventMapCheckout(publicSlug: string, input: PublicCheckoutInput) {
+  return prisma.$transaction(async (tx) => {
+    const map = await getPublicMapShellOrThrow(tx, publicSlug);
+    await expirePublicReservations(tx, map.contaId);
+
+    const reservation = await tx.eventMapReservation.findFirst({
+      where: {
+        id: input.reservationId,
+        holdToken: input.holdToken,
+        contaId: map.contaId,
+        eventMapId: map.id,
+        versionId: map.publishedVersionId!,
+        status: 'HELD',
+      },
+      include: { seats: { include: { publicSeat: true } } },
+    });
+    if (!reservation) throw new EventsError('RESERVA_NAO_ENCONTRADA', 'Reserva não encontrada ou expirada.', 404);
+    if (reservation.expiresAt < new Date()) {
+      throw new EventsError('RESERVA_EXPIRADA', 'A reserva expirou. Selecione os assentos novamente.', 409);
+    }
+
+    const publicSeats = reservation.seats.map((entry) => entry.publicSeat);
+    if (publicSeats.length === 0 || publicSeats.some((seat) => seat.status !== 'HELD')) {
+      throw new EventsError('RESERVA_INVALIDA', 'A reserva possui assentos indisponíveis.', 409);
+    }
+
+    const totalAmount = publicSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
+    const order = await tx.eventMapOrder.create({
+      data: {
+        contaId: map.contaId,
+        eventId: map.eventId,
+        eventMapId: map.id,
+        versionId: map.publishedVersionId!,
+        reservationId: reservation.id,
+        buyerName: input.buyerName,
+        buyerEmail: input.buyerEmail,
+        buyerDocument: input.buyerDocument ?? null,
+        totalAmount: decimal(totalAmount),
+        accessToken: createPublicToken('order'),
+      },
+    });
+
+    const soldUpdate = await tx.eventMapPublicSeat.updateMany({
+      where: { contaId: map.contaId, id: { in: publicSeats.map((seat) => seat.id) }, status: 'HELD' },
+      data: { status: 'SOLD' },
+    });
+    if (soldUpdate.count !== publicSeats.length) {
+      throw new EventsError('ASSENTOS_INDISPONIVEIS', 'Um ou mais assentos não puderam ser confirmados.', 409);
+    }
+
+    const items: Array<{
+      item: EventMapOrderItemRecord;
+      ticket: EventTicketRecord;
+      seat: EventMapPublicSeatRecord;
+    }> = [];
+    for (const seat of publicSeats) {
+      const item = await tx.eventMapOrderItem.create({
+        data: {
+          contaId: map.contaId,
+          orderId: order.id,
+          publicSeatId: seat.id,
+          lotId: seat.lotId,
+          unitPriceSnapshot: seat.unitPrice,
+          sectionName: seat.sectionName,
+          seatLabel: seat.displayLabel,
+          technicalCode: seat.technicalCode,
+        },
+      });
+      const ticket = await tx.eventTicket.create({
+        data: {
+          contaId: map.contaId,
+          eventId: map.eventId,
+          eventMapOrderId: order.id,
+          orderItemId: item.id,
+          ticketCode: createPublicToken('ticket').toUpperCase(),
+        },
+      });
+      items.push({ item, ticket, seat });
+    }
+
+    const lotGroups = new Map<string, typeof publicSeats>();
+    for (const seat of publicSeats) {
+      if (!seat.lotId) continue;
+      const group = lotGroups.get(seat.lotId) ?? [];
+      group.push(seat);
+      lotGroups.set(seat.lotId, group);
+    }
+
+    for (const [lotId, groupSeats] of lotGroups) {
+      const lotTotal = groupSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
+      const unitPrice = groupSeats.length > 0 ? lotTotal / groupSeats.length : 0;
+      const sale = await tx.eventTicketSale.create({
+        data: {
+          contaId: map.contaId,
+          eventId: map.eventId,
+          lotId,
+          buyerName: input.buyerName,
+          quantity: groupSeats.length,
+          unitPriceSnapshot: decimal(unitPrice),
+          totalAmount: decimal(lotTotal),
+          paymentMethod: 'OTHER',
+          status: 'PAID',
+          paidAt: new Date(),
+          notes: `Pedido público do mapa ${order.id}`,
+        },
+      });
+      if (lotTotal > 0) {
+        const entry = await tx.eventFinancialEntry.create({
+          data: {
+            contaId: map.contaId,
+            eventId: map.eventId,
+            type: 'REVENUE',
+            category: 'Venda de ingresso',
+            description: `Venda pública de ingresso - ${map.name}`,
+            originType: 'TICKET_SALE',
+            originId: sale.id,
+            expectedAmount: decimal(lotTotal),
+            actualAmount: decimal(lotTotal),
+            status: 'RECEIVED',
+            paymentMethod: 'OTHER',
+            realizedAt: new Date(),
+          },
+        });
+        await tx.eventTicketSale.update({ where: { id: sale.id }, data: { revenueEntryId: entry.id } });
+      }
+      await syncPublicLotQuantity(tx, map.contaId, lotId);
+    }
+
+    await tx.eventMapReservation.update({
+      where: { id: reservation.id },
+      data: {
+        status: 'CONSUMED',
+        consumedAt: new Date(),
+        buyerName: input.buyerName,
+        buyerEmail: input.buyerEmail,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        contaId: map.contaId,
+        actorType: 'SYSTEM',
+        actorId: null,
+        action: 'events.map.public.checkout',
+        entityType: 'EventMapOrder',
+        entityId: order.id,
+        metadata: toAuditJson({
+          eventId: map.eventId,
+          eventMapId: map.id,
+          versionId: map.publishedVersionId,
+          seats: publicSeats.map((seat) => seat.technicalCode),
+          totalAmount,
+        }),
+      },
+    });
+
+    return {
+      orderId: order.id,
+      accessToken: order.accessToken,
+      buyerName: order.buyerName,
+      buyerEmail: order.buyerEmail,
+      totalAmount,
+      ticketsUrl: `/api/public/event-map-orders/${order.id}/tickets?token=${order.accessToken}`,
+      items: items.map(({ item, ticket, seat }) => ({
+        id: item.id,
+        ticketId: ticket.id,
+        ticketCode: ticket.ticketCode,
+        seat: mapPublicSeat({ ...seat, status: 'SOLD' }),
+        sectionName: item.sectionName,
+        seatLabel: item.seatLabel,
+        unitPrice: toMoney(item.unitPriceSnapshot),
+      })),
+    };
+  });
+}
+
+export type PublicCheckoutDTO = Awaited<ReturnType<typeof completePublicEventMapCheckout>>;
+
+export async function getPublicEventMapOrderTickets(orderId: string, accessToken: string) {
+  const order = await prisma.eventMapOrder.findFirst({
+    where: { id: orderId, accessToken, status: 'CONFIRMED' },
+    include: {
+      event: { select: { id: true, name: true, startsAt: true, locationName: true, locationAddress: true } },
+      map: { select: { id: true, name: true, publicSlug: true } },
+      items: {
+        include: {
+          publicSeat: true,
+          ticket: true,
+        },
+        orderBy: [{ sectionName: 'asc' }, { seatLabel: 'asc' }],
+      },
+    },
+  });
+
+  if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+
+  return {
+    id: order.id,
+    buyerName: order.buyerName,
+    buyerEmail: order.buyerEmail,
+    totalAmount: toMoney(order.totalAmount),
+    confirmedAt: order.confirmedAt.toISOString(),
+    event: {
+      ...order.event,
+      startsAt: order.event.startsAt.toISOString(),
+    },
+    map: order.map,
+    items: order.items.map((item) => ({
+      id: item.id,
+      sectionName: item.sectionName,
+      seatLabel: item.seatLabel,
+      technicalCode: item.technicalCode,
+      unitPrice: toMoney(item.unitPriceSnapshot),
+      ticketCode: item.ticket?.ticketCode ?? '',
+      ticketStatus: item.ticket?.status ?? 'VALID',
+      seat: mapPublicSeat(item.publicSeat),
+    })),
+  };
+}
+
+export type PublicOrderTicketsDTO = Awaited<ReturnType<typeof getPublicEventMapOrderTickets>>;

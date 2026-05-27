@@ -129,6 +129,11 @@ export function useMapNodeDragSession({
   const handleNodeDragStart = useCallback(
     (nodeId: string, item?: MapSelectionItem) => {
       clearGuides();
+      const activeDrag = groupDragRef.current;
+      if (activeDrag?.origin.has(nodeId)) {
+        return;
+      }
+
       const currentState = useEventMapEditorStore.getState();
       const currentSelection = currentState.selection;
       const currentObjects =

@@ -1,4 +1,4 @@
-import { getCorridorBounds, getCorridorUnionGroupByObjectId, getCorridorUnionGroups, isCorridorInCompositeUnion, shouldRenderIndividualCorridorBody } from '../index';
+import { getCorridorBounds, getCorridorUnionGroupByObjectId, getCorridorUnionGroups, isCorridorInCompositeUnion, mergePolygons, shouldRenderIndividualCorridorBody } from '../index';
 import type { EventMapObjectDTO } from '../index';
 
 import { describe, expect, it } from 'vitest';
@@ -102,5 +102,23 @@ describe('corridor-union', () => {
     ]);
 
     expect(getCorridorUnionGroupByObjectId(groups, 'corridor-2')?.objectIds).toContain('corridor-1');
+  });
+
+  it('does not crash when clipping receives fractional near-collinear corridor polygons', () => {
+    const first = [
+      { x: 355.0881913650565, y: 80.59906797075931 },
+      { x: 355.18223477209494, y: 80.59906797075931 },
+      { x: 355.18223477209494, y: 796.4845135958423 },
+      { x: 355.0881913650565, y: 796.4845135958423 },
+    ];
+    const second = [
+      { x: 260.25, y: 350.125 },
+      { x: 640.75, y: 350.125 },
+      { x: 640.75, y: 382.875 },
+      { x: 260.25, y: 382.875 },
+    ];
+
+    expect(() => mergePolygons([first, second])).not.toThrow();
+    expect(mergePolygons([first, second]).length).toBeGreaterThan(0);
   });
 });
