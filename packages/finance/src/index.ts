@@ -28,6 +28,10 @@ export {
   type AsaasSubscriptionStatus,
 } from './mappers/asaas-subscription-status';
 export {
+  sanitizeWebhookPayload,
+  sanitizeRejectedWebhookPayload,
+} from './privacy/webhook-payload-sanitizer';
+export {
   BillingV2Flags,
   isBillingV2FlagEnabled,
   getBillingV2Flags,

@@ -82,6 +82,9 @@ export * from './events/map/map-rules.js';
 // DTOs formais do domínio
 export * from './dtos/index.js';
 
+// Privacidade e LGPD
+export * from './privacy/privacy-request-state-machine.js';
+export * from './privacy/consent-rules.js';
+
 // Nova engine decoplada do mapa de eventos
 export * from './map-engine/index.js';
-

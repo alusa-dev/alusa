@@ -51,7 +51,6 @@ export async function GET() {
                 },
                 responsavelFinanceiro: {
                   select: {
-                    asaasCreditCardToken: true,
                     creditCardBrand: true,
                     creditCardLast4: true,
                   },
@@ -118,7 +117,10 @@ export async function GET() {
             },
           } : null,
           responsavelFinanceiro: c.matricula.responsavelFinanceiro ? {
-            hasSavedCard: Boolean(c.matricula.responsavelFinanceiro.asaasCreditCardToken),
+            hasSavedCard: Boolean(
+              c.matricula.responsavelFinanceiro.creditCardBrand &&
+              c.matricula.responsavelFinanceiro.creditCardLast4,
+            ),
             creditCardBrand: c.matricula.responsavelFinanceiro.creditCardBrand,
             creditCardLast4: c.matricula.responsavelFinanceiro.creditCardLast4,
           } : null,

@@ -210,7 +210,6 @@ describe('GET /api/portal/financeiro/[id]', () => {
         turma: null,
         responsavelFinanceiro: {
           id: 'resp-1',
-          asaasCreditCardToken: 'tok_sensitive',
           creditCardBrand: 'VISA',
           creditCardLast4: '4242',
           creditCardExpiryMonth: 12,
@@ -233,6 +232,5 @@ describe('GET /api/portal/financeiro/[id]', () => {
       creditCardExpiryMonth: 12,
       creditCardExpiryYear: 2030,
     });
-    expect(json.matricula.responsavelFinanceiro).not.toHaveProperty('asaasCreditCardToken');
   });
 });

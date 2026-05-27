@@ -31,8 +31,13 @@ export const footerGroups = [
   {
     title: 'Legal',
     links: [
-      { label: 'Privacidade', sectionId: 'contato' },
-      { label: 'Termos', sectionId: 'contato' },
+      { label: 'Privacidade', href: '/privacidade' },
+      { label: 'Termos', href: '/termos' },
+      { label: 'Cookies', href: '/cookies' },
+      { label: 'Segurança', href: '/seguranca' },
+      { label: 'Suboperadores', href: '/suboperadores' },
+      { label: 'DPA', href: '/dpa' },
+      { label: 'Direitos LGPD', href: '/direitos-lgpd' },
     ],
   },
   {

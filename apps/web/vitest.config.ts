@@ -33,6 +33,14 @@ export default defineConfig({
       { find: './app/globals.css', replacement: path.resolve(__dirname, 'vitest-empty.css') },
       { find: '@/prisma/client', replacement: path.resolve(__dirname, 'src', 'prisma.ts') },
       {
+        find: '@alusa/lib/cpf-cnpj',
+        replacement: path.resolve(__dirname, '..', '..', 'packages', 'lib', 'src', 'utils', 'cpf-cnpj.ts'),
+      },
+      {
+        find: '@alusa/lib/date-only',
+        replacement: path.resolve(__dirname, '..', '..', 'packages', 'lib', 'src', 'utils', 'date-only.ts'),
+      },
+      {
         find: /^@alusa\/lib(.*)$/,
         replacement: path.resolve(__dirname, '..', '..', 'packages', 'lib', 'src') + '$1',
       },

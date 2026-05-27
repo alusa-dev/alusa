@@ -1,6 +1,17 @@
 import * as Sentry from '@sentry/nextjs';
+import { redactSensitiveData } from '@/lib/security/sensitive-redaction';
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+const pathname = typeof window === 'undefined' ? '' : window.location.pathname;
+const replayAllowed =
+  pathname === '/' ||
+  pathname.startsWith('/privacidade') ||
+  pathname.startsWith('/termos') ||
+  pathname.startsWith('/cookies') ||
+  pathname.startsWith('/seguranca') ||
+  pathname.startsWith('/suboperadores') ||
+  pathname.startsWith('/dpa') ||
+  pathname.startsWith('/direitos-lgpd');
 
 if (dsn) {
   Sentry.init({
@@ -16,10 +27,16 @@ if (dsn) {
 
     tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.1,
 
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
+    replaysSessionSampleRate: replayAllowed ? 0.05 : 0,
+    replaysOnErrorSampleRate: replayAllowed ? 0.5 : 0,
 
-    integrations: [Sentry.replayIntegration()],
+    beforeSend(event) {
+      return redactSensitiveData(event);
+    },
+
+    integrations: replayAllowed
+      ? [Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true })]
+      : [],
   });
 }
 

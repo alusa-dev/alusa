@@ -1,4 +1,5 @@
 import * as Sentry from '@sentry/nextjs';
+import { redactSensitiveData } from './lib/security/sensitive-redaction';
 
 const dsn = process.env.SENTRY_DSN ?? process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -11,5 +12,9 @@ if (dsn) {
     sendDefaultPii: false,
 
     tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.1,
+
+    beforeSend(event) {
+      return redactSensitiveData(event);
+    },
   });
 }

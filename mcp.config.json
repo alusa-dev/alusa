@@ -12,17 +12,8 @@
       ],
       "cwd": "${workspaceFolder}"
     },
-    "asaas7": {
-      "command": "npx",
-      "args": [
-        "dotenv",
-        "-e",
-        ".env",
-        "--",
-        "tsx",
-        "mcp/asaas/server.ts"
-      ],
-      "cwd": "${workspaceFolder}"
+    "asaas": {
+      "url": "https://docs.asaas.com/mcp"
     },
     "tiptap": {
       "command": "npx",

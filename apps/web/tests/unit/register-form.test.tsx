@@ -63,7 +63,9 @@ describe('RegisterForm', () => {
     fireEvent.click(screen.getByRole('option', { name: /Já tenho uma conta no Asaas/i }));
     fireEvent.change(screen.getByTestId('register-senha'), { target: { value: 'StrongPass123!' } });
     fireEvent.change(screen.getByTestId('register-senha-confirmar'), { target: { value: 'StrongPass123!' } });
-    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByTestId('register-termos-checkbox'));
+    fireEvent.click(await screen.findByTestId('legal-acceptance-inner-checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /Aceitar e continuar/i }));
     fireEvent.click(screen.getByTestId('register-submit'));
 
     await waitFor(() => {

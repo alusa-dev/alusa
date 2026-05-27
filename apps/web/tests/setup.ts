@@ -36,6 +36,14 @@ if (!skipDatabaseSetup) {
 // Mantém compatível com .env.test, mas fornece fallback para não quebrar a suite local/CI.
 process.env.ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
 
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // Silencia logs de pacotes externos ruidosos durante testes
 const noisy = ['DATABASE_URL não definido'];
 const origWarn = console.warn;

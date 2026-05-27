@@ -133,7 +133,6 @@ export const contaFormaPagamentoSyncResultDTOSchema = z.object({
     .object({
       creditCard: z
         .object({
-          token: z.string(),
           brand: z.string(),
           last4: z.string(),
         })

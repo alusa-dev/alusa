@@ -1056,7 +1056,6 @@ export async function anonimizarResponsavel(input: AnonimizarResponsavelInput) {
         enderecoBairro: null,
         enderecoCidade: null,
         enderecoUf: null,
-        asaasCreditCardToken: null,
         creditCardBrand: null,
         creditCardLast4: null,
         creditCardExpiryMonth: null,

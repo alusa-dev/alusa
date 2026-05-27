@@ -810,6 +810,10 @@ model Conta {
   descontos                      Desconto[]
   webhooks                       WebhookAsaas[]
   webhooksArchive                WebhookAsaasArchive[]
+  legalAcceptances               LegalAcceptance[]
+  privacyRequests                PrivacyRequest[]
+  sensitiveAccessLogs            SensitiveAccessLog[]
+  consentRecords                 ConsentRecord[]
   financeReconciliationIssues    FinanceReconciliationIssue[]
   financeWebhookSideEffectOutbox FinanceWebhookSideEffectOutbox[]
   logsFinanceiros                LogFinanceiro[]
@@ -1072,6 +1076,11 @@ model Usuario {
   attendanceRecorded        AttendanceRecord[]       @relation("AttendanceRecordedBy")
   makeupClassesCreated      MakeupClass[]            @relation("MakeupClassCreatedBy")
   authActionTokens          AuthActionToken[]
+  legalAcceptances          LegalAcceptance[]
+  cookieConsents            CookieConsent[]
+  privacyRequests           PrivacyRequest[]
+  sensitiveAccessLogs       SensitiveAccessLog[]
+  consentRecords            ConsentRecord[]
   salesOperated             Sale[]                   @relation("SalesOperated")
   inventoryMovementsCreated InventoryMovement[]      @relation("InventoryMovementActor")
   restockOrdersCreated      RestockOrder[]           @relation("RestockOrderCreatedBy")
@@ -1208,7 +1217,6 @@ model Responsavel {
   asaasId                        String?
   asaasCustomerId                String?
   asaasCustomerExternalReference String?
-  asaasCreditCardToken           String? // Token do cartão para débito automático
   // Metadados do cartão (para exibição, não contém dados sensíveis)
   creditCardBrand                String? // Bandeira do cartão (Visa, Mastercard, etc)
   creditCardLast4                String? // Últimos 4 dígitos
@@ -2156,6 +2164,131 @@ model WebhookAsaasRejection {
   @@index([contaId], name: "idx_webhookasaas_rejection_conta")
   @@index([contaId, recebidoEm], name: "idx_webhookasaas_rejection_conta_recebido")
   @@index([recebidoEm], name: "idx_webhookasaas_rejection_recebido")
+}
+
+model LegalAcceptance {
+  id              String   @id @default(cuid())
+  contaId          String?
+  userId           String?
+  documentType     String
+  documentVersion  String
+  acceptedAt       DateTime @default(now())
+  ipHash           String?
+  userAgentHash    String?
+  locale           String   @default("pt-BR")
+  source           String
+  metadata         Json?
+
+  conta Conta?   @relation(fields: [contaId], references: [id], onDelete: SetNull)
+  user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([contaId])
+  @@index([userId])
+  @@index([documentType, documentVersion])
+  @@index([contaId, documentType, documentVersion], name: "idx_legal_acceptance_conta_doc_version")
+}
+
+model CookieConsent {
+  id              String   @id @default(cuid())
+  anonymousId     String?
+  userId          String?
+  categories      Json
+  acceptedAt      DateTime?
+  rejectedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  ipHash          String?
+  userAgentHash   String?
+  policyVersion   String
+
+  user Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([anonymousId])
+  @@index([userId])
+  @@index([policyVersion])
+}
+
+model PrivacyRequest {
+  id              String   @id @default(cuid())
+  contaId          String?
+  userId           String?
+  requestType      String
+  status           String   @default("PENDING_REVIEW")
+  action           String?
+  subjectType      String?
+  subjectId        String?
+  requesterEmail   String?
+  requesterName    String?
+  details          String?
+  resultUrl        String?
+  rejectedReason   String?
+  ipHash           String?
+  userAgentHash    String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  completedAt      DateTime?
+
+  conta Conta?   @relation(fields: [contaId], references: [id], onDelete: SetNull)
+  user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, status], name: "idx_privacy_request_conta_status")
+  @@index([userId])
+  @@index([requestType, status])
+  @@index([createdAt])
+}
+
+model SensitiveAccessLog {
+  id             String   @id @default(cuid())
+  contaId         String
+  actorUserId     String?
+  action          String
+  entityType      String
+  entityId        String?
+  reason          String?
+  requestId       String?
+  ipHash          String?
+  userAgentHash   String?
+  before          Json?
+  after           Json?
+  metadata        Json?
+  createdAt       DateTime @default(now())
+
+  conta     Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  actorUser Usuario? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, createdAt], name: "idx_sensitive_access_conta_created")
+  @@index([contaId, action, createdAt], name: "idx_sensitive_access_conta_action")
+  @@index([actorUserId, createdAt], name: "idx_sensitive_access_actor")
+  @@index([entityType, entityId], name: "idx_sensitive_access_entity")
+  @@index([requestId])
+}
+
+model ConsentRecord {
+  id              String   @id @default(cuid())
+  contaId          String
+  userId           String?
+  subjectType      String
+  subjectId        String?
+  consentType      String
+  legalBasis       String
+  status           String   @default("GRANTED")
+  documentVersion  String?
+  grantedAt        DateTime @default(now())
+  revokedAt        DateTime?
+  source           String
+  ipHash           String?
+  userAgentHash    String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  conta Conta   @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, subjectType, subjectId], name: "idx_consent_record_subject")
+  @@index([contaId, consentType, status], name: "idx_consent_record_type_status")
+  @@index([userId])
 }
 
 model FinanceReconciliationIssue {

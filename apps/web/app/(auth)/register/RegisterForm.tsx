@@ -18,6 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { LegalAcceptanceModal } from '@/components/legal/LegalAcceptanceModal';
+import { requiredRegisterLegalDocuments } from '@/lib/privacy/legal-versions';
 
 export const REQUIRES_SCHOOL_DATA = false;
 
@@ -76,8 +78,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [legalModalOpen, setLegalModalOpen] = useState(false);
   const schema = useMemo(() => schemaFor(), []);
-  const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<FormValues>({
+  const { register, handleSubmit, control, formState: { errors, isSubmitting }, setValue, watch } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
     defaultValues: {
@@ -86,6 +89,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
       termos: false,
     }
   });
+  const termsAccepted = watch('termos');
 
   const targetAfterVerification =
     mode === 'first' || inviteData?.role?.toUpperCase() === 'ADMIN'
@@ -111,6 +115,15 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         senha: data.senha,
         escolaNome,
         financeIntegrationMode: mode === 'first' ? data.financeIntegrationMode : 'WHITELABEL_BAAS',
+        legalAcceptance: {
+          accepted: true,
+          locale: 'pt-BR',
+          source: 'REGISTER',
+          documents: requiredRegisterLegalDocuments().map((document) => ({
+            documentType: document.type,
+            documentVersion: document.version,
+          })),
+        },
       };
 
       // Ajuste por modo
@@ -290,6 +303,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
           className="flex w-full flex-col items-stretch gap-4 lg:items-start"
           data-testid="register-form"
+          data-sentry-mask
           noValidate
         >
           <div className="flex w-full gap-3 lg:gap-4">
@@ -423,28 +437,26 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                     id="register-termos"
                     data-testid="register-termos-checkbox"
                     checked={field.value}
-                    onCheckedChange={field.onChange}
+                    onCheckedChange={(checked) => {
+                      if (checked && !field.value) {
+                        setLegalModalOpen(true);
+                        return;
+                      }
+                      field.onChange(false);
+                    }}
                     className="mt-0.5 lg:mt-0"
                   />
                 )}
               />
               <span>
-                Li e aceito os{' '}
-                <a className="text-brand-accent hover:underline" href="/termos" target="_blank" rel="noopener noreferrer">
-                  Termos de Uso
-                </a>{' '}
-                e a{' '}
-                <a className="text-brand-accent hover:underline" href="/privacidade" target="_blank" rel="noopener noreferrer">
-                  Política de Privacidade
-                </a>
-                .
+                Aceito os Termos de Uso, a Politica de Privacidade e o DPA da Alusa.
               </span>
             </label>
           </div>
           <button
             type="submit"
             data-testid="register-submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || !termsAccepted}
             className="mt-1 flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-base font-medium text-white outline-none transition-colors hover:bg-[#4b217a] disabled:opacity-60 lg:h-12 lg:text-[14px]"
           >
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
@@ -456,6 +468,14 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
             </a>
           </p>
         </form>
+        <LegalAcceptanceModal
+          open={legalModalOpen}
+          onOpenChange={setLegalModalOpen}
+          onAccept={() => {
+            setValue('termos', true, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+            setLegalModalOpen(false);
+          }}
+        />
       </div>
     </AuthShell>
   );

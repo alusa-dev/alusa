@@ -16,5 +16,11 @@ export { ok, err } from './types/common';
 export { BILLING_TYPES, PAYMENT_STATUSES } from './constants/billing';
 export type { BillingType, PaymentStatus } from './constants/billing';
 
+// Privacidade, LGPD e seguranca de dados
+export * from './privacy/data-classification';
+export * from './privacy/data-map';
+export * from './privacy/masking';
+export * from './privacy/retention-policy';
+
 // Eventos escolares
 export * from './events/types';

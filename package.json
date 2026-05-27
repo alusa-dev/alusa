@@ -43,9 +43,10 @@
     "mcp:alusadb:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
     "mcp:build": "tsc -p mcp/alusadb/tsconfig.json",
     "mcp:dev": "dotenv -e .env -- tsx watch mcp/alusadb/src/index.ts",
-    "mcp:asaas": "dotenv -e .env -- tsx mcp/asaas/server.ts",
+    "mcp:asaas": "npx -y mcp-remote@0.1.38 https://docs.asaas.com/mcp",
     "sandbox:asaas:add-balance": "dotenv -e .env.local -- node scripts/asaas/sandbox-add-wallet-balance.mjs",
-    "support:upsert-admin": "tsx scripts/support-upsert-admin-user.ts"
+    "support:upsert-admin": "tsx scripts/support-upsert-admin-user.ts",
+    "security:check": "tsx scripts/security/run-all.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -76,6 +77,7 @@
       "postcss": "^8.5.14",
       "preact": "^10.29.2",
       "qs": "^6.15.2",
+      "uuid": "^11.1.1",
       "yaml": "^2.9.0"
     }
   },

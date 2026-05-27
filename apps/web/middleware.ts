@@ -4,6 +4,7 @@ import { getToken } from 'next-auth/jwt';
 
 import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
 import { isPublicApiPath } from '@/lib/middleware/public-api-paths';
+import { hasCronSecret, resolveRouteProtection } from '@/lib/security/route-protection-registry';
 import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
@@ -149,6 +150,14 @@ function handleApiRequest(req: NextRequest): NextResponse | null {
         { status: 403, headers: { 'cache-control': 'no-store' } },
       );
     }
+  }
+
+  const protection = resolveRouteProtection(pathname);
+  if (protection === 'CRON_SECRET' && !hasCronSecret(req)) {
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401, headers: { 'cache-control': 'no-store' } },
+    );
   }
 
   if (isPublicApiPath(pathname)) {

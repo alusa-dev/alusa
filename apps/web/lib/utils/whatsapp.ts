@@ -4,7 +4,7 @@
  */
 
 /**
- * Formata número de telefone brasileiro para formato Twilio WhatsApp
+ * Formata número de telefone brasileiro para identificador WhatsApp.
  *
  * @example
  * formatarNumeroWhatsApp("(97) 98110-6749") // "whatsapp:+5597981106749"
@@ -13,7 +13,7 @@
  * formatarNumeroWhatsApp("5597981106749") // "whatsapp:+5597981106749"
  *
  * @param numero - Número de telefone em qualquer formato
- * @returns Número formatado no padrão Twilio: whatsapp:+55DDDNÚMERO
+ * @returns Número formatado no padrão whatsapp:+55DDDNÚMERO
  * @throws Error se número for inválido ou vazio
  */
 export function formatarNumeroWhatsApp(numero: string): string {

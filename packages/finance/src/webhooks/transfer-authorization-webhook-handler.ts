@@ -7,6 +7,7 @@ import {
   buildTransferRequestIntentFromRecord,
   verifyTransferAuthorizationPayload,
 } from '../use-cases/transfers/transfer-request-integrity';
+import { sanitizeWebhookPayload } from '../privacy/webhook-payload-sanitizer';
 
 export type TransferAuthorizationWebhookPayload = {
   type?: string;
@@ -82,6 +83,7 @@ async function persistDecision(params: {
   duracaoMs: number;
 }) {
   const payloadHash = sha256Hex(params.rawBody);
+  const sanitizedPayload = sanitizeWebhookPayload(params.payload);
 
   const existing = await prisma.webhookAsaas.findFirst({
     where: {
@@ -98,7 +100,7 @@ async function persistDecision(params: {
         evento: 'TRANSFER_AUTHORIZATION',
         payloadHash,
         payload: {
-          request: params.payload,
+          request: sanitizedPayload,
           authorizationDecision: params.decision,
         },
         asaasTransferId: params.payload.transfer?.id ?? null,
@@ -117,7 +119,7 @@ async function persistDecision(params: {
     where: { id: existing.id },
     data: {
       payload: {
-        request: params.payload,
+        request: sanitizedPayload,
         authorizationDecision: params.decision,
       },
       asaasTransferId: params.payload.transfer?.id ?? null,

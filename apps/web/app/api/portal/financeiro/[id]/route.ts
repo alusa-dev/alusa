@@ -73,7 +73,6 @@ export async function GET(
             responsavelFinanceiro: {
               select: {
                 id: true,
-                asaasCreditCardToken: true,
                 creditCardBrand: true,
                 creditCardLast4: true,
                 creditCardExpiryMonth: true,
@@ -230,7 +229,10 @@ export async function GET(
                 }
               : null,
             responsavelFinanceiro: cobranca.matricula.responsavelFinanceiro ? {
-              hasSavedCard: Boolean(cobranca.matricula.responsavelFinanceiro.asaasCreditCardToken),
+              hasSavedCard: Boolean(
+                cobranca.matricula.responsavelFinanceiro.creditCardBrand &&
+                cobranca.matricula.responsavelFinanceiro.creditCardLast4,
+              ),
               creditCardBrand: cobranca.matricula.responsavelFinanceiro.creditCardBrand,
               creditCardLast4: cobranca.matricula.responsavelFinanceiro.creditCardLast4,
               creditCardExpiryMonth: cobranca.matricula.responsavelFinanceiro.creditCardExpiryMonth,

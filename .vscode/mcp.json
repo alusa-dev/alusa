@@ -40,6 +40,10 @@
 			"type": "http",
 			"url": "https://mcp.neon.tech/mcp"
 		},
+		"asaas": {
+			"type": "http",
+			"url": "https://docs.asaas.com/mcp"
+		},
 		"cloudflare": {
 			"type": "http",
 			"url": "https://mcp.cloudflare.com/mcp"

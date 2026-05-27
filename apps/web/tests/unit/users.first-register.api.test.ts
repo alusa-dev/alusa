@@ -23,6 +23,19 @@ vi.mock('@/lib/auth-email-flow', () => ({
   sendEmailVerificationForUser: sendEmailVerificationForUserMock,
 }));
 
+function legalAcceptancePayload() {
+  return {
+    accepted: true,
+    locale: 'pt-BR',
+    source: 'REGISTER',
+    documents: [
+      { documentType: 'TERMS_OF_USE', documentVersion: '2026-05-27' },
+      { documentType: 'PRIVACY_POLICY', documentVersion: '2026-05-27' },
+      { documentType: 'DPA', documentVersion: '2026-05-27' },
+    ],
+  };
+}
+
 describe('POST /api/users/first-register', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -60,6 +73,7 @@ describe('POST /api/users/first-register', () => {
         email: 'inactive@example.com',
         senha: 'SenhaFort3!',
         escolaNome: 'Conta Inativa',
+        legalAcceptance: legalAcceptancePayload(),
       }),
     });
 
@@ -93,6 +107,7 @@ describe('POST /api/users/first-register', () => {
         email: 'finance@example.com',
         senha: 'SenhaFort3!',
         escolaNome: 'Conta Financeira',
+        legalAcceptance: legalAcceptancePayload(),
       }),
     });
 
@@ -121,6 +136,7 @@ describe('POST /api/users/first-register', () => {
         senha: 'SenhaFort3!',
         escolaNome: 'Escola Piloto',
         financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+        legalAcceptance: legalAcceptancePayload(),
       }),
     });
 
@@ -156,6 +172,7 @@ describe('POST /api/users/first-register', () => {
         senha: 'SenhaFort3!',
         escolaNome: 'Escola Piloto',
         financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+        legalAcceptance: legalAcceptancePayload(),
       }),
     });
 

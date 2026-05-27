@@ -41,7 +41,7 @@ export function prefersReducedMotion(): boolean {
 export function scheduleReveal(onReveal: () => void, frames = 2): () => void {
   let cancelled = false;
   let frame = 0;
-  let pending = onReveal;
+  const pending = onReveal;
 
   const tick = (remaining: number) => {
     if (cancelled) return;

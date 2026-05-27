@@ -5,11 +5,12 @@ import AuthPageContainer from '@/components/auth/AuthPageContainer';
 import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 interface RegisterPageProps {
-  searchParams: { token?: string; next?: string };
+  searchParams: Promise<{ token?: string; next?: string }>;
 }
 
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
-  const token = searchParams.token;
+  const params = await searchParams;
+  const token = params.token;
   const enableExternalAsaasOnboarding = isExternalAsaasOnboardingRolloutEnabled();
 
   // Se há token, validar convite

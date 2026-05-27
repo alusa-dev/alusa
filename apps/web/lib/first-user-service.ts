@@ -9,6 +9,7 @@ import {
 } from '@alusa/lib/date-only';
 import { hashPassword, passwordPolicyMessage, passwordPolicyRegex } from '@/lib/auth-password';
 import prisma from '@/lib/prisma';
+import type { LegalDocumentType } from '@/lib/privacy/legal-versions';
 
 export interface FirstUserInput {
   escolaNome: string;
@@ -19,6 +20,19 @@ export interface FirstUserInput {
   financeIntegrationMode?: FinanceIntegrationMode;
   birthDate?: string;
   senha: string;
+  legalAcceptance?: {
+    accepted: true;
+    locale?: string;
+    source?: 'REGISTER' | 'ONBOARDING' | 'REACCEPTANCE';
+    documents: Array<{
+      documentType: LegalDocumentType;
+      documentVersion: string;
+    }>;
+  };
+  legalAcceptanceEvidence?: {
+    ipHash?: string | null;
+    userAgentHash?: string | null;
+  };
 }
 
 export class EmailInUseError extends Error { constructor() { super('E-mail já está em uso.'); } }
@@ -170,6 +184,25 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
         },
       });
       await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+
+      if (data.legalAcceptance) {
+        await tx.legalAcceptance.createMany({
+          data: data.legalAcceptance.documents.map((document) => ({
+            contaId: conta.id,
+            userId: user.id,
+            documentType: document.documentType,
+            documentVersion: document.documentVersion,
+            locale: data.legalAcceptance?.locale ?? 'pt-BR',
+            source: data.legalAcceptance?.source ?? 'REGISTER',
+            ipHash: data.legalAcceptanceEvidence?.ipHash ?? null,
+            userAgentHash: data.legalAcceptanceEvidence?.userAgentHash ?? null,
+            metadata: {
+              financeIntegrationMode,
+              flow: 'first-register',
+            },
+          })),
+        });
+      }
 
       if (financeIntegrationMode === FinanceIntegrationMode.EXTERNAL_ASAAS_ACCOUNT) {
         await tx.tenantFeatureFlags.upsert({

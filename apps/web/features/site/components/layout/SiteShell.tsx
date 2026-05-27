@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { Inter } from 'next/font/google';
-import { Analytics } from '@vercel/analytics/next';
 import { SiteFooter } from '@/features/site/components/layout/SiteFooter';
 import { SiteHeader } from '@/features/site/components/layout/SiteHeader';
 import { SiteScrollRestoration } from '@/features/site/components/layout/SiteScrollRestoration';
@@ -32,7 +31,6 @@ export function SiteShell({ children }: SiteShellProps) {
       <SiteHeader />
       <main>{children}</main>
       <SiteFooter />
-      <Analytics />
     </div>
   );
 }

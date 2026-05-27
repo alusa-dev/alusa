@@ -48,7 +48,6 @@ export async function POST(_req: NextRequest) {
       select: {
         id: true,
         asaasCustomerId: true,
-        asaasCreditCardToken: true,
         preferredBillingType: true,
         creditCardBrand: true,
         creditCardLast4: true,
@@ -76,7 +75,6 @@ export async function POST(_req: NextRequest) {
     const localCardData =
       responsavel.creditCardBrand && responsavel.creditCardLast4
         ? {
-            token: responsavel.asaasCreditCardToken ?? 'local_snapshot',
             brand: responsavel.creditCardBrand,
             last4: responsavel.creditCardLast4,
           }
@@ -214,7 +212,6 @@ export async function POST(_req: NextRequest) {
               const last4 = payment.creditCard.creditCardNumber;
 
               cardData = {
-                token: 'imported_from_payment',
                 brand: brandMap[brand.toUpperCase()] || brand,
                 last4: last4,
               };
@@ -222,7 +219,6 @@ export async function POST(_req: NextRequest) {
               await prisma.responsavel.update({
                 where: { id: responsavel.id },
                 data: {
-                  asaasCreditCardToken: cardData.token,
                   creditCardBrand: cardData.brand,
                   creditCardLast4: cardData.last4,
                   creditCardUpdatedAt: new Date(),
@@ -290,7 +286,6 @@ export async function POST(_req: NextRequest) {
               const last4 = payment.creditCard.creditCardNumber;
 
               cardData = {
-                token: 'imported_from_payment',
                 brand: brandMap[brand.toUpperCase()] || brand,
                 last4: last4,
               };
@@ -298,7 +293,6 @@ export async function POST(_req: NextRequest) {
               await prisma.responsavel.update({
                 where: { id: responsavel.id },
                 data: {
-                  asaasCreditCardToken: cardData.token,
                   creditCardBrand: cardData.brand,
                   creditCardLast4: cardData.last4,
                   creditCardUpdatedAt: new Date(),

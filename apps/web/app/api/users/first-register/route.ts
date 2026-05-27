@@ -11,6 +11,7 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { firstRegisterInputDTOSchema, firstRegisterResultDTOSchema } from '@/features/users/dtos';
 import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
 import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
+import { requestEvidence } from '@/lib/privacy/evidence';
 
 
 const schema = firstRegisterInputDTOSchema;
@@ -77,7 +78,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const user = await createFirstUser(parsed.data);
+    const user = await createFirstUser({
+      ...parsed.data,
+      legalAcceptanceEvidence: requestEvidence(req),
+    });
     await sendEmailVerificationForUser(user.id, {
       ip,
       userAgent: req.headers.get('user-agent'),

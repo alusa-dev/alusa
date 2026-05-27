@@ -28,6 +28,10 @@ import { redactWebhookLogObject } from './webhook-redaction';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { shouldAlertUnknownWebhookEvent } from './asaas-event-registry';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import {
+  sanitizeRejectedWebhookPayload,
+  sanitizeWebhookPayload,
+} from '../privacy/webhook-payload-sanitizer';
 
 type AttemptLogEntry = {
   at: string;
@@ -187,10 +191,7 @@ async function persistRejectedWebhook(params: {
   eventId: string | null;
 }): Promise<void> {
   try {
-    const safePayload = (() => {
-      try { return JSON.parse(params.rawBody); }
-      catch { return { _raw: params.rawBody.slice(0, 2048) }; }
-    })();
+    const safePayload = sanitizeRejectedWebhookPayload(params.rawBody);
 
     await prisma.webhookAsaasRejection.create({
       data: {
@@ -644,6 +645,7 @@ export async function enqueueAsaasWebhookEvent(
   const contaId = auth.contaId;
 
   const payloadHash = hashWebhookPayload(params.rawBody);
+  const sanitizedPayload = sanitizeWebhookPayload(payload);
   const eventId = payload.id ?? null;
   const now = new Date();
 
@@ -684,7 +686,7 @@ export async function enqueueAsaasWebhookEvent(
       where: { id: existing.id },
       data: {
         evento: event,
-        payload: payload as unknown as object,
+        payload: sanitizedPayload as unknown as object,
         payloadHash,
         status: 'PENDENTE',
         ultimoErro: null,
@@ -707,7 +709,7 @@ export async function enqueueAsaasWebhookEvent(
           evento: event,
           eventId,
           payloadHash,
-          payload: payload as unknown as object,
+          payload: sanitizedPayload as unknown as object,
           status: 'PENDENTE',
           tentativas: 0,
           asaasPaymentId: getPayloadAsaasPaymentId(payload),
@@ -1009,6 +1011,7 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
 
     const payloadHash = hashWebhookPayload(params.rawBody);
     const eventId = payload.id;
+    const sanitizedPayload = sanitizeWebhookPayload(payload);
 
     const existing = eventId
       ? await prisma.webhookAsaas.findUnique({ where: { uq_webhookasaas_conta_event: { contaId, eventId } } })
@@ -1066,7 +1069,7 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
             },
             data: {
               evento: event,
-              payload: payload as unknown as object,
+              payload: sanitizedPayload as unknown as object,
               status: 'PROCESSANDO',
               tentativas: { increment: 1 },
               ultimaTentativaEm: now,
@@ -1087,7 +1090,7 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
                 evento: event,
                 eventId: eventId ?? null,
                 payloadHash,
-                payload: payload as unknown as object,
+                payload: sanitizedPayload as unknown as object,
                 status: 'PROCESSANDO',
                 tentativas: 1,
                 ultimaTentativaEm: now,

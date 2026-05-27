@@ -64,7 +64,6 @@ describe('POST /api/conta/forma-pagamento/sync', () => {
     prismaMock.responsavel.findFirst.mockResolvedValue({
       id: 'resp-1',
       asaasCustomerId: 'cus-1',
-      asaasCreditCardToken: 'tok_local',
       preferredBillingType: 'PIX',
       creditCardBrand: 'VISA',
       creditCardLast4: '4242',
@@ -85,7 +84,6 @@ describe('POST /api/conta/forma-pagamento/sync', () => {
       data: {
         billingType: 'PIX',
         creditCard: {
-          token: 'tok_local',
           brand: 'VISA',
           last4: '4242',
         },
@@ -97,7 +95,6 @@ describe('POST /api/conta/forma-pagamento/sync', () => {
     prismaMock.responsavel.findFirst.mockResolvedValue({
       id: 'resp-1',
       asaasCustomerId: 'cus-1',
-      asaasCreditCardToken: null,
       preferredBillingType: null,
       creditCardBrand: null,
       creditCardLast4: null,
@@ -139,7 +136,6 @@ describe('POST /api/conta/forma-pagamento/sync', () => {
       data: {
         billingType: 'CREDIT_CARD',
         creditCard: {
-          token: 'imported_from_payment',
           brand: 'VISA',
           last4: '4242',
         },
