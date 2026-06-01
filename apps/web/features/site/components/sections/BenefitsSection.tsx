@@ -7,7 +7,7 @@ export function BenefitsSection() {
   const { benefits } = homePage;
 
   return (
-    <section className="relative border-b border-alusa-grid-line-light bg-white py-section sm:py-section-lg">
+    <section className="relative bg-white py-section sm:py-section-lg">
       <VerticalGridLines />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
         <ScrollReveal className="max-w-2xl">

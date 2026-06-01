@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { updateTicketLot, updateTicketLotSchema } from '@alusa/lib';
+import { deleteTicketLot, updateTicketLot, updateTicketLotSchema } from '@alusa/lib';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 
@@ -16,5 +16,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ data: await updateTicketLot(ctx, params.lotId, body) });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_ATUALIZAR_LOTE_EVENTO');
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  try {
+    const ctx = await getEventsContext('eventTickets.manageLots');
+    return NextResponse.json({ data: await deleteTicketLot(ctx, params.lotId) });
+  } catch (error) {
+    return handleEventsRouteError(error, 'ERRO_EXCLUIR_LOTE_EVENTO');
   }
 }

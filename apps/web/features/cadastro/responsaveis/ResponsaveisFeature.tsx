@@ -54,12 +54,16 @@ const initialFormState: ResponsavelFormState = {
 export function ResponsaveisFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
-  const { items, loading, reload } = useResponsaveis({ enabled: Boolean(user?.contaId) });
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState<ResponsavelFormState>(initialFormState);
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
+  const [serverQuery, setServerQuery] = useState('');
+  const { items, loading, reload } = useResponsaveis({
+    enabled: Boolean(user?.contaId),
+    query: serverQuery,
+  });
 
   const {
     search,
@@ -78,6 +82,7 @@ export function ResponsaveisFeature() {
     searchPredicate: (responsavel, term, digits) => {
       const cpfDigits = (responsavel.cpf ?? '').replace(/\D/g, '');
       const telefoneDigits = (responsavel.telefone ?? '').replace(/\D/g, '');
+      if (digits && digits.length >= 3) return true;
       return (
         (responsavel.nome ?? '').toLowerCase().includes(term) ||
         (responsavel.email ?? '').toLowerCase().includes(term) ||
@@ -87,6 +92,10 @@ export function ResponsaveisFeature() {
     statusFilterEnabled: false,
     initialSort: 'ASC',
   });
+
+  useEffect(() => {
+    setServerQuery(search);
+  }, [search]);
 
   useEffect(() => {
     setPageSize(PAGE_SIZE);
@@ -337,7 +346,7 @@ function ResponsaveisTable({
               {responsavel.nome}
             </div>
             <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
-              {responsavel.cpf ? maskCpf(responsavel.cpf) : '—'}
+              {responsavel.cpfMasked ?? (responsavel.cpf ? maskCpf(responsavel.cpf) : '—')}
             </div>
           </div>
         </div>
@@ -373,9 +382,9 @@ function ResponsaveisTable({
       render: (responsavel) => (
         <span
           className="block w-full truncate tabular-nums leading-5 text-gray-900"
-          title={responsavel.cpf ? maskCpf(responsavel.cpf) : undefined}
+          title={responsavel.cpfMasked ?? (responsavel.cpf ? maskCpf(responsavel.cpf) : undefined)}
         >
-          {responsavel.cpf ? maskCpf(responsavel.cpf) : '-'}
+          {responsavel.cpfMasked ?? (responsavel.cpf ? maskCpf(responsavel.cpf) : '-')}
         </span>
       ),
       skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
@@ -390,9 +399,9 @@ function ResponsaveisTable({
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] leading-5 text-gray-900"
-          title={responsavel.email ?? undefined}
+          title={responsavel.emailMasked ?? responsavel.email ?? undefined}
         >
-          {responsavel.email?.trim() || '—'}
+          {responsavel.emailMasked ?? (responsavel.email?.trim() || '—')}
         </span>
       ),
       skeleton: <div className="hidden h-4 max-w-full w-36 rounded bg-gray-200 lg:block" />,
@@ -407,9 +416,9 @@ function ResponsaveisTable({
       render: (responsavel) => (
         <span
           className="block w-full truncate text-[13px] tabular-nums leading-5 text-gray-900"
-          title={maskPhone(responsavel.telefone) || undefined}
+          title={responsavel.phoneMasked ?? (maskPhone(responsavel.telefone) || undefined)}
         >
-          {maskPhone(responsavel.telefone) || '—'}
+          {responsavel.phoneMasked ?? (maskPhone(responsavel.telefone) || '—')}
         </span>
       ),
       skeleton: <div className="hidden h-4 w-28 rounded bg-gray-200 lg:block" />,

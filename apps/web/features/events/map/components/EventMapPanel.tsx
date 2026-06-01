@@ -1,4 +1,5 @@
 'use client';
+import { useState } from 'react';
 import { formatDateTime } from '../../events-service';
 import type { SchoolEventDTO } from '../../events-service';
 import { createEventMap, deleteEventMap, duplicateEventMap, listEventMaps } from '../api/event-map-service';
@@ -20,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from '@/components/ui/toast';
+import { ConfirmDeleteDialog } from '@/components/dialogs/ConfirmDeleteDialog';
 
 const eventMapQueryKeys = {
   maps: (eventId: string) => ['events', 'maps', eventId] as const,
@@ -38,6 +40,7 @@ function modeText(event: SchoolEventDTO) {
 export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [mapToDelete, setMapToDelete] = useState<EventMapDTO | null>(null);
   const mapsQuery = useQuery({
     queryKey: eventMapQueryKeys.maps(event.id),
     queryFn: () => listEventMaps(event.id),
@@ -67,7 +70,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
     mutationFn: (mapId: string) => deleteEventMap(event.id, mapId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: eventMapQueryKeys.maps(event.id) });
-      toast.success({ title: 'Mapa excluído' });
+      toast.success({ title: 'Mapa excluído', description: 'O mapa do evento foi removido permanentemente.' });
     },
     onError: (error) => toast.error({ title: 'Não foi possível excluir', description: (error as Error).message }),
   });
@@ -78,18 +81,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <Map className="h-4 w-4 text-brand-accent" />
-            <h2 className="text-sm font-semibold text-slate-950">Mapa do evento</h2>
-          </div>
-          <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            O mapa organiza setores, fileiras e assentos. O preço continua vindo dos lotes vinculados aos setores.
-          </p>
-        </div>
-        <Badge variant={canCreateMap ? 'success' : 'neutral'}>{modeText(event)}</Badge>
-      </div>
+
 
       {!canCreateMap ? (
         <Card className="rounded-xl border-slate-200 bg-slate-50 p-6">
@@ -103,24 +95,26 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <button
-            type="button"
-            onClick={() => createMutation.mutate()}
-            disabled={createMutation.isPending}
-            className={cn(
-              'flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-brand-accent/40 bg-brand-accent/5 p-6 text-center transition hover:border-brand-accent hover:bg-brand-accent/10 disabled:cursor-not-allowed disabled:opacity-60',
-            )}
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-accent text-white shadow-sm">
-              <Plus className="h-6 w-6" />
-            </span>
-            <span className="mt-4 text-base font-semibold text-slate-950">
-              {createMutation.isPending ? 'Criando mapa...' : 'Criar Mapa'}
-            </span>
-            <span className="mt-2 max-w-64 text-sm text-slate-500">
-              Inicia um rascunho com prancheta, toolbar flutuante e editor dedicado.
-            </span>
-          </button>
+          {maps.length === 0 && (
+            <button
+              type="button"
+              onClick={() => createMutation.mutate()}
+              disabled={createMutation.isPending}
+              className={cn(
+                'flex min-h-52 flex-col items-center justify-center rounded-xl border border-dashed border-brand-accent/40 bg-brand-accent/5 p-6 text-center transition hover:border-brand-accent hover:bg-brand-accent/10 disabled:cursor-not-allowed disabled:opacity-60',
+              )}
+            >
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-accent text-white shadow-sm">
+                <Plus className="h-6 w-6" />
+              </span>
+              <span className="mt-4 text-base font-semibold text-slate-950">
+                {createMutation.isPending ? 'Criando mapa...' : 'Criar Mapa'}
+              </span>
+              <span className="mt-2 max-w-64 text-sm text-slate-500">
+                Inicia um rascunho com prancheta, toolbar flutuante e editor dedicado.
+              </span>
+            </button>
+          )}
 
           {maps.map((map) => (
             <Card key={map.id} className="group flex min-h-52 flex-col rounded-xl border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40">
@@ -150,30 +144,32 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                 </div>
               </div>
 
-              <div className="mt-auto flex flex-wrap gap-2 pt-5">
+              <div className="mt-auto flex items-center gap-1.5 pt-5">
                 <Button asChild variant="outline" size="sm" className="border-slate-200 bg-white text-slate-700">
                   <Link href={`/events/${event.id}/maps/${map.id}/editor`}>
                     <Edit3 className="h-3.5 w-3.5" />
-                    Abrir
+                    Editar
                   </Link>
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="border-slate-200 bg-white text-slate-700"
-                  onClick={() => duplicateMutation.mutate(map.id)}
-                  disabled={duplicateMutation.isPending}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Usar como template
-                </Button>
+
                 {map.status === 'PUBLISHED' && map.publicUrl ? (
-                  <Button asChild variant="outline" size="sm" className="border-slate-200 bg-white text-slate-700">
-                    <Link href={map.publicUrl} target="_blank">
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Link público
-                    </Link>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="border-slate-200 bg-white text-slate-700"
+                    onClick={() => {
+                      if (map.publicUrl) {
+                        navigator.clipboard.writeText(map.publicUrl);
+                        toast.success({
+                          title: 'Link copiado',
+                          description: 'O link público do mapa foi copiado para a área de transferência.'
+                        });
+                      }
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copiar link público
                   </Button>
                 ) : null}
                 {map.status !== 'ARCHIVED' ? (
@@ -182,23 +178,42 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                     variant="outline"
                     size="sm"
                     className="border-rose-200 bg-white text-rose-700 hover:bg-rose-50"
-                    onClick={() => {
-                      const message =
-                        map.status === 'DRAFT'
-                          ? 'Excluir este rascunho de mapa?'
-                          : 'Arquivar este mapa publicado? O link público será desativado.';
-                      if (window.confirm(message)) deleteMutation.mutate(map.id);
-                    }}
+                    onClick={() => setMapToDelete(map)}
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
-                    {map.status === 'DRAFT' ? 'Excluir' : 'Arquivar'}
+                    Excluir
                   </Button>
                 ) : null}
               </div>
             </Card>
           ))}
         </div>
+      )}
+
+      {mapToDelete && (
+        <ConfirmDeleteDialog
+          open={!!mapToDelete}
+          onOpenChange={(open) => {
+            if (!open) setMapToDelete(null);
+          }}
+          title="Excluir Mapa do Evento"
+          description={
+            mapToDelete.status === 'DRAFT'
+              ? 'Deseja realmente excluir este rascunho de mapa?'
+              : 'Deseja realmente excluir este mapa publicado? O link público será desativado.'
+          }
+          confirmLabel="Confirmar"
+          cancelLabel="Cancelar"
+          loadingLabel="Excluindo..."
+          onConfirm={async () => {
+            try {
+              await deleteMutation.mutateAsync(mapToDelete.id);
+            } catch (err) {
+              // Deixamos o onError da mutação lidar com o toast
+            }
+          }}
+        />
       )}
 
       {mapsQuery.isLoading && canCreateMap ? (

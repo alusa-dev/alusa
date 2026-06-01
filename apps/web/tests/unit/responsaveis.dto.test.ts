@@ -57,8 +57,11 @@ describe('responsaveis DTOs', () => {
       id: 'r1',
       nome: 'Maria Silva',
       cpf: '12345678909',
+      cpfMasked: '***.***.***-09',
       email: 'maria@example.com',
+      emailMasked: 'ma***@example.com',
       telefone: '92999999999',
+      phoneMasked: '(**) *****-9999',
       financeiro: true,
       alunosCount: 0,
     });

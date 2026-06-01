@@ -21,6 +21,7 @@ import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import { Prisma } from '@prisma/client';
 import type {
   ChargeStatus,
   LiquidacaoStatus,
@@ -546,7 +547,85 @@ async function handleStandaloneChargeWebhook(
     asaasPaymentId: p.id,
   });
 
+  try {
+    await updateEventFinancialEntryFromWebhook(contaId, payload);
+  } catch (err) {
+    console.error('[handleStandaloneChargeWebhook] Falha ao sincronizar EventFinancialEntry:', err);
+  }
+
   return { success: true };
+}
+
+async function updateEventFinancialEntryFromWebhook(
+  contaId: string,
+  payload: PaymentWebhookPayload,
+): Promise<void> {
+  if (!prisma.eventFinancialEntry) return;
+  const p = payload.payment;
+  const paymentId = p.id;
+  const installmentId = p.installment ?? null;
+  const subscriptionId = p.subscription ?? null;
+
+  const entry = await prisma.eventFinancialEntry.findFirst({
+    where: {
+      contaId,
+      OR: [
+        { asaasPaymentId: paymentId },
+        ...(installmentId ? [{ asaasPaymentId: installmentId }] : []),
+        ...(subscriptionId ? [{ asaasPaymentId: subscriptionId }] : []),
+      ],
+    },
+    select: { id: true, expectedAmount: true },
+  });
+
+  if (!entry) return;
+
+  const asaasStatus = p.status;
+  let nextStatus: 'RECEIVED' | 'PENDING' | 'REFUNDED' | 'CANCELLED' = 'PENDING';
+  let actualAmount: number | null = null;
+  let realizedAt: Date | null = null;
+  let cancelledAt: Date | null = null;
+  let refundedAt: Date | null = null;
+
+  if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(asaasStatus)) {
+    nextStatus = 'RECEIVED';
+    actualAmount = entry.expectedAmount.toNumber();
+    const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
+    realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
+  } else if (['REFUNDED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DEPOSITED'].includes(asaasStatus)) {
+    nextStatus = 'REFUNDED';
+    refundedAt = new Date();
+  } else if (['DELETED'].includes(asaasStatus) || p.deleted) {
+    nextStatus = 'CANCELLED';
+    cancelledAt = new Date();
+  }
+
+  await prisma.eventFinancialEntry.update({
+    where: { id: entry.id },
+    data: {
+      status: nextStatus as any,
+      paymentStatus: asaasStatus,
+      actualAmount: actualAmount ? new Prisma.Decimal(actualAmount) : null,
+      realizedAt,
+      cancelledAt,
+      refundedAt,
+    },
+  });
+
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { revenueEntryId: entry.id, contaId },
+    select: { id: true },
+  });
+
+  if (participant) {
+    await prisma.eventParticipant.update({
+      where: { id: participant.id },
+      data: {
+        isFeePaid: nextStatus === 'RECEIVED',
+        ...(nextStatus === 'RECEIVED' && p.billingType && { feePaymentMethod: p.billingType }),
+      },
+    });
+  }
 }
 
 /**
@@ -2131,6 +2210,12 @@ async function handlePaymentWebhookCore(
       asaasStatus: payload.payment.status,
       revision: Date.now(),
     });
+
+    try {
+      await updateEventFinancialEntryFromWebhook(contaId, payload);
+    } catch (err) {
+      console.error('[handlePaymentWebhookCore] Falha ao sincronizar EventFinancialEntry:', err);
+    }
 
     return { success: true };
   } catch (error) {

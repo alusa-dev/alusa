@@ -12,6 +12,13 @@ import {
 } from '@/features/cadastro/alunos/dtos';
 import { mapAlunoDetailToDTO, mapAlunoListItemToDTO } from '@/features/cadastro/alunos/mappers';
 import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
+import { isMenorDeIdade } from '@alusa/domain';
+import {
+  maskCpf as privacyMaskCpf,
+  maskEmail as privacyMaskEmail,
+  maskPhone as privacyMaskPhone,
+} from '@alusa/shared';
+
 
 // Util simples para limpar dígitos
 const digits = (v: unknown) => (typeof v === 'string' ? v.replace(/\D/g, '') : v);
@@ -64,6 +71,7 @@ export async function GET(request: NextRequest) {
           foto: true,
           updatedAt: true,
           cpf: true,
+          dataNasc: true,
           consentimentoImagem: true,
           dataConsentimentoImagem: true,
           isentoTaxaMatricula: true,
@@ -71,6 +79,19 @@ export async function GET(request: NextRequest) {
           tags: true,
           dataInativacao: true,
           motivoInativacao: true,
+          responsaveis: {
+            select: {
+              tipoVinculo: true,
+              responsavel: {
+                select: {
+                  cpf: true,
+                  email: true,
+                  telefone: true,
+                  financeiro: true,
+                },
+              },
+            },
+          },
         },
       }),
       ]);
@@ -80,28 +101,53 @@ export async function GET(request: NextRequest) {
         page,
         pageSize,
         items: alunos.map((aluno) => {
-        const bolsaRaw = aluno.bolsaDescontoPercent;
-        const bolsaDescontoPercent =
-          bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
+          const bolsaRaw = aluno.bolsaDescontoPercent;
+          const bolsaDescontoPercent =
+            bolsaRaw === null || bolsaRaw === undefined ? null : Number(bolsaRaw);
 
-        return {
-          id: aluno.id,
-          nome: aluno.nome ?? '',
-          email: aluno.email ?? null,
-          telefone: aluno.telefone ?? null,
-          status: aluno.status ?? 'ATIVO',
-          foto: aluno.foto ?? null,
-          updatedAt: aluno.updatedAt,
-          cpf: aluno.cpf ?? null,
-          consentimentoImagem: aluno.consentimentoImagem ?? null,
-          dataConsentimentoImagem: aluno.dataConsentimentoImagem
-            ? aluno.dataConsentimentoImagem.toISOString()
-            : null,
-          isentoTaxaMatricula: aluno.isentoTaxaMatricula ?? null,
-          bolsaDescontoPercent,
-          tags: Array.isArray(aluno.tags) ? aluno.tags : null,
-        };
-      }),
+          const menor = isMenorDeIdade(aluno.dataNasc);
+          let cpfOriginal = aluno.cpf;
+          let emailOriginal = aluno.email;
+          let phoneOriginal = aluno.telefone;
+
+          if (menor && aluno.responsaveis && aluno.responsaveis.length > 0) {
+            const resp = aluno.responsaveis.find(
+              (r) =>
+                r.responsavel.financeiro ||
+                r.tipoVinculo === 'FINANCEIRO' ||
+                r.tipoVinculo === 'PRINCIPAL'
+            ) || aluno.responsaveis[0];
+            cpfOriginal = resp.responsavel.cpf ?? aluno.cpf;
+            emailOriginal = resp.responsavel.email ?? aluno.email;
+            phoneOriginal = resp.responsavel.telefone ?? aluno.telefone;
+          }
+
+          const cpfMasked = cpfOriginal ? privacyMaskCpf(cpfOriginal) : null;
+          const emailMasked = emailOriginal ? privacyMaskEmail(emailOriginal) : null;
+
+          const phoneMasked = phoneOriginal ? privacyMaskPhone(phoneOriginal) : null;
+
+          return {
+            id: aluno.id,
+            nome: aluno.nome ?? '',
+            email: emailMasked,
+            telefone: phoneMasked,
+            cpfMasked,
+            emailMasked,
+            phoneMasked,
+            status: aluno.status ?? 'ATIVO',
+            foto: aluno.foto ?? null,
+            updatedAt: aluno.updatedAt,
+            cpf: cpfMasked,
+            consentimentoImagem: aluno.consentimentoImagem ?? null,
+            dataConsentimentoImagem: aluno.dataConsentimentoImagem
+              ? aluno.dataConsentimentoImagem.toISOString()
+              : null,
+            isentoTaxaMatricula: aluno.isentoTaxaMatricula ?? null,
+            bolsaDescontoPercent,
+            tags: Array.isArray(aluno.tags) ? aluno.tags : null,
+          };
+        }),
       };
     });
 

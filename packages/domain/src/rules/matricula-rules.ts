@@ -14,7 +14,13 @@ export function calcularIdadeMaxima(): number {
  * Calcula idade a partir de uma data de nascimento
  */
 export function calcularIdade(dataNasc: Date): number {
-  return Math.floor((Date.now() - dataNasc.getTime()) / 31557600000);
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - dataNasc.getFullYear();
+  const m = hoje.getMonth() - dataNasc.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < dataNasc.getDate())) {
+    idade--;
+  }
+  return idade;
 }
 
 /**

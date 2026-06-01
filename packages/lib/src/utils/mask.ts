@@ -9,6 +9,7 @@ export function maskCpf(value: string | null | undefined): string {
 
 export function maskPhone(value: string | null | undefined): string {
   const input = value ?? '';
+  if (input.includes('*')) return input;
   const digits = input.replace(/\D/g, '');
   if (digits.length <= 2) return digits ? `(${digits}` : '';
   if (digits.length <= 6) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;

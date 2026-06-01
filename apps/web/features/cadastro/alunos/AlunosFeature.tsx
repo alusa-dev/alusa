@@ -304,7 +304,7 @@ function AlunosTable({
                 {aluno.nome}
               </div>
               <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
-                {aluno.cpf ? maskCpf(aluno.cpf) : '—'}
+                {aluno.cpfMasked ?? (aluno.cpf ? maskCpf(aluno.cpf) : '—')}
               </div>
               <div className="mt-1 flex flex-wrap gap-1">
                 {aluno.isentoTaxaMatricula && (
@@ -333,7 +333,7 @@ function AlunosTable({
       cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
         <span className="tabular-nums leading-[20px]">
-          {aluno.cpf ? maskCpf(aluno.cpf) : '-'}
+          {aluno.cpfMasked ?? (aluno.cpf ? maskCpf(aluno.cpf) : '-')}
         </span>
       ),
       skeleton: <div className="hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
@@ -348,9 +348,9 @@ function AlunosTable({
       render: (aluno) => (
         <span
           className="inline-block max-w-full truncate leading-[20px]"
-          title={aluno.email ?? undefined}
+          title={aluno.emailMasked ?? aluno.email ?? undefined}
         >
-          {aluno.email || '-'}
+          {aluno.emailMasked ?? aluno.email ?? '-'}
         </span>
       ),
       skeleton: <div className="mx-auto hidden h-4 w-40 rounded bg-gray-200 lg:block" />,
@@ -363,7 +363,9 @@ function AlunosTable({
       headerClassName: 'hidden lg:table-cell',
       cellClassName: 'hidden lg:table-cell',
       render: (aluno) => (
-        <span className="tabular-nums leading-[20px]">{maskPhone(aluno.telefone) || '-'}</span>
+        <span className="tabular-nums leading-[20px]">
+          {aluno.phoneMasked ?? (maskPhone(aluno.telefone) || '-')}
+        </span>
       ),
       skeleton: <div className="mx-auto hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
     },

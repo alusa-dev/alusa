@@ -25,6 +25,10 @@ import {
   mapAlunoDetailToDTO,
 } from '@/features/cadastro/alunos/mappers';
 import { normalizeAvatarUpload } from '@/src/server/media/avatar-storage.service';
+import {
+  auditSensitiveAccess,
+  canViewSensitivePersonData,
+} from '@/lib/privacy/sensitive-access';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -123,13 +127,18 @@ async function getAlunoDeletionBlockers(params: {
   };
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
     const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId;
+    const user = (session as { user?: { id?: string; role?: string; contaId?: string } } | null)?.user;
+    const contaId = user?.contaId;
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'STUDENT_DETAIL' })) {
+      return NextResponse.json({ error: 'Acesso negado a dados sensíveis do aluno.' }, { status: 403 });
     }
 
     const aluno = await getAluno(rawParams.id, contaId);
@@ -171,6 +180,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         : null,
     };
 
+    await auditSensitiveAccess({
+      prisma,
+      req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'student.sensitive.view',
+      entityType: 'Aluno',
+      entityId: aluno.id,
+      purpose: 'STUDENT_DETAIL',
+      metadata: {
+        fields: ['cpf', 'email', 'telefone', 'responsavel.cpf', 'responsavel.email', 'responsavel.telefone'],
+      },
+    });
+
     return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(alunoTransformado)));
   } catch (e: unknown) {
     return NextResponse.json(
@@ -185,9 +208,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   try {
     // Obter contaId da sessão para sincronização com Asaas
     const session = await getServerSession(authOptions);
-    const contaId = (session as { user?: { contaId?: string } } | null)?.user?.contaId;
+    const user = (session as { user?: { id?: string; role?: string; contaId?: string } } | null)?.user;
+    const contaId = user?.contaId;
     if (!contaId) {
       return NextResponse.json({ error: 'Sessão inválida.' }, { status: 401 });
+    }
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'STUDENT_EDIT' })) {
+      return NextResponse.json({ error: 'Acesso negado para alterar dados sensíveis do aluno.' }, { status: 403 });
     }
 
     const body = await req.json();
@@ -210,6 +238,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       ...parsed,
       contaId,
       ...(normalizedFoto !== undefined ? { foto: normalizedFoto } : {}),
+    });
+
+    await auditSensitiveAccess({
+      prisma,
+      req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'student.sensitive.update',
+      entityType: 'Aluno',
+      entityId: rawParams.id,
+      purpose: 'STUDENT_EDIT',
+      metadata: {
+        fields: Object.keys(body ?? {}).filter((field) =>
+          ['cpf', 'email', 'telefone', 'dataNasc', 'endereco', 'restricoesMedicas', 'alergias'].includes(field),
+        ),
+      },
     });
     return NextResponse.json(alunoDetailDTOSchema.parse(mapAlunoDetailToDTO(aluno)));
   } catch (e: unknown) {

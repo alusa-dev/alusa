@@ -53,7 +53,7 @@ const schoolEventBaseSchema = z
     name: requiredText('Informe o nome do evento.'),
     description: optionalText,
     type: z.enum(SCHOOL_EVENT_TYPES),
-    status: z.enum(SCHOOL_EVENT_STATUSES).optional().default('PLANNING'),
+    status: z.enum(SCHOOL_EVENT_STATUSES).optional().default('ACTIVE'),
     startsAt: requiredDate,
     endsAt: optionalDate,
     locationName: optionalText,
@@ -64,6 +64,7 @@ const schoolEventBaseSchema = z
     ticketMode: z.enum(EVENT_TICKET_MODES).optional().default('NONE'),
     hasCostumes: z.coerce.boolean().optional().default(false),
     hasFinancialControl: z.coerce.boolean().optional().default(true),
+    registrationFee: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
     notes: optionalText,
   });
 
@@ -144,6 +145,19 @@ export const createTicketSaleSchema = z.object({
   notes: optionalText,
 });
 
+export const updateTicketSaleSchema = z.object({
+  lotId: z.string().trim().min(1).optional(),
+  buyerName: z.string().trim().min(1, 'Informe o comprador.').optional(),
+  alunoId: optionalId.nullable().optional(),
+  responsavelId: optionalId.nullable().optional(),
+  quantity: positiveIntSchema.optional(),
+  paymentMethod: z.enum(EVENT_PAYMENT_METHODS).optional(),
+  status: z.enum(EVENT_TICKET_SALE_STATUSES).optional(),
+  soldAt: optionalDate.optional(),
+  notes: optionalText.nullable().optional(),
+});
+
+
 export const ticketSaleActionSchema = z.object({
   reason: optionalText,
 });
@@ -180,6 +194,9 @@ export const createCostumeAssignmentSchema = z.object({
 });
 
 export const updateCostumeAssignmentSchema = z.object({
+  costumeId: z.string().trim().min(1).optional(),
+  alunoId: optionalId,
+  turmaId: optionalId,
   status: z.enum(EVENT_COSTUME_ASSIGNMENT_STATUSES).optional(),
   definedSize: optionalText,
   chargedValue: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
@@ -218,15 +235,33 @@ export const eventReportQuerySchema = z.object({
   compareWithEventId: z.string().trim().optional(),
 });
 
+export const createEventParticipantSchema = z.object({
+  eventId: eventIdSchema,
+  alunoId: z.string().trim().min(1),
+  registrationFeeCharged: moneySchema.optional().default(0),
+  isFeePaid: z.coerce.boolean().optional().default(false),
+  feePaymentMethod: z.string().trim().optional().nullable(),
+  notes: optionalText,
+});
+
+export const quitarParticipantFeeSchema = z.object({
+  paymentMethod: z.string().trim().min(1),
+});
+
 export type ListSchoolEventsQuery = z.infer<typeof listSchoolEventsQuerySchema>;
 export type CreateSchoolEventInput = z.infer<typeof createSchoolEventSchema>;
 export type UpdateSchoolEventInput = z.infer<typeof updateSchoolEventSchema>;
 export type CreateTicketLotInput = z.infer<typeof createTicketLotSchema>;
 export type UpdateTicketLotInput = z.infer<typeof updateTicketLotSchema>;
 export type CreateTicketSaleInput = z.infer<typeof createTicketSaleSchema>;
+export type UpdateTicketSaleInput = z.infer<typeof updateTicketSaleSchema>;
 export type CreateCostumeInput = z.infer<typeof createCostumeSchema>;
 export type UpdateCostumeInput = z.infer<typeof updateCostumeSchema>;
 export type CreateCostumeAssignmentInput = z.infer<typeof createCostumeAssignmentSchema>;
 export type UpdateCostumeAssignmentInput = z.infer<typeof updateCostumeAssignmentSchema>;
 export type CreateEventFinancialEntryInput = z.infer<typeof createEventFinancialEntrySchema>;
 export type UpdateEventFinancialEntryInput = z.infer<typeof updateEventFinancialEntrySchema>;
+export type CreateEventParticipantInput = z.infer<typeof createEventParticipantSchema>;
+export type QuitarParticipantFeeInput = z.infer<typeof quitarParticipantFeeSchema>;
+
+

@@ -2,18 +2,10 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 import { Analytics } from '@vercel/analytics/next';
 
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   COOKIE_POLICY_VERSION,
 } from '@/lib/privacy/legal-versions';
@@ -120,7 +112,6 @@ async function persistConsent(categories: CookieCategories, decision: 'ACCEPT_AL
 export function CookieConsentBanner() {
   const pathname = usePathname() ?? '/';
   const [visible, setVisible] = useState(false);
-  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [categories, setCategories] = useState<CookieCategories>(defaultCookieCategories);
 
   const shouldRender = useMemo(() => isCookieBannerPath(pathname), [pathname]);
@@ -138,6 +129,15 @@ export function CookieConsentBanner() {
     } else {
       setVisible(true);
     }
+
+    const handleConsentUpdated = () => {
+      setVisible(false);
+    };
+
+    window.addEventListener(CONSENT_EVENT, handleConsentUpdated);
+    return () => {
+      window.removeEventListener(CONSENT_EVENT, handleConsentUpdated);
+    };
   }, [shouldRender]);
 
   if (!shouldRender || !visible) return null;
@@ -156,108 +156,47 @@ export function CookieConsentBanner() {
     await persistConsent(next, 'REJECT_NON_ESSENTIAL');
   }
 
-  async function savePreferences() {
-    const next: CookieCategories = { ...categories, essential: true };
-    setCategories(next);
-    setVisible(false);
-    setPreferencesOpen(false);
-    await persistConsent(next, 'SAVE_PREFERENCES');
-  }
-
   return (
     <>
       <div
-        className="fixed bottom-4 left-4 z-[60] w-[min(calc(100vw-2rem),28rem)] translate-y-0 rounded-lg border border-white/15 bg-[#190b2d] p-4 text-white shadow-2xl animate-in slide-in-from-bottom-4 duration-500"
+        className="fixed bottom-4 left-4 z-[60] w-[min(calc(100vw-2rem),28rem)] translate-y-0 rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 shadow-xl animate-in slide-in-from-bottom-4 duration-500"
         role="region"
         aria-label="Preferencias de cookies"
       >
-        <p className="text-sm leading-relaxed text-white/82">
-          Usamos cookies essenciais para o funcionamento da Alusa e, com seu consentimento, cookies
-          de analise para melhorar sua experiencia.
+        <p className="text-sm leading-relaxed text-slate-600">
+          Usamos cookies para aprimorar sua experiência e para fins de publicidade. Leia nossa{' '}
+          <a href="/cookies" className="underline font-semibold text-slate-800 hover:text-slate-955">
+            Política de Cookies
+          </a>{' '}
+          ou{' '}
+          <Link
+            href="/preferencias-de-cookies"
+            className="underline font-semibold text-slate-800 hover:text-slate-955 cursor-pointer align-baseline"
+          >
+            gerencie os cookies
+          </Link>
+          .
         </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr]">
-          <Button type="button" className="h-10 bg-white text-[#3e1f63] hover:bg-white/90" onClick={acceptAll}>
+        <div className="mt-4 grid gap-3 grid-cols-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 border-slate-200 bg-white text-alusa-purple hover:bg-alusa-purple-tint hover:text-alusa-purple-hover font-semibold transition-colors"
+            onClick={acceptAll}
+          >
             Aceitar todos
           </Button>
-          <Button type="button" variant="outline" className="h-10 border-white/25 bg-transparent text-white hover:bg-white/10" onClick={rejectNonEssential}>
-            Rejeitar nao necessarios
-          </Button>
-          <Button type="button" variant="ghost" className="h-10 text-white hover:bg-white/10 sm:col-span-2" onClick={() => setPreferencesOpen(true)}>
-            Preferencias
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 border-slate-200 bg-white text-alusa-purple hover:bg-alusa-purple-tint hover:text-alusa-purple-hover font-semibold transition-colors"
+            onClick={rejectNonEssential}
+          >
+            Rejeitar todos
           </Button>
         </div>
       </div>
-
-      <Dialog open={preferencesOpen} onOpenChange={setPreferencesOpen}>
-        <DialogContent className="max-w-xl" data-sentry-mask>
-          <DialogHeader>
-            <DialogTitle>Preferencias de cookies</DialogTitle>
-            <DialogDescription>
-              Cookies nao essenciais ficam desativados ate voce autorizar.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <CookieCategoryRow
-              title="Cookies essenciais"
-              description="Necessarios para sessao, seguranca, autenticacao e funcionamento basico."
-              checked
-              disabled
-              onCheckedChange={() => undefined}
-            />
-            <CookieCategoryRow
-              title="Cookies de analise"
-              description="Ajudam a entender uso do site publico sem carregar antes do consentimento."
-              checked={categories.analytics}
-              onCheckedChange={(analytics) => setCategories((current) => ({ ...current, analytics }))}
-            />
-            <CookieCategoryRow
-              title="Cookies de marketing"
-              description="Podem apoiar campanhas e mensuracao comercial quando forem utilizados."
-              checked={categories.marketing}
-              onCheckedChange={(marketing) => setCategories((current) => ({ ...current, marketing }))}
-            />
-            <CookieCategoryRow
-              title="Cookies de preferencias"
-              description="Guardam escolhas de experiencia no site publico."
-              checked={categories.preferences}
-              onCheckedChange={(preferences) => setCategories((current) => ({ ...current, preferences }))}
-            />
-          </div>
-          <DialogFooter className="gap-2 sm:space-x-0">
-            <Button type="button" variant="outline" onClick={rejectNonEssential}>
-              Rejeitar nao necessarios
-            </Button>
-            <Button type="button" onClick={savePreferences}>
-              Salvar preferencias
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
-  );
-}
-
-function CookieCategoryRow({
-  title,
-  description,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-  disabled?: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-4">
-      <Checkbox checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} className="mt-0.5" />
-      <span>
-        <span className="block text-sm font-semibold text-slate-950">{title}</span>
-        <span className="mt-1 block text-sm leading-relaxed text-slate-600">{description}</span>
-      </span>
-    </label>
   );
 }
 

@@ -39,6 +39,13 @@
 	color: var(--alusa-purple-deeper);
 }
 
+@media (min-width: 1024px) {
+	.legal-nav-link-aligned {
+		margin-left: -20px !important;
+		padding-left: 20px !important;
+	}
+}
+
 @media (prefers-reduced-motion: no-preference) {
 	html:has([data-area='public']) {
 		scroll-behavior: smooth;

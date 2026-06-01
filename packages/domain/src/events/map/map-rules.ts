@@ -110,13 +110,6 @@ export function decideEventMapDeletion(input: {
     };
   }
 
-  if (input.status === 'PUBLISHED' || input.versionsCount > 0) {
-    return {
-      action: 'ARCHIVE',
-      reason: 'Mapa publicado deve ser arquivado para preservar o link e versões anteriores.',
-    };
-  }
-
   return { action: 'DELETE' };
 }
 

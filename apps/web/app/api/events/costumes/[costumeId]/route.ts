@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { updateCostume, updateCostumeSchema } from '@alusa/lib';
+import { deleteCostume, updateCostume, updateCostumeSchema } from '@alusa/lib';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 
@@ -18,3 +18,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     return handleEventsRouteError(error, 'ERRO_ATUALIZAR_FIGURINO_EVENTO');
   }
 }
+
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  try {
+    const ctx = await getEventsContext('eventCostumes.manage');
+    return NextResponse.json({ data: await deleteCostume(ctx, params.costumeId) });
+  } catch (error) {
+    return handleEventsRouteError(error, 'ERRO_EXCLUIR_FIGURINO_EVENTO');
+  }
+}
+

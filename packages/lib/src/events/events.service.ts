@@ -1,4 +1,11 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient, EventPaymentMethod } from '@prisma/client';
+
+const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
+  if (!method) return 'OTHER';
+  const allowed = ['CASH', 'MANUAL_PIX', 'EXTERNAL_CARD', 'TRANSFER', 'COMPLIMENTARY', 'OTHER'];
+  if (allowed.includes(method)) return method as EventPaymentMethod;
+  return 'OTHER';
+};
 
 import {
   calculateEventMetrics,
@@ -17,12 +24,15 @@ import type {
   CreateSchoolEventInput,
   CreateTicketLotInput,
   CreateTicketSaleInput,
+  UpdateTicketSaleInput,
   ListSchoolEventsQuery,
   UpdateCostumeAssignmentInput,
   UpdateCostumeInput,
   UpdateEventFinancialEntryInput,
   UpdateSchoolEventInput,
   UpdateTicketLotInput,
+  CreateEventParticipantInput,
+  QuitarParticipantFeeInput,
 } from './events.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -140,7 +150,7 @@ async function recordEventAudit(
   });
 }
 
-function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments'>): EventMetrics {
+function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes'>): EventMetrics {
   return calculateEventMetrics({
     ticketSales: record.ticketSales.map((sale) => ({
       status: sale.status,
@@ -150,6 +160,7 @@ function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLot
     ticketLots: record.ticketLots.map((lot) => ({
       quantityTotal: lot.quantityTotal,
       quantitySold: lot.quantitySold,
+      unitPrice: toMoney(lot.unitPrice),
     })),
     financialEntries: record.financialEntries.map((entry) => ({
       type: entry.type,
@@ -157,11 +168,16 @@ function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLot
       expectedAmount: toMoney(entry.expectedAmount),
       actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
       originType: entry.originType,
+      category: entry.category,
     })),
     costumeAssignments: record.assignments.map((assignment) => ({
       status: assignment.status,
       chargedValue: assignment.chargedValue == null ? null : toMoney(assignment.chargedValue),
       isPaid: assignment.isPaid,
+    })),
+    costumes: record.costumes.map((costume) => ({
+      schoolCost: toMoney(costume.schoolCost),
+      quantity: costume.quantity,
     })),
   });
 }
@@ -188,6 +204,7 @@ export function mapSchoolEvent(record: SchoolEventRecord) {
     hasCostumes: record.hasCostumes,
     hasFinancialControl: record.hasFinancialControl,
     notes: record.notes,
+    registrationFee: toMoney(record.registrationFee),
     createdByUserId: record.createdByUserId,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
@@ -351,6 +368,7 @@ export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolE
         ticketMode: ticketSettings.ticketMode ?? input.ticketMode,
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
+        registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
         notes: input.notes,
         createdByUserId: ctx.userId,
       },
@@ -395,6 +413,7 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
         ticketMode: ticketSettings.ticketMode,
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
+        registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
         notes: input.notes,
       },
     });
@@ -545,6 +564,13 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
     assertOperationalEvent(event.status);
 
+    const existing = await tx.eventTicketLot.findFirst({
+      where: { contaId: ctx.contaId, eventId: input.eventId, name: input.name },
+    });
+    if (existing) {
+      throw new EventsError('LOTE_JA_EXISTE', 'Já existe um lote com este nome neste evento.', 409);
+    }
+
     const lot = await tx.eventTicketLot.create({
       data: {
         contaId: ctx.contaId,
@@ -586,6 +612,15 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
     });
     if (!current) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
     assertOperationalEvent(current.event.status);
+
+    if (input.name && input.name !== current.name) {
+      const existing = await tx.eventTicketLot.findFirst({
+        where: { contaId: ctx.contaId, eventId: current.eventId, name: input.name },
+      });
+      if (existing) {
+        throw new EventsError('LOTE_JA_EXISTE', 'Já existe um lote com este nome neste evento.', 409);
+      }
+    }
 
     if (input.quantityTotal != null && input.quantityTotal < current.quantitySold) {
       throw new EventsError('QUANTIDADE_INVALIDA', 'A quantidade total não pode ser menor que a vendida.', 422);
@@ -1050,8 +1085,8 @@ export async function updateCostume(ctx: EventsContext, costumeId: string, input
         size: input.size,
         color: input.color,
         accessories: input.accessories,
-        schoolCost: input.schoolCost == null ? undefined : decimal(input.schoolCost),
-        chargedValue: input.chargedValue == null ? undefined : decimal(input.chargedValue),
+        schoolCost: input.schoolCost === null ? null : (input.schoolCost === undefined ? undefined : decimal(input.schoolCost)),
+        chargedValue: input.chargedValue === null ? null : (input.chargedValue === undefined ? undefined : decimal(input.chargedValue)),
         supplier: input.supplier,
         quantity: input.quantity,
         notes: input.notes,
@@ -1142,6 +1177,18 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
     if (!costume) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
     assertOperationalEvent(costume.event.status);
 
+    const activeAssignmentsCount = await tx.eventCostumeAssignment.count({
+      where: {
+        costumeId: input.costumeId,
+        contaId: ctx.contaId,
+        status: { not: 'CANCELLED' }
+      }
+    });
+
+    if (input.status !== 'CANCELLED' && activeAssignmentsCount >= costume.quantity) {
+      throw new EventsError('ESTOQUE_INSUFICIENTE', `Estoque insuficiente para o figurino "${costume.name}". (Disponível: ${costume.quantity}, Reservado: ${activeAssignmentsCount})`, 400);
+    }
+
     if (input.status === 'DELIVERED' && !input.alunoId) {
       throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
     }
@@ -1175,7 +1222,7 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
           eventId: input.eventId,
           type: 'REVENUE',
           category: 'Figurino',
-          description: `Figurino - ${costume.name}`,
+          description: costume.name,
           originType: 'COSTUME_ASSIGNMENT',
           originId: assignment.id,
           expectedAmount: decimal(chargedValue),
@@ -1219,36 +1266,120 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
       }
     }
 
-    if ((input.status === 'RETURNED' || input.returnedAt) && !current.deliveredAt && !input.deliveredAt) {
-      throw new EventsError('DEVOLUCAO_INVALIDA', 'Não é possível devolver antes da entrega.', 422);
+    const targetCostumeId = (input.costumeId as string) ?? current.costumeId;
+    const willBeActive = input.status ? input.status !== 'CANCELLED' : current.status !== 'CANCELLED';
+    const wasActive = current.status !== 'CANCELLED';
+    const isAddingNewActiveReservation = (willBeActive && !wasActive) || (willBeActive && wasActive && input.costumeId && input.costumeId !== current.costumeId);
+
+    if (isAddingNewActiveReservation) {
+      const costume = await tx.eventCostume.findFirst({
+        where: { id: targetCostumeId, contaId: ctx.contaId },
+      });
+      if (!costume) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
+
+      const activeAssignmentsCount = await tx.eventCostumeAssignment.count({
+        where: {
+          costumeId: targetCostumeId,
+          contaId: ctx.contaId,
+          status: { not: 'CANCELLED' }
+        }
+      });
+
+      if (activeAssignmentsCount >= costume.quantity) {
+        throw new EventsError('ESTOQUE_INSUFICIENTE', `Estoque insuficiente para o figurino "${costume.name}". (Disponível: ${costume.quantity}, Reservado: ${activeAssignmentsCount})`, 400);
+      }
     }
 
     const now = new Date();
+    let deliveredAt: Date | null | undefined = input.deliveredAt;
+    let returnedAt: Date | null | undefined = input.returnedAt;
+    let deliveredByUserId: string | null | undefined = undefined;
+
+    if (input.status) {
+      if (input.status === 'DELIVERED') {
+        deliveredAt = input.deliveredAt ?? current.deliveredAt ?? now;
+        returnedAt = null;
+        deliveredByUserId = ctx.userId;
+      } else if (input.status === 'RETURNED') {
+        deliveredAt = input.deliveredAt ?? current.deliveredAt ?? now;
+        returnedAt = input.returnedAt ?? current.returnedAt ?? now;
+        deliveredByUserId = current.deliveredByUserId ?? ctx.userId;
+      } else {
+        deliveredAt = null;
+        returnedAt = null;
+        deliveredByUserId = null;
+      }
+    }
+
     const updated = await tx.eventCostumeAssignment.update({
       where: { id: assignmentId },
       data: {
+        costumeId: input.costumeId,
+        alunoId: input.alunoId,
+        turmaId: input.turmaId,
         status: input.status,
         definedSize: input.definedSize,
         chargedValue: input.chargedValue == null ? undefined : decimal(input.chargedValue),
         isPaid: input.isPaid,
-        deliveredAt: input.deliveredAt ?? (input.status === 'DELIVERED' ? now : undefined),
-        returnedAt: input.returnedAt ?? (input.status === 'RETURNED' ? now : undefined),
-        deliveredByUserId: input.status === 'DELIVERED' ? ctx.userId : undefined,
+        deliveredAt,
+        returnedAt,
+        deliveredByUserId,
         notes: input.notes,
       },
     });
 
     const chargedValue = toMoney(updated.chargedValue);
-    if (updated.revenueEntryId && chargedValue > 0) {
-      await tx.eventFinancialEntry.updateMany({
-        where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
-        data: {
-          expectedAmount: decimal(chargedValue),
-          actualAmount: updated.isPaid ? decimal(chargedValue) : null,
-          status: updated.isPaid ? 'RECEIVED' : 'PENDING',
-          realizedAt: updated.isPaid ? now : null,
-        },
+    if (updated.revenueEntryId) {
+      const targetCostume = await tx.eventCostume.findFirst({
+        where: { id: updated.costumeId, contaId: ctx.contaId },
       });
+
+      if (chargedValue > 0) {
+        await tx.eventFinancialEntry.updateMany({
+          where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
+          data: {
+            description: targetCostume?.name ?? undefined,
+            expectedAmount: decimal(chargedValue),
+            actualAmount: updated.isPaid ? decimal(chargedValue) : null,
+            status: updated.isPaid ? 'RECEIVED' : 'PENDING',
+            realizedAt: updated.isPaid ? now : null,
+          },
+        });
+      } else {
+        await tx.eventFinancialEntry.deleteMany({
+          where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
+        });
+        await tx.eventCostumeAssignment.update({
+          where: { id: assignmentId },
+          data: { revenueEntryId: null },
+        });
+      }
+    } else if (chargedValue > 0) {
+      const targetCostume = await tx.eventCostume.findFirst({
+        where: { id: updated.costumeId, contaId: ctx.contaId },
+      });
+      if (targetCostume) {
+        const entry = await tx.eventFinancialEntry.create({
+          data: {
+            contaId: ctx.contaId,
+            eventId: updated.eventId,
+            type: 'REVENUE',
+            category: 'Figurino',
+            description: targetCostume.name,
+            originType: 'COSTUME_ASSIGNMENT',
+            originId: updated.id,
+            expectedAmount: decimal(chargedValue),
+            actualAmount: updated.isPaid ? decimal(chargedValue) : null,
+            status: updated.isPaid ? 'RECEIVED' : 'PENDING',
+            realizedAt: updated.isPaid ? now : null,
+            createdByUserId: ctx.userId,
+          },
+        });
+        await tx.eventCostumeAssignment.update({
+          where: { id: updated.id },
+          data: { revenueEntryId: entry.id },
+        });
+      }
     }
 
     await recordEventAudit(tx, {
@@ -1489,3 +1620,641 @@ export async function getEventReports(ctx: Pick<EventsContext, 'contaId'>, input
     })),
   };
 }
+
+export async function registerEventParticipant(ctx: EventsContext, input: CreateEventParticipantInput) {
+  return prisma.$transaction(async (tx) => {
+    const event = await tx.schoolEvent.findFirst({
+      where: { id: input.eventId, contaId: ctx.contaId },
+    });
+    if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
+    assertOperationalEvent(event.status);
+
+    const existing = await tx.eventParticipant.findFirst({
+      where: {
+        contaId: ctx.contaId,
+        eventId: input.eventId,
+        alunoId: input.alunoId,
+      },
+    });
+    if (existing) {
+      throw new EventsError('ALUNO_JA_INSCRITO', 'Aluno já inscrito neste evento.', 409);
+    }
+
+    const aluno = await tx.aluno.findFirst({
+      where: { id: input.alunoId, contaId: ctx.contaId },
+    });
+    if (!aluno) throw new EventsError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado.', 404);
+
+    let revenueEntryId: string | null = null;
+    const feeCharged = input.registrationFeeCharged ?? 0;
+
+    if (feeCharged > 0) {
+      const entry = await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: input.eventId,
+          type: 'REVENUE',
+          category: 'Taxa de inscrição',
+          description: 'Taxa de inscrição',
+          expectedAmount: decimal(feeCharged),
+          actualAmount: input.isFeePaid ? decimal(feeCharged) : null,
+          dueDate: new Date(),
+          realizedAt: input.isFeePaid ? new Date() : null,
+          status: input.isFeePaid ? 'RECEIVED' : 'PENDING',
+          paymentMethod: mapToEventPaymentMethod(input.feePaymentMethod),
+          notes: input.notes,
+        },
+      });
+      revenueEntryId = entry.id;
+    }
+
+    const participant = await tx.eventParticipant.create({
+      data: {
+        contaId: ctx.contaId,
+        eventId: input.eventId,
+        type: 'STUDENT',
+        alunoId: input.alunoId,
+        displayName: aluno.nome,
+        registrationFeeCharged: decimal(feeCharged),
+        isFeePaid: input.isFeePaid ?? false,
+        feePaymentMethod: input.feePaymentMethod ?? null,
+        revenueEntryId,
+        notes: input.notes,
+      },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.register',
+      entityType: 'EventParticipant',
+      entityId: participant.id,
+      eventId: input.eventId,
+      after: participant,
+    });
+
+    return participant;
+  });
+}
+
+export async function unregisterEventParticipant(ctx: EventsContext, participantId: string) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+
+    if (participant.revenueEntryId) {
+      const entry = await tx.eventFinancialEntry.findFirst({
+        where: { id: participant.revenueEntryId, contaId: ctx.contaId },
+      });
+      if (entry) {
+        if (entry.status === 'RECEIVED') {
+          throw new EventsError(
+            'TAXA_PAGA',
+            'Não é possível remover inscrição com taxa já paga. Estorne o lançamento financeiro primeiro.',
+            409,
+          );
+        }
+        await tx.eventFinancialEntry.delete({ where: { id: entry.id } });
+      }
+    }
+
+    await tx.eventParticipant.delete({ where: { id: participantId } });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.unregister',
+      entityType: 'EventParticipant',
+      entityId: participantId,
+      eventId: participant.eventId,
+      before: participant,
+    });
+
+    return { ok: true };
+  });
+}
+
+export async function quitarEventParticipantFee(ctx: EventsContext, participantId: string, input: QuitarParticipantFeeInput) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+
+    if (participant.isFeePaid) {
+      throw new EventsError('TAXA_JA_PAGA', 'A taxa de inscrição deste aluno já está paga.', 409);
+    }
+
+    const value = participant.registrationFeeCharged.toNumber();
+    if (value <= 0) {
+      throw new EventsError('VALOR_INVALIDO', 'Esta inscrição não possui valor a ser cobrado.', 400);
+    }
+
+    let revenueEntryId = participant.revenueEntryId;
+    if (revenueEntryId) {
+      await tx.eventFinancialEntry.update({
+        where: { id: revenueEntryId },
+        data: {
+          status: 'RECEIVED',
+          actualAmount: decimal(value),
+          realizedAt: new Date(),
+          paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+        },
+      });
+    } else {
+      const entry = await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId: participant.eventId,
+          type: 'REVENUE',
+          category: 'Taxa de inscrição',
+          description: 'Taxa de inscrição',
+          expectedAmount: decimal(value),
+          actualAmount: decimal(value),
+          dueDate: new Date(),
+          realizedAt: new Date(),
+          status: 'RECEIVED',
+          paymentMethod: mapToEventPaymentMethod(input.paymentMethod),
+        },
+      });
+      revenueEntryId = entry.id;
+    }
+
+    const updated = await tx.eventParticipant.update({
+      where: { id: participantId },
+      data: {
+        isFeePaid: true,
+        feePaymentMethod: input.paymentMethod,
+        revenueEntryId,
+      },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.quitar',
+      entityType: 'EventParticipant',
+      entityId: participantId,
+      eventId: participant.eventId,
+      before: participant,
+      after: updated,
+    });
+
+    return updated;
+  });
+}
+
+export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>, eventId: string) {
+  const participants = await prisma.eventParticipant.findMany({
+    where: { contaId: ctx.contaId, eventId },
+    include: {
+      aluno: { select: { id: true, nome: true, foto: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const participantData: any[] = [];
+  for (const part of participants) {
+    let costumeCount = 0;
+    let pendingCostumes = 0;
+    let costumesValue = 0;
+
+    if (part.alunoId) {
+      const costumes = await prisma.eventCostumeAssignment.findMany({
+        where: { contaId: ctx.contaId, eventId, alunoId: part.alunoId },
+      });
+      costumeCount = costumes.length;
+      pendingCostumes = costumes.filter((c) => c.status !== 'DELIVERED').length;
+      costumesValue = costumes.reduce((sum, c) => sum + (c.chargedValue ? c.chargedValue.toNumber() : 0), 0);
+    }
+
+    let ticketsBought = 0;
+    let ticketsValue = 0;
+    if (part.alunoId) {
+      const ticketSales = await prisma.eventTicketSale.findMany({
+        where: { contaId: ctx.contaId, eventId, alunoId: part.alunoId, status: { in: ['PAID', 'COMPLIMENTARY'] } },
+      });
+      ticketsBought = ticketSales.reduce((sum, s) => sum + s.quantity, 0);
+      ticketsValue = ticketSales.reduce((sum, s) => sum + s.totalAmount.toNumber(), 0);
+    }
+
+    const feeValue = part.registrationFeeCharged.toNumber();
+    const totalSpent = feeValue + costumesValue + ticketsValue;
+
+    participantData.push({
+      id: part.id,
+      contaId: part.contaId,
+      eventId: part.eventId,
+      type: part.type,
+      alunoId: part.alunoId,
+      aluno: part.aluno,
+      displayName: part.displayName,
+      registrationFeeCharged: feeValue,
+      isFeePaid: part.isFeePaid,
+      feePaymentMethod: part.feePaymentMethod,
+      notes: part.notes,
+      createdAt: part.createdAt.toISOString(),
+      metrics: {
+        costumeCount,
+        pendingCostumes,
+        costumesValue,
+        ticketsBought,
+        ticketsValue,
+        totalSpent,
+      },
+    });
+  }
+
+  return participantData;
+}
+
+export async function deleteSchoolEvent(ctx: EventsContext, eventId: string) {
+  const event = await prisma.schoolEvent.findFirst({
+    where: { id: eventId, contaId: ctx.contaId },
+  });
+
+  if (!event) {
+    throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.delete',
+      entityType: 'SchoolEvent',
+      entityId: eventId,
+      eventId,
+      before: event,
+      after: null,
+    });
+
+    await tx.schoolEvent.delete({
+      where: { id: eventId, contaId: ctx.contaId },
+    });
+  });
+
+  return { success: true };
+}
+
+export async function deleteCostumeAssignment(ctx: EventsContext, assignmentId: string) {
+  const current = await prisma.eventCostumeAssignment.findFirst({
+    where: { id: assignmentId, contaId: ctx.contaId },
+    include: { event: true },
+  });
+  if (!current) {
+    throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino não encontrado.', 404);
+  }
+  assertOperationalEvent(current.event.status);
+
+  if (current.isPaid) {
+    throw new EventsError(
+      'EXCLUSAO_BLOQUEADA_PAGO',
+      'Não é possível excluir um vínculo de figurino que já foi pago. Por favor, marque o pagamento como pendente ou estorne-o antes de excluir.',
+      400
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.costumeAssignment.delete',
+      entityType: 'EventCostumeAssignment',
+      entityId: assignmentId,
+      eventId: current.eventId,
+      before: current,
+      after: null,
+    });
+
+    await tx.eventCostumeAssignment.delete({
+      where: { id: assignmentId },
+    });
+
+    if (current.revenueEntryId) {
+      await tx.eventFinancialEntry.deleteMany({
+        where: { contaId: ctx.contaId, id: current.revenueEntryId },
+      });
+    }
+  });
+
+  return { success: true };
+}
+
+export async function updateTicketSale(ctx: EventsContext, saleId: string, input: UpdateTicketSaleInput) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.eventTicketSale.findFirst({
+      where: { id: saleId, contaId: ctx.contaId },
+      include: { lot: true },
+    });
+    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+    assertOperationalEvent(current.lot.eventId);
+
+    const lotId = input.lotId ?? current.lotId;
+    const lot = lotId === current.lotId ? current.lot : await tx.eventTicketLot.findFirst({
+      where: { id: lotId, contaId: ctx.contaId },
+    });
+    if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
+
+    const quantity = input.quantity ?? current.quantity;
+
+    // Check stock if quantity or lot changed
+    if (lotId !== current.lotId || quantity !== current.quantity) {
+      const sold = await tx.eventTicketSale.aggregate({
+        where: {
+          contaId: ctx.contaId,
+          lotId: lot.id,
+          id: { not: saleId },
+          status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] },
+        },
+        _sum: { quantity: true },
+      });
+      const quantitySoldOthers = sold._sum.quantity ?? 0;
+      if (quantitySoldOthers + quantity > lot.quantityTotal) {
+        throw new EventsError('ESTOQUE_INSUFICIENTE', 'Não há ingressos suficientes neste lote.', 409);
+      }
+    }
+
+    const newStatus = input.status ?? current.status;
+    const paymentMethod = input.paymentMethod ?? current.paymentMethod;
+
+    const resolvedStatus = paymentMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : newStatus;
+
+    const unitPrice = toMoney(lot.unitPrice);
+    const totalAmount = resolvedStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
+
+    const now = new Date();
+    
+    // Status transition validation
+    if (resolvedStatus !== current.status) {
+      const transition = validateTicketSaleStatusTransition(current.status, resolvedStatus);
+      if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
+    }
+
+    const updated = await tx.eventTicketSale.update({
+      where: { id: saleId },
+      data: {
+        buyerName: input.buyerName,
+        alunoId: input.alunoId === undefined ? undefined : input.alunoId,
+        responsavelId: input.responsavelId === undefined ? undefined : input.responsavelId,
+        lotId,
+        quantity,
+        unitPriceSnapshot: decimal(unitPrice),
+        totalAmount: decimal(totalAmount),
+        paymentMethod,
+        status: resolvedStatus,
+        notes: input.notes === undefined ? undefined : input.notes,
+        paidAt: resolvedStatus === 'PAID' ? (current.paidAt ?? now) : null,
+        cancelledAt: resolvedStatus === 'CANCELLED' ? (current.cancelledAt ?? now) : null,
+        refundedAt: resolvedStatus === 'REFUNDED' ? (current.refundedAt ?? now) : null,
+      },
+    });
+
+    // Sync financial entries
+    if (resolvedStatus === 'COMPLIMENTARY' || totalAmount === 0) {
+      // If it has financial entry, delete it
+      if (current.revenueEntryId) {
+        await tx.eventFinancialEntry.delete({
+          where: { id: current.revenueEntryId },
+        });
+        await tx.eventTicketSale.update({
+          where: { id: saleId },
+          data: { revenueEntryId: null },
+        });
+      }
+    } else {
+      if (current.revenueEntryId) {
+        // Update existing financial entry
+        const entryStatus = resolvedStatus === 'PAID' ? 'RECEIVED' : (resolvedStatus === 'CANCELLED' ? 'CANCELLED' : (resolvedStatus === 'REFUNDED' ? 'REFUNDED' : 'PENDING'));
+        await tx.eventFinancialEntry.update({
+          where: { id: current.revenueEntryId },
+          data: {
+            description: `Venda de ingresso - ${lot.name}`,
+            expectedAmount: decimal(totalAmount),
+            actualAmount: resolvedStatus === 'PAID' ? decimal(totalAmount) : (resolvedStatus === 'REFUNDED' ? decimal(totalAmount) : null),
+            status: entryStatus,
+            paymentMethod,
+            realizedAt: resolvedStatus === 'PAID' ? (current.paidAt ?? now) : null,
+            refundedAt: resolvedStatus === 'REFUNDED' ? (current.refundedAt ?? now) : null,
+            cancelledAt: resolvedStatus === 'CANCELLED' ? (current.cancelledAt ?? now) : null,
+          },
+        });
+      } else {
+        // Create new financial entry
+        const entryStatus = resolvedStatus === 'PAID' ? 'RECEIVED' : (resolvedStatus === 'CANCELLED' ? 'CANCELLED' : (resolvedStatus === 'REFUNDED' ? 'REFUNDED' : 'PENDING'));
+        const entry = await tx.eventFinancialEntry.create({
+          data: {
+            contaId: ctx.contaId,
+            eventId: lot.eventId,
+            type: 'REVENUE',
+            category: 'Venda de ingresso',
+            description: `Venda de ingresso - ${lot.name}`,
+            originType: 'TICKET_SALE',
+            originId: saleId,
+            expectedAmount: decimal(totalAmount),
+            actualAmount: resolvedStatus === 'PAID' ? decimal(totalAmount) : null,
+            status: entryStatus,
+            paymentMethod,
+            realizedAt: resolvedStatus === 'PAID' ? now : null,
+            createdByUserId: ctx.userId,
+          },
+        });
+        await tx.eventTicketSale.update({
+          where: { id: saleId },
+          data: { revenueEntryId: entry.id },
+        });
+      }
+    }
+
+    // Sync quantities
+    await syncLotQuantity(tx, ctx.contaId, current.lotId);
+    if (lotId !== current.lotId) {
+      await syncLotQuantity(tx, ctx.contaId, lotId);
+    }
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.ticketSale.update',
+      entityType: 'EventTicketSale',
+      entityId: saleId,
+      eventId: lot.eventId,
+      before: current,
+      after: updated,
+      metadata: { lotId },
+    });
+
+    return getTicketSaleDto(tx, ctx.contaId, saleId);
+  });
+}
+
+export async function deleteTicketSale(ctx: EventsContext, saleId: string) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.eventTicketSale.findFirst({
+      where: { id: saleId, contaId: ctx.contaId },
+    });
+    if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+
+    // Business rule: Prevent deletion of PAID sales to preserve financial audit trail
+    if (current.status === 'PAID') {
+      throw new EventsError(
+        'EXCLUSAO_BLOQUEADA_PAGO',
+        'Não é possível excluir uma venda de ingresso que já foi paga. Por favor, estorne a venda primeiro.',
+        400
+      );
+    }
+
+    // Delete associated financial entry if exists
+    if (current.revenueEntryId) {
+      await tx.eventFinancialEntry.delete({
+        where: { id: current.revenueEntryId },
+      });
+    }
+
+    await tx.eventTicketSale.delete({
+      where: { id: saleId },
+    });
+
+    await syncLotQuantity(tx, ctx.contaId, current.lotId);
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.ticketSale.delete',
+      entityType: 'EventTicketSale',
+      entityId: saleId,
+      eventId: current.eventId,
+      before: current,
+      after: null,
+    });
+
+    return { success: true };
+  });
+}
+
+export async function deleteTicketLot(ctx: EventsContext, lotId: string) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.eventTicketLot.findFirst({
+      where: { id: lotId, contaId: ctx.contaId },
+    });
+    if (!current) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
+
+    // Business rule: Prevent deletion if any sales have been made
+    const salesCount = await tx.eventTicketSale.count({
+      where: { contaId: ctx.contaId, lotId },
+    });
+
+    if (salesCount > 0) {
+      throw new EventsError(
+        'EXCLUSAO_BLOQUEADA_VENDAS',
+        'Não é possível excluir um lote que já possui registros de vendas. Se necessário, cancele/exclua as vendas primeiro.',
+        400
+      );
+    }
+
+    // Business rule: Prevent deletion if lot is linked to map sections
+    const sectionsCount = await tx.eventMapSection.count({
+      where: { contaId: ctx.contaId, lotId },
+    });
+    if (sectionsCount > 0) {
+      throw new EventsError(
+        'EXCLUSAO_BLOQUEADA_MAPA',
+        'Não é possível excluir um lote que está vinculado a um setor do mapa do evento.',
+        400
+      );
+    }
+
+    await tx.eventTicketLot.delete({
+      where: { id: lotId },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.ticketLot.delete',
+      entityType: 'EventTicketLot',
+      entityId: lotId,
+      eventId: current.eventId,
+      before: current,
+      after: null,
+    });
+
+    return { success: true };
+  });
+}
+
+export async function deleteCostume(ctx: EventsContext, costumeId: string) {
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.eventCostume.findFirst({
+      where: { id: costumeId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!current) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
+    assertOperationalEvent(current.event.status);
+
+    // Business rule: Prevent deletion if any students/groups are assigned to this costume
+    const assignmentsCount = await tx.eventCostumeAssignment.count({
+      where: { contaId: ctx.contaId, costumeId },
+    });
+    if (assignmentsCount > 0) {
+      throw new EventsError(
+        'EXCLUSAO_BLOQUEADA_VINCULOS',
+        'Não é possível excluir um figurino que possui alunos vinculados.',
+        400
+      );
+    }
+
+    // Business rule: Prevent deletion if there are paid financial entries associated with it
+    const paidFinancialEntriesCount = await tx.eventFinancialEntry.count({
+      where: {
+        contaId: ctx.contaId,
+        originType: 'COSTUME',
+        originId: costumeId,
+        status: 'PAID',
+      },
+    });
+    if (paidFinancialEntriesCount > 0) {
+      throw new EventsError(
+        'EXCLUSAO_BLOQUEADA_PAGO',
+        'Não é possível excluir um figurino que possui lançamentos financeiros pagos.',
+        400
+      );
+    }
+
+    // Delete any pending financial entries associated with the costume
+    await tx.eventFinancialEntry.deleteMany({
+      where: {
+        contaId: ctx.contaId,
+        originType: 'COSTUME',
+        originId: costumeId,
+        status: 'PENDING',
+      },
+    });
+
+    // Delete the costume itself
+    await tx.eventCostume.delete({
+      where: { id: costumeId },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.costume.delete',
+      entityType: 'EventCostume',
+      entityId: costumeId,
+      eventId: current.eventId,
+      before: current,
+      after: null,
+    });
+
+    return { success: true };
+  });
+}
+
+

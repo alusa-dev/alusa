@@ -33,7 +33,9 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
     await page.fill('[data-testid="register-senha"]', 'SenhaFort3!');
   await page.fill('[data-testid="register-senha-confirmar"]', 'SenhaFort3!');
   // aceitar termos
-  await page.getByTestId('register-termos-checkbox').check();
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByRole('button', { name: /Aceitar e continuar/i }).click();
     await page.click('[data-testid="register-submit"]');
     await page.waitForURL('**/dashboard');
     await waitSession(page);
@@ -96,7 +98,9 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
       await p2.getByTestId('register-nome-last').fill('E2E');
       await p2.getByTestId('register-senha').fill('Aa!23456');
       await p2.getByTestId('register-senha-confirmar').fill('Aa!23456');
-      await p2.getByTestId('register-termos-checkbox').check();
+      await p2.getByTestId('register-termos-checkbox').click();
+      await p2.getByTestId('legal-acceptance-inner-checkbox').click();
+      await p2.getByRole('button', { name: /Aceitar e continuar/i }).click();
       await p2.getByTestId('register-submit').click();
       await p2.waitForURL('**/dashboard');
       await expect(p2.locator('[data-testid="dashboard-header"]')).toBeVisible();

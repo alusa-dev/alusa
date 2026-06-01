@@ -9,7 +9,7 @@ export function FlowSection() {
 
   return (
     <section className="relative overflow-hidden bg-alusa-purple-deeper py-section text-white sm:py-section-lg">
-      <VerticalGridLines />
+      <VerticalGridLines tone="dark" />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8">
         <ScrollReveal className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/60">Fluxo operacional</p>

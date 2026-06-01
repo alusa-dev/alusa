@@ -147,6 +147,7 @@ export type CreateStandaloneChargeOutput = {
   chargeId: string;
   asaasPaymentId?: string;
   asaasSubscriptionId?: string;
+  asaasInstallmentId?: string;
   externalReference: string;
   status: string;
   expectedWebhooks?: string[];
@@ -644,6 +645,7 @@ export async function createStandaloneCharge(
 
       return ok({
         chargeId: installmentResult.data.installmentPlanId,
+        asaasInstallmentId: installmentResult.data.asaasInstallmentId ?? undefined,
         externalReference: installmentResult.data.externalReference,
         status: installmentResult.data.status,
         notificationSync,

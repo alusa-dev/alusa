@@ -208,6 +208,16 @@ export function formatDateTime(value: string | null | undefined) {
   }).format(date);
 }
 
+export function formatTime(value: string | null | undefined) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 export async function listEvents(params: Record<string, string | number | boolean | undefined> = {}) {
   const query = buildParams(params);
   return parseResponse<EventListResult>(await fetch(`/api/events?${query}`, { cache: 'no-store' }));
@@ -263,6 +273,13 @@ export async function updateTicketLot(id: string, payload: Record<string, unknow
   }))).data;
 }
 
+export async function deleteTicketLot(id: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean }>>(await fetch(`/api/events/ticket-lots/${id}`, {
+    method: 'DELETE',
+  }))).data;
+}
+
+
 export async function listTicketSales(eventId?: string) {
   const query = buildParams({ eventId });
   return (await parseResponse<JsonEnvelope<TicketSaleDTO[]>>(await fetch(`/api/events/ticket-sales?${query}`, { cache: 'no-store' }))).data;
@@ -296,6 +313,21 @@ export async function refundTicketSale(id: string, reason?: string) {
   }))).data;
 }
 
+export async function updateTicketSale(id: string, payload: Record<string, unknown>) {
+  return (await parseResponse<JsonEnvelope<TicketSaleDTO>>(await fetch(`/api/events/ticket-sales/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function deleteTicketSale(id: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean }>>(await fetch(`/api/events/ticket-sales/${id}`, {
+    method: 'DELETE',
+  }))).data;
+}
+
+
 export async function listCostumes(eventId?: string) {
   const query = buildParams({ eventId });
   return (await parseResponse<JsonEnvelope<CostumeDTO[]>>(await fetch(`/api/events/costumes?${query}`, { cache: 'no-store' }))).data;
@@ -308,6 +340,21 @@ export async function createCostume(payload: Record<string, unknown>) {
     body: JSON.stringify(payload),
   }))).data;
 }
+
+export async function updateCostume(id: string, payload: Record<string, unknown>) {
+  return (await parseResponse<JsonEnvelope<CostumeDTO>>(await fetch(`/api/events/costumes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function deleteCostume(id: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean }>>(await fetch(`/api/events/costumes/${id}`, {
+    method: 'DELETE',
+  }))).data;
+}
+
 
 export async function listCostumeAssignments(eventId?: string) {
   const query = buildParams({ eventId });
@@ -327,6 +374,12 @@ export async function updateCostumeAssignment(id: string, payload: Record<string
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  }))).data;
+}
+
+export async function deleteCostumeAssignment(id: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean }>>(await fetch(`/api/events/costume-assignments/${id}`, {
+    method: 'DELETE',
   }))).data;
 }
 
@@ -358,4 +411,57 @@ export async function listEventAudit(eventId: string) {
 export async function getEventReports(params: { eventId?: string; compareWithEventId?: string } = {}) {
   const query = buildParams(params);
   return parseResponse<EventReportsDTO>(await fetch(`/api/events/reports?${query}`, { cache: 'no-store' }));
+}
+
+
+export type EventParticipantDTO = {
+  id: string;
+  contaId: string;
+  eventId: string;
+  type: string;
+  alunoId: string | null;
+  aluno: { id: string; nome: string; foto: string | null } | null;
+  displayName: string;
+  registrationFeeCharged: number;
+  isFeePaid: boolean;
+  feePaymentMethod: string | null;
+  notes: string | null;
+  createdAt: string;
+  metrics: {
+    costumeCount: number;
+    pendingCostumes: number;
+    costumesValue: number;
+    ticketsBought: number;
+    ticketsValue: number;
+    totalSpent: number;
+  };
+};
+
+export async function listEventParticipants(eventId: string) {
+  return (await parseResponse<JsonEnvelope<EventParticipantDTO[]>>(await fetch(`/api/events/${eventId}/participants`, { cache: "no-store" }))).data;
+}
+
+export async function registerEventParticipant(eventId: string, payload: Record<string, unknown>) {
+  const response = await fetch(`/api/events/${eventId}/participants`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
+}
+
+export async function unregisterEventParticipant(eventId: string, participantId: string) {
+  const response = await fetch(`/api/events/${eventId}/participants/${participantId}`, {
+    method: "DELETE",
+  });
+  return parseResponse<{ data: { ok: boolean } }>(response);
+}
+
+export async function quitarEventParticipantFee(eventId: string, participantId: string, paymentMethod: string) {
+  const response = await fetch(`/api/events/${eventId}/participants/${participantId}/quitar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paymentMethod }),
+  });
+  return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
 }

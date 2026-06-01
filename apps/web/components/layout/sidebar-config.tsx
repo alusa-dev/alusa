@@ -360,24 +360,6 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
         iconSolid: <TicketSolid className="h-5 w-5" />,
       },
       {
-        label: 'Ingressos',
-        href: '/events/tickets',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Figurinos',
-        href: '/events/costumes',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Custos e receitas',
-        href: '/events/financial',
-        icon: <TicketIcon className="h-5 w-5" />,
-        iconSolid: <TicketSolid className="h-5 w-5" />,
-      },
-      {
         label: 'Relatórios',
         href: '/events/reports',
         icon: <TicketIcon className="h-5 w-5" />,

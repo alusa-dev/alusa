@@ -12,7 +12,7 @@ function maskMiddle(value: string, visibleStart: number, visibleEnd: number): st
 export function maskCpf(value: string | null | undefined): string {
   const digits = onlyDigits(value);
   if (digits.length !== 11) return maskMiddle(digits || String(value ?? ''), 3, 2);
-  return `${digits.slice(0, 3)}.***.***-${digits.slice(-2)}`;
+  return `***.***.***-${digits.slice(-2)}`;
 }
 
 export function maskCnpj(value: string | null | undefined): string {
@@ -25,13 +25,15 @@ export function maskEmail(value: string | null | undefined): string {
   const email = String(value ?? '').trim();
   const [local, domain] = email.split('@');
   if (!local || !domain) return maskMiddle(email, 1, 1);
-  return `${maskMiddle(local, Math.min(2, local.length), 0)}@${domain}`;
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}***@${domain}`;
 }
 
 export function maskPhone(value: string | null | undefined): string {
   const digits = onlyDigits(value);
   if (digits.length < 8) return maskMiddle(digits || String(value ?? ''), 2, 2);
-  return `${digits.slice(0, 2)}*****${digits.slice(-4)}`;
+  if (digits.length >= 10) return `(**) *****-${digits.slice(-4)}`;
+  return `*****-${digits.slice(-4)}`;
 }
 
 export function maskAddress(value: string | null | undefined): string {

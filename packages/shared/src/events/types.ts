@@ -235,8 +235,8 @@ export const EVENT_TICKET_SALE_STATUS_LABELS: Record<EventTicketSaleStatus, stri
 
 export const EVENT_PAYMENT_METHOD_LABELS: Record<EventPaymentMethod, string> = {
   CASH: 'Dinheiro',
-  MANUAL_PIX: 'Pix manual',
-  EXTERNAL_CARD: 'Cartão externo',
+  MANUAL_PIX: 'Pix',
+  EXTERNAL_CARD: 'Cartão Externo',
   TRANSFER: 'Transferência',
   COMPLIMENTARY: 'Cortesia',
   OTHER: 'Outro',

@@ -5,6 +5,7 @@ import type {
   ResponsavelSummaryDTO,
   UpdateResponsavelInputDTO,
 } from './dtos';
+import { maskCpf, maskEmail, maskPhone } from '@alusa/shared';
 
 type ResponsavelSummaryRecord = {
   id: string;
@@ -97,14 +98,33 @@ export function mapUpdateResponsavelDTOToData(dto: UpdateResponsavelInputDTO) {
 export function mapResponsavelRecordToSummaryDTO(
   record: ResponsavelSummaryRecord,
 ): ResponsavelSummaryDTO {
+  const cpfMasked = maskCpf(record.cpf);
+  const emailMasked = maskEmail(record.email);
+  const phoneMasked = maskPhone(record.telefone);
+
   return {
     id: record.id,
     nome: record.nome,
     cpf: record.cpf,
     email: record.email,
     telefone: record.telefone,
+    cpfMasked,
+    emailMasked,
+    phoneMasked,
     financeiro: record.financeiro,
     alunosCount: record._count?.alunos ?? 0,
+  };
+}
+
+export function mapResponsavelRecordToMaskedSummaryDTO(
+  record: ResponsavelSummaryRecord,
+): ResponsavelSummaryDTO {
+  const dto = mapResponsavelRecordToSummaryDTO(record);
+  return {
+    ...dto,
+    cpf: dto.cpfMasked ?? '',
+    email: dto.emailMasked ?? '',
+    telefone: dto.phoneMasked ?? '',
   };
 }
 

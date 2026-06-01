@@ -23,9 +23,9 @@ const EVENT_STATUS_TRANSITIONS: Record<SchoolEventStatus, SchoolEventStatus[]> =
   DRAFT: ['PLANNING'],
   PLANNING: ['ACTIVE', 'CANCELLED'],
   ACTIVE: ['FINISHED', 'CANCELLED'],
-  FINISHED: ['ARCHIVED'],
+  FINISHED: ['ARCHIVED', 'ACTIVE'],
   CANCELLED: ['ARCHIVED'],
-  ARCHIVED: [],
+  ARCHIVED: ['FINISHED'],
 };
 
 const LOT_STATUS_TRANSITIONS: Record<EventTicketLotStatus, EventTicketLotStatus[]> = {
@@ -49,14 +49,14 @@ const COSTUME_ASSIGNMENT_TRANSITIONS: Record<
   EventCostumeAssignmentStatus,
   EventCostumeAssignmentStatus[]
 > = {
-  PENDING: ['ORDERED', 'CANCELLED'],
-  ORDERED: ['RECEIVED'],
-  RECEIVED: ['DELIVERED'],
-  DELIVERED: ['RETURNED', 'DAMAGED', 'LOST'],
-  RETURNED: [],
-  DAMAGED: [],
-  LOST: [],
-  CANCELLED: [],
+  PENDING: ['ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  ORDERED: ['PENDING', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  RECEIVED: ['PENDING', 'ORDERED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  DELIVERED: ['PENDING', 'ORDERED', 'RECEIVED', 'RETURNED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  RETURNED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'DAMAGED', 'LOST', 'CANCELLED'],
+  DAMAGED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'LOST', 'CANCELLED'],
+  LOST: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'CANCELLED'],
+  CANCELLED: ['PENDING', 'ORDERED', 'RECEIVED', 'DELIVERED', 'RETURNED', 'DAMAGED', 'LOST'],
 };
 
 function transitionResult<T extends string>(
@@ -110,6 +110,7 @@ export type EventMetricTicketSale = {
 export type EventMetricTicketLot = {
   quantityTotal: number;
   quantitySold: number;
+  unitPrice?: number;
 };
 
 export type EventMetricFinancialEntry = {
@@ -118,6 +119,7 @@ export type EventMetricFinancialEntry = {
   expectedAmount: number | string | null;
   actualAmount: number | string | null;
   originType?: EventFinancialOriginType | null;
+  category?: string | null;
 };
 
 export type EventMetricCostumeAssignment = {
@@ -126,11 +128,17 @@ export type EventMetricCostumeAssignment = {
   isPaid?: boolean | null;
 };
 
+export type EventMetricCostume = {
+  schoolCost: number | string | null;
+  quantity: number;
+};
+
 export type EventMetricsInput = {
   ticketSales?: EventMetricTicketSale[];
   ticketLots?: EventMetricTicketLot[];
   financialEntries?: EventMetricFinancialEntry[];
   costumeAssignments?: EventMetricCostumeAssignment[];
+  costumes?: EventMetricCostume[];
 };
 
 export type EventMetrics = {
@@ -140,6 +148,10 @@ export type EventMetrics = {
   custoRealizado: number;
   resultadoPrevisto: number;
   resultadoRealizado: number;
+  lucroBrutoPrevisto: number;
+  lucroBrutoRealizado: number;
+  lucroLiquidoPrevisto: number;
+  lucroLiquidoRealizado: number;
   margemRealizada: number | null;
   ingressosVendidos: number;
   ingressosDisponiveis: number;
@@ -162,7 +174,7 @@ function roundMoney(value: number): number {
 }
 
 function isAutomaticEventFinance(entry: EventMetricFinancialEntry): boolean {
-  return entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT';
+  return entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME';
 }
 
 export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
@@ -170,14 +182,27 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ticketLots = input.ticketLots ?? [];
   const financialEntries = input.financialEntries ?? [];
   const costumeAssignments = input.costumeAssignments ?? [];
+  const costumes = input.costumes ?? [];
 
   let receitaPrevista = 0;
   let receitaRealizada = 0;
   let custoPrevisto = 0;
   let custoRealizado = 0;
+  let custoDiretoPrevisto = 0;
+  let custoDiretoRealizado = 0;
   let ingressosVendidos = 0;
   let ingressosPagos = 0;
   let cortesias = 0;
+
+  let costumeCost = 0;
+  for (const costume of costumes) {
+    costumeCost += money(costume.schoolCost) * costume.quantity;
+  }
+
+  custoPrevisto += costumeCost;
+  custoRealizado += costumeCost;
+  custoDiretoPrevisto += costumeCost;
+  custoDiretoRealizado += costumeCost;
 
   for (const sale of ticketSales) {
     const total = money(sale.totalAmount);
@@ -192,10 +217,6 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
       receitaRealizada += total;
       ingressosVendidos += sale.quantity;
       ingressosPagos += sale.quantity;
-    }
-
-    if (sale.status === 'REFUNDED') {
-      receitaRealizada -= total;
     }
 
     if (sale.status === 'COMPLIMENTARY') {
@@ -215,15 +236,41 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
         receitaPrevista += expected;
       }
       if (entry.status === 'RECEIVED') receitaRealizada += actual;
-      if (entry.status === 'REFUNDED') receitaRealizada -= actual;
     }
 
     if (entry.type === 'COST') {
+      const isDirect = entry.originType === 'COSTUME' || entry.category === 'Figurino';
+
       if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID') {
         custoPrevisto += expected;
+        if (isDirect) {
+          custoDiretoPrevisto += expected;
+        }
       }
-      if (entry.status === 'PAID') custoRealizado += actual;
+      if (entry.status === 'PAID') {
+        custoRealizado += actual;
+        if (isDirect) {
+          custoDiretoRealizado += actual;
+        }
+      }
     }
+  }
+
+  for (const assignment of costumeAssignments) {
+    if (assignment.status === 'CANCELLED') continue;
+    const value = money(assignment.chargedValue);
+    if (value > 0) {
+      receitaPrevista += value;
+      if (assignment.isPaid) {
+        receitaRealizada += value;
+      }
+    }
+  }
+
+  for (const lot of ticketLots) {
+    const unsoldQty = Math.max(lot.quantityTotal - lot.quantitySold, 0);
+    const lotPrice = lot.unitPrice ?? 0;
+    receitaPrevista += unsoldQty * lotPrice;
   }
 
   const totalCapacity = ticketLots.reduce((sum, lot) => sum + lot.quantityTotal, 0);
@@ -231,6 +278,8 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ingressosDisponiveis = Math.max(totalCapacity - lotSold, 0);
   const resultadoPrevisto = receitaPrevista - custoPrevisto;
   const resultadoRealizado = receitaRealizada - custoRealizado;
+  const lucroBrutoPrevisto = receitaPrevista - custoDiretoPrevisto;
+  const lucroBrutoRealizado = receitaRealizada - custoDiretoRealizado;
 
   return {
     receitaPrevista: roundMoney(receitaPrevista),
@@ -239,6 +288,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     custoRealizado: roundMoney(custoRealizado),
     resultadoPrevisto: roundMoney(resultadoPrevisto),
     resultadoRealizado: roundMoney(resultadoRealizado),
+    lucroBrutoPrevisto: roundMoney(lucroBrutoPrevisto),
+    lucroBrutoRealizado: roundMoney(lucroBrutoRealizado),
+    lucroLiquidoPrevisto: roundMoney(resultadoPrevisto),
+    lucroLiquidoRealizado: roundMoney(resultadoRealizado),
     margemRealizada:
       receitaRealizada > 0 ? roundMoney(resultadoRealizado / receitaRealizada) : null,
     ingressosVendidos,

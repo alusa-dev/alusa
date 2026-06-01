@@ -30,6 +30,7 @@ test.describe('LGPD public flows', () => {
 
     await page.getByTestId('register-termos-checkbox').click();
     await expect(page.getByRole('button', { name: /Aceitar e continuar/i })).toBeDisabled();
+    
     await page.getByTestId('legal-acceptance-inner-checkbox').click();
     await page.getByRole('button', { name: /Aceitar e continuar/i }).click();
 
@@ -37,16 +38,18 @@ test.describe('LGPD public flows', () => {
     await expect(page.getByTestId('register-submit')).toBeEnabled();
   });
 
-  test('banner de cookies permite rejeitar nao necessarios e salva preferencias', async ({ page }) => {
+  test('banner de cookies redireciona para preferencias e salva', async ({ page }) => {
     await page.goto('/privacidade');
 
     await expect(page.getByRole('region', { name: /Preferencias de cookies/i })).toBeVisible();
-    await page.getByRole('button', { name: /Preferencias/i }).click();
-    await expect(page.getByRole('dialog', { name: /Preferencias de cookies/i })).toBeVisible();
-    await expect(page.getByRole('checkbox', { name: /Cookies de analise/i })).not.toBeChecked();
-    await expect(page.getByRole('checkbox', { name: /Cookies de marketing/i })).not.toBeChecked();
-
-    await page.getByRole('button', { name: /Rejeitar nao necessarios/i }).click();
+    await page.getByRole('link', { name: /gerencie os cookies/i }).click();
+    await expect(page).toHaveURL(/.*preferencias-de-cookies/);
+    
+    await expect(page.getByRole('heading', { name: 'Configurações de cookies', level: 1 })).toBeVisible();
+    
+    // Clica para salvar as configurações padrões (não essenciais desativados)
+    await page.getByRole('button', { name: /Salvar configurações/i }).click();
+    
     await expect(page.getByRole('region', { name: /Preferencias de cookies/i })).toBeHidden();
 
     const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('alusa.cookie-consent.v1') ?? '{}'));

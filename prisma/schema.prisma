@@ -2631,6 +2631,7 @@ model SchoolEvent {
   ticketMode          EventTicketMode   @default(NONE)
   hasCostumes         Boolean           @default(false)
   hasFinancialControl Boolean           @default(true)
+  registrationFee     Decimal?          @db.Decimal(12, 2)
   notes               String?
   createdByUserId     String?
   createdAt           DateTime          @default(now())
@@ -3199,6 +3200,10 @@ model EventParticipant {
   responsavelId String?
   displayName   String?
   notes         String?
+  registrationFeeCharged Decimal            @default(0) @db.Decimal(12, 2)
+  isFeePaid              Boolean            @default(false)
+  feePaymentMethod       String?
+  revenueEntryId         String?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
 

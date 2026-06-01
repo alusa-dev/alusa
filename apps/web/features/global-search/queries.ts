@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { maskCpf, maskEmail } from '@alusa/shared';
 
 import {
   GLOBAL_SEARCH_GROUP_LIMIT,
@@ -168,7 +169,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         type: 'aluno',
         id: item.id,
         title: item.nome,
-        description: compactDescription(item.cpf, item.email),
+        description: compactDescription(maskCpf(item.cpf), maskEmail(item.email)),
         href: `/alunos/${item.id}`,
       })),
     ),
@@ -179,7 +180,7 @@ async function searchEntityGroups(query: string, contaId: string) {
         type: 'responsavel',
         id: item.id,
         title: item.nome,
-        description: compactDescription(item.cpf, item.email),
+        description: compactDescription(maskCpf(item.cpf), maskEmail(item.email)),
         href: `/responsaveis/${item.id}`,
       })),
     ),

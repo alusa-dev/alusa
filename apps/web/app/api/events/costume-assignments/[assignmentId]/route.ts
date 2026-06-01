@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { updateCostumeAssignment, updateCostumeAssignmentSchema } from '@alusa/lib';
+import { deleteCostumeAssignment, updateCostumeAssignment, updateCostumeAssignmentSchema } from '@alusa/lib';
 
 import { getEventsContext, handleEventsRouteError } from '../../_helpers';
 
@@ -22,5 +22,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ data: await updateCostumeAssignment(ctx, params.assignmentId, body) });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_ATUALIZAR_ENTREGA_FIGURINO');
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  try {
+    const ctx = await getEventsContext('eventCostumes.manage');
+    return NextResponse.json({ data: await deleteCostumeAssignment(ctx, params.assignmentId) });
+  } catch (error) {
+    return handleEventsRouteError(error, 'ERRO_EXCLUIR_ENTREGA_FIGURINO');
   }
 }

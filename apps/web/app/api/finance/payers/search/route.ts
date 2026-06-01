@@ -12,6 +12,7 @@ import {
   mapFinancePayerCandidateToDTO,
   mapFinancePayerSearchResultToDTO,
 } from '@/features/finance/mappers';
+import { maskCpf } from '@alusa/shared';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -130,7 +131,8 @@ export async function GET(request: NextRequest) {
           id: aluno.id,
           name: aluno.nome,
           type: 'aluno',
-          cpf: aluno.cpf ?? undefined,
+          cpf: aluno.cpf ? maskCpf(aluno.cpf) : undefined,
+          cpfMasked: aluno.cpf ? maskCpf(aluno.cpf) : null,
           isMinor: true,
           hasResponsible: true,
           responsibleId: respFinanceiro.id,
@@ -151,7 +153,8 @@ export async function GET(request: NextRequest) {
         id: aluno.id,
         name: aluno.nome,
         type: 'aluno',
-        cpf: aluno.cpf ?? undefined,
+        cpf: aluno.cpf ? maskCpf(aluno.cpf) : undefined,
+        cpfMasked: aluno.cpf ? maskCpf(aluno.cpf) : null,
         isMinor: false,
         hasResponsible: !!respFinanceiro,
         responsibleId: respFinanceiro?.id ?? null,
@@ -177,7 +180,8 @@ export async function GET(request: NextRequest) {
       id: resp.id,
       name: resp.nome,
       type: 'responsavel',
-      cpf: resp.cpf ?? undefined,
+      cpf: resp.cpf ? maskCpf(resp.cpf) : undefined,
+      cpfMasked: resp.cpf ? maskCpf(resp.cpf) : null,
       isMinor: false,
       hasResponsible: false,
       responsibleId: null,

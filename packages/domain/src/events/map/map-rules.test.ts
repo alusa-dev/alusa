@@ -57,11 +57,11 @@ describe('event map rules', () => {
     expect(canEditEventMapDraft('ARCHIVED')).toBe(false);
   });
 
-  it('archives published maps instead of hard deleting historical public versions', () => {
+  it('archives maps with orders but allows hard deleting published maps without orders', () => {
     expect(decideEventMapDeletion({ status: 'DRAFT', versionsCount: 0, ordersCount: 0 })).toEqual({
       action: 'DELETE',
     });
-    expect(decideEventMapDeletion({ status: 'PUBLISHED', versionsCount: 1, ordersCount: 0 }).action).toBe('ARCHIVE');
+    expect(decideEventMapDeletion({ status: 'PUBLISHED', versionsCount: 1, ordersCount: 0 }).action).toBe('DELETE');
     expect(decideEventMapDeletion({ status: 'DRAFT', versionsCount: 1, ordersCount: 2 }).action).toBe('ARCHIVE');
   });
 

@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { listResponsaveis, type ResponsavelListItem } from '../services/responsaveis-service';
 
-export function useResponsaveis({ enabled = true }: { enabled?: boolean } = {}) {
+export function useResponsaveis({
+  enabled = true,
+  query,
+}: {
+  enabled?: boolean;
+  query?: string;
+} = {}) {
   const [items, setItems] = useState<ResponsavelListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +27,7 @@ export function useResponsaveis({ enabled = true }: { enabled?: boolean } = {}) 
     setError(null);
 
     try {
-      const data = await listResponsaveis({ signal: controller.signal });
+      const data = await listResponsaveis({ signal: controller.signal, query });
       setItems(data);
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') {
@@ -32,7 +38,7 @@ export function useResponsaveis({ enabled = true }: { enabled?: boolean } = {}) 
     } finally {
       setLoading(false);
     }
-  }, [enabled]);
+  }, [enabled, query]);
 
   useEffect(() => {
     void load();

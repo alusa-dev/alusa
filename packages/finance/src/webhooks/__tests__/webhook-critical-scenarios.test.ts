@@ -91,6 +91,7 @@ async function cleanupTestAccount(contaId: string) {
     select: { id: true },
   });
 
+  await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
   await prisma.webhookAsaas.deleteMany({ where: { contaId } });
   await prisma.asaasIntegrationJob.deleteMany({ where: { contaId } });
   await prisma.invoice.deleteMany({ where: { contaId } });

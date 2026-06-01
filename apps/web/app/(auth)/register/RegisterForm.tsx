@@ -428,7 +428,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
             </div>
           </div>
           <div className="flex w-full justify-start pt-1">
-            <label htmlFor="register-termos" className="flex cursor-pointer select-none items-start gap-2 text-left text-sm font-medium text-[#686868] lg:items-center lg:text-[12px]">
+            <label htmlFor="register-termos" className="flex cursor-pointer select-none items-center gap-2.5 text-left text-sm font-medium text-[#686868] lg:text-[12px]">
               <Controller
                 control={control}
                 name="termos"
@@ -449,7 +449,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                 )}
               />
               <span>
-                Aceito os Termos de Uso, a Politica de Privacidade e o DPA da Alusa.
+                Li e aceito os Termos e Políticas da Alusa.
               </span>
             </label>
           </div>

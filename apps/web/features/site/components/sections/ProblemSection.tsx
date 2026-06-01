@@ -8,7 +8,7 @@ export function ProblemSection() {
   const { problem } = homePage;
 
   return (
-    <section className="relative overflow-hidden border-b border-alusa-grid-line-light bg-white">
+    <section id="demonstracao" className="relative overflow-hidden border-b border-alusa-grid-line-light bg-white">
       <VerticalGridLines />
       <div className="relative z-10 lg:grid lg:grid-cols-[1.2fr_0.9fr] lg:items-stretch">
         <div className="flex justify-end lg:items-center">

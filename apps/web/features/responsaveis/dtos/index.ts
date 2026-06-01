@@ -11,6 +11,9 @@ export type ListResponsaveisQueryDTO = z.infer<typeof listResponsaveisQueryDTOSc
 export const responsavelSummaryDTOSchema = z.object({
   id: z.string().min(1),
   nome: z.string().min(1),
+  cpfMasked: z.string().nullable().optional(),
+  emailMasked: z.string().nullable().optional(),
+  phoneMasked: z.string().nullable().optional(),
   cpf: z.string().min(1),
   email: z.string(),
   telefone: z.string(),

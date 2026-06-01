@@ -27,13 +27,20 @@ export type SidebarLogoMarkProps = {
  * Escuro: máscara sobre `logo-sidebar-dark.svg` + `var(--sidebar-active-bg)`.
  * Claro: `alusa-logo-dark.svg` com fill inline `#3e1f63` (compatível com `<img>`).
  */
+import { useEffect, useState } from 'react';
+
 export function SidebarLogoMark({
-  isDark,
+  isDark: isDarkProp,
   size = 'desktop',
   className = '',
   collapsed = false,
   fetchPriority,
-}: SidebarLogoMarkProps) {
+} : SidebarLogoMarkProps) {
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+  const isDark = isMounted ? isDarkProp : false;
   const w = size === 'desktop' ? 132 : 108;
   const h = size === 'desktop' ? 40 : 32;
   const boxClass = size === 'desktop' ? 'h-10 w-[132px]' : 'h-8 w-[108px]';

@@ -13,6 +13,10 @@ import {
   mapUpdateResponsavelDTOToData,
 } from '@/features/responsaveis/mappers';
 import { resolveResponsavelRouteId } from '../_lib/resolve-responsavel-route-id';
+import {
+  auditSensitiveAccess,
+  canViewSensitivePersonData,
+} from '@/lib/privacy/sensitive-access';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,8 +42,8 @@ type ResponsavelDetailRecord = Prisma.ResponsavelGetPayload<{
   select: typeof responsavelDetailSelect;
 }>;
 
-function getContaId(session: Awaited<ReturnType<typeof getServerSession>>) {
-  return (session as { user?: { contaId?: string } })?.user?.contaId ?? null;
+function getSessionUser(session: Awaited<ReturnType<typeof getServerSession>>) {
+  return (session as { user?: { id?: string; role?: string; contaId?: string } })?.user ?? null;
 }
 
 type IdParams = Promise<{ id: string }> | { id: string };
@@ -88,10 +92,18 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
     }
 
     const session = await getServerSession(authOptions);
-    const contaId = getContaId(session);
+    const user = getSessionUser(session);
+    const contaId = user?.contaId ?? null;
 
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'RESPONSAVEL_DETAIL' })) {
+      return NextResponse.json(
+        { error: 'Acesso negado a dados sensíveis do responsável' },
+        { status: 403 },
+      );
     }
 
     const responsavelId = await resolveResponsavelRouteId(id, contaId);
@@ -113,6 +125,18 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
+    await auditSensitiveAccess({
+      prisma,
+      req: _req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'responsavel.sensitive.view',
+      entityType: 'Responsavel',
+      entityId: responsavel.id,
+      purpose: 'RESPONSAVEL_DETAIL',
+      metadata: { fields: ['cpf', 'email', 'telefone', 'endereco'] },
+    });
+
     return NextResponse.json(dto);
   } catch (error) {
     console.error('[GET /api/responsaveis/[id]]', error);
@@ -128,10 +152,18 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
     }
 
     const session = await getServerSession(authOptions);
-    const contaId = getContaId(session);
+    const user = getSessionUser(session);
+    const contaId = user?.contaId ?? null;
 
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+
+    if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'RESPONSAVEL_EDIT' })) {
+      return NextResponse.json(
+        { error: 'Acesso negado para alterar dados sensíveis do responsável' },
+        { status: 403 },
+      );
     }
 
     const raw = await req.json().catch(() => null);
@@ -201,6 +233,22 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
+    await auditSensitiveAccess({
+      prisma,
+      req,
+      contaId,
+      actorUserId: user?.id,
+      action: 'responsavel.sensitive.update',
+      entityType: 'Responsavel',
+      entityId: responsavel.id,
+      purpose: 'RESPONSAVEL_EDIT',
+      metadata: {
+        fields: Object.keys(raw ?? {}).filter((field) =>
+          ['cpf', 'email', 'telefone', 'endereco'].includes(field),
+        ),
+      },
+    });
+
     return NextResponse.json(dto);
   } catch (error) {
     console.error('[PATCH /api/responsaveis/[id]]', error);
@@ -225,7 +273,8 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
     }
 
     const session = await getServerSession(authOptions);
-    const contaId = getContaId(session);
+    const user = getSessionUser(session);
+    const contaId = user?.contaId ?? null;
 
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });

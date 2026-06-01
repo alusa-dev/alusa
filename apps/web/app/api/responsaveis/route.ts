@@ -11,6 +11,7 @@ import {
 import {
   mapCreateResponsavelDTOToData,
   mapListResponsaveisQueryToFilters,
+  mapResponsavelRecordToMaskedSummaryDTO,
   mapResponsavelRecordToSummaryDTO,
 } from '@/features/responsaveis/mappers';
 
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
     });
 
     const dto = listResponsaveisResultDTOSchema.parse({
-      items: responsaveis.map(mapResponsavelRecordToSummaryDTO),
+      items: responsaveis.map(mapResponsavelRecordToMaskedSummaryDTO),
     });
 
     return NextResponse.json(dto);
