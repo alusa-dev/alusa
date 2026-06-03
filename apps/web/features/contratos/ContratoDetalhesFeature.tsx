@@ -4,13 +4,18 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeftIcon, ArrowDownTrayIcon, ShareIcon } from '@heroicons/react/24/outline';
-import { getContrato, createContrato, type Contrato } from './services/contratos-service';
+import { ArrowLeft, Download, Eye, Share2 } from '@/components/icons/icons';
+import {
+  getContrato,
+  createContrato,
+  regenerateContrato,
+  getContratoPdfUrl,
+  type Contrato,
+} from './services/contratos-service';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { CompartilharContratoDialog } from './components/CompartilharContratoDialog';
 import { PDFViewer } from './components/PDFViewer';
 import { toast } from '@/components/ui/toast';
-import { EyeIcon } from '@heroicons/react/24/outline';
 
 interface ContratoDetalhesFeatureProps {
   contratoId: string;
@@ -21,6 +26,7 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
   const [contrato, setContrato] = useState<Contrato | null>(null);
   const [loading, setLoading] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     getContrato(contratoId)
@@ -52,16 +58,41 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
   };
 
   const handleDownload = () => {
-    if (!contrato?.arquivoPdfUrl) return;
+    if (!contrato) return;
+    const pdfUrl = getContratoPdfUrl(contrato);
+    if (!pdfUrl) return;
     const link = document.createElement('a');
-    link.href = contrato.arquivoPdfUrl;
+    link.href = pdfUrl;
     link.download = `Contrato-${contrato.matricula.aluno.nome}.pdf`;
     link.click();
   };
 
   const handleViewPdf = () => {
-    if (!contrato?.arquivoPdfUrl) return;
-    window.open(contrato.arquivoPdfUrl, '_blank', 'noopener,noreferrer');
+    if (!contrato) return;
+    const pdfUrl = getContratoPdfUrl(contrato);
+    if (!pdfUrl) return;
+    window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleShareContrato = async () => {
+    if (!contrato || sharing) return;
+
+    if (contrato.tokenPublico) {
+      setShareOpen(true);
+      return;
+    }
+
+    try {
+      setSharing(true);
+      const contratoComLink = await regenerateContrato(contrato.id);
+      setContrato(contratoComLink);
+      setShareOpen(true);
+      toast.success('Link de assinatura gerado.');
+    } catch (error) {
+      toast.error((error as Error).message || 'Erro ao gerar link de assinatura');
+    } finally {
+      setSharing(false);
+    }
   };
 
   if (loading) {
@@ -84,8 +115,8 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-gray-50 to-white">
-      <div className="bg-white/90 backdrop-blur border-b px-6 py-5 sticky top-0 z-10">
+    <div className="min-h-screen bg-white">
+      <div className="bg-white px-6 py-5 sticky top-0 z-10">
         <div className="flex w-full min-w-0 flex-col gap-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-4">
@@ -96,7 +127,7 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
                 className="-ml-2 hover:bg-gray-100"
                 title="Voltar"
               >
-                <ArrowLeftIcon className="h-5 w-5 text-gray-500" />
+                <ArrowLeft className="h-5 w-5 text-gray-500" />
               </Button>
               <div>
                 <div className="flex items-center gap-3">
@@ -118,10 +149,11 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShareOpen(true)}
+                  onClick={handleShareContrato}
+                  disabled={sharing}
                 >
-                  <ShareIcon className="h-4 w-4 mr-2" />
-                  Compartilhar Link
+                  <Share2 className="h-4 w-4 mr-2" />
+                  {sharing ? 'Gerando Link...' : 'Compartilhar Link'}
                 </Button>
               )}
 
@@ -136,12 +168,12 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
               )}
 
               <Button variant="outline" size="sm" onClick={handleViewPdf}>
-                <EyeIcon className="h-4 w-4 mr-2" />
+                <Eye className="h-4 w-4 mr-2" />
                 Visualizar PDF
               </Button>
 
               <Button size="sm" onClick={handleDownload} className="shadow-none">
-                <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+                <Download className="h-4 w-4 mr-2" />
                 Baixar
               </Button>
             </div>
@@ -152,76 +184,48 @@ export function ContratoDetalhesFeature({ contratoId }: ContratoDetalhesFeatureP
       <div className="w-full min-w-0 px-6 py-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="lg:col-span-8 xl:col-span-9">
-            <Card className="flex flex-col overflow-hidden border-gray-200/70 shadow-sm ring-1 ring-gray-200/60">
-              <CardHeader className="bg-gray-50 border-b py-4 flex flex-row items-center justify-between">
-                <CardTitle className="text-base font-medium text-gray-900">
-                  Visualização do Documento
-                </CardTitle>
-                <Badge variant="outline" className="bg-white text-xs">
-                  PDF
-                </Badge>
-              </CardHeader>
-              <CardContent className="bg-white p-0">
-                {contrato.arquivoPdfUrl ? (
-                  <PDFViewer
-                    url={contrato.arquivoPdfUrl}
-                    title={`Contrato - ${contrato.matricula.aluno.nome}`}
-                    className="flex-1"
-                    maxHeight="82vh"
-                    showDownload={false}
-                  />
-                ) : (
-                  <div className="flex items-center justify-center h-[32rem] text-gray-400 font-medium">
-                    PDF não disponível
-                  </div>
-                )}
-              </CardContent>
+            <div className="space-y-4">
+              {getContratoPdfUrl(contrato) ? (
+                <PDFViewer
+                  url={getContratoPdfUrl(contrato)}
+                  title={`Contrato - ${contrato.matricula.aluno.nome}`}
+                  className="w-full"
+                  maxHeight="82vh"
+                  showDownload={false}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-[32rem] rounded-lg border bg-gray-50 text-gray-400 font-medium">
+                  PDF não disponível
+                </div>
+              )}
 
               {contrato.status === 'ASSINADO' && (
-                <div className="border-t border-gray-200 bg-emerald-50/60 px-6 py-4">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-emerald-100 rounded-lg text-emerald-700 mt-1">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="w-5 h-5"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M16.403 12.652a3 3 0 000-5.304 3 3 0 00-3.75-3.651 5 5 0 00-5.305 0 3 3 0 00-3.751 3.651 3 3 0 000 5.305 5 5 0 005.305 0 3 3 0 003.751 3.651zM10 8a2 2 0 100-4 2 2 0 000 4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-emerald-900 mb-1">
-                        Assinatura Eletrônica Registrada
-                      </p>
-                      <div className="space-y-1 text-sm text-emerald-800">
-                        <p>
-                          <span className="font-medium">Assinado por:</span>{' '}
-                          {contrato.assinadoPor}
-                        </p>
-                        <p>
-                          <span className="font-medium">CPF:</span>{' '}
-                          {contrato.assinadoCpf}
-                        </p>
-                        <p>
-                          <span className="font-medium">Data:</span>{' '}
-                          {contrato.assinadoEm
-                            ? new Date(contrato.assinadoEm).toLocaleString()
-                            : 'N/A'}
-                        </p>
-                        <p className="text-xs text-emerald-700/80 mt-2 break-all font-mono bg-emerald-100/50 p-1.5 rounded">
-                          Hash: {contrato.hashAssinatura}
-                        </p>
-                      </div>
-                    </div>
+                <div className="px-1 py-2">
+                  <p className="text-sm font-semibold text-emerald-900 mb-1">
+                    Assinatura Eletrônica Registrada
+                  </p>
+                  <div className="space-y-1 text-sm text-emerald-800">
+                    <p>
+                      <span className="font-medium">Assinado por:</span>{' '}
+                      {contrato.assinadoPor}
+                    </p>
+                    <p>
+                      <span className="font-medium">CPF:</span>{' '}
+                      {contrato.assinadoCpf}
+                    </p>
+                    <p>
+                      <span className="font-medium">Data:</span>{' '}
+                      {contrato.assinadoEm
+                        ? new Date(contrato.assinadoEm).toLocaleString()
+                        : 'N/A'}
+                    </p>
+                    <p className="text-xs text-emerald-700/80 mt-2 break-all font-mono">
+                      Hash: {contrato.hashAssinatura}
+                    </p>
                   </div>
                 </div>
               )}
-            </Card>
+            </div>
           </div>
 
           <div className="space-y-6 lg:col-span-4 xl:col-span-3">

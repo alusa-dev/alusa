@@ -22,6 +22,8 @@ export declare const EVENT_COSTUME_CATEGORIES: readonly ["CLOTHING", "ACCESSORY"
 export type EventCostumeCategory = (typeof EVENT_COSTUME_CATEGORIES)[number];
 export declare const EVENT_COSTUME_ASSIGNMENT_STATUSES: readonly ["PENDING", "ORDERED", "RECEIVED", "DELIVERED", "RETURNED", "DAMAGED", "LOST", "CANCELLED"];
 export type EventCostumeAssignmentStatus = (typeof EVENT_COSTUME_ASSIGNMENT_STATUSES)[number];
+export declare const EVENT_COSTUME_ASSIGNMENT_BILLING_MODES: readonly ["INCLUDED_IN_REGISTRATION_FEE", "SEPARATE_CHARGE", "FREE"];
+export type EventCostumeAssignmentBillingMode = (typeof EVENT_COSTUME_ASSIGNMENT_BILLING_MODES)[number];
 export declare const EVENT_FINANCIAL_ENTRY_TYPES: readonly ["COST", "REVENUE"];
 export type EventFinancialEntryType = (typeof EVENT_FINANCIAL_ENTRY_TYPES)[number];
 export declare const EVENT_FINANCIAL_ENTRY_STATUSES: readonly ["EXPECTED", "PENDING", "PAID", "RECEIVED", "CANCELLED", "REFUNDED"];
@@ -42,6 +44,7 @@ export declare const EVENT_TICKET_SALE_STATUS_LABELS: Record<EventTicketSaleStat
 export declare const EVENT_PAYMENT_METHOD_LABELS: Record<EventPaymentMethod, string>;
 export declare const EVENT_COSTUME_CATEGORY_LABELS: Record<EventCostumeCategory, string>;
 export declare const EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS: Record<EventCostumeAssignmentStatus, string>;
+export declare const EVENT_COSTUME_ASSIGNMENT_BILLING_MODE_LABELS: Record<EventCostumeAssignmentBillingMode, string>;
 export declare const EVENT_FINANCIAL_STATUS_LABELS: Record<EventFinancialEntryStatus, string>;
 export declare const EVENT_COST_CATEGORIES: readonly ["Figurino", "Decoração", "Espaço", "Som e iluminação", "Alimentação", "Transporte", "Equipe", "Material", "Marketing", "Taxas", "Fornecedor", "Outros"];
 export declare const EVENT_REVENUE_CATEGORIES: readonly ["Venda de ingresso", "Figurino", "Patrocínio", "Venda interna", "Inscrição", "Taxa extra", "Outros"];

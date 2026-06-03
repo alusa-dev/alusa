@@ -20,7 +20,7 @@ import {
   type PaidReceiptAluno,
   type PaidReceiptItem,
 } from './paid-receipts-pdf';
-import { fetchCurrentProfile } from '@/features/account/services/profile-service';
+import { loadPaidReceiptSchoolProfile } from './receipt-school-profile';
 import {
   normalizePaymentHistoryCategory,
   PAYMENT_HISTORY_CATEGORY_FILTER_OPTIONS,
@@ -207,41 +207,10 @@ export function ExportPaidReceiptsDialog({
     if (!canGenerate) return;
     setGenerating(true);
     try {
-      const [profile, financeRes] = await Promise.all([
-        fetchCurrentProfile(),
-        fetch('/api/conta/finance-onboarding', { cache: 'no-store' }).catch(() => null),
-      ]);
-      const school = profile.school;
-
-      let telefone = profile.telefone ?? null;
-      let email = profile.email ?? null;
-
-      if (financeRes?.ok) {
-        const finance = await financeRes.json().catch(() => null);
-        const commercialInfo = finance?.financialAccount?.commercialInfo;
-        telefone =
-          commercialInfo?.mobilePhone ??
-          commercialInfo?.phone ??
-          finance?.financeProfile?.mobilePhone ??
-          finance?.financeProfile?.asaasPhone ??
-          telefone;
-        email =
-          commercialInfo?.email ??
-          finance?.financeProfile?.asaasLoginEmail ??
-          email;
-      }
-
       await exportPaidReceiptsPdf({
         aluno,
         items: filteredItems,
-        escola: school
-          ? {
-              nome: school.name,
-              cpfCnpj: school.cpfCnpj ?? null,
-              telefone,
-              email,
-            }
-          : null,
+        escola: await loadPaidReceiptSchoolProfile(),
       });
       onOpenChange(false);
     } finally {

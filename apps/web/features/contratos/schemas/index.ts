@@ -66,6 +66,9 @@ export const publicAssinarContratoSchema = z.object({
   cpf: cpfDigitsSchema,
   nome: z.string().trim().min(2, 'Nome inválido').max(160, 'Nome inválido'),
   email: z.string().email('Email inválido').optional().or(z.literal('')),
+  aceite: z.literal(true, {
+    errorMap: () => ({ message: 'Aceite explícito é obrigatório.' }),
+  }),
   userAgent: z.string().trim().max(512, 'User agent inválido').optional(),
 });
 export type PublicAssinarContratoInput = z.infer<typeof publicAssinarContratoSchema>;

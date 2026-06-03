@@ -56,6 +56,11 @@ export * from './utils/format-name';
 export * from './utils/mask';
 export * from './utils/cpf-cnpj';
 export * from './utils/date-only';
+export * from './contracts/tokens';
+export * from './contracts/evidence/create-contract-evidence';
+export * from './contracts/pdf/generate-signed-contract-pdf';
+export * from './contracts/providers/signature-provider';
+export * from './contracts/use-cases/sign-contract';
 // Integrações / Credenciais
 export * from './services/integracoes/asaas-credentials-service';
 // Sincronização de Matrículas

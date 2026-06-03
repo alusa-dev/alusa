@@ -56,11 +56,18 @@ export default function FinanceiroPagamentosPage() {
   const [alunos, setAlunos] = useState<AlunoComPagamentos[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODOS');
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
       if (searchQuery.trim()) {
         params.set('q', searchQuery.trim());
       }
@@ -85,14 +92,18 @@ export default function FinanceiroPagamentosPage() {
 
       const payload = await res.json();
       setAlunos(payload.data || []);
+      setTotal(payload.total || 0);
+      setTotalPages(Math.max(1, payload.totalPages || 1));
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
       setAlunos([]);
+      setTotal(0);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, statusFilter]);
+  }, [page, pageSize, searchQuery, statusFilter]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -101,6 +112,10 @@ export default function FinanceiroPagamentosPage() {
 
     return () => clearTimeout(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusFilter]);
 
   const filtrosAtivos = [Boolean(searchQuery.trim()), statusFilter !== 'TODOS'].filter(Boolean).length;
   const statusLabel =
@@ -350,6 +365,34 @@ export default function FinanceiroPagamentosPage() {
             </div>
           </>
         )}
+      </div>
+      <div className="flex flex-col gap-2 text-[13px] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+        <span>
+          {total === 0 ? 'Nenhum registro' : `${total} aluno${total === 1 ? '' : 's'} com histórico`}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-lg border-gray-300 px-3 text-[13px]"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+          >
+            Anterior
+          </Button>
+          <span className="min-w-20 text-center tabular-nums">
+            {page} / {totalPages}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 rounded-lg border-gray-300 px-3 text-[13px]"
+            disabled={loading || page >= totalPages}
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+          >
+            Próxima
+          </Button>
+        </div>
       </div>
     </div>
   );

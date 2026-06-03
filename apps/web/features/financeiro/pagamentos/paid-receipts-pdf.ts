@@ -114,6 +114,13 @@ const PAYMENT_LABELS: Record<string, string> = {
   CARTAO_DEBITO: 'Cartão de débito',
   DEBIT_CARD: 'Cartão de débito',
   DINHEIRO: 'Dinheiro',
+  CASH: 'Dinheiro',
+  MANUAL: 'Pagamento manual',
+  MANUAL_PIX: 'Pix manual',
+  MANUAL_BOLETO: 'Boleto pago manualmente',
+  MANUAL_CARD: 'Cartão manual',
+  MANUAL_CASH: 'Dinheiro / Caixa',
+  MANUAL_TRANSFER: 'Transferência bancária',
   PIX_PRESENCIAL: 'Pix presencial',
   CARTAO_DEBITO_PRESENCIAL: 'Cartão de débito',
   CARTAO_CREDITO_PRESENCIAL: 'Cartão de crédito',
@@ -153,6 +160,10 @@ function ellipsize(value: string | null | undefined, max = 72) {
 }
 
 function resolveTypeLabel(item: PaidReceiptItem) {
+  if (item.chargeType === 'EVENT_REGISTRATION_FEE' || item.tipo === 'EVENT_REGISTRATION_FEE') {
+    return 'Taxa de inscrição';
+  }
+
   const category = item.category
     ? (item.category as keyof typeof PAYMENT_HISTORY_CATEGORY_LABELS)
     : normalizePaymentHistoryCategory(item);
@@ -161,7 +172,11 @@ function resolveTypeLabel(item: PaidReceiptItem) {
 
 function resolvePaymentLabel(item: PaidReceiptItem) {
   const key = item.pagamento?.formaPagamento ?? item.billingType ?? 'INDEFINIDO';
-  return PAYMENT_LABELS[key] ?? key.replaceAll('_', ' ').toLowerCase();
+  const fallback = key
+    .replaceAll('_', ' ')
+    .toLowerCase()
+    .replace(/^\p{L}/u, (letter) => letter.toUpperCase());
+  return PAYMENT_LABELS[key] ?? fallback;
 }
 
 function resolveReceiptOrigin(item: PaidReceiptItem) {

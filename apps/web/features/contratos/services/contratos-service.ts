@@ -16,6 +16,10 @@ export type CreateContratoPayload = CreateContratoInputDTO;
 export type ContratoStatus = ContratoStatusDTO;
 export type AlunoContratoCard = AlunoContratoCardDTO;
 
+export function getContratoPdfUrl(contrato: Pick<Contrato, 'arquivoPdfUrl' | 'arquivoPdfAssinadoUrl'>) {
+  return contrato.arquivoPdfAssinadoUrl || contrato.arquivoPdfUrl;
+}
+
 async function parseResponse<T>(res: Response, parser: { parse: (_value: unknown) => T }, fallback: string) {
   const json = await res.json().catch(() => null);
   if (!res.ok) {

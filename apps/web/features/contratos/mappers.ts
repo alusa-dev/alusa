@@ -1,4 +1,8 @@
 import {
+  CONTRACT_ACCEPTANCE_TEXT_V1,
+  CONTRACT_ACCEPTANCE_VERSION,
+} from '@alusa/domain';
+import {
   alunoContratoCardDTOSchema,
   contratoDTOSchema,
   contratoModeloDTOSchema,
@@ -17,12 +21,15 @@ function toIsoString(value: Date | string | null | undefined): string | null {
 
 export function mapContratoRecordToDTO(
   contrato: Record<string, unknown>,
-  extras?: { subscriptionSync?: ContratoSubscriptionSyncDTO | null },
+  extras?: { subscriptionSync?: ContratoSubscriptionSyncDTO | null; publicToken?: string | null },
 ) {
   const modelo = (contrato.modelo as Nullable<Record<string, unknown>>) ?? null;
   const matricula = (contrato.matricula as Nullable<Record<string, unknown>>) ?? {};
   const aluno = (matricula.aluno as Nullable<Record<string, unknown>>) ?? {};
   const turma = (matricula.turma as Nullable<Record<string, unknown>>) ?? null;
+  const storedPublicToken = contrato.tokenPublico ? String(contrato.tokenPublico) : '';
+  const dtoPublicToken =
+    extras?.publicToken ?? (storedPublicToken.startsWith('hash:') ? '' : storedPublicToken);
 
   return contratoDTOSchema.parse({
     id: String(contrato.id ?? ''),
@@ -31,6 +38,8 @@ export function mapContratoRecordToDTO(
     contratoOrigemId: contrato.contratoOrigemId ? String(contrato.contratoOrigemId) : null,
     arquivoPdfUrl: String(contrato.arquivoPdfUrl ?? ''),
     hashPdf: String(contrato.hashPdf ?? ''),
+    arquivoPdfAssinadoUrl: contrato.arquivoPdfAssinadoUrl ? String(contrato.arquivoPdfAssinadoUrl) : null,
+    hashPdfAssinado: contrato.hashPdfAssinado ? String(contrato.hashPdfAssinado) : null,
     status: contrato.status,
     assinadoPor: contrato.assinadoPor ? String(contrato.assinadoPor) : null,
     assinadoEmail: contrato.assinadoEmail ? String(contrato.assinadoEmail) : null,
@@ -39,7 +48,7 @@ export function mapContratoRecordToDTO(
     assinadoEm: toIsoString(contrato.assinadoEm as Nullable<Date | string>),
     assinadoUserAgent: contrato.assinadoUserAgent ? String(contrato.assinadoUserAgent) : null,
     hashAssinatura: contrato.hashAssinatura ? String(contrato.hashAssinatura) : null,
-    tokenPublico: String(contrato.tokenPublico ?? ''),
+    tokenPublico: dtoPublicToken,
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
     createdAt: toIsoString(contrato.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     updatedAt: toIsoString(contrato.updatedAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
@@ -113,6 +122,8 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     hashPdf: String(contrato.hashPdf ?? ''),
     status: contrato.status,
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
+    acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
+    acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
     matricula: {
       aluno: {
         nome: String(aluno.nome ?? ''),

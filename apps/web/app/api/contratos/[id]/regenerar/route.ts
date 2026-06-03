@@ -1,5 +1,5 @@
-import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import { contratoDTOSchema, contratoRouteParamsDTOSchema } from '@/features/contratos/dtos';
@@ -9,7 +9,8 @@ async function getContratoWithRelations(id: string, contaId: string) {
   return prisma.contrato.findFirst({
     where: {
       id,
-      matricula: { aluno: { contaId } },
+      contaId,
+      matricula: { contaId },
     },
     include: {
       modelo: {
@@ -45,18 +46,19 @@ export async function PATCH(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-    const rawParams = await params;
   const user = await getSessionUser();
   if (!user?.contaId) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
   }
 
   try {
-    const { id } = contratoRouteParamsDTOSchema.parse(params);
+    const rawParams = await params;
+    const { id } = contratoRouteParamsDTOSchema.parse(rawParams);
     const contrato = await prisma.contrato.findFirst({
       where: {
         id,
-        matricula: { aluno: { contaId: user.contaId } },
+        contaId: user.contaId,
+        matricula: { contaId: user.contaId },
       },
       include: {
         matricula: {
@@ -80,16 +82,30 @@ export async function PATCH(
     }
 
     const novaExpiracao = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    const tokenPublico = crypto.randomUUID();
+    const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
 
     await prisma.contrato.update({
       where: { id: contrato.id },
       data: {
-        tokenPublico,
+        tokenPublico: `hash:${tokenPublicoHash}`,
+        tokenPublicoHash,
         tokenExpiraEm: novaExpiracao,
         status: 'PENDENTE',
       },
     });
+
+    await createContractEvidence(prisma as never, {
+      contaId: user.contaId,
+      contratoId: contrato.id,
+      type: 'PUBLIC_LINK_CREATED',
+      actorType: 'USER',
+      actorId: user.id,
+      payload: {
+        tokenPublicoHash,
+        tokenExpiraEm: novaExpiracao.toISOString(),
+        regenerated: true,
+      },
+    }).catch(() => undefined);
 
     await prisma.matricula.update({
       where: { id: contrato.matricula.id },
@@ -109,7 +125,7 @@ export async function PATCH(
     }
 
     return NextResponse.json(
-      contratoDTOSchema.parse(mapContratoRecordToDTO(hydratedContrato)),
+      contratoDTOSchema.parse(mapContratoRecordToDTO(hydratedContrato, { publicToken: tokenPublico })),
     );
   } catch (error) {
     console.error('[CONTRATO_REGENERAR]', error);

@@ -26,6 +26,10 @@
       "types": "./dist/errors/asaas-customer-ensure-error.d.ts",
       "default": "./dist/errors/asaas-customer-ensure-error.js"
     },
+    "./events/map/event-map.service": {
+      "types": "./dist/events/map/event-map.service.d.ts",
+      "default": "./dist/events/map/event-map.service.js"
+    },
     "./prisma": {
       "types": "./dist/prisma.d.ts",
       "default": "./dist/prisma.js"
@@ -48,6 +52,7 @@
     "@aws-sdk/client-s3": "^3.1040.0",
     "axios": "^1.12.2",
     "jose": "^4.15.9",
+    "pdf-lib": "1.17.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

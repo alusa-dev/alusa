@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeftIcon, DocumentArrowUpIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { ArrowLeft, CheckCircle, DocumentText } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { uploadContratoArquivo, createContratoModelo } from './services/modelos-service';
 import { PDFViewer } from './components/PDFViewer';
@@ -123,9 +123,9 @@ export function ImportarContratoFeature() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50/50 pb-20">
+    <div className="min-h-screen pb-20">
       {/* Header com estilo padrão */}
-      <div className="sticky top-0 z-10 bg-white border-b shadow-sm">
+      <div className="sticky top-0 z-10 bg-white">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-4">
@@ -135,7 +135,7 @@ export function ImportarContratoFeature() {
                 onClick={() => router.back()}
                 className="-ml-2 text-gray-500 hover:text-gray-900"
               >
-                <ArrowLeftIcon className="h-5 w-5" />
+                <ArrowLeft className="h-5 w-5" />
               </Button>
               <div className="flex flex-col">
                 <h1 className="text-lg font-semibold text-gray-900 leading-tight">
@@ -159,7 +159,7 @@ export function ImportarContratoFeature() {
               <CardHeader className="bg-gray-50/50 border-b border-gray-100 pb-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                    <DocumentArrowUpIcon className="h-5 w-5" />
+                    <DocumentText className="h-5 w-5" />
                   </div>
                   <div>
                     <CardTitle className="text-base font-medium">Arquivo do Contrato</CardTitle>
@@ -200,7 +200,7 @@ export function ImportarContratoFeature() {
                   ) : uploadResult ? (
                     <div className="space-y-4 py-2">
                       <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2">
-                        <CheckCircleIcon className="h-8 w-8 text-green-600" />
+                        <CheckCircle className="h-8 w-8 text-green-600" />
                       </div>
                       <div>
                         <p className="font-medium text-gray-900 truncate px-4" title={file?.name}>{file?.name}</p>
@@ -226,7 +226,7 @@ export function ImportarContratoFeature() {
                     </div>
                   ) : (
                     <label className="cursor-pointer">
-                      <DocumentArrowUpIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <DocumentText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                       <p className="text-gray-600 mb-2">
                         Arraste um arquivo PDF aqui
                       </p>
@@ -247,7 +247,7 @@ export function ImportarContratoFeature() {
                 {uploadResult && (
                   <div className="mt-4 p-4 bg-green-50 rounded-lg">
                     <div className="flex items-center gap-2 text-green-700">
-                      <CheckCircleIcon className="h-5 w-5" />
+                      <CheckCircle className="h-5 w-5" />
                       <span className="font-medium">Arquivo pronto para salvar</span>
                     </div>
                     <p className="text-xs text-green-600 mt-1 font-mono truncate">
@@ -262,7 +262,7 @@ export function ImportarContratoFeature() {
               <CardHeader className="bg-gray-50/50 border-b border-gray-100 pb-4">
                  <div className="flex items-center gap-3">
                   <div className="p-2 bg-gray-100 text-gray-600 rounded-lg">
-                    <DocumentArrowUpIcon className="h-5 w-5" />
+                    <DocumentText className="h-5 w-5" />
                   </div>
                   <div>
                     <CardTitle className="text-base font-medium">Informações do Modelo</CardTitle>
@@ -326,7 +326,7 @@ export function ImportarContratoFeature() {
             {uploadResult && (
                <div className="px-1 text-center">
                 <p className="text-[10px] text-gray-300 font-mono inline-flex items-center gap-1">
-                  <CheckCircleIcon className="h-3 w-3" />
+                  <CheckCircle className="h-3 w-3" />
                   Integridade verificada (SHA-256)
                 </p>
               </div>
@@ -337,27 +337,21 @@ export function ImportarContratoFeature() {
           <div className="hidden lg:block relative">
              {/* Sticky só funciona se o pai tiver altura, mas aqui estamos em grid */}
              <div className="sticky top-24 space-y-4">
-              <div className="bg-white p-1 rounded-xl border shadow-sm">
-                <div className="bg-gray-50 rounded-lg p-4 text-center border-b border-gray-100 mb-0">
-                  <h3 className="text-sm font-medium text-gray-900">Prévia do Documento</h3>
-                  <p className="text-xs text-gray-500">O que será exibido para assinatura</p>
+              {previewUrl ? (
+                <PDFViewer
+                  url={previewUrl}
+                  showDownload={false}
+                  className="w-full"
+                  maxHeight="600px"
+                />
+              ) : (
+                <div className="min-h-[400px] rounded-lg border bg-gray-50 flex items-center justify-center">
+                  <div className="text-center p-8">
+                     <DocumentText className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                     <p className="text-gray-400 text-sm">Nenhum arquivo selecionado</p>
+                  </div>
                 </div>
-                 <div className="bg-gray-100 min-h-[400px] rounded-b-lg overflow-hidden flex flex-col items-center justify-center">
-                  {previewUrl ? (
-                    <PDFViewer
-                      url={previewUrl}
-                      showDownload={false}
-                      className="w-full h-full"
-                      maxHeight="600px"
-                    />
-                  ) : (
-                    <div className="text-center p-8">
-                       <DocumentArrowUpIcon className="h-16 w-16 text-gray-300 mx-auto mb-3" />
-                       <p className="text-gray-400 text-sm">Nenhum arquivo selecionado</p>
-                    </div>
-                  )}
-                 </div>
-              </div>
+              )}
               
               <InfoCallout title="Dica Importante" size="sm" showIcon={false}>
                 Certifique-se de que o PDF contém todos os campos necessários preenchidos ou placeholders

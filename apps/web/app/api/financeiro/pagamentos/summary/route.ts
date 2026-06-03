@@ -5,7 +5,6 @@ import { listFinanceiroPagamentoSummaryResultDTOSchema } from '@/features/financ
 import { mapFinanceiroPagamentoSummaryItemToDTO } from '@/features/financeiro/mappers';
 import {
   HISTORICAL_ASAAS_PAYMENT_STATUSES,
-  reconcileAcademicCharges,
   resolveAcademicDisplayedStatus,
   resolveAcademicHistoricalPayment,
 } from '@/src/server/finance/academic-payment-history';
@@ -14,8 +13,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
-const PAYMENT_SUMMARY_RECONCILE_LIMIT = 100;
 
 function buildStatusVariants(status: string | null | undefined): string[] {
   const upper = status?.trim().toUpperCase();
@@ -137,16 +134,10 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const search = url.searchParams.get('q')?.trim() || undefined;
     const statusFilters = url.searchParams.getAll('status');
+    const page = Math.max(1, Number(url.searchParams.get('page') || '1'));
+    const pageSize = Math.min(50, Math.max(1, Number(url.searchParams.get('pageSize') || '20')));
 
-    let cobrancas = await loadCobrancas({ contaId: user.contaId, search });
-    const reconciliation = await reconcileAcademicCharges({
-      contaId: user.contaId,
-      cobrancas,
-      limit: PAYMENT_SUMMARY_RECONCILE_LIMIT,
-    });
-    if (reconciliation.attempted > 0) {
-      cobrancas = await loadCobrancas({ contaId: user.contaId, search });
-    }
+    const cobrancas = await loadCobrancas({ contaId: user.contaId, search });
 
     // Agrupar histórico de pagamentos por aluno
     const alunosMap = new Map<
@@ -213,11 +204,16 @@ export async function GET(req: NextRequest) {
       if (!b.ultimoPagamento) return -1;
       return b.ultimoPagamento.localeCompare(a.ultimoPagamento);
     });
+    const total = alunos.length;
+    const paginatedAlunos = alunos.slice((page - 1) * pageSize, page * pageSize);
 
     return NextResponse.json(
       listFinanceiroPagamentoSummaryResultDTOSchema.parse({
-        data: alunos.map((item) => mapFinanceiroPagamentoSummaryItemToDTO(item)),
-        total: alunos.length,
+        data: paginatedAlunos.map((item) => mapFinanceiroPagamentoSummaryItemToDTO(item)),
+        total,
+        page,
+        pageSize,
+        totalPages: Math.ceil(total / pageSize),
       }),
       { headers: { 'cache-control': 'no-store' } },
     );
@@ -226,4 +222,3 @@ export async function GET(req: NextRequest) {
     return err(500, 'ERRO_INTERNO', (e as Error).message);
   }
 }
-

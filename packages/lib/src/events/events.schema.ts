@@ -31,6 +31,11 @@ const optionalId = z.preprocess(emptyToUndefined, z.string().trim().min(1).optio
 
 const moneySchema = z.coerce.number().finite().min(0);
 const positiveIntSchema = z.coerce.number().int().positive();
+const eventCostumeAssignmentBillingModes = [
+  'INCLUDED_IN_REGISTRATION_FEE',
+  'SEPARATE_CHARGE',
+  'FREE',
+] as const;
 
 export const eventIdSchema = z.string().trim().min(1);
 
@@ -186,6 +191,7 @@ export const createCostumeAssignmentSchema = z.object({
   turmaId: optionalId,
   definedSize: optionalText,
   status: z.enum(EVENT_COSTUME_ASSIGNMENT_STATUSES).optional().default('PENDING'),
+  billingMode: z.enum(eventCostumeAssignmentBillingModes).optional().default('SEPARATE_CHARGE'),
   chargedValue: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   isPaid: z.coerce.boolean().optional().default(false),
   deliveredAt: optionalDate,
@@ -198,6 +204,7 @@ export const updateCostumeAssignmentSchema = z.object({
   alunoId: optionalId,
   turmaId: optionalId,
   status: z.enum(EVENT_COSTUME_ASSIGNMENT_STATUSES).optional(),
+  billingMode: z.enum(eventCostumeAssignmentBillingModes).optional(),
   definedSize: optionalText,
   chargedValue: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   isPaid: z.coerce.boolean().optional(),
@@ -218,6 +225,7 @@ export const createEventFinancialEntrySchema = z.object({
   supplier: optionalText,
   expectedAmount: moneySchema,
   actualAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
+  refundedAmount: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
   dueDate: optionalDate,
   realizedAt: optionalDate,
   status: z.enum(EVENT_FINANCIAL_ENTRY_STATUSES),
@@ -263,5 +271,3 @@ export type CreateEventFinancialEntryInput = z.infer<typeof createEventFinancial
 export type UpdateEventFinancialEntryInput = z.infer<typeof updateEventFinancialEntrySchema>;
 export type CreateEventParticipantInput = z.infer<typeof createEventParticipantSchema>;
 export type QuitarParticipantFeeInput = z.infer<typeof quitarParticipantFeeSchema>;
-
-

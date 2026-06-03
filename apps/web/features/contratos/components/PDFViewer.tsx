@@ -26,15 +26,15 @@ export interface PDFViewerProps {
   showControls?: boolean;
   showDownload?: boolean;
   maxHeight?: string;
-  onLoadSuccess?: (numPages: number) => void;
-  onLoadError?: (error: Error) => void;
+  onLoadSuccess?: (_numPages: number) => void;
+  onLoadError?: (_error: Error) => void;
 }
 
 /**
  * Componente PDFViewer - Wrapper para visualização de PDFs no Next.js
  *
  * Utiliza dynamic import com ssr: false para evitar erros de hydration
- * e garantir que o pdfjs-dist seja executado apenas no cliente.
+ * e renderiza o PDF com o visualizador nativo do navegador.
  */
 export function PDFViewer(props: PDFViewerProps) {
   return (

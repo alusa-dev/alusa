@@ -121,6 +121,7 @@ export async function seedFinanceData(
 
   const contrato = await prisma.contrato.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       arquivoPdfUrl: 'https://example.com/contrato-e2e.pdf',
       hashPdf: createHash('sha256').update(randomUUID()).digest('hex'),

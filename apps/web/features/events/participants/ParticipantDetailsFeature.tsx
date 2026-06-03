@@ -17,6 +17,8 @@ import {
   Clock,
   ExternalLink,
   MoreHorizontal,
+  Pencil,
+  Unlink,
 } from 'lucide-react';
 
 import {
@@ -43,9 +45,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { refundPublicEventMapOrder } from '@/features/events/events-service';
+import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
+import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
+import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
+import { buildEventFeeReceiptInput } from './event-fee-receipt';
 
 type EditSection = 'cadastro' | 'figurinos' | null;
 
@@ -67,6 +75,11 @@ const participantTypeLabels: Record<string, string> = {
   GUARDIAN: 'Responsável',
   GUEST: 'Convidado',
   OTHER: 'Outro',
+};
+
+const EXTENDED_TICKET_SALE_STATUS_LABELS = {
+  ...EVENT_TICKET_SALE_STATUS_LABELS,
+  RESERVED: 'Reservado',
 };
 
 function SoftBadge({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' }) {
@@ -264,6 +277,11 @@ export function ParticipantDetailsFeature({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [quitarConfirmOpen, setQuitarConfirmOpen] = useState<string | null>(null);
   const [quitarMethod, setQuitarMethod] = useState('MANUAL_PIX');
+  const [refundOrderTarget, setRefundOrderTarget] = useState<{ orderId: string; buyerName: string } | null>(null);
+  const [generatingReceiptId, setGeneratingReceiptId] = useState<string | null>(null);
+  const [feeActionTarget, setFeeActionTarget] = useState<{ action: 'refund' | 'delete'; entryId: string } | null>(null);
+  const [costumeEditTarget, setCostumeEditTarget] = useState<{ id: string; name: string } | null>(null);
+  const [costumeActionTarget, setCostumeActionTarget] = useState<{ action: 'unlink' | 'refund'; id: string; name: string } | null>(null);
 
   // Form states
   const [generalForm, setGeneralForm] = useState({
@@ -272,7 +290,7 @@ export function ParticipantDetailsFeature({
     isFeePaid: false,
   });
 
-  const [costumesForm, setCostumesForm] = useState<Array<{ id: string; definedSize: string; status: string; notes: string }>>([]);
+  const [costumeEditForm, setCostumeEditForm] = useState({ definedSize: '', status: 'PENDING', notes: '' });
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['events', 'participants', eventId, participantId],
@@ -299,6 +317,26 @@ export function ParticipantDetailsFeature({
   }, [participant, financialEntries]);
   const isManualPayment = !feeEntry?.asaasPaymentId;
 
+  async function handleGenerateFeeReceipt(entry: any) {
+    if (!participant) return;
+    setGeneratingReceiptId(entry.id);
+    try {
+      const { aluno, item } = buildEventFeeReceiptInput(participant, entry);
+      await exportPaidReceiptsPdf({
+        aluno,
+        items: [item],
+        escola: await loadPaidReceiptSchoolProfile(),
+      });
+    } catch (err) {
+      toast.error({
+        title: 'Erro ao gerar recibo',
+        description: err instanceof Error ? err.message : 'Não foi possível gerar o recibo da taxa.',
+      });
+    } finally {
+      setGeneratingReceiptId(null);
+    }
+  }
+
   // Reset forms when data changes
   useEffect(() => {
     if (participant) {
@@ -307,16 +345,6 @@ export function ParticipantDetailsFeature({
         notes: participant.notes ?? '',
         isFeePaid: participant.isFeePaid,
       });
-    }
-    if (costumes.length > 0) {
-      setCostumesForm(
-        costumes.map((c: any) => ({
-          id: c.id,
-          definedSize: c.definedSize ?? '',
-          status: c.status,
-          notes: c.notes ?? '',
-        }))
-      );
     }
   }, [participant, costumes]);
 
@@ -341,6 +369,106 @@ export function ParticipantDetailsFeature({
     },
     onError: (err) => {
       toast.error({ title: 'Erro ao salvar', description: err.message });
+    },
+  });
+
+  const refundPublicOrderMutation = useMutation({
+    mutationFn: async (orderId: string) => refundPublicEventMapOrder(orderId),
+    onSuccess: async () => {
+      await Promise.all([
+        refetch(),
+        queryClient.invalidateQueries({ queryKey: ['events', 'sales', eventId] }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] }),
+      ]);
+      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
+      setRefundOrderTarget(null);
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao estornar pagamento', description: (error as Error).message });
+    },
+  });
+
+  const refundParticipantFeeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/events/${eventId}/participants/${participantId}/fee`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'refund' }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? err?.message ?? 'Erro ao estornar taxa.');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      setFeeActionTarget(null);
+      toast.success({ title: 'Taxa estornada', description: 'O recibo histórico foi preservado e a inscrição voltou a ficar sem pagamento ativo.' });
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao estornar taxa', description: (error as Error).message });
+    },
+  });
+
+  const deleteParticipantFeeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/events/${eventId}/participants/${participantId}/fee`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? err?.message ?? 'Erro ao excluir cobrança.');
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      setFeeActionTarget(null);
+      toast.success({ title: 'Cobrança excluída', description: 'A cobrança manual pendente foi removida da inscrição.' });
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao excluir cobrança', description: (error as Error).message });
+    },
+  });
+
+  const updateCostumeAssignmentMutation = useMutation({
+    mutationFn: async ({
+      assignmentId,
+      payload,
+    }: {
+      assignmentId: string;
+      payload: { definedSize?: string | null; status?: string; notes?: string | null; alunoId?: string | null; turmaId?: string | null; isPaid?: boolean };
+    }) => {
+      const res = await fetch(`/api/events/costume-assignments/${assignmentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.error?.message ?? err?.message ?? 'Erro ao atualizar figurino.');
+      }
+      return res.json();
+    },
+    onSuccess: async (_data, variables) => {
+      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] });
+      if (variables.payload.status === 'CANCELLED' && variables.payload.alunoId === null) {
+        toast.success({ title: 'Figurino desvinculado', description: 'O vínculo foi removido deste participante.' });
+        setCostumeActionTarget(null);
+      } else if (variables.payload.isPaid === false) {
+        toast.success({ title: 'Pagamento estornado', description: 'O pagamento do figurino voltou para pendente antes da desvinculação.' });
+        setCostumeActionTarget(null);
+      } else {
+        toast.success({ title: 'Figurino atualizado', description: 'As informações do vínculo foram salvas.' });
+        setCostumeEditTarget(null);
+      }
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao atualizar figurino', description: (error as Error).message });
     },
   });
 
@@ -500,12 +628,6 @@ export function ParticipantDetailsFeature({
     });
   };
 
-  const handleCostumesSave = () => {
-    updateMutation.mutate({
-      costumes: costumesForm,
-    });
-  };
-
   const handleCancelEdit = () => {
     setEditSection(null);
     if (participant) {
@@ -514,16 +636,6 @@ export function ParticipantDetailsFeature({
         notes: participant.notes ?? '',
         isFeePaid: participant.isFeePaid,
       });
-    }
-    if (costumes.length > 0) {
-      setCostumesForm(
-        costumes.map((c: any) => ({
-          id: c.id,
-          definedSize: c.definedSize ?? '',
-          status: c.status,
-          notes: c.notes ?? '',
-        }))
-      );
     }
   };
 
@@ -536,6 +648,136 @@ export function ParticipantDetailsFeature({
       .join('')
       .toUpperCase();
   }, [participant]);
+
+  const renderTicketActions = (sale: any) => {
+    const canRefund = sale.source === 'PUBLIC_ORDER' && sale.status === 'PAID' && sale.eventMapOrderId;
+    const canViewTicket = sale.source === 'PUBLIC_ORDER' && sale.ticketsUrl;
+    const canViewCharge = sale.source === 'PUBLIC_ORDER' && sale.status === 'RESERVED' && sale.invoiceUrl;
+
+    if (!canRefund && !canViewTicket && !canViewCharge) {
+      return <span className="text-slate-400">-</span>;
+    }
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            disabled={refundPublicOrderMutation.isPending}
+            aria-label="Ações do ingresso"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52">
+          {canViewCharge ? (
+            <DropdownMenuItem asChild>
+              <Link href={sale.invoiceUrl} target="_blank">Cobrança</Link>
+            </DropdownMenuItem>
+          ) : null}
+          {canViewTicket ? (
+            <DropdownMenuItem asChild>
+              <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
+            </DropdownMenuItem>
+          ) : null}
+          {canRefund ? (
+            <>
+              {(canViewCharge || canViewTicket) ? <DropdownMenuSeparator /> : null}
+              <DropdownMenuItem
+                className="text-rose-700 focus:text-rose-700"
+                onClick={() => setRefundOrderTarget({ orderId: sale.eventMapOrderId, buyerName: sale.buyerName })}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Estornar pagamento
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
+  const openCostumeEdit = (item: any) => {
+    setCostumeEditTarget({ id: item.id, name: item.costume.name });
+    setCostumeEditForm({
+      definedSize: item.definedSize ?? '',
+      status: item.status,
+      notes: item.notes ?? '',
+    });
+  };
+
+  const handleSaveCostumeEdit = () => {
+    if (!costumeEditTarget) return;
+    updateCostumeAssignmentMutation.mutate({
+      assignmentId: costumeEditTarget.id,
+      payload: {
+        definedSize: costumeEditForm.definedSize || null,
+        status: costumeEditForm.status,
+        notes: costumeEditForm.notes || null,
+      },
+    });
+  };
+
+  const renderCostumeFinancialStatus = (item: any) => {
+    if (item.billingMode === 'INCLUDED_IN_REGISTRATION_FEE') return <SoftBadge tone="info">Incluso</SoftBadge>;
+    if (item.billingMode === 'FREE') return <SoftBadge tone="neutral">Sem cobrança</SoftBadge>;
+    return item.isPaid ? <SoftBadge tone="success">Pago</SoftBadge> : <SoftBadge tone="warning">Pendente</SoftBadge>;
+  };
+
+  const formatCostumeChargedValue = (item: any) => {
+    if (item.billingMode === 'FREE') return '-';
+    if (item.billingMode === 'INCLUDED_IN_REGISTRATION_FEE') return 'Incluso';
+    return formatCurrency(item.chargedValue);
+  };
+
+  const renderCostumeActions = (item: any) => {
+    const isPaid = Boolean(item.isPaid);
+    const hasSeparateCharge = item.billingMode === 'SEPARATE_CHARGE' && Boolean(item.revenueEntryId);
+    const canRefund = isPaid && hasSeparateCharge;
+    const canUnlink = !isPaid || !hasSeparateCharge;
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            aria-label="Ações do figurino"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuItem onClick={() => openCostumeEdit(item)}>
+            <Pencil className="mr-2 h-4 w-4" />
+            Editar
+          </DropdownMenuItem>
+          {canRefund ? (
+            <DropdownMenuItem
+              className="text-rose-700 focus:text-rose-700"
+              onClick={() => setCostumeActionTarget({ action: 'refund', id: item.id, name: item.costume.name })}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Estornar pagamento
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={!canUnlink}
+            onClick={() => setCostumeActionTarget({ action: 'unlink', id: item.id, name: item.costume.name })}
+          >
+            <Unlink className="mr-2 h-4 w-4" />
+            Desvincular
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   if (isLoading) {
     return (
@@ -682,7 +924,15 @@ export function ParticipantDetailsFeature({
               ) : (
                 <LockedField
                   label="Status Financeiro da Inscrição"
-                  value={participant.registrationFeeCharged === 0 ? 'Isento' : participant.isFeePaid ? 'Pago' : 'Pendente'}
+                  value={
+                    participant.financialStatus === 'ISENTO' ? 'Isento' :
+                    participant.financialStatus === 'QUITADO' ? 'Quitado' :
+                    participant.financialStatus === 'EM_DIA' ? 'Em dia' :
+                    participant.financialStatus === 'ATRASADO' ? 'Atrasado' :
+                    participant.financialStatus === 'ESTORNADO' ? 'Estornado' :
+                    participant.financialStatus === 'CANCELADO' ? 'Cancelado' :
+                    participant.isFeePaid ? 'Pago' : 'Pendente'
+                  }
                 />
               )}
               <LockedField
@@ -722,7 +972,7 @@ export function ParticipantDetailsFeature({
                     id: 'desc',
                     header: 'Tipo',
                     align: 'left',
-                    width: 'w-[35%]',
+                    width: 'w-[30%]',
                     render: (entry: any) => {
                       let displayDesc = entry.description;
                       if (displayDesc.startsWith('Taxa de inscrição - ')) {
@@ -739,31 +989,59 @@ export function ParticipantDetailsFeature({
                     id: 'dueDate',
                     header: 'Vencimento',
                     align: 'left',
-                    width: 'w-[15%]',
+                    width: 'w-[14%]',
                     render: (entry: any) => formatDate(entry.dueDate),
                   },
                   {
                     id: 'realizedAt',
                     header: 'Pagamento',
                     align: 'left',
-                    width: 'w-[15%]',
+                    width: 'w-[14%]',
                     render: (entry: any) => formatDate(entry.realizedAt),
                   },
                   {
                     id: 'value',
-                    header: 'Valor Esperado',
+                    header: 'Valor Pago',
                     align: 'right',
-                    width: 'w-[15%]',
-                    render: (entry: any) => (
-                      <span className="font-medium text-slate-900">{formatCurrency(entry.expectedAmount)}</span>
-                    ),
+                    width: 'w-[14%]',
+                    render: (entry: any) => {
+                      const paidAmount = entry.actualAmount ?? 0;
+                      return (
+                        <span className="font-medium text-slate-900">
+                          {formatCurrency(paidAmount)}
+                        </span>
+                      );
+                    },
                   },
                   {
                     id: 'status',
                     header: 'Status',
                     align: 'center',
-                    width: 'w-[20%]',
+                    width: 'w-[14%]',
                     render: (entry: any) => {
+                      if (participant && entry.id === participant.revenueEntryId) {
+                        const status = participant.financialStatus || (participant.registrationFeeCharged === 0 ? 'ISENTO' : participant.isFeePaid ? 'QUITADO' : 'PENDENTE');
+                        const statusTone = {
+                          ISENTO: 'neutral',
+                          QUITADO: 'success',
+                          EM_DIA: 'info',
+                          ATRASADO: 'danger',
+                          PENDENTE: 'warning',
+                          ESTORNADO: 'neutral',
+                          CANCELADO: 'neutral',
+                        }[status as string] || 'neutral';
+                        const statusLabel = {
+                          ISENTO: 'Isento',
+                          QUITADO: 'Quitado',
+                          EM_DIA: 'Em dia',
+                          ATRASADO: 'Atrasado',
+                          PENDENTE: 'Pendente',
+                          ESTORNADO: 'Estornado',
+                          CANCELADO: 'Cancelado',
+                        }[status as string] || status;
+                        return <SoftBadge tone={statusTone as any}>{statusLabel}</SoftBadge>;
+                      }
+
                       const statusTone = {
                         PENDING: 'warning',
                         RECEIVED: 'success',
@@ -772,6 +1050,79 @@ export function ParticipantDetailsFeature({
                         CANCELLED: 'neutral',
                       }[entry.status as string] || 'neutral';
                       return <SoftBadge tone={statusTone as any}>{EVENT_FINANCIAL_STATUS_LABELS[entry.status as keyof typeof EVENT_FINANCIAL_STATUS_LABELS] || entry.status}</SoftBadge>;
+                    },
+                  },
+                  {
+                    id: 'actions',
+                    header: 'Ações',
+                    align: 'right',
+                    width: 'w-[8%]',
+                    render: (entry: any) => {
+                      const isParticipantFee = participant && entry.id === participant.revenueEntryId;
+                      const paidAmount = entry.actualAmount ?? 0;
+                      const isAsaasEntry = Boolean(entry.asaasPaymentId || entry.paymentProvider === 'ASAAS');
+                      const isPaidManualFee =
+                        isParticipantFee &&
+                        !entry.asaasPaymentId &&
+                        participant.isFeePaid &&
+                        paidAmount > 0 &&
+                        entry.status !== 'REFUNDED' &&
+                        entry.status !== 'CANCELLED';
+                      const canGenerateReceipt = isPaidManualFee;
+                      const canRefund = isPaidManualFee;
+                      const canDelete =
+                        isParticipantFee &&
+                        !isAsaasEntry &&
+                        !participant.isFeePaid &&
+                        !entry.actualAmount &&
+                        !['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status);
+
+                      if (!canGenerateReceipt && !canRefund && !canDelete) {
+                        return <span className="text-slate-400">-</span>;
+                      }
+
+                      return (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                              disabled={generatingReceiptId === entry.id}
+                              aria-label="Ações do lançamento"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48">
+                            {canGenerateReceipt ? (
+                              <DropdownMenuItem onClick={() => void handleGenerateFeeReceipt(entry)}>
+                                <Receipt className="mr-2 h-4 w-4" />
+                                Emitir recibo
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canRefund ? (
+                              <DropdownMenuItem onClick={() => setFeeActionTarget({ action: 'refund', entryId: entry.id })}>
+                                <RotateCcw className="mr-2 h-4 w-4" />
+                                Estornar
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canDelete ? (
+                              <>
+                                {(canGenerateReceipt || canRefund) ? <DropdownMenuSeparator /> : null}
+                                <DropdownMenuItem
+                                  className="text-rose-700 focus:text-rose-700"
+                                  onClick={() => setFeeActionTarget({ action: 'delete', entryId: entry.id })}
+                                >
+                                  <Trash className="mr-2 h-4 w-4" />
+                                  Excluir cobrança
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      );
                     },
                   },
                 ]}
@@ -958,16 +1309,10 @@ export function ParticipantDetailsFeature({
 
           {/* Seção 3: Figurinos Vinculados */}
           {participant.event.hasCostumes && (
-            <EditableSection
-              title="Figurinos Vinculados"
-              editSection="figurinos"
-              activeSection={editSection}
-              saving={updateMutation.isPending}
-              onEdit={setEditSection}
-              onCancel={handleCancelEdit}
-              onSave={handleCostumesSave}
-              hideActions={costumes.length === 0}
-            >
+            <section className={sectionClass}>
+              <div className="mb-4 flex items-start justify-between">
+                <span className="text-sm font-semibold text-slate-700">Figurinos Vinculados</span>
+              </div>
               {costumes.length === 0 ? (
                 <EmptyState title="Nenhum figurino vinculado." description="Atribua figurinos a este aluno através da aba de Figurinos na página do Evento." />
               ) : (
@@ -988,26 +1333,7 @@ export function ParticipantDetailsFeature({
                         header: 'Tamanho',
                         align: 'left',
                         width: 'w-[15%]',
-                        render: (item: any) => {
-                          const rowIndex = costumes.findIndex((c: any) => c.id === item.id);
-                          const isEditing = editSection === 'figurinos';
-                          if (isEditing && costumesForm[rowIndex]) {
-                            return (
-                              <input
-                                type="text"
-                                value={costumesForm[rowIndex].definedSize}
-                                onChange={(e) => {
-                                  const updated = [...costumesForm];
-                                  updated[rowIndex].definedSize = e.target.value;
-                                  setCostumesForm(updated);
-                                }}
-                                className="h-8 w-20 rounded border border-slate-200 px-2 text-xs focus:border-[#A94DFF] focus:outline-none"
-                                placeholder="Tam"
-                              />
-                            );
-                          }
-                          return <span className="font-medium text-slate-800">{item.definedSize || '—'}</span>;
-                        },
+                        render: (item: any) => <span className="font-medium text-slate-800">{item.definedSize || '—'}</span>,
                       },
                       {
                         id: 'status',
@@ -1015,30 +1341,6 @@ export function ParticipantDetailsFeature({
                         align: 'left',
                         width: 'w-[20%]',
                         render: (item: any) => {
-                          const rowIndex = costumes.findIndex((c: any) => c.id === item.id);
-                          const isEditing = editSection === 'figurinos';
-                          if (isEditing && costumesForm[rowIndex]) {
-                            const costumeStatusOptions = Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(
-                              ([value, label]) => ({ value, label })
-                            );
-                            return (
-                              <select
-                                value={costumesForm[rowIndex].status}
-                                onChange={(e) => {
-                                  const updated = [...costumesForm];
-                                  updated[rowIndex].status = e.target.value;
-                                  setCostumesForm(updated);
-                                }}
-                                className="h-8 rounded border border-slate-200 px-2 text-xs focus:border-[#A94DFF] focus:outline-none bg-white"
-                              >
-                                {costumeStatusOptions.map((opt) => (
-                                  <option key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </option>
-                                ))}
-                              </select>
-                            );
-                          }
                           const tone = {
                             PENDING: 'warning',
                             ORDERED: 'info',
@@ -1055,45 +1357,21 @@ export function ParticipantDetailsFeature({
                         header: 'Valor Cobrado',
                         align: 'right',
                         width: 'w-[15%]',
-                        render: (item: any) => formatCurrency(item.chargedValue),
+                        render: (item: any) => formatCostumeChargedValue(item),
                       },
                       {
-                        id: 'paid',
-                        header: 'Status',
+                        id: 'finance',
+                        header: 'Financeiro',
                         align: 'center',
                         width: 'w-[15%]',
-                        render: (item: any) =>
-                          item.isPaid ? (
-                            <SoftBadge tone="success">Pago</SoftBadge>
-                          ) : (
-                            <SoftBadge tone="warning">Pendente</SoftBadge>
-                          ),
+                        render: (item: any) => renderCostumeFinancialStatus(item),
                       },
                       {
-                        id: 'notes',
-                        header: 'Obs.',
-                        align: 'left',
+                        id: 'actions',
+                        header: 'Ações',
+                        align: 'right',
                         width: 'w-[10%]',
-                        render: (item: any) => {
-                          const rowIndex = costumes.findIndex((c: any) => c.id === item.id);
-                          const isEditing = editSection === 'figurinos';
-                          if (isEditing && costumesForm[rowIndex]) {
-                            return (
-                              <input
-                                type="text"
-                                value={costumesForm[rowIndex].notes}
-                                onChange={(e) => {
-                                  const updated = [...costumesForm];
-                                  updated[rowIndex].notes = e.target.value;
-                                  setCostumesForm(updated);
-                                }}
-                                className="h-8 w-24 rounded border border-slate-200 px-2 text-xs focus:border-[#A94DFF] focus:outline-none"
-                                placeholder="Obs..."
-                              />
-                            );
-                          }
-                          return <span className="text-xs text-slate-500 truncate block max-w-[80px]" title={item.notes ?? ''}>{item.notes || '—'}</span>;
-                        },
+                        render: (item: any) => <span className="flex justify-end">{renderCostumeActions(item)}</span>,
                       },
                     ]}
                     data={costumes}
@@ -1101,7 +1379,7 @@ export function ParticipantDetailsFeature({
                   />
                 </TablePanel>
               )}
-            </EditableSection>
+            </section>
           )}
 
           {/* Seção 4: Ingressos Adquiridos */}
@@ -1111,70 +1389,51 @@ export function ParticipantDetailsFeature({
               {ticketSales.length === 0 ? (
                 <EmptyState title="Nenhum ingresso adquirido." description="Registre vendas de ingressos para este participante na aba Ingressos do Evento." />
               ) : (
-                <TablePanel>
-                  <DataTable
-                    columns={[
-                      {
-                        id: 'lot',
-                        header: 'Lote',
-                        align: 'left',
-                        width: 'w-[30%]',
-                        render: (sale: any) => (
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-slate-900">{sale.lot.name}</span>
-                            <span className="text-xs text-slate-500">{sale.buyerName}</span>
-                          </div>
-                        ),
-                      },
-                      {
-                        id: 'qty',
-                        header: 'Qtd.',
-                        align: 'right',
-                        width: 'w-[10%]',
-                        render: (sale: any) => sale.quantity,
-                      },
-                      {
-                        id: 'total',
-                        header: 'Total',
-                        align: 'right',
-                        width: 'w-[15%]',
-                        render: (sale: any) => formatCurrency(sale.totalAmount),
-                      },
-                      {
-                        id: 'method',
-                        header: 'Forma Pagamento',
-                        align: 'left',
-                        width: 'w-[15%]',
-                        render: (sale: any) => EVENT_PAYMENT_METHOD_LABELS[sale.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] || sale.paymentMethod,
-                      },
-                      {
-                        id: 'status',
-                        header: 'Status',
-                        align: 'center',
-                        width: 'w-[15%]',
-                        render: (sale: any) => {
-                          const tone = {
-                            PENDING: 'warning',
-                            PAID: 'success',
-                            CANCELLED: 'danger',
-                            REFUNDED: 'neutral',
-                            COMPLIMENTARY: 'info',
-                          }[sale.status as string] || 'neutral';
-                          return <SoftBadge tone={tone as any}>{EVENT_TICKET_SALE_STATUS_LABELS[sale.status as keyof typeof EVENT_TICKET_SALE_STATUS_LABELS] || sale.status}</SoftBadge>;
-                        },
-                      },
-                      {
-                        id: 'date',
-                        header: 'Data da Venda',
-                        align: 'left',
-                        width: 'w-[15%]',
-                        render: (sale: any) => formatDate(sale.soldAt),
-                      },
-                    ]}
-                    data={ticketSales}
-                    rowKey={(sale) => sale.id}
-                  />
-                </TablePanel>
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  <div className="grid grid-cols-[20fr_16fr_15fr_20fr_16fr_13fr] items-center bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500">
+                    <span className="px-6 py-3">Lote</span>
+                    <span className="px-6 py-3">Venda</span>
+                    <span className="px-6 py-3 text-right">Valor</span>
+                    <span className="px-6 py-3 text-center">Método</span>
+                    <span className="px-6 py-3 text-center">Status</span>
+                    <span className="px-6 py-3 text-right">Ações</span>
+                  </div>
+                  <div className="divide-y divide-slate-200">
+                    {ticketSales.map((sale: any) => {
+                      const paymentMethodLabel =
+                        sale.paymentMethodLabel ||
+                        EVENT_PAYMENT_METHOD_LABELS[sale.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ||
+                        sale.paymentMethod ||
+                        'Não informado';
+                      const tone = {
+                        RESERVED: 'info',
+                        PENDING: 'warning',
+                        PAID: 'success',
+                        CANCELLED: 'danger',
+                        REFUNDED: 'neutral',
+                        COMPLIMENTARY: 'info',
+                      }[sale.status as string] || 'neutral';
+
+                      return (
+                        <div
+                          key={sale.id}
+                          className="grid grid-cols-[20fr_16fr_15fr_20fr_16fr_13fr] items-center text-sm text-slate-700"
+                        >
+                          <span className="min-w-0 whitespace-normal break-words px-6 py-5 font-semibold text-slate-900" title={sale.lot.name}>
+                            {sale.lot.name}
+                          </span>
+                          <span className="px-6 py-5 tabular-nums">{formatDate(sale.soldAt)}</span>
+                          <span className="px-6 py-5 text-right font-medium tabular-nums text-slate-900">{formatCurrency(sale.totalAmount)}</span>
+                          <span className="min-w-0 whitespace-normal break-words px-6 py-5 text-center text-xs font-medium text-slate-600" title={paymentMethodLabel}>{paymentMethodLabel}</span>
+                          <span className="px-6 py-5 text-center">
+                            <SoftBadge tone={tone as any}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status as keyof typeof EXTENDED_TICKET_SALE_STATUS_LABELS] || sale.status}</SoftBadge>
+                          </span>
+                          <span className="flex justify-end px-6 py-5">{renderTicketActions(sale)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )}
@@ -1236,6 +1495,159 @@ export function ParticipantDetailsFeature({
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={feeActionTarget?.action === 'refund'}
+        onOpenChange={(open) => {
+          if (!open) setFeeActionTarget(null);
+        }}
+        title="Estornar taxa de inscrição?"
+        description="O pagamento manual será marcado como estornado e o histórico financeiro será preservado para auditoria."
+        confirmText="Estornar"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => refundParticipantFeeMutation.mutate()}
+        loading={refundParticipantFeeMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={feeActionTarget?.action === 'delete'}
+        onOpenChange={(open) => {
+          if (!open) setFeeActionTarget(null);
+        }}
+        title="Excluir cobrança?"
+        description="Somente cobranças manuais pendentes podem ser excluídas. Taxas pagas ou estornadas permanecem no histórico."
+        confirmText="Excluir cobrança"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => deleteParticipantFeeMutation.mutate()}
+        loading={deleteParticipantFeeMutation.isPending}
+      />
+
+      <Dialog open={Boolean(costumeEditTarget)} onOpenChange={(open) => !open && setCostumeEditTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar figurino</DialogTitle>
+            <DialogDescription>
+              Atualize as informações do vínculo {costumeEditTarget ? `"${costumeEditTarget.name}"` : ''}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-3">
+            <div className="space-y-1">
+              <label className={labelClass}>Tamanho</label>
+              <Input
+                value={costumeEditForm.definedSize}
+                onChange={(event) => setCostumeEditForm((current) => ({ ...current, definedSize: event.target.value }))}
+                placeholder="Informe o tamanho"
+                className={controlClass}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={labelClass}>Status de entrega</label>
+              <select
+                value={costumeEditForm.status}
+                onChange={(event) => setCostumeEditForm((current) => ({ ...current, status: event.target.value }))}
+                className={controlClass}
+              >
+                {Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className={labelClass}>Observações</label>
+              <Textarea
+                value={costumeEditForm.notes}
+                onChange={(event) => setCostumeEditForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="Observações internas"
+                className="min-h-[88px] rounded-lg border-slate-200 text-sm shadow-sm focus:border-[#A94DFF] focus:ring-[#A94DFF]/30"
+              />
+            </div>
+          </div>
+          <DialogFooter className="pt-2">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setCostumeEditTarget(null)}
+              disabled={updateCostumeAssignmentMutation.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="w-full bg-[#A94DFF] text-white shadow-none hover:bg-[#A94DFF]/90 sm:w-auto"
+              onClick={handleSaveCostumeEdit}
+              disabled={updateCostumeAssignmentMutation.isPending}
+            >
+              {updateCostumeAssignmentMutation.isPending ? 'Salvando...' : 'Salvar alterações'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={costumeActionTarget?.action === 'unlink'}
+        onOpenChange={(open) => {
+          if (!open) setCostumeActionTarget(null);
+        }}
+        title="Desvincular figurino?"
+        description={costumeActionTarget ? `O figurino "${costumeActionTarget.name}" será cancelado e deixará de aparecer para este participante.` : 'O figurino será desvinculado deste participante.'}
+        confirmText="Desvincular"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (!costumeActionTarget) return;
+          updateCostumeAssignmentMutation.mutate({
+            assignmentId: costumeActionTarget.id,
+            payload: {
+              status: 'CANCELLED',
+              alunoId: null,
+              turmaId: null,
+            },
+          });
+        }}
+        loading={updateCostumeAssignmentMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={costumeActionTarget?.action === 'refund'}
+        onOpenChange={(open) => {
+          if (!open) setCostumeActionTarget(null);
+        }}
+        title="Estornar pagamento do figurino?"
+        description={costumeActionTarget ? `O pagamento próprio do figurino "${costumeActionTarget.name}" voltará para pendente. Depois disso, o figurino poderá ser desvinculado.` : 'O pagamento próprio do figurino voltará para pendente.'}
+        confirmText="Estornar pagamento"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (!costumeActionTarget) return;
+          updateCostumeAssignmentMutation.mutate({
+            assignmentId: costumeActionTarget.id,
+            payload: {
+              isPaid: false,
+            },
+          });
+        }}
+        loading={updateCostumeAssignmentMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={Boolean(refundOrderTarget)}
+        onOpenChange={(open) => {
+          if (!open) setRefundOrderTarget(null);
+        }}
+        title="Estornar pagamento?"
+        description={refundOrderTarget ? `O estorno de ${refundOrderTarget.buyerName} será solicitado no Asaas e o status final será confirmado via webhook.` : 'O estorno será solicitado no Asaas e o status final será confirmado via webhook.'}
+        confirmText="Solicitar estorno"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (!refundOrderTarget) return;
+          refundPublicOrderMutation.mutate(refundOrderTarget.orderId);
+        }}
+        loading={refundPublicOrderMutation.isPending}
+      />
     </div>
   );
 }

@@ -138,6 +138,9 @@ export type FinanceiroPagamentoSummaryItemDTO = z.infer<
 export const listFinanceiroPagamentoSummaryResultDTOSchema = z.object({
   data: z.array(financeiroPagamentoSummaryItemDTOSchema),
   total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  totalPages: z.number().int().nonnegative(),
 });
 
 export type ListFinanceiroPagamentoSummaryResultDTO = z.infer<

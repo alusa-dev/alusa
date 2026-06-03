@@ -101,6 +101,7 @@ export async function seedContratoPublico(
 
   const contrato = await prisma.contrato.create({
     data: {
+      contaId,
       matriculaId: matricula.id,
       modeloId: modelo.id,
       arquivoPdfUrl: 'https://example.com/contrato.pdf',

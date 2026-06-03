@@ -1,7 +1,7 @@
-import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { PeriodicidadePlano } from '@prisma/client';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
+import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -33,7 +33,8 @@ async function getContratoWithRelations(id: string, contaId: string) {
   return prisma.contrato.findFirst({
     where: {
       id,
-      matricula: { aluno: { contaId } },
+      contaId,
+      matricula: { contaId },
     },
     include: {
       modelo: {
@@ -94,6 +95,7 @@ export async function GET(request: NextRequest) {
           aluno: { contaId: user.contaId, ...(alunoId ? { id: alunoId } : {}) },
           ...(matriculaId ? { id: matriculaId } : {}),
         },
+        contaId: user.contaId,
         ...(status ? { status } : {}),
       },
       orderBy: { createdAt: 'desc' },
@@ -225,6 +227,7 @@ export async function POST(request: NextRequest) {
 
     const existingPendente = await prisma.contrato.findFirst({
       where: {
+        contaId: user.contaId,
         matriculaId: body.matriculaId,
         status: 'PENDENTE',
       },
@@ -239,8 +242,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.contratoOrigemId) {
-      const origem = await prisma.contrato.findUnique({
-        where: { id: body.contratoOrigemId },
+      const origem = await prisma.contrato.findFirst({
+        where: { id: body.contratoOrigemId, contaId: user.contaId },
         select: { id: true, matriculaId: true, status: true },
       });
 
@@ -270,20 +273,73 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const tokenPublico = crypto.randomUUID();
+    const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
     const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const contrato = await prisma.$transaction(async (tx) => {
       const created = await tx.contrato.create({
         data: {
+          contaId: user.contaId,
           matriculaId: body.matriculaId,
           modeloId: body.modeloId,
           contratoOrigemId: body.contratoOrigemId,
           arquivoPdfUrl: modelo.arquivoPdfUrl,
           hashPdf: modelo.hashSha256,
           status: 'PENDENTE',
-          tokenPublico,
+          tokenPublico: `hash:${tokenPublicoHash}`,
+          tokenPublicoHash,
           tokenExpiraEm,
+        },
+      });
+
+      await tx.contratoDocumento.create({
+        data: {
+          contaId: user.contaId,
+          contratoId: created.id,
+          tipo: 'GERADO_MATRICULA',
+          arquivoUrl: modelo.arquivoPdfUrl,
+          hashSha256: modelo.hashSha256,
+          tamanhoBytes: modelo.tamanhoBytes ?? null,
+          mimeType: modelo.mimeType ?? 'application/pdf',
+        },
+      });
+
+      if (modelo.arquivoOriginalUrl) {
+        await tx.contratoDocumento.create({
+          data: {
+            contaId: user.contaId,
+            contratoId: created.id,
+            tipo: 'MODELO_ORIGINAL',
+            arquivoUrl: modelo.arquivoOriginalUrl,
+            hashSha256: modelo.hashSha256,
+            tamanhoBytes: modelo.tamanhoBytes ?? null,
+            mimeType: modelo.mimeType ?? 'application/pdf',
+          },
+        });
+      }
+
+      await createContractEvidence(tx as never, {
+        contaId: user.contaId,
+        contratoId: created.id,
+        type: 'CONTRACT_CREATED',
+        actorType: 'USER',
+        actorId: user.id,
+        payload: {
+          matriculaId: body.matriculaId,
+          modeloId: body.modeloId,
+          hashPdf: modelo.hashSha256,
+        },
+      });
+
+      await createContractEvidence(tx as never, {
+        contaId: user.contaId,
+        contratoId: created.id,
+        type: 'PUBLIC_LINK_CREATED',
+        actorType: 'USER',
+        actorId: user.id,
+        payload: {
+          tokenPublicoHash,
+          tokenExpiraEm: tokenExpiraEm.toISOString(),
         },
       });
 
@@ -490,6 +546,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       mapContratoRecordToDTO(hydratedContrato, {
         subscriptionSync: subscriptionSync ?? null,
+        publicToken: tokenPublico,
       }),
     );
   } catch (error) {

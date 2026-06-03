@@ -36,4 +36,54 @@ describe('AsaasCredentialsService', () => {
     expect(raw).toBeTruthy();
     expect(raw?.apiKey).toBe('test-api-key-placeholder');
   });
+
+  it('carrega api key da fonte canônica AsaasAccount quando Conta legacy está vazia', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Test Credenciais Canonicas',
+        cpfCnpj: '99988877766655',
+        status: 'ATIVO',
+      },
+      select: { id: true },
+    });
+
+    await saveAsaasCredentials(conta.id, {
+      apiKey: 'canonical-api-key-placeholder',
+      webhookSecret: 'canonical-webhook-secret-placeholder',
+    });
+
+    const encrypted = await prisma.conta.findUnique({
+      where: { id: conta.id },
+      select: { asaasApiKeyEncrypted: true },
+    });
+
+    expect(encrypted?.asaasApiKeyEncrypted).toBeTruthy();
+
+    await prisma.financeProfile.create({
+      data: {
+        contaId: conta.id,
+        asaasAccount: {
+          create: {
+            status: 'APPROVED',
+            apiKeyStatus: 'CONNECTED',
+            apiKeyEncrypted: encrypted!.asaasApiKeyEncrypted,
+          },
+        },
+      },
+    });
+
+    await prisma.conta.update({
+      where: { id: conta.id },
+      data: {
+        asaasApiKeyEncrypted: null,
+        asaasWebhookSecretEncrypted: null,
+        asaasCredsUpdatedAt: null,
+      },
+    });
+
+    const raw = await loadDecryptedAsaasCredentials(conta.id);
+
+    expect(raw).toBeTruthy();
+    expect(raw?.apiKey).toBe('canonical-api-key-placeholder');
+  });
 });

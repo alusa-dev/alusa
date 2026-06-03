@@ -56,6 +56,7 @@ export async function createAlunoWithMatriculaAndSubscription(params: {
 
   const contrato = await prisma.contrato.create({
     data: {
+      contaId: params.contaId,
       matriculaId: matricula.id,
       arquivoPdfUrl: 'https://example.com/contrato.pdf',
       hashPdf: createHash('sha256').update(randomUUID()).digest('hex'),

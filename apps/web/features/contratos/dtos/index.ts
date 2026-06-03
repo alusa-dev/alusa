@@ -105,6 +105,8 @@ export const contratoDTOSchema = z.object({
   contratoOrigemId: optionalStringDTOSchema.default(null),
   arquivoPdfUrl: z.string(),
   hashPdf: z.string(),
+  arquivoPdfAssinadoUrl: optionalStringDTOSchema.default(null),
+  hashPdfAssinado: optionalStringDTOSchema.default(null),
   status: contratoStatusDTOSchema,
   assinadoPor: optionalStringDTOSchema.default(null),
   assinadoEmail: optionalStringDTOSchema.default(null),
@@ -193,6 +195,8 @@ export const contratoPublicoDTOSchema = z.object({
   hashPdf: z.string(),
   status: contratoStatusDTOSchema,
   tokenExpiraEm: optionalDateStringDTOSchema.default(null),
+  acceptanceText: z.string(),
+  acceptanceVersion: z.number().int().positive(),
   matricula: z.object({
     aluno: z.object({
       nome: z.string(),
@@ -210,5 +214,7 @@ export type ContratoPublicoDTO = z.infer<typeof contratoPublicoDTOSchema>;
 export const publicAssinarContratoResultDTOSchema = z.object({
   success: z.literal(true),
   hash: z.string().length(64),
+  signedPdfHash: z.string().length(64).optional(),
+  signedPdfUrl: z.string().optional(),
 });
 export type PublicAssinarContratoResultDTO = z.infer<typeof publicAssinarContratoResultDTOSchema>;

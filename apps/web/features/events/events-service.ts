@@ -2,6 +2,7 @@
 
 import type {
   EventCostumeAssignmentStatus,
+  EventCostumeAssignmentBillingMode,
   EventCostumeCategory,
   EventFinancialEntryStatus,
   EventFinancialEntryType,
@@ -65,11 +66,24 @@ export type TicketSaleDTO = {
   quantity: number;
   unitPriceSnapshot: number;
   totalAmount: number;
-  paymentMethod: EventPaymentMethod;
-  status: EventTicketSaleStatus;
+  paymentMethod: EventPaymentMethod | string | null;
+  paymentMethodLabel?: string | null;
+  status: EventTicketSaleStatus | 'RESERVED';
   soldAt: string;
   paidAt: string | null;
+  cancelledAt?: string | null;
+  refundedAt?: string | null;
+  createdBy?: { id: string; nome: string } | null;
   notes: string | null;
+  revenueEntryId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  source?: 'MANUAL_SALE' | 'PUBLIC_ORDER';
+  eventMapOrderId?: string | null;
+  asaasPaymentId?: string | null;
+  reservationExpiresAt?: string | null;
+  invoiceUrl?: string | null;
+  ticketsUrl?: string | null;
 };
 
 export type CostumeDTO = {
@@ -100,11 +114,13 @@ export type CostumeAssignmentDTO = {
   turma: { id: string; nome: string } | null;
   definedSize: string | null;
   status: EventCostumeAssignmentStatus;
+  billingMode: EventCostumeAssignmentBillingMode;
   chargedValue: number | null;
   isPaid: boolean;
   deliveredAt: string | null;
   returnedAt: string | null;
   notes: string | null;
+  revenueEntryId?: string | null;
 };
 
 export type FinancialEntryDTO = {
@@ -119,6 +135,8 @@ export type FinancialEntryDTO = {
   originId: string | null;
   expectedAmount: number;
   actualAmount: number | null;
+  refundedAmount?: number;
+  netAmount?: number | null;
   dueDate: string | null;
   realizedAt: string | null;
   status: EventFinancialEntryStatus;
@@ -313,6 +331,14 @@ export async function refundTicketSale(id: string, reason?: string) {
   }))).data;
 }
 
+export async function refundPublicEventMapOrder(orderId: string, reason?: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean; pending?: boolean; correlationId?: string }>>(await fetch(`/api/events/public-orders/${orderId}/refund`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  }))).data;
+}
+
 export async function updateTicketSale(id: string, payload: Record<string, unknown>) {
   return (await parseResponse<JsonEnvelope<TicketSaleDTO>>(await fetch(`/api/events/ticket-sales/${id}`, {
     method: 'PATCH',
@@ -424,6 +450,11 @@ export type EventParticipantDTO = {
   displayName: string;
   registrationFeeCharged: number;
   isFeePaid: boolean;
+  percentPaid?: number;
+  totalPaid?: number;
+  totalRefunded?: number;
+  netPaid?: number;
+  financialStatus?: string;
   feePaymentMethod: string | null;
   notes: string | null;
   createdAt: string;

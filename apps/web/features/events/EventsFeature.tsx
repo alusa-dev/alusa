@@ -11,6 +11,7 @@ import {
   CircleDollarSign,
   ClipboardList,
   PackageCheck,
+  Pencil,
   Plus,
   Search,
   Shirt,
@@ -24,6 +25,7 @@ import {
   Clock,
   Eye,
   MoreVertical,
+  RotateCcw,
 } from 'lucide-react';
 
 import {
@@ -44,6 +46,7 @@ import {
   EVENT_TICKET_TYPES,
   EVENT_TYPE_LABELS,
   SCHOOL_EVENT_TYPES,
+  type EventCostumeAssignmentBillingMode,
   type EventCostumeAssignmentStatus,
   type EventFinancialEntryStatus,
   type EventFinancialEntryType,
@@ -98,7 +101,6 @@ import {
   createTicketLot,
   createTicketSale,
   deleteCostume,
-  deleteCostumeAssignment,
   type EventListResult,
   formatCurrency,
   formatDate,
@@ -117,6 +119,7 @@ import {
   listTicketLots,
   listTicketSales,
   markTicketSalePaid,
+  refundPublicEventMapOrder,
   refundTicketSale,
   saveEvent,
   updateCostumeAssignment,
@@ -138,6 +141,61 @@ import {
   type TicketLotDTO,
   type TicketSaleDTO,
 } from './events-service';
+
+const EXTENDED_TICKET_SALE_STATUS_LABELS: Record<TicketSaleDTO['status'], string> = {
+  ...EVENT_TICKET_SALE_STATUS_LABELS,
+  RESERVED: 'Reservado',
+};
+
+function getTicketSaleTone(status: TicketSaleDTO['status']) {
+  return {
+    RESERVED: 'info',
+    PENDING: 'warning',
+    PAID: 'success',
+    CANCELLED: 'danger',
+    REFUNDED: 'neutral',
+    COMPLIMENTARY: 'info',
+  }[status] as 'neutral' | 'success' | 'warning' | 'danger' | 'info';
+}
+
+function getTicketPaymentMethodLabel(sale: TicketSaleDTO) {
+  if (sale.paymentMethodLabel) return sale.paymentMethodLabel;
+  if (!sale.paymentMethod) return 'Checkout público';
+  return EVENT_PAYMENT_METHOD_LABELS[sale.paymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] ?? sale.paymentMethod;
+}
+
+const COSTUME_BILLING_MODES: EventCostumeAssignmentBillingMode[] = [
+  'INCLUDED_IN_REGISTRATION_FEE',
+  'SEPARATE_CHARGE',
+  'FREE',
+];
+
+const COSTUME_BILLING_LABELS: Record<EventCostumeAssignmentBillingMode, string> = {
+  INCLUDED_IN_REGISTRATION_FEE: 'Incluso na taxa de inscrição',
+  SEPARATE_CHARGE: 'Cobrar separadamente',
+  FREE: 'Sem cobrança',
+};
+
+const COSTUME_BILLING_OPTIONS = COSTUME_BILLING_MODES.map((mode) => ({
+  value: mode,
+  label: COSTUME_BILLING_LABELS[mode],
+}));
+
+function getCostumeAssignmentFinancialBadge(assignment: CostumeAssignmentDTO) {
+  if (assignment.billingMode === 'INCLUDED_IN_REGISTRATION_FEE') {
+    return <SoftBadge tone="info">Incluso</SoftBadge>;
+  }
+  if (assignment.billingMode === 'FREE') {
+    return <SoftBadge tone="neutral">Sem cobrança</SoftBadge>;
+  }
+  return assignment.isPaid ? <SoftBadge tone="success">Pago</SoftBadge> : <SoftBadge tone="warning">Pendente</SoftBadge>;
+}
+
+function getCostumeAssignmentValueLabel(assignment: CostumeAssignmentDTO) {
+  if (assignment.billingMode === 'FREE') return '-';
+  if (assignment.billingMode === 'INCLUDED_IN_REGISTRATION_FEE') return 'Incluso';
+  return formatCurrency(assignment.chargedValue ?? 0);
+}
 import { EventMapPanel } from './map/components/EventMapPanel';
 
 type Option = { value: string; label: string };
@@ -164,7 +222,6 @@ const SELECT_CLASS =
 const LABEL_CLASS = 'text-xs font-medium text-slate-600';
 const PRIMARY_BUTTON_CLASS = 'h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90';
 const OUTLINE_BUTTON_CLASS = 'h-10 border-slate-200 bg-white px-4 text-slate-700 shadow-sm shadow-slate-200/40 hover:bg-slate-50';
-const SMALL_OUTLINE_BUTTON_CLASS = 'h-8 border-slate-200 bg-white px-3 text-xs text-slate-700 shadow-sm shadow-slate-200/40 hover:bg-slate-50';
 const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, index) => {
   const hour = String(Math.floor(index / 4)).padStart(2, '0');
   const minute = String((index % 4) * 15).padStart(2, '0');
@@ -1381,6 +1438,7 @@ function TicketActions({ sale, eventId, lots, resources }: { sale: TicketSaleDTO
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
 
   const invalidate = async () => {
     await Promise.all([
@@ -1389,6 +1447,16 @@ function TicketActions({ sale, eventId, lots, resources }: { sale: TicketSaleDTO
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
     ]);
   };
+
+  const refundPublic = useMutation({
+    mutationFn: () => refundPublicEventMapOrder(sale.eventMapOrderId ?? sale.id),
+    onSuccess: async () => {
+      await invalidate();
+      toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
+      setRefundOpen(false);
+    },
+    onError: (err) => toast.error({ title: 'Erro ao estornar pagamento', description: err.message }),
+  });
 
   const paid = useMutation({ mutationFn: () => markTicketSalePaid(sale.id), onSuccess: invalidate, onError: (err) => toast.error({ title: 'Erro ao marcar como pago', description: err.message }) });
   const cancel = useMutation({ mutationFn: () => cancelTicketSale(sale.id), onSuccess: invalidate, onError: (err) => toast.error({ title: 'Erro ao cancelar', description: err.message }) });
@@ -1402,6 +1470,58 @@ function TicketActions({ sale, eventId, lots, resources }: { sale: TicketSaleDTO
     },
     onError: (err) => toast.error({ title: 'Erro ao excluir', description: err.message }),
   });
+
+  if (sale.source === 'PUBLIC_ORDER') {
+    const hasActions = Boolean(sale.invoiceUrl || sale.ticketsUrl || (sale.status === 'PAID' && sale.eventMapOrderId));
+    if (!hasActions) return <span className="text-slate-400">-</span>;
+
+    return (
+      <>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-slate-900">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {sale.status === 'RESERVED' && sale.invoiceUrl ? (
+              <DropdownMenuItem asChild>
+                <Link href={sale.invoiceUrl} target="_blank">Cobrança</Link>
+              </DropdownMenuItem>
+            ) : null}
+            {sale.ticketsUrl ? (
+              <DropdownMenuItem asChild>
+                <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
+              </DropdownMenuItem>
+            ) : null}
+            {sale.status === 'PAID' && sale.eventMapOrderId ? (
+              <>
+                {(sale.ticketsUrl || sale.invoiceUrl) ? <DropdownMenuSeparator /> : null}
+                <DropdownMenuItem
+                  className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
+                  onClick={() => setRefundOpen(true)}
+                >
+                  Estornar pagamento
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <ConfirmDialog
+          open={refundOpen}
+          onOpenChange={setRefundOpen}
+          title="Estornar pagamento?"
+          description="O estorno será solicitado no Asaas e o status final será confirmado via webhook."
+          confirmText="Solicitar estorno"
+          cancelText="Cancelar"
+          variant="destructive"
+          onConfirm={() => refundPublic.mutate()}
+          loading={refundPublic.isPending}
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -1476,15 +1596,18 @@ function EventTicketsPanel({ eventId, resources }: { eventId: string; resources?
   const sales = useQuery({ queryKey: eventQueryKeys.sales(eventId), queryFn: () => listTicketSales(eventId) });
   const lotRows = lots.data ?? [];
   const saleRows = sales.data ?? [];
-  const revenue = saleRows.filter((sale) => sale.status === 'PAID').reduce((sum, sale) => sum + sale.totalAmount, 0);
-  const pending = saleRows.filter((sale) => sale.status === 'PENDING').reduce((sum, sale) => sum + sale.totalAmount, 0);
-  const complimentary = saleRows.filter((sale) => sale.status === 'COMPLIMENTARY').reduce((sum, sale) => sum + sale.quantity, 0);
+  const manualSaleRows = saleRows.filter((sale) => sale.status !== 'RESERVED');
+  const reservedRows = saleRows.filter((sale) => sale.status === 'RESERVED');
+  const revenue = manualSaleRows.filter((sale) => sale.status === 'PAID').reduce((sum, sale) => sum + sale.totalAmount, 0);
+  const pending = saleRows.filter((sale) => sale.status === 'PENDING' || sale.status === 'RESERVED').reduce((sum, sale) => sum + sale.totalAmount, 0);
+  const complimentary = manualSaleRows.filter((sale) => sale.status === 'COMPLIMENTARY').reduce((sum, sale) => sum + sale.quantity, 0);
 
   return (
     <Tabs defaultValue="sales" variant="line" className="space-y-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <TabsList className="overflow-x-auto">
           <TabsTrigger value="sales">Vendas</TabsTrigger>
+          <TabsTrigger value="reserved">Reservados</TabsTrigger>
           <TabsTrigger value="lots">Lotes</TabsTrigger>
           <TabsTrigger value="metrics">Métricas</TabsTrigger>
         </TabsList>
@@ -1504,22 +1627,37 @@ function EventTicketsPanel({ eventId, resources }: { eventId: string; resources?
               { id: 'qty', header: 'Qtd.', width: 'w-[9%]', align: 'right', render: (sale: TicketSaleDTO) => sale.quantity },
               { id: 'total', header: 'Total', width: 'w-[14%]', align: 'right', render: (sale: TicketSaleDTO) => formatCurrency(sale.totalAmount) },
               { id: 'status', header: 'Status', width: 'w-[14%]', align: 'center', render: (sale: TicketSaleDTO) => {
-                const tone = {
-                  PENDING: 'warning',
-                  PAID: 'success',
-                  CANCELLED: 'danger',
-                  REFUNDED: 'neutral',
-                  COMPLIMENTARY: 'info',
-                }[sale.status] as any;
-                return <SoftBadge tone={tone}>{EVENT_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge>;
+                return <SoftBadge tone={getTicketSaleTone(sale.status)}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge>;
               } },
               { id: 'date', header: 'Data', width: 'w-[13%]', align: 'left', render: (sale: TicketSaleDTO) => formatDate(sale.soldAt) },
               { id: 'actions', header: 'Ações', width: 'w-[12%]', align: 'right', render: (sale: TicketSaleDTO) => <TicketActions sale={sale} eventId={eventId} lots={lotRows} resources={resources} /> },
             ]}
-            data={saleRows}
+            data={manualSaleRows}
             rowKey={(sale) => sale.id}
             loading={sales.isLoading}
             emptyMessage={<EmptyState title="Nenhuma venda registrada." description="Registre vendas manuais vinculadas a um lote deste evento." />}
+          />
+        </TablePanel>
+      </TabsContent>
+      <TabsContent value="reserved">
+        <TablePanel>
+          <DataTable
+            paginate={true}
+            pageSize={5}
+            columns={[
+              { id: 'buyer', header: 'Comprador', width: 'w-[24%]', align: 'left', render: (sale: TicketSaleDTO) => <span className="font-medium text-slate-950">{sale.buyerName}</span> },
+              { id: 'lot', header: 'Lote', width: 'w-[18%]', align: 'left', render: (sale: TicketSaleDTO) => sale.lot.name },
+              { id: 'qty', header: 'Qtd.', width: 'w-[10%]', align: 'right', render: (sale: TicketSaleDTO) => sale.quantity },
+              { id: 'total', header: 'Total', width: 'w-[14%]', align: 'right', render: (sale: TicketSaleDTO) => formatCurrency(sale.totalAmount) },
+              { id: 'method', header: 'Origem', width: 'w-[14%]', align: 'left', render: (sale: TicketSaleDTO) => getTicketPaymentMethodLabel(sale) },
+              { id: 'status', header: 'Status', width: 'w-[10%]', align: 'center', render: (sale: TicketSaleDTO) => <SoftBadge tone={getTicketSaleTone(sale.status)}>{EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge> },
+              { id: 'expires', header: 'Expira em', width: 'w-[12%]', align: 'left', render: (sale: TicketSaleDTO) => formatDateTime(sale.reservationExpiresAt ?? null) },
+              { id: 'actions', header: 'Ações', width: 'w-[10%]', align: 'right', render: (sale: TicketSaleDTO) => <TicketActions sale={sale} eventId={eventId} lots={lotRows} resources={resources} /> },
+            ]}
+            data={reservedRows}
+            rowKey={(sale) => sale.id}
+            loading={sales.isLoading}
+            emptyMessage={<EmptyState title="Nenhum ingresso reservado." description="As reservas aguardando pagamento aparecerão aqui." />}
           />
         </TablePanel>
       </TabsContent>
@@ -1557,7 +1695,7 @@ function EventTicketsPanel({ eventId, resources }: { eventId: string; resources?
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Receita recebida" value={formatCurrency(revenue)} icon={CircleDollarSign} tone="success" />
           <MetricCard label="Receita pendente" value={formatCurrency(pending)} icon={WalletCards} tone="warning" />
-          <MetricCard label="Ingressos vendidos" value={saleRows.reduce((sum, sale) => sum + sale.quantity, 0)} icon={Ticket} />
+          <MetricCard label="Ingressos vendidos" value={manualSaleRows.reduce((sum, sale) => sum + sale.quantity, 0)} icon={Ticket} />
           <MetricCard label="Cortesias" value={complimentary} icon={Ticket} tone="info" />
         </div>
       </TabsContent>
@@ -1764,6 +1902,8 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [chargedValueText, setChargedValueText] = useState("");
+  const [billingMode, setBillingMode] = useState<EventCostumeAssignmentBillingMode>('INCLUDED_IN_REGISTRATION_FEE');
+  const isSeparateCharge = billingMode === 'SEPARATE_CHARGE';
 
   const mutation = useMutation({
     mutationFn: createCostumeAssignment,
@@ -1775,11 +1915,13 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
       toast.success({ title: 'Entrega cadastrada', description: 'A entrega do figurino foi registrada com sucesso.' });
       setOpen(false);
       setChargedValueText("");
+      setBillingMode('INCLUDED_IN_REGISTRATION_FEE');
     },
     onError: (error) => toast.error({ title: 'Erro na entrega', description: (error as Error).message }),
   });
   function submit(formData: FormData) {
     const chargedValueRaw = nullableString(formData, 'chargedValue') ?? '';
+    const selectedBillingMode = (nullableString(formData, 'billingMode') ?? 'INCLUDED_IN_REGISTRATION_FEE') as EventCostumeAssignmentBillingMode;
 
     mutation.mutate({
       eventId,
@@ -1788,8 +1930,8 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
       turmaId: nullableString(formData, 'turmaId'),
       definedSize: nullableString(formData, 'definedSize'),
       status: nullableString(formData, 'status'),
-      chargedValue: chargedValueRaw ? parseCurrencyInput(chargedValueRaw) : undefined,
-      isPaid: booleanValue(formData, 'isPaid'),
+      billingMode: selectedBillingMode,
+      chargedValue: selectedBillingMode === 'SEPARATE_CHARGE' && chargedValueRaw ? parseCurrencyInput(chargedValueRaw) : undefined,
       notes: nullableString(formData, 'notes'),
     });
   }
@@ -1798,11 +1940,12 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
       setOpen(val);
       if (!val) {
         setChargedValueText("");
+        setBillingMode('INCLUDED_IN_REGISTRATION_FEE');
       }
     }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Acompanhe aluno, turma, entrega, devolução e pagamento.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Defina o vínculo, entrega e forma de cobrança.</DialogDescription></DialogHeader>
         <form action={submit} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino"><NativeSelect name="costumeId" required placeholder="Selecione" options={costumes.map((item) => ({ value: item.id, label: item.name }))} /></Field>
@@ -1810,6 +1953,15 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
             <Field label="Turma"><NativeSelect name="turmaId" placeholder="Opcional" options={(resources?.turmas ?? []).map((item) => ({ value: item.id, label: item.nome }))} /></Field>
             <Field label="Tamanho definido"><Input name="definedSize" className={FILTER_INPUT_CLASS} /></Field>
             <Field label="Status"><NativeSelect name="status" defaultValue="PENDING" options={Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))} /></Field>
+            <Field label="Forma de cobrança">
+              <NativeSelect
+                name="billingMode"
+                defaultValue="INCLUDED_IN_REGISTRATION_FEE"
+                options={COSTUME_BILLING_OPTIONS}
+                onValueChange={(value) => setBillingMode(value as EventCostumeAssignmentBillingMode)}
+              />
+            </Field>
+            {isSeparateCharge ? (
             <Field label="Valor cobrado">
               <div className="relative flex items-center">
                 <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">
@@ -1824,8 +1976,8 @@ function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { event
                 />
               </div>
             </Field>
+            ) : null}
           </div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700"><input name="isPaid" type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-violet-700" /> Pago?</label>
           <Field label="Observações"><Textarea name="notes" className="rounded-xl border-slate-200" /></Field>
           <DialogFooter><Button type="submit">Salvar vínculo</Button></DialogFooter>
         </form>
@@ -1853,12 +2005,15 @@ function EditAssignmentFormDialog({
   const [chargedValueText, setChargedValueText] = useState(
     assignment.chargedValue ? (assignment.chargedValue).toFixed(2).replace('.', ',') : ""
   );
+  const [billingMode, setBillingMode] = useState<EventCostumeAssignmentBillingMode>(assignment.billingMode);
+  const isSeparateCharge = billingMode === 'SEPARATE_CHARGE';
 
   useEffect(() => {
     if (open) {
       setChargedValueText(assignment.chargedValue ? (assignment.chargedValue).toFixed(2).replace('.', ',') : "");
+      setBillingMode(assignment.billingMode);
     }
-  }, [open, assignment.chargedValue]);
+  }, [open, assignment.billingMode, assignment.chargedValue]);
 
   const mutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => updateCostumeAssignment(assignment.id, payload),
@@ -1875,6 +2030,7 @@ function EditAssignmentFormDialog({
 
   function submit(formData: FormData) {
     const chargedValueRaw = nullableString(formData, 'chargedValue') ?? '';
+    const selectedBillingMode = (nullableString(formData, 'billingMode') ?? assignment.billingMode) as EventCostumeAssignmentBillingMode;
 
     mutation.mutate({
       costumeId: nullableString(formData, 'costumeId'),
@@ -1882,8 +2038,8 @@ function EditAssignmentFormDialog({
       turmaId: nullableString(formData, 'turmaId') || null,
       definedSize: nullableString(formData, 'definedSize'),
       status: nullableString(formData, 'status'),
-      chargedValue: chargedValueRaw ? parseCurrencyInput(chargedValueRaw) : null,
-      isPaid: booleanValue(formData, 'isPaid'),
+      billingMode: selectedBillingMode,
+      chargedValue: selectedBillingMode === 'SEPARATE_CHARGE' && chargedValueRaw ? parseCurrencyInput(chargedValueRaw) : null,
       notes: nullableString(formData, 'notes'),
     });
   }
@@ -1893,7 +2049,7 @@ function EditAssignmentFormDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Editar vínculo</DialogTitle>
-          <DialogDescription>Acompanhe aluno, turma, entrega, devolução e pagamento.</DialogDescription>
+          <DialogDescription>Atualize o vínculo, entrega e forma de cobrança.</DialogDescription>
         </DialogHeader>
         <form action={submit} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -1932,6 +2088,15 @@ function EditAssignmentFormDialog({
                 options={Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
               />
             </Field>
+            <Field label="Forma de cobrança">
+              <NativeSelect
+                name="billingMode"
+                defaultValue={assignment.billingMode}
+                options={COSTUME_BILLING_OPTIONS}
+                onValueChange={(value) => setBillingMode(value as EventCostumeAssignmentBillingMode)}
+              />
+            </Field>
+            {isSeparateCharge ? (
             <Field label="Valor cobrado">
               <div className="relative flex items-center">
                 <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">
@@ -1946,16 +2111,8 @@ function EditAssignmentFormDialog({
                 />
               </div>
             </Field>
+            ) : null}
           </div>
-          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-            <input
-              name="isPaid"
-              type="checkbox"
-              defaultChecked={assignment.isPaid}
-              className="h-4 w-4 rounded border-slate-300 accent-violet-700"
-            />{' '}
-            Pago?
-          </label>
           <Field label="Observações">
             <Textarea name="notes" defaultValue={assignment.notes || ""} className="rounded-xl border-slate-200" />
           </Field>
@@ -1981,7 +2138,9 @@ function AssignmentActions({
 }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [unlinkOpen, setUnlinkOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const isSeparatePaid = assignment.billingMode === 'SEPARATE_CHARGE' && assignment.isPaid;
 
   const mutation = useMutation({
     mutationFn: (status: EventCostumeAssignmentStatus) => updateCostumeAssignment(assignment.id, { status }),
@@ -1995,17 +2154,30 @@ function AssignmentActions({
     onError: (error) => toast.error({ title: 'Erro ao atualizar status', description: (error as Error).message }),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteCostumeAssignment(assignment.id),
+  const refundMutation = useMutation({
+    mutationFn: () => updateCostumeAssignment(assignment.id, { isPaid: false }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
       ]);
-      toast.success({ title: 'Vínculo excluído', description: 'O vínculo do figurino foi excluído com sucesso.' });
-      setDeleteOpen(false);
+      toast.success({ title: 'Pagamento estornado', description: 'O pagamento próprio do figurino voltou para pendente.' });
+      setRefundOpen(false);
     },
-    onError: (error) => toast.error({ title: 'Erro ao excluir vínculo', description: (error as Error).message }),
+    onError: (error) => toast.error({ title: 'Erro ao estornar pagamento', description: (error as Error).message }),
+  });
+
+  const unlinkMutation = useMutation({
+    mutationFn: () => updateCostumeAssignment(assignment.id, { status: 'CANCELLED', alunoId: null, turmaId: null }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.assignments(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+      ]);
+      toast.success({ title: 'Figurino desvinculado', description: 'O vínculo foi removido deste participante.' });
+      setUnlinkOpen(false);
+    },
+    onError: (error) => toast.error({ title: 'Erro ao desvincular figurino', description: (error as Error).message }),
   });
 
   return (
@@ -2041,11 +2213,22 @@ function AssignmentActions({
 
           <DropdownMenuSeparator />
 
+          {isSeparatePaid ? (
+            <DropdownMenuItem
+              className="text-rose-700 focus:text-rose-700"
+              onClick={() => setRefundOpen(true)}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Estornar pagamento
+            </DropdownMenuItem>
+          ) : null}
+
           <DropdownMenuItem
             className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
-            onClick={() => setDeleteOpen(true)}
+            disabled={isSeparatePaid}
+            onClick={() => setUnlinkOpen(true)}
           >
-            Excluir
+            Desvincular
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -2060,15 +2243,27 @@ function AssignmentActions({
       />
 
       <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Excluir vínculo de figurino"
-        description="Tem certeza que deseja excluir o vínculo deste figurino? Esta ação não poderá ser desfeita."
-        confirmText="Excluir"
+        open={unlinkOpen}
+        onOpenChange={setUnlinkOpen}
+        title="Desvincular figurino?"
+        description="O vínculo será cancelado e deixará de aparecer para este aluno ou turma. Pagamentos próprios precisam ser estornados antes."
+        confirmText="Desvincular"
         cancelText="Cancelar"
         variant="destructive"
-        onConfirm={() => deleteMutation.mutate()}
-        loading={deleteMutation.isPending}
+        onConfirm={() => unlinkMutation.mutate()}
+        loading={unlinkMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={refundOpen}
+        onOpenChange={setRefundOpen}
+        title="Estornar pagamento do figurino?"
+        description="O pagamento próprio deste figurino voltará para pendente. Depois disso, o vínculo poderá ser desvinculado."
+        confirmText="Estornar pagamento"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => refundMutation.mutate()}
+        loading={refundMutation.isPending}
       />
     </>
   );
@@ -2079,10 +2274,13 @@ function EventCostumesPanel({ eventId, resources }: { eventId: string; resources
   const assignments = useQuery({ queryKey: eventQueryKeys.assignments(eventId), queryFn: () => listCostumeAssignments(eventId) });
   const costumeRows = costumes.data ?? [];
   const assignmentRows = assignments.data ?? [];
-  const cost = costumeRows.reduce((sum, item) => sum + (item.schoolCost ?? 0) * item.quantity, 0);
-  const charged = assignmentRows.reduce((sum, item) => sum + (item.chargedValue ?? 0), 0);
-  const delivered = assignmentRows.filter((item) => item.status === 'DELIVERED').length;
-  const returned = assignmentRows.filter((item) => item.status === 'RETURNED').length;
+  const costumeCost = costumeRows.reduce((sum, item) => sum + (item.schoolCost ?? 0) * item.quantity, 0);
+  const separateAssignments = assignmentRows.filter((item) => item.status !== 'CANCELLED' && item.billingMode === 'SEPARATE_CHARGE');
+  const separateExpectedRevenue = separateAssignments.reduce((sum, item) => sum + (item.chargedValue ?? 0), 0);
+  const separateReceivedRevenue = separateAssignments
+    .filter((item) => item.isPaid)
+    .reduce((sum, item) => sum + (item.chargedValue ?? 0), 0);
+  const includedAssignments = assignmentRows.filter((item) => item.status !== 'CANCELLED' && item.billingMode === 'INCLUDED_IN_REGISTRATION_FEE');
 
   const getCostumeStats = (costumeId: string) => {
     const costumeAssignments = assignmentRows.filter((a) => a.costume.id === costumeId && a.status !== 'CANCELLED');
@@ -2096,6 +2294,12 @@ function EventCostumesPanel({ eventId, resources }: { eventId: string; resources
 
   return (
     <Tabs defaultValue="costumes" variant="line" className="space-y-5">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Custo dos figurinos" value={formatCurrency(costumeCost)} icon={WalletCards} tone="warning" />
+        <MetricCard label="Receita própria prevista" value={formatCurrency(separateExpectedRevenue)} icon={CircleDollarSign} tone="info" />
+        <MetricCard label="Receita própria recebida" value={formatCurrency(separateReceivedRevenue)} icon={CircleDollarSign} tone="success" />
+        <MetricCard label="Inclusos na inscrição" value={includedAssignments.length} icon={Shirt} tone="info" />
+      </div>
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <TabsList className="overflow-x-auto"><TabsTrigger value="costumes">Figurinos</TabsTrigger><TabsTrigger value="assignments">Entregas</TabsTrigger></TabsList>
         <div className="flex flex-wrap gap-2 md:justify-end">
@@ -2145,9 +2349,9 @@ function EventCostumesPanel({ eventId, resources }: { eventId: string; resources
             paginate={true}
             pageSize={5}
             columns={[
-              { id: 'costume', header: 'Figurino', width: 'w-[22%]', align: 'left', render: (item: CostumeAssignmentDTO) => <span className="font-medium text-slate-950">{item.costume.name}</span> },
-              { id: 'student', header: 'Aluno/Turma', width: 'w-[22%]', align: 'left', render: (item: CostumeAssignmentDTO) => item.aluno?.nome || item.turma?.nome || '-' },
-              { id: 'status', header: 'Status', width: 'w-[15%]', align: 'center', render: (item: CostumeAssignmentDTO) => {
+              { id: 'costume', header: 'Figurino', width: 'w-[18%]', align: 'left', render: (item: CostumeAssignmentDTO) => <span className="font-medium text-slate-950">{item.costume.name}</span> },
+              { id: 'student', header: 'Aluno/Turma', width: 'w-[18%]', align: 'left', render: (item: CostumeAssignmentDTO) => item.aluno?.nome || item.turma?.nome || '-' },
+              { id: 'status', header: 'Status', width: 'w-[13%]', align: 'center', render: (item: CostumeAssignmentDTO) => {
                 const tone = {
                   PENDING: 'warning',
                   ORDERED: 'info',
@@ -2160,9 +2364,10 @@ function EventCostumesPanel({ eventId, resources }: { eventId: string; resources
                 }[item.status] as any;
                 return <SoftBadge tone={tone}>{EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS[item.status]}</SoftBadge>;
               } },
-              { id: 'value', header: 'Valor', width: 'w-[14%]', align: 'right', render: (item: CostumeAssignmentDTO) => formatCurrency(item.chargedValue ?? 0) },
-              { id: 'paid', header: 'Pago?', width: 'w-[13%]', align: 'center', render: (item: CostumeAssignmentDTO) => item.isPaid ? <SoftBadge tone="success">Pago</SoftBadge> : <SoftBadge tone="warning">Pendente</SoftBadge> },
-              { id: 'actions', header: 'Ações', width: 'w-[14%]', align: 'right', render: (item: CostumeAssignmentDTO) => <AssignmentActions assignment={item} eventId={eventId} costumes={costumeRows} resources={resources} /> },
+              { id: 'billing', header: 'Cobrança', width: 'w-[17%]', align: 'left', render: (item: CostumeAssignmentDTO) => COSTUME_BILLING_LABELS[item.billingMode] },
+              { id: 'value', header: 'Valor', width: 'w-[14%]', align: 'right', render: (item: CostumeAssignmentDTO) => getCostumeAssignmentValueLabel(item) },
+              { id: 'finance', header: 'Financeiro', width: 'w-[12%]', align: 'center', render: (item: CostumeAssignmentDTO) => getCostumeAssignmentFinancialBadge(item) },
+              { id: 'actions', header: 'Ações', width: 'w-[10%]', align: 'right', render: (item: CostumeAssignmentDTO) => <AssignmentActions assignment={item} eventId={eventId} costumes={costumeRows} resources={resources} /> },
             ]}
             data={assignmentRows}
             rowKey={(item) => item.id}
@@ -2347,29 +2552,405 @@ function FinancialFormDialog({ eventId, type, trigger }: { eventId: string; type
   );
 }
 
-function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; eventId: string }) {
+const FINANCIAL_STATUS_OPTIONS: Record<EventFinancialEntryType, EventFinancialEntryStatus[]> = {
+  COST: ['EXPECTED', 'PENDING', 'PAID', 'CANCELLED'],
+  REVENUE: ['EXPECTED', 'PENDING', 'RECEIVED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'CANCELLED'],
+};
+
+function toCurrencyInputText(value?: number | null) {
+  if (value == null) return '';
+  return value.toFixed(2).replace('.', ',');
+}
+
+function isFinancialRealized(status: EventFinancialEntryStatus) {
+  return status === 'PAID' || status === 'RECEIVED' || status === 'PARTIALLY_REFUNDED' || status === 'REFUNDED';
+}
+
+function getFinancialOriginLabel(entry: FinancialEntryDTO) {
+  if (entry.originType === 'MANUAL') return 'Manual';
+  if (entry.originType === 'TICKET_SALE') return 'Venda de ingresso';
+  if (entry.originType === 'COSTUME_ASSIGNMENT') return 'Vínculo de figurino';
+  if (entry.originType === 'COSTUME') return entry.originId?.startsWith('loss:') ? 'Prejuízo de figurino' : 'Figurino';
+  return 'Automática';
+}
+
+function getFinancialOriginActionLabel(entry: FinancialEntryDTO) {
+  if (entry.originType === 'TICKET_SALE') return 'Ajuste pela venda de ingresso';
+  if (entry.originType === 'COSTUME_ASSIGNMENT') return 'Ajuste pelo vínculo do figurino';
+  if (entry.originType === 'COSTUME') return entry.originId?.startsWith('loss:')
+    ? 'Ajuste pelo status do figurino'
+    : 'Ajuste pelo figurino';
+  return 'Ajuste pela origem';
+}
+
+function FinancialEntryDetailsDialog({
+  entry,
+  open,
+  onOpenChange,
+}: {
+  entry: FinancialEntryDTO;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const details = [
+    ['Tipo', entry.type === 'COST' ? 'Custo' : 'Receita'],
+    ['Categoria', entry.category],
+    ['Previsto', formatCurrency(entry.expectedAmount)],
+    ['Realizado', formatCurrency(entry.actualAmount ?? 0)],
+    ['Estornado', entry.refundedAmount ? formatCurrency(entry.refundedAmount) : '-'],
+    ['Status', EVENT_FINANCIAL_STATUS_LABELS[entry.status]],
+    ['Origem', getFinancialOriginLabel(entry)],
+    ['Vencimento', entry.dueDate ? formatDate(entry.dueDate) : '-'],
+    ['Realização', entry.realizedAt ? formatDate(entry.realizedAt) : '-'],
+    ['Método', entry.paymentMethod ? EVENT_PAYMENT_METHOD_LABELS[entry.paymentMethod] : '-'],
+    ['Fornecedor', entry.supplier || '-'],
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Detalhes do lançamento</DialogTitle>
+          <DialogDescription>{entry.description}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {details.map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+              <p className="mt-1 text-sm font-medium text-slate-900">{value}</p>
+            </div>
+          ))}
+        </div>
+        {entry.originType !== 'MANUAL' ? (
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+            Este lançamento é automático. Para alterar valores ou status, use a origem indicada: {getFinancialOriginActionLabel(entry).toLowerCase()}.
+          </div>
+        ) : null}
+        {entry.notes ? (
+          <Field label="Observações">
+            <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">{entry.notes}</div>
+          </Field>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FinancialEntryEditDialog({
+  entry,
+  eventId,
+  open,
+  onOpenChange,
+}: {
+  entry: FinancialEntryDTO;
+  eventId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const queryClient = useQueryClient();
+  const statusOptions = FINANCIAL_STATUS_OPTIONS[entry.type];
+  const [selectedStatus, setSelectedStatus] = useState<EventFinancialEntryStatus>(entry.status);
+  const [expectedAmountText, setExpectedAmountText] = useState(toCurrencyInputText(entry.expectedAmount));
+  const [actualAmountText, setActualAmountText] = useState(toCurrencyInputText(entry.actualAmount ?? entry.expectedAmount));
+  const isRealized = isFinancialRealized(selectedStatus);
+
   const mutation = useMutation({
-    mutationFn: (status: EventFinancialEntryStatus) => updateFinancialEntry(entry.id, {
-      status,
-      actualAmount: entry.actualAmount ?? entry.expectedAmount,
-      realizedAt: new Date().toISOString(),
-    }),
+    mutationFn: (payload: Record<string, unknown>) => updateFinancialEntry(entry.id, payload),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
       ]);
+      toast.success({ title: 'Lançamento atualizado', description: 'As alterações foram salvas com sucesso.' });
+      onOpenChange(false);
+    },
+    onError: (error) => toast.error({ title: 'Erro ao editar lançamento', description: (error as Error).message }),
+  });
+
+  function submit(formData: FormData) {
+    const status = nullableString(formData, 'status') as EventFinancialEntryStatus;
+    const realized = isFinancialRealized(status);
+
+    mutation.mutate({
+      category: nullableString(formData, 'category'),
+      description: nullableString(formData, 'description'),
+      supplier: entry.type === 'COST' ? nullableString(formData, 'supplier') : undefined,
+      expectedAmount: parseCurrencyInput(nullableString(formData, 'expectedAmount') ?? expectedAmountText),
+      actualAmount: realized ? parseCurrencyInput(nullableString(formData, 'actualAmount') ?? actualAmountText) : undefined,
+      dueDate: realized ? undefined : datetimeValue(formData, 'dueDate'),
+      realizedAt: realized ? datetimeValue(formData, 'realizedAt') : undefined,
+      status,
+      paymentMethod: realized ? nullableString(formData, 'paymentMethod') : undefined,
+      notes: nullableString(formData, 'notes'),
+    });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Editar lançamento</DialogTitle>
+          <DialogDescription>Atualize apenas lançamentos manuais. Lançamentos automáticos devem ser ajustados pela origem.</DialogDescription>
+        </DialogHeader>
+        <form action={submit} className="grid gap-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Categoria">
+              <NativeSelect
+                name="category"
+                defaultValue={entry.category}
+                required
+                options={(entry.type === 'COST' ? EVENT_COST_CATEGORIES : EVENT_REVENUE_CATEGORIES).map((category) => ({ value: category, label: category }))}
+              />
+            </Field>
+            <Field label="Status">
+              <NativeSelect
+                name="status"
+                defaultValue={selectedStatus}
+                required
+                onValueChange={(val) => setSelectedStatus(val as EventFinancialEntryStatus)}
+                options={statusOptions.map((status) => ({ value: status, label: EVENT_FINANCIAL_STATUS_LABELS[status] }))}
+              />
+            </Field>
+            <Field label="Descrição">
+              <Input name="description" defaultValue={entry.description} required className={FILTER_INPUT_CLASS} />
+            </Field>
+            {entry.type === 'COST' ? (
+              <Field label="Fornecedor">
+                <Input name="supplier" defaultValue={entry.supplier ?? ''} className={FILTER_INPUT_CLASS} />
+              </Field>
+            ) : null}
+            <Field label="Valor previsto">
+              <div className="relative flex items-center">
+                <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                <Input
+                  name="expectedAmount"
+                  type="text"
+                  value={expectedAmountText}
+                  onChange={(event) => setExpectedAmountText(formatCurrencyInput(event.target.value))}
+                  className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                  required
+                />
+              </div>
+            </Field>
+            {isRealized ? (
+              <>
+                <Field label={entry.type === 'COST' ? 'Valor pago' : 'Valor recebido'}>
+                  <div className="relative flex items-center">
+                    <span className="pointer-events-none absolute left-3 text-xs font-semibold text-slate-400">R$</span>
+                    <Input
+                      name="actualAmount"
+                      type="text"
+                      value={actualAmountText}
+                      onChange={(event) => setActualAmountText(formatCurrencyInput(event.target.value))}
+                      className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                      required
+                    />
+                  </div>
+                </Field>
+                <Field label={entry.type === 'COST' ? 'Data de pagamento' : 'Data de recebimento'}>
+                  <DateTimeField name="realizedAt" defaultValue={entry.realizedAt ?? getRoundedNowISOString()} />
+                </Field>
+                <Field label="Forma de pagamento">
+                  <NativeSelect
+                    name="paymentMethod"
+                    defaultValue={entry.paymentMethod}
+                    placeholder="Opcional"
+                    options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({ value: method, label: EVENT_PAYMENT_METHOD_LABELS[method] }))}
+                  />
+                </Field>
+              </>
+            ) : (
+              <Field label="Data prevista">
+                <DateTimeField name="dueDate" defaultValue={entry.dueDate} />
+              </Field>
+            )}
+          </div>
+          <Field label="Observações">
+            <Textarea name="notes" defaultValue={entry.notes ?? ''} className="rounded-xl border-slate-200" />
+          </Field>
+          <DialogFooter>
+            <Button type="submit" disabled={mutation.isPending}>Salvar alterações</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; eventId: string }) {
+  const queryClient = useQueryClient();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [fullRefundOpen, setFullRefundOpen] = useState(false);
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundText, setRefundText] = useState('');
+  const mutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => updateFinancialEntry(entry.id, payload),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) }),
+        queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
+      ]);
+      setCancelOpen(false);
+      setFullRefundOpen(false);
+      setRefundOpen(false);
+      setRefundText('');
     },
     onError: (error) => toast.error({ title: 'Erro no lançamento', description: (error as Error).message }),
   });
-  if (entry.originType !== 'MANUAL') return <SoftBadge tone="neutral">Automático</SoftBadge>;
+  const refundableAmount = entry.actualAmount ?? entry.expectedAmount;
+  const isManual = entry.originType === 'MANUAL';
+  const isPendingManual = isManual && (entry.status === 'EXPECTED' || entry.status === 'PENDING');
+  const canRefund = isManual && ((entry.type === 'REVENUE' && entry.status === 'RECEIVED') || (entry.type === 'COST' && entry.status === 'PAID'));
+  const realizedLabel = entry.type === 'COST' ? 'Marcar como pago' : 'Marcar como recebido';
+  const refundedLabel = entry.type === 'COST' ? 'Estornar pagamento' : 'Estornar recebimento';
+
+  function submitPartialRefund(formData: FormData) {
+    const refundedAmount = parseCurrencyInput(nullableString(formData, 'refundedAmount') ?? '');
+    if (refundedAmount <= 0 || refundedAmount >= refundableAmount) {
+      toast.error({ title: 'Valor inválido', description: 'Informe um valor maior que zero e menor que o recebido.' });
+      return;
+    }
+    mutation.mutate({
+      status: 'PARTIALLY_REFUNDED',
+      actualAmount: refundableAmount,
+      realizedAt: entry.realizedAt ?? new Date().toISOString(),
+      refundedAmount,
+    });
+  }
+
   return (
-    <div className="flex justify-end gap-2">
-      {entry.type === 'COST' && entry.status !== 'PAID' ? <Button size="sm" variant="outline" className={SMALL_OUTLINE_BUTTON_CLASS} onClick={() => mutation.mutate('PAID')}>Pago</Button> : null}
-      {entry.type === 'REVENUE' && entry.status !== 'RECEIVED' ? <Button size="sm" variant="outline" className={SMALL_OUTLINE_BUTTON_CLASS} onClick={() => mutation.mutate('RECEIVED')}>Recebido</Button> : null}
-      {entry.status !== 'CANCELLED' ? <Button size="sm" variant="outline" className={SMALL_OUTLINE_BUTTON_CLASS} onClick={() => mutation.mutate('CANCELLED')}>Cancelar</Button> : null}
-    </div>
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-slate-900">
+            <MoreVertical className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onClick={() => setDetailsOpen(true)}>
+            <Eye className="mr-2 h-4 w-4" />
+            Ver detalhes
+          </DropdownMenuItem>
+
+          {isManual ? (
+            <>
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Editar
+              </DropdownMenuItem>
+              {isPendingManual ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => mutation.mutate({
+                      status: entry.type === 'COST' ? 'PAID' : 'RECEIVED',
+                      actualAmount: entry.actualAmount ?? entry.expectedAmount,
+                      realizedAt: entry.realizedAt ?? new Date().toISOString(),
+                    })}
+                  >
+                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    {realizedLabel}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50" onClick={() => setCancelOpen(true)}>
+                    <XCircle className="mr-2 h-4 w-4" />
+                    Cancelar
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              {canRefund ? (
+                <>
+                  <DropdownMenuSeparator />
+                  {entry.type === 'REVENUE' ? (
+                    <DropdownMenuItem onClick={() => setRefundOpen(true)}>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Estorno parcial
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50" onClick={() => setFullRefundOpen(true)}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    {refundedLabel}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled>
+                {getFinancialOriginActionLabel(entry)}
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <FinancialEntryDetailsDialog entry={entry} open={detailsOpen} onOpenChange={setDetailsOpen} />
+
+      {isManual ? (
+        <>
+          <FinancialEntryEditDialog entry={entry} eventId={eventId} open={editOpen} onOpenChange={setEditOpen} />
+
+          <Dialog open={refundOpen} onOpenChange={setRefundOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Estorno parcial</DialogTitle>
+                <DialogDescription>Informe o valor estornado para ajustar o recebido líquido.</DialogDescription>
+              </DialogHeader>
+              <form action={submitPartialRefund} className="grid gap-4">
+                <Field label="Valor estornado">
+                  <div className="relative flex items-center">
+                    <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">R$</span>
+                    <Input
+                      name="refundedAmount"
+                      value={refundText}
+                      onChange={(event) => setRefundText(formatCurrencyInput(event.target.value))}
+                      className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
+                      required
+                    />
+                  </div>
+                </Field>
+                <DialogFooter>
+                  <Button type="submit" disabled={mutation.isPending}>Confirmar estorno</Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <ConfirmDialog
+            open={cancelOpen}
+            onOpenChange={setCancelOpen}
+            title="Cancelar lançamento?"
+            description="O lançamento manual será marcado como cancelado e deixará de compor os resultados do evento."
+            confirmText="Cancelar lançamento"
+            cancelText="Voltar"
+            variant="destructive"
+            onConfirm={() => mutation.mutate({ status: 'CANCELLED' })}
+            loading={mutation.isPending}
+          />
+
+          <ConfirmDialog
+            open={fullRefundOpen}
+            onOpenChange={setFullRefundOpen}
+            title={`${refundedLabel}?`}
+            description={entry.type === 'COST'
+              ? 'O custo manual será marcado como estornado e deixará de compor os custos pagos.'
+              : 'A receita manual será marcada como estornada e deixará de compor as receitas recebidas.'}
+            confirmText={refundedLabel}
+            cancelText="Cancelar"
+            variant="destructive"
+            onConfirm={() => mutation.mutate({
+              status: 'REFUNDED',
+              actualAmount: refundableAmount,
+              realizedAt: entry.realizedAt ?? new Date().toISOString(),
+              refundedAmount: refundableAmount,
+            })}
+            loading={mutation.isPending}
+          />
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -2408,6 +2989,7 @@ function EventFinancialPanel({ eventId, event }: { eventId: string; event?: Scho
                 RECEIVED: 'success',
                 CANCELLED: 'danger',
                 REFUNDED: 'neutral',
+                PARTIALLY_REFUNDED: 'warning',
               }[entry.status] as any;
               return <SoftBadge tone={tone}>{EVENT_FINANCIAL_STATUS_LABELS[entry.status]}</SoftBadge>;
             } },
@@ -2752,7 +3334,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
                 Inscrever aluno
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto pr-2">
+            <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>Inscrever Aluno no Evento</DialogTitle>
                 <DialogDescription>Selecione um aluno cadastrado e especifique a taxa cobrada.</DialogDescription>
@@ -2973,8 +3555,20 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
                   width: 'w-[15%]',
                   align: 'left',
                   render: (part) => {
-                    const pct = (part.registrationFeeCharged === 0 || part.isFeePaid) ? '100%' : '0%';
-                    return <span className="font-semibold text-slate-900">{pct}</span>;
+                    const pct = part.percentPaid !== undefined ? part.percentPaid : ((part.registrationFeeCharged === 0 || part.isFeePaid) ? 100 : 0);
+                    return (
+                      <div className="flex w-full max-w-[150px] flex-col gap-1">
+                        <span className="text-xs font-semibold text-slate-900">
+                          {pct}%
+                        </span>
+                        <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-[#A94DFF] rounded-full transition-all duration-300"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
                   },
                 },
                 {
@@ -2983,12 +3577,20 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
                   width: 'w-[20%]',
                   align: 'left',
                   render: (part) => {
-                    if (part.registrationFeeCharged === 0 || !part.isFeePaid) {
+                    if (part.registrationFeeCharged === 0) {
                       return <span className="text-slate-400">—</span>;
                     }
+                    const method = part.feePaymentMethod;
+                    const labels: Record<string, string> = {
+                      BOLETO: 'Boleto',
+                      PIX: 'Pix',
+                      CREDIT_CARD: 'Cartão de Crédito',
+                      ...EVENT_PAYMENT_METHOD_LABELS,
+                    };
+                    const label = method ? (labels[method] || method) : '—';
                     return (
                       <span className="text-slate-700 text-sm font-medium">
-                        {part.feePaymentMethod ? EVENT_PAYMENT_METHOD_LABELS[part.feePaymentMethod as keyof typeof EVENT_PAYMENT_METHOD_LABELS] : 'Pago'}
+                        {label}
                       </span>
                     );
                   },
@@ -2999,13 +3601,19 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
                   width: 'w-[15%]',
                   align: 'left',
                   render: (part) => {
-                    if (part.registrationFeeCharged === 0) {
-                      return <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Isento</span>;
-                    }
-                    if (part.isFeePaid) {
-                      return <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Pago</span>;
-                    }
-                    return <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Pendente</span>;
+                    const status = part.financialStatus || (part.registrationFeeCharged === 0 ? 'ISENTO' : part.isFeePaid ? 'QUITADO' : 'PENDENTE');
+                    
+                    const badges = {
+                      ISENTO: <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Isento</span>,
+                      QUITADO: <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">Quitado</span>,
+                      EM_DIA: <span className="inline-flex rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">Em dia</span>,
+                      ATRASADO: <span className="inline-flex rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-800">Atrasado</span>,
+                      PENDENTE: <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">Pendente</span>,
+                      ESTORNADO: <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Estornado</span>,
+                      CANCELADO: <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">Cancelado</span>,
+                    };
+                    
+                    return badges[status as keyof typeof badges] || badges.PENDENTE;
                   },
                 },
                 {

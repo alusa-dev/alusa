@@ -58,6 +58,19 @@
       "env": {
         "DEBUG": "false"
       }
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "dotenv",
+        "-e",
+        ".env.local",
+        "--",
+        "npx",
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "cwd": "${workspaceFolder}"
     }
   }
 }

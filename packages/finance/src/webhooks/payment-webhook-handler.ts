@@ -1,5 +1,11 @@
 import { prisma } from '@alusa/database';
 import type { PaymentStatus } from '@alusa/asaas';
+import {
+  cancelPublicEventMapOrderByPayment,
+  confirmPublicEventMapOrderPayment,
+  refundPublicEventMapOrderByPayment,
+  syncPublicEventMapOrderPaymentCreated,
+} from '@alusa/lib/events/map/event-map.service';
 import { isBillingV2FlagEnabled } from '../foundation/billing-v2-flags';
 import { resolvePaymentToLocalEntity } from './payment-resolver';
 import {
@@ -580,32 +586,93 @@ async function updateEventFinancialEntryFromWebhook(
 
   if (!entry) return;
 
-  const asaasStatus = p.status;
-  let nextStatus: 'RECEIVED' | 'PENDING' | 'REFUNDED' | 'CANCELLED' = 'PENDING';
-  let actualAmount: number | null = null;
+  // Let's load all charges for this plan/payment to compute dynamic values
+  let charges: any[] = [];
+  if (installmentId) {
+    const plan = await prisma.standaloneInstallmentPlan.findFirst({
+      where: { contaId, asaasInstallmentId: installmentId },
+      include: { charges: true },
+    });
+    if (plan) {
+      charges = plan.charges;
+    }
+  }
+
+  if (charges.length === 0) {
+    const directCharge = await prisma.charge.findFirst({
+      where: { contaId, asaasPaymentId: paymentId },
+    });
+    if (directCharge) {
+      if (directCharge.standaloneInstallmentPlanId) {
+        charges = await prisma.charge.findMany({
+          where: { contaId, standaloneInstallmentPlanId: directCharge.standaloneInstallmentPlanId },
+        });
+      } else {
+        charges = [directCharge];
+      }
+    }
+  }
+
+  // Fallback if charges aren't materialised yet or is a one-off payment
+  if (charges.length === 0) {
+    charges = [{
+      status: p.status,
+      value: p.value,
+      billingType: p.billingType,
+    }];
+  }
+
+  const paidStatus = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'];
+  const refundedStatus = ['REFUNDED', 'REFUND_IN_PROGRESS', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DEPOSITED'];
+  const cancelledStatus = ['CANCELED', 'DELETED'];
+
+  const paidCharges = charges.filter((c) => paidStatus.includes(c.status));
+  const refundedCharges = charges.filter((c) => refundedStatus.includes(c.status));
+  const cancelledCharges = charges.filter((c) => cancelledStatus.includes(c.status));
+
+  const totalPaid = paidCharges.reduce((sum, c) => sum + (c.value ? Number(c.value) : 0), 0);
+  const totalRefunded = refundedCharges.reduce((sum, c) => sum + (c.value ? Number(c.value) : 0), 0);
+
+  let nextStatus: 'RECEIVED' | 'PENDING' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'CANCELLED' = 'PENDING';
   let realizedAt: Date | null = null;
   let cancelledAt: Date | null = null;
   let refundedAt: Date | null = null;
 
-  if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(asaasStatus)) {
-    nextStatus = 'RECEIVED';
-    actualAmount = entry.expectedAmount.toNumber();
-    const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
-    realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
-  } else if (['REFUNDED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DEPOSITED'].includes(asaasStatus)) {
-    nextStatus = 'REFUNDED';
-    refundedAt = new Date();
-  } else if (['DELETED'].includes(asaasStatus) || p.deleted) {
+  if (cancelledCharges.length === charges.length) {
     nextStatus = 'CANCELLED';
     cancelledAt = new Date();
+  } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
+    nextStatus = 'PARTIALLY_REFUNDED';
+    refundedAt = new Date();
+  } else if (refundedCharges.length > 0 && (refundedCharges.length + cancelledCharges.length === charges.length)) {
+    nextStatus = 'REFUNDED';
+    refundedAt = new Date();
+  } else if (paidCharges.length + cancelledCharges.length + refundedCharges.length === charges.length) {
+    nextStatus = 'RECEIVED';
+    const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
+    realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
+  } else {
+    nextStatus = 'PENDING';
+    if (paidCharges.length > 0) {
+      const paymentDateStr = p.clientPaymentDate ?? p.paymentDate ?? p.creditDate;
+      realizedAt = paymentDateStr ? new Date(paymentDateStr) : new Date();
+    }
   }
+
+  const actualAmount = totalPaid > 0 ? totalPaid : null;
+  const refundedAmount = payload.event === 'PAYMENT_PARTIALLY_REFUNDED'
+    ? Math.min(Number(p.value ?? 0), totalPaid || Number(entry.expectedAmount))
+    : totalRefunded;
+  const netAmount = actualAmount == null ? null : Math.max(actualAmount - refundedAmount, 0);
 
   await prisma.eventFinancialEntry.update({
     where: { id: entry.id },
     data: {
       status: nextStatus as any,
-      paymentStatus: asaasStatus,
+      paymentStatus: p.status,
       actualAmount: actualAmount ? new Prisma.Decimal(actualAmount) : null,
+      refundedAmount: new Prisma.Decimal(refundedAmount),
+      netAmount: netAmount == null ? null : new Prisma.Decimal(netAmount),
       realizedAt,
       cancelledAt,
       refundedAt,
@@ -658,6 +725,60 @@ async function handlePaymentWebhookCore(
       ...payload,
       payment: await enrichPaymentWithOfficialLinks(contaId, payload.payment),
     };
+
+    try {
+      const paidAt =
+        payload.payment.clientPaymentDate ??
+        payload.payment.paymentDate ??
+        payload.payment.creditDate ??
+        new Date().toISOString();
+      if (
+        ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH', 'PAYMENT_DUNNING_RECEIVED'].includes(payload.event) ||
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(payload.payment.status)
+      ) {
+        await confirmPublicEventMapOrderPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: payload.payment.status,
+          invoiceUrl: payload.payment.invoiceUrl ?? null,
+          paidAt,
+          paidAmount: payload.payment.value,
+        });
+      } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
+        await syncPublicEventMapOrderPaymentCreated({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: payload.payment.status,
+          invoiceUrl: payload.payment.invoiceUrl ?? null,
+        });
+      } else if (payload.event === 'PAYMENT_REFUNDED' || payload.payment.status === 'REFUNDED') {
+        await refundPublicEventMapOrderByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          refundedAmount: payload.payment.value,
+        });
+      } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
+        await refundPublicEventMapOrderByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          refundedAmount: payload.payment.value,
+          partial: true,
+        });
+      } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
+        await cancelPublicEventMapOrderByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          reason: payload.event,
+        });
+      }
+    } catch (eventOrderError) {
+      console.error('[payment-webhook] Falha ao sincronizar pedido público de evento:', eventOrderError);
+    }
 
     // A validação de origem/assinatura do webhook deve acontecer no handler principal
     // (com base no rawBody) para evitar recomputar HMAC em JSON reconstruído.

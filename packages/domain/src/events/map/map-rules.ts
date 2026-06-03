@@ -10,7 +10,7 @@ export type EventMapTransitionResult =
 
 const MAP_STATUS_TRANSITIONS: Record<EventMapStatus, EventMapStatus[]> = {
   DRAFT: ['PUBLISHED', 'ARCHIVED'],
-  PUBLISHED: ['ARCHIVED'],
+  PUBLISHED: ['PUBLISHED', 'ARCHIVED'],
   ARCHIVED: [],
 };
 

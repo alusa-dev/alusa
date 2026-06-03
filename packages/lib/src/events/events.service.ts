@@ -1,3 +1,4 @@
+import { deletePayment as deleteAsaasPayment } from '@alusa/asaas';
 import { Prisma, PrismaClient, EventPaymentMethod } from '@prisma/client';
 
 const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
@@ -9,6 +10,7 @@ const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => 
 
 import {
   calculateEventMetrics,
+  resolveEventParticipantPayment,
   validateCostumeAssignmentStatusTransition,
   validateSchoolEventStatusTransition,
   validateTicketLotStatusTransition,
@@ -17,6 +19,7 @@ import {
 } from '@alusa/domain/events';
 
 import { prisma } from '../prisma';
+import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
 import type {
   CreateCostumeAssignmentInput,
   CreateCostumeInput,
@@ -73,6 +76,7 @@ const eventInclude = {
   costumes: true,
   assignments: true,
   financialEntries: true,
+  participants: true,
 } satisfies Prisma.SchoolEventInclude;
 
 type SchoolEventRecord = Prisma.SchoolEventGetPayload<{ include: typeof eventInclude }>;
@@ -150,7 +154,51 @@ async function recordEventAudit(
   });
 }
 
-function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes'>): EventMetrics {
+type ParticipantPaymentSnapshot = {
+  percentPaid: number;
+  financialStatus: string;
+  totalPaid: number;
+  totalRefunded: number;
+  netPaid: number;
+  realizedAt: Date | null;
+  entryStatus: 'PENDING' | 'RECEIVED' | 'CANCELLED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
+};
+
+function financialEntryStatusFromParticipantStatus(status: string): ParticipantPaymentSnapshot['entryStatus'] {
+  if (status === 'QUITADO') return 'RECEIVED';
+  if (status === 'CANCELADO') return 'CANCELLED';
+  if (status === 'ESTORNADO') return 'REFUNDED';
+  if (status === 'ESTORNADO_PARCIAL') return 'PARTIALLY_REFUNDED';
+  return 'PENDING';
+}
+
+function applyParticipantPaymentSnapshotsToEntries<T extends { id: string; status: any; actualAmount: any; realizedAt?: Date | null; refundedAmount?: any; netAmount?: any }>(
+  entries: T[],
+  snapshots: Map<string, ParticipantPaymentSnapshot> | undefined,
+): T[] {
+  if (!snapshots?.size) return entries;
+
+  return entries.map((entry) => {
+    const snapshot = snapshots.get(entry.id);
+    if (!snapshot) return entry;
+
+    return {
+      ...entry,
+      status: snapshot.entryStatus,
+      actualAmount: snapshot.totalPaid > 0 ? decimal(snapshot.totalPaid) : null,
+      refundedAmount: snapshot.totalRefunded > 0 ? decimal(snapshot.totalRefunded) : (entry.refundedAmount ?? decimal(0)),
+      netAmount: snapshot.netPaid > 0 ? decimal(snapshot.netPaid) : null,
+      realizedAt: snapshot.realizedAt,
+    };
+  });
+}
+
+function buildMetrics(
+  record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLots' | 'financialEntries' | 'assignments' | 'costumes'>,
+  paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>,
+): EventMetrics {
+  const financialEntries = applyParticipantPaymentSnapshotsToEntries(record.financialEntries, paymentSnapshots);
+
   return calculateEventMetrics({
     ticketSales: record.ticketSales.map((sale) => ({
       status: sale.status,
@@ -162,16 +210,18 @@ function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLot
       quantitySold: lot.quantitySold,
       unitPrice: toMoney(lot.unitPrice),
     })),
-    financialEntries: record.financialEntries.map((entry) => ({
+    financialEntries: financialEntries.map((entry) => ({
       type: entry.type,
       status: entry.status,
       expectedAmount: toMoney(entry.expectedAmount),
       actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
+      refundedAmount: entry.refundedAmount == null ? null : toMoney(entry.refundedAmount),
       originType: entry.originType,
       category: entry.category,
     })),
     costumeAssignments: record.assignments.map((assignment) => ({
       status: assignment.status,
+      billingMode: assignment.billingMode,
       chargedValue: assignment.chargedValue == null ? null : toMoney(assignment.chargedValue),
       isPaid: assignment.isPaid,
     })),
@@ -182,8 +232,8 @@ function buildMetrics(record: Pick<SchoolEventRecord, 'ticketSales' | 'ticketLot
   });
 }
 
-export function mapSchoolEvent(record: SchoolEventRecord) {
-  const metrics = buildMetrics(record);
+export function mapSchoolEvent(record: SchoolEventRecord, paymentSnapshots?: Map<string, ParticipantPaymentSnapshot>) {
+  const metrics = buildMetrics(record, paymentSnapshots);
 
   return {
     id: record.id,
@@ -276,6 +326,97 @@ function assertOperationalEvent(status: string) {
   }
 }
 
+function assertFinancialAdjustmentEvent(status: string) {
+  if (status === 'CANCELLED' || status === 'ARCHIVED') {
+    throw new EventsError(
+      'EVENTO_BLOQUEADO',
+      'Este evento não aceita ajustes financeiros.',
+      409,
+    );
+  }
+}
+
+async function assertEventCanBeCancelled(tx: Prisma.TransactionClient, contaId: string, eventId: string) {
+  const [openEntries, openSales, openOrders, heldReservations] = await Promise.all([
+    tx.eventFinancialEntry.count({
+      where: {
+        contaId,
+        eventId,
+        status: { in: ['EXPECTED', 'PENDING'] },
+      },
+    }),
+    tx.eventTicketSale.count({
+      where: {
+        contaId,
+        eventId,
+        status: { in: ['PENDING', 'PAID'] },
+      },
+    }),
+    tx.eventMapOrder.count({
+      where: {
+        contaId,
+        eventId,
+        status: { in: ['PAYMENT_PENDING', 'CONFIRMED', 'PARTIALLY_REFUNDED'] },
+      },
+    }),
+    tx.eventMapReservation.count({
+      where: {
+        contaId,
+        eventId,
+        status: 'HELD',
+        expiresAt: { gt: new Date() },
+      },
+    }),
+  ]);
+
+  const blockers = [
+    openEntries > 0 ? `${openEntries} lançamento(s) financeiro(s) aberto(s)` : null,
+    openSales > 0 ? `${openSales} venda(s) ativa(s)` : null,
+    openOrders > 0 ? `${openOrders} pedido(s) público(s) ativo(s)` : null,
+    heldReservations > 0 ? `${heldReservations} reserva(s) pública(s) ativa(s)` : null,
+  ].filter(Boolean);
+
+  if (blockers.length > 0) {
+    throw new EventsError(
+      'EVENTO_COM_PENDENCIAS',
+      `Não é possível cancelar o evento. Resolva antes: ${blockers.join(', ')}.`,
+      409,
+    );
+  }
+}
+
+async function assertTicketLotCanBeCancelled(tx: Prisma.TransactionClient, contaId: string, lotId: string) {
+  const [activeSales, pendingOrders, heldSeats] = await Promise.all([
+    tx.eventTicketSale.count({
+      where: { contaId, lotId, status: { in: ['PENDING', 'PAID', 'COMPLIMENTARY'] } },
+    }),
+    tx.eventMapOrderItem.count({
+      where: {
+        contaId,
+        lotId,
+        order: { status: { in: ['PAYMENT_PENDING', 'CONFIRMED', 'PARTIALLY_REFUNDED'] } },
+      },
+    }),
+    tx.eventMapPublicSeat.count({
+      where: { contaId, lotId, status: 'HELD' },
+    }),
+  ]);
+
+  const blockers = [
+    activeSales > 0 ? `${activeSales} venda(s) ativa(s)` : null,
+    pendingOrders > 0 ? `${pendingOrders} item(ns) em pedido público ativo` : null,
+    heldSeats > 0 ? `${heldSeats} assento(s) reservado(s)` : null,
+  ].filter(Boolean);
+
+  if (blockers.length > 0) {
+    throw new EventsError(
+      'LOTE_COM_PENDENCIAS',
+      `Não é possível cancelar o lote. Resolva antes: ${blockers.join(', ')}.`,
+      409,
+    );
+  }
+}
+
 function resolveTicketSettings(input: {
   hasTickets?: boolean;
   ticketMode?: SchoolEventRecord['ticketMode'];
@@ -320,7 +461,8 @@ export async function listSchoolEvents(ctx: Pick<EventsContext, 'contaId'>, quer
     }),
   ]);
 
-  const data = records.map(mapSchoolEvent);
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, records);
+  const data = records.map((record) => mapSchoolEvent(record, paymentSnapshots));
   const summary = data.reduce(
     (acc, event) => {
       if (event.status === 'ACTIVE') acc.active += 1;
@@ -345,7 +487,9 @@ export async function listSchoolEvents(ctx: Pick<EventsContext, 'contaId'>, quer
 }
 
 export async function getSchoolEvent(ctx: Pick<EventsContext, 'contaId'>, eventId: string) {
-  return mapSchoolEvent(await getEventRecordOrThrow(ctx.contaId, eventId));
+  const record = await getEventRecordOrThrow(ctx.contaId, eventId);
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, [record]);
+  return mapSchoolEvent(record, paymentSnapshots);
 }
 
 export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolEventInput) {
@@ -441,6 +585,9 @@ export async function updateSchoolEventStatus(ctx: EventsContext, eventId: strin
     const transition = validateSchoolEventStatusTransition(current.status, nextStatus);
     if (!transition.ok) {
       throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
+    }
+    if (nextStatus === 'CANCELLED') {
+      await assertEventCanBeCancelled(tx, ctx.contaId, eventId);
     }
 
     const now = new Date();
@@ -642,6 +789,9 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
     if (input.status) {
       const transition = validateTicketLotStatusTransition(current.status, input.status);
       if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
+      if (input.status === 'CANCELLED') {
+        await assertTicketLotCanBeCancelled(tx, ctx.contaId, lotId);
+      }
     }
 
     const updated = await tx.eventTicketLot.update({
@@ -708,22 +858,152 @@ export function mapTicketSale(
     revenueEntryId: sale.revenueEntryId,
     createdAt: sale.createdAt.toISOString(),
     updatedAt: sale.updatedAt.toISOString(),
+    source: sale.eventMapOrderId ? ('PUBLIC_ORDER' as const) : ('MANUAL_SALE' as const),
+    eventMapOrderId: sale.eventMapOrderId,
+    asaasPaymentId: sale.asaasPaymentId,
+  };
+}
+
+function mapPendingPublicOrderAsTicketSale(
+  order: Prisma.EventMapOrderGetPayload<{
+    include: {
+      event: { select: { id: true; name: true; startsAt: true } };
+      reservation: {
+        include: {
+          seats: {
+            include: {
+              publicSeat: {
+                select: { lotId: true; lotName: true };
+              };
+            };
+          };
+        };
+      };
+    };
+  }>,
+) {
+  const seats = order.reservation?.seats ?? [];
+  const lots = seats
+    .map((seat) => {
+      if (!seat.publicSeat.lotId && !seat.publicSeat.lotName) return null;
+      return {
+        id: seat.publicSeat.lotId ?? `public-seat:${order.id}`,
+        name: seat.publicSeat.lotName ?? 'Mapa público',
+        ticketType: 'OTHER' as const,
+      };
+    })
+    .filter((lot): lot is { id: string; name: string; ticketType: 'OTHER' } => Boolean(lot));
+  const uniqueLots = lots.filter((lot, index, arr) => arr.findIndex((entry) => entry.id === lot.id) === index);
+  const primaryLot = uniqueLots[0] ?? null;
+  const lotName =
+    uniqueLots.length <= 1
+      ? (primaryLot?.name ?? 'Mapa público')
+      : `${primaryLot?.name ?? 'Mapa público'} +${uniqueLots.length - 1}`;
+
+  return {
+    id: order.id,
+    contaId: order.contaId,
+    eventId: order.eventId,
+    event: { ...order.event, startsAt: order.event.startsAt.toISOString() },
+    lotId: primaryLot?.id ?? `public-order:${order.id}`,
+    lot: {
+      id: primaryLot?.id ?? `public-order:${order.id}`,
+      name: lotName,
+      ticketType: primaryLot?.ticketType ?? 'OTHER',
+    },
+    buyerName: order.buyerName,
+    aluno: null,
+    responsavel: null,
+    quantity: seats.length,
+    unitPriceSnapshot: seats.length > 0 ? toMoney(order.totalAmount) / seats.length : toMoney(order.totalAmount),
+    totalAmount: toMoney(order.totalAmount),
+    paymentMethod: null,
+    paymentMethodLabel: 'Checkout público',
+    status: 'RESERVED' as const,
+    soldAt: order.createdAt.toISOString(),
+    paidAt: null,
+    cancelledAt: toIso(order.cancelledAt),
+    refundedAt: toIso(order.refundedAt),
+    createdBy: null,
+    notes: order.paymentStatus ?? 'Aguardando pagamento do checkout público.',
+    revenueEntryId: null,
+    createdAt: order.createdAt.toISOString(),
+    updatedAt: order.updatedAt.toISOString(),
+    source: 'PUBLIC_ORDER' as const,
+    eventMapOrderId: order.id,
+    asaasPaymentId: order.asaasPaymentId,
+    reservationExpiresAt: toIso(order.expiresAt),
+    invoiceUrl: order.invoiceUrl,
+    ticketsUrl: null,
   };
 }
 
 export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input: { eventId?: string } = {}) {
-  const sales = await prisma.eventTicketSale.findMany({
-    where: { contaId: ctx.contaId, ...(input.eventId ? { eventId: input.eventId } : {}) },
-    include: {
-      event: { select: { id: true, name: true, startsAt: true } },
-      lot: { select: { id: true, name: true, ticketType: true } },
-      aluno: { select: { id: true, nome: true } },
-      responsavel: { select: { id: true, nome: true } },
-      createdBy: { select: { id: true, nome: true } },
-    },
-    orderBy: [{ soldAt: 'desc' }, { createdAt: 'desc' }],
+  const [sales, pendingOrders] = await Promise.all([
+    prisma.eventTicketSale.findMany({
+      where: { contaId: ctx.contaId, ...(input.eventId ? { eventId: input.eventId } : {}) },
+      include: {
+        event: { select: { id: true, name: true, startsAt: true } },
+        lot: { select: { id: true, name: true, ticketType: true } },
+        aluno: { select: { id: true, nome: true } },
+        responsavel: { select: { id: true, nome: true } },
+        createdBy: { select: { id: true, nome: true } },
+      },
+      orderBy: [{ soldAt: 'desc' }, { createdAt: 'desc' }],
+    }),
+    prisma.eventMapOrder.findMany({
+      where: {
+        contaId: ctx.contaId,
+        status: 'PAYMENT_PENDING',
+        ...(input.eventId ? { eventId: input.eventId } : {}),
+      },
+      include: {
+        event: { select: { id: true, name: true, startsAt: true } },
+        reservation: {
+          include: {
+            seats: {
+              include: {
+                publicSeat: {
+                  select: { lotId: true, lotName: true },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+    }),
+  ]);
+
+  const publicOrderIds = [...new Set(sales.map((sale) => sale.eventMapOrderId).filter((orderId): orderId is string => Boolean(orderId)))];
+  const publicOrders = publicOrderIds.length
+    ? await prisma.eventMapOrder.findMany({
+        where: { contaId: ctx.contaId, id: { in: publicOrderIds } },
+        select: { id: true, status: true, accessToken: true, invoiceUrl: true, asaasPaymentId: true },
+      })
+    : [];
+  const publicOrdersById = new Map(publicOrders.map((order) => [order.id, order]));
+
+  const mappedSales = sales.map((sale) => {
+    const dto = mapTicketSale(sale);
+    if (!sale.eventMapOrderId) return dto;
+
+    const order = publicOrdersById.get(sale.eventMapOrderId);
+    return {
+      ...dto,
+      source: 'PUBLIC_ORDER' as const,
+      asaasPaymentId: dto.asaasPaymentId ?? order?.asaasPaymentId ?? null,
+      invoiceUrl: order?.invoiceUrl ?? null,
+      ticketsUrl:
+        order?.status === 'CONFIRMED'
+          ? `/api/events/public-orders/${order.id}/tickets`
+          : null,
+    };
   });
-  return sales.map(mapTicketSale);
+
+  return [...mappedSales, ...pendingOrders.map(mapPendingPublicOrderAsTicketSale)].sort(
+    (left, right) => new Date(right.soldAt).getTime() - new Date(left.soldAt).getTime(),
+  );
 }
 
 async function getTicketSaleDto(db: DbClient, contaId: string, saleId: string) {
@@ -942,11 +1222,11 @@ export async function refundTicketSale(ctx: EventsContext, saleId: string, reaso
     const now = new Date();
     const updated = await tx.eventTicketSale.update({
       where: { id: saleId },
-      data: { status: 'REFUNDED', refundedAt: now, notes: reason ?? current.notes },
+      data: { status: 'REFUNDED', refundedAt: now, refundedAmount: current.totalAmount, notes: reason ?? current.notes },
     });
     await tx.eventFinancialEntry.updateMany({
       where: { contaId: ctx.contaId, originType: 'TICKET_SALE', originId: saleId },
-      data: { status: 'REFUNDED', refundedAt: now, actualAmount: current.totalAmount },
+      data: { status: 'REFUNDED', refundedAt: now, actualAmount: current.totalAmount, refundedAmount: current.totalAmount, netAmount: decimal(0) },
     });
     await syncLotQuantity(tx, ctx.contaId, current.lotId);
 
@@ -1011,7 +1291,7 @@ export async function createCostume(ctx: EventsContext, input: CreateCostumeInpu
   return prisma.$transaction(async (tx) => {
     const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertOperationalEvent(event.status);
+    assertFinancialAdjustmentEvent(event.status);
 
     const costume = await tx.eventCostume.create({
       data: {
@@ -1074,7 +1354,7 @@ export async function updateCostume(ctx: EventsContext, costumeId: string, input
       include: { event: true },
     });
     if (!current) throw new EventsError('FIGURINO_NAO_ENCONTRADO', 'Figurino não encontrado.', 404);
-    assertOperationalEvent(current.event.status);
+    assertFinancialAdjustmentEvent(current.event.status);
 
     const updated = await tx.eventCostume.update({
       where: { id: costumeId },
@@ -1131,6 +1411,7 @@ export function mapCostumeAssignment(
     status: assignment.status,
     chargedValue: assignment.chargedValue == null ? null : toMoney(assignment.chargedValue),
     isPaid: assignment.isPaid,
+    billingMode: assignment.billingMode,
     deliveredAt: toIso(assignment.deliveredAt),
     returnedAt: toIso(assignment.returnedAt),
     notes: assignment.notes,
@@ -1196,6 +1477,15 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
       throw new EventsError('DEVOLUCAO_INVALIDA', 'Não é possível devolver antes da entrega.', 422);
     }
 
+    const billingMode = input.billingMode ?? 'SEPARATE_CHARGE';
+    const chargedValue =
+      billingMode === 'FREE'
+        ? 0
+        : toMoney(input.chargedValue == null ? costume.chargedValue : input.chargedValue);
+    if (billingMode === 'SEPARATE_CHARGE' && chargedValue <= 0) {
+      throw new EventsError('VALOR_OBRIGATORIO', 'Informe um valor maior que zero para cobrança separada.', 422);
+    }
+
     const assignment = await tx.eventCostumeAssignment.create({
       data: {
         contaId: ctx.contaId,
@@ -1205,8 +1495,9 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
         turmaId: input.turmaId,
         definedSize: input.definedSize,
         status: input.status,
-        chargedValue: input.chargedValue == null ? costume.chargedValue : decimal(input.chargedValue),
-        isPaid: input.isPaid,
+        billingMode,
+        chargedValue: billingMode === 'FREE' ? null : decimal(chargedValue),
+        isPaid: billingMode === 'SEPARATE_CHARGE' ? input.isPaid : false,
         deliveredAt: input.deliveredAt,
         returnedAt: input.returnedAt,
         deliveredByUserId: input.status === 'DELIVERED' ? ctx.userId : null,
@@ -1214,8 +1505,7 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
       },
     });
 
-    const chargedValue = toMoney(assignment.chargedValue);
-    if (chargedValue > 0) {
+    if (billingMode === 'SEPARATE_CHARGE' && chargedValue > 0) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -1226,9 +1516,9 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
           originType: 'COSTUME_ASSIGNMENT',
           originId: assignment.id,
           expectedAmount: decimal(chargedValue),
-          actualAmount: assignment.isPaid ? decimal(chargedValue) : null,
-          status: assignment.isPaid ? 'RECEIVED' : 'PENDING',
-          realizedAt: assignment.isPaid ? new Date() : null,
+          actualAmount: input.isPaid ? decimal(chargedValue) : null,
+          status: input.isPaid ? 'RECEIVED' : 'PENDING',
+          realizedAt: input.isPaid ? new Date() : null,
           createdByUserId: ctx.userId,
         },
       });
@@ -1261,6 +1551,13 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     if (input.status) {
       const transition = validateCostumeAssignmentStatusTransition(current.status, input.status);
       if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
+      if (input.status === 'CANCELLED' && current.billingMode === 'SEPARATE_CHARGE' && current.isPaid && current.revenueEntryId) {
+        throw new EventsError(
+          'DESVINCULO_BLOQUEADO_PAGO',
+          'Não é possível desvincular um figurino pago. Estorne ou ajuste o pagamento antes de desvincular.',
+          400,
+        );
+      }
       if (input.status === 'DELIVERED' && !current.alunoId) {
         throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
       }
@@ -1311,6 +1608,18 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
       }
     }
 
+    const targetBillingMode = input.billingMode ?? current.billingMode;
+    const targetChargedValue =
+      targetBillingMode === 'FREE'
+        ? 0
+        : toMoney(input.chargedValue == null ? current.chargedValue : input.chargedValue);
+    if (targetBillingMode === 'SEPARATE_CHARGE' && targetChargedValue <= 0) {
+      throw new EventsError('VALOR_OBRIGATORIO', 'Informe um valor maior que zero para cobrança separada.', 422);
+    }
+    const targetIsPaid = targetBillingMode === 'SEPARATE_CHARGE'
+      ? (input.isPaid ?? current.isPaid)
+      : false;
+
     const updated = await tx.eventCostumeAssignment.update({
       where: { id: assignmentId },
       data: {
@@ -1318,9 +1627,10 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         alunoId: input.alunoId,
         turmaId: input.turmaId,
         status: input.status,
+        billingMode: targetBillingMode,
         definedSize: input.definedSize,
-        chargedValue: input.chargedValue == null ? undefined : decimal(input.chargedValue),
-        isPaid: input.isPaid,
+        chargedValue: targetBillingMode === 'FREE' ? null : decimal(targetChargedValue),
+        isPaid: targetIsPaid,
         deliveredAt,
         returnedAt,
         deliveredByUserId,
@@ -1329,7 +1639,17 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     });
 
     const chargedValue = toMoney(updated.chargedValue);
-    if (updated.revenueEntryId) {
+    if (updated.billingMode !== 'SEPARATE_CHARGE') {
+      if (updated.revenueEntryId) {
+        await tx.eventFinancialEntry.deleteMany({
+          where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
+        });
+        await tx.eventCostumeAssignment.update({
+          where: { id: assignmentId },
+          data: { revenueEntryId: null },
+        });
+      }
+    } else if (updated.revenueEntryId) {
       const targetCostume = await tx.eventCostume.findFirst({
         where: { id: updated.costumeId, contaId: ctx.contaId },
       });
@@ -1340,9 +1660,9 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
           data: {
             description: targetCostume?.name ?? undefined,
             expectedAmount: decimal(chargedValue),
-            actualAmount: updated.isPaid ? decimal(chargedValue) : null,
-            status: updated.isPaid ? 'RECEIVED' : 'PENDING',
-            realizedAt: updated.isPaid ? now : null,
+            actualAmount: targetIsPaid ? decimal(chargedValue) : null,
+            status: targetIsPaid ? 'RECEIVED' : 'PENDING',
+            realizedAt: targetIsPaid ? now : null,
           },
         });
       } else {
@@ -1369,9 +1689,9 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
             originType: 'COSTUME_ASSIGNMENT',
             originId: updated.id,
             expectedAmount: decimal(chargedValue),
-            actualAmount: updated.isPaid ? decimal(chargedValue) : null,
-            status: updated.isPaid ? 'RECEIVED' : 'PENDING',
-            realizedAt: updated.isPaid ? now : null,
+            actualAmount: targetIsPaid ? decimal(chargedValue) : null,
+            status: targetIsPaid ? 'RECEIVED' : 'PENDING',
+            realizedAt: targetIsPaid ? now : null,
             createdByUserId: ctx.userId,
           },
         });
@@ -1380,6 +1700,62 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
           data: { revenueEntryId: entry.id },
         });
       }
+    }
+
+    const lossOriginId = `loss:${updated.id}`;
+    if (updated.status === 'DAMAGED' || updated.status === 'LOST') {
+      const targetCostume = await tx.eventCostume.findFirst({
+        where: { id: updated.costumeId, contaId: ctx.contaId },
+      });
+      const lossAmount = toMoney(targetCostume?.schoolCost) || toMoney(updated.chargedValue);
+      if (lossAmount > 0) {
+        const existingLoss = await tx.eventFinancialEntry.findFirst({
+          where: { contaId: ctx.contaId, originType: 'COSTUME', originId: lossOriginId },
+        });
+        const lossData = {
+          type: 'COST' as const,
+          category: 'Prejuízo',
+          description: `${updated.status === 'DAMAGED' ? 'Figurino danificado' : 'Figurino perdido'} - ${targetCostume?.name ?? 'Figurino'}`,
+          supplier: targetCostume?.supplier ?? null,
+          expectedAmount: decimal(lossAmount),
+          actualAmount: decimal(lossAmount),
+          status: 'PAID' as const,
+          realizedAt: now,
+          notes: updated.notes,
+        };
+        if (existingLoss) {
+          await tx.eventFinancialEntry.update({
+            where: { id: existingLoss.id },
+            data: lossData,
+          });
+        } else {
+          await tx.eventFinancialEntry.create({
+            data: {
+              contaId: ctx.contaId,
+              eventId: updated.eventId,
+              originType: 'COSTUME',
+              originId: lossOriginId,
+              createdByUserId: ctx.userId,
+              ...lossData,
+            },
+          });
+        }
+      }
+    } else {
+      await tx.eventFinancialEntry.updateMany({
+        where: {
+          contaId: ctx.contaId,
+          originType: 'COSTUME',
+          originId: lossOriginId,
+          status: { not: 'CANCELLED' },
+        },
+        data: {
+          status: 'CANCELLED',
+          actualAmount: null,
+          realizedAt: null,
+          notes: `Prejuízo cancelado porque o figurino voltou para ${updated.status}.`,
+        },
+      });
     }
 
     await recordEventAudit(tx, {
@@ -1418,6 +1794,8 @@ export function mapFinancialEntry(
     originId: entry.originId,
     expectedAmount: toMoney(entry.expectedAmount),
     actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
+    refundedAmount: entry.refundedAmount == null ? 0 : toMoney(entry.refundedAmount),
+    netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
     dueDate: toIso(entry.dueDate),
     realizedAt: toIso(entry.realizedAt),
     status: entry.status,
@@ -1465,8 +1843,11 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
   return prisma.$transaction(async (tx) => {
     const event = await tx.schoolEvent.findFirst({ where: { id: input.eventId, contaId: ctx.contaId } });
     if (!event) throw new EventsError('EVENTO_NAO_ENCONTRADO', 'Evento não encontrado.', 404);
-    assertOperationalEvent(event.status);
+    assertFinancialAdjustmentEvent(event.status);
 
+    const actualAmount = input.actualAmount == null ? null : decimal(input.actualAmount);
+    const refundedAmount = input.refundedAmount == null ? decimal(0) : decimal(input.refundedAmount);
+    const netAmount = input.actualAmount == null ? null : decimal(Math.max(input.actualAmount - (input.refundedAmount ?? 0), 0));
     const entry = await tx.eventFinancialEntry.create({
       data: {
         contaId: ctx.contaId,
@@ -1477,7 +1858,9 @@ export async function createFinancialEntry(ctx: EventsContext, input: CreateEven
         supplier: input.supplier,
         originType: 'MANUAL',
         expectedAmount: decimal(input.expectedAmount),
-        actualAmount: input.actualAmount == null ? null : decimal(input.actualAmount),
+        actualAmount,
+        refundedAmount,
+        netAmount,
         dueDate: input.dueDate,
         realizedAt: input.realizedAt,
         status: input.status,
@@ -1516,7 +1899,15 @@ export async function updateFinancialEntry(ctx: EventsContext, entryId: string, 
         409,
       );
     }
-    assertOperationalEvent(current.event.status);
+    assertFinancialAdjustmentEvent(current.event.status);
+
+    const actualAmount = input.actualAmount == null ? undefined : decimal(input.actualAmount);
+    const refundedAmount = input.refundedAmount == null ? undefined : decimal(input.refundedAmount);
+    const nextActual = input.actualAmount ?? toMoney(current.actualAmount);
+    const nextRefunded = input.refundedAmount ?? toMoney(current.refundedAmount);
+    const netAmount = input.actualAmount == null && input.refundedAmount == null
+      ? undefined
+      : decimal(Math.max(nextActual - nextRefunded, 0));
 
     const updated = await tx.eventFinancialEntry.update({
       where: { id: entryId },
@@ -1526,7 +1917,9 @@ export async function updateFinancialEntry(ctx: EventsContext, entryId: string, 
         description: input.description,
         supplier: input.supplier,
         expectedAmount: input.expectedAmount == null ? undefined : decimal(input.expectedAmount),
-        actualAmount: input.actualAmount == null ? undefined : decimal(input.actualAmount),
+        actualAmount,
+        refundedAmount,
+        netAmount,
         dueDate: input.dueDate,
         realizedAt: input.realizedAt,
         status: input.status,
@@ -1578,7 +1971,8 @@ export async function getEventReports(ctx: Pick<EventsContext, 'contaId'>, input
     include: eventInclude,
     orderBy: { startsAt: 'desc' },
   });
-  const mapped = events.map(mapSchoolEvent);
+  const paymentSnapshots = await buildParticipantPaymentSnapshots(ctx, events);
+  const mapped = events.map((event) => mapSchoolEvent(event, paymentSnapshots));
   const selected = input.eventId ? mapped.find((event) => event.id === input.eventId) ?? null : mapped[0] ?? null;
   const compareWith = input.compareWithEventId
     ? mapped.find((event) => event.id === input.compareWithEventId) ?? null
@@ -1698,31 +2092,88 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
 }
 
 export async function unregisterEventParticipant(ctx: EventsContext, participantId: string) {
-  return prisma.$transaction(async (tx) => {
-    const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
-      include: { event: true },
-    });
-    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
-    assertOperationalEvent(participant.event.status);
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { id: participantId, contaId: ctx.contaId },
+    include: { event: true },
+  });
+  if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+  assertOperationalEvent(participant.event.status);
 
-    if (participant.revenueEntryId) {
-      const entry = await tx.eventFinancialEntry.findFirst({
+  if (participant.cancelledAt) {
+    return { ok: true };
+  }
+
+  const entry = participant.revenueEntryId
+    ? await prisma.eventFinancialEntry.findFirst({
         where: { id: participant.revenueEntryId, contaId: ctx.contaId },
-      });
-      if (entry) {
-        if (entry.status === 'RECEIVED') {
-          throw new EventsError(
-            'TAXA_PAGA',
-            'Não é possível remover inscrição com taxa já paga. Estorne o lançamento financeiro primeiro.',
-            409,
-          );
-        }
-        await tx.eventFinancialEntry.delete({ where: { id: entry.id } });
+      })
+    : null;
+
+  const linkedCharges = entry?.asaasPaymentId
+    ? await prisma.charge.findMany({
+        where: {
+          contaId: ctx.contaId,
+          OR: [
+            { asaasPaymentId: entry.asaasPaymentId },
+            { standaloneInstallmentPlan: { asaasInstallmentId: entry.asaasPaymentId } },
+          ],
+        },
+      })
+    : [];
+
+  const openCharges = linkedCharges.filter((charge) =>
+    ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'].includes(charge.status),
+  );
+  if (openCharges.length > 0) {
+    const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
+    if (credentials?.apiKey) {
+      for (const charge of openCharges) {
+        if (!charge.asaasPaymentId) continue;
+        await deleteAsaasPayment({ apiKey: credentials.apiKey, paymentId: charge.asaasPaymentId });
       }
     }
+  }
 
-    await tx.eventParticipant.delete({ where: { id: participantId } });
+  return prisma.$transaction(async (tx) => {
+    const payment = calculateParticipantPayment(
+      participant.registrationFeeCharged.toNumber(),
+      participant.isFeePaid,
+      entry,
+      linkedCharges,
+    );
+
+    const updated = await tx.eventParticipant.update({
+      where: { id: participantId },
+      data: {
+        isFeePaid: false,
+        financialStatusSnapshot: 'CANCELADO',
+        feePaidAmount: decimal(payment.totalPaid),
+        feeRefundedAmount: decimal(payment.totalRefunded),
+        cancelledAt: new Date(),
+      },
+    });
+
+    if (openCharges.length > 0) {
+      await tx.charge.updateMany({
+        where: { contaId: ctx.contaId, id: { in: openCharges.map((charge) => charge.id) } },
+        data: { status: 'CANCELED', statusUpdatedAt: new Date() },
+      });
+    }
+
+    if (entry) {
+      const actualAmount = payment.totalPaid > 0 ? decimal(payment.totalPaid) : null;
+      await tx.eventFinancialEntry.update({
+        where: { id: entry.id },
+        data: {
+          status: payment.totalPaid > 0 ? 'PENDING' : 'CANCELLED',
+          actualAmount,
+          refundedAmount: decimal(payment.totalRefunded),
+          netAmount: payment.netPaid > 0 ? decimal(payment.netPaid) : null,
+          cancelledAt: payment.totalPaid > 0 ? null : new Date(),
+          notes: [entry.notes, 'Inscrição cancelada; histórico financeiro preservado.'].filter(Boolean).join('\n'),
+        },
+      });
+    }
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -1732,6 +2183,12 @@ export async function unregisterEventParticipant(ctx: EventsContext, participant
       entityId: participantId,
       eventId: participant.eventId,
       before: participant,
+      after: updated,
+      metadata: {
+        cancelledOpenCharges: openCharges.map((charge) => charge.id),
+        paidAmount: payment.totalPaid,
+        refundedAmount: payment.totalRefunded,
+      },
     });
 
     return { ok: true };
@@ -1810,6 +2267,235 @@ export async function quitarEventParticipantFee(ctx: EventsContext, participantI
   });
 }
 
+export async function refundManualEventParticipantFee(ctx: EventsContext, participantId: string) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+    if (!participant.revenueEntryId) {
+      throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
+    }
+
+    const entry = await tx.eventFinancialEntry.findFirst({
+      where: { id: participant.revenueEntryId, contaId: ctx.contaId },
+    });
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
+      throw new EventsError('ESTORNO_ASAAS_BLOQUEADO', 'Use o fluxo de estorno do Asaas para cobranças intermediadas.', 409);
+    }
+    if (!['RECEIVED', 'PAID'].includes(entry.status)) {
+      throw new EventsError('ESTORNO_BLOQUEADO', 'Somente taxas manuais pagas podem ser estornadas.', 400);
+    }
+
+    const refundableAmount = toNumber(entry.actualAmount ?? participant.registrationFeeCharged);
+    if (refundableAmount <= 0) {
+      throw new EventsError('VALOR_INVALIDO', 'Não há valor pago para estornar.', 400);
+    }
+
+    const updatedEntry = await tx.eventFinancialEntry.update({
+      where: { id: entry.id },
+      data: {
+        status: 'REFUNDED',
+        refundedAt: new Date(),
+        refundedAmount: decimal(refundableAmount),
+        netAmount: decimal(0),
+      },
+    });
+
+    const updatedParticipant = await tx.eventParticipant.update({
+      where: { id: participant.id },
+      data: {
+        isFeePaid: false,
+        feeRefundedAmount: decimal(refundableAmount),
+        feePaidAmount: decimal(0),
+        financialStatusSnapshot: 'ESTORNADO',
+      },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.fee.refund',
+      entityType: 'EventFinancialEntry',
+      entityId: entry.id,
+      eventId: participant.eventId,
+      before: { participant, entry },
+      after: { participant: updatedParticipant, entry: updatedEntry },
+    });
+
+    return { success: true };
+  });
+}
+
+export async function deleteManualEventParticipantFee(ctx: EventsContext, participantId: string) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, contaId: ctx.contaId },
+      include: { event: true },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+    if (!participant.revenueEntryId) {
+      throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'A inscrição não possui lançamento financeiro vinculado.', 404);
+    }
+
+    const entry = await tx.eventFinancialEntry.findFirst({
+      where: { id: participant.revenueEntryId, contaId: ctx.contaId },
+    });
+    if (!entry) throw new EventsError('LANCAMENTO_NAO_ENCONTRADO', 'Lançamento não encontrado.', 404);
+    if (entry.asaasPaymentId || entry.paymentProvider === 'ASAAS') {
+      throw new EventsError('EXCLUSAO_ASAAS_BLOQUEADA', 'Não é possível excluir cobrança intermediada pelo Asaas.', 409);
+    }
+    if (participant.isFeePaid || entry.actualAmount || ['RECEIVED', 'PAID', 'REFUNDED', 'PARTIALLY_REFUNDED'].includes(entry.status)) {
+      throw new EventsError('EXCLUSAO_BLOQUEADA', 'Não é possível excluir taxa paga ou estornada. Use estorno para preservar o histórico.', 400);
+    }
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.fee.delete',
+      entityType: 'EventFinancialEntry',
+      entityId: entry.id,
+      eventId: participant.eventId,
+      before: { participant, entry },
+      after: null,
+    });
+
+    await tx.eventParticipant.update({
+      where: { id: participant.id },
+      data: {
+        revenueEntryId: null,
+        isFeePaid: false,
+        financialStatusSnapshot: null,
+      },
+    });
+
+    await tx.eventFinancialEntry.delete({
+      where: { id: entry.id },
+    });
+
+    return { success: true };
+  });
+}
+
+export function calculateParticipantPayment(
+  registrationFeeCharged: number,
+  isFeePaid: boolean,
+  entry: any,
+  charges: any[]
+) {
+  const resolution = resolveEventParticipantPayment({
+    expectedAmount: registrationFeeCharged,
+    paidFallback: isFeePaid,
+    cancelled: entry?.status === 'CANCELLED',
+    refunded: entry?.status === 'REFUNDED',
+    charges,
+  });
+
+  return {
+    percentPaid: resolution.percentPaid,
+    status: resolution.status,
+    totalPaid: resolution.paidAmount,
+    totalRefunded: resolution.refundedAmount,
+    netPaid: resolution.netPaidAmount,
+  };
+}
+
+async function buildParticipantPaymentSnapshots(
+  ctx: Pick<EventsContext, 'contaId'>,
+  records: Pick<SchoolEventRecord, 'participants' | 'financialEntries'>[],
+): Promise<Map<string, ParticipantPaymentSnapshot>> {
+  const participants = records.flatMap((record) => record.participants);
+  const entryById = new Map(records.flatMap((record) => record.financialEntries.map((entry) => [entry.id, entry])));
+  const feeParticipants = participants.filter((participant) => participant.revenueEntryId);
+  const asaasPaymentIds = feeParticipants
+    .map((participant) => entryById.get(participant.revenueEntryId ?? '')?.asaasPaymentId)
+    .filter((id): id is string => Boolean(id));
+
+  const snapshots = new Map<string, ParticipantPaymentSnapshot>();
+  if (feeParticipants.length === 0) return snapshots;
+
+  let plans: any[] = [];
+  let directCharges: any[] = [];
+  let planCharges: any[] = [];
+
+  if (asaasPaymentIds.length > 0) {
+    plans = await prisma.standaloneInstallmentPlan.findMany({
+      where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
+      include: { charges: true },
+    });
+
+    directCharges = await prisma.charge.findMany({
+      where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
+    });
+
+    const planIds = Array.from(new Set([
+      ...directCharges.map((charge) => charge.standaloneInstallmentPlanId).filter((id): id is string => Boolean(id)),
+      ...plans.map((plan) => plan.id),
+    ]));
+
+    if (planIds.length > 0) {
+      planCharges = await prisma.charge.findMany({
+        where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
+      });
+    }
+  }
+
+  for (const participant of feeParticipants) {
+    const entry = entryById.get(participant.revenueEntryId ?? '');
+    if (!entry) continue;
+
+    const asaasPaymentId = entry.asaasPaymentId;
+    let participantCharges: any[] = [];
+
+    if (asaasPaymentId) {
+      const direct = directCharges.filter((charge) => charge.asaasPaymentId === asaasPaymentId);
+      const directPlanIds = direct
+        .map((charge) => charge.standaloneInstallmentPlanId)
+        .filter((id): id is string => Boolean(id));
+      const paymentPlans = plans.filter((plan) => plan.asaasInstallmentId === asaasPaymentId);
+      const paymentPlanIds = paymentPlans.map((plan) => plan.id);
+      const referencedPlanIds = Array.from(new Set([...directPlanIds, ...paymentPlanIds]));
+
+      const seen = new Set<string>();
+      participantCharges = [
+        ...direct,
+        ...paymentPlans.flatMap((plan) => plan.charges),
+        ...planCharges.filter((charge) => charge.standaloneInstallmentPlanId && referencedPlanIds.includes(charge.standaloneInstallmentPlanId)),
+      ].filter((charge) => {
+        if (seen.has(charge.id)) return false;
+        seen.add(charge.id);
+        return true;
+      });
+    }
+
+    const payment = calculateParticipantPayment(
+      participant.registrationFeeCharged.toNumber(),
+      participant.isFeePaid,
+      entry,
+      participantCharges,
+    );
+    const realizedAt = participantCharges
+      .filter((charge) => ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAID'].includes(charge.status))
+      .sort((a, b) => b.statusUpdatedAt.getTime() - a.statusUpdatedAt.getTime())[0]?.statusUpdatedAt ?? null;
+
+    snapshots.set(participant.revenueEntryId ?? '', {
+      percentPaid: payment.percentPaid,
+      financialStatus: payment.status,
+      totalPaid: payment.totalPaid,
+      totalRefunded: payment.totalRefunded,
+      netPaid: payment.netPaid,
+      realizedAt,
+      entryStatus: financialEntryStatusFromParticipantStatus(payment.status),
+    });
+  }
+
+  return snapshots;
+}
+
 export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>, eventId: string) {
   const participants = await prisma.eventParticipant.findMany({
     where: { contaId: ctx.contaId, eventId },
@@ -1818,6 +2504,45 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     },
     orderBy: { createdAt: 'desc' },
   });
+
+  const revenueEntryIds = participants
+    .map((p) => p.revenueEntryId)
+    .filter((id): id is string => Boolean(id));
+
+  const financialEntries = revenueEntryIds.length > 0
+    ? await prisma.eventFinancialEntry.findMany({
+        where: { contaId: ctx.contaId, id: { in: revenueEntryIds } },
+      })
+    : [];
+
+  const asaasPaymentIds = financialEntries
+    .map((e) => e.asaasPaymentId)
+    .filter((id): id is string => Boolean(id));
+
+  let plans: any[] = [];
+  let directCharges: any[] = [];
+  let planCharges: any[] = [];
+
+  if (asaasPaymentIds.length > 0) {
+    plans = await prisma.standaloneInstallmentPlan.findMany({
+      where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
+      include: { charges: true },
+    });
+
+    directCharges = await prisma.charge.findMany({
+      where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
+    });
+
+    const planIds = directCharges
+      .map((c) => c.standaloneInstallmentPlanId)
+      .filter((id): id is string => Boolean(id));
+
+    if (planIds.length > 0) {
+      planCharges = await prisma.charge.findMany({
+        where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
+      });
+    }
+  }
 
   const participantData: any[] = [];
   for (const part of participants) {
@@ -1831,7 +2556,10 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       });
       costumeCount = costumes.length;
       pendingCostumes = costumes.filter((c) => c.status !== 'DELIVERED').length;
-      costumesValue = costumes.reduce((sum, c) => sum + (c.chargedValue ? c.chargedValue.toNumber() : 0), 0);
+      costumesValue = costumes.reduce(
+        (sum, c) => sum + (c.billingMode === 'SEPARATE_CHARGE' && c.chargedValue ? c.chargedValue.toNumber() : 0),
+        0,
+      );
     }
 
     let ticketsBought = 0;
@@ -1847,6 +2575,44 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
     const feeValue = part.registrationFeeCharged.toNumber();
     const totalSpent = feeValue + costumesValue + ticketsValue;
 
+    // Resolve charges for this participant
+    const entry = financialEntries.find((e) => e.id === part.revenueEntryId);
+    const asaasPaymentId = entry?.asaasPaymentId;
+    let participantCharges: any[] = [];
+
+    if (asaasPaymentId) {
+      const direct = directCharges.filter((c) => c.asaasPaymentId === asaasPaymentId);
+      const planIdsForDirect = direct
+        .map((c) => c.standaloneInstallmentPlanId)
+        .filter((id): id is string => Boolean(id));
+
+      const planFromPaymentId = plans.filter((p) => p.asaasInstallmentId === asaasPaymentId);
+      const planIdsFromPayment = planFromPaymentId.map((p) => p.id);
+
+      const allReferencedPlanIds = Array.from(new Set([...planIdsForDirect, ...planIdsFromPayment]));
+
+      const planCh = planCharges.filter((c) => c.standaloneInstallmentPlanId && allReferencedPlanIds.includes(c.standaloneInstallmentPlanId));
+      const planFromPaymentIdCh = planFromPaymentId.flatMap((p) => p.charges);
+
+      const seen = new Set();
+      participantCharges = [
+        ...direct,
+        ...planCh,
+        ...planFromPaymentIdCh,
+      ].filter((c) => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
+    }
+
+    const paymentDetails = calculateParticipantPayment(
+      feeValue,
+      part.isFeePaid,
+      entry,
+      participantCharges
+    );
+
     participantData.push({
       id: part.id,
       contaId: part.contaId,
@@ -1860,6 +2626,11 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       feePaymentMethod: part.feePaymentMethod,
       notes: part.notes,
       createdAt: part.createdAt.toISOString(),
+      percentPaid: paymentDetails.percentPaid,
+      totalPaid: paymentDetails.totalPaid,
+      totalRefunded: paymentDetails.totalRefunded,
+      netPaid: paymentDetails.netPaid,
+      financialStatus: paymentDetails.status,
       metrics: {
         costumeCount,
         pendingCostumes,
@@ -1951,10 +2722,10 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
   return prisma.$transaction(async (tx) => {
     const current = await tx.eventTicketSale.findFirst({
       where: { id: saleId, contaId: ctx.contaId },
-      include: { lot: true },
+      include: { lot: { include: { event: true } } },
     });
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
-    assertOperationalEvent(current.lot.eventId);
+    assertOperationalEvent(current.lot.event.status);
 
     const lotId = input.lotId ?? current.lotId;
     const lot = lotId === current.lotId ? current.lot : await tx.eventTicketLot.findFirst({
@@ -2256,5 +3027,3 @@ export async function deleteCostume(ctx: EventsContext, costumeId: string) {
     return { success: true };
   });
 }
-
-

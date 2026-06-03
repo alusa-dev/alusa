@@ -4,7 +4,10 @@ import { NextRequest } from 'next/server';
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
     contrato: {
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+    },
+    contractEvidence: {
+      create: vi.fn(),
     },
   },
 }));
@@ -17,8 +20,9 @@ import { GET } from '@/app/api/public/contrato/[token]/route';
 
 describe('GET /api/public/contrato/[token]', () => {
   it('não expõe CPF do aluno nem do responsável no payload público', async () => {
-    prismaMock.contrato.findUnique.mockResolvedValueOnce({
+    prismaMock.contrato.findFirst.mockResolvedValueOnce({
       id: 'contrato-1',
+      contaId: 'conta-1',
       arquivoPdfUrl: '/uploads/contratos/contrato-1.pdf',
       hashPdf: 'a'.repeat(64),
       status: 'PENDENTE',
@@ -37,6 +41,25 @@ describe('GET /api/public/contrato/[token]', () => {
     expect(response.status).toBe(200);
     expect(json.matricula.aluno).not.toHaveProperty('cpf');
     expect(json.matricula.responsavelFinanceiro).not.toHaveProperty('cpf');
+    expect(json.acceptanceText).toContain('Declaro que li');
     expect(response.headers.get('cache-control')).toContain('no-store');
+  });
+
+  it('valida os params resolvidos antes de consultar o contrato', async () => {
+    prismaMock.contrato.findFirst.mockResolvedValueOnce(null);
+
+    await GET(new NextRequest('http://localhost/api/public/contrato/token-1'), {
+      params: Promise.resolve({ token: 'token-resolvido' }),
+    });
+
+    expect(prismaMock.contrato.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({ tokenPublicoHash: expect.any(String) }),
+          ]),
+        }),
+      }),
+    );
   });
 });

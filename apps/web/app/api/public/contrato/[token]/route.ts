@@ -7,19 +7,28 @@ import {
 } from '@/features/contratos/dtos';
 import { mapPublicContratoRecordToDTO } from '@/features/contratos/mappers';
 import { jsonSensitive } from '@/lib/http-security';
+import { createContractEvidence, hashPublicContractToken } from '@alusa/lib';
+import { ipFromRequest } from '@/lib/rate-limit';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
-    const rawParams = await params;
-  const { token } = contratoPublicTokenParamsDTOSchema.parse(params);
-
   try {
-    const contrato = await prisma.contrato.findUnique({
-      where: { tokenPublico: token },
+    const rawParams = await params;
+    const { token } = contratoPublicTokenParamsDTOSchema.parse(rawParams);
+    const tokenHash = hashPublicContractToken(token);
+
+    const contrato = await prisma.contrato.findFirst({
+      where: {
+        OR: [
+          { tokenPublicoHash: tokenHash },
+          { tokenPublicoHash: null, tokenPublico: token },
+        ],
+      },
       select: {
         id: true,
+        contaId: true,
         arquivoPdfUrl: true,
         hashPdf: true,
         status: true,
@@ -46,8 +55,25 @@ export async function GET(
     }
 
     if (contrato.tokenExpiraEm && new Date() > contrato.tokenExpiraEm) {
+      void createContractEvidence(prisma as never, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        type: 'LINK_EXPIRED',
+        ip: ipFromRequest(request),
+        userAgent: request.headers.get('user-agent')?.slice(0, 512) ?? null,
+        payload: { tokenHash, expiredAt: contrato.tokenExpiraEm.toISOString() },
+      }).catch(() => undefined);
       return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
     }
+
+    void createContractEvidence(prisma as never, {
+      contaId: contrato.contaId,
+      contratoId: contrato.id,
+      type: 'PUBLIC_LINK_OPENED',
+      ip: ipFromRequest(request),
+      userAgent: request.headers.get('user-agent')?.slice(0, 512) ?? null,
+      payload: { tokenHash },
+    }).catch(() => undefined);
 
     return jsonSensitive(
       contratoPublicoDTOSchema.parse(mapPublicContratoRecordToDTO(contrato)),

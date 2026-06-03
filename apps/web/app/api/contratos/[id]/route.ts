@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createContractCancelledNotification } from '@alusa/lib';
+import { createContractCancelledNotification, createContractEvidence } from '@alusa/lib';
 import { prisma } from '@/prisma/client';
 import { getSessionUser } from '@/lib/auth/session';
-import { deleteContratoResultDTOSchema } from '@/features/contratos/dtos';
+import { contratoRouteParamsDTOSchema, deleteContratoResultDTOSchema } from '@/features/contratos/dtos';
 import { mapContratoRecordToDTO } from '@/features/contratos/mappers';
 
 async function getContratoWithRelations(id: string, contaId: string) {
   return prisma.contrato.findFirst({
     where: {
       id,
-      matricula: { aluno: { contaId } },
+      contaId,
+      matricula: { contaId },
     },
     include: {
       modelo: {
@@ -45,14 +46,15 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-    const rawParams = await params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
   }
 
   try {
-    const contrato = await getContratoWithRelations(rawParams.id, user.contaId);
+    const rawParams = await params;
+    const { id } = contratoRouteParamsDTOSchema.parse(rawParams);
+    const contrato = await getContratoWithRelations(id, user.contaId);
 
     if (!contrato) {
       return NextResponse.json(
@@ -75,17 +77,19 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-    const rawParams = await params;
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
   }
 
   try {
+    const rawParams = await params;
+    const { id } = contratoRouteParamsDTOSchema.parse(rawParams);
     const contrato = await prisma.contrato.findFirst({
       where: {
-        id: rawParams.id,
-        matricula: { aluno: { contaId: user.contaId } },
+        id,
+        contaId: user.contaId,
+        matricula: { contaId: user.contaId },
       },
       include: {
         matricula: {
@@ -113,9 +117,21 @@ export async function DELETE(
     }
 
     await prisma.contrato.update({
-      where: { id: rawParams.id },
+      where: { id },
       data: { status: 'CANCELADO' },
     });
+
+    await createContractEvidence(prisma as never, {
+      contaId: user.contaId,
+      contratoId: contrato.id,
+      type: 'CONTRACT_CANCELLED',
+      actorType: 'USER',
+      actorId: user.id,
+      payload: {
+        matriculaId: contrato.matricula.id,
+        previousStatus: contrato.status,
+      },
+    }).catch(() => undefined);
 
     if (contrato.matricula.contratoAtualId === contrato.id) {
       await prisma.matricula.update({

@@ -261,6 +261,7 @@ describe('Aluno Service', () => {
 
     const contrato = await prisma.contrato.create({
       data: {
+        contaId,
         matriculaId: matricula.id,
         conteudoFinal: '<p>Contrato de teste</p>',
         status: 'PENDENTE',

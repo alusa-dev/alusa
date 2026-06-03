@@ -113,7 +113,7 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   });
 
   const publishMutation = useMutation({
-    mutationFn: () => publishEventMap(eventId, mapId),
+    mutationFn: (payload?: ReturnType<typeof toPayload>) => publishEventMap(eventId, mapId, payload),
     onSuccess: async (published) => {
       clearEventMapLocalDraft(eventId, mapId);
       markSaved(published);
@@ -124,10 +124,9 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   });
 
   async function handlePublish() {
-    if (map?.status !== 'ARCHIVED' && isDirty) {
-      await saveMutation.mutateAsync();
-    }
-    await publishMutation.mutateAsync();
+    const payload = map?.status !== 'ARCHIVED' && isDirty ? toPayload() : null;
+    if (isDirty && !payload) throw new Error('Mapa ainda não carregado.');
+    await publishMutation.mutateAsync(payload);
   }
 
   useEffect(() => {

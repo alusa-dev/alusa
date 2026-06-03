@@ -22,6 +22,8 @@ interface ContratoPublico {
   hashPdf: string;
   status: 'PENDENTE' | 'ASSINADO' | 'EXPIRADO' | 'CANCELADO';
   tokenExpiraEm: string;
+  acceptanceText: string;
+  acceptanceVersion: number;
   matricula: {
     aluno: { nome: string };
     responsavelFinanceiro?: { nome: string };
@@ -98,6 +100,7 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
           nome: nome.trim(),
           cpf: cpfDigits,
           email: email.trim() || undefined,
+          aceite: true,
           userAgent: navigator.userAgent,
         }),
       });
@@ -208,7 +211,7 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
             </div>
             <div>
               <h1 className="text-base font-semibold text-gray-900 leading-none">
-                Assinatura Digital
+                Assinatura Eletrônica
               </h1>
               <p className="text-xs text-gray-500 mt-1">
                 {contrato?.matricula.aluno.nome}
@@ -249,37 +252,25 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
             </div>
 
             {/* Desktop View: Embedded Viewer */}
-            <Card className="hidden lg:flex border-gray-200 shadow-sm overflow-hidden flex-col h-full">
-              <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-                 <h2 className="text-sm font-medium text-gray-700 flex items-center gap-2">
-                    <DocumentCheckIcon className="h-4 w-4 text-gray-400" />
-                    Documento Original
-                 </h2>
-                 <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
-                   Leitura Obrigatória
-                 </span>
-              </div>
-              
-              <div className="bg-gray-100 flex-1 min-h-[50vh] lg:min-h-[75vh]">
-                {contrato && (
-                  <PDFViewer
-                    url={contrato.arquivoPdfUrl}
-                    showDownload={true}
-                    maxHeight="75vh" // Melhor altura para desktop
-                    className="h-full w-full"
-                  />
-                )}
-              </div>
-            </Card>
+            <div className="hidden lg:block">
+              {contrato && (
+                <PDFViewer
+                  url={contrato.arquivoPdfUrl}
+                  showDownload={true}
+                  maxHeight="calc(100vh - 170px)"
+                  className="w-full"
+                />
+              )}
+            </div>
           </div>
 
           {/* Signature Form - Mobile: Ordem 2, Desktop: Sticky Right (4 cols) */}
           <div className="lg:col-span-4 order-2 lg:sticky lg:top-24">
             <Card className="border-gray-200 shadow-lg ring-1 ring-black/5">
               <CardHeader className="bg-white border-b pb-4">
-                <CardTitle className="text-lg text-gray-900">Confirmar Assinatura</CardTitle>
+                <CardTitle className="text-lg text-gray-900">Confirmar assinatura eletrônica</CardTitle>
                 <CardDescription className="text-sm">
-                  Preencha os dados do responsável para validar o contrato.
+                  Preencha seus dados para registrar o aceite eletrônico com evidências.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5 p-5 bg-gray-50/30">
@@ -329,7 +320,10 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
                       className="mt-1 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                     />
                     <Label htmlFor="aceite" className="text-sm text-gray-700 leading-relaxed cursor-pointer font-normal">
-                      Declaro que li o documento e concordo com todos os termos e condições legais.
+                      {contrato?.acceptanceText}
+                      <span className="block mt-1 text-xs text-gray-500">
+                        Versão do aceite: {contrato?.acceptanceVersion}
+                      </span>
                     </Label>
                   </div>
                 </div>
@@ -352,7 +346,7 @@ export function ContratoPublicoFeature({ token }: ContratoPublicoFeatureProps) {
                     ) : (
                       <>
                         <CheckCircleIcon className="h-5 w-5 mr-2" />
-                        Assinar Digitalmente
+                        Assinar eletronicamente
                       </>
                     )}
                   </Button>

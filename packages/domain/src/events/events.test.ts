@@ -45,8 +45,8 @@ describe('events domain rules', () => {
     expect(metrics.custoRealizado).toBe(250);
     expect(metrics.resultadoPrevisto).toBe(1400);
     expect(metrics.resultadoRealizado).toBe(950);
-    expect(metrics.lucroBrutoPrevisto).toBe(1700);
-    expect(metrics.lucroBrutoRealizado).toBe(1200);
+    expect(metrics.lucroBrutoPrevisto).toBe(1400);
+    expect(metrics.lucroBrutoRealizado).toBe(950);
     expect(metrics.lucroLiquidoPrevisto).toBe(1400);
     expect(metrics.lucroLiquidoRealizado).toBe(950);
     expect(metrics.ticketMedio).toBe(60);
@@ -84,9 +84,10 @@ describe('events domain rules', () => {
         },
       ],
       costumeAssignments: [
-        { status: 'DELIVERED', chargedValue: 40, isPaid: true }, // Revenue
-        { status: 'PENDING', chargedValue: 30, isPaid: false }, // Expected Revenue
-        { status: 'CANCELLED', chargedValue: 30, isPaid: false }, // Ignored
+        { status: 'DELIVERED', billingMode: 'SEPARATE_CHARGE', chargedValue: 40, isPaid: true }, // Revenue
+        { status: 'PENDING', billingMode: 'SEPARATE_CHARGE', chargedValue: 30, isPaid: false }, // Expected Revenue
+        { status: 'DELIVERED', billingMode: 'INCLUDED_IN_REGISTRATION_FEE', chargedValue: 80, isPaid: true }, // Included in fee, no duplicate revenue
+        { status: 'CANCELLED', billingMode: 'SEPARATE_CHARGE', chargedValue: 30, isPaid: false }, // Ignored
       ],
     });
 
@@ -98,10 +99,9 @@ describe('events domain rules', () => {
     expect(metrics.custoPrevisto).toBe(80);
     // Custo Realizado = Costume Cost (50) + Manual Cost (30) = 80
     expect(metrics.custoRealizado).toBe(80);
-    // Lucro Bruto Previsto = Receita Prevista (170) - Custo Direto Previsto (50) = 120
-    expect(metrics.lucroBrutoPrevisto).toBe(120);
-    // Lucro Bruto Realizado = Receita Realizada (140) - Custo Direto Realizado (50) = 90
-    expect(metrics.lucroBrutoRealizado).toBe(90);
+    // Lucro Bruto desconta todos os custos operacionais relacionados ao evento.
+    expect(metrics.lucroBrutoPrevisto).toBe(90);
+    expect(metrics.lucroBrutoRealizado).toBe(60);
     // Lucro Líquido Previsto = Receita Prevista (170) - Custo Previsto (80) = 90
     expect(metrics.lucroLiquidoPrevisto).toBe(90);
     // Lucro Líquido Realizado = Receita Realizada (140) - Custo Realizado (80) = 60
@@ -124,6 +124,30 @@ describe('events domain rules', () => {
 
     expect(metrics.receitaPrevista).toBe(100);
     expect(metrics.receitaRealizada).toBe(100);
+  });
+
+  it('soma no realizado apenas valores financeiros realmente recebidos', () => {
+    const metrics = calculateEventMetrics({
+      financialEntries: [
+        {
+          type: 'REVENUE',
+          status: 'RECEIVED',
+          expectedAmount: 650,
+          actualAmount: null,
+          originType: 'MANUAL',
+        },
+        {
+          type: 'REVENUE',
+          status: 'PENDING',
+          expectedAmount: 650,
+          actualAmount: 325,
+          originType: 'MANUAL',
+        },
+      ],
+    });
+
+    expect(metrics.receitaPrevista).toBe(1300);
+    expect(metrics.receitaRealizada).toBe(325);
   });
 
   it('calcula receita prevista incluindo ingressos potenciais nao vendidos do lote', () => {

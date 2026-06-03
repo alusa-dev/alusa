@@ -4,13 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  ArrowLeftIcon,
-  ArrowDownTrayIcon,
-  ShareIcon,
-} from '@heroicons/react/24/outline';
+import { ArrowLeft, Download, Share2 } from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
-import { getContrato, type Contrato } from './services/modelos-service';
+import {
+  getContrato,
+  regenerateContrato,
+  getContratoPdfUrl,
+  type Contrato,
+} from './services/contratos-service';
 import { PDFViewer } from './components/PDFViewer';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { CompartilharContratoDialog } from './components/CompartilharContratoDialog';
@@ -24,6 +25,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
   const [contrato, setContrato] = useState<Contrato | null>(null);
   const [loading, setLoading] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     getContrato(contratoId)
@@ -37,11 +39,33 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
 
   const handleDownload = useCallback(() => {
     if (!contrato) return;
+    const pdfUrl = getContratoPdfUrl(contrato);
     const link = document.createElement('a');
-    link.href = contrato.arquivoPdfUrl;
+    link.href = pdfUrl;
     link.download = `Contrato-${contrato.matricula.aluno.nome}.pdf`;
     link.click();
   }, [contrato]);
+
+  const handleShareContrato = useCallback(async () => {
+    if (!contrato || sharing) return;
+
+    if (contrato.tokenPublico) {
+      setShareOpen(true);
+      return;
+    }
+
+    try {
+      setSharing(true);
+      const contratoComLink = await regenerateContrato(contrato.id);
+      setContrato(contratoComLink);
+      setShareOpen(true);
+      toast.success('Link de assinatura gerado.');
+    } catch (error) {
+      toast.error((error as Error).message || 'Erro ao gerar link de assinatura');
+    } finally {
+      setSharing(false);
+    }
+  }, [contrato, sharing]);
 
   if (loading) {
     return (
@@ -71,7 +95,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
         <div className="flex w-full min-w-0 items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.back()}>
-              <ArrowLeftIcon className="h-5 w-5" />
+              <ArrowLeft className="h-5 w-5" />
             </Button>
             <div>
               <div className="flex items-center gap-3">
@@ -90,13 +114,13 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
 
           <div className="flex items-center gap-2">
             {contrato.status === 'PENDENTE' && (
-              <Button variant="outline" onClick={() => setShareOpen(true)}>
-                <ShareIcon className="h-4 w-4 mr-2" />
-                Compartilhar
+              <Button variant="outline" onClick={handleShareContrato} disabled={sharing}>
+                <Share2 className="h-4 w-4 mr-2" />
+                {sharing ? 'Gerando Link...' : 'Compartilhar'}
               </Button>
             )}
             <Button onClick={handleDownload}>
-              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+              <Download className="h-4 w-4 mr-2" />
               Baixar PDF
             </Button>
           </div>
@@ -111,7 +135,7 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
             <Card>
               <CardContent className="p-0">
                 <PDFViewer
-                  url={contrato.arquivoPdfUrl}
+                  url={getContratoPdfUrl(contrato)}
                   title={`Contrato-${contrato.matricula.aluno.nome}`}
                   maxHeight="75vh"
                 />

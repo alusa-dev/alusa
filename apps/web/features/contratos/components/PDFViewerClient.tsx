@@ -1,24 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Document, Page, pdfjs } from 'react-pdf';
-import 'react-pdf/dist/Page/AnnotationLayer.css';
-import 'react-pdf/dist/Page/TextLayer.css';
-import {
-  MagnifyingGlassPlusIcon,
-  MagnifyingGlassMinusIcon,
-  ArrowDownTrayIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-} from '@heroicons/react/24/outline';
+import { useCallback, useEffect, useState } from 'react';
+import { Download, ExternalLink } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-
-// Worker no mesmo módulo que <Document>/<Page> (react-pdf README); pdfjs-dist alinhado via package.json/pnpm override.
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
 
 interface PDFViewerClientProps {
   url: string;
@@ -27,8 +12,12 @@ interface PDFViewerClientProps {
   showControls?: boolean;
   showDownload?: boolean;
   maxHeight?: string;
-  onLoadSuccess?: (numPages: number) => void;
-  onLoadError?: (error: Error) => void;
+  onLoadSuccess?: (_numPages: number) => void;
+  onLoadError?: (_error: Error) => void;
+}
+
+function getFileName(title?: string) {
+  return title?.trim() || 'contrato.pdf';
 }
 
 export function PDFViewerClient({
@@ -41,182 +30,120 @@ export function PDFViewerClient({
   onLoadSuccess,
   onLoadError,
 }: PDFViewerClientProps) {
-  const [numPages, setNumPages] = useState<number>(0);
-  const [pageNumber, setPageNumber] = useState<number>(1);
-  const [scale, setScale] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [frameUrl, setFrameUrl] = useState<string>(url);
 
-  const handleLoadSuccess = useCallback(
-    ({ numPages: pages }: { numPages: number }) => {
-      setNumPages(pages);
-      setLoading(false);
-      onLoadSuccess?.(pages);
-    },
-    [onLoadSuccess]
-  );
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
 
-  const handleLoadError = useCallback(
-    (err: Error) => {
-      setError('Não foi possível carregar o PDF.');
-      setLoading(false);
-      onLoadError?.(err);
-      console.error('[PDFViewer] Erro ao carregar PDF:', err);
-    },
-    [onLoadError]
-  );
+    setLoading(true);
+    setFrameUrl(url);
 
-  const goToPrevPage = useCallback(() => {
-    setPageNumber((prev) => Math.max(1, prev - 1));
-  }, []);
+    if (url.startsWith('blob:')) {
+      return () => {
+        active = false;
+      };
+    }
 
-  const goToNextPage = useCallback(() => {
-    setPageNumber((prev) => Math.min(numPages, prev + 1));
-  }, [numPages]);
+    fetch(url)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Não foi possível carregar o arquivo PDF.');
+        }
 
-  const zoomIn = useCallback(() => {
-    setScale((prev) => Math.min(2, prev + 0.25));
-  }, []);
+        return response.blob();
+      })
+      .then((blob) => {
+        if (!active) {
+          return;
+        }
 
-  const zoomOut = useCallback(() => {
-    setScale((prev) => Math.max(0.5, prev - 0.25));
-  }, []);
+        objectUrl = URL.createObjectURL(blob);
+        setFrameUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        const loadError = error instanceof Error
+          ? error
+          : new Error('Não foi possível carregar o arquivo PDF.');
+        setLoading(false);
+        onLoadError?.(loadError);
+      });
+
+    return () => {
+      active = false;
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [url, onLoadError]);
 
   const handleDownload = useCallback(() => {
     const link = document.createElement('a');
     link.href = url;
-    link.download = title || 'contrato.pdf';
+    link.download = getFileName(title);
     link.click();
   }, [url, title]);
 
-  // Keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') {
-        goToPrevPage();
-      } else if (e.key === 'ArrowRight') {
-        goToNextPage();
-      } else if (e.key === '+' || e.key === '=') {
-        zoomIn();
-      } else if (e.key === '-') {
-        zoomOut();
-      }
-    };
+  const handleOpenInNewTab = useCallback(() => {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [url]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goToPrevPage, goToNextPage, zoomIn, zoomOut]);
+  const handleFrameLoad = useCallback(() => {
+    setLoading(false);
+    onLoadSuccess?.(1);
+  }, [onLoadSuccess]);
 
-  if (error) {
-    return (
-      <div className={cn('flex items-center justify-center p-8 bg-gray-50 rounded-lg', className)}>
-        <div className="text-center">
-          <p className="text-red-600 mb-2">{error}</p>
-          <Button variant="outline" onClick={() => window.location.reload()}>
-            Tentar novamente
-          </Button>
-        </div>
-      </div>
-    );
-  }
+  const handleFrameError = useCallback(() => {
+    const error = new Error('Não foi possível carregar a visualização nativa do PDF.');
+    setLoading(false);
+    onLoadError?.(error);
+  }, [onLoadError]);
 
   return (
-    <div className={cn('flex flex-col bg-gray-100 rounded-lg overflow-hidden', className)}>
-      {/* Controls */}
+    <div className={cn('flex flex-col bg-gray-50 rounded-lg overflow-hidden border', className)}>
       {showControls && (
-        <div className="flex items-center justify-between px-4 py-2 bg-white border-b">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goToPrevPage}
-              disabled={pageNumber <= 1}
-              title="Página anterior"
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </Button>
-            <span className="text-sm text-gray-600 min-w-[80px] text-center">
-              {pageNumber} / {numPages}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goToNextPage}
-              disabled={pageNumber >= numPages}
-              title="Próxima página"
-            >
-              <ChevronRightIcon className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="flex items-center justify-between px-4 py-2 bg-white border-b gap-2">
+          <span className="text-sm text-gray-500">
+            {loading ? 'Carregando documento...' : 'Visualização do PDF'}
+          </span>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={zoomOut}
-              disabled={scale <= 0.5}
-              title="Diminuir zoom"
-            >
-              <MagnifyingGlassMinusIcon className="h-4 w-4" />
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-8 px-2 text-gray-600" onClick={handleOpenInNewTab}>
+              <ExternalLink className="h-4 w-4 mr-1.5" />
+              Abrir
             </Button>
-            <span className="text-sm text-gray-600 min-w-[50px] text-center">
-              {Math.round(scale * 100)}%
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={zoomIn}
-              disabled={scale >= 2}
-              title="Aumentar zoom"
-            >
-              <MagnifyingGlassPlusIcon className="h-4 w-4" />
-            </Button>
+            {showDownload && (
+              <Button variant="ghost" size="sm" className="h-8 px-2 text-gray-600" onClick={handleDownload}>
+                <Download className="h-4 w-4 mr-1.5" />
+                Baixar
+              </Button>
+            )}
           </div>
-
-          {showDownload && (
-            <Button variant="ghost" size="sm" onClick={handleDownload}>
-              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-              Baixar
-            </Button>
-          )}
         </div>
       )}
 
-      {/* PDF Content */}
       <div
-        ref={containerRef}
-        className="flex-1 overflow-auto"
-        style={{ maxHeight }}
+        className="relative flex-1 overflow-hidden bg-gray-100"
+        style={{ height: maxHeight, maxHeight }}
       >
-        <div className="flex justify-center p-4">
-          {loading && (
-            <div className="flex items-center justify-center p-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-accent"></div>
+        {loading && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-gray-50/80">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-accent mx-auto mb-2" />
+              <p className="text-xs text-gray-500">Carregando documento...</p>
             </div>
-          )}
+          </div>
+        )}
 
-          <Document
-            file={url}
-            onLoadSuccess={handleLoadSuccess}
-            onLoadError={handleLoadError}
-            loading={null}
-            className="flex flex-col items-center gap-4"
-          >
-            <Page
-              pageNumber={pageNumber}
-              scale={scale}
-              renderTextLayer={false}
-              renderAnnotationLayer={false}
-              className="shadow-lg"
-              loading={
-                <div className="flex items-center justify-center w-[595px] h-[842px] bg-white">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-400"></div>
-                </div>
-              }
-            />
-          </Document>
-        </div>
+        <iframe
+          src={frameUrl}
+          title={title || 'Visualização do contrato'}
+          className="h-full min-h-[400px] w-full border-0 bg-white"
+          onLoad={handleFrameLoad}
+          onError={handleFrameError}
+          style={{ height: maxHeight, maxHeight }}
+        />
       </div>
     </div>
   );

@@ -253,9 +253,12 @@ enum EventMapReservationStatus {
 }
 
 enum EventMapOrderStatus {
+  PAYMENT_PENDING
   CONFIRMED
   CANCELLED
+  EXPIRED
   REFUNDED
+  PARTIALLY_REFUNDED
 }
 
 enum EventTicketStatus {
@@ -302,6 +305,12 @@ enum EventCostumeAssignmentStatus {
   CANCELLED
 }
 
+enum EventCostumeAssignmentBillingMode {
+  INCLUDED_IN_REGISTRATION_FEE
+  SEPARATE_CHARGE
+  FREE
+}
+
 enum EventFinancialEntryType {
   COST
   REVENUE
@@ -314,6 +323,7 @@ enum EventFinancialEntryStatus {
   RECEIVED
   CANCELLED
   REFUNDED
+  PARTIALLY_REFUNDED
 }
 
 enum EventFinancialOriginType {
@@ -879,6 +889,9 @@ model Conta {
   eventAudits                    EventAudit[]
   contratoTemplates              ContratoTemplate[]
   contratoModelos                ContratoModelo[]
+  contratos                      Contrato[]
+  contratoEvidencias             ContractEvidence[]
+  contratoDocumentos             ContratoDocumento[]
   rematriculaOperacoes           RematriculaOperacao[]
   payerChangeOperacoes           PayerChangeOperacao[]
   matriculaOperacoes             MatriculaOperacao[]
@@ -2936,6 +2949,7 @@ model EventMapReservation {
   eventMapId  String
   versionId   String
   holdToken   String                    @unique
+  checkoutKey String?
   status      EventMapReservationStatus @default(HELD)
   buyerName   String?
   buyerEmail  String?
@@ -2954,6 +2968,7 @@ model EventMapReservation {
 
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_reservation_conta_map_version_status")
   @@index([contaId, expiresAt, status], name: "idx_event_map_reservation_conta_expires_status")
+  @@unique([contaId, eventMapId, checkoutKey], name: "uq_event_map_reservation_conta_map_checkout_key")
 }
 
 model EventMapReservationSeat {
@@ -2982,9 +2997,18 @@ model EventMapOrder {
   buyerEmail    String
   buyerDocument String?
   totalAmount   Decimal             @default(0) @db.Decimal(12, 2)
-  status        EventMapOrderStatus @default(CONFIRMED)
+  status        EventMapOrderStatus @default(PAYMENT_PENDING)
+  paymentProvider String?
+  asaasCustomerId String?
+  asaasPaymentId  String?
+  paymentMethod   String?
+  paymentStatus   String?
+  invoiceUrl      String?
+  expiresAt       DateTime?
+  paidAt          DateTime?
+  refundedAmount  Decimal           @default(0) @db.Decimal(12, 2)
   accessToken   String              @unique
-  confirmedAt   DateTime            @default(now())
+  confirmedAt   DateTime?
   cancelledAt   DateTime?
   refundedAt    DateTime?
   createdAt     DateTime            @default(now())
@@ -3000,6 +3024,8 @@ model EventMapOrder {
 
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_order_conta_map_version_status")
   @@index([contaId, eventId, createdAt], name: "idx_event_map_order_conta_event_created")
+  @@index([contaId, asaasPaymentId], name: "idx_event_map_order_conta_asaas_payment")
+  @@index([contaId, expiresAt, status], name: "idx_event_map_order_conta_expires_status")
 }
 
 model EventMapOrderItem {
@@ -3066,10 +3092,12 @@ model EventTicketSale {
   createdByUserId   String?
   notes             String?
   revenueEntryId    String?
+  eventMapOrderId   String?
   paymentProvider   String?
   asaasPaymentId    String?
   paymentStatus     String?
   providerChargeId  String?
+  refundedAmount    Decimal               @default(0) @db.Decimal(12, 2)
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
 
@@ -3087,6 +3115,7 @@ model EventTicketSale {
   @@index([contaId, alunoId], name: "idx_event_ticket_sale_conta_aluno")
   @@index([contaId, responsavelId], name: "idx_event_ticket_sale_conta_responsavel")
   @@index([contaId, asaasPaymentId], name: "idx_event_ticket_sale_conta_asaas_payment")
+  @@index([contaId, eventMapOrderId], name: "idx_event_ticket_sale_conta_map_order")
 }
 
 model EventCostume {
@@ -3125,6 +3154,7 @@ model EventCostumeAssignment {
   turmaId           String?
   definedSize       String?
   status            EventCostumeAssignmentStatus @default(PENDING)
+  billingMode       EventCostumeAssignmentBillingMode @default(SEPARATE_CHARGE)
   chargedValue      Decimal?                     @db.Decimal(12, 2)
   isPaid            Boolean                      @default(false)
   deliveredAt       DateTime?
@@ -3174,6 +3204,8 @@ model EventFinancialEntry {
   paymentStatus   String?
   cancelledAt     DateTime?
   refundedAt      DateTime?
+  refundedAmount  Decimal                 @default(0) @db.Decimal(12, 2)
+  netAmount       Decimal?                @db.Decimal(12, 2)
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
 
@@ -3204,6 +3236,11 @@ model EventParticipant {
   isFeePaid              Boolean            @default(false)
   feePaymentMethod       String?
   revenueEntryId         String?
+  financialStatusSnapshot String?
+  feePaidAmount          Decimal            @default(0) @db.Decimal(12, 2)
+  feeRefundedAmount      Decimal            @default(0) @db.Decimal(12, 2)
+  cancelledAt            DateTime?
+  cancelledReason        String?
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
 
@@ -3310,13 +3347,16 @@ model ContratoTemplate {
 
 model Contrato {
   id               String  @id @default(cuid())
+  contaId          String
   matriculaId      String
   modeloId         String? // Referência ao modelo de contrato usado
   contratoOrigemId String?
 
-  // PDF final do contrato (imutável após assinatura)
-  arquivoPdfUrl String // URL do PDF gerado para este aluno
-  hashPdf       String // SHA-256 do PDF para prova de integridade
+  // PDF apresentado ao assinante. Mantido por compatibilidade com o fluxo legado.
+  arquivoPdfUrl         String
+  hashPdf               String
+  arquivoPdfAssinadoUrl String?
+  hashPdfAssinado       String?
 
   // @deprecated - Campo legado para migração
   conteudoFinal String? @db.Text // HTML renderizado (contratos antigos)
@@ -3334,26 +3374,94 @@ model Contrato {
   hashAssinatura    String? // SHA-256 do PDF + dados da assinatura
 
   // Link de compartilhamento
-  tokenPublico  String    @unique @default(cuid())
-  tokenExpiraEm DateTime? // Expiração do link (padrão: 7 dias)
+  tokenPublico     String    @unique @default(cuid()) // @deprecated: manter somente para fallback legado.
+  tokenPublicoHash String?
+  tokenExpiraEm    DateTime? // Expiração do link (padrão: 7 dias)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  matricula              Matricula         @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Restrict)
-  modelo                 ContratoModelo?   @relation(fields: [modeloId], references: [id])
-  contratoOrigem         Contrato?         @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
-  aditivos               Contrato[]        @relation("ContratoAditivo")
-  matriculaContratoAtual Matricula?        @relation("MatriculaContratoAtual")
+  conta                  Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  matricula              Matricula           @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Restrict)
+  modelo                 ContratoModelo?     @relation(fields: [modeloId], references: [id])
+  contratoOrigem         Contrato?           @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
+  aditivos               Contrato[]          @relation("ContratoAditivo")
+  matriculaContratoAtual Matricula?          @relation("MatriculaContratoAtual")
   subscriptions          Subscription[]
   installmentPlans       InstallmentPlan[]
+  evidencias             ContractEvidence[]
+  documentos             ContratoDocumento[]
 
+  @@index([contaId, status], name: "idx_contrato_conta_status")
+  @@index([contaId, matriculaId], name: "idx_contrato_conta_matricula")
+  @@index([contaId, createdAt], name: "idx_contrato_conta_created")
+  @@index([contaId, tokenPublicoHash], name: "idx_contrato_conta_token_hash")
   @@index([matriculaId], name: "idx_contrato_matricula")
   @@index([modeloId], name: "idx_contrato_modelo")
   @@index([status], name: "idx_contrato_status")
   @@index([tokenPublico], name: "idx_contrato_token")
+  @@index([tokenPublicoHash], name: "idx_contrato_token_hash")
   @@index([tokenExpiraEm], name: "idx_contrato_token_expira")
   @@index([status, matriculaId], name: "idx_contrato_status_matricula")
+}
+
+enum ContractEvidenceType {
+  CONTRACT_CREATED
+  PUBLIC_LINK_CREATED
+  PUBLIC_LINK_OPENED
+  PDF_VIEWED
+  SIGNATURE_STARTED
+  SIGNATURE_ACCEPTED
+  SIGNATURE_COMPLETED
+  SIGNATURE_REJECTED
+  LINK_EXPIRED
+  CONTRACT_CANCELLED
+  SIGNED_PDF_GENERATED
+}
+
+model ContractEvidence {
+  id          String               @id @default(cuid())
+  contaId     String
+  contratoId  String
+  type        ContractEvidenceType
+  actorType   String?
+  actorId     String?
+  ip          String?
+  userAgent   String?
+  payload     Json
+  payloadHash String
+  createdAt   DateTime             @default(now())
+
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato Contrato @relation(fields: [contratoId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, contratoId, createdAt], name: "idx_contract_evidence_conta_contract_created")
+  @@index([contaId, type, createdAt], name: "idx_contract_evidence_conta_type_created")
+}
+
+enum ContratoDocumentoTipo {
+  MODELO_ORIGINAL
+  GERADO_MATRICULA
+  ASSINADO
+  CERTIFICADO_EVIDENCIAS
+}
+
+model ContratoDocumento {
+  id           String                @id @default(cuid())
+  contaId      String
+  contratoId   String
+  tipo         ContratoDocumentoTipo
+  arquivoUrl   String
+  hashSha256   String
+  tamanhoBytes Int?
+  mimeType     String                @default("application/pdf")
+  createdAt    DateTime              @default(now())
+
+  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato Contrato @relation(fields: [contratoId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, contratoId], name: "idx_contrato_documento_conta_contrato")
+  @@index([contaId, tipo], name: "idx_contrato_documento_conta_tipo")
 }
 
 // ==================== ASAAS WHITE LABEL (NOVO NÚCLEO) ====================

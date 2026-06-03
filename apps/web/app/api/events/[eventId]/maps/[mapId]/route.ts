@@ -7,6 +7,7 @@ import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+export const maxDuration = 60;
 
 type RouteContext = {
   params: Promise<{ eventId: string; mapId: string }>;

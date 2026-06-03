@@ -123,6 +123,14 @@ export const EVENT_COSTUME_ASSIGNMENT_STATUSES = [
 
 export type EventCostumeAssignmentStatus = (typeof EVENT_COSTUME_ASSIGNMENT_STATUSES)[number];
 
+export const EVENT_COSTUME_ASSIGNMENT_BILLING_MODES = [
+  'INCLUDED_IN_REGISTRATION_FEE',
+  'SEPARATE_CHARGE',
+  'FREE',
+] as const;
+
+export type EventCostumeAssignmentBillingMode = (typeof EVENT_COSTUME_ASSIGNMENT_BILLING_MODES)[number];
+
 export const EVENT_FINANCIAL_ENTRY_TYPES = ['COST', 'REVENUE'] as const;
 export type EventFinancialEntryType = (typeof EVENT_FINANCIAL_ENTRY_TYPES)[number];
 
@@ -133,6 +141,7 @@ export const EVENT_FINANCIAL_ENTRY_STATUSES = [
   'RECEIVED',
   'CANCELLED',
   'REFUNDED',
+  'PARTIALLY_REFUNDED',
 ] as const;
 
 export type EventFinancialEntryStatus = (typeof EVENT_FINANCIAL_ENTRY_STATUSES)[number];
@@ -262,6 +271,12 @@ export const EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS: Record<EventCostumeAssignme
   CANCELLED: 'Cancelado',
 };
 
+export const EVENT_COSTUME_ASSIGNMENT_BILLING_MODE_LABELS: Record<EventCostumeAssignmentBillingMode, string> = {
+  INCLUDED_IN_REGISTRATION_FEE: 'Incluso na taxa de inscrição',
+  SEPARATE_CHARGE: 'Cobrar separadamente',
+  FREE: 'Sem cobrança',
+};
+
 export const EVENT_FINANCIAL_STATUS_LABELS: Record<EventFinancialEntryStatus, string> = {
   EXPECTED: 'Previsto',
   PENDING: 'Pendente',
@@ -269,6 +284,7 @@ export const EVENT_FINANCIAL_STATUS_LABELS: Record<EventFinancialEntryStatus, st
   RECEIVED: 'Recebido',
   CANCELLED: 'Cancelado',
   REFUNDED: 'Estornado',
+  PARTIALLY_REFUNDED: 'Estornado parcial',
 };
 
 export const EVENT_COST_CATEGORIES = [

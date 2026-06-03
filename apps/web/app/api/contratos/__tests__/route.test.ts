@@ -19,6 +19,12 @@ const {
     contrato: {
       create: vi.fn(),
     },
+    contratoDocumento: {
+      create: vi.fn(),
+    },
+    contractEvidence: {
+      create: vi.fn(),
+    },
     matricula: {
       update: vi.fn(),
     },
@@ -84,6 +90,7 @@ describe('POST /api/contratos', () => {
     );
     transactionMock.contrato.create.mockResolvedValue({
       id: 'contrato-1',
+      contaId: 'conta-1',
       matriculaId: 'mat-1',
       modeloId: 'modelo-1',
       contratoOrigemId: null,
@@ -91,6 +98,7 @@ describe('POST /api/contratos', () => {
       hashPdf: 'hash-1',
       status: 'PENDENTE',
       tokenPublico: 'token-publico',
+      tokenPublicoHash: 'hash-token-publico',
       tokenExpiraEm: new Date('2025-02-20T00:00:00.000Z'),
       createdAt: new Date('2025-02-01T00:00:00.000Z'),
       updatedAt: new Date('2025-02-01T00:00:00.000Z'),
@@ -111,6 +119,7 @@ describe('POST /api/contratos', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({
         id: 'contrato-1',
+        contaId: 'conta-1',
         matriculaId: 'mat-1',
         modeloId: 'modelo-1',
         contratoOrigemId: null,
@@ -125,6 +134,7 @@ describe('POST /api/contratos', () => {
         assinadoUserAgent: null,
         hashAssinatura: null,
         tokenPublico: 'token-publico',
+        tokenPublicoHash: 'hash-token-publico',
         tokenExpiraEm: new Date('2025-02-20T00:00:00.000Z'),
         createdAt: new Date('2025-02-01T00:00:00.000Z'),
         updatedAt: new Date('2025-02-01T00:00:00.000Z'),
@@ -183,7 +193,10 @@ describe('POST /api/contratos', () => {
       contaId: 'conta-1',
       nome: 'Modelo padrão',
       arquivoPdfUrl: 'https://example.com/contrato.pdf',
+      arquivoOriginalUrl: null,
       hashSha256: 'hash-1',
+      tamanhoBytes: 1024,
+      mimeType: 'application/pdf',
       status: 'ATIVO',
     });
     prismaMock.subscription.findFirst.mockResolvedValueOnce({

@@ -90,20 +90,20 @@ describe('GET /api/financeiro/pagamentos/summary', () => {
     expect(response.status).toBe(401);
   });
 
-  it('agrega historico por aluno usando snapshot oficial reconciliado', async () => {
+  it('agrega historico por aluno usando estado local sem reconciliar no carregamento', async () => {
     const response = await GET(new NextRequest('http://localhost/api/financeiro/pagamentos/summary?status=PAGO'));
     const json = await response.json();
 
     expect(response.status).toBe(200);
     expect(json.total).toBe(1);
+    expect(json.page).toBe(1);
+    expect(json.pageSize).toBe(20);
+    expect(json.totalPages).toBe(1);
     expect(json.data[0].id).toBe('aluno-1');
     expect(json.data[0].nome).toBe('Aluno Financeiro');
     expect(json.data[0].valorTotal).toBe(120);
     expect(json.data[0].pagamentosCount).toBe(1);
-    expect(mockSyncPaymentStateFromAsaas).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      asaasPaymentId: 'pay_1',
-    });
-    expect(mockCobrancaFindMany).toHaveBeenCalledTimes(2);
+    expect(mockSyncPaymentStateFromAsaas).not.toHaveBeenCalled();
+    expect(mockCobrancaFindMany).toHaveBeenCalledTimes(1);
   });
 });

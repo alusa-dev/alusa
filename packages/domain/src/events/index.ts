@@ -11,9 +11,56 @@ export type EventCostumeAssignmentStatus =
   | 'DAMAGED'
   | 'LOST'
   | 'CANCELLED';
+export type EventCostumeAssignmentBillingMode =
+  | 'INCLUDED_IN_REGISTRATION_FEE'
+  | 'SEPARATE_CHARGE'
+  | 'FREE';
 export type EventFinancialEntryType = 'COST' | 'REVENUE';
-export type EventFinancialEntryStatus = 'EXPECTED' | 'PENDING' | 'PAID' | 'RECEIVED' | 'CANCELLED' | 'REFUNDED';
+export type EventFinancialEntryStatus =
+  | 'EXPECTED'
+  | 'PENDING'
+  | 'PAID'
+  | 'RECEIVED'
+  | 'CANCELLED'
+  | 'REFUNDED'
+  | 'PARTIALLY_REFUNDED';
 export type EventFinancialOriginType = 'MANUAL' | 'TICKET_SALE' | 'COSTUME' | 'COSTUME_ASSIGNMENT';
+
+export type EventParticipantFinancialStatus =
+  | 'ISENTO'
+  | 'PENDENTE'
+  | 'EM_DIA'
+  | 'ATRASADO'
+  | 'QUITADO'
+  | 'CANCELADO'
+  | 'ESTORNADO'
+  | 'ESTORNADO_PARCIAL';
+
+export type EventChargeLike = {
+  status?: string | null;
+  value?: number | string | null;
+  amount?: number | string | null;
+  paidValue?: number | string | null;
+  refundedValue?: number | string | null;
+  dueDate?: Date | string | null;
+  paymentDate?: Date | string | null;
+  paidAt?: Date | string | null;
+  cancelledAt?: Date | string | null;
+  refundedAt?: Date | string | null;
+};
+
+export type EventParticipantPaymentResolution = {
+  status: EventParticipantFinancialStatus;
+  expectedAmount: number;
+  paidAmount: number;
+  refundedAmount: number;
+  netPaidAmount: number;
+  openAmount: number;
+  overdueAmount: number;
+  percentPaid: number;
+  isFullyPaid: boolean;
+  hasOverdue: boolean;
+};
 
 export type EventTransitionResult =
   | { ok: true }
@@ -118,12 +165,14 @@ export type EventMetricFinancialEntry = {
   status: EventFinancialEntryStatus;
   expectedAmount: number | string | null;
   actualAmount: number | string | null;
+  refundedAmount?: number | string | null;
   originType?: EventFinancialOriginType | null;
   category?: string | null;
 };
 
 export type EventMetricCostumeAssignment = {
   status: EventCostumeAssignmentStatus;
+  billingMode?: EventCostumeAssignmentBillingMode | null;
   chargedValue?: number | string | null;
   isPaid?: boolean | null;
 };
@@ -157,6 +206,9 @@ export type EventMetrics = {
   ingressosDisponiveis: number;
   cortesias: number;
   ticketMedio: number | null;
+  receitaRecebidaBruta: number;
+  receitaEstornada: number;
+  receitaRecebidaLiquida: number;
   taxaOcupacao: number | null;
   figurinosPendentes: number;
   figurinosEntregues: number;
@@ -177,6 +229,158 @@ function isAutomaticEventFinance(entry: EventMetricFinancialEntry): boolean {
   return entry.originType === 'TICKET_SALE' || entry.originType === 'COSTUME_ASSIGNMENT' || entry.originType === 'COSTUME';
 }
 
+const PAID_CHARGE_STATUSES = new Set([
+  'PAID',
+  'PAGO',
+  'RECEIVED',
+  'CONFIRMED',
+  'RECEIVED_IN_CASH',
+  'DUNNING_RECEIVED',
+]);
+
+const OVERDUE_CHARGE_STATUSES = new Set(['OVERDUE', 'ATRASADO', 'VENCIDO']);
+const CANCELLED_CHARGE_STATUSES = new Set(['CANCELLED', 'CANCELED', 'CANCELADO', 'DELETED']);
+const REFUNDED_CHARGE_STATUSES = new Set([
+  'REFUNDED',
+  'ESTORNADO',
+  'CHARGEBACK_REQUESTED',
+  'CHARGEBACK_DISPUTE',
+  'CHARGEBACK_DEPOSITED',
+]);
+const OPEN_CHARGE_STATUSES = new Set([
+  'OPEN',
+  'PENDING',
+  'PENDENTE',
+  'CREATED',
+  'PENDING_SYNC',
+  'AWAITING_RISK_ANALYSIS',
+  'DUNNING_REQUESTED',
+]);
+
+function normalizeStatus(status: string | null | undefined): string {
+  return (status ?? '').trim().toUpperCase();
+}
+
+function chargeValue(charge: EventChargeLike): number {
+  return money(charge.paidValue ?? charge.value ?? charge.amount);
+}
+
+function isPastDue(charge: EventChargeLike, today: Date): boolean {
+  if (!charge.dueDate) return false;
+  const due = new Date(charge.dueDate);
+  if (Number.isNaN(due.getTime())) return false;
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return dueDay < todayDay;
+}
+
+export function resolveEventParticipantPayment(input: {
+  expectedAmount: number | string | null | undefined;
+  charges?: EventChargeLike[];
+  paidFallback?: boolean | null;
+  cancelled?: boolean | null;
+  refunded?: boolean | null;
+  today?: Date;
+}): EventParticipantPaymentResolution {
+  const expectedAmount = roundMoney(money(input.expectedAmount));
+  const today = input.today ?? new Date();
+  const charges = input.charges ?? [];
+
+  if (expectedAmount <= 0) {
+    return {
+      status: 'ISENTO',
+      expectedAmount: 0,
+      paidAmount: 0,
+      refundedAmount: 0,
+      netPaidAmount: 0,
+      openAmount: 0,
+      overdueAmount: 0,
+      percentPaid: 100,
+      isFullyPaid: true,
+      hasOverdue: false,
+    };
+  }
+
+  if (input.cancelled && charges.length === 0) {
+    return {
+      status: 'CANCELADO',
+      expectedAmount,
+      paidAmount: 0,
+      refundedAmount: 0,
+      netPaidAmount: 0,
+      openAmount: 0,
+      overdueAmount: 0,
+      percentPaid: 0,
+      isFullyPaid: false,
+      hasOverdue: false,
+    };
+  }
+
+  let paidAmount = input.paidFallback ? expectedAmount : 0;
+  let refundedAmount = input.refunded ? paidAmount : 0;
+  let openAmount = input.paidFallback ? 0 : expectedAmount;
+  let overdueAmount = 0;
+  let hasOverdue = false;
+  let hasOpen = !input.paidFallback;
+  let hasCancelled = false;
+  let hasRefunded = Boolean(input.refunded);
+
+  if (charges.length > 0) {
+    paidAmount = 0;
+    refundedAmount = 0;
+    openAmount = 0;
+    hasOpen = false;
+
+    for (const charge of charges) {
+      const status = normalizeStatus(charge.status);
+      const value = chargeValue(charge);
+      const refunded = money(charge.refundedValue);
+
+      if (PAID_CHARGE_STATUSES.has(status)) {
+        paidAmount += value;
+      } else if (REFUNDED_CHARGE_STATUSES.has(status)) {
+        paidAmount += value;
+        refundedAmount += refunded > 0 ? refunded : value;
+        hasRefunded = true;
+      } else if (CANCELLED_CHARGE_STATUSES.has(status)) {
+        hasCancelled = true;
+      } else {
+        hasOpen = OPEN_CHARGE_STATUSES.has(status) || status === '';
+        openAmount += value;
+        if (OVERDUE_CHARGE_STATUSES.has(status) || isPastDue(charge, today)) {
+          hasOverdue = true;
+          overdueAmount += value;
+        }
+      }
+    }
+  }
+
+  const netPaidAmount = roundMoney(Math.max(paidAmount - refundedAmount, 0));
+  const isFullyPaid = netPaidAmount >= expectedAmount;
+  const percentPaid = expectedAmount > 0 ? Math.min(100, roundMoney((netPaidAmount / expectedAmount) * 100)) : 100;
+
+  let status: EventParticipantFinancialStatus = 'PENDENTE';
+  if (hasOverdue) status = 'ATRASADO';
+  else if (isFullyPaid) status = 'QUITADO';
+  else if (hasRefunded && netPaidAmount <= 0) status = 'ESTORNADO';
+  else if (hasRefunded) status = 'ESTORNADO_PARCIAL';
+  else if (netPaidAmount > 0 || hasOpen) status = 'EM_DIA';
+  else if (hasCancelled || input.cancelled) status = 'CANCELADO';
+
+  return {
+    status,
+    expectedAmount,
+    paidAmount: roundMoney(paidAmount),
+    refundedAmount: roundMoney(refundedAmount),
+    netPaidAmount,
+    openAmount: roundMoney(Math.max(openAmount, expectedAmount - netPaidAmount)),
+    overdueAmount: roundMoney(overdueAmount),
+    percentPaid,
+    isFullyPaid,
+    hasOverdue,
+  };
+}
+
 export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ticketSales = input.ticketSales ?? [];
   const ticketLots = input.ticketLots ?? [];
@@ -186,10 +390,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 
   let receitaPrevista = 0;
   let receitaRealizada = 0;
+  let receitaRecebidaBruta = 0;
+  let receitaEstornada = 0;
   let custoPrevisto = 0;
   let custoRealizado = 0;
-  let custoDiretoPrevisto = 0;
-  let custoDiretoRealizado = 0;
   let ingressosVendidos = 0;
   let ingressosPagos = 0;
   let cortesias = 0;
@@ -201,8 +405,6 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 
   custoPrevisto += costumeCost;
   custoRealizado += costumeCost;
-  custoDiretoPrevisto += costumeCost;
-  custoDiretoRealizado += costumeCost;
 
   for (const sale of ticketSales) {
     const total = money(sale.totalAmount);
@@ -215,6 +417,7 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     if (sale.status === 'PAID') {
       receitaPrevista += total;
       receitaRealizada += total;
+      receitaRecebidaBruta += total;
       ingressosVendidos += sale.quantity;
       ingressosPagos += sale.quantity;
     }
@@ -229,40 +432,41 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     if (isAutomaticEventFinance(entry)) continue;
 
     const expected = money(entry.expectedAmount);
-    const actual = money(entry.actualAmount ?? entry.expectedAmount);
+    const actual = money(entry.actualAmount);
+    const refunded = money(entry.refundedAmount);
 
     if (entry.type === 'REVENUE') {
       if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'RECEIVED') {
         receitaPrevista += expected;
       }
-      if (entry.status === 'RECEIVED') receitaRealizada += actual;
+      if (entry.status === 'RECEIVED' || entry.status === 'PENDING' || entry.status === 'PARTIALLY_REFUNDED') {
+        if (entry.actualAmount != null) {
+          receitaRecebidaBruta += actual;
+          receitaEstornada += refunded;
+          receitaRealizada += Math.max(actual - refunded, 0);
+        }
+      }
     }
 
     if (entry.type === 'COST') {
-      const isDirect = entry.originType === 'COSTUME' || entry.category === 'Figurino';
-
       if (entry.status === 'EXPECTED' || entry.status === 'PENDING' || entry.status === 'PAID') {
         custoPrevisto += expected;
-        if (isDirect) {
-          custoDiretoPrevisto += expected;
-        }
       }
       if (entry.status === 'PAID') {
         custoRealizado += actual;
-        if (isDirect) {
-          custoDiretoRealizado += actual;
-        }
       }
     }
   }
 
   for (const assignment of costumeAssignments) {
     if (assignment.status === 'CANCELLED') continue;
+    if (assignment.billingMode !== 'SEPARATE_CHARGE') continue;
     const value = money(assignment.chargedValue);
     if (value > 0) {
       receitaPrevista += value;
       if (assignment.isPaid) {
         receitaRealizada += value;
+        receitaRecebidaBruta += value;
       }
     }
   }
@@ -278,8 +482,8 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
   const ingressosDisponiveis = Math.max(totalCapacity - lotSold, 0);
   const resultadoPrevisto = receitaPrevista - custoPrevisto;
   const resultadoRealizado = receitaRealizada - custoRealizado;
-  const lucroBrutoPrevisto = receitaPrevista - custoDiretoPrevisto;
-  const lucroBrutoRealizado = receitaRealizada - custoDiretoRealizado;
+  const lucroBrutoPrevisto = receitaPrevista - custoPrevisto;
+  const lucroBrutoRealizado = receitaRealizada - custoRealizado;
 
   return {
     receitaPrevista: roundMoney(receitaPrevista),
@@ -297,7 +501,10 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
     ingressosVendidos,
     ingressosDisponiveis,
     cortesias,
-    ticketMedio: ingressosPagos > 0 ? roundMoney(receitaRealizada / ingressosPagos) : null,
+    ticketMedio: ingressosPagos > 0 ? roundMoney(receitaRecebidaBruta / ingressosPagos) : null,
+    receitaRecebidaBruta: roundMoney(receitaRecebidaBruta),
+    receitaEstornada: roundMoney(receitaEstornada),
+    receitaRecebidaLiquida: roundMoney(receitaRealizada),
     taxaOcupacao: totalCapacity > 0 ? roundMoney(ingressosVendidos / totalCapacity) : null,
     figurinosPendentes: costumeAssignments.filter((item) =>
       ['PENDING', 'ORDERED', 'RECEIVED'].includes(item.status),
