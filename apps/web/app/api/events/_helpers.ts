@@ -29,6 +29,7 @@ export type EventsPermission =
   | 'eventFinance.markPaid'
   | 'eventFinance.markReceived'
   | 'eventFinance.cancelEntry'
+  | 'eventFinance.reconcile'
   | 'eventReports.view'
   | 'eventAudit.view';
 
@@ -56,6 +57,7 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'eventFinance.markPaid',
   'eventFinance.markReceived',
   'eventFinance.cancelEntry',
+  'eventFinance.reconcile',
   'eventReports.view',
   'eventAudit.view',
 ];
@@ -93,6 +95,7 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
     'eventFinance.markPaid',
     'eventFinance.markReceived',
     'eventFinance.cancelEntry',
+    'eventFinance.reconcile',
     'eventReports.view',
     'eventAudit.view',
   ],

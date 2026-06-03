@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@alusa/database';
-import { getPayment } from '@alusa/asaas';
 import { unregisterEventParticipant, calculateParticipantPayment } from '@alusa/lib/events/events.service';
-import { loadDecryptedAsaasCredentials } from '@alusa/lib/services/integracoes/asaas-credentials-service';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 
 export const dynamic = 'force-dynamic';
@@ -116,32 +114,6 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             },
           },
         });
-
-        const ordersMissingPaymentMethod = publicOrders.filter((order) => !order.paymentMethod && order.asaasPaymentId);
-        if (ordersMissingPaymentMethod.length > 0) {
-          const credentials = await loadDecryptedAsaasCredentials(ctx.contaId);
-          if (credentials?.apiKey) {
-            await Promise.all(
-              ordersMissingPaymentMethod.map(async (order) => {
-                try {
-                  const payment = await getPayment({ apiKey: credentials.apiKey, paymentId: order.asaasPaymentId! });
-                  if (!payment.billingType) return;
-                  order.paymentMethod = payment.billingType;
-                  await prisma.eventMapOrder.update({
-                    where: { id: order.id },
-                    data: { paymentMethod: payment.billingType },
-                  });
-                } catch (paymentError) {
-                  console.warn('[events.participant.detail] Falha ao resolver forma de pagamento do pedido público', {
-                    orderId: order.id,
-                    asaasPaymentId: order.asaasPaymentId,
-                    error: paymentError instanceof Error ? paymentError.message : String(paymentError),
-                  });
-                }
-              }),
-            );
-          }
-        }
 
         ticketSales.push(...publicOrders.map((order) => {
           const lotSources = order.status === 'PAYMENT_PENDING'
