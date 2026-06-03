@@ -35,7 +35,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const ctx = await getEventsContext('events.view');
 
     const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
       include: {
         aluno: true,
         event: true,
@@ -400,7 +400,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const body = patchParticipantBodySchema.parse(await request.json());
 
     const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
     });
 
     if (!participant) {
@@ -521,7 +521,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     const ctx = await getEventsContext('events.update');
 
     const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
     });
 
     if (!participant) {
@@ -531,41 +531,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (participant.alunoId) {
-      // 1. Verificar se possui figurinos vinculados
-      const costumes = await prisma.eventCostumeAssignment.findFirst({
-        where: { contaId: ctx.contaId, eventId, alunoId: participant.alunoId },
-      });
-      if (costumes) {
-        return NextResponse.json(
-          {
-            error: {
-              code: 'POSSUI_FIGURINOS',
-              message: 'Não é possível remover a inscrição pois o participante possui figurinos vinculados. Remova os figurinos primeiro.',
-            },
-          },
-          { status: 409 }
-        );
-      }
-
-      // 2. Verificar se possui ingressos vinculados
-      const ticketSales = await prisma.eventTicketSale.findFirst({
-        where: { contaId: ctx.contaId, eventId, alunoId: participant.alunoId },
-      });
-      if (ticketSales) {
-        return NextResponse.json(
-          {
-            error: {
-              code: 'POSSUI_INGRESSOS',
-              message: 'Não é possível remover a inscrição pois o participante possui ingressos/vendas registradas. Cancele as vendas primeiro.',
-            },
-          },
-          { status: 409 }
-        );
-      }
-    }
-
-    const result = await unregisterEventParticipant(ctx, participantId);
+    const result = await unregisterEventParticipant(ctx, eventId, participantId);
     return NextResponse.json({ data: result });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_DESINSCREVER_PARTICIPANTE');

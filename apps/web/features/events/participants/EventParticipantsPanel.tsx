@@ -10,12 +10,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from '@/components/ui/toast';
 
-import { formatCurrency, unregisterEventParticipant, type EventParticipantDTO, type SchoolEventDTO } from '../events-service';
+import {
+  formatCurrency,
+  removeEventParticipant,
+  unregisterEventParticipant,
+  type EventParticipantDTO,
+  type SchoolEventDTO,
+} from '../events-service';
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventTablePanel as TablePanel } from '../shared/EventTablePanel';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { ParticipantActions } from './ParticipantActions';
 import { ParticipantPaymentMethod, ParticipantPaymentStatusBadge } from './ParticipantPaymentBadge';
+import { ReactivateParticipantDialog } from './ReactivateParticipantDialog';
 import { RegisterParticipantDialog } from './RegisterParticipantDialog';
 
 export function EventParticipantsPanel({
@@ -32,20 +39,39 @@ export function EventParticipantsPanel({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-  const [participantToDelete, setParticipantToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [participantToCancel, setParticipantToCancel] = useState<{ id: string; name: string } | null>(null);
+  const [participantToRemove, setParticipantToRemove] = useState<{ id: string; name: string } | null>(null);
+  const [participantToReactivate, setParticipantToReactivate] = useState<EventParticipantDTO | null>(null);
+
+  const invalidateParticipants = () => {
+    queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+  };
 
   const unregisterMutation = useMutation({
     mutationFn: (participantId: string) => unregisterEventParticipant(eventId, participantId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
-      queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
-      queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
-      toast.success({ title: 'Inscrição removida', description: 'A inscrição do participante foi removida do evento.' });
-      setParticipantToDelete(null);
+      invalidateParticipants();
+      toast.success({ title: 'Inscrição cancelada', description: 'A inscrição do participante foi cancelada e o histórico foi preservado.' });
+      setParticipantToCancel(null);
     },
     onError: (error) => {
-      toast.error({ title: 'Erro ao remover inscrição', description: error.message });
-      setParticipantToDelete(null);
+      toast.error({ title: 'Erro ao cancelar inscrição', description: error.message });
+      setParticipantToCancel(null);
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (participantId: string) => removeEventParticipant(eventId, participantId),
+    onSuccess: () => {
+      invalidateParticipants();
+      toast.success({ title: 'Aluno removido do evento', description: 'A inscrição cancelada sem histórico foi removida.' });
+      setParticipantToRemove(null);
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao remover aluno do evento', description: error.message });
+      setParticipantToRemove(null);
     },
   });
 
@@ -113,8 +139,14 @@ export function EventParticipantsPanel({
                 align: 'right',
                 render: (part: EventParticipantDTO) => (
                   <ParticipantActions
+                    isCancelled={Boolean(part.cancelledAt)}
+                    canRemove={part.canRemove === true}
+                    canReactivate={part.canReactivate === true}
+                    removeReasons={part.removalBlockReasons ?? []}
                     onView={() => router.push('/events/' + eventId + '/participants/' + part.id)}
-                    onRemove={() => setParticipantToDelete({ id: part.id, name: part.displayName })}
+                    onCancel={() => setParticipantToCancel({ id: part.id, name: part.displayName })}
+                    onReactivate={() => setParticipantToReactivate(part)}
+                    onRemove={() => setParticipantToRemove({ id: part.id, name: part.displayName })}
                   />
                 ),
               },
@@ -128,20 +160,46 @@ export function EventParticipantsPanel({
         </TablePanel>
       </CardContent>
 
-      <ConfirmDialog
-        open={participantToDelete !== null}
+      <ReactivateParticipantDialog
+        eventId={eventId}
+        event={event}
+        participant={participantToReactivate}
+        open={participantToReactivate !== null}
         onOpenChange={(open) => {
-          if (!open) setParticipantToDelete(null);
+          if (!open) setParticipantToReactivate(null);
         }}
-        title="Remover inscrição"
-        description={'Tem certeza que deseja remover a inscrição de ' + participantToDelete?.name + '?'}
-        confirmText="Remover"
+      />
+
+      <ConfirmDialog
+        open={participantToCancel !== null}
+        onOpenChange={(open) => {
+          if (!open) setParticipantToCancel(null);
+        }}
+        title="Cancelar inscrição"
+        description={'Tem certeza que deseja cancelar a inscrição de ' + participantToCancel?.name + '? O histórico financeiro e operacional será preservado.'}
+        confirmText="Cancelar inscrição"
         cancelText="Cancelar"
         variant="destructive"
         onConfirm={() => {
-          if (participantToDelete) unregisterMutation.mutate(participantToDelete.id);
+          if (participantToCancel) unregisterMutation.mutate(participantToCancel.id);
         }}
         loading={unregisterMutation.isPending}
+      />
+
+      <ConfirmDialog
+        open={participantToRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setParticipantToRemove(null);
+        }}
+        title="Remover aluno do evento"
+        description={'Tem certeza que deseja remover ' + participantToRemove?.name + ' do evento? Esta ação só é permitida para inscrição cancelada sem histórico operacional relevante.'}
+        confirmText="Remover aluno do evento"
+        cancelText="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (participantToRemove) removeMutation.mutate(participantToRemove.id);
+        }}
+        loading={removeMutation.isPending}
       />
     </Card>
   );

@@ -12,10 +12,10 @@ type RouteParams = { params: Promise<{ eventId: string; participantId: string }>
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const { participantId } = await params;
+    const { eventId, participantId } = await params;
     const ctx = await getEventsContext('eventFinance.markReceived');
     const body = quitarParticipantFeeSchema.parse(await request.json());
-    const result = await quitarEventParticipantFee(ctx, participantId, body);
+    const result = await quitarEventParticipantFee(ctx, eventId, participantId, body);
     return NextResponse.json({ data: result });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_QUITAR_TAXA_PARTICIPANTE');

@@ -252,6 +252,32 @@ export const createEventParticipantSchema = z.object({
   notes: optionalText,
 });
 
+export const eventParticipantBillingRequestSchema = z.object({
+  registrationFeeCharged: z.coerce.number().optional().default(0),
+  billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional().default('MANUAL_RECEIVED'),
+  feePaymentMethod: z.string().trim().optional().nullable(),
+  notes: z.string().trim().optional().nullable(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),
+  installmentCount: z.coerce.number().int().min(2).max(24).optional(),
+});
+
+export const registerEventParticipantRequestSchema = eventParticipantBillingRequestSchema.extend({
+  alunoId: z.string().trim().min(1),
+});
+
+export const reactivateEventParticipantRequestSchema = eventParticipantBillingRequestSchema;
+
+export const reactivateEventParticipantSchema = createEventParticipantSchema.omit({ eventId: true, alunoId: true }).extend({
+  dueDate: optionalDate,
+  paymentProvider: optionalText,
+  asaasPaymentId: optionalText,
+  paymentStatus: optionalText,
+  billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional(),
+  chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),
+  installmentCount: z.coerce.number().int().min(2).max(24).optional(),
+});
+
 export const quitarParticipantFeeSchema = z.object({
   paymentMethod: z.string().trim().min(1),
 });
@@ -270,4 +296,5 @@ export type UpdateCostumeAssignmentInput = z.infer<typeof updateCostumeAssignmen
 export type CreateEventFinancialEntryInput = z.infer<typeof createEventFinancialEntrySchema>;
 export type UpdateEventFinancialEntryInput = z.infer<typeof updateEventFinancialEntrySchema>;
 export type CreateEventParticipantInput = z.infer<typeof createEventParticipantSchema>;
+export type ReactivateEventParticipantInput = z.infer<typeof reactivateEventParticipantSchema>;
 export type QuitarParticipantFeeInput = z.infer<typeof quitarParticipantFeeSchema>;

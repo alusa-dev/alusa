@@ -217,7 +217,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // 1. Fetch the participant to check if it belongs to the active account/tenant
     const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
     });
 
     if (!participant) {
@@ -331,7 +331,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const ctx = await getEventsContext('events.view');
 
     const participant = await prisma.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
       include: {
         event: true,
         turma: true,

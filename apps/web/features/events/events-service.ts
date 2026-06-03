@@ -180,14 +180,41 @@ export type EventReportsDTO = {
 
 type JsonEnvelope<T> = { data: T };
 
+type ApiErrorEnvelope = {
+  error?: {
+    code?: string;
+    message?: string;
+    details?: unknown;
+  };
+};
+
+export class EventApiError extends Error {
+  readonly code?: string;
+  readonly details?: unknown;
+  readonly status: number;
+
+  constructor(message: string, params: { code?: string; details?: unknown; status: number }) {
+    super(message);
+    this.name = 'EventApiError';
+    this.code = params.code;
+    this.details = params.details;
+    this.status = params.status;
+  }
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const json = await response.json().catch(() => null);
 
   if (!response.ok) {
+    const errorPayload = json as ApiErrorEnvelope | null;
     const message =
-      (json as { error?: { message?: string } } | null)?.error?.message ??
+      errorPayload?.error?.message ??
       'Não foi possível concluir a ação de Eventos.';
-    throw new Error(message);
+    throw new EventApiError(message, {
+      code: errorPayload?.error?.code,
+      details: errorPayload?.error?.details,
+      status: response.status,
+    });
   }
 
   return json as T;
@@ -458,6 +485,10 @@ export type EventParticipantDTO = {
   feePaymentMethod: string | null;
   notes: string | null;
   createdAt: string;
+  cancelledAt?: string | null;
+  canRemove?: boolean;
+  canReactivate?: boolean;
+  removalBlockReasons?: string[];
   metrics: {
     costumeCount: number;
     pendingCostumes: number;
@@ -486,6 +517,22 @@ export async function unregisterEventParticipant(eventId: string, participantId:
     method: "DELETE",
   });
   return parseResponse<{ data: { ok: boolean } }>(response);
+}
+
+export async function removeEventParticipant(eventId: string, participantId: string) {
+  const response = await fetch(`/api/events/${eventId}/participants/${participantId}/remove`, {
+    method: "POST",
+  });
+  return (await parseResponse<JsonEnvelope<{ ok: boolean }>>(response)).data;
+}
+
+export async function reactivateEventParticipant(eventId: string, participantId: string, payload: Record<string, unknown>) {
+  const response = await fetch(`/api/events/${eventId}/participants/${participantId}/reactivate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return (await parseResponse<JsonEnvelope<EventParticipantDTO>>(response)).data;
 }
 
 export async function quitarEventParticipantFee(eventId: string, participantId: string, paymentMethod: string) {

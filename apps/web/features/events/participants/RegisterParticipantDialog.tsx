@@ -3,11 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { EVENT_PAYMENT_METHOD_LABELS, EVENT_PAYMENT_METHODS } from '@alusa/shared';
 
 import { AutocompleteList } from '@/components/matriculas/wizard/shared/AutocompleteList';
 import { Button } from '@/components/ui/button';
-import { DatePicker } from '@/components/ui/date-picker';
 import {
   Dialog,
   DialogContent,
@@ -20,24 +18,50 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 
-import { registerEventParticipant, type SchoolEventDTO } from '../events-service';
+import {
+  EventApiError,
+  reactivateEventParticipant,
+  registerEventParticipant,
+  removeEventParticipant,
+  type SchoolEventDTO,
+} from '../events-service';
 import { EventField as Field } from '../shared/EventField';
-import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
-import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
+import { parseCurrencyInput } from '../shared/event-formatters';
+import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType } from './ParticipantBillingFields';
 import { useStudentAutocomplete } from './useStudentAutocomplete';
 
-type ChargeType = 'ONE_TIME' | 'INSTALLMENT';
+type CancelledParticipantConflict = {
+  participantId: string;
+  canRemove: boolean;
+  canReactivate: boolean;
+  reasons: string[];
+};
+
+function parseCancelledParticipantConflict(details: unknown): CancelledParticipantConflict | null {
+  if (!details || typeof details !== 'object') return null;
+  const record = details as Record<string, unknown>;
+  if (typeof record.participantId !== 'string') return null;
+  return {
+    participantId: record.participantId,
+    canRemove: record.canRemove === true,
+    canReactivate: record.canReactivate === true,
+    reasons: Array.isArray(record.reasons)
+      ? record.reasons.filter((reason): reason is string => typeof reason === 'string')
+      : [],
+  };
+}
 
 export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }: { eventId: string; event: SchoolEventDTO; open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
-  const [billingMethod, setBillingMethod] = useState('');
-  const [chargeType, setChargeType] = useState<ChargeType>('ONE_TIME');
+  const [billingMethod, setBillingMethod] = useState<ParticipantBillingMethod>('');
+  const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [lastPayload, setLastPayload] = useState<Record<string, unknown> | null>(null);
+  const [cancelledParticipant, setCancelledParticipant] = useState<CancelledParticipantConflict | null>(null);
   const autocomplete = useStudentAutocomplete({ enabled: open });
   const {
     resetAutocomplete,
@@ -63,24 +87,68 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       setChargeType('ONE_TIME');
       setFeeText('');
       setDueDate(undefined);
+      setLastPayload(null);
+      setCancelledParticipant(null);
     }
   }, [open, event.registrationFee, resetAutocomplete]);
+
+  const invalidateParticipants = () => {
+    queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+  };
 
   const registerMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => registerEventParticipant(eventId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
-      queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
-      queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+      invalidateParticipants();
       onOpenChange(false);
       toast.success({ title: 'Aluno inscrito', description: 'A inscrição do participante foi realizada com sucesso.' });
     },
     onError: (error) => {
+      if (error instanceof EventApiError && error.code === 'PARTICIPANTE_CANCELADO_EXISTENTE') {
+        const conflict = parseCancelledParticipantConflict(error.details);
+        if (conflict) {
+          setCancelledParticipant(conflict);
+        }
+      }
       toast.error({ title: 'Erro ao inscrever aluno', description: error.message });
     },
   });
 
+  const reactivateMutation = useMutation({
+    mutationFn: () => {
+      if (!cancelledParticipant || !lastPayload) {
+        throw new Error('Não foi possível localizar a inscrição cancelada para reinscrever.');
+      }
+      return reactivateEventParticipant(eventId, cancelledParticipant.participantId, lastPayload);
+    },
+    onSuccess: () => {
+      invalidateParticipants();
+      onOpenChange(false);
+      toast.success({ title: 'Aluno reinscrito', description: 'A inscrição foi reativada e uma nova cobrança foi gerada quando aplicável.' });
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao reinscrever aluno', description: error.message });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (participantId: string) => removeEventParticipant(eventId, participantId),
+    onSuccess: () => {
+      invalidateParticipants();
+      setCancelledParticipant(null);
+      setLastPayload(null);
+      resetAutocomplete();
+      toast.success({ title: 'Aluno removido do evento', description: 'A inscrição cancelada sem histórico foi removida.' });
+    },
+    onError: (error) => {
+      toast.error({ title: 'Erro ao remover aluno do evento', description: error.message });
+    },
+  });
+
   function handleRegisterParticipant(formData: FormData) {
+    setCancelledParticipant(null);
     const alunoId = selectedStudent?.id || '';
     if (!alunoId) {
       toast.error({ title: 'Aviso', description: 'Por favor, selecione um aluno válido.' });
@@ -100,7 +168,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     }
     const installmentCount = resolvedChargeType === 'INSTALLMENT' ? Number(formData.get('installmentCount') || 2) : undefined;
 
-    registerMutation.mutate({
+    const payload = {
       alunoId,
       registrationFeeCharged,
       billingMethod: selectedBilling,
@@ -109,27 +177,10 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       chargeType: resolvedChargeType,
       dueDate: dueDateValue,
       installmentCount,
-    });
-  }
+    };
 
-  const cleanFeeText = feeText.replace(/[^\d,]/g, '').replace(',', '.');
-  const totalFeeVal = parseFloat(cleanFeeText) || 0;
-  const installmentOptions: Array<{ value: string; label: string }> = [];
-  if (totalFeeVal > 0) {
-    for (let i = 2; i <= 12; i++) {
-      const instVal = totalFeeVal / i;
-      if (instVal >= 5.0) {
-        installmentOptions.push({
-          value: String(i),
-          label: i + 'x de R$ ' + instVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        });
-      }
-    }
-  }
-  if (installmentOptions.length === 0) {
-    for (let i = 2; i <= 12; i++) {
-      installmentOptions.push({ value: String(i), label: i + 'x' });
-    }
+    setLastPayload(payload);
+    registerMutation.mutate(payload);
   }
 
   return (
@@ -195,90 +246,50 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
               </p>
             )}
           </Field>
-          <Field label="Forma de Cobrança">
-            <NativeSelect
-              name="billingMethod"
-              placeholder="Selecione a forma de cobrança"
-              required
-              onValueChange={(value) => {
-                setBillingMethod(value);
-                if (value === 'PIX') setChargeType('ONE_TIME');
-              }}
-              options={[
-                { value: 'MANUAL_RECEIVED', label: 'Quitado na hora (Manual)' },
-                { value: 'BOLETO', label: 'Boleto' },
-                { value: 'PIX', label: 'Pix' },
-                { value: 'CREDIT_CARD', label: 'Cartão de Crédito' },
-              ]}
-            />
-          </Field>
-
-          {billingMethod && (
-            <div className="space-y-4">
-              <Field label="Taxa de inscrição cobrada">
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-xs font-semibold text-slate-400 pointer-events-none">R$</span>
-                  <Input
-                    name="registrationFeeCharged"
-                    type="text"
-                    value={feeText}
-                    onChange={(event) => setFeeText(formatCurrencyInput(event.target.value))}
-                    className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
-                    required
-                  />
-                </div>
-              </Field>
-
-              <input type="hidden" name="isManual" value={billingMethod === 'MANUAL_RECEIVED' ? 'true' : 'false'} />
-              {billingMethod === 'MANUAL_RECEIVED' && (
-                <Field label="Forma de recebimento">
-                  <NativeSelect
-                    name="feePaymentMethod"
-                    defaultValue="MANUAL_PIX"
-                    options={EVENT_PAYMENT_METHODS.filter((method) => method !== 'COMPLIMENTARY').map((method) => ({ value: method, label: EVENT_PAYMENT_METHOD_LABELS[method] }))}
-                  />
-                </Field>
+          {cancelledParticipant && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">Este aluno já teve uma inscrição cancelada neste evento.</p>
+              <p className="mt-1">Você pode reinscrever o aluno e gerar uma nova cobrança.</p>
+              {cancelledParticipant.reasons.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">
+                  {cancelledParticipant.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
               )}
-
-              {billingMethod !== 'MANUAL_RECEIVED' && (
-                <>
-                  <Field label="Tipo de cobrança">
-                    <NativeSelect
-                      name="chargeType"
-                      defaultValue={billingMethod === 'PIX' ? 'ONE_TIME' : chargeType}
-                      onValueChange={(value) => setChargeType(value as ChargeType)}
-                      options={
-                        billingMethod === 'PIX'
-                          ? [{ value: 'ONE_TIME', label: 'À vista' }]
-                          : [
-                              { value: 'ONE_TIME', label: 'À vista' },
-                              { value: 'INSTALLMENT', label: 'Parcelado' },
-                            ]
-                      }
-                    />
-                  </Field>
-
-                  <Field label="Vencimento da primeira cobrança">
-                    <input type="hidden" name="dueDate" value={dueDate ? dueDate.toISOString().split('T')[0] : ''} />
-                    <DatePicker
-                      value={dueDate}
-                      onChange={setDueDate}
-                      variant="input"
-                      placeholder="dd/mm/aaaa"
-                      className={FILTER_INPUT_CLASS}
-                      readOnlyInput
-                    />
-                  </Field>
-
-                  {chargeType === 'INSTALLMENT' && billingMethod !== 'PIX' && (
-                    <Field label="Quantidade de parcelas">
-                      <NativeSelect name="installmentCount" defaultValue="2" options={installmentOptions} />
-                    </Field>
-                  )}
-                </>
-              )}
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!cancelledParticipant.canReactivate || reactivateMutation.isPending}
+                  onClick={() => reactivateMutation.mutate()}
+                >
+                  {reactivateMutation.isPending ? 'Reinscrevendo...' : 'Reinscrever aluno'}
+                </Button>
+                {cancelledParticipant.canRemove && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={removeMutation.isPending}
+                    onClick={() => removeMutation.mutate(cancelledParticipant.participantId)}
+                  >
+                    {removeMutation.isPending ? 'Removendo...' : 'Remover aluno do evento'}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
+          <ParticipantBillingFields
+            billingMethod={billingMethod}
+            chargeType={chargeType}
+            feeText={feeText}
+            dueDate={dueDate}
+            onBillingMethodChange={setBillingMethod}
+            onChargeTypeChange={setChargeType}
+            onFeeTextChange={setFeeText}
+            onDueDateChange={setDueDate}
+          />
           <Field label="Observações">
             <Textarea name="notes" className="min-h-16 rounded-lg border-slate-200" />
           </Field>

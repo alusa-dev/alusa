@@ -58,7 +58,7 @@ export function EventFormDialog({
     mutationFn: (payload: Record<string, unknown>) => saveEvent(payload, event?.id),
     onSuccess: async (saved) => {
       toast.success({
-        title: event ? 'Evento updated' : 'Evento criado',
+        title: event ? 'Evento atualizado' : 'Evento criado',
         description: event ? 'As alterações do evento foram salvas com sucesso.' : 'O novo evento foi cadastrado com sucesso.'
       });
       await queryClient.invalidateQueries({ queryKey: eventQueryKeys.events });

@@ -20,6 +20,11 @@ import {
 
 import { prisma } from '../prisma';
 import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
+import {
+  canRemoveEventParticipant,
+  type EventParticipantRemovalDecision,
+  type EventParticipantRemovalFacts,
+} from './event-participant-lifecycle';
 import type {
   CreateCostumeAssignmentInput,
   CreateCostumeInput,
@@ -35,6 +40,7 @@ import type {
   UpdateSchoolEventInput,
   UpdateTicketLotInput,
   CreateEventParticipantInput,
+  ReactivateEventParticipantInput,
   QuitarParticipantFeeInput,
 } from './events.schema';
 
@@ -45,6 +51,7 @@ export class EventsError extends Error {
     public readonly code: string,
     message: string,
     public readonly status = 400,
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = 'EventsError';
@@ -2015,6 +2022,189 @@ export async function getEventReports(ctx: Pick<EventsContext, 'contaId'>, input
   };
 }
 
+type ParticipantLifecycleRecord = Prisma.EventParticipantGetPayload<{
+  include: {
+    aluno: { select: { email: true } };
+    responsavel: { select: { email: true } };
+  };
+}>;
+
+function normalizeParticipantEmails(participant: ParticipantLifecycleRecord) {
+  return [...new Set([
+    participant.aluno?.email?.trim().toLowerCase(),
+    participant.responsavel?.email?.trim().toLowerCase(),
+  ].filter((email): email is string => Boolean(email)))];
+}
+
+async function collectChargesForEntries(
+  db: DbClient,
+  ctx: Pick<EventsContext, 'contaId'>,
+  entries: Prisma.EventFinancialEntryGetPayload<{}>[],
+) {
+  const asaasPaymentIds = entries
+    .map((entry) => entry.asaasPaymentId)
+    .filter((id): id is string => Boolean(id));
+
+  if (asaasPaymentIds.length === 0) return [];
+
+  const [plans, directCharges] = await Promise.all([
+    db.standaloneInstallmentPlan.findMany({
+      where: { contaId: ctx.contaId, asaasInstallmentId: { in: asaasPaymentIds } },
+      include: { charges: true },
+    }),
+    db.charge.findMany({
+      where: { contaId: ctx.contaId, asaasPaymentId: { in: asaasPaymentIds } },
+    }),
+  ]);
+
+  const planIds = Array.from(new Set([
+    ...plans.map((plan) => plan.id),
+    ...directCharges
+      .map((charge) => charge.standaloneInstallmentPlanId)
+      .filter((id): id is string => Boolean(id)),
+  ]));
+
+  const planCharges = planIds.length > 0
+    ? await db.charge.findMany({
+        where: { contaId: ctx.contaId, standaloneInstallmentPlanId: { in: planIds } },
+      })
+    : [];
+
+  const seen = new Set<string>();
+  return [
+    ...directCharges,
+    ...plans.flatMap((plan) => plan.charges),
+    ...planCharges,
+  ].filter((charge) => {
+    if (seen.has(charge.id)) return false;
+    seen.add(charge.id);
+    return true;
+  });
+}
+
+async function buildEventParticipantRemovalDecision(
+  db: DbClient,
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  participant: ParticipantLifecycleRecord,
+): Promise<EventParticipantRemovalDecision> {
+  const financialEntries = participant.revenueEntryId
+    ? await db.eventFinancialEntry.findMany({
+        where: { contaId: ctx.contaId, eventId, id: participant.revenueEntryId },
+      })
+    : [];
+  const charges = await collectChargesForEntries(db, ctx, financialEntries);
+
+  const ticketOwnerFilters = [
+    participant.alunoId ? { alunoId: participant.alunoId } : null,
+    participant.responsavelId ? { responsavelId: participant.responsavelId } : null,
+  ].filter((filter): filter is { alunoId: string } | { responsavelId: string } => Boolean(filter));
+
+  const costumeOwnerFilters = [
+    participant.alunoId ? { alunoId: participant.alunoId } : null,
+    participant.turmaId ? { turmaId: participant.turmaId } : null,
+  ].filter((filter): filter is { alunoId: string } | { turmaId: string } => Boolean(filter));
+
+  const buyerEmails = normalizeParticipantEmails(participant);
+
+  const [ticketSales, costumeAssignments, publicOrders] = await Promise.all([
+    ticketOwnerFilters.length > 0
+      ? db.eventTicketSale.findMany({
+          where: {
+            contaId: ctx.contaId,
+            eventId,
+            OR: ticketOwnerFilters,
+          },
+          select: { status: true },
+        })
+      : Promise.resolve([]),
+    costumeOwnerFilters.length > 0
+      ? db.eventCostumeAssignment.findMany({
+          where: {
+            contaId: ctx.contaId,
+            eventId,
+            OR: costumeOwnerFilters,
+          },
+          select: { status: true, isPaid: true },
+        })
+      : Promise.resolve([]),
+    buyerEmails.length > 0
+      ? db.eventMapOrder.findMany({
+          where: {
+            contaId: ctx.contaId,
+            eventId,
+            OR: buyerEmails.map((email) => ({ buyerEmail: { equals: email, mode: 'insensitive' } })),
+          },
+          select: {
+            status: true,
+            refundedAmount: true,
+            items: {
+              select: {
+                ticket: {
+                  select: { id: true, status: true },
+                },
+              },
+            },
+            tickets: {
+              select: { id: true, status: true },
+            },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const facts: EventParticipantRemovalFacts = {
+    cancelledAt: participant.cancelledAt,
+    isFeePaid: participant.isFeePaid,
+    feePaidAmount: toMoney(participant.feePaidAmount),
+    feeRefundedAmount: toMoney(participant.feeRefundedAmount),
+    financialEntries: financialEntries.map((entry) => ({
+      status: entry.status,
+      actualAmount: entry.actualAmount == null ? null : toMoney(entry.actualAmount),
+      refundedAmount: entry.refundedAmount == null ? null : toMoney(entry.refundedAmount),
+      netAmount: entry.netAmount == null ? null : toMoney(entry.netAmount),
+    })),
+    charges: charges.map((charge) => ({ status: charge.status })),
+    ticketSales: ticketSales.map((sale) => ({ status: sale.status })),
+    costumeAssignments: costumeAssignments.map((assignment) => ({
+      status: assignment.status,
+      isPaid: assignment.isPaid,
+    })),
+    publicOrders: publicOrders.map((order) => ({
+      status: order.status,
+      refundedAmount: toMoney(order.refundedAmount),
+      itemsCount: order.items.length,
+      ticketsCount: order.tickets.length,
+    })),
+    tickets: publicOrders.flatMap((order) => [
+      ...order.tickets.map((ticket) => ({ status: ticket.status })),
+      ...order.items.flatMap((item) => (item.ticket ? [{ status: item.ticket.status }] : [])),
+    ]),
+  };
+
+  return canRemoveEventParticipant(facts);
+}
+
+export async function getEventParticipantRemovalDecision(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  participantId: string,
+) {
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { id: participantId, eventId, contaId: ctx.contaId },
+    include: {
+      aluno: { select: { email: true } },
+      responsavel: { select: { email: true } },
+    },
+  });
+
+  if (!participant) {
+    throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+  }
+
+  return buildEventParticipantRemovalDecision(prisma, ctx, eventId, participant);
+}
+
 export async function registerEventParticipant(ctx: EventsContext, input: CreateEventParticipantInput) {
   return prisma.$transaction(async (tx) => {
     const event = await tx.schoolEvent.findFirst({
@@ -2029,9 +2219,32 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
         eventId: input.eventId,
         alunoId: input.alunoId,
       },
+      include: {
+        aluno: { select: { email: true } },
+        responsavel: { select: { email: true } },
+      },
     });
     if (existing) {
-      throw new EventsError('ALUNO_JA_INSCRITO', 'Aluno já inscrito neste evento.', 409);
+      if (!existing.cancelledAt) {
+        throw new EventsError(
+          'PARTICIPANTE_JA_INSCRITO',
+          'Este aluno já está inscrito neste evento.',
+          409,
+        );
+      }
+
+      const decision = await buildEventParticipantRemovalDecision(tx, ctx, input.eventId, existing);
+      throw new EventsError(
+        'PARTICIPANTE_CANCELADO_EXISTENTE',
+        'Este aluno possui uma inscrição cancelada neste evento. Reative a inscrição para gerar uma nova cobrança.',
+        409,
+        {
+          participantId: existing.id,
+          canRemove: decision.canRemove,
+          canReactivate: decision.canRemove,
+          reasons: decision.canRemove ? [] : decision.reasons,
+        },
+      );
     }
 
     const aluno = await tx.aluno.findFirst({
@@ -2091,9 +2304,9 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
   });
 }
 
-export async function unregisterEventParticipant(ctx: EventsContext, participantId: string) {
+export async function unregisterEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
   const participant = await prisma.eventParticipant.findFirst({
-    where: { id: participantId, contaId: ctx.contaId },
+    where: { id: participantId, eventId, contaId: ctx.contaId },
     include: { event: true },
   });
   if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
@@ -2195,10 +2408,159 @@ export async function unregisterEventParticipant(ctx: EventsContext, participant
   });
 }
 
-export async function quitarEventParticipantFee(ctx: EventsContext, participantId: string, input: QuitarParticipantFeeInput) {
+export async function removeCancelledEventParticipant(ctx: EventsContext, eventId: string, participantId: string) {
+  const participant = await prisma.eventParticipant.findFirst({
+    where: { id: participantId, eventId, contaId: ctx.contaId },
+    include: {
+      event: true,
+      aluno: { select: { email: true } },
+      responsavel: { select: { email: true } },
+    },
+  });
+  if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+  assertOperationalEvent(participant.event.status);
+
+  const decision = await buildEventParticipantRemovalDecision(prisma, ctx, eventId, participant);
+  if (!decision.canRemove) {
+    throw new EventsError(
+      'PARTICIPANTE_NAO_REMOVIVEL',
+      decision.reasons[0] ?? 'Este participante possui histórico e não pode ser removido com segurança.',
+      409,
+      { reasons: decision.reasons },
+    );
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.remove',
+      entityType: 'EventParticipant',
+      entityId: participantId,
+      eventId,
+      before: participant,
+      after: null,
+      metadata: {
+        decision,
+        reason: 'Inscrição cancelada sem histórico operacional relevante.',
+      },
+    });
+
+    await tx.eventParticipant.delete({
+      where: { id: participantId },
+    });
+
+    return { ok: true };
+  });
+}
+
+export async function reactivateEventParticipant(
+  ctx: EventsContext,
+  eventId: string,
+  participantId: string,
+  input: ReactivateEventParticipantInput,
+) {
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
+      include: {
+        event: true,
+        aluno: { select: { email: true } },
+        responsavel: { select: { email: true } },
+      },
+    });
+    if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
+    assertOperationalEvent(participant.event.status);
+
+    if (!participant.cancelledAt) {
+      throw new EventsError(
+        'PARTICIPANTE_NAO_CANCELADO',
+        'Somente inscrições canceladas podem ser reinscritas.',
+        409,
+      );
+    }
+
+    const decision = await buildEventParticipantRemovalDecision(tx, ctx, eventId, participant);
+    if (!decision.canRemove) {
+      throw new EventsError(
+        'PARTICIPANTE_REINSCRICAO_BLOQUEADA',
+        'Este aluno possui histórico financeiro ou operacional neste evento. A reinscrição automática não está disponível para este caso.',
+        409,
+        { reasons: decision.reasons },
+      );
+    }
+
+    const before = participant;
+    const feeCharged = input.registrationFeeCharged ?? participant.registrationFeeCharged.toNumber();
+    const isFeePaid = input.isFeePaid ?? false;
+    const dueDate = input.dueDate ?? new Date();
+    let revenueEntryId: string | null = null;
+
+    if (feeCharged > 0) {
+      const entry = await tx.eventFinancialEntry.create({
+        data: {
+          contaId: ctx.contaId,
+          eventId,
+          type: 'REVENUE',
+          category: 'Taxa de inscrição',
+          description: 'Taxa de inscrição',
+          expectedAmount: decimal(feeCharged),
+          actualAmount: isFeePaid ? decimal(feeCharged) : null,
+          dueDate,
+          realizedAt: isFeePaid ? new Date() : null,
+          status: isFeePaid ? 'RECEIVED' : 'PENDING',
+          paymentMethod: mapToEventPaymentMethod(input.feePaymentMethod),
+          notes: input.notes,
+          paymentProvider: input.paymentProvider ?? null,
+          asaasPaymentId: input.asaasPaymentId ?? null,
+          paymentStatus: input.paymentStatus ?? null,
+        },
+      });
+      revenueEntryId = entry.id;
+    }
+
+    const updated = await tx.eventParticipant.update({
+      where: { id: participantId },
+      data: {
+        registrationFeeCharged: decimal(feeCharged),
+        isFeePaid,
+        feePaymentMethod: feeCharged > 0 ? (input.feePaymentMethod ?? null) : null,
+        revenueEntryId,
+        financialStatusSnapshot: feeCharged <= 0 ? 'ISENTO' : isFeePaid ? 'QUITADO' : 'PENDENTE',
+        feePaidAmount: isFeePaid ? decimal(feeCharged) : decimal(0),
+        feeRefundedAmount: decimal(0),
+        cancelledAt: null,
+        cancelledReason: null,
+        notes: input.notes ?? participant.notes,
+      },
+    });
+
+    await recordEventAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.participant.reactivate',
+      entityType: 'EventParticipant',
+      entityId: participantId,
+      eventId,
+      before,
+      after: updated,
+      metadata: {
+        billingMethod: input.billingMethod,
+        chargeType: input.chargeType,
+        installmentCount: input.installmentCount,
+        previousRevenueEntryId: before.revenueEntryId,
+        newRevenueEntryId: revenueEntryId,
+      },
+    });
+
+    return updated;
+  });
+}
+
+export async function quitarEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string, input: QuitarParticipantFeeInput) {
+  return prisma.$transaction(async (tx) => {
+    const participant = await tx.eventParticipant.findFirst({
+      where: { id: participantId, eventId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
@@ -2267,10 +2629,10 @@ export async function quitarEventParticipantFee(ctx: EventsContext, participantI
   });
 }
 
-export async function refundManualEventParticipantFee(ctx: EventsContext, participantId: string) {
+export async function refundManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
@@ -2330,10 +2692,10 @@ export async function refundManualEventParticipantFee(ctx: EventsContext, partic
   });
 }
 
-export async function deleteManualEventParticipantFee(ctx: EventsContext, participantId: string) {
+export async function deleteManualEventParticipantFee(ctx: EventsContext, eventId: string, participantId: string) {
   return prisma.$transaction(async (tx) => {
     const participant = await tx.eventParticipant.findFirst({
-      where: { id: participantId, contaId: ctx.contaId },
+      where: { id: participantId, eventId, contaId: ctx.contaId },
       include: { event: true },
     });
     if (!participant) throw new EventsError('INSCRICAO_NAO_ENCONTRADA', 'Inscrição não encontrada.', 404);
@@ -2500,7 +2862,8 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
   const participants = await prisma.eventParticipant.findMany({
     where: { contaId: ctx.contaId, eventId },
     include: {
-      aluno: { select: { id: true, nome: true, foto: true } },
+      aluno: { select: { id: true, nome: true, foto: true, email: true } },
+      responsavel: { select: { email: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -2612,6 +2975,9 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       entry,
       participantCharges
     );
+    const removalDecision = part.cancelledAt
+      ? await buildEventParticipantRemovalDecision(prisma, ctx, eventId, part)
+      : null;
 
     participantData.push({
       id: part.id,
@@ -2619,18 +2985,24 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
       eventId: part.eventId,
       type: part.type,
       alunoId: part.alunoId,
-      aluno: part.aluno,
+      aluno: part.aluno
+        ? { id: part.aluno.id, nome: part.aluno.nome, foto: part.aluno.foto }
+        : null,
       displayName: part.displayName,
       registrationFeeCharged: feeValue,
       isFeePaid: part.isFeePaid,
       feePaymentMethod: part.feePaymentMethod,
       notes: part.notes,
       createdAt: part.createdAt.toISOString(),
+      cancelledAt: toIso(part.cancelledAt),
       percentPaid: paymentDetails.percentPaid,
       totalPaid: paymentDetails.totalPaid,
       totalRefunded: paymentDetails.totalRefunded,
       netPaid: paymentDetails.netPaid,
-      financialStatus: paymentDetails.status,
+      financialStatus: part.cancelledAt ? 'CANCELADO' : paymentDetails.status,
+      canRemove: removalDecision?.canRemove ?? false,
+      canReactivate: part.cancelledAt ? (removalDecision?.canRemove ?? false) : false,
+      removalBlockReasons: removalDecision?.canRemove === false ? removalDecision.reasons : [],
       metrics: {
         costumeCount,
         pendingCostumes,

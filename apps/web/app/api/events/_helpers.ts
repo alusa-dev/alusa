@@ -124,7 +124,7 @@ export async function getEventsContext(permission: EventsPermission): Promise<Ev
 
 export function handleEventsRouteError(error: unknown, fallbackCode: string) {
   if (error instanceof EventsError) {
-    return jsonError(error.status, error.code, error.message);
+    return jsonError(error.status, error.code, error.message, error.details);
   }
 
   if (error instanceof ZodError) {

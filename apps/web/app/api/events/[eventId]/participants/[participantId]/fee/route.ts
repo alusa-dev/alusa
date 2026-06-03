@@ -18,12 +18,12 @@ const postBodySchema = z.object({
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const { participantId } = await params;
+    const { eventId, participantId } = await params;
     const body = postBodySchema.parse(await request.json());
     const ctx = await getEventsContext('eventFinance.cancelEntry');
 
     if (body.action === 'refund') {
-      return NextResponse.json({ data: await refundManualEventParticipantFee(ctx, participantId) });
+      return NextResponse.json({ data: await refundManualEventParticipantFee(ctx, eventId, participantId) });
     }
 
     return NextResponse.json(
@@ -37,9 +37,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
-    const { participantId } = await params;
+    const { eventId, participantId } = await params;
     const ctx = await getEventsContext('eventFinance.cancelEntry');
-    return NextResponse.json({ data: await deleteManualEventParticipantFee(ctx, participantId) });
+    return NextResponse.json({ data: await deleteManualEventParticipantFee(ctx, eventId, participantId) });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_EXCLUIR_TAXA_INSCRICAO');
   }

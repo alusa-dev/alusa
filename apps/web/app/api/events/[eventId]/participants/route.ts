@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 
-import { createEventParticipantSchema } from '@alusa/lib/events/events.schema';
+import { registerEventParticipantRequestSchema } from '@alusa/lib/events/events.schema';
 import { listEventParticipants, registerEventParticipant } from '@alusa/lib/events/events.service';
 import { createStandaloneCharge } from '@alusa/finance';
 import { prisma } from '@alusa/database';
@@ -12,17 +11,6 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 type RouteParams = { params: Promise<{ eventId: string }> };
-
-const registerParticipantBodySchema = z.object({
-  alunoId: z.string().trim().min(1),
-  registrationFeeCharged: z.coerce.number().optional().default(0),
-  billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional().default('MANUAL_RECEIVED'),
-  feePaymentMethod: z.string().trim().optional().nullable(),
-  notes: z.string().trim().optional().nullable(),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),
-  installmentCount: z.coerce.number().int().min(2).max(24).optional(),
-});
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   try {
@@ -39,7 +27,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     const { eventId } = await params;
     const ctx = await getEventsContext('events.update');
-    const body = registerParticipantBodySchema.parse(await request.json());
+    const body = registerEventParticipantRequestSchema.parse(await request.json());
 
     // 1. Verificar se o evento existe
     const event = await prisma.schoolEvent.findFirst({
