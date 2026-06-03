@@ -104,4 +104,3 @@ export * from './events/events.schema';
 export * from './events/events.service';
 export * from './events/map/event-map.schema';
 export * from './events/map/event-map.service';
-export * from './events/map/reconcile-event-map-order-payment';

@@ -1403,3 +1403,39 @@ export type {
   ApplyMatriculaTimeoutInput,
   ApplyMatriculaTimeoutResult,
 } from './jobs/apply-matricula-timeout';
+
+// Eventos
+export {
+  reconcileEventMapOrderPayment,
+} from './events/reconcile-event-map-order-payment';
+export type {
+  ReconcileEventMapOrderPaymentDependencies,
+  ReconcileEventMapOrderPaymentInput,
+  ReconcileEventMapOrderPaymentResult,
+} from './events/reconcile-event-map-order-payment';
+export {
+  classifyEventMapOrderInconsistencies,
+  expireEventMapReservations,
+  getExpiredReservationDecision,
+  inspectEventFinancialInconsistencies,
+  reconcilePendingEventMapOrders,
+} from './events/event-map-order-jobs';
+export type {
+  EventFinancialInconsistency,
+  EventFinancialInconsistencyType,
+  ExpirableEventMapReservationRecord,
+  ExpireEventMapReservationsInput,
+  ExpireEventMapReservationsResult,
+  ExpiredReservationDecision,
+  InspectableEventMapOrder,
+  InspectEventFinancialInconsistenciesInput,
+  InspectEventFinancialInconsistenciesResult,
+  ReconcilePendingEventMapOrdersInput,
+  ReconcilePendingEventMapOrdersResult,
+} from './events/event-map-order-jobs';
+export {
+  logEventsFinance,
+} from './events/events-finance-observability';
+export type {
+  EventFinanceLogPayload,
+} from './events/events-finance-observability';

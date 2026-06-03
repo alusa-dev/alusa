@@ -1,13 +1,13 @@
 import { getPayment } from '@alusa/asaas';
+import { prisma } from '@alusa/database';
+import { EventsError, loadDecryptedAsaasCredentials } from '@alusa/lib';
 import { Prisma } from '@prisma/client';
 
-import { prisma } from '../../prisma';
-import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
-import { EventsError } from '../events.service';
+import { logEventsFinance } from './events-finance-observability';
 
 export type ReconcileEventMapOrderPaymentInput = {
   contaId: string;
-  userId: string;
+  userId?: string | null;
   eventId: string;
   orderId: string;
 };
@@ -28,6 +28,7 @@ type EventMapOrderPaymentRecord = {
   eventId: string;
   asaasPaymentId: string | null;
   paymentMethod: string | null;
+  wasUpdated?: boolean;
 };
 
 type AsaasCredentials = {
@@ -85,15 +86,12 @@ const defaultDependencies: ReconcileEventMapOrderPaymentDependencies = {
         id: params.orderId,
         contaId: params.contaId,
         eventId: params.eventId,
+        paymentMethod: null,
       },
       data: {
         paymentMethod: params.paymentMethod,
       },
     });
-
-    if (updated.count === 0) {
-      throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
-    }
 
     const order = await prisma.eventMapOrder.findFirst({
       where: {
@@ -114,14 +112,18 @@ const defaultDependencies: ReconcileEventMapOrderPaymentDependencies = {
       throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
     }
 
-    return order;
+    if (updated.count === 0 && !order.paymentMethod) {
+      throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+    }
+
+    return { ...order, wasUpdated: updated.count > 0 };
   },
   recordAudit: async (params) => {
     await prisma.eventAudit.create({
       data: {
         contaId: params.input.contaId,
         eventId: params.input.eventId,
-        actorUserId: params.input.userId,
+        actorUserId: params.input.userId ?? null,
         action: 'events.publicOrder.payment.reconcile',
         entityType: 'EventMapOrder',
         entityId: params.order.id,
@@ -136,8 +138,8 @@ const defaultDependencies: ReconcileEventMapOrderPaymentDependencies = {
     await prisma.auditLog.create({
       data: {
         contaId: params.input.contaId,
-        actorType: 'USER',
-        actorId: params.input.userId,
+        actorType: params.input.userId ? 'USER' : 'SYSTEM',
+        actorId: params.input.userId ?? null,
         action: 'events.publicOrder.payment.reconcile',
         entityType: 'EventMapOrder',
         entityId: params.order.id,
@@ -206,13 +208,17 @@ export async function reconcileEventMapOrderPayment(
       paymentId: order.asaasPaymentId,
     });
   } catch (error) {
-    console.warn('[events.publicOrder.payment.reconcile] Falha ao consultar Asaas', {
-      contaId: input.contaId,
-      eventId: input.eventId,
-      orderId: input.orderId,
-      asaasPaymentId: order.asaasPaymentId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logEventsFinance(
+      'eventMapOrder.reconcile.failed',
+      {
+        contaId: input.contaId,
+        eventId: input.eventId,
+        orderId: input.orderId,
+        asaasPaymentId: order.asaasPaymentId,
+        message: error instanceof Error ? error.message : String(error),
+      },
+      'warn',
+    );
 
     throw new EventsError(
       'ASAAS_PAYMENT_RECONCILE_FAILED',
@@ -242,11 +248,31 @@ export async function reconcileEventMapOrderPayment(
     paymentMethod,
   });
 
+  if (updatedOrder.wasUpdated === false) {
+    return {
+      ok: true,
+      updated: false,
+      orderId: order.id,
+      asaasPaymentId: order.asaasPaymentId,
+      previousPaymentMethod: order.paymentMethod,
+      paymentMethod: updatedOrder.paymentMethod,
+      message: 'Pedido já está consistente.',
+    };
+  }
+
   await dependencies.recordAudit({
     input,
     order,
     previousPaymentMethod: order.paymentMethod,
     paymentMethod: updatedOrder.paymentMethod,
+  });
+
+  logEventsFinance('eventMapOrder.reconcile', {
+    contaId: input.contaId,
+    eventId: input.eventId,
+    orderId: order.id,
+    asaasPaymentId: order.asaasPaymentId,
+    updated: true,
   });
 
   return {

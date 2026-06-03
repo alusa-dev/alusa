@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   reconcileEventMapOrderPayment,
   type ReconcileEventMapOrderPaymentDependencies,
-} from './reconcile-event-map-order-payment';
+} from '../reconcile-event-map-order-payment';
 
 type TestOrder = {
   id: string;

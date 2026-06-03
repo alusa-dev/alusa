@@ -17,6 +17,18 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/jobs/events-expire-reservations?limit=200&maxAccounts=20",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/jobs/events-reconcile-orders?olderThanMinutes=10&limit=100&maxAccounts=20",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/jobs/events-inspect-financial-inconsistencies?limit=200&maxAccounts=20",
+      "schedule": "20 * * * *"
+    },
+    {
       "path": "/api/jobs/webhook-maintenance",
       "schedule": "0 3 * * *"
     },

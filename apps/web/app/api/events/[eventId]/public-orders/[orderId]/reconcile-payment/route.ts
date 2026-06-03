@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { reconcileEventMapOrderPayment } from '@alusa/lib/events/map/reconcile-event-map-order-payment';
+import { reconcileEventMapOrderPayment } from '@alusa/finance';
 
 import { getEventsContext, handleEventsRouteError } from '../../../../_helpers';
 

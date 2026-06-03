@@ -1,7 +1,6 @@
 import {
   createCustomer,
   createPayment,
-  deletePayment as deleteAsaasPayment,
   listCustomers,
   listPayments,
   updateCustomer,
@@ -1034,20 +1033,40 @@ function snapshotRecord(snapshot: Prisma.JsonValue) {
 async function expirePublicReservations(db: DbClient, contaId: string, now = new Date()) {
   const expired = await db.eventMapReservation.findMany({
     where: { contaId, status: 'HELD', expiresAt: { lt: now } },
-    include: { seats: { select: { publicSeatId: true } } },
+    include: {
+      seats: { select: { publicSeatId: true } },
+      order: {
+        select: {
+          id: true,
+          status: true,
+          asaasPaymentId: true,
+          _count: { select: { tickets: true } },
+        },
+      },
+    },
   });
   if (expired.length === 0) return;
 
-  const expiredOrders = await db.eventMapOrder.findMany({
-    where: {
-      contaId,
-      reservationId: { in: expired.map((reservation) => reservation.id) },
-      status: 'PAYMENT_PENDING',
-    },
-    select: { id: true, asaasPaymentId: true },
+  const expirable = expired.filter((reservation) => {
+    if (!reservation.order) return true;
+    return (
+      reservation.order.status === 'PAYMENT_PENDING' &&
+      !reservation.order.asaasPaymentId &&
+      reservation.order._count.tickets === 0
+    );
   });
+  const skipped = expired.length - expirable.length;
+  if (skipped > 0) {
+    console.info('[events.finance]', {
+      action: 'eventMapReservation.expire.inline.skipped',
+      contaId,
+      skipped,
+      reason: 'external_payment_or_operational_history_requires_job_reconciliation',
+    });
+  }
+  if (expirable.length === 0) return;
 
-  const expiredSeatIds = [...new Set(expired.flatMap((reservation) => reservation.seats.map((seat) => seat.publicSeatId)))];
+  const expiredSeatIds = [...new Set(expirable.flatMap((reservation) => reservation.seats.map((seat) => seat.publicSeatId)))];
   if (expiredSeatIds.length > 0) {
     await db.eventMapPublicSeat.updateMany({
       where: { contaId, id: { in: expiredSeatIds }, status: 'HELD' },
@@ -1055,33 +1074,18 @@ async function expirePublicReservations(db: DbClient, contaId: string, now = new
     });
   }
   await db.eventMapReservation.updateMany({
-    where: { contaId, id: { in: expired.map((reservation) => reservation.id) }, status: 'HELD' },
+    where: { contaId, id: { in: expirable.map((reservation) => reservation.id) }, status: 'HELD' },
     data: { status: 'EXPIRED', checkoutKey: null },
   });
   await db.eventMapOrder.updateMany({
     where: {
       contaId,
-      reservationId: { in: expired.map((reservation) => reservation.id) },
+      reservationId: { in: expirable.map((reservation) => reservation.id) },
       status: 'PAYMENT_PENDING',
+      asaasPaymentId: null,
     },
     data: { status: 'EXPIRED', cancelledAt: now, paymentStatus: 'EXPIRED' },
   });
-
-  const credentials = await loadDecryptedAsaasCredentials(contaId);
-  if (credentials?.apiKey) {
-    for (const order of expiredOrders) {
-      if (!order.asaasPaymentId) continue;
-      try {
-        await deleteAsaasPayment({ apiKey: credentials.apiKey, paymentId: order.asaasPaymentId });
-      } catch (error) {
-        console.warn('[event-map] Falha ao cancelar cobrança Asaas expirada:', {
-          orderId: order.id,
-          asaasPaymentId: order.asaasPaymentId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
 }
 
 async function syncPublicLotQuantity(tx: Prisma.TransactionClient, contaId: string, lotId: string) {
@@ -1114,8 +1118,6 @@ export async function getPublicEventMap(publicSlug: string) {
     where: { id: map.publishedVersionId!, contaId: map.contaId, eventMapId: map.id },
   });
   if (!version) throw new EventsError('VERSAO_PUBLICA_NAO_ENCONTRADA', 'Versão pública não encontrada.', 404);
-
-  await expirePublicReservations(prisma, map.contaId);
 
   const seats = await prisma.eventMapPublicSeat.findMany({
     where: { contaId: map.contaId, versionId: version.id, publicVisible: true },
@@ -1381,6 +1383,14 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     };
   });
 
+  console.info('[events.finance]', {
+    action: 'eventMapOrder.checkout.prepared',
+    contaId: pending.map.contaId,
+    eventId: pending.map.eventId,
+    orderId: pending.order.id,
+    updated: Boolean(pending.order.asaasPaymentId),
+  });
+
   try {
     const credentials = await loadDecryptedAsaasCredentials(pending.map.contaId);
     if (!credentials?.apiKey) {
@@ -1448,6 +1458,12 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     const externalReference = `event-map-order:${pending.order.id}`;
     let payment: AsaasPayment;
     try {
+      console.info('[events.finance]', {
+        action: 'eventMapOrder.payment.create.start',
+        contaId: pending.map.contaId,
+        eventId: pending.map.eventId,
+        orderId: pending.order.id,
+      });
       payment = await createPayment({
         apiKey: credentials.apiKey,
         idempotencyKey: buildEventMapAsaasIdempotencyKey('payment', pending.order.id),
@@ -1473,6 +1489,14 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       if (!existingPayment) throw paymentError;
       payment = existingPayment;
     }
+
+    console.info('[events.finance]', {
+      action: 'eventMapOrder.payment.create',
+      contaId: pending.map.contaId,
+      eventId: pending.map.eventId,
+      orderId: pending.order.id,
+      asaasPaymentId: payment.id,
+    });
 
     const updated = await prisma.eventMapOrder.update({
       where: { id: pending.order.id },

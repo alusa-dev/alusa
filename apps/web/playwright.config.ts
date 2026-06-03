@@ -69,6 +69,7 @@ export default defineConfig({
       DATABASE_URL: process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL ?? '',
       NEXTAUTH_URL: baseURL,
       NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ?? 'testsecret',
+      CRON_SECRET: process.env.CRON_SECRET ?? 'test-cron-secret',
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? '',
     },
   },
