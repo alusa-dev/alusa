@@ -777,13 +777,14 @@ html {
 .app-content-scroll {
 	overflow-y: auto;
 	overflow-x: hidden;
+	scrollbar-gutter: stable;
 	scrollbar-width: thin;
 	scrollbar-color: #d1d5db transparent;
 }
 
 .app-content-scroll::-webkit-scrollbar {
-	width: 3px;
-	height: 3px;
+	width: 2px;
+	height: 2px;
 }
 
 .app-content-scroll::-webkit-scrollbar-track {

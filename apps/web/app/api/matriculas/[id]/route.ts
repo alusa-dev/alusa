@@ -17,11 +17,11 @@ import {
 } from '@/features/cadastro/matriculas/mappers';
 import {
   deriveLocalAssinaturaSnapshot,
-  shouldFetchRemoteSubscriptionSnapshot,
   type AssinaturaSnapshot,
 } from '@/src/server/matriculas/subscription-snapshot';
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
+import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -258,15 +258,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         localSubscription,
       );
 
-      if (
-        shouldFetchRemoteSubscriptionSnapshot({
-          forceRefresh,
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
-          localSubscription,
-          localSnapshot,
-        })
-      ) {
-        recordAsaasReadDecision('matricula_detail', forceRefresh ? 'fresh_remote' : 'remote');
+      if (forceRefresh) {
+        recordAsaasReadDecision('matricula_detail', 'fresh_remote');
         try {
           const remote = await getSubscription(matricula.asaasSubscriptionId, { contaId: contaCtx.contaId });
           assinaturaSnapshot = {
@@ -404,6 +397,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     let subscriptionMetadata: Record<string, unknown> | undefined;
+    let pendingLocalAlignment:
+      | {
+          matriculaId: string;
+          contaId: string;
+          dueDate: string;
+        }
+      | null = null;
     if (
       typeof parsedBody.data.vencimentoDia === 'number' &&
       parsedBody.data.vencimentoDia !== before.vencimentoDia &&
@@ -505,6 +505,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           nextBillingDay: parsedBody.data.vencimentoDia,
         },
       };
+      pendingLocalAlignment = {
+        matriculaId: before.id,
+        contaId: contaCtx.contaId,
+        dueDate: nextDueDate,
+      };
     }
 
     const matricula = await atualizarDetalhesMatricula({
@@ -520,6 +525,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
 
+    const localAlignment = pendingLocalAlignment
+      ? await alignLocalPendingEnrollmentCharges({
+          db: prisma,
+          matriculaId: pendingLocalAlignment.matriculaId,
+          contaId: pendingLocalAlignment.contaId,
+          dueDate: pendingLocalAlignment.dueDate,
+        })
+      : null;
+
     return NextResponse.json(
       {
         data: mapMatriculaRecordToCoreDTO(matricula as unknown as Record<string, unknown>),
@@ -528,6 +542,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
             ? {
                 provider: 'ASAAS',
                 fields: ['nextDueDate', 'updatePendingPayments'],
+                localAlignment,
                 message:
                   'O dia de vencimento foi alinhado com o vínculo financeiro e pode refletir nos próximos ciclos e nas pendências ainda editáveis.',
               }

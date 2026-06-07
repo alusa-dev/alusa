@@ -45,6 +45,27 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function mapEventChargeStatus(status: string) {
+  switch (status) {
+    case 'PAID':
+    case 'RECEIVED':
+    case 'COMPLIMENTARY':
+    case 'CONFIRMED':
+      return 'PAGO';
+    case 'CANCELLED':
+    case 'EXPIRED':
+      return 'CANCELADO';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'ESTORNADO';
+    case 'EXPECTED':
+    case 'PENDING':
+    case 'PAYMENT_PENDING':
+    default:
+      return 'PENDENTE';
+  }
+}
+
 function sanitizePreference(preference: {
   event: string;
   scheduleOffset: number;
@@ -235,6 +256,96 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       })),
     }));
 
+    const matriculaIds = aluno.matriculas.map((matricula) => matricula.id);
+    const directFamilyGroupIds = aluno.matriculas
+      .map((matricula) => matricula.matriculaFamiliarId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+
+    const [familyItems, eventParticipants, eventCostumes, eventTicketSales] = await Promise.all([
+      matriculaIds.length
+        ? prisma.matriculaFamiliarItem.findMany({
+            where: {
+              matriculaId: { in: matriculaIds },
+              matriculaFamiliar: { contaId: user.contaId },
+            },
+            select: { matriculaFamiliarId: true },
+          })
+        : Promise.resolve([]),
+      prisma.eventParticipant.findMany({
+        where: {
+          contaId: user.contaId,
+          alunoId: aluno.id,
+          revenueEntryId: { not: null },
+        },
+        select: { revenueEntryId: true },
+      }),
+      prisma.eventCostumeAssignment.findMany({
+        where: {
+          contaId: user.contaId,
+          alunoId: aluno.id,
+          revenueEntryId: { not: null },
+        },
+        select: { revenueEntryId: true },
+      }),
+      prisma.eventTicketSale.findMany({
+        where: {
+          contaId: user.contaId,
+          alunoId: aluno.id,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        include: { event: { select: { name: true } } },
+      }),
+    ]);
+
+    const familyGroupIds = [
+      ...new Set([
+        ...directFamilyGroupIds,
+        ...familyItems.map((item) => item.matriculaFamiliarId),
+      ]),
+    ];
+
+    const eventRevenueEntryIds = [
+      ...new Set(
+        [
+          ...eventParticipants.map((item) => item.revenueEntryId),
+          ...eventCostumes.map((item) => item.revenueEntryId),
+          ...eventTicketSales.map((sale) => sale.revenueEntryId),
+        ].filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    ];
+
+    const [familyCharges, familySubscriptions, eventEntries] = await Promise.all([
+      familyGroupIds.length
+        ? prisma.charge.findMany({
+            where: {
+              contaId: user.contaId,
+              familyGroupId: { in: familyGroupIds },
+            },
+            orderBy: [{ dueDate: 'desc' }, { createdAt: 'desc' }],
+          })
+        : Promise.resolve([]),
+      familyGroupIds.length
+        ? prisma.standaloneSubscription.findMany({
+            where: {
+              contaId: user.contaId,
+              familyGroupId: { in: familyGroupIds },
+            },
+            orderBy: [{ nextDueDate: 'desc' }, { createdAt: 'desc' }],
+          })
+        : Promise.resolve([]),
+      eventRevenueEntryIds.length
+        ? prisma.eventFinancialEntry.findMany({
+            where: {
+              contaId: user.contaId,
+              id: { in: eventRevenueEntryIds },
+            },
+            orderBy: [{ dueDate: 'desc' }, { createdAt: 'desc' }],
+            include: { event: { select: { name: true } } },
+          })
+        : Promise.resolve([]),
+    ]);
+
     const cobrancasAcademicas = aluno.matriculas.flatMap((matricula) =>
       matricula.cobrancas.map((cobranca) => ({
         id: cobranca.id,
@@ -284,7 +395,98 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       pagamentos: [],
     }));
 
-    const cobrancas = [...cobrancasAcademicas, ...cobrancasAvulsas].sort((a, b) => {
+    const cobrancasFamiliares = familyCharges.map((charge) => ({
+      id: charge.id,
+      source: 'FAMILIAR' as const,
+      matriculaId: null,
+      tipo: charge.standaloneInstallmentPlanId
+        ? 'PARCELADA'
+        : charge.standaloneSubscriptionId
+          ? 'RECORRENTE'
+          : 'AVULSA',
+      descricao: charge.description ?? 'Cobrança familiar',
+      status: charge.status,
+      valor: toNumber(charge.value),
+      valorFinal: toNumber(charge.value),
+      vencimento: toIso(charge.dueDate),
+      dataPagamento: null,
+      formaPagamento: charge.billingType,
+      asaasPaymentId: charge.asaasPaymentId,
+      planoNome: 'Plano familiar',
+      createdAt: toIso(charge.createdAt),
+      pagamentos: [],
+    }));
+
+    const cobrancasAssinaturasFamiliares = familySubscriptions
+      .filter(
+        (subscription) =>
+          !familyCharges.some((charge) => charge.standaloneSubscriptionId === subscription.id),
+      )
+      .map((subscription) => ({
+        id: `group:subscription:${subscription.id}`,
+        source: 'FAMILIAR' as const,
+        matriculaId: null,
+        tipo: 'RECORRENTE',
+        descricao: subscription.description ?? 'Assinatura familiar',
+        status: ['ACTIVE', 'REQUESTED'].includes(subscription.status) ? 'PENDENTE' : subscription.status,
+        valor: toNumber(subscription.value),
+        valorFinal: toNumber(subscription.value),
+        vencimento: toIso(subscription.nextDueDate),
+        dataPagamento: null,
+        formaPagamento: subscription.billingType,
+        asaasPaymentId: null,
+        planoNome: 'Plano familiar',
+        createdAt: toIso(subscription.createdAt),
+        pagamentos: [],
+      }));
+
+    const eventEntryById = new Map(eventEntries.map((entry) => [entry.id, entry]));
+    const cobrancasEventos = [
+      ...eventEntries.map((entry) => ({
+        id: `event-entry:${entry.id}`,
+        source: 'EVENTO' as const,
+        matriculaId: null,
+        tipo: 'EVENTO',
+        descricao: `${entry.event.name} · ${entry.description}`,
+        status: mapEventChargeStatus(entry.status),
+        valor: toNumber(entry.expectedAmount),
+        valorFinal: toNumber(entry.actualAmount ?? entry.expectedAmount),
+        vencimento: toIso(entry.dueDate ?? entry.realizedAt ?? entry.createdAt),
+        dataPagamento: toIso(entry.realizedAt),
+        formaPagamento: entry.paymentMethod,
+        asaasPaymentId: entry.asaasPaymentId,
+        planoNome: entry.event.name,
+        createdAt: toIso(entry.createdAt),
+        pagamentos: [],
+      })),
+      ...eventTicketSales
+        .filter((sale) => !sale.revenueEntryId || !eventEntryById.has(sale.revenueEntryId))
+        .map((sale) => ({
+          id: `event-ticket-sale:${sale.id}`,
+          source: 'EVENTO' as const,
+          matriculaId: null,
+          tipo: 'EVENTO',
+          descricao: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
+          status: mapEventChargeStatus(sale.status),
+          valor: toNumber(sale.totalAmount),
+          valorFinal: toNumber(sale.totalAmount),
+          vencimento: toIso(sale.soldAt),
+          dataPagamento: toIso(sale.paidAt),
+          formaPagamento: sale.paymentMethod,
+          asaasPaymentId: sale.asaasPaymentId,
+          planoNome: sale.event.name,
+          createdAt: toIso(sale.createdAt),
+          pagamentos: [],
+        })),
+    ];
+
+    const cobrancas = [
+      ...cobrancasAcademicas,
+      ...cobrancasAvulsas,
+      ...cobrancasFamiliares,
+      ...cobrancasAssinaturasFamiliares,
+      ...cobrancasEventos,
+    ].sort((a, b) => {
       const aTime = a.vencimento ? new Date(a.vencimento).getTime() : 0;
       const bTime = b.vencimento ? new Date(b.vencimento).getTime() : 0;
       return bTime - aTime;

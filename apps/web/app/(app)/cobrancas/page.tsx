@@ -28,7 +28,6 @@ import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFilt
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import dynamic from 'next/dynamic';
 
 const CreateChargeModal = dynamic(
@@ -66,10 +65,11 @@ type Cobranca = {
   asaasPaymentId?: string | null;
   invoiceUrl?: string | null;
   matriculaId?: string | null;
+  eventId?: string | null;
   formaPagamento?: string | null;
-  origin?: 'ACADEMIC' | 'STANDALONE';
+  origin?: 'ACADEMIC' | 'STANDALONE' | 'EVENT';
   isGroup?: boolean;
-  groupType?: 'INSTALLMENT' | null;
+  groupType?: 'INSTALLMENT' | 'SUBSCRIPTION' | null;
   groupId?: string | null;
   installmentCount?: number | null;
   installmentsPaid?: number | null;
@@ -88,15 +88,7 @@ export default function CobrancasTodasPage() {
   const shouldOpenCreateModal = searchParams.get('new') === '1';
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
 
-  const actionLoading = false;
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
-  const [confirmDialog, setConfirmDialog] = useState<{
-    open: boolean;
-    title: string;
-    description: string;
-    variant?: 'default' | 'destructive';
-    action?: () => Promise<void> | void;
-  }>({ open: false, title: '', description: '', variant: 'default', action: async () => { } });
 
   useEffect(() => {
     if (shouldOpenCreateModal) {
@@ -152,10 +144,11 @@ export default function CobrancasTodasPage() {
             asaasPaymentId: item.asaasPaymentId as string | null,
             invoiceUrl: item.invoiceUrl as string | null,
             matriculaId: item.matriculaId as string | null,
+            eventId: item.eventId as string | null,
             formaPagamento: item.billingType as string | null,
-            origin: item.origin as 'ACADEMIC' | 'STANDALONE',
+            origin: item.origin as 'ACADEMIC' | 'STANDALONE' | 'EVENT',
             isGroup: item.isGroup as boolean | undefined,
-            groupType: item.groupType as 'INSTALLMENT' | null,
+            groupType: item.groupType as 'INSTALLMENT' | 'SUBSCRIPTION' | null,
             groupId: item.groupId as string | null,
             installmentCount: item.installmentCount as number | null,
             installmentsPaid: item.installmentsPaid as number | null,
@@ -175,9 +168,10 @@ export default function CobrancasTodasPage() {
           asaasPaymentId: item.asaasPaymentId as string | null,
           invoiceUrl: null,
           matriculaId: item.matriculaId as string | null,
+          eventId: item.eventId as string | null,
           formaPagamento: item.formaPagamento as string | null,
           isGroup: item.isGroup as boolean | undefined,
-          groupType: item.groupType as 'INSTALLMENT' | null,
+          groupType: item.groupType as 'INSTALLMENT' | 'SUBSCRIPTION' | null,
           groupId: item.installmentPlanId as string | null,
           installmentCount: item.installmentCount as number | null,
           installmentsPaid: item.installmentsPaid as number | null,
@@ -225,7 +219,7 @@ export default function CobrancasTodasPage() {
 
   return (
     <TableLayout
-      className="min-w-0 max-w-full pb-6"
+      className="min-w-0 max-w-full pb-6 pr-5"
       title="Todas as Cobranças"
       subtitle="Visão operacional de todas as cobranças da instituição."
       headerEnd={<AsaasSeal variant="negativo-preto" />}
@@ -234,7 +228,6 @@ export default function CobrancasTodasPage() {
           onClick={handleCreateCharge}
           className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
           aria-label="Gerar nova cobrança"
-          disabled={actionLoading}
         >
           <Plus className="mr-2 h-4 w-4 transition-none" />
           Nova cobrança
@@ -354,11 +347,16 @@ export default function CobrancasTodasPage() {
                 orderedCobrancas.map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
+                  const isSubscriptionGroup = cobranca.isGroup && cobranca.groupType === 'SUBSCRIPTION';
                   const badgeStatus = (cobranca.status ?? 'PENDENTE') as StatusType;
 
                   const handleRowClick = () => {
                     if (isInstallmentGroup && cobranca.groupId) {
                       router.push(`/cobrancas/parcelamentos/${cobranca.groupId}`);
+                    } else if (isSubscriptionGroup && cobranca.groupId) {
+                      router.push(`/cobrancas/assinaturas/${cobranca.groupId}`);
+                    } else if (cobranca.origin === 'EVENT') {
+                      router.push(cobranca.eventId ? `/events/${cobranca.eventId}` : '/events');
                     } else {
                       router.push(`/cobrancas/${cobranca.id}`);
                     }
@@ -423,7 +421,7 @@ export default function CobrancasTodasPage() {
                             onKeyDown={(e) => e.stopPropagation()}
                           >
                             <div className="shrink-0">
-                              {!isInstallmentGroup ? (
+                              {!cobranca.isGroup && cobranca.origin !== 'EVENT' ? (
                                 <CobrancaActionsMenu
                                   cobranca={{
                                     id: cobranca.id,
@@ -432,6 +430,10 @@ export default function CobrancasTodasPage() {
                                     invoiceUrl: cobranca.invoiceUrl ?? undefined,
                                     matriculaId: cobranca.matriculaId ?? '',
                                     formaPagamento: cobranca.formaPagamento ?? undefined,
+                                    tipo: cobranca.tipo ?? undefined,
+                                    valor: cobranca.valor ?? undefined,
+                                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+                                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
                                     atrasado: isOverdue,
                                   }}
                                   onPrint={() => handlePrint(cobranca)}
@@ -491,7 +493,7 @@ export default function CobrancasTodasPage() {
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => e.stopPropagation()}
                             >
-                              {!isInstallmentGroup && (
+                              {!cobranca.isGroup && cobranca.origin !== 'EVENT' && (
                                 <CobrancaActionsMenu
                                   cobranca={{
                                     id: cobranca.id,
@@ -500,6 +502,10 @@ export default function CobrancasTodasPage() {
                                     invoiceUrl: cobranca.invoiceUrl ?? undefined,
                                     matriculaId: cobranca.matriculaId ?? '',
                                     formaPagamento: cobranca.formaPagamento ?? undefined,
+                                    tipo: cobranca.tipo ?? undefined,
+                                    valor: cobranca.valor ?? undefined,
+                                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+                                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
                                     atrasado: isOverdue,
                                   }}
                                   onPrint={() => handlePrint(cobranca)}
@@ -519,17 +525,6 @@ export default function CobrancasTodasPage() {
           </>
         )}
       </div>
-
-      <ConfirmDialog
-        open={confirmDialog.open}
-        onOpenChange={(open) => setConfirmDialog((prev) => ({ ...prev, open }))}
-        title={confirmDialog.title}
-        description={confirmDialog.description}
-        variant={confirmDialog.variant}
-        onConfirm={confirmDialog.action as () => void}
-        loading={actionLoading}
-        confirmText={actionLoading ? 'Processando...' : 'Confirmar'}
-      />
 
       <CreateChargeModal
         open={createModalOpen}

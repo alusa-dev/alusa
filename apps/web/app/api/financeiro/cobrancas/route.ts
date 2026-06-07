@@ -104,6 +104,7 @@ export async function GET(req: NextRequest) {
           vencimento: c.dueDate,
           aluno: { id: c.alunoId ?? c.id, nome: c.payerName },
           matriculaId: c.matriculaId,
+          eventId: (c as { eventId?: string | null }).eventId ?? null,
           asaasPaymentId: c.asaasPaymentId,
           atrasado: c.status === 'OVERDUE' || (c.status === 'PENDING' && venc < now && venc > 0),
           origin: c.origin,
@@ -206,6 +207,7 @@ export async function GET(req: NextRequest) {
         vencimento: c.dueDate,
         aluno: { id: c.alunoId ?? c.id, nome: c.payerName },
         matriculaId: c.matriculaId,
+        eventId: (c as { eventId?: string | null }).eventId ?? null,
         asaasPaymentId: c.asaasPaymentId,
         atrasado,
         // Novo campo para diferenciar origem

@@ -8,6 +8,7 @@ import { editMatriculaInputDTOSchema } from '@/features/cadastro/matriculas/dtos
 import { mapEditMatriculaResultToDTO } from '@/features/cadastro/matriculas/mappers';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
 import { deriveLocalAssinaturaSnapshot } from '@/src/server/matriculas/subscription-snapshot';
+import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -88,6 +89,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     let financialMetadata: Record<string, unknown> | undefined;
+    let nextSubscriptionValue: number | null = null;
     if (
       parsedBody.data.planoId &&
       parsedBody.data.planoId !== currentMatricula.planoId &&
@@ -195,6 +197,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           nextPlanoId: nextPlano.id,
         },
       };
+      nextSubscriptionValue = Number(nextPlano.valor);
     }
 
     const matricula = await editarMatricula({
@@ -208,6 +211,16 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       metadata: financialMetadata,
     });
 
+    const localAlignment =
+      financialMetadata && nextSubscriptionValue !== null
+        ? await alignLocalPendingEnrollmentCharges({
+            db: prisma,
+            matriculaId: currentMatricula.id,
+            contaId: contaCtx.contaId,
+            value: nextSubscriptionValue,
+          })
+        : null;
+
     return NextResponse.json(
       {
         ...mapEditMatriculaResultToDTO(matricula as unknown as Record<string, unknown>),
@@ -215,6 +228,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           ? {
               provider: 'ASAAS',
               fields: ['value', 'updatePendingPayments'],
+              localAlignment,
               message:
                 'A troca de plano também atualizou o valor recorrente para manter coerência com os próximos ciclos financeiros.',
             }

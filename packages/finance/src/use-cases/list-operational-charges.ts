@@ -108,12 +108,62 @@ function inferAcademicChargeType(tipo: string | null): 'ONE_TIME' | 'INSTALLMENT
 function inferStandaloneChargeType(params: {
   standaloneInstallmentPlanId: string | null;
   externalReference: string | null;
+  standaloneSubscriptionId?: string | null;
 }): 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION' {
   if (params.standaloneInstallmentPlanId || extractInstallmentPlanId(params.externalReference)) {
     return 'INSTALLMENT';
   }
+  if (params.standaloneSubscriptionId) return 'SUBSCRIPTION';
   if (params.externalReference?.startsWith('alusa:standalone-subscription:')) return 'SUBSCRIPTION';
   return 'ONE_TIME';
+}
+
+function mapEventFinancialEntryStatus(status: string): UnifiedChargeItem['status'] {
+  switch (status) {
+    case 'PAID':
+    case 'RECEIVED':
+      return 'PAID';
+    case 'CANCELLED':
+      return 'CANCELED';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'REFUNDED';
+    case 'EXPECTED':
+    case 'PENDING':
+    default:
+      return 'PENDING';
+  }
+}
+
+function mapEventTicketSaleStatus(status: string): UnifiedChargeItem['status'] {
+  switch (status) {
+    case 'PAID':
+    case 'COMPLIMENTARY':
+      return 'PAID';
+    case 'CANCELLED':
+      return 'CANCELED';
+    case 'REFUNDED':
+      return 'REFUNDED';
+    case 'PENDING':
+    default:
+      return 'PENDING';
+  }
+}
+
+function mapEventMapOrderStatus(status: string): UnifiedChargeItem['status'] {
+  switch (status) {
+    case 'CONFIRMED':
+      return 'PAID';
+    case 'CANCELLED':
+    case 'EXPIRED':
+      return 'CANCELED';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'REFUNDED';
+    case 'PAYMENT_PENDING':
+    default:
+      return 'PENDING';
+  }
 }
 
 function shouldExposeInOperationalQueue(params: {
@@ -225,10 +275,98 @@ async function buildOperationalChargesCollection(
     });
   }
 
+  const standaloneSubscriptionWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: { in: ['REQUESTED', 'ACTIVE'] } },
+      { nextDueDate: { lte: endOfMonth } },
+    ],
+  };
+
+  if (search) {
+    (standaloneSubscriptionWhere.AND as unknown[]).push({
+      OR: [
+        { description: { contains: search, mode: 'insensitive' } },
+        { customer: { is: { payerId: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
+  const eventFinancialEntryWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { type: 'REVENUE' },
+      { status: { in: ['EXPECTED', 'PENDING'] } },
+      { NOT: { originType: 'TICKET_SALE' } },
+      {
+        OR: [
+          { dueDate: { lte: endOfMonth } },
+          { dueDate: null },
+        ],
+      },
+    ],
+  };
+
+  if (search) {
+    (eventFinancialEntryWhere.AND as unknown[]).push({
+      OR: [
+        { description: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } },
+        { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
+  const eventTicketSaleWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: 'PENDING' },
+    ],
+  };
+
+  if (search) {
+    (eventTicketSaleWhere.AND as unknown[]).push({
+      OR: [
+        { buyerName: { contains: search, mode: 'insensitive' } },
+        { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
+  const eventMapOrderWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: 'PAYMENT_PENDING' },
+      {
+        OR: [
+          { expiresAt: { lte: endOfMonth } },
+          { expiresAt: null },
+        ],
+      },
+    ],
+  };
+
+  if (search) {
+    (eventMapOrderWhere.AND as unknown[]).push({
+      OR: [
+        { buyerName: { contains: search, mode: 'insensitive' } },
+        { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+  }
+
   // =================================================================
   // 3. Executar queries em paralelo
   // =================================================================
-  const [academicResultRaw, standaloneResult, linkedCharges] = await Promise.all([
+  const [
+    academicResultRaw,
+    standaloneResult,
+    linkedCharges,
+    standaloneSubscriptions,
+    eventFinancialEntries,
+    eventTicketSales,
+    eventMapOrders,
+  ] = await Promise.all([
     _db.cobranca.findMany({
       where: academicWhere,
       orderBy: { vencimento: 'asc' },
@@ -274,6 +412,78 @@ async function buildOperationalChargesCollection(
       },
       select: { cobrancaId: true, externalReference: true },
     }),
+    _db.standaloneSubscription.findMany({
+      where: standaloneSubscriptionWhere,
+      orderBy: { nextDueDate: 'asc' },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        asaasSubscriptionId: true,
+        cycle: true,
+        billingType: true,
+        value: true,
+        nextDueDate: true,
+        description: true,
+        familyGroupId: true,
+        createdAt: true,
+        customer: { select: { payerType: true, payerId: true } },
+      },
+    }),
+    _db.eventFinancialEntry.findMany({
+      where: eventFinancialEntryWhere,
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        eventId: true,
+        category: true,
+        description: true,
+        expectedAmount: true,
+        dueDate: true,
+        status: true,
+        paymentMethod: true,
+        asaasPaymentId: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
+    _db.eventTicketSale.findMany({
+      where: eventTicketSaleWhere,
+      orderBy: [{ soldAt: 'desc' }],
+      select: {
+        id: true,
+        eventId: true,
+        buyerName: true,
+        alunoId: true,
+        responsavelId: true,
+        quantity: true,
+        totalAmount: true,
+        paymentMethod: true,
+        status: true,
+        soldAt: true,
+        asaasPaymentId: true,
+        revenueEntryId: true,
+        event: { select: { name: true } },
+      },
+    }),
+    _db.eventMapOrder.findMany({
+      where: eventMapOrderWhere,
+      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        eventId: true,
+        buyerName: true,
+        totalAmount: true,
+        status: true,
+        paymentMethod: true,
+        paymentProvider: true,
+        asaasPaymentId: true,
+        invoiceUrl: true,
+        expiresAt: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
   ]);
 
   const academicResult = academicResultRaw;
@@ -302,27 +512,37 @@ async function buildOperationalChargesCollection(
 
   const standaloneAlunoIds = Array.from(
     new Set(
-      effectiveStandaloneResult
-        .filter(
-          (charge) =>
-            isGenericPayerName(charge.payerName) &&
-            charge.customer?.payerType === 'ALUNO' &&
-            typeof charge.customer.payerId === 'string',
-        )
-        .map((charge) => charge.customer!.payerId),
+      [
+        ...effectiveStandaloneResult
+          .filter(
+            (charge) =>
+              isGenericPayerName(charge.payerName) &&
+              charge.customer?.payerType === 'ALUNO' &&
+              typeof charge.customer.payerId === 'string',
+          )
+          .map((charge) => charge.customer!.payerId),
+        ...standaloneSubscriptions
+          .filter((subscription) => subscription.customer?.payerType === 'ALUNO')
+          .map((subscription) => subscription.customer.payerId),
+      ],
     ),
   );
 
   const standaloneResponsavelIds = Array.from(
     new Set(
-      effectiveStandaloneResult
-        .filter(
-          (charge) =>
-            isGenericPayerName(charge.payerName) &&
-            charge.customer?.payerType === 'RESPONSAVEL' &&
-            typeof charge.customer.payerId === 'string',
-        )
-        .map((charge) => charge.customer!.payerId),
+      [
+        ...effectiveStandaloneResult
+          .filter(
+            (charge) =>
+              isGenericPayerName(charge.payerName) &&
+              charge.customer?.payerType === 'RESPONSAVEL' &&
+              typeof charge.customer.payerId === 'string',
+          )
+          .map((charge) => charge.customer!.payerId),
+        ...standaloneSubscriptions
+          .filter((subscription) => subscription.customer?.payerType === 'RESPONSAVEL')
+          .map((subscription) => subscription.customer.payerId),
+      ],
     ),
   );
 
@@ -382,6 +602,7 @@ async function buildOperationalChargesCollection(
     const chargeType = inferStandaloneChargeType({
       standaloneInstallmentPlanId: c.standaloneInstallmentPlanId,
       externalReference: c.externalReference,
+      standaloneSubscriptionId: c.standaloneSubscriptionId,
     });
     const resolvedPlanId = c.standaloneInstallmentPlanId ?? extractInstallmentPlanId(c.externalReference);
     const resolvedPayerName = c.customer
@@ -424,10 +645,137 @@ async function buildOperationalChargesCollection(
     };
   });
 
+  const materializedSubscriptionIds = new Set(
+    effectiveStandaloneResult
+      .map((charge) => charge.standaloneSubscriptionId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  );
+
+  const standaloneSubscriptionItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] =
+    standaloneSubscriptions
+      .filter((subscription) => {
+        if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
+        return !materializedSubscriptionIds.has(subscription.id);
+      })
+      .map((subscription) => {
+        const resolvedPayerName = subscription.customer
+          ? standalonePayerNameByKey.get(`${subscription.customer.payerType}:${subscription.customer.payerId}`)
+          : null;
+
+        return {
+          id: `group:subscription:${subscription.id}`,
+          origin: 'STANDALONE' as const,
+          description: subscription.description ?? 'Assinatura recorrente',
+          payerName: resolvedPayerName ?? 'Cliente',
+          value: Number(subscription.value),
+          dueDate: subscription.nextDueDate.toISOString(),
+          billingType: subscription.billingType,
+          status: 'PENDING',
+          chargeType: 'SUBSCRIPTION',
+          linkStatus: subscription.asaasSubscriptionId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
+          asaasPaymentId: null,
+          tipo: 'RECORRENTE',
+          createdAt: subscription.createdAt.toISOString(),
+          matriculaId: null,
+          alunoId: subscription.customer?.payerType === 'ALUNO' ? subscription.customer.payerId : null,
+          isGroup: true,
+          groupType: 'SUBSCRIPTION',
+          groupId: subscription.id,
+          installmentCount: null,
+          installmentsPaid: null,
+          _planId: null,
+          _subscriptionKey: subscription.id,
+        };
+      });
+
+  const eventItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] = [
+    ...eventFinancialEntries.map((entry) => ({
+      id: `event-entry:${entry.id}`,
+      origin: 'EVENT' as const,
+      description: `${entry.event.name} · ${entry.description || entry.category}`,
+      payerName: entry.event.name,
+      value: Number(entry.expectedAmount),
+      dueDate: entry.dueDate?.toISOString() ?? null,
+      billingType: entry.paymentMethod,
+      status: mapEventFinancialEntryStatus(entry.status),
+      chargeType: 'ONE_TIME' as const,
+      linkStatus: entry.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
+      asaasPaymentId: entry.asaasPaymentId,
+      tipo: 'EVENTO',
+      createdAt: entry.createdAt.toISOString(),
+      matriculaId: null,
+      alunoId: null,
+      eventId: entry.eventId,
+      isGroup: false,
+      groupType: null,
+      groupId: null,
+      installmentCount: null,
+      installmentsPaid: null,
+      _planId: null,
+      _subscriptionKey: null,
+    })),
+    ...eventTicketSales.map((sale) => ({
+      id: `event-ticket-sale:${sale.id}`,
+      origin: 'EVENT' as const,
+      description: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
+      payerName: sale.buyerName,
+      value: Number(sale.totalAmount),
+      dueDate: sale.soldAt.toISOString(),
+      billingType: sale.paymentMethod,
+      status: mapEventTicketSaleStatus(sale.status),
+      chargeType: 'ONE_TIME' as const,
+      linkStatus: sale.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
+      asaasPaymentId: sale.asaasPaymentId,
+      tipo: 'EVENTO',
+      createdAt: sale.soldAt.toISOString(),
+      matriculaId: null,
+      alunoId: sale.alunoId,
+      eventId: sale.eventId,
+      isGroup: false,
+      groupType: null,
+      groupId: null,
+      installmentCount: null,
+      installmentsPaid: null,
+      _planId: null,
+      _subscriptionKey: null,
+    })),
+    ...eventMapOrders.map((order) => ({
+      id: `event-map-order:${order.id}`,
+      origin: 'EVENT' as const,
+      description: `${order.event.name} · Pedido de ingresso`,
+      payerName: order.buyerName,
+      value: Number(order.totalAmount),
+      dueDate: order.expiresAt?.toISOString() ?? null,
+      billingType: order.paymentMethod ?? order.paymentProvider,
+      status: mapEventMapOrderStatus(order.status),
+      chargeType: 'ONE_TIME' as const,
+      linkStatus: order.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
+      asaasPaymentId: order.asaasPaymentId,
+      invoiceUrl: order.invoiceUrl,
+      tipo: 'EVENTO',
+      createdAt: order.createdAt.toISOString(),
+      matriculaId: null,
+      alunoId: null,
+      eventId: order.eventId,
+      isGroup: false,
+      groupType: null,
+      groupId: null,
+      installmentCount: null,
+      installmentsPaid: null,
+      _planId: null,
+      _subscriptionKey: null,
+    })),
+  ].filter((item) => !tipoFilter?.length || tipoFilter.includes(item.tipo ?? ''));
+
   // =================================================================
   // 5. Expor apenas itens operacionais relevantes
   // =================================================================
-  const allItemsWithMeta = [...academicItems, ...standaloneItems];
+  const allItemsWithMeta = [
+    ...academicItems,
+    ...standaloneItems,
+    ...standaloneSubscriptionItems,
+    ...eventItems,
+  ];
   const selectedIds = new Set<string>();
 
   const allOverdue = allItemsWithMeta.filter((item) => item.status === 'OVERDUE');

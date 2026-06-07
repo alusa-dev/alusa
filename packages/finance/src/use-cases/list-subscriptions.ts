@@ -1,7 +1,6 @@
 import { prisma } from '@alusa/database';
 import type { SubscriptionStatus, Prisma } from '@prisma/client';
 import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
-import { convergeSubscriptionsWithAsaas } from './financial-read-convergence';
 
 type StandaloneSubscriptionFindManyArgs = {
   where: { contaId: string };
@@ -76,7 +75,7 @@ export async function listSubscriptions(input: ListSubscriptionsInput): Promise<
   const where: { contaId: string; status?: SubscriptionStatus } = { contaId: input.contaId };
   if (input.status) where.status = input.status;
 
-  const [total, initialItems] = await Promise.all([
+  const [total, items] = await Promise.all([
     prisma.subscription.count({ where }),
     prisma.subscription.findMany({
       where,
@@ -95,35 +94,6 @@ export async function listSubscriptions(input: ListSubscriptionsInput): Promise<
       },
     }),
   ]);
-
-  const converged = await convergeSubscriptionsWithAsaas({
-    contaId: input.contaId,
-    subscriptions: initialItems.map((item) => ({
-      id: item.id,
-      source: 'ACADEMIC' as const,
-      asaasSubscriptionId: item.asaasSubscriptionId,
-      externalReference: item.externalReference,
-    })),
-  });
-
-  const items = converged
-    ? await prisma.subscription.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: input.limit,
-        skip: input.offset,
-        select: {
-          id: true,
-          contratoId: true,
-          matriculaId: true,
-          externalReference: true,
-          asaasSubscriptionId: true,
-          status: true,
-          statusUpdatedAt: true,
-          createdAt: true,
-        },
-      })
-    : initialItems;
 
   return {
     total,
@@ -327,51 +297,11 @@ export async function listSubscriptionsForFinance(
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, status, search } = input;
 
-  let [subscriptions, standaloneSubscriptions, manualLogs] = await loadFinanceSubscriptionSources({
+  const [subscriptions, standaloneSubscriptions, manualLogs] = await loadFinanceSubscriptionSources({
     contaId,
     status,
     search,
   });
-
-  const converged = await convergeSubscriptionsWithAsaas({
-    contaId,
-    subscriptions: [
-      ...subscriptions.map((subscription) => ({
-        id: subscription.id,
-        source: 'ACADEMIC' as const,
-        asaasSubscriptionId: subscription.asaasSubscriptionId,
-        externalReference: subscription.externalReference,
-      })),
-      ...standaloneSubscriptions.map((subscription) => ({
-        id: subscription.id,
-        source: 'STANDALONE' as const,
-        asaasSubscriptionId: subscription.asaasSubscriptionId,
-        externalReference: subscription.externalReference,
-      })),
-      ...manualLogs
-        .map((log) => {
-          const metadata = asRecord(log.metadata);
-          if (!metadata || !log.entityId) return null;
-          return {
-            id: log.entityId,
-            source: 'LEGACY_MANUAL' as const,
-            asaasSubscriptionId:
-              typeof metadata.asaasSubscriptionId === 'string' ? metadata.asaasSubscriptionId : null,
-            externalReference:
-              typeof metadata.externalReference === 'string' ? metadata.externalReference : null,
-          };
-        })
-        .filter((item): item is NonNullable<typeof item> => item != null),
-    ],
-  });
-
-  if (converged) {
-    [subscriptions, standaloneSubscriptions, manualLogs] = await loadFinanceSubscriptionSources({
-      contaId,
-      status,
-      search,
-    });
-  }
 
   const standaloneResponsavelIds = standaloneSubscriptions
     .filter((sub) => sub.customer?.payerType === 'RESPONSAVEL' && sub.customer.payerId)

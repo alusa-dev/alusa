@@ -6,6 +6,7 @@ import { prisma } from '@/src/prisma';
 import { updateMatriculaJurosMultaInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaSubscriptionTermsUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
+import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -43,15 +44,10 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     const ctxParams = await ctx.params;
   try {
     const sessionUser = await resolveSessionUser();
-    console.log('🟡 [BACKEND] Recebendo requisição PUT /api/matriculas/[id]/juros-multa');
-    console.log('🟡 [BACKEND] Matrícula ID:', ctxParams.id);
-    
     const json = await req.json().catch(() => null);
-    console.log('🟡 [BACKEND] Body recebido:', JSON.stringify(json, null, 2));
 
     const parsedBody = updateMatriculaJurosMultaInputDTOSchema.safeParse(json);
     if (!parsedBody.success) {
-      console.error('🔴 [BACKEND] Payload inválido');
       return jsonError(
         400,
         'PAYLOAD_INVALIDO',
@@ -91,13 +87,6 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(400, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui vínculo financeiro ativo');
     }
 
-    console.log('🟡 [BACKEND] Atualizando juros, multa e desconto da assinatura:', {
-      subscriptionId: matricula.asaasSubscriptionId,
-      interest,
-      fine,
-      discount,
-    });
-
     const localSubscription = await prisma.subscription.findFirst({
       where: {
         contaId: contaCtx.contaId,
@@ -112,7 +101,6 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(409, 'ASSINATURA_NAO_EDITAVEL', 'O vínculo recorrente não pode ser atualizado no momento.');
     }
 
-    console.log('🟡 [BACKEND] Chamando updateSubscription no Asaas...');
     const asaasInterest = interest ? { value: interest.value as number } : undefined;
     const asaasFine = fine ? { value: fine.value as number, type: fine.type } : undefined;
     const asaasDiscount = discount
@@ -122,9 +110,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           dueDateLimitDays: discount.dueDateLimitDays,
         }
       : undefined;
-    let asaasResponse;
     try {
-      asaasResponse = await updateSubscription(matricula.asaasSubscriptionId, {
+      await updateSubscription(matricula.asaasSubscriptionId, {
         interest: asaasInterest,
         fine: asaasFine,
         discount: asaasDiscount,
@@ -150,22 +137,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       }
       throw error;
     }
-    console.log('🟢 [BACKEND] Resposta do Asaas:', JSON.stringify(asaasResponse, null, 2));
 
-    console.log('🟢 [BACKEND] Juros, multa e desconto atualizados com sucesso no Asaas');
-
-    // Atualizar no banco de dados local
-    console.log('🟡 [BACKEND] Atualizando banco de dados local...');
-    console.log('🟡 [BACKEND] Valores a serem salvos:', {
-      jurosMensal: interest?.value,
-      jurosTipo: interest?.type,
-      multaPercentual: fine?.value,
-      multaTipo: fine?.type,
-      descontoAntecipado: discount?.value,
-      descontoTipo: discount?.type,
-      prazoDesconto: discount?.dueDateLimitDays,
-    });
-    
     const updatedMatricula = await prisma.matricula.update({
       where: { id: matriculaId },
       data: {
@@ -194,43 +166,25 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         },
       },
     });
-    
-    console.log('🟢 [BACKEND] Banco de dados atualizado:', {
-      id: updatedMatricula.id,
-      jurosMensal: updatedMatricula.jurosMensal,
-      jurosTipo: updatedMatricula.jurosTipo,
-      multaPercentual: updatedMatricula.multaPercentual,
-      multaTipo: updatedMatricula.multaTipo,
-      descontoAntecipado: updatedMatricula.descontoAntecipado,
-      descontoTipo: updatedMatricula.descontoTipo,
-      prazoDesconto: updatedMatricula.prazoDesconto,
-    });
-    
-    // Verificar se realmente salvou
-    const verificacao = await prisma.matricula.findUnique({
-      where: { id: matriculaId },
-      select: {
-        id: true,
-        jurosMensal: true,
-        jurosTipo: true,
-        multaPercentual: true,
-        multaTipo: true,
-        descontoAntecipado: true,
-        descontoTipo: true,
-        prazoDesconto: true,
-      },
-    });
-    console.log('🔍 [BACKEND] Verificação após salvamento:', {
-      jurosMensal: verificacao?.jurosMensal,
-      jurosTipo: verificacao?.jurosTipo,
-      multaPercentual: verificacao?.multaPercentual,
-      multaTipo: verificacao?.multaTipo,
-      descontoAntecipado: verificacao?.descontoAntecipado,
-      descontoTipo: verificacao?.descontoTipo,
-      prazoDesconto: verificacao?.prazoDesconto,
-    });
 
-    console.log('🟢 [BACKEND] Juros e multa atualizados no banco de dados local');
+    const localAlignment = await alignLocalPendingEnrollmentCharges({
+      db: prisma,
+      matriculaId,
+      contaId: contaCtx.contaId,
+      interest: interest
+        ? { value: interest.value, type: interest.type ?? 'PERCENTAGE' }
+        : null,
+      fine: fine
+        ? { value: fine.value, type: fine.type ?? 'PERCENTAGE' }
+        : null,
+      discount: discount
+        ? {
+            value: discount.value,
+            type: discount.type ?? 'FIXED',
+            dueDateLimitDays: discount.dueDateLimitDays ?? 0,
+          }
+        : null,
+    });
 
     const response = mapMatriculaSubscriptionTermsUpdateResultToDTO({
       interest,
@@ -249,17 +203,24 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       },
       message: 'Juros, multa e desconto atualizados com sucesso',
     });
-    
-    console.log('🟢 [BACKEND] Enviando resposta de sucesso:', JSON.stringify(response, null, 2));
 
-    return NextResponse.json(response, { headers: { 'cache-control': 'no-store' } });
+    return NextResponse.json(
+      {
+        ...response,
+        asyncSync: {
+          provider: 'ASAAS',
+          fields: ['interest', 'fine', 'discount', 'updatePendingPayments'],
+          localAlignment,
+        },
+      },
+      { headers: { 'cache-control': 'no-store' } },
+    );
   } catch (error) {
-    console.error('🔴 [BACKEND] Erro ao atualizar juros e multa:', error);
+    console.error('[ASAAS_SYNC] Erro ao atualizar juros e multa:', error);
 
     if (error instanceof KycNotApprovedError) {
       return jsonError(409, 'KYC_NAO_APROVADO', 'Conta não aprovada para operações financeiras');
     }
-    console.error('🔴 [BACKEND] Stack trace:', (error as Error).stack);
     return jsonError(500, 'ERRO_ATUALIZAR_JUROS_MULTA', (error as Error).message);
   }
 }

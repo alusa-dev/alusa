@@ -20,6 +20,12 @@ const {
     matricula: {
       findFirst: vi.fn(),
     },
+    cobranca: {
+      updateMany: vi.fn(),
+    },
+    charge: {
+      updateMany: vi.fn(),
+    },
     subscription: {
       findFirst: vi.fn(),
     },
@@ -70,6 +76,8 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getServerSessionMock.mockResolvedValue({ user: { id: 'user-1', contaId: 'conta-1' } });
+    prismaMock.cobranca.updateMany.mockResolvedValue({ count: 2 });
+    prismaMock.charge.updateMany.mockResolvedValue({ count: 2 });
   });
 
   it('atualiza o valor do vínculo financeiro quando o plano muda', async () => {
@@ -121,6 +129,29 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
         turmaId: 'turma-2',
       }),
     );
+    expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
+      where: {
+        matriculaId: 'mat-1',
+        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+      },
+      data: {
+        valor: 299.9,
+        valorFinal: 299.9,
+      },
+    });
+    expect(prismaMock.charge.updateMany).toHaveBeenCalledWith({
+      where: {
+        contaId: 'conta-1',
+        cobranca: {
+          matriculaId: 'mat-1',
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+        },
+      },
+      data: {
+        value: 299.9,
+      },
+    });
+    expect(data.asyncSync.localAlignment).toEqual({ cobrancasUpdated: 2, chargesUpdated: 2 });
     expect(data.asyncSync.message).toMatch(/valor recorrente/i);
   });
 });

@@ -14,7 +14,28 @@ vi.mock('@alusa/database', () => {
         findMany: vi.fn(),
       },
       installmentPlan: {
-        findMany: vi.fn(),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      standaloneInstallmentPlan: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      standaloneSubscription: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      eventFinancialEntry: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      eventTicketSale: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      eventMapOrder: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      aluno: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+      responsavel: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
     },
   };
@@ -170,6 +191,45 @@ describe('listChargesAggregated', () => {
     expect(result.total).toBe(0);
     expect(result.items).toHaveLength(0);
     expect(result.totalPages).toBe(0);
+  });
+
+  it('deve incluir receita de evento na visão agregada', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.charge.findMany)
+      .mockResolvedValueOnce([] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.cobranca.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.charge.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.eventFinancialEntry.findMany).mockResolvedValueOnce([
+      {
+        id: 'entry-event-1',
+        eventId: 'evt-1',
+        category: 'Taxa de inscrição',
+        description: 'Inscrição',
+        expectedAmount: 90,
+        dueDate: new Date('2026-01-10T00:00:00.000Z'),
+        status: 'PENDING',
+        paymentMethod: 'MANUAL_PIX',
+        asaasPaymentId: 'pay_evt_1',
+        createdAt: new Date('2026-01-03T00:00:00.000Z'),
+        event: { name: 'Festival' },
+      },
+    ] as never);
+
+    const result = await listChargesAggregated({ contaId: 'c1', statusView: 'all' });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'event-entry:entry-event-1',
+      origin: 'EVENT',
+      eventId: 'evt-1',
+      tipo: 'EVENTO',
+      description: 'Festival · Inscrição',
+      value: 90,
+      status: 'PENDING',
+    });
   });
 
   it('deve incluir campos necessários para listagem', async () => {

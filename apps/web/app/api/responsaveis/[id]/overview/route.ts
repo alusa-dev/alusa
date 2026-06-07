@@ -12,6 +12,27 @@ import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
+function mapEventChargeStatus(status: string) {
+  switch (status) {
+    case 'PAID':
+    case 'RECEIVED':
+    case 'COMPLIMENTARY':
+    case 'CONFIRMED':
+      return 'PAGO';
+    case 'CANCELLED':
+    case 'EXPIRED':
+      return 'CANCELADO';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'ESTORNADO';
+    case 'EXPECTED':
+    case 'PENDING':
+    case 'PAYMENT_PENDING':
+    default:
+      return 'PENDENTE';
+  }
+}
+
 async function loadRematriculaDecision(params: {
   contaId: string;
   matriculaId: string;
@@ -251,8 +272,93 @@ export async function GET(
       }),
     ]);
 
-    const openCharges = charges.filter((charge) => ['CREATED', 'OPEN', 'OVERDUE'].includes(charge.status));
-    const overdueCharges = charges.filter((charge) => charge.status === 'OVERDUE');
+    const [eventParticipants, eventTicketSales] = await Promise.all([
+      prisma.eventParticipant.findMany({
+        where: {
+          contaId: user.contaId,
+          responsavelId,
+          revenueEntryId: { not: null },
+        },
+        select: { revenueEntryId: true },
+      }),
+      prisma.eventTicketSale.findMany({
+        where: {
+          contaId: user.contaId,
+          responsavelId,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        include: { event: { select: { name: true } } },
+      }),
+    ]);
+
+    const eventRevenueEntryIds = [
+      ...new Set(
+        [
+          ...eventParticipants.map((item) => item.revenueEntryId),
+          ...eventTicketSales.map((sale) => sale.revenueEntryId),
+        ].filter((id): id is string => typeof id === 'string' && id.length > 0),
+      ),
+    ];
+
+    const eventEntries = eventRevenueEntryIds.length
+      ? await prisma.eventFinancialEntry.findMany({
+          where: {
+            contaId: user.contaId,
+            id: { in: eventRevenueEntryIds },
+          },
+          orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+          include: { event: { select: { name: true } } },
+        })
+      : [];
+
+    const eventEntryById = new Map(eventEntries.map((entry) => [entry.id, entry]));
+    const eventCharges = [
+      ...eventEntries.map((entry) => ({
+        id: `event-entry:${entry.id}`,
+        origin: 'EVENT',
+        description: `${entry.event.name} · ${entry.description}`,
+        status: mapEventChargeStatus(entry.status),
+        value: Number(entry.expectedAmount ?? 0),
+        dueDate: entry.dueDate?.toISOString() ?? entry.realizedAt?.toISOString() ?? entry.createdAt.toISOString(),
+        billingType: entry.paymentMethod,
+        invoiceUrl: null,
+        familyGroupId: null,
+        standaloneSubscriptionId: null,
+        standaloneInstallmentPlanId: null,
+        createdAt: entry.createdAt.toISOString(),
+      })),
+      ...eventTicketSales
+        .filter((sale) => !sale.revenueEntryId || !eventEntryById.has(sale.revenueEntryId))
+        .map((sale) => ({
+          id: `event-ticket-sale:${sale.id}`,
+          origin: 'EVENT',
+          description: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
+          status: mapEventChargeStatus(sale.status),
+          value: Number(sale.totalAmount ?? 0),
+          dueDate: sale.soldAt.toISOString(),
+          billingType: sale.paymentMethod,
+          invoiceUrl: null,
+          familyGroupId: null,
+          standaloneSubscriptionId: null,
+          standaloneInstallmentPlanId: null,
+          createdAt: sale.createdAt.toISOString(),
+        })),
+    ];
+
+    const mappedCharges = charges.map((charge) => ({
+      ...charge,
+      origin: charge.familyGroupId ? 'FAMILY' : 'STANDALONE',
+      value: Number(charge.value ?? 0),
+      dueDate: charge.dueDate?.toISOString() ?? null,
+      createdAt: charge.createdAt.toISOString(),
+    }));
+    const allCharges = [...mappedCharges, ...eventCharges];
+
+    const openCharges = allCharges.filter((charge) =>
+      ['CREATED', 'OPEN', 'OVERDUE', 'PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'].includes(charge.status),
+    );
+    const overdueCharges = allCharges.filter((charge) => ['OVERDUE', 'ATRASADO'].includes(charge.status));
 
     const rematriculaCandidates = [];
     for (const aluno of alunosVinculados) {
@@ -305,12 +411,7 @@ export async function GET(
           valorMensalidadeTotal: Number(family.valorMensalidadeTotal),
           valorTaxaMatriculaTotal: Number(family.valorTaxaMatriculaTotal),
         })),
-        charges: charges.map((charge) => ({
-          ...charge,
-          value: Number(charge.value ?? 0),
-          dueDate: charge.dueDate?.toISOString() ?? null,
-          createdAt: charge.createdAt.toISOString(),
-        })),
+        charges: allCharges,
         subscriptions: standaloneSubscriptions.map((subscription) => ({
           ...subscription,
           source: 'AVULSA',

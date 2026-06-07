@@ -80,10 +80,19 @@ function createPrismaMock(overrides?: {
   findFirst?: unknown;
   turmaCount?: number;
   pendingOperations?: unknown[];
+  localCharges?: unknown[];
 }) {
   const tx = {
     matricula: {
       update: vi.fn(async () => ({ id: 'mat-1' })),
+    },
+    cobranca: {
+      findMany: vi.fn(async () => overrides?.localCharges ?? []),
+      update: vi.fn(async () => ({ id: 'cob-1' })),
+      updateMany: vi.fn(async () => ({ count: 0 })),
+    },
+    charge: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
     },
     matriculaOperacao: {
       updateMany: vi.fn(async () => ({ count: 0 })),
@@ -108,6 +117,9 @@ function createPrismaMock(overrides?: {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     cobranca: {
+      updateMany: vi.fn(async () => ({ count: 0 })),
+    },
+    charge: {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     $transaction: vi.fn(async (fn: (_t: typeof tx) => unknown) => fn(tx)),
@@ -190,7 +202,10 @@ describe('matricula-pausa.service', () => {
   // -----------------------------------------------------------------------
   describe('pausarMatricula', () => {
     it('pausa matrícula ativa com assinatura, inativando no Asaas', async () => {
-      const { root } = createPrismaMock({ findFirst: ativaMatricula() });
+      const { root, tx } = createPrismaMock({
+        findFirst: ativaMatricula(),
+        localCharges: [{ id: 'cob-1', asaasPaymentId: 'pay_1' }],
+      });
 
       listSubscriptionPaymentsMock.mockResolvedValueOnce({
         data: [
@@ -212,6 +227,34 @@ describe('matricula-pausa.service', () => {
         contaId: 'conta-1',
       });
       expect(deletePaymentMock).toHaveBeenCalledTimes(1);
+      expect(tx.cobranca.findMany).toHaveBeenCalledWith({
+        where: {
+          matriculaId: 'mat-1',
+          vencimento: { gte: new Date('2025-06-01T12:00:00.000Z') },
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+        },
+        select: {
+          id: true,
+          asaasPaymentId: true,
+        },
+      });
+      expect(tx.cobranca.update).toHaveBeenCalledWith({
+        where: { id: 'cob-1' },
+        data: expect.objectContaining({
+          status: 'CANCELADO',
+          canceladoMotivo: 'Viagem',
+          canceladoPor: 'user-1',
+        }),
+      });
+      expect(tx.charge.updateMany).toHaveBeenCalledWith({
+        where: {
+          contaId: 'conta-1',
+          cobrancaId: { in: ['cob-1'] },
+        },
+        data: expect.objectContaining({
+          status: 'CANCELED',
+        }),
+      });
     });
 
     it('pausa matrícula sem assinatura (LOCAL_ONLY)', async () => {

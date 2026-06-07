@@ -304,7 +304,7 @@ describe('listInstallmentPlansAggregated', () => {
     expect(result.items[0].status).toBe('CANCELED');
   });
 
-  it('aciona a convergência centralizada para academic e standalone antes de montar a lista', async () => {
+  it('monta a lista sem acionar convergência com Asaas', async () => {
     const db = createMockDb();
     db.installmentPlan.findMany.mockResolvedValue([makeAcademicPlan()]);
     db.standaloneInstallmentPlan.findMany.mockResolvedValue([
@@ -314,12 +314,6 @@ describe('listInstallmentPlansAggregated', () => {
 
     await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
 
-    expect(convergeInstallmentPlansWithAsaas).toHaveBeenCalledWith({
-      contaId: 'ct_1',
-      plans: [
-        { id: 'ip_1', asaasInstallmentId: 'asaas_inst_1' },
-        { id: 'sip_2', asaasInstallmentId: 'asaas_inst_2' },
-      ],
-    });
+    expect(convergeInstallmentPlansWithAsaas).not.toHaveBeenCalled();
   });
 });

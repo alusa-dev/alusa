@@ -11,7 +11,6 @@
 import { prisma } from '@alusa/database';
 import type { SubscriptionStatus, StatusCobranca, ChargeStatus } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
-import { convergeSubscriptionsWithAsaas } from './financial-read-convergence';
 
 type StandaloneSubscriptionFindFirstArgs = {
   where: { id: string; contaId: string };
@@ -255,18 +254,6 @@ export async function getSubscriptionWithCharges(
       : null;
 
     if (standaloneSub) {
-      await convergeSubscriptionsWithAsaas({
-        contaId,
-        subscriptions: [
-          {
-            id: standaloneSub.id,
-            source: 'STANDALONE',
-            asaasSubscriptionId: standaloneSub.asaasSubscriptionId,
-            externalReference: standaloneSub.externalReference,
-          },
-        ],
-      });
-
       const charges = await prisma.charge.findMany({
         where: {
           contaId,
@@ -401,20 +388,6 @@ export async function getSubscriptionWithCharges(
       return { success: false, error: 'Assinatura manual sem metadados válidos' };
     }
 
-    await convergeSubscriptionsWithAsaas({
-      contaId,
-      subscriptions: [
-        {
-          id: manualLog.entityId,
-          source: 'LEGACY_MANUAL',
-          asaasSubscriptionId:
-            typeof metadata.asaasSubscriptionId === 'string' ? metadata.asaasSubscriptionId : null,
-          externalReference:
-            typeof metadata.externalReference === 'string' ? metadata.externalReference : null,
-        },
-      ],
-    });
-
     const externalReference =
       typeof metadata.externalReference === 'string' ? metadata.externalReference : null;
     if (!externalReference) {
@@ -528,18 +501,6 @@ export async function getSubscriptionWithCharges(
   const responsavel = matricula.responsavelFinanceiro;
   const plano = matricula.plano;
   const combo = matricula.combo;
-
-  await convergeSubscriptionsWithAsaas({
-    contaId,
-    subscriptions: [
-      {
-        id: sub.id,
-        source: 'ACADEMIC',
-        asaasSubscriptionId: sub.asaasSubscriptionId,
-        externalReference: sub.externalReference,
-      },
-    ],
-  });
 
   // Determinar pagador
   const idade = calcularIdade(aluno.dataNasc);

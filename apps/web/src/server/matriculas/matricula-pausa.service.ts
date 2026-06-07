@@ -12,6 +12,10 @@ import {
 import { AsaasHttpError } from '@alusa/finance';
 import { validatePausa, validateReativacao, validarCapacidade } from '@alusa/domain';
 import type { TurmaCapacidadeInfo } from '@alusa/domain';
+import {
+  cancelLocalFutureEnrollmentCharges,
+  markEnrollmentFinanceDivergence,
+} from './enrollment-finance-consistency.service';
 
 // ============================================================================
 // ERRORS
@@ -542,9 +546,17 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
 
   const warnings: string[] = [];
   let asaasAction: PausarMatriculaResult['asaasAction'] = 'LOCAL_ONLY';
-  let integrationStatus: PausarMatriculaResult['integrationStatus'] = 'SINCRONIZADO';
+  let integrationStatus: PausarMatriculaResult['integrationStatus'] = 'SINCRONIZADO' as PausarMatriculaResult['integrationStatus'];
   let warningCode: string | null = null;
   let cobrancasFuturasRemovidas = 0;
+  let deletedRemotePaymentIds: string[] = [];
+  let failedRemotePaymentIds: string[] = [];
+  let remoteDeletionUncertain = false;
+  let localChargeAlignment = {
+    scanned: 0,
+    canceled: 0,
+    pending: 0,
+  };
 
   // Sincronizar com Asaas se houver assinatura e política de não cobrar
   if (matricula.asaasSubscriptionId) {
@@ -589,12 +601,15 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
         for (const payment of futurasIndevidas) {
           try {
             await deletePayment(payment.id, { contaId: input.contaId });
+            deletedRemotePaymentIds.push(payment.id);
             cobrancasFuturasRemovidas++;
           } catch (deleteError) {
+            failedRemotePaymentIds.push(payment.id);
             warnings.push(`Não foi possível remover a cobrança ${payment.id}: ${deleteError instanceof Error ? deleteError.message : 'erro desconhecido'}`);
           }
         }
       } catch (listError) {
+        remoteDeletionUncertain = true;
         warnings.push(`Não foi possível listar cobranças da assinatura para remoção: ${listError instanceof Error ? listError.message : 'erro desconhecido'}`);
       }
     }
@@ -607,7 +622,32 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
   }
 
   // Atualizar matrícula
+  let finalIntegrationStatus: PausarMatriculaResult['integrationStatus'] = integrationStatus;
+  let finalWarningCode = warningCode;
+
   await input.prisma.$transaction(async (tx) => {
+    if (!input.cobrarDurantePausa) {
+      localChargeAlignment = await cancelLocalFutureEnrollmentCharges({
+        db: tx,
+        matriculaId: matricula.id,
+        contaId: input.contaId,
+        effectiveDate: input.dataInicioPausa,
+        actor: { id: input.actorId },
+        reason: input.motivoPausa,
+        canceledRemotePaymentIds: deletedRemotePaymentIds,
+        failedRemotePaymentIds,
+        remoteDeletionUncertain,
+      });
+
+      if (localChargeAlignment.pending > 0) {
+        finalIntegrationStatus = 'DIVERGENTE';
+        finalWarningCode = 'COBRANCAS_FUTURAS_CANCELAMENTO_PENDENTE';
+        warnings.push(
+          'Algumas cobranças futuras ficaram pendentes de confirmação no Asaas e precisam de reconciliação.',
+        );
+      }
+    }
+
     await tx.matricula.update({
       where: { id: matricula.id, version: matricula.version },
       data: {
@@ -618,8 +658,8 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
         manterVaga: input.manterVaga,
         cobrarDurantePausa: input.cobrarDurantePausa,
         motivoPausa: input.motivoPausa,
-        integrationStatus,
-        warningCode,
+        integrationStatus: finalIntegrationStatus,
+        warningCode: finalWarningCode,
         version: { increment: 1 },
       },
     });
@@ -638,17 +678,52 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
           cobrarDurantePausa: input.cobrarDurantePausa,
           asaasAction,
           cobrancasFuturasRemovidas,
+          localChargeAlignment,
+          deletedRemotePaymentIds,
+          failedRemotePaymentIds,
+          remoteDeletionUncertain,
         },
       },
     });
   });
+
+  integrationStatus = finalIntegrationStatus;
+  warningCode = finalWarningCode;
+
+  if (integrationStatus === 'DIVERGENTE') {
+    try {
+      await markEnrollmentFinanceDivergence({
+        contaId: input.contaId,
+        matriculaId: matricula.id,
+        asaasSubscriptionId: matricula.asaasSubscriptionId,
+        issue: 'PAYMENT_STATUS_DRIFT',
+        severity: 'HIGH',
+        localStatus: warningCode,
+        remoteStatus: remoteDeletionUncertain ? 'UNKNOWN' : 'PARTIAL_FAILURE',
+        metadata: {
+          correlationId: operacao.correlationId,
+          localChargeAlignment,
+          deletedRemotePaymentIds,
+          failedRemotePaymentIds,
+          remoteDeletionUncertain,
+        },
+      });
+    } catch (error) {
+      console.error('[MATRICULA_PAUSA] Falha ao registrar divergência financeira:', error);
+    }
+  }
 
   // Atualizar operação
   await input.prisma.matriculaOperacao.update({
     where: { id: operacao.id },
     data: {
       status: integrationStatus === 'PENDENTE_SINCRONISMO' ? 'PENDENTE_SINCRONISMO' : 'SINCRONIZADO',
-      payloadRecebido: { asaasAction, cobrancasFuturasRemovidas, warnings },
+      payloadRecebido: {
+        asaasAction,
+        cobrancasFuturasRemovidas,
+        localChargeAlignment,
+        warnings,
+      },
       processedAt: new Date(),
     },
   });

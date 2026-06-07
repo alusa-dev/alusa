@@ -118,7 +118,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
 
   if (isInitialLoading) {
     return (
-      <div className="container mx-auto max-w-5xl min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
+      <div className="container mx-auto max-w-5xl min-w-0 overflow-x-clip px-3 py-4 sm:px-4 sm:py-6">
         <Skeleton className="mb-4 h-10 w-32 sm:mb-5" />
         <div className="space-y-4 sm:space-y-6">
           <div className="rounded-xl border bg-white p-4 sm:p-6">
@@ -148,7 +148,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
   // Error state
   if (error || !assinatura) {
     return (
-      <div className="container mx-auto max-w-5xl min-w-0 overflow-x-hidden px-3 py-4 sm:px-4 sm:py-6">
+      <div className="container mx-auto max-w-5xl min-w-0 overflow-x-clip px-3 py-4 sm:px-4 sm:py-6">
         <button
           type="button"
           onClick={() => router.back()}
@@ -185,7 +185,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
     studentNamesLabel && subtitlePrimary !== studentNamesLabel ? studentNamesLabel : null;
 
   return (
-    <div className="container mx-auto max-w-5xl min-w-0 overflow-x-hidden px-3 py-4 pb-8 sm:px-4 sm:py-6">
+    <div className="container mx-auto max-w-5xl min-w-0 overflow-x-clip px-3 py-4 pb-8 sm:px-4 sm:py-6">
       {/* Header */}
       <div className="mb-5 sm:mb-6">
         <button

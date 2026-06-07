@@ -24,6 +24,12 @@ const {
     matricula: {
       findFirst: vi.fn(),
     },
+    cobranca: {
+      updateMany: vi.fn(),
+    },
+    charge: {
+      updateMany: vi.fn(),
+    },
     subscription: {
       findFirst: vi.fn(),
     },
@@ -66,6 +72,8 @@ describe('PATCH /api/matriculas/[id]', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getServerSessionMock.mockResolvedValue({ user: { id: 'user-1', contaId: 'conta-1' } });
+    prismaMock.cobranca.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.charge.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('sincroniza o novo dia de vencimento com o vínculo financeiro antes de salvar localmente', async () => {
@@ -120,6 +128,28 @@ describe('PATCH /api/matriculas/[id]', () => {
         vencimentoDia: 10,
       }),
     );
+    expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
+      where: {
+        matriculaId: 'mat-1',
+        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+      },
+      data: {
+        vencimento: new Date('2026-03-10T12:00:00.000Z'),
+      },
+    });
+    expect(prismaMock.charge.updateMany).toHaveBeenCalledWith({
+      where: {
+        contaId: 'conta-1',
+        cobranca: {
+          matriculaId: 'mat-1',
+          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+        },
+      },
+      data: {
+        dueDate: new Date('2026-03-10T12:00:00.000Z'),
+      },
+    });
+    expect(data.asyncSync.localAlignment).toEqual({ cobrancasUpdated: 1, chargesUpdated: 1 });
     expect(data.asyncSync.message).toMatch(/alinhado com o vínculo financeiro/i);
   });
 

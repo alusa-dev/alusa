@@ -84,7 +84,7 @@ type MatriculaResumo = {
 
 type CobrancaResumo = {
   id: string;
-  source: 'ACADEMICA' | 'AVULSA';
+  source: 'ACADEMICA' | 'AVULSA' | 'FAMILIAR' | 'EVENTO';
   matriculaId: Nullable<string>;
   tipo: string;
   descricao: Nullable<string>;
@@ -1412,7 +1412,15 @@ function CobrancasTable({ cobrancas }: { cobrancas: CobrancaResumo[] }) {
               <td className="px-5 py-3 font-semibold text-blue-700">{formatCurrency(cobranca.valorFinal ?? cobranca.valor)}</td>
               <td className="px-5 py-3 text-slate-800">
                 {cobranca.descricao || cobranca.planoNome || cobranca.tipo}
-                <div className="text-xs text-slate-500">{cobranca.source === 'ACADEMICA' ? 'Acadêmica' : 'Avulsa'}</div>
+                <div className="text-xs text-slate-500">
+                  {cobranca.source === 'ACADEMICA'
+                    ? 'Acadêmica'
+                    : cobranca.source === 'FAMILIAR'
+                      ? 'Familiar'
+                      : cobranca.source === 'EVENTO'
+                        ? 'Evento'
+                        : 'Avulsa'}
+                </div>
               </td>
               <td className="px-5 py-3 text-slate-700">{formatFormaPagamentoLabel(cobranca.formaPagamento ?? '')}</td>
               <td className="px-5 py-3 text-slate-700">{formatDate(cobranca.vencimento)}</td>
@@ -1420,13 +1428,13 @@ function CobrancasTable({ cobrancas }: { cobrancas: CobrancaResumo[] }) {
                 <Badge status={chargeStatusMap[cobranca.status] ?? 'PENDING'} size="sm" />
               </td>
               <td className="px-5 py-3 text-right">
-                {cobranca.source === 'ACADEMICA' ? (
+                {cobranca.source !== 'EVENTO' && !cobranca.id.startsWith('group:') ? (
                   <Link href={`/cobrancas/${cobranca.id}`} className="inline-flex items-center text-sm text-brand-accent hover:underline">
                     Abrir
                     <ExternalLink className="ml-1 h-3.5 w-3.5" />
                   </Link>
                 ) : (
-                  <span className="text-xs text-slate-400">Avulsa</span>
+                  <span className="text-xs text-slate-400">{cobranca.source === 'EVENTO' ? 'Evento' : 'Familiar'}</span>
                 )}
               </td>
             </tr>

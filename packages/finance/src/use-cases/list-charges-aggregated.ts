@@ -93,6 +93,60 @@ function mapChargeStatus(status: string): UnifiedChargeStatus {
   }
 }
 
+function mapEventFinancialEntryStatus(status: string): UnifiedChargeStatus {
+  switch (status) {
+    case 'PAID':
+    case 'RECEIVED':
+      return 'PAID';
+    case 'CANCELLED':
+      return 'CANCELED';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'REFUNDED';
+    case 'EXPECTED':
+    case 'PENDING':
+    default:
+      return 'PENDING';
+  }
+}
+
+function mapEventTicketSaleStatus(status: string): UnifiedChargeStatus {
+  switch (status) {
+    case 'PAID':
+    case 'COMPLIMENTARY':
+      return 'PAID';
+    case 'CANCELLED':
+      return 'CANCELED';
+    case 'REFUNDED':
+      return 'REFUNDED';
+    case 'PENDING':
+    default:
+      return 'PENDING';
+  }
+}
+
+function mapEventMapOrderStatus(status: string): UnifiedChargeStatus {
+  switch (status) {
+    case 'CONFIRMED':
+      return 'PAID';
+    case 'CANCELLED':
+    case 'EXPIRED':
+      return 'CANCELED';
+    case 'REFUNDED':
+    case 'PARTIALLY_REFUNDED':
+      return 'REFUNDED';
+    case 'PAYMENT_PENDING':
+    default:
+      return 'PENDING';
+  }
+}
+
+function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all') {
+  if (statusView === 'all') return true;
+  if (statusView === 'paid') return status === 'PAID';
+  return ['PENDING', 'PROCESSING', 'OVERDUE'].includes(status);
+}
+
 // Mapeamento de FormaPagamento para billing type
 function mapBillingType(formaPagamento: string | null): string | null {
   if (!formaPagamento) return null;
@@ -232,7 +286,45 @@ export async function listChargesAggregated(
   // Buscar Charges vinculadas para extrair installmentPlanId (quando groupInstallments=true)
   const shouldGroup = input.groupInstallments !== false; // default true
 
-  const [academicResult, standaloneResult, academicCount, standaloneCount, linkedCharges] = await Promise.all([
+  const eventFinancialEntryWhere: Record<string, unknown> = {
+    contaId,
+    type: 'REVENUE',
+    NOT: { originType: 'TICKET_SALE' },
+  };
+  const eventTicketSaleWhere: Record<string, unknown> = { contaId };
+  const eventMapOrderWhere: Record<string, unknown> = { contaId };
+  const standaloneSubscriptionWhere: Record<string, unknown> = { contaId };
+
+  if (search) {
+    eventFinancialEntryWhere.OR = [
+      { description: { contains: search, mode: 'insensitive' } },
+      { category: { contains: search, mode: 'insensitive' } },
+      { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+    ];
+    eventTicketSaleWhere.OR = [
+      { buyerName: { contains: search, mode: 'insensitive' } },
+      { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+    ];
+    eventMapOrderWhere.OR = [
+      { buyerName: { contains: search, mode: 'insensitive' } },
+      { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+    ];
+    standaloneSubscriptionWhere.OR = [
+      { description: { contains: search, mode: 'insensitive' } },
+    ];
+  }
+
+  const [
+    academicResult,
+    standaloneResult,
+    academicCount,
+    standaloneCount,
+    linkedCharges,
+    standaloneSubscriptions,
+    eventFinancialEntries,
+    eventTicketSales,
+    eventMapOrders,
+  ] = await Promise.all([
     includeAcademic
       ? _db.cobranca.findMany({
           where: academicWhere,
@@ -268,6 +360,7 @@ export async function listChargesAggregated(
             dueDate: true,
             billingType: true,
             standaloneInstallmentPlanId: true,
+            standaloneSubscriptionId: true,
           },
         })
       : Promise.resolve([]),
@@ -292,6 +385,82 @@ export async function listChargesAggregated(
           },
         })
       : Promise.resolve([]),
+    includeStandalone
+      ? _db.standaloneSubscription.findMany({
+          where: standaloneSubscriptionWhere,
+          orderBy: { createdAt: 'desc' },
+          take: fetchLimit,
+          select: {
+            id: true,
+            status: true,
+            customerId: true,
+            asaasSubscriptionId: true,
+            billingType: true,
+            value: true,
+            nextDueDate: true,
+            description: true,
+            familyGroupId: true,
+            createdAt: true,
+            customer: { select: { payerType: true, payerId: true } },
+          },
+        })
+      : Promise.resolve([]),
+    _db.eventFinancialEntry.findMany({
+      where: eventFinancialEntryWhere,
+      orderBy: { createdAt: 'desc' },
+      take: fetchLimit,
+      select: {
+        id: true,
+        eventId: true,
+        category: true,
+        description: true,
+        expectedAmount: true,
+        dueDate: true,
+        status: true,
+        paymentMethod: true,
+        asaasPaymentId: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
+    _db.eventTicketSale.findMany({
+      where: eventTicketSaleWhere,
+      orderBy: { createdAt: 'desc' },
+      take: fetchLimit,
+      select: {
+        id: true,
+        eventId: true,
+        buyerName: true,
+        alunoId: true,
+        quantity: true,
+        totalAmount: true,
+        paymentMethod: true,
+        status: true,
+        soldAt: true,
+        asaasPaymentId: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
+    _db.eventMapOrder.findMany({
+      where: eventMapOrderWhere,
+      orderBy: { createdAt: 'desc' },
+      take: fetchLimit,
+      select: {
+        id: true,
+        eventId: true,
+        buyerName: true,
+        totalAmount: true,
+        status: true,
+        paymentMethod: true,
+        paymentProvider: true,
+        asaasPaymentId: true,
+        invoiceUrl: true,
+        expiresAt: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
   ]);
 
   // Criar mapa de cobrancaId -> installmentPlanId
@@ -369,6 +538,132 @@ export async function listChargesAggregated(
       installmentPlanId: c.standaloneInstallmentPlanId ?? null,
     });
   }
+
+  const materializedSubscriptionIds = new Set(
+    standaloneResult
+      .map((charge) => charge.standaloneSubscriptionId)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  );
+
+  const subscriptionPayerIdsByType = {
+    ALUNO: standaloneSubscriptions
+      .filter((subscription) => subscription.customer?.payerType === 'ALUNO')
+      .map((subscription) => subscription.customer.payerId),
+    RESPONSAVEL: standaloneSubscriptions
+      .filter((subscription) => subscription.customer?.payerType === 'RESPONSAVEL')
+      .map((subscription) => subscription.customer.payerId),
+  };
+
+  const [subscriptionAlunos, subscriptionResponsaveis] = await Promise.all([
+    subscriptionPayerIdsByType.ALUNO.length
+      ? _db.aluno.findMany({
+          where: { id: { in: subscriptionPayerIdsByType.ALUNO } },
+          select: { id: true, nome: true },
+        })
+      : Promise.resolve([]),
+    subscriptionPayerIdsByType.RESPONSAVEL.length
+      ? _db.responsavel.findMany({
+          where: { id: { in: subscriptionPayerIdsByType.RESPONSAVEL } },
+          select: { id: true, nome: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const subscriptionPayerName = new Map<string, string>([
+    ...subscriptionAlunos.map((aluno) => [`ALUNO:${aluno.id}`, aluno.nome] as const),
+    ...subscriptionResponsaveis.map((responsavel) => [`RESPONSAVEL:${responsavel.id}`, responsavel.nome] as const),
+  ]);
+
+  const standaloneSubscriptionItems: ChargeListItemDTO[] = standaloneSubscriptions
+    .filter((subscription) => {
+      if (materializedSubscriptionIds.has(subscription.id)) return false;
+      if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
+      return statusView !== 'paid';
+    })
+    .map((subscription) => ({
+      id: `group:subscription:${subscription.id}`,
+      origin: 'STANDALONE' as const,
+      description: subscription.description ?? 'Assinatura recorrente',
+      payerName: subscription.customer
+        ? subscriptionPayerName.get(`${subscription.customer.payerType}:${subscription.customer.payerId}`) ?? 'Cliente'
+        : 'Cliente',
+      value: Number(subscription.value),
+      dueDate: subscription.nextDueDate.toISOString(),
+      billingType: subscription.billingType,
+      status: 'PENDING' as const,
+      liquidacaoStatus: null,
+      createdAt: subscription.createdAt.toISOString(),
+      sourceId: subscription.id,
+      matriculaId: null,
+      alunoId: subscription.customer?.payerType === 'ALUNO' ? subscription.customer.payerId : null,
+      asaasPaymentId: null,
+      tipo: 'RECORRENTE',
+      isGroup: true,
+      groupType: 'SUBSCRIPTION',
+      installmentPlanId: subscription.id,
+      installmentCount: undefined,
+      installmentsPaid: undefined,
+    }));
+
+  const eventItems: ChargeListItemDTO[] = [
+    ...eventFinancialEntries.map((entry) => ({
+      id: `event-entry:${entry.id}`,
+      origin: 'EVENT' as const,
+      description: `${entry.event.name} · ${entry.description || entry.category}`,
+      payerName: entry.event.name,
+      value: Number(entry.expectedAmount),
+      dueDate: entry.dueDate?.toISOString() ?? null,
+      billingType: entry.paymentMethod,
+      status: mapEventFinancialEntryStatus(entry.status),
+      liquidacaoStatus: null,
+      createdAt: entry.createdAt.toISOString(),
+      sourceId: entry.id,
+      matriculaId: null,
+      alunoId: null,
+      eventId: entry.eventId,
+      asaasPaymentId: entry.asaasPaymentId,
+      tipo: 'EVENTO',
+    })),
+    ...eventTicketSales.map((sale) => ({
+      id: `event-ticket-sale:${sale.id}`,
+      origin: 'EVENT' as const,
+      description: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
+      payerName: sale.buyerName,
+      value: Number(sale.totalAmount),
+      dueDate: sale.soldAt.toISOString(),
+      billingType: sale.paymentMethod,
+      status: mapEventTicketSaleStatus(sale.status),
+      liquidacaoStatus: null,
+      createdAt: sale.createdAt.toISOString(),
+      sourceId: sale.id,
+      matriculaId: null,
+      alunoId: sale.alunoId,
+      eventId: sale.eventId,
+      asaasPaymentId: sale.asaasPaymentId,
+      tipo: 'EVENTO',
+    })),
+    ...eventMapOrders.map((order) => ({
+      id: `event-map-order:${order.id}`,
+      origin: 'EVENT' as const,
+      description: `${order.event.name} · Pedido de ingresso`,
+      payerName: order.buyerName,
+      value: Number(order.totalAmount),
+      dueDate: order.expiresAt?.toISOString() ?? null,
+      billingType: order.paymentMethod ?? order.paymentProvider,
+      status: mapEventMapOrderStatus(order.status),
+      liquidacaoStatus: null,
+      createdAt: order.createdAt.toISOString(),
+      sourceId: order.id,
+      matriculaId: null,
+      alunoId: null,
+      eventId: order.eventId,
+      asaasPaymentId: order.asaasPaymentId,
+      tipo: 'EVENTO',
+    })),
+  ].filter((item) => {
+    if (tipoFilter?.length && !tipoFilter.includes(item.tipo ?? '')) return false;
+    return matchesStatusView(item.status, statusView);
+  });
 
   // ==================== Agrupar parcelamentos (se habilitado) ====================
   let processedItems: ChargeListItemDTO[];
@@ -590,10 +885,17 @@ export async function listChargesAggregated(
     }
 
     // Combinar grupos + outros itens + standalone não-parceladas
-    processedItems = [...groupItems, ...standaloneGroupItems, ...otherItems, ...standaloneOtherItems];
+    processedItems = [
+      ...groupItems,
+      ...standaloneGroupItems,
+      ...otherItems,
+      ...standaloneOtherItems,
+      ...standaloneSubscriptionItems,
+      ...eventItems,
+    ];
   } else {
     // Sem agrupamento - retornar tudo individualmente
-    processedItems = [...academicItems, ...standaloneItems];
+    processedItems = [...academicItems, ...standaloneItems, ...standaloneSubscriptionItems, ...eventItems];
   }
 
   // Ordenar por data de criação (mais recente primeiro)
@@ -622,15 +924,18 @@ export async function listChargesAggregated(
     academicInstallmentItemsCount -
     standaloneInstallmentItemsCount +
     academicGroupCount +
-    standaloneGroupCount;
+    standaloneGroupCount +
+    standaloneSubscriptionItems.length +
+    eventItems.length;
+
+  const ungroupedTotal =
+    academicCount + standaloneCount - standaloneExcludedCount + standaloneSubscriptionItems.length + eventItems.length;
 
   return {
     items: paginatedItems,
-    total: shouldGroup ? adjustedTotal : academicCount + standaloneCount - standaloneExcludedCount,
+    total: shouldGroup ? adjustedTotal : ungroupedTotal,
     page,
     pageSize,
-    totalPages: Math.ceil(
-      (shouldGroup ? adjustedTotal : academicCount + standaloneCount - standaloneExcludedCount) / pageSize,
-    ),
+    totalPages: Math.ceil((shouldGroup ? adjustedTotal : ungroupedTotal) / pageSize),
   };
 }

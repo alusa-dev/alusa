@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../financial-read-convergence', () => ({
-  convergeSubscriptionsWithAsaas: vi.fn().mockResolvedValue(false),
-}));
-
 vi.mock('@alusa/database', () => {
   const prisma = {
     subscription: {
@@ -28,7 +24,6 @@ vi.mock('@alusa/database', () => {
 });
 
 import { prisma } from '@alusa/database';
-import { convergeSubscriptionsWithAsaas } from '../financial-read-convergence';
 import { getSubscriptionWithCharges } from '../get-subscription-with-charges';
 
 describe('getSubscriptionWithCharges', () => {
@@ -197,7 +192,7 @@ describe('getSubscriptionWithCharges', () => {
     );
   });
 
-  it('aciona a convergência oficial ao abrir uma assinatura manual', async () => {
+  it('abre assinatura manual sem acionar convergência com Asaas', async () => {
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
     vi.mocked(prisma.auditLog.findFirst).mockResolvedValueOnce({
       entityId: 'sub_manual_sync',
@@ -222,17 +217,7 @@ describe('getSubscriptionWithCharges', () => {
       subscriptionId: 'sub_manual_sync',
     });
 
-    expect(convergeSubscriptionsWithAsaas).toHaveBeenCalledWith({
-      contaId: 'conta_1',
-      subscriptions: [
-        {
-          id: 'sub_manual_sync',
-          source: 'LEGACY_MANUAL',
-          asaasSubscriptionId: 'sub_asaas_sync',
-          externalReference: 'alusa:standalone-subscription:sub_manual_sync',
-        },
-      ],
-    });
+    expect(prisma.charge.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('usa o valor oficial refletido nas cobranças da assinatura acadêmica', async () => {
@@ -297,4 +282,3 @@ describe('getSubscriptionWithCharges', () => {
     expect(result.data.nextDueDate).toBe('2099-05-05T00:00:00.000Z');
   });
 });
-

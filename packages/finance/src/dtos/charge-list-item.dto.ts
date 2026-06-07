@@ -4,7 +4,7 @@
  */
 export type ChargeListItemDTO = {
   id: string;
-  origin: 'ACADEMIC' | 'STANDALONE';
+  origin: 'ACADEMIC' | 'STANDALONE' | 'EVENT';
   description: string | null;
   payerName: string;
   value: number;
@@ -17,6 +17,7 @@ export type ChargeListItemDTO = {
   sourceId: string;
   matriculaId: string | null;
   alunoId: string | null;
+  eventId?: string | null;
   asaasPaymentId: string | null;
   tipo: string | null;
   // Campos para agrupamento de parcelamentos

@@ -320,7 +320,7 @@ describe('getInstallmentPlanDetail', () => {
     expect(result!.valorTotal).toBe(400);
   });
 
-  it('aciona convergência do parcelamento acadêmico antes de montar o detalhe', async () => {
+  it('monta detalhe sem acionar convergência com Asaas', async () => {
     const db = createMockDb();
     db.installmentPlan.findFirst.mockResolvedValue(
       makeAcademicPlan({ asaasInstallmentId: 'asaas_inst_1' }),
@@ -328,9 +328,6 @@ describe('getInstallmentPlanDetail', () => {
 
     await getInstallmentPlanDetail({ planId: 'ip_1', contaId: 'ct_1' }, db);
 
-    expect(convergeInstallmentPlansWithAsaas).toHaveBeenCalledWith({
-      contaId: 'ct_1',
-      plans: [{ id: 'ip_1', asaasInstallmentId: 'asaas_inst_1' }],
-    });
+    expect(convergeInstallmentPlansWithAsaas).not.toHaveBeenCalled();
   });
 });

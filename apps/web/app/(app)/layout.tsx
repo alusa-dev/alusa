@@ -28,7 +28,7 @@ const GlobalQuickCreatePortals = dynamic(
 /** Espaçamentos já validados por você */
 const CONTENT_GAP_PX = 12;
 const OUTER_PADDING_TOP_PX = 20;
-const OUTER_PADDING_RIGHT_PX = 24; // igual ao padding inferior
+const OUTER_PADDING_RIGHT_PX = 0; // mantém a scrollbar no canto direito do painel
 const OUTER_PADDING_BOTTOM_PX = 24;
 const OUTER_PADDING_LEFT_PX = 12; // espaço para sombra do card não ser cortada
 const CARD_PADDING_PX = 32;

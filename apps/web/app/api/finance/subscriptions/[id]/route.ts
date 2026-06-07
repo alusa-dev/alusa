@@ -8,7 +8,6 @@ import {
 } from '@alusa/finance';
 import { prisma } from '@/lib/prisma';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
-import { syncInitialSubscriptionPaymentFromAsaas } from '@/src/server/matriculas/subscription-payment-materialization';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -121,30 +120,6 @@ export async function GET(
 
     if (!result.success) {
       return err(404, 'NAO_ENCONTRADO', result.error);
-    }
-
-    if (result.data.totalCobrancas === 0 && result.data.asaasSubscriptionId) {
-      const targetDueDate = result.data.nextDueDate ? new Date(result.data.nextDueDate) : new Date();
-      const syncResult = await syncInitialSubscriptionPaymentFromAsaas({
-        contaId: user.contaId,
-        asaasSubscriptionId: result.data.asaasSubscriptionId,
-        targetDueDate,
-        intent: 'RECONCILIATION',
-      });
-
-      if (syncResult.processed || syncResult.localCharge) {
-        const refreshed = await getSubscriptionWithCharges({
-          contaId: user.contaId,
-          subscriptionId: rawParams.id,
-        });
-
-        if (refreshed.success) {
-          return NextResponse.json(
-            { data: refreshed.data },
-            { headers: { 'cache-control': 'no-store' } },
-          );
-        }
-      }
     }
 
     return NextResponse.json(

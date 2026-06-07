@@ -634,7 +634,11 @@ function CobrancasTable({ cobrancas }: { cobrancas: ResponsavelCharge[] }) {
               <td className="px-5 py-3 text-slate-800">
                 {cobranca.description || 'Cobrança'}
                 <div className="text-xs text-slate-500">
-                  {cobranca.familyGroupId ? 'Familiar' : 'Avulsa'}
+                  {cobranca.origin === 'EVENT'
+                    ? 'Evento'
+                    : cobranca.familyGroupId || cobranca.origin === 'FAMILY'
+                      ? 'Familiar'
+                      : 'Avulsa'}
                 </div>
               </td>
               <td className="px-5 py-3 text-slate-700">{cobranca.billingType ?? '—'}</td>
@@ -643,10 +647,14 @@ function CobrancasTable({ cobrancas }: { cobrancas: ResponsavelCharge[] }) {
                 <Badge status={chargeStatusMap[cobranca.status] ?? 'PENDING'} size="sm" />
               </td>
               <td className="px-5 py-3 text-right">
-                <Link href={`/cobrancas/${cobranca.id}`} className="inline-flex items-center text-sm text-brand-accent hover:underline">
-                  Abrir
-                  <ExternalLink className="ml-1 h-3.5 w-3.5" />
-                </Link>
+                {cobranca.origin === 'EVENT' ? (
+                  <span className="text-xs text-slate-400">Evento</span>
+                ) : (
+                  <Link href={`/cobrancas/${cobranca.id}`} className="inline-flex items-center text-sm text-brand-accent hover:underline">
+                    Abrir
+                    <ExternalLink className="ml-1 h-3.5 w-3.5" />
+                  </Link>
+                )}
               </td>
             </tr>
           ))}

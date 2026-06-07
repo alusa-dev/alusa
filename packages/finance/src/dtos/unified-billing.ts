@@ -62,7 +62,7 @@ export type UnifiedChargeItem = {
   /** ID interno (Charge.id ou Cobranca.id). */
   id: string;
   /** Origem do registro. */
-  origin: 'ACADEMIC' | 'STANDALONE';
+  origin: 'ACADEMIC' | 'STANDALONE' | 'EVENT';
   /** Descrição exibida na listagem. */
   description: string | null;
   /** Nome do pagador (aluno ou responsável financeiro). */
@@ -93,12 +93,13 @@ export type UnifiedChargeItem = {
   // Contexto acadêmico (nullable para standalone)
   matriculaId: string | null;
   alunoId: string | null;
+  eventId?: string | null;
 
   // Agrupamento: se este item representa um grupo (parcelamento/assinatura)
   /** true se este item é um agrupador (parcelamento com parcelas pendentes). */
   isGroup: boolean;
   /** Tipo do agrupador. */
-  groupType: 'INSTALLMENT' | null;
+  groupType: 'INSTALLMENT' | 'SUBSCRIPTION' | null;
   /** ID do parcelamento agrupador. */
   groupId: string | null;
   /** Total de parcelas no grupo. */

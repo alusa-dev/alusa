@@ -8,6 +8,7 @@ import { mapMatriculaSubscriptionBillingTypeUpdateResultToDTO } from '@/features
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
 import { deriveLocalAssinaturaSnapshot } from '@/src/server/matriculas/subscription-snapshot';
 import { mapBillingTypeToFormaPagamento } from '@/src/server/matriculas/recurring-billing';
+import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -176,18 +177,33 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     });
 
     const nextFormaPagamento = mapBillingTypeToFormaPagamento(billingType);
+    let localAlignment = null;
     if (nextFormaPagamento) {
       await prisma.matricula.update({
         where: { id: matriculaId },
         data: { formaPagamento: nextFormaPagamento },
       });
+      localAlignment = await alignLocalPendingEnrollmentCharges({
+        db: prisma,
+        matriculaId,
+        contaId: contaCtx.contaId,
+        billingType: nextFormaPagamento,
+        chargeBillingType: billingType,
+      });
     }
 
     return NextResponse.json(
-      mapMatriculaSubscriptionBillingTypeUpdateResultToDTO({
-        billingType,
-        message: 'Forma de pagamento atualizada com sucesso para os próximos ciclos e para as pendências ainda editáveis.',
-      }),
+      {
+        ...mapMatriculaSubscriptionBillingTypeUpdateResultToDTO({
+          billingType,
+          message: 'Forma de pagamento atualizada com sucesso para os próximos ciclos e para as pendências ainda editáveis.',
+        }),
+        asyncSync: {
+          provider: 'ASAAS',
+          fields: ['billingType', 'updatePendingPayments'],
+          localAlignment,
+        },
+      },
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {

@@ -2,7 +2,6 @@ import { prisma } from '@alusa/database';
 import type { UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import { normalizeChargeStatus } from '../dtos/unified-billing';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
-import { convergeStandaloneChargesWithAsaas } from './financial-read-convergence';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -158,7 +157,7 @@ export async function listStandaloneCharges(
     statusView,
   });
 
-  const [initialCharges, total] = await Promise.all([
+  const [charges, total] = await Promise.all([
     _db.charge.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -180,36 +179,6 @@ export async function listStandaloneCharges(
     }),
     _db.charge.count({ where }),
   ]);
-
-  const converged = await convergeStandaloneChargesWithAsaas({
-    contaId,
-    charges: initialCharges.map((charge) => ({
-      asaasPaymentId: charge.asaasPaymentId,
-      status: charge.status,
-    })),
-  });
-
-  const charges = converged
-    ? await _db.charge.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-        select: {
-          id: true,
-          status: true,
-          asaasPaymentId: true,
-          payerName: true,
-          description: true,
-          value: true,
-          dueDate: true,
-          billingType: true,
-          invoiceUrl: true,
-          standaloneInstallmentPlanId: true,
-          createdAt: true,
-        },
-      })
-    : initialCharges;
 
   const items: StandaloneChargeItem[] = charges.map((c) => ({
     id: c.id,

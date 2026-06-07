@@ -72,6 +72,7 @@ function getChargeWarningPrefix(cobrancaId: string) {
 
 async function markChargeAsCanceled(params: {
   prisma: PrismaClient;
+  contaId: string;
   cobrancaId: string;
   actorId: string;
   motivo?: string;
@@ -83,6 +84,16 @@ async function markChargeAsCanceled(params: {
       canceladoEm: new Date(),
       canceladoMotivo: params.motivo ?? 'Cancelada junto com o encerramento da matrícula',
       canceladoPor: params.actorId,
+    },
+  });
+  await params.prisma.charge.updateMany({
+    where: {
+      contaId: params.contaId,
+      cobrancaId: params.cobrancaId,
+    },
+    data: {
+      status: 'CANCELED',
+      statusUpdatedAt: new Date(),
     },
   });
 }
@@ -119,6 +130,7 @@ async function syncOpenChargesForCancellation(params: {
     if (!cobranca.asaasPaymentId) {
       await markChargeAsCanceled({
         prisma: params.prisma,
+        contaId: params.contaId,
         cobrancaId: cobranca.id,
         actorId: params.actorId,
         motivo: params.motivo,
@@ -142,6 +154,7 @@ async function syncOpenChargesForCancellation(params: {
       if (payment.deleted || payment.status === 'DELETED') {
         await markChargeAsCanceled({
           prisma: params.prisma,
+          contaId: params.contaId,
           cobrancaId: cobranca.id,
           actorId: params.actorId,
           motivo: params.motivo,
@@ -173,6 +186,7 @@ async function syncOpenChargesForCancellation(params: {
       await deletePayment(cobranca.asaasPaymentId, { contaId: params.contaId });
       await markChargeAsCanceled({
         prisma: params.prisma,
+        contaId: params.contaId,
         cobrancaId: cobranca.id,
         actorId: params.actorId,
         motivo: params.motivo,
@@ -191,6 +205,7 @@ async function syncOpenChargesForCancellation(params: {
         );
         await markChargeAsCanceled({
           prisma: params.prisma,
+          contaId: params.contaId,
           cobrancaId: cobranca.id,
           actorId: params.actorId,
           motivo: params.motivo,

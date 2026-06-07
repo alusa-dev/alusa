@@ -21,6 +21,18 @@ function createMockDb() {
     standaloneInstallmentPlan: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    standaloneSubscription: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    eventFinancialEntry: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    eventTicketSale: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    eventMapOrder: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     responsavel: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -362,6 +374,112 @@ describe('listOperationalCharges', () => {
       tipo: 'RECORRENTE',
       chargeType: 'SUBSCRIPTION',
       payerName: 'Lara Bianca de Alencar',
+    });
+  });
+
+  it('inclui assinatura familiar sem payment materializado como item recorrente navegável', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    db.standaloneSubscription.findMany.mockResolvedValue([
+      {
+        id: 'sub_family_1',
+        status: 'ACTIVE',
+        customerId: 'cus_resp_1',
+        asaasSubscriptionId: 'sub_asaas_1',
+        cycle: 'MONTHLY',
+        billingType: 'PIX',
+        value: 700,
+        nextDueDate: new Date('2025-06-20T12:00:00.000Z'),
+        description: 'Plano familiar',
+        familyGroupId: 'fam_1',
+        createdAt: new Date('2025-06-01T12:00:00.000Z'),
+        customer: { payerType: 'RESPONSAVEL', payerId: 'resp_1' },
+      },
+    ]);
+    db.responsavel.findMany.mockResolvedValue([{ id: 'resp_1', nome: 'Maria Família' }]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'group:subscription:sub_family_1',
+      origin: 'STANDALONE',
+      tipo: 'RECORRENTE',
+      chargeType: 'SUBSCRIPTION',
+      isGroup: true,
+      groupType: 'SUBSCRIPTION',
+      groupId: 'sub_family_1',
+      payerName: 'Maria Família',
+    });
+  });
+
+  it('inclui receita pendente de evento na fila operacional', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      {
+        id: 'entry_1',
+        eventId: 'evt_1',
+        category: 'Taxa de inscrição',
+        description: 'Inscrição do festival',
+        expectedAmount: 120,
+        dueDate: new Date('2025-06-18T12:00:00.000Z'),
+        status: 'PENDING',
+        paymentMethod: 'MANUAL_PIX',
+        asaasPaymentId: 'pay_evt_1',
+        createdAt: new Date('2025-06-10T12:00:00.000Z'),
+        event: { name: 'Festival de Dança' },
+      },
+    ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'event-entry:entry_1',
+      origin: 'EVENT',
+      tipo: 'EVENTO',
+      description: 'Festival de Dança · Inscrição do festival',
+      payerName: 'Festival de Dança',
+      status: 'PENDING',
+      asaasPaymentId: 'pay_evt_1',
+    });
+  });
+
+  it('inclui venda de ingresso pendente de evento na fila operacional', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    db.charge.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    db.eventTicketSale.findMany.mockResolvedValue([
+      {
+        id: 'sale_1',
+        eventId: 'evt_1',
+        buyerName: 'Carlos Comprador',
+        alunoId: 'alu_1',
+        responsavelId: null,
+        quantity: 2,
+        totalAmount: 80,
+        paymentMethod: 'CASH',
+        status: 'PENDING',
+        soldAt: new Date('2025-06-11T12:00:00.000Z'),
+        asaasPaymentId: null,
+        revenueEntryId: null,
+        event: { name: 'Mostra Cultural' },
+      },
+    ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'event-ticket-sale:sale_1',
+      origin: 'EVENT',
+      tipo: 'EVENTO',
+      payerName: 'Carlos Comprador',
+      alunoId: 'alu_1',
+      value: 80,
     });
   });
 

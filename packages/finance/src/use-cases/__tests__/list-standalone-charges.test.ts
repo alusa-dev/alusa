@@ -225,22 +225,16 @@ describe('listStandaloneCharges', () => {
     expect(result.items[0].value).toBe(0);
   });
 
-  it('reconsulta a cobrança após convergência oficial do Asaas', async () => {
+  it('lista cobranças sem acionar convergência com Asaas', async () => {
     const db = createMockDb();
-    db.charge.findMany
-      .mockResolvedValueOnce([makeCharge({ status: 'OPEN' })])
-      .mockResolvedValueOnce([makeCharge({ status: 'PAID' })]);
+    db.charge.findMany.mockResolvedValueOnce([makeCharge({ status: 'OPEN' })]);
     db.charge.count.mockResolvedValue(1);
-    vi.mocked(convergeStandaloneChargesWithAsaas).mockResolvedValueOnce(true);
 
     const result = await listStandaloneCharges({ contaId: 'ct_1' }, db);
 
-    expect(convergeStandaloneChargesWithAsaas).toHaveBeenCalledWith({
-      contaId: 'ct_1',
-      charges: [{ asaasPaymentId: 'pay_asaas_1', status: 'OPEN' }],
-    });
-    expect(db.charge.findMany).toHaveBeenCalledTimes(2);
-    expect(result.items[0].status).toBe('PAID');
+    expect(convergeStandaloneChargesWithAsaas).not.toHaveBeenCalled();
+    expect(db.charge.findMany).toHaveBeenCalledTimes(1);
+    expect(result.items[0].status).toBe('PENDING');
   });
 
   it('usa ChargeReadModel diretamente quando FIN_READMODEL_ENABLED=true', async () => {
@@ -273,7 +267,7 @@ describe('listStandaloneCharges', () => {
 
     expect(db.charge.findMany).toHaveBeenCalledTimes(1);
     expect(db.charge.count).toHaveBeenCalledTimes(1);
-    expect(convergeStandaloneChargesWithAsaas).toHaveBeenCalledTimes(1);
+    expect(convergeStandaloneChargesWithAsaas).not.toHaveBeenCalled();
     expect(chargeReadModelService.listStandaloneChargesFromReadModel).not.toHaveBeenCalled();
   });
 });
