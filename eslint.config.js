@@ -12,7 +12,7 @@ export default [
   reactPlugin.configs.flat.recommended,
   reactPlugin.configs.flat['jsx-runtime'],
   prettier,
-  { ignores: ['**/dist/**', '**/.next/**', '**/node_modules/**', '**/coverage/**', '**/next-env.d.ts', '**/*.ts.disabled'] },
+  { ignores: ['**/dist/**', '**/.next/**', '**/node_modules/**', '**/coverage/**', '**/next-env.d.ts'] },
   {
     files: ['**/tailwind.config.js','**/postcss.config.cjs','**/*.config.{js,cjs,mjs}', '**/scripts/**/*.{js,mjs,ts}'],
     languageOptions: { globals: { module: true, require: true, process: true, console: true, fetch: true, setTimeout: true } },
@@ -121,12 +121,6 @@ export default [
           ],
         },
       ],
-    },
-  },
-  {
-    files: ['packages/lib/src/alunos/sync-aluno-asaas.ts.disabled'],
-    rules: {
-      'no-restricted-imports': 'off',
     },
   },
   {

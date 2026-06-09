@@ -32,6 +32,9 @@ const {
       kycProcess: {
         findFirst: vi.fn().mockResolvedValue(null),
       },
+      kycSlot: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
       conta: {
         update: vi.fn().mockResolvedValue({ id: 'conta-1' }),
       },
@@ -55,6 +58,29 @@ vi.mock('@alusa/database', () => ({
 
 vi.mock('../get-kyc-snapshot', () => ({
   getKycSnapshotByContaId: mockGetKycSnapshot,
+}));
+
+vi.mock('../kyc-asaas-read-cache', () => ({
+  getMyAccountDocumentsCached: vi.fn(async (params: { apiKey: string }) => mockGetMyAccountDocuments(params)),
+  getMyAccountStatusCached: vi.fn(async (params: { apiKey: string }) => mockGetMyAccountStatus(params)),
+}));
+
+vi.mock('../get-kyc-summary', () => ({
+  getKycSummary: vi.fn(async () => {
+    let myAccountStatus = null;
+    try {
+      myAccountStatus = await mockGetMyAccountStatus({ apiKey: 'key-1' });
+    } catch {
+      myAccountStatus = null;
+    }
+    return {
+      onboarding: { status: 'UNDER_REVIEW' },
+      asaasConnection: { status: 'CONNECTED' },
+      myAccountStatus,
+      documents: null,
+      documentsRequired: false,
+    };
+  }),
 }));
 
 vi.mock('../../../foundation/audit-log.service', () => ({

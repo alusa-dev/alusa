@@ -261,12 +261,12 @@ describe('charge-status-guard', () => {
     });
 
     describe('ATRASADO', () => {
-      it('deve permitir visualizar, confirmar e cancelar (mas não editar)', () => {
+      it('deve permitir visualizar, confirmar, cancelar e editar', () => {
         const actions = getAllowedActionsByChargeStatus('ATRASADO');
         expect(actions).toContain('VIEW_INVOICE');
         expect(actions).toContain('CONFIRM_CASH_PAYMENT');
         expect(actions).toContain('CANCEL');
-        expect(actions).not.toContain('EDIT');
+        expect(actions).toContain('EDIT');
       });
     });
   });

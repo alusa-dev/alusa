@@ -310,7 +310,11 @@ async function refreshDocumentsCacheV2(
       getMyAccountDocumentsCached({ apiKey: creds.apiKey }, { forceRefresh: true, intent: 'RECONCILIATION' }),
     ]);
 
-    const commercialInfoState = resolveCommercialInfoState({ myAccountStatus: status });
+    const commercialInfoState = resolveCommercialInfoState({
+      myAccountStatus: status,
+      persistedStatus: currentAccount?.commercialInfoStatus ?? null,
+      persistedScheduledDate: currentAccount?.commercialInfoScheduledDate ?? null,
+    });
 
     const cachePayload = buildWebhookCacheV2({ myAccountStatus: status, documents: docs });
     const shouldUpdateCommercialInfo =

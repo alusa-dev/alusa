@@ -10,6 +10,7 @@ import {
   updateMatriculaNotificationChannelsInputDTOSchema,
 } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaNotificationChannelsResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import { resolveMatriculaFinancialContext } from '@/src/server/matriculas/financial-context.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -40,38 +41,21 @@ async function resolveContaId(explicit?: string | null) {
 }
 
 async function resolveFinancialCustomer(matriculaId: string, contaId: string) {
-  const matricula = await prisma.matricula.findFirst({
-    where: { id: matriculaId, aluno: { contaId } },
-    select: {
-      id: true,
-      asaasSubscriptionId: true,
-      aluno: {
-        select: {
-          id: true,
-          nome: true,
-          asaasCustomerId: true,
-        },
-      },
-      responsavelFinanceiro: {
-        select: {
-          id: true,
-          nome: true,
-          asaasCustomerId: true,
-        },
-      },
-    },
+  const context = await resolveMatriculaFinancialContext({
+    db: prisma,
+    matriculaId,
+    contaId,
   });
 
-  if (!matricula) return null;
-
-  const customerId =
-    matricula.responsavelFinanceiro?.asaasCustomerId ?? matricula.aluno.asaasCustomerId ?? null;
+  if (!context) return null;
 
   return {
-    matriculaId: matricula.id,
-    subscriptionId: matricula.asaasSubscriptionId,
-    customerId,
-    payerName: matricula.responsavelFinanceiro?.nome ?? matricula.aluno.nome,
+    matriculaId: context.targetMatriculaId,
+    subscriptionId: context.asaasSubscriptionId,
+    customerId: context.customerId,
+    payerName: context.payerName,
+    mode: context.mode,
+    familyGroupId: context.family?.id ?? null,
   };
 }
 
@@ -207,6 +191,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         metadata: {
           customerId: financialCustomer.customerId,
           payerName: financialCustomer.payerName,
+          mode: financialCustomer.mode,
+          familyGroupId: financialCustomer.familyGroupId,
           previousChannels: {
             email: current.email,
             sms: current.sms,

@@ -26,11 +26,13 @@ const GlobalQuickCreatePortals = dynamic(
 );
 
 /** Espaçamentos já validados por você */
-const CONTENT_GAP_PX = 12;
+const CONTENT_GAP_PX = 20;
 const OUTER_PADDING_TOP_PX = 20;
-const OUTER_PADDING_RIGHT_PX = 0; // mantém a scrollbar no canto direito do painel
 const OUTER_PADDING_BOTTOM_PX = 24;
-const OUTER_PADDING_LEFT_PX = 12; // espaço para sombra do card não ser cortada
+const OUTER_PADDING_LEFT_PX = 20; // espaço para sombra do card não ser cortada
+/** Mesmo respiro visual do lado esquerdo: gap da sidebar + padding do shell */
+const OUTER_PADDING_RIGHT_PX = CONTENT_GAP_PX + OUTER_PADDING_LEFT_PX;
+const SCROLL_CONTENT_PADDING_RIGHT_PX = CONTENT_GAP_PX; // respiro entre conteúdo e scrollbar
 const CARD_PADDING_PX = 32;
 const CARD_RADIUS_PX = 40;
 const CARD_SHADOW =
@@ -111,7 +113,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
              */}
             <div
               className="relative mt-0 flex min-h-0 w-full min-w-0 flex-1 flex-col app-content-scroll outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 lg:mt-6"
-              style={{ paddingRight: OUTER_PADDING_RIGHT_PX }}
+              style={{ paddingRight: SCROLL_CONTENT_PADDING_RIGHT_PX }}
             >
               {children}
             </div>

@@ -5,12 +5,35 @@ function startOfToday(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+function getCivilDateParts(date: Date) {
+  const isUtcMidnight =
+    date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0;
+
+  if (isUtcMidnight) {
+    return {
+      year: date.getUTCFullYear(),
+      monthIndex: date.getUTCMonth(),
+      day: date.getUTCDate(),
+    };
+  }
+
+  return {
+    year: date.getFullYear(),
+    monthIndex: date.getMonth(),
+    day: date.getDate(),
+  };
+}
+
 export function resolveFirstDueDate(dataInicio: Date, vencimentoDia: number) {
-  const base = new Date(dataInicio);
+  const baseParts = getCivilDateParts(dataInicio);
+  const base = new Date(baseParts.year, baseParts.monthIndex, baseParts.day);
   const day = Math.min(28, Math.max(1, vencimentoDia));
-  const due = new Date(base.getFullYear(), base.getMonth(), day);
+  const due = new Date(baseParts.year, baseParts.monthIndex, day);
   if (due < startOfToday(base)) {
-    return new Date(base.getFullYear(), base.getMonth() + 1, day);
+    return new Date(baseParts.year, baseParts.monthIndex + 1, day);
   }
   return due;
 }
@@ -42,9 +65,10 @@ export function resolveEnrollmentFeeDueDate(dataInicio: Date): Date {
 }
 
 export function formatIsoDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const parts = getCivilDateParts(date);
+  const year = parts.year;
+  const month = String(parts.monthIndex + 1).padStart(2, '0');
+  const day = String(parts.day).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 

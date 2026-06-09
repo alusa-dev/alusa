@@ -8,8 +8,6 @@ export { digits, nullifyEmpty } from './alunos/map-flatten';
 export * from './alunos/aluno.service';
 // Aluno Archive Policy
 export * from './alunos/policies';
-// export * from './services/matricula'; // TODO: Fase 2 - refatorar para usar @alusa/asaas
-// export * from './services/rematricula'; // TODO: Fase 2 - refatorar para usar @alusa/asaas
 // Turmas
 export * from './schemas/turma.schema';
 export * from './services/turma.service';
@@ -63,17 +61,6 @@ export * from './contracts/providers/signature-provider';
 export * from './contracts/use-cases/sign-contract';
 // Integrações / Credenciais
 export * from './services/integracoes/asaas-credentials-service';
-// Sincronização de Matrículas
-// TODO: Fase 2 - refatorar matricula-sync para usar @alusa/asaas
-// export {
-//   syncMatriculaStatus,
-//   resendTaxaMatricula,
-//   ManualSyncError,
-//   type SyncMatriculaStatusInput,
-//   type SyncMatriculaStatusResult,
-//   type ResendTaxaMatriculaInput,
-//   type ResendTaxaMatriculaResult,
-// } from './services/integracoes/matricula-sync.service';
 
 // Ocupação de Vagas (Matrícula)
 export {
@@ -102,5 +89,6 @@ export {
 // Eventos escolares
 export * from './events/events.schema';
 export * from './events/events.service';
+export * from './events/event-asaas-payment-provider';
 export * from './events/map/event-map.schema';
 export * from './events/map/event-map.service';

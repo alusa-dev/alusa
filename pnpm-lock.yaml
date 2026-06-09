@@ -512,9 +512,6 @@ importers:
 
   packages/lib:
     dependencies:
-      '@alusa/asaas':
-        specifier: workspace:*
-        version: link:../asaas
       '@alusa/domain':
         specifier: workspace:*
         version: link:../domain

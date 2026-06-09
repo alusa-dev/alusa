@@ -253,6 +253,90 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
             ),
           }
         : null,
+    financialContext:
+      matricula.financialContext && typeof matricula.financialContext === 'object'
+        ? {
+            mode:
+              (matricula.financialContext as Record<string, unknown>).mode === 'FAMILY'
+                ? 'FAMILY'
+                : 'INDIVIDUAL',
+            sourceMatriculaId: String(
+              (matricula.financialContext as Record<string, unknown>).sourceMatriculaId ??
+                matricula.id ??
+                '',
+            ),
+            targetMatriculaId: String(
+              (matricula.financialContext as Record<string, unknown>).targetMatriculaId ??
+                matricula.id ??
+                '',
+            ),
+            familyGroupId:
+              (matricula.financialContext as Record<string, unknown>).familyGroupId != null
+                ? String((matricula.financialContext as Record<string, unknown>).familyGroupId)
+                : null,
+            responsavelFinanceiro:
+              (matricula.financialContext as Record<string, unknown>).responsavelFinanceiro &&
+              typeof (matricula.financialContext as Record<string, unknown>).responsavelFinanceiro ===
+                'object'
+                ? {
+                    id: String(
+                      (
+                        (matricula.financialContext as Record<string, unknown>)
+                          .responsavelFinanceiro as Record<string, unknown>
+                      ).id ?? '',
+                    ),
+                    nome: String(
+                      (
+                        (matricula.financialContext as Record<string, unknown>)
+                          .responsavelFinanceiro as Record<string, unknown>
+                      ).nome ?? '',
+                    ),
+                    email:
+                      (
+                        (matricula.financialContext as Record<string, unknown>)
+                          .responsavelFinanceiro as Record<string, unknown>
+                      ).email != null
+                        ? String(
+                            (
+                              (matricula.financialContext as Record<string, unknown>)
+                                .responsavelFinanceiro as Record<string, unknown>
+                            ).email,
+                          )
+                        : null,
+                    telefone:
+                      (
+                        (matricula.financialContext as Record<string, unknown>)
+                          .responsavelFinanceiro as Record<string, unknown>
+                      ).telefone != null
+                        ? String(
+                            (
+                              (matricula.financialContext as Record<string, unknown>)
+                                .responsavelFinanceiro as Record<string, unknown>
+                            ).telefone,
+                          )
+                        : null,
+                  }
+                : null,
+            affectedMatriculaIds: Array.isArray(
+              (matricula.financialContext as Record<string, unknown>).affectedMatriculaIds,
+            )
+              ? (
+                  (matricula.financialContext as Record<string, unknown>)
+                    .affectedMatriculaIds as unknown[]
+                ).map((id) => String(id))
+              : [],
+            alunos: Array.isArray((matricula.financialContext as Record<string, unknown>).alunos)
+              ? (
+                  (matricula.financialContext as Record<string, unknown>)
+                    .alunos as Record<string, unknown>[]
+                ).map((aluno) => ({
+                  matriculaId: String(aluno.matriculaId ?? ''),
+                  alunoId: String(aluno.alunoId ?? ''),
+                  nome: String(aluno.nome ?? ''),
+                }))
+              : [],
+          }
+        : null,
   };
 
   return matriculaResumoDTOSchema.parse(dto);

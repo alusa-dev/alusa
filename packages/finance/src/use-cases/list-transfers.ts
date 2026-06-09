@@ -60,6 +60,16 @@ function isWithinRange(value: string | null, from?: string, to?: string) {
   return true;
 }
 
+function toNumberOrNull(value: unknown): number | null {
+  if (value == null) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function toNumberOrFallback(value: unknown, fallback: number): number {
+  return toNumberOrNull(value) ?? fallback;
+}
+
 export async function listTransfers(input: ListTransfersInput): Promise<ListTransfersOutput> {
   const credentials = await loadAsaasCredentials(input.contaId);
 
@@ -163,7 +173,7 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
         (value): value is string =>
           typeof value === 'string' &&
           !officialTransfersById.has(value) &&
-          !items.find((i) => i.asaasTransferId === value && i.feeValue !== null && i.netValue !== null),
+          !items.find((i) => i.asaasTransferId === value && i.feeValue != null && i.netValue != null),
       );
 
     if (pagedTransferIds.length > 0) {
@@ -191,15 +201,16 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
         webhookMeta,
       );
       const officialTransfer = item.asaasTransferId ? officialTransfersById.get(item.asaasTransferId) ?? null : null;
-      const grossValue = officialTransfer?.value ?? Number(item.value);
+      const persistedGrossValue = toNumberOrFallback(item.value, 0);
+      const grossValue = toNumberOrFallback(officialTransfer?.value, persistedGrossValue);
       // Prefer persisted DB values; fall back to live GET / webhook resolution
       const feeValue =
-        item.feeValue !== null
-          ? Number(item.feeValue)
+        item.feeValue != null
+          ? toNumberOrFallback(item.feeValue, 0)
           : resolveOfficialFeeValue(officialTransfer, webhookMeta, grossValue);
       const netValue =
-        item.netValue !== null
-          ? Number(item.netValue)
+        item.netValue != null
+          ? toNumberOrFallback(item.netValue, grossValue)
           : resolveOfficialNetValue(officialTransfer, webhookMeta, grossValue);
 
       return {

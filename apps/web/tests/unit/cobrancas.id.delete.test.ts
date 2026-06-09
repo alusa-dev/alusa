@@ -37,13 +37,31 @@ vi.mock('@/lib/prisma', () => ({
 vi.mock('@alusa/finance', () => {
   class KycNotApprovedError extends Error {}
   class AsaasEnvError extends Error {}
+  const evaluatePaymentActionPolicy = (input: { localStatus?: string | null; asaasStatus?: string | null; hasAsaasPaymentId?: boolean }) => {
+    const status = String(input.asaasStatus ?? input.localStatus ?? '').toUpperCase();
+    const cancelable = ['PENDING', 'OVERDUE', 'PENDENTE', 'A_VENCER', 'ATRASADO', 'OPEN', 'CREATED'].includes(status);
+    const canCancel = Boolean(input.hasAsaasPaymentId ?? true) && cancelable;
+    return {
+      canCancel,
+      actions: {
+        CANCEL: canCancel
+          ? { allowed: true }
+          : { allowed: false, code: 'CANCEL_NOT_ALLOWED_FOR_ASAAS_STATUS', reason: `Não é possível cancelar cobrança com status ${status} no Asaas.` },
+      },
+    };
+  };
 
   return {
     KycNotApprovedError,
     AsaasEnvError,
+    evaluatePaymentActionPolicy,
     buildStandaloneExternalReference: vi.fn(({ chargeId }: { chargeId: string }) => `alusa:standalone:${chargeId}`),
     isAsaasEnabled: vi.fn(() => true),
     readPaymentFullPreflight: vi.fn(async () => ({ id: 'pay_1', status: 'PENDING' })),
+    expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_DELETED']),
+    registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+    markPaymentCommandSent: vi.fn(async () => undefined),
+    failPaymentCommand: vi.fn(async () => undefined),
     deletePayment: vi.fn(async () => {
       throw new KycNotApprovedError('KYC_NAO_APROVADO');
     }),
@@ -174,6 +192,44 @@ describe('DELETE /api/cobrancas/[id]', () => {
     const json = await res.json();
     expect(json).toMatchObject({ success: true, pending: false });
     expect(deletePayment).toHaveBeenCalledWith('pay_overdue_1', { contaId: 'conta-1' });
+  });
+
+  it('retorna 409 com código de domínio ao cancelar cobrança recebida em dinheiro no Asaas', async () => {
+    mockGetSessionUser.mockResolvedValue({
+      id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1',
+    });
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-paid-cash',
+      status: 'PENDENTE',
+      asaasPaymentId: 'pay_cash',
+      matricula: {
+        aluno: { contaId: 'conta-1' },
+      },
+    } as never);
+    vi.mocked(readPaymentFullPreflight).mockResolvedValueOnce({
+      id: 'pay_cash',
+      status: 'RECEIVED_IN_CASH',
+      deleted: false,
+      value: 100,
+      netValue: 100,
+      billingType: 'RECEIVED_IN_CASH',
+      dueDate: '2026-03-09',
+    } as never);
+
+    const { deletePayment } = await import('@alusa/finance');
+
+    const res = await DELETE(new NextRequest('http://localhost/api/cobrancas/cob-paid-cash'), {
+      params: { id: 'cob-paid-cash' },
+    });
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      success: false,
+      code: 'CANCEL_NOT_ALLOWED_FOR_PAID_CHARGE',
+      asaasStatus: 'RECEIVED_IN_CASH',
+    });
+    expect(deletePayment).not.toHaveBeenCalled();
   });
 
   it('reconcilia localmente quando a cobrança standalone já estava deletada no Asaas', async () => {

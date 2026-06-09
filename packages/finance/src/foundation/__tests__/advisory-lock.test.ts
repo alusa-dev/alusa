@@ -51,91 +51,60 @@ describe('advisoryLockKey64', () => {
 });
 
 describe('tryAcquireAdvisoryLock', () => {
-  it('deve retornar true quando lock é adquirido', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ locked: true }]),
-    };
+  it('deve retornar false porque lock manual foi desativado', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await tryAcquireAdvisoryLock('test-lock:1', {
-      prisma: mockPrisma as any,
-    });
+    const result = await tryAcquireAdvisoryLock();
 
-    expect(result).toBe(true);
-    expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalled();
+    expect(result).toBe(false);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('deve retornar false quando lock não é adquirido', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ locked: false }]),
-    };
-
-    const result = await tryAcquireAdvisoryLock('test-lock:2', {
-      prisma: mockPrisma as any,
-    });
+    const result = await tryAcquireAdvisoryLock();
 
     expect(result).toBe(false);
   });
 
   it('deve retornar false em caso de erro', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('DB connection failed')),
-    };
-
-    const result = await tryAcquireAdvisoryLock('test-lock:3', {
-      prisma: mockPrisma as any,
-    });
+    const result = await tryAcquireAdvisoryLock();
 
     expect(result).toBe(false);
   });
 });
 
 describe('releaseAdvisoryLock', () => {
-  it('deve retornar true quando lock é liberado', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ unlocked: true }]),
-    };
-
-    const result = await releaseAdvisoryLock('test-lock:1', {
-      prisma: mockPrisma as any,
-    });
+  it('deve retornar true porque lock transacional libera no fim da transação', async () => {
+    const result = await releaseAdvisoryLock();
 
     expect(result).toBe(true);
-    expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalled();
   });
 
-  it('não deve gerar warning quando unlock retorna false', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ unlocked: false }]),
-    };
+  it('não deve gerar warning no no-op de compatibilidade', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const result = await releaseAdvisoryLock('test-lock:1', {
-      prisma: mockPrisma as any,
-    });
+    const result = await releaseAdvisoryLock();
 
-    expect(result).toBe(false);
+    expect(result).toBe(true);
     expect(warnSpy).not.toHaveBeenCalled();
 
     warnSpy.mockRestore();
   });
 
-  it('deve retornar false em caso de erro', async () => {
-    const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockRejectedValue(new Error('DB error')),
-    };
+  it('deve retornar true mesmo sem conexão porque é no-op legado', async () => {
+    const result = await releaseAdvisoryLock();
 
-    const result = await releaseAdvisoryLock('test-lock:1', {
-      prisma: mockPrisma as any,
-    });
-
-    expect(result).toBe(false);
+    expect(result).toBe(true);
   });
 });
 
 describe('withAdvisoryLock', () => {
   it('quando lock retorna false, não deve executar fn', async () => {
     const mockPrisma = {
-      $queryRawUnsafe: vi.fn().mockResolvedValue([{ locked: false }]),
+      $transaction: vi.fn(async (callback: (tx: any) => unknown) =>
+        callback({ $queryRawUnsafe: vi.fn().mockResolvedValue([{ locked: false }]) }),
+      ),
     };
     const fn = vi.fn().mockResolvedValue('result');
 
@@ -148,11 +117,11 @@ describe('withAdvisoryLock', () => {
   });
 
   it('quando lock retorna true, deve executar fn e chamar unlock', async () => {
+    const query = vi.fn().mockResolvedValue([{ locked: true }]);
     const mockPrisma = {
-      $queryRawUnsafe: vi
-        .fn()
-        .mockResolvedValueOnce([{ locked: true }]) // tryAcquire
-        .mockResolvedValueOnce([{ unlocked: true }]), // release
+      $transaction: vi.fn(async (callback: (tx: any) => unknown) =>
+        callback({ $queryRawUnsafe: query }),
+      ),
     };
     const fn = vi.fn().mockResolvedValue('test-result');
 
@@ -165,15 +134,15 @@ describe('withAdvisoryLock', () => {
       expect(result.result).toBe('test-result');
     }
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalledTimes(2); // acquire + release
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('quando fn lança erro, deve chamar unlock no finally', async () => {
+    const query = vi.fn().mockResolvedValue([{ locked: true }]);
     const mockPrisma = {
-      $queryRawUnsafe: vi
-        .fn()
-        .mockResolvedValueOnce([{ locked: true }]) // tryAcquire
-        .mockResolvedValueOnce([{ unlocked: true }]), // release
+      $transaction: vi.fn(async (callback: (tx: any) => unknown) =>
+        callback({ $queryRawUnsafe: query }),
+      ),
     };
     const fn = vi.fn().mockRejectedValue(new Error('fn failed'));
 
@@ -182,15 +151,14 @@ describe('withAdvisoryLock', () => {
     ).rejects.toThrow('fn failed');
 
     expect(fn).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalledTimes(2); // acquire + release
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it('deve passar logContext corretamente', async () => {
     const mockPrisma = {
-      $queryRawUnsafe: vi
-        .fn()
-        .mockResolvedValueOnce([{ locked: true }])
-        .mockResolvedValueOnce([{ unlocked: true }]),
+      $transaction: vi.fn(async (callback: (tx: any) => unknown) =>
+        callback({ $queryRawUnsafe: vi.fn().mockResolvedValue([{ locked: true }]) }),
+      ),
     };
     const fn = vi.fn().mockResolvedValue('result');
 

@@ -5,7 +5,7 @@ import { prisma } from '@alusa/database';
 
 import { financeProfileService } from '../../../foundation/finance-profile.service';
 import { submitKycData } from '../../submit-kyc-data';
-import { getKycSummary } from '../get-kyc-summary';
+import { getKycSummary, getKycSummaryFresh } from '../get-kyc-summary';
 
 const VALID_CPF = '11144477735';
 
@@ -22,6 +22,14 @@ vi.mock('@alusa/asaas', async () => {
       cpfCnpj: VALID_CPF,
       apiKey: '$aact_sub_123',
       walletId: 'wallet-1',
+    })),
+    listSubaccounts: vi.fn(async () => ({
+      object: 'list',
+      hasMore: false,
+      totalCount: 0,
+      limit: 10,
+      offset: 0,
+      data: [],
     })),
     updateSubaccount: vi.fn(async (params: { accountId?: string }) => ({
       object: 'account',
@@ -266,8 +274,8 @@ describe('getKycSummary (cache TTL)', () => {
     });
 
     const { getMyAccountDocuments, getMyAccountStatus } = await import('@alusa/asaas');
-    vi.mocked(getMyAccountDocuments).mockResolvedValueOnce({ data: [], rejectReasons: [] });
-    vi.mocked(getMyAccountStatus).mockResolvedValueOnce({
+    vi.mocked(getMyAccountDocuments).mockResolvedValue({ data: [], rejectReasons: [] });
+    vi.mocked(getMyAccountStatus).mockResolvedValue({
       documentation: 'APPROVED',
       general: 'APPROVED',
       bankAccountInfo: 'APPROVED',
@@ -275,14 +283,22 @@ describe('getKycSummary (cache TTL)', () => {
       commercialInfoExpiration: { isExpired: true, scheduledDate: '2026-05-10' },
     });
 
-    const summary = await getKycSummary(conta.id);
+    const profile = await prisma.financeProfile.findUnique({ where: { contaId: conta.id }, select: { id: true } });
+    await prisma.asaasAccount.updateMany({
+      where: { financeProfileId: profile!.id },
+      data: {
+        provisionedAt: new Date(Date.now() - 60_000),
+        documentsCacheUpdatedAt: new Date(Date.now() - 60_000),
+      },
+    });
+
+    const summary = await getKycSummaryFresh(conta.id);
 
     expect(summary.myAccountStatus?.commercialInfoExpiration).toEqual({
       isExpired: true,
       scheduledDate: '2026-05-10',
     });
 
-    const profile = await prisma.financeProfile.findUnique({ where: { contaId: conta.id }, select: { id: true } });
     const asaasAccount = await prisma.asaasAccount.findFirst({
       where: { financeProfileId: profile!.id },
       select: { commercialInfoStatus: true, commercialInfoScheduledDate: true },

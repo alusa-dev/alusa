@@ -1,12 +1,3 @@
-import {
-  createCustomer,
-  createPayment,
-  listCustomers,
-  listPayments,
-  updateCustomer,
-  getPixQrCode,
-  type AsaasPayment,
-} from '@alusa/asaas';
 import { FinanceWebhookSideEffectStatus, Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
@@ -20,6 +11,7 @@ import {
 
 import { prisma } from '../../prisma';
 import { loadDecryptedAsaasCredentials } from '../../services/integracoes/asaas-credentials-service';
+import { getEventAsaasPaymentProvider, type EventAsaasPayment } from '../event-asaas-payment-provider';
 import { EventsError, type EventsContext } from '../events.service';
 import type {
   CreateEventMapInput,
@@ -992,7 +984,10 @@ async function buildPublicCheckoutResponse(
   let pixQrCode: { encodedImage: string; payload: string; expirationDate: string } | null = null;
   if (params?.paymentMethod === 'PIX' && params.apiKey && order.asaasPaymentId) {
     try {
-      const qr = await getPixQrCode({ apiKey: params.apiKey, paymentId: order.asaasPaymentId });
+      const qr = await getEventAsaasPaymentProvider().getPixQrCode({
+        apiKey: params.apiKey,
+        paymentId: order.asaasPaymentId,
+      });
       pixQrCode = {
         encodedImage: qr.encodedImage,
         payload: qr.payload,
@@ -1407,7 +1402,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
 
     let customerId = '';
     try {
-      const existing = await listCustomers({
+      const existing = await getEventAsaasPaymentProvider().listCustomers({
         apiKey: credentials.apiKey,
         cpfCnpj: buyerDocument,
         limit: 10,
@@ -1415,7 +1410,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       const activeCustomer = existing.data.find((c) => !c.deleted) ?? existing.data[0];
       if (activeCustomer) {
         customerId = activeCustomer.id;
-        await updateCustomer({
+        await getEventAsaasPaymentProvider().updateCustomer({
           apiKey: credentials.apiKey,
           customerId,
           data: {
@@ -1436,7 +1431,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     }
 
     if (!customerId) {
-      const customer = await createCustomer({
+      const customer = await getEventAsaasPaymentProvider().createCustomer({
         apiKey: credentials.apiKey,
         idempotencyKey: buildEventMapAsaasIdempotencyKey('customer', pending.order.id),
         data: {
@@ -1456,7 +1451,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
     }
 
     const externalReference = `event-map-order:${pending.order.id}`;
-    let payment: AsaasPayment;
+    let payment: EventAsaasPayment;
     try {
       console.info('[events.finance]', {
         action: 'eventMapOrder.payment.create.start',
@@ -1464,7 +1459,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
         eventId: pending.map.eventId,
         orderId: pending.order.id,
       });
-      payment = await createPayment({
+      payment = await getEventAsaasPaymentProvider().createPayment({
         apiKey: credentials.apiKey,
         idempotencyKey: buildEventMapAsaasIdempotencyKey('payment', pending.order.id),
         data: {
@@ -1477,7 +1472,7 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
         },
       });
     } catch (paymentError) {
-      const reconciled = await listPayments({
+      const reconciled = await getEventAsaasPaymentProvider().listPayments({
         apiKey: credentials.apiKey,
         externalReference,
         limit: 10,

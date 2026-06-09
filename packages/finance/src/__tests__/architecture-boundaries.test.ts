@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(__dirname, '../../../..');
@@ -62,7 +63,34 @@ describe('architecture boundaries — Asaas layers', () => {
       'packages/lib direct @alusa/asaas imports',
       "from '@alusa/asaas'|from \"@alusa/asaas\"",
       path.join(repoRoot, 'packages/lib/src'),
-      ['sync-aluno-asaas.ts.disabled'],
+    );
+  });
+
+  it('não reintroduz legados Billing V2 ou rotas antigas de recebimento manual', () => {
+    const legacyPaths = [
+      'packages/finance/src/foundation/billing-v2-flags.ts',
+      'apps/web/app/api/cobrancas/[id]/confirmar-recebimento/route.ts',
+      'apps/web/app/api/financeiro/cobrancas/[id]/receber-dinheiro/route.ts',
+      'apps/web/tests/unit/cobrancas.confirmar-recebimento.post.test.ts',
+      'apps/web/tests/unit/financeiro.cobrancas.receber-dinheiro.post.test.ts',
+    ];
+
+    expect(
+      legacyPaths.filter((legacyPath) => existsSync(path.join(repoRoot, legacyPath))),
+      'Arquivos legados não devem voltar; use o fluxo canônico de mark-charge-as-paid.',
+    ).toEqual([]);
+
+    assertNoMatches(
+      'legacy manual payment routes',
+      'Billing V2|billing-v2|billingV2|BILLING_V2|confirmar-recebimento|receber-dinheiro',
+      path.join(repoRoot, 'apps/web'),
+    );
+
+    assertNoMatches(
+      'legacy finance Billing V2 naming',
+      'Billing V2|billing-v2|billingV2|BILLING_V2',
+      path.join(repoRoot, 'packages/finance/src'),
+      ['architecture-boundaries.test.ts'],
     );
   });
 });

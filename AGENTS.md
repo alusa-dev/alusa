@@ -14,6 +14,7 @@ Contratos canônicos em **`.agents/`**:
 | **core** | [`.agents/core.md`](.agents/core.md) | Implementação segura, UI, camadas, testes, cache — `#core` |
 | **tenant** | [`.agents/tenant.md`](.agents/tenant.md) | Isolamento multitenancy, RLS, `contaId` — `#tenant` |
 | **asaas** | [`.agents/asaas.md`](.agents/asaas.md) | API Asaas, webhooks, MCP, cobranças — `#asaas` |
+| **finance-sync** | [`.agents/finance-sync.md`](.agents/finance-sync.md) | Sincronização financeira outbound Alusa → Asaas com reconciliação — `#finance-sync` |
 | *(índice)* | [`.agents/README.md`](.agents/README.md) | Mapa e roteamento de agentes |
 
 Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core**. Contrato operacional completo (UI, fluxo, checklists): [`.agents/core.md`](.agents/core.md). Skills Cursor: `.cursor/skills/`.

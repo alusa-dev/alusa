@@ -69,6 +69,7 @@ async function cleanup(contaId: string) {
 
   await prisma.logIntegracao.deleteMany({ where: { contaId } });
   await prisma.auditLog.deleteMany({ where: { contaId } });
+  await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
   await prisma.usuario.deleteMany({ where: { contaId } });
   await prisma.conta.deleteMany({ where: { id: contaId } });
 }
@@ -155,7 +156,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-${unique}@example.com`,
@@ -211,8 +212,7 @@ describe('excluirContaAlusaEAsaas', () => {
     expect(deletedAsaas!.asaasAccountId).toBeNull();
     expect(deletedAsaas!.deletedAsaasAccountId).toBe(`acc_${unique}`);
 
-    // Cleanup manual (já que não há mais hard delete)
-    await prisma.conta.delete({ where: { id: contaId } }).catch(() => null);
+    await cleanup(contaId);
   });
 
   it('repara vínculo via FinanceProfile.asaasAccountId (legado) e prossegue com a exclusão', async () => {
@@ -227,7 +227,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-link-repair-${unique}@example.com`,
@@ -366,7 +366,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-probe-${unique}@example.com`,
@@ -450,7 +450,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-429-${unique}@example.com`,
@@ -511,7 +511,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-404-${unique}@example.com`,
@@ -571,7 +571,7 @@ describe('excluirContaAlusaEAsaas', () => {
 
     await prisma.usuario.create({
       data: {
-        id: 'u1',
+        id: `u_${unique}`,
         contaId: conta.id,
         nome: 'Admin Teste',
         email: `admin-concurrency-${unique}@example.com`,

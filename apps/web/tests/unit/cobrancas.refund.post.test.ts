@@ -29,8 +29,36 @@ vi.mock('@/src/prisma', () => ({
 
 vi.mock('@alusa/finance', () => ({
   KycNotApprovedError: class KycNotApprovedError extends Error {},
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status = 400;
+  },
+  evaluatePaymentActionPolicy: vi.fn((input: { asaasStatus?: string | null }) => {
+    const status = String(input.asaasStatus ?? '').toUpperCase();
+    const canRefund = ['RECEIVED', 'CONFIRMED', 'DUNNING_RECEIVED'].includes(status);
+    const cash = status === 'RECEIVED_IN_CASH';
+    return {
+      canRefund: canRefund && !cash,
+      canPartialRefund: canRefund && !cash,
+      actions: {
+        REFUND: canRefund && !cash
+          ? { allowed: true }
+          : {
+              allowed: false,
+              code: cash ? 'REFUND_NOT_ALLOWED_FOR_CASH_PAYMENT' : 'REFUND_NOT_ALLOWED_FOR_ASAAS_STATUS',
+              reason: cash
+                ? 'Cobranças recebidas em dinheiro devem usar a ação de desfazer recebimento.'
+                : `Não é possível estornar cobrança com status ${status} no Asaas.`,
+            },
+        PARTIAL_REFUND: { allowed: canRefund && !cash },
+      },
+    };
+  }),
   isAsaasEnabled: vi.fn(() => true),
   readPaymentFullPreflight: vi.fn(async () => ({ id: 'pay_1', status: 'RECEIVED', value: 120 })),
+  expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_REFUNDED']),
+  registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+  markPaymentCommandSent: vi.fn(async () => undefined),
+  failPaymentCommand: vi.fn(async () => undefined),
   refundCobranca: vi.fn(async () => undefined),
   syncPaymentStateFromAsaas: vi.fn(async () => undefined),
   auditLogService: { record: vi.fn(async () => undefined) },

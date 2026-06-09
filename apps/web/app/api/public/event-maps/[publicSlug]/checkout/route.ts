@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { publicCheckoutSchema } from '@alusa/lib/events/map/event-map.schema';
 import { completePublicEventMapCheckout } from '@alusa/lib/events/map/event-map.service';
 
+import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 import { handleEventsRouteError } from '../../../../events/_helpers';
 
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,7 @@ type RouteContext = {
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
+    ensureEventAsaasPaymentProviderRegistered();
     const { publicSlug } = await params;
     const body = publicCheckoutSchema.parse(await request.json());
     return NextResponse.json({ data: await completePublicEventMapCheckout(publicSlug, body) });

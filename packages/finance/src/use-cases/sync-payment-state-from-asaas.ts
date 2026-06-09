@@ -3,6 +3,7 @@ import { emitBillingNotificationCandidate } from '@alusa/lib';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { handlePaymentWebhook } from '../webhooks/payment-webhook-handler';
+import { confirmPaymentCommandsByProviderEvent } from './payment-command-ledger';
 
 export type SyncPaymentStateFromAsaasInput = {
   contaId: string;
@@ -97,6 +98,14 @@ export async function syncPaymentStateFromAsaas(
       error: webhookResult.error ?? 'SYNC_FAILED',
     };
   }
+
+  await confirmPaymentCommandsByProviderEvent({
+    contaId: input.contaId,
+    asaasPaymentId: payment.id,
+    eventName: appliedEvent,
+    providerStatus: payment.status,
+  });
+
   void emitBillingNotificationCandidate(
     {
       event: appliedEvent,

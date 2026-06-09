@@ -25,7 +25,13 @@ export const CICLO_LABELS: Record<Ciclo, string> = {
   YEARLY: 'Anual',
 };
 
-export const DISCOUNT_DUE_DATE_OPTIONS = [0, 1, 2, 3, 5, 7, 10, 15, 30] as const;
+export const DISCOUNT_DUE_DATE_OPTIONS = Array.from({ length: 31 }, (_, days) => days);
+
+export function formatDiscountDueDateLimitLabel(days: number) {
+  if (days <= 0) return 'Até o dia do vencimento';
+  if (days === 1) return 'Até 1 dia antes do vencimento';
+  return `Até ${days} dias antes do vencimento`;
+}
 
 // --- Formatação / Parsing ---
 

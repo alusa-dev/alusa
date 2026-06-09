@@ -104,6 +104,7 @@ export const responsavelFamilyAggregateDTOSchema = z.object({
 
 export const responsavelFamilyChargeDTOSchema = z.object({
   id: z.string().min(1),
+  origin: z.enum(['STANDALONE', 'FAMILY', 'EVENT']).optional(),
   description: z.string().nullable(),
   status: z.string().min(1),
   value: z.number().nonnegative(),

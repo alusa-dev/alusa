@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/asaas';
+import { getAsaasBaseUrlForApiKeyOrThrow } from '@alusa/finance';
 import { jsPDF } from 'jspdf';
 import { getEventsContext, handleEventsRouteError, jsonError } from '../../../../_helpers';
 

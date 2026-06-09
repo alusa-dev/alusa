@@ -17,14 +17,18 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  ChatBubbleLeftRightIcon,
-  DevicePhoneMobileIcon,
-  EnvelopeIcon,
-  InformationCircleIcon,
-} from '@heroicons/react/24/outline';
+  ChatBubble,
+  InfoCircle,
+  Mail,
+  MobilePhone,
+} from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
 import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import useCurrentUser from '@/hooks/use-current-user';
+import {
+  DISCOUNT_DUE_DATE_OPTIONS,
+  formatDiscountDueDateLimitLabel,
+} from '@/lib/finance-form-utils';
 
 interface ConfiguracoesPagamentoProps {
   matriculaId: string;
@@ -35,6 +39,22 @@ interface ConfiguracoesPagamentoProps {
     value?: number | null;
     status?: 'ACTIVE' | 'INACTIVE' | 'EXPIRED';
     syncError?: string | null;
+  } | null;
+  financialContext?: {
+    mode: 'INDIVIDUAL' | 'FAMILY';
+    familyGroupId: string | null;
+    responsavelFinanceiro: {
+      id: string;
+      nome: string;
+      email?: string | null;
+      telefone?: string | null;
+    } | null;
+    affectedMatriculaIds: string[];
+    alunos: Array<{
+      matriculaId: string;
+      alunoId: string;
+      nome: string;
+    }>;
   } | null;
   jurosAtual?: number;
   jurosTipoAtual?: 'FIXED' | 'PERCENTAGE';
@@ -73,6 +93,14 @@ function numberToPercent(value?: number): string {
   return `${intPart},${decPart}`;
 }
 
+function formatSubscriptionDate(value?: string | null): string {
+  if (!value) return 'Não informado';
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00.000Z` : value;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return 'Não informado';
+  return date.toLocaleDateString('pt-BR');
+}
+
 const FORMA_PAGAMENTO_LABELS: Record<string, string> = {
   BOLETO: 'Boleto Bancário',
   PIX: 'PIX',
@@ -91,8 +119,8 @@ export function ConfiguracoesPagamento({
   matriculaId,
   asaasSubscriptionId,
   assinaturaSnapshot,
+  financialContext,
   jurosAtual,
-  jurosTipoAtual,
   multaAtual,
   multaTipoAtual,
   descontoAtual,
@@ -116,7 +144,6 @@ export function ConfiguracoesPagamento({
 
   // Estados para juros, multa e desconto (padrão Asaas API)
   const [jurosPercentual, setJurosPercentual] = useState('2,00');
-  const [jurosTipo, setJurosTipo] = useState<'FIXED' | 'PERCENTAGE'>('PERCENTAGE');
   const [multaPercentual, setMultaPercentual] = useState('2,00');
   const [multaTipo, setMultaTipo] = useState<'FIXED' | 'PERCENTAGE'>('PERCENTAGE');
   const [descontoPercentual, setDescontoPercentual] = useState('0,00');
@@ -132,15 +159,6 @@ export function ConfiguracoesPagamento({
     sms: false,
     whatsapp: false,
   });
-  const [resumoNotificacoes, setResumoNotificacoes] = useState<{
-    customerId: string;
-    notificationCount: number;
-    warnings: Array<{
-      channel: 'email' | 'sms' | 'whatsapp';
-      code: string;
-      message: string;
-    }>;
-  } | null>(null);
   const [erroNotificacoes, setErroNotificacoes] = useState<string | null>(null);
   
   // Limites segundo documentação Asaas
@@ -148,6 +166,13 @@ export function ConfiguracoesPagamento({
   const LIMITE_MULTA_RECOMENDADO = 2; // 2% (recomendação legal)
   const LIMITE_MULTA_MAX = 10; // 10% (máximo técnico)
   const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50';
+  const isFamilyBilling = financialContext?.mode === 'FAMILY';
+  const familyStudentNames = financialContext?.alunos.map((aluno) => aluno.nome).filter(Boolean) ?? [];
+  const familyStudentSummary =
+    familyStudentNames.length > 0
+      ? familyStudentNames.slice(0, 3).join(', ') +
+        (familyStudentNames.length > 3 ? ` e mais ${familyStudentNames.length - 3}` : '')
+      : `${financialContext?.affectedMatriculaIds.length ?? 0} matrículas`;
   const subscriptionStatusLabel =
     assinaturaSnapshot?.status === 'ACTIVE'
       ? 'Ativa'
@@ -160,6 +185,8 @@ export function ConfiguracoesPagamento({
   // Validações
   const jurosValor = parsePercent(jurosPercentual);
   const multaValor = parsePercent(multaPercentual);
+  const descontoValor = parsePercent(descontoPercentual);
+  const descontoAtivo = descontoValor > 0;
   const jurosExcedeLimite = jurosValor > LIMITE_JUROS_MAX;
   const multaExcedeRecomendado = multaValor > LIMITE_MULTA_RECOMENDADO;
   const multaExcedeMaximo = multaValor > LIMITE_MULTA_MAX;
@@ -178,9 +205,6 @@ export function ConfiguracoesPagamento({
       if (jurosAtual !== undefined) {
         setJurosPercentual(numberToPercent(jurosAtual));
       }
-      if (jurosTipoAtual) {
-        setJurosTipo(jurosTipoAtual);
-      }
       if (multaAtual !== undefined) {
         setMultaPercentual(numberToPercent(multaAtual));
       }
@@ -197,7 +221,13 @@ export function ConfiguracoesPagamento({
         setPrazoDesconto(prazoDescontoAtual);
       }
     }
-  }, [assinaturaSnapshot?.billingType, jurosAtual, jurosTipoAtual, multaAtual, multaTipoAtual, descontoAtual, descontoTipoAtual, prazoDescontoAtual, editandoJurosMulta]);
+  }, [assinaturaSnapshot?.billingType, jurosAtual, multaAtual, multaTipoAtual, descontoAtual, descontoTipoAtual, prazoDescontoAtual, editandoJurosMulta]);
+
+  useEffect(() => {
+    if (editandoJurosMulta && !descontoAtivo && prazoDesconto !== 0) {
+      setPrazoDesconto(0);
+    }
+  }, [descontoAtivo, editandoJurosMulta, prazoDesconto]);
 
   useEffect(() => {
     if (!asaasSubscriptionId) {
@@ -220,15 +250,6 @@ export function ConfiguracoesPagamento({
         if (!active) return;
         setCanaisNotificacao(json.channels);
         setCanaisNotificacaoIndisponiveis({ email: false, sms: false, whatsapp: false });
-        setResumoNotificacoes({
-          customerId: json.customerId,
-          notificationCount: json.notificationCount,
-          warnings: (json.warnings ?? []).map((warning: { channel: 'email' | 'sms' | 'whatsapp'; code: string; message: string }) => ({
-            channel: warning.channel,
-            code: warning.code,
-            message: warning.message,
-          })),
-        });
       } catch (error) {
         if (!active) return;
         setErroNotificacoes((error as Error).message);
@@ -256,11 +277,6 @@ export function ConfiguracoesPagamento({
     if (jurosAtual !== undefined) {
       setJurosPercentual(numberToPercent(jurosAtual));
     }
-    if (jurosTipoAtual) {
-      setJurosTipo(jurosTipoAtual);
-    } else {
-      setJurosTipo('PERCENTAGE');
-    }
     if (multaAtual !== undefined) {
       setMultaPercentual(numberToPercent(multaAtual));
     }
@@ -285,7 +301,7 @@ export function ConfiguracoesPagamento({
       setPrazoDesconto(0);
     }
     setEditandoJurosMulta(false);
-  }, [jurosAtual, jurosTipoAtual, multaAtual, multaTipoAtual, descontoAtual, descontoTipoAtual, prazoDescontoAtual]);
+  }, [jurosAtual, multaAtual, multaTipoAtual, descontoAtual, descontoTipoAtual, prazoDescontoAtual]);
 
   const handleSalvarFormaPagamento = useCallback(async () => {
     if (!asaasSubscriptionId) {
@@ -314,7 +330,6 @@ export function ConfiguracoesPagamento({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           billingType: novaFormaPagamento,
-          contaId,
         }),
       });
 
@@ -367,7 +382,7 @@ export function ConfiguracoesPagamento({
     const desconto = parsePercent(descontoPercentual);
     
     // Validar limites (apenas para PERCENTAGE)
-    if (jurosTipo === 'PERCENTAGE' && juros > LIMITE_JUROS_MAX) {
+    if (juros > LIMITE_JUROS_MAX) {
       pushToast({
         title: 'Juros acima do limite',
         description: `O sistema permite juros de até ${LIMITE_JUROS_MAX}% ao mês. Por favor, ajuste o valor.`,
@@ -389,20 +404,18 @@ export function ConfiguracoesPagamento({
       setSalvando(true);
 
       const payload: {
-        interest: { value: number; type: 'FIXED' | 'PERCENTAGE' };
+        interest: { value: number; type: 'PERCENTAGE' };
         fine: { value: number; type: 'FIXED' | 'PERCENTAGE' };
         discount?: { value: number; type: 'FIXED' | 'PERCENTAGE'; dueDateLimitDays: number };
-        contaId: string;
       } = {
         interest: {
           value: juros,
-          type: jurosTipo,
+          type: 'PERCENTAGE',
         },
         fine: {
           value: multa,
           type: multaTipo,
         },
-        contaId,
       };
 
       payload.discount = {
@@ -410,9 +423,6 @@ export function ConfiguracoesPagamento({
         type: descontoTipo,
         dueDateLimitDays: desconto > 0 ? prazoDesconto : 0,
       };
-
-      console.log('🔵 [FRONTEND] Payload a ser enviado:', JSON.stringify(payload, null, 2));
-      console.log('🔵 [FRONTEND] URL:', `/api/matriculas/${matriculaId}/juros-multa`);
 
       const res = await fetch(`/api/matriculas/${matriculaId}/juros-multa`, {
         method: 'PUT',
@@ -446,7 +456,20 @@ export function ConfiguracoesPagamento({
     } finally {
       setSalvando(false);
     }
-  }, [asaasSubscriptionId, matriculaId, jurosPercentual, multaPercentual, contaId, onRefresh, LIMITE_JUROS_MAX, LIMITE_MULTA_MAX]);
+  }, [
+    asaasSubscriptionId,
+    contaId,
+    descontoPercentual,
+    descontoTipo,
+    jurosPercentual,
+    matriculaId,
+    multaPercentual,
+    multaTipo,
+    onRefresh,
+    prazoDesconto,
+    LIMITE_JUROS_MAX,
+    LIMITE_MULTA_MAX,
+  ]);
 
   const handleSalvarNotificacoes = useCallback(async (nextChannels: typeof canaisNotificacao) => {
     const requestId = notificacaoRequestRef.current + 1;
@@ -491,15 +514,6 @@ export function ConfiguracoesPagamento({
 
       setCanaisNotificacao(json.channels);
       setCanaisNotificacaoIndisponiveis(unavailableChannels);
-      setResumoNotificacoes({
-        customerId: json.customerId,
-        notificationCount: json.notificationCount,
-        warnings: (json.warnings ?? []).map((warning: { channel: 'email' | 'sms' | 'whatsapp'; code: string; message: string }) => ({
-          channel: warning.channel,
-          code: warning.code,
-          message: warning.message,
-        })),
-      });
 
       const whatsappIndisponivel = unavailableChannels.whatsapp && nextChannels.whatsapp;
 
@@ -548,39 +562,55 @@ export function ConfiguracoesPagamento({
         });
       }
     },
-    [asaasSubscriptionId, canaisNotificacao, carregandoNotificacoes, erroNotificacoes, handleSalvarNotificacoes],
+    [
+      asaasSubscriptionId,
+      canaisNotificacao,
+      canaisNotificacaoIndisponiveis,
+      carregandoNotificacoes,
+      erroNotificacoes,
+      handleSalvarNotificacoes,
+      salvandoNotificacoes,
+    ],
   );
 
   const notificationButtons = [
     {
       key: 'whatsapp' as const,
       label: 'WhatsApp',
-      icon: ChatBubbleLeftRightIcon,
+      icon: ChatBubble,
     },
     {
       key: 'email' as const,
       label: 'E-mail',
-      icon: EnvelopeIcon,
+      icon: Mail,
     },
     {
       key: 'sms' as const,
       label: 'SMS',
-      icon: DevicePhoneMobileIcon,
+      icon: MobilePhone,
     },
   ];
 
-  const notificationHint = resumoNotificacoes?.warnings.find(
-    (warning) => canaisNotificacaoIndisponiveis[warning.channel],
-  );
-
   return (
     <div className={sectionClass}>
-      <span className="text-sm font-semibold text-slate-700">Configurações de Pagamento</span>
+      <span className="text-sm font-semibold text-slate-700">
+        {isFamilyBilling ? 'Configurações de Pagamento Familiar' : 'Configurações de Pagamento'}
+      </span>
       <p className="text-xs text-slate-600 mb-4">
-        Configure os campos editáveis do vínculo recorrente. As alterações passam pela integração financeira da Alusa e valem para os próximos ciclos e para pendências que ainda possam ser ajustadas.
+        {isFamilyBilling
+          ? 'Esta matrícula participa de uma cobrança familiar. As alterações passam pela assinatura do responsável financeiro e valem para todo o grupo.'
+          : 'Configure os campos editáveis do vínculo recorrente. As alterações passam pela integração financeira da Alusa e valem para os próximos ciclos e para pendências que ainda possam ser ajustadas.'}
       </p>
 
       <div className="space-y-6">
+        {isFamilyBilling ? (
+          <InfoCallout size="sm">
+            <InfoCalloutItem label="Cobrança familiar" labelTone="default">
+              {`Responsável: ${financialContext?.responsavelFinanceiro?.nome ?? 'não informado'}. Alunos vinculados: ${familyStudentSummary}. Edições nesta seção afetam a assinatura familiar consolidada.`}
+            </InfoCalloutItem>
+          </InfoCallout>
+        ) : null}
+
         {/* Informações Gerais */}
         <div className="space-y-3">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -598,7 +628,7 @@ export function ConfiguracoesPagamento({
             <div className="space-y-1">
               <label className={labelClass}>Próximo vencimento</label>
               <Input
-                value={assinaturaSnapshot?.nextDueDate ? new Date(`${assinaturaSnapshot.nextDueDate}T12:00:00Z`).toLocaleDateString('pt-BR') : 'Não informado'}
+                value={formatSubscriptionDate(assinaturaSnapshot?.nextDueDate)}
                 disabled
                 className={controlClass}
                 readOnly
@@ -632,7 +662,9 @@ export function ConfiguracoesPagamento({
                 Alterar Forma de Pagamento
               </label>
               <p className="text-xs text-slate-600 mt-1">
-                Altera a forma de pagamento do vínculo recorrente. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.
+                {isFamilyBilling
+                  ? 'Altera a forma de pagamento da assinatura familiar do responsável. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.'
+                  : 'Altera a forma de pagamento do vínculo recorrente. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.'}
               </p>
             </div>
             {!editandoFormaPagamento ? (
@@ -692,8 +724,9 @@ export function ConfiguracoesPagamento({
           {editandoFormaPagamento ? (
             <InfoCallout size="sm">
               <InfoCalloutItem label="Importante" labelTone="default">
-                esta alteração afeta apenas os próximos ciclos. Cobranças já geradas podem exigir uma nova
-                sincronização para refletir a mudança.
+                {isFamilyBilling
+                  ? 'esta alteração será aplicada à assinatura familiar consolidada e pode impactar todas as matrículas vinculadas ao responsável. Cartões salvos usam um fluxo seguro separado.'
+                  : 'esta alteração usa a atualização da assinatura no Asaas e tenta aplicar a mudança também em cobranças pendentes editáveis. Cartões salvos usam um fluxo seguro separado.'}
               </InfoCalloutItem>
             </InfoCallout>
           ) : null}
@@ -711,7 +744,7 @@ export function ConfiguracoesPagamento({
                         type="button"
                         className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:text-slate-600"
                       >
-                        <InformationCircleIcon className="h-4 w-4" />
+                        <InfoCircle className="h-4 w-4" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
@@ -721,7 +754,9 @@ export function ConfiguracoesPagamento({
                 </TooltipProvider>
               </div>
               <p className="text-xs text-slate-600 mt-1">
-                Escolha os canais de aviso da Alusa para o responsável financeiro. A atualização é aplicada imediatamente.
+                {isFamilyBilling
+                  ? 'Escolha os canais de aviso da Alusa para o responsável financeiro da família. A atualização é aplicada imediatamente.'
+                  : 'Escolha os canais de aviso da Alusa para o responsável financeiro. A atualização é aplicada imediatamente.'}
               </p>
             </div>
           </div>
@@ -778,7 +813,9 @@ export function ConfiguracoesPagamento({
                 Juros, Multa e Desconto
               </label>
               <p className="text-xs text-slate-600 mt-1">
-                Configure juros, multa e desconto do vínculo recorrente da Alusa.
+                {isFamilyBilling
+                  ? 'Configure juros, multa e desconto da assinatura familiar consolidada.'
+                  : 'Configure juros, multa e desconto do vínculo recorrente da Alusa.'}
               </p>
             </div>
             {!editandoJurosMulta ? (
@@ -824,7 +861,7 @@ export function ConfiguracoesPagamento({
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">
-                    {jurosTipo === 'PERCENTAGE' ? '%' : 'R$'}
+                    %
                   </span>
                   <Input
                     id="jurosPercentual"
@@ -838,14 +875,14 @@ export function ConfiguracoesPagamento({
                     }}
                     disabled={!editandoJurosMulta}
                     className={`pl-8 text-right h-10 rounded-lg border px-3 text-sm shadow-sm transition focus:outline-none focus:ring-2 ${
-                      jurosTipo === 'PERCENTAGE' && jurosExcedeLimite && editandoJurosMulta
+                      jurosExcedeLimite && editandoJurosMulta
                         ? 'border-red-300 bg-red-50 text-red-900 focus:border-red-400 focus:ring-red-400/30'
                         : 'border-slate-200 bg-white text-slate-900 focus:border-[#A94DFF] focus:ring-[#A94DFF]/30'
                     } disabled:bg-slate-50 disabled:text-slate-700 disabled:cursor-not-allowed`}
                     placeholder="2,00"
                   />
                 </div>
-                {editandoJurosMulta && jurosTipo === 'PERCENTAGE' && jurosExcedeLimite && (
+                {editandoJurosMulta && jurosExcedeLimite && (
                   <p className="text-xs text-red-600 mt-1">
                     Limite máximo: {LIMITE_JUROS_MAX}% ao mês
                   </p>
@@ -855,19 +892,13 @@ export function ConfiguracoesPagamento({
                 <label htmlFor="jurosTipo" className={labelClass}>
                   Tipo
                 </label>
-                <Select
-                  value={jurosTipo}
-                  onValueChange={(v) => setJurosTipo(v as 'FIXED' | 'PERCENTAGE')}
-                  disabled={!editandoJurosMulta}
-                >
-                  <SelectTrigger className={controlClass}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PERCENTAGE">Percentual (%)</SelectItem>
-                    <SelectItem value="FIXED">Valor Fixo (R$)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input
+                  id="jurosTipo"
+                  value="Percentual (%)"
+                  disabled
+                  className={controlClass}
+                  readOnly
+                />
               </div>
             </div>
           </div>
@@ -985,23 +1016,28 @@ export function ConfiguracoesPagamento({
                 <label htmlFor="prazoDesconto" className={labelClass}>
                   Prazo (dias)
                 </label>
-                <Input
-                  id="prazoDesconto"
-                  type="number"
-                  min={0}
-                  max={30}
-                  value={prazoDesconto}
-                  onChange={(e) => setPrazoDesconto(parseInt(e.target.value) || 0)}
-                  disabled={!editandoJurosMulta}
-                  className={controlClass}
-                  placeholder="0"
-                />
+                <Select
+                  value={String(prazoDesconto)}
+                  onValueChange={(value) => setPrazoDesconto(Number(value))}
+                  disabled={!editandoJurosMulta || !descontoAtivo}
+                >
+                  <SelectTrigger id="prazoDesconto" className={controlClass}>
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISCOUNT_DUE_DATE_OPTIONS.map((days) => (
+                      <SelectItem key={days} value={String(days)}>
+                        {formatDiscountDueDateLimitLabel(days)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <p className="text-xs text-slate-500">
-              {prazoDesconto === 0 
-                ? 'Desconto válido até o vencimento' 
-                : `Desconto válido até ${prazoDesconto} dias antes do vencimento`}
+              {descontoAtivo
+                ? formatDiscountDueDateLimitLabel(prazoDesconto)
+                : 'Defina um valor de desconto maior que zero para escolher um prazo.'}
             </p>
           </div>
 
@@ -1017,10 +1053,10 @@ export function ConfiguracoesPagamento({
                   <div className="space-y-1">
                     <p className="font-medium text-slate-600">Juros (10 dias)</p>
                     <p className="text-slate-700">
-                      R$ {(jurosTipo === 'PERCENTAGE' ? 150 * (jurosValor / 100 / 30) * 10 : jurosValor).toFixed(2)}
+                      R$ {(150 * (jurosValor / 100 / 30) * 10).toFixed(2)}
                     </p>
                     <p className="text-slate-500 text-[10px]">
-                      {jurosTipo === 'PERCENTAGE' ? `${jurosValor}% ÷ 30 × 10 dias` : `R$ ${jurosValor.toFixed(2)} fixos`}
+                      {jurosValor}% ÷ 30 × 10 dias
                     </p>
                   </div>
                   
@@ -1055,7 +1091,7 @@ export function ConfiguracoesPagamento({
                     <span className="text-sm font-bold text-slate-800">
                       R$ {(
                         150 +
-                        (jurosTipo === 'PERCENTAGE' ? 150 * (jurosValor / 100 / 30) * 10 : jurosValor) +
+                        150 * (jurosValor / 100 / 30) * 10 +
                         (multaTipo === 'PERCENTAGE' ? 150 * (multaValor / 100) : multaValor)
                       ).toFixed(2)}
                     </span>
@@ -1080,7 +1116,10 @@ export function ConfiguracoesPagamento({
         {!asaasSubscriptionId && (
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
             <p className="text-xs text-amber-800">
-              <strong>Atenção:</strong> Esta matrícula não possui vínculo financeiro ativo. As configurações de pagamento e comunicação automática não podem ser editadas.
+              <strong>Atenção:</strong>{' '}
+              {isFamilyBilling
+                ? 'Esta matrícula pertence a um grupo familiar, mas a assinatura financeira familiar ainda não foi resolvida. Gere ou sincronize a cobrança familiar para liberar as configurações.'
+                : 'Esta matrícula não possui vínculo financeiro ativo. As configurações de pagamento e comunicação automática não podem ser editadas.'}
             </p>
           </div>
         )}

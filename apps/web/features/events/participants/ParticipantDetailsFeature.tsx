@@ -539,7 +539,7 @@ export function ParticipantDetailsFeature({
 
   const confirmCashReceiveMutation = useMutation({
     mutationFn: async (chargeId: string) => {
-      const res = await fetch(`/api/cobrancas/${chargeId}/confirmar-recebimento`, {
+      const res = await fetch(`/api/financeiro/cobrancas/${chargeId}/marcar-pago`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

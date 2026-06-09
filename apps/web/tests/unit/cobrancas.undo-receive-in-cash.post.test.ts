@@ -29,8 +29,28 @@ vi.mock('@/src/prisma', () => ({
 
 vi.mock('@alusa/finance', () => ({
   KycNotApprovedError: class KycNotApprovedError extends Error {},
+  evaluatePaymentActionPolicy: vi.fn((input: { asaasStatus?: string | null; wasReceivedInCash?: boolean }) => {
+    const canUndoCashPayment =
+      input.wasReceivedInCash || String(input.asaasStatus ?? '').toUpperCase() === 'RECEIVED_IN_CASH';
+    return {
+      canUndoCashPayment,
+      actions: {
+        UNDO_CASH_PAYMENT: canUndoCashPayment
+          ? { allowed: true }
+          : {
+              allowed: false,
+              code: 'UNDO_CASH_PAYMENT_NOT_ALLOWED',
+              reason: 'Apenas cobranças recebidas em dinheiro podem ter o recebimento desfeito.',
+            },
+      },
+    };
+  }),
   isAsaasEnabled: vi.fn(() => true),
   readPaymentStatusPreflight: vi.fn(async () => ({ status: 'RECEIVED_IN_CASH' })),
+  expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_RECEIVED_IN_CASH_UNDONE']),
+  registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+  markPaymentCommandSent: vi.fn(async () => undefined),
+  failPaymentCommand: vi.fn(async () => undefined),
   undoCashPayment: vi.fn(async () => undefined),
   syncPaymentStateFromAsaas: vi.fn(async () => undefined),
   auditLogService: { record: vi.fn(async () => undefined) },

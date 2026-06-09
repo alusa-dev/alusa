@@ -33,10 +33,13 @@ describe('getDashboardFinanceKpisLocal', () => {
       now: new Date('2026-05-10T12:00:00.000Z'),
     });
 
-    expect(getOperationalChargesSummaryMock).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      now: new Date('2026-05-10T12:00:00.000Z'),
-    });
+    expect(getOperationalChargesSummaryMock).toHaveBeenCalledWith(
+      {
+        contaId: 'conta-1',
+        now: new Date('2026-05-10T12:00:00.000Z'),
+      },
+      undefined,
+    );
     expect(result.aguardandoPagamentoProximos30Dias).toMatchObject({
       valorBruto: 485,
       quantidadeDeCobrancas: 5,

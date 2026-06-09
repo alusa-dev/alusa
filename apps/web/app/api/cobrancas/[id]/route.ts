@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -10,13 +11,21 @@ import {
   handlePaymentWebhook,
   isAsaasEnabled,
   mapAsaasPaymentStatusToCobranca,
-  reconcileAcademicChargesWithAsaas,
   readPaymentFullPreflight,
   resolveCobrancaDisplayStatus,
   resolveLiquidacaoFromAsaasPayment,
   syncPaymentStateFromAsaas,
   updatePayment,
   auditLogService,
+  evaluatePaymentActionPolicy,
+  expectedEventsForPaymentCommand,
+  failPaymentCommand,
+  markPaymentCommandSent,
+  registerPaymentCommand,
+  type PaymentActionDecision,
+  type PaymentOrigin,
+  type PaymentCommandEntityType,
+  type PaymentCommandJobType,
 } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import type { AsaasCreatePaymentInput } from '@alusa/finance';
@@ -39,6 +48,7 @@ import {
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
 
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
+const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
 const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
 const TERMINAL_ASAAS_PAYMENT_STATUSES = new Set([
   'RECEIVED',
@@ -53,6 +63,150 @@ const TERMINAL_ASAAS_PAYMENT_STATUSES = new Set([
   'AWAITING_CHARGEBACK_REVERSAL',
   'DELETED',
 ]);
+
+function mutationError(
+  status: number,
+  code: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      code,
+      error: message,
+      ...extra,
+    },
+    { status },
+  );
+}
+
+function editBlockedError(params: { status: string; source: 'LOCAL' | 'ASAAS' }) {
+  const isPaid = params.source === 'ASAAS'
+    ? ASAAS_PAID_PAYMENT_STATUSES.has(params.status)
+    : params.status === 'PAID' || params.status === 'PAGO';
+
+  return mutationError(
+    isPaid ? 409 : 400,
+    isPaid ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE' : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
+    params.source === 'ASAAS'
+      ? `Não é possível editar cobrança com status ${params.status} no Asaas`
+      : `Não é possível editar cobrança com status ${params.status}`,
+    params.source === 'ASAAS'
+      ? { asaasStatus: params.status }
+      : { status: params.status },
+  );
+}
+
+function cancelBlockedError(params: { status: string; source: 'LOCAL' | 'ASAAS' }) {
+  const isPaid = params.source === 'ASAAS'
+    ? ASAAS_PAID_PAYMENT_STATUSES.has(params.status)
+    : params.status === 'PAID' || params.status === 'PAGO';
+
+  return mutationError(
+    isPaid ? 409 : 400,
+    isPaid ? 'CANCEL_NOT_ALLOWED_FOR_PAID_CHARGE' : 'CANCEL_NOT_ALLOWED_FOR_CHARGE_STATUS',
+    params.source === 'ASAAS'
+      ? `Cobrança paga no Asaas (${params.status}). Não é possível cancelar.`
+      : `Não é possível cancelar cobrança com status ${params.status}.`,
+    params.source === 'ASAAS'
+      ? { asaasStatus: params.status }
+      : { status: params.status },
+  );
+}
+
+function policyBlockedError(params: {
+  action: 'EDIT' | 'CANCEL';
+  decision: PaymentActionDecision;
+  status?: string | null;
+  source?: 'LOCAL' | 'ASAAS';
+}) {
+  const fallback = params.action === 'EDIT'
+    ? editBlockedError({ status: params.status ?? 'DESCONHECIDO', source: params.source ?? 'LOCAL' })
+    : cancelBlockedError({ status: params.status ?? 'DESCONHECIDO', source: params.source ?? 'LOCAL' });
+
+  if (!params.decision.code || !params.decision.reason) {
+    return fallback;
+  }
+
+  const isPaidBlock =
+    params.decision.code.includes('PAID') ||
+    params.status === 'RECEIVED' ||
+    params.status === 'CONFIRMED' ||
+    params.status === 'RECEIVED_IN_CASH' ||
+    params.status === 'DUNNING_RECEIVED' ||
+    params.status === 'PAGO' ||
+    params.status === 'PAID';
+
+  return mutationError(
+    isPaidBlock ? 409 : 400,
+    isPaidBlock
+      ? params.action === 'EDIT'
+        ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
+        : 'CANCEL_NOT_ALLOWED_FOR_PAID_CHARGE'
+      : params.decision.code,
+    params.decision.reason,
+    {
+      ...(params.source === 'ASAAS' ? { asaasStatus: params.status } : { status: params.status }),
+      ...(params.decision.hint ? { hint: params.decision.hint } : {}),
+    },
+  );
+}
+
+async function runAsaasPaymentCommand<T>(input: {
+  contaId: string;
+  type: PaymentCommandJobType;
+  entityType: PaymentCommandEntityType;
+  entityId: string;
+  asaasPaymentId: string;
+  actorId: string;
+  chargeId?: string | null;
+  cobrancaId?: string | null;
+  providerStatus?: string | null;
+  metadata?: Record<string, unknown>;
+  run: () => Promise<T>;
+}): Promise<{ result: T; commandJobId: string }> {
+  const command = await registerPaymentCommand({
+    contaId: input.contaId,
+    type: input.type,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    asaasPaymentId: input.asaasPaymentId,
+    expectedEvents: expectedEventsForPaymentCommand(input.type),
+    correlationId: randomUUID(),
+    actorId: input.actorId,
+    chargeId: input.chargeId ?? null,
+    cobrancaId: input.cobrancaId ?? null,
+    metadata: input.metadata,
+  });
+
+  try {
+    const result = await input.run();
+    await markPaymentCommandSent({
+      jobId: command.id,
+      providerStatus: input.providerStatus ?? null,
+    });
+    return { result, commandJobId: command.id };
+  } catch (error) {
+    await failPaymentCommand({ jobId: command.id, error });
+    throw error;
+  }
+}
+
+function resolveAcademicPaymentOrigin(tipo?: string | null): PaymentOrigin {
+  switch (tipo) {
+    case 'PARCELADA':
+      return 'INSTALLMENT';
+    case 'RECORRENTE':
+      return 'SUBSCRIPTION';
+    case 'TAXA_MATRICULA':
+      return 'ENROLLMENT_FEE';
+    case 'AVULSA':
+      return 'STANDALONE';
+    default:
+      return 'ACADEMIC';
+  }
+}
 
 function resolveStandaloneDisplayedStatus(params: {
   localChargeStatus: string;
@@ -116,15 +270,6 @@ function parseDateOnly(value?: string | null): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function isFutureDate(value?: string | null): boolean {
-  const parsed = parseDateOnly(value);
-  if (!parsed) return false;
-
-  const today = new Date();
-  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  return parsed.getTime() > todayUtc.getTime();
-}
-
 function resolveStandaloneLiquidacaoStatus(params: {
   displayedStatus: string;
   remotePaymentStatus?: string | null;
@@ -177,11 +322,13 @@ function buildAsaasPaymentUpdatePayload(params: {
     vencimento?: unknown;
     descricao?: unknown;
     jurosPercentual?: unknown;
+    multaValorFixo?: unknown;
     multaPercentual?: unknown;
     descontoPercentual?: unknown;
     descontoValorFixo?: unknown;
     descontoPrazoMaximo?: unknown;
     desconto?: unknown;
+    normalizedMultaTipo?: string | undefined;
     normalizedDescontoTipo?: string | undefined;
   };
 }): Partial<AsaasCreatePaymentInput> {
@@ -192,11 +339,13 @@ function buildAsaasPaymentUpdatePayload(params: {
       vencimento,
       descricao,
       jurosPercentual,
+      multaValorFixo,
       multaPercentual,
       descontoPercentual,
       descontoValorFixo,
       descontoPrazoMaximo,
       desconto,
+      normalizedMultaTipo,
       normalizedDescontoTipo,
     },
   } = params;
@@ -216,45 +365,80 @@ function buildAsaasPaymentUpdatePayload(params: {
     payload.description = String(descricao || '');
   }
 
-  if (jurosPercentual !== undefined && Number(jurosPercentual) > 0) {
+  if (jurosPercentual !== undefined && Number(jurosPercentual) >= 0) {
     payload.interest = { value: Number(jurosPercentual) };
   }
 
-  if (multaPercentual !== undefined && Number(multaPercentual) > 0) {
-    payload.fine = { value: Number(multaPercentual) };
+  if (
+    (multaPercentual !== undefined || multaValorFixo !== undefined) &&
+    Number(normalizedMultaTipo === 'VALOR_FIXO' ? multaValorFixo : multaPercentual) >= 0
+  ) {
+    payload.fine = {
+      value: Number(normalizedMultaTipo === 'VALOR_FIXO' ? multaValorFixo : multaPercentual),
+      type: normalizedMultaTipo === 'VALOR_FIXO' ? 'FIXED' : 'PERCENTAGE',
+    };
   }
 
-  let dueDateLimitDays = 0;
-  if (descontoPrazoMaximo) {
-    if (descontoPrazoMaximo === 'ATE_VENCIMENTO') {
-      dueDateLimitDays = 0;
-    } else {
-      const match = String(descontoPrazoMaximo).match(/(\d+)_DIAS/);
-      dueDateLimitDays = match ? parseInt(match[1], 10) : 0;
-    }
-  }
+  const dueDateLimitDays = parseDiscountDueDateLimitDays(descontoPrazoMaximo);
 
-  if (descontoPercentual !== undefined && Number(descontoPercentual) > 0) {
+  if (descontoPercentual !== undefined && normalizedDescontoTipo !== 'VALOR_FIXO') {
+    const discountValue = Math.max(0, Number(descontoPercentual) || 0);
     payload.discount = {
-      value: Number(descontoPercentual),
+      value: discountValue,
       type: 'PERCENTAGE',
-      dueDateLimitDays,
+      dueDateLimitDays: discountValue > 0 ? dueDateLimitDays : 0,
     };
-  } else if (descontoValorFixo !== undefined && Number(descontoValorFixo) > 0) {
+  } else if (descontoValorFixo !== undefined && normalizedDescontoTipo === 'VALOR_FIXO') {
+    const discountValue = Math.max(0, Number(descontoValorFixo) || 0);
     payload.discount = {
-      value: Number(descontoValorFixo),
+      value: discountValue,
       type: 'FIXED',
-      dueDateLimitDays,
+      dueDateLimitDays: discountValue > 0 ? dueDateLimitDays : 0,
     };
-  } else if (desconto !== undefined && Number(desconto) > 0) {
+  } else if (desconto !== undefined) {
+    const discountValue = Math.max(0, Number(desconto) || 0);
     payload.discount = {
-      value: Number(desconto),
+      value: discountValue,
       type: normalizedDescontoTipo === 'VALOR_FIXO' ? 'FIXED' : 'PERCENTAGE',
-      dueDateLimitDays,
+      dueDateLimitDays: discountValue > 0 ? dueDateLimitDays : 0,
     };
   }
 
   return payload;
+}
+
+function parseDiscountDueDateLimitDays(descontoPrazoMaximo?: unknown): number {
+  if (!descontoPrazoMaximo || descontoPrazoMaximo === 'ATE_VENCIMENTO') {
+    return 0;
+  }
+
+  const match = String(descontoPrazoMaximo).match(/(\d+)_DIAS/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+function resolveCanonicalDiscountDueDateLimit(params: {
+  descontoPrazoMaximo?: unknown;
+  normalizedDescontoTipo?: string;
+  descontoPercentual?: unknown;
+  descontoValorFixo?: unknown;
+  desconto?: unknown;
+}) {
+  if (params.descontoPrazoMaximo === undefined) {
+    return undefined;
+  }
+
+  const discountValue =
+    params.normalizedDescontoTipo === 'VALOR_FIXO'
+      ? Number(params.descontoValorFixo ?? params.desconto ?? 0)
+      : Number(params.descontoPercentual ?? params.desconto ?? 0);
+
+  if (!Number.isFinite(discountValue) || discountValue <= 0) {
+    return 'ATE_VENCIMENTO';
+  }
+
+  return parseDiscountDueDateLimitDays(params.descontoPrazoMaximo) === 0
+    ? 'ATE_VENCIMENTO'
+    : `${parseDiscountDueDateLimitDays(params.descontoPrazoMaximo)}_DIAS`;
 }
 
 function buildDeletedPaymentWebhookPayload(
@@ -524,40 +708,21 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       recordAsaasReadDecision('cobranca_detail', 'local');
     }
 
-    const reconciliation =
-      academicAsaasPaymentId && asaasActive && contaIdForAsaas
-        ? await reconcileAcademicChargesWithAsaas({
-            contaId: contaIdForAsaas,
-            cobrancaIds: [cobranca.id],
-            force: true,
-            limit: 1,
-          })
-        : null;
-    const reconciledCobranca = reconciliation?.items.get(cobranca.id);
-    const effectiveCobranca = reconciledCobranca
-      ? {
-          ...cobranca,
-          status: reconciledCobranca.status,
-          asaasPaymentId: reconciledCobranca.asaasPaymentId,
-          asaasStatus: reconciledCobranca.asaasStatus,
-          vencimento: reconciledCobranca.vencimento,
-          dataPagamento: reconciledCobranca.dataPagamento,
-          pagoEm: reconciledCobranca.pagoEm,
-          liquidacaoStatus: reconciledCobranca.liquidacaoStatus,
-          liquidadoEm: reconciledCobranca.liquidadoEm,
-        }
-      : cobranca;
+    const effectiveCobranca = cobranca;
 
     const asaasData =
       remoteAsaasData ?? buildAcademicAsaasData(effectiveCobranca as unknown as Record<string, unknown>);
 
+    const remoteBillingTypeForForma =
+      (remoteAsaasData?.billingType as string | null | undefined) ??
+      (asaasData?.billingType as string | null | undefined);
     const effectiveFormaPagamento =
-      cobranca.formaPagamento && cobranca.formaPagamento !== 'INDEFINIDO'
-        ? cobranca.formaPagamento
-        : (mapBillingTypeToFormaPagamento(
-            (remoteAsaasData?.billingType as string | null | undefined) ??
-              (asaasData?.billingType as string | null | undefined),
-          ) ?? cobranca.formaPagamento);
+      typeof remoteBillingTypeForForma === 'string' &&
+      remoteBillingTypeForForma.trim().toUpperCase() === 'RECEIVED_IN_CASH'
+        ? 'INDEFINIDO'
+        : cobranca.formaPagamento && cobranca.formaPagamento !== 'INDEFINIDO'
+          ? cobranca.formaPagamento
+          : (mapBillingTypeToFormaPagamento(remoteBillingTypeForForma) ?? cobranca.formaPagamento);
 
     // Buscar InstallmentPlan se cobrança for do tipo PARCELADA
     let installmentPlanId: string | null = null;
@@ -581,7 +746,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const effectiveStatus = resolveAcademicDisplayedStatus({
       localCobrancaStatus: effectiveCobranca.status,
-      remotePaymentStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? asaasData?.status ?? null,
+      remotePaymentStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
       dueDate: effectiveCobranca.vencimento,
     });
 
@@ -590,7 +755,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const effectiveLiquidacaoStatus: LiquidacaoStatus =
       storedLiquidacao ??
       resolveLiquidacaoFromAsaasPayment({
-        asaasStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? null,
+        asaasStatus: remoteAsaasData?.status ?? null,
         creditDate: remoteAsaasData?.creditDate ?? null,
         billingType: remoteAsaasData?.billingType ?? null,
       });
@@ -598,7 +763,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const displayStatus = resolveCobrancaDisplayStatus({
       status: effectiveStatus as StatusCobranca,
       liquidacaoStatus: effectiveLiquidacaoStatus,
-      asaasStatus: reconciledCobranca?.asaasStatus ?? remoteAsaasData?.status ?? asaasData?.status ?? null,
+      asaasStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
     });
 
     const { charge: _academicCharge, ...cobrancaDetail } = effectiveCobranca;
@@ -689,6 +854,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             dueDate: true,
             description: true,
             billingType: true,
+            invoiceUrl: true,
+            standaloneInstallmentPlanId: true,
+            standaloneSubscriptionId: true,
           },
         })
       : null;
@@ -766,6 +934,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const normalizedMultaTipo = normalizeTipo(multaTipo);
     const normalizedDescontoTipo = normalizeTipo(descontoTipo);
+    const canonicalDescontoPrazoMaximo = resolveCanonicalDiscountDueDateLimit({
+      descontoPrazoMaximo,
+      normalizedDescontoTipo,
+      descontoPercentual,
+      descontoValorFixo,
+      desconto,
+    });
+    let asaasCommandJobId: string | null = null;
 
     // Validações básicas de domínio
     const isNeg = (n: unknown) => typeof n === 'number' && n < 0;
@@ -810,28 +986,55 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     if (chargeAtual) {
-      const chargeEditaveis = new Set(['CREATED', 'OPEN', 'OVERDUE']);
-      if (!chargeEditaveis.has(chargeAtual.status)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Não é possível editar cobrança com status ${chargeAtual.status}`,
-          },
-          { status: 400 },
-        );
+      const localPolicy = evaluatePaymentActionPolicy({
+        entityType: 'CHARGE',
+        origin: chargeAtual.standaloneInstallmentPlanId
+          ? 'INSTALLMENT'
+          : chargeAtual.standaloneSubscriptionId
+            ? 'SUBSCRIPTION'
+            : 'STANDALONE',
+        localStatus: chargeAtual.status,
+        billingType: chargeAtual.billingType,
+        hasAsaasPaymentId: Boolean(chargeAtual.asaasPaymentId),
+        hasInvoiceUrl: Boolean(chargeAtual.invoiceUrl),
+        isInstallmentPayment: Boolean(chargeAtual.standaloneInstallmentPlanId),
+        isSubscriptionPayment: Boolean(chargeAtual.standaloneSubscriptionId),
+      });
+
+      if (!localPolicy.canEdit) {
+        return policyBlockedError({
+          action: 'EDIT',
+          decision: localPolicy.actions.EDIT,
+          status: chargeAtual.status,
+          source: 'LOCAL',
+        });
       }
 
       if (isAsaasEnabled() && chargeAtual.asaasPaymentId) {
         const currentPayment = await readPaymentFullPreflight(chargeAtual.asaasPaymentId, { contaId });
+        const remotePolicy = evaluatePaymentActionPolicy({
+          entityType: 'CHARGE',
+          origin: chargeAtual.standaloneInstallmentPlanId
+            ? 'INSTALLMENT'
+            : chargeAtual.standaloneSubscriptionId
+              ? 'SUBSCRIPTION'
+              : 'STANDALONE',
+          localStatus: chargeAtual.status,
+          asaasStatus: currentPayment.status,
+          billingType: currentPayment.billingType ?? chargeAtual.billingType,
+          hasAsaasPaymentId: true,
+          hasInvoiceUrl: Boolean(chargeAtual.invoiceUrl || currentPayment.invoiceUrl),
+          isInstallmentPayment: Boolean(chargeAtual.standaloneInstallmentPlanId),
+          isSubscriptionPayment: Boolean(chargeAtual.standaloneSubscriptionId),
+        });
 
-        if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
-            },
-            { status: 409 },
-          );
+        if (!remotePolicy.canEdit) {
+          return policyBlockedError({
+            action: 'EDIT',
+            decision: remotePolicy.actions.EDIT,
+            status: currentPayment.status,
+            source: 'ASAAS',
+          });
         }
 
         const updatePayload = buildAsaasPaymentUpdatePayload({
@@ -841,16 +1044,44 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             vencimento,
             descricao,
             jurosPercentual,
+            multaValorFixo,
             multaPercentual,
             descontoPercentual,
             descontoValorFixo,
-            descontoPrazoMaximo,
+            descontoPrazoMaximo: canonicalDescontoPrazoMaximo,
             desconto,
+            normalizedMultaTipo,
             normalizedDescontoTipo,
           },
         });
 
-        await updatePayment(chargeAtual.asaasPaymentId, updatePayload, { contaId });
+        const { commandJobId } = await runAsaasPaymentCommand({
+          contaId,
+          type: 'PAYMENT_UPDATE_COMMAND',
+          entityType: 'CHARGE',
+          entityId: chargeAtual.id,
+          asaasPaymentId: chargeAtual.asaasPaymentId,
+          actorId: user.id,
+          chargeId: chargeAtual.id,
+          providerStatus: currentPayment.status,
+          metadata: {
+            source: 'PUT /api/cobrancas/[id]',
+            changes: {
+              valor,
+              vencimento,
+              descricao,
+              jurosPercentual,
+              multaTipo: normalizedMultaTipo,
+              multaPercentual,
+              descontoTipo: normalizedDescontoTipo,
+              descontoPercentual,
+              descontoValorFixo,
+              descontoPrazoMaximo: canonicalDescontoPrazoMaximo,
+            },
+          },
+          run: () => updatePayment(chargeAtual.asaasPaymentId!, updatePayload, { contaId }),
+        });
+        asaasCommandJobId = commandJobId;
       }
 
       const chargeAtualizada = await prisma.charge.update({
@@ -869,6 +1100,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         entity: { type: 'Charge', id: chargeAtual.id },
         metadata: {
           asaasPaymentId: chargeAtual.asaasPaymentId,
+          commandJobId: asaasCommandJobId,
           previousStatus: chargeAtual.status,
           changes: {
             valor,
@@ -899,15 +1131,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       );
     }
 
-    const statusEditaveis = ['PENDENTE', 'A_VENCER'];
-    if (!statusEditaveis.includes(cobrancaAtual.status)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Não é possível editar cobrança com status ${cobrancaAtual.status}`,
-        },
-        { status: 400 },
-      );
+    const localPolicy = evaluatePaymentActionPolicy({
+      entityType: 'COBRANCA',
+      origin: resolveAcademicPaymentOrigin(cobrancaAtual.tipo),
+      localStatus: cobrancaAtual.status,
+      billingType: cobrancaAtual.formaPagamento,
+      hasAsaasPaymentId: Boolean(cobrancaAtual.asaasPaymentId),
+      hasInvoiceUrl: Boolean((cobrancaAtual as unknown as { charge?: { invoiceUrl?: string | null } }).charge?.invoiceUrl),
+      isInstallmentPayment: cobrancaAtual.tipo === 'PARCELADA',
+      isSubscriptionPayment: cobrancaAtual.tipo === 'RECORRENTE',
+    });
+
+    if (!localPolicy.canEdit) {
+      return policyBlockedError({
+        action: 'EDIT',
+        decision: localPolicy.actions.EDIT,
+        status: cobrancaAtual.status,
+        source: 'LOCAL',
+      });
     }
 
     // Se tiver asaasPaymentId, validar/atualizar no Asaas ANTES de mutar o banco local.
@@ -917,15 +1158,25 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
       if (contaIdForAsaas) {
         const currentPayment = await readPaymentFullPreflight(cobrancaAtual.asaasPaymentId, { contaId: contaIdForAsaas });
+        const remotePolicy = evaluatePaymentActionPolicy({
+          entityType: 'COBRANCA',
+          origin: resolveAcademicPaymentOrigin(cobrancaAtual.tipo),
+          localStatus: cobrancaAtual.status,
+          asaasStatus: currentPayment.status,
+          billingType: currentPayment.billingType ?? cobrancaAtual.formaPagamento,
+          hasAsaasPaymentId: true,
+          hasInvoiceUrl: Boolean(currentPayment.invoiceUrl),
+          isInstallmentPayment: cobrancaAtual.tipo === 'PARCELADA',
+          isSubscriptionPayment: cobrancaAtual.tipo === 'RECORRENTE',
+        });
 
-        if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
-            },
-            { status: 409 },
-          );
+        if (!remotePolicy.canEdit) {
+          return policyBlockedError({
+            action: 'EDIT',
+            decision: remotePolicy.actions.EDIT,
+            status: currentPayment.status,
+            source: 'ASAAS',
+          });
         }
 
         const updatePayload = buildAsaasPaymentUpdatePayload({
@@ -935,16 +1186,44 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             vencimento,
             descricao,
             jurosPercentual,
+            multaValorFixo,
             multaPercentual,
             descontoPercentual,
             descontoValorFixo,
-            descontoPrazoMaximo,
+            descontoPrazoMaximo: canonicalDescontoPrazoMaximo,
             desconto,
+            normalizedMultaTipo,
             normalizedDescontoTipo,
           },
         });
 
-        await updatePayment(cobrancaAtual.asaasPaymentId, updatePayload, { contaId: contaIdForAsaas });
+        const { commandJobId } = await runAsaasPaymentCommand({
+          contaId: contaIdForAsaas,
+          type: 'PAYMENT_UPDATE_COMMAND',
+          entityType: 'COBRANCA',
+          entityId: cobrancaAtual.id,
+          asaasPaymentId: cobrancaAtual.asaasPaymentId,
+          actorId: user.id,
+          cobrancaId: cobrancaAtual.id,
+          providerStatus: currentPayment.status,
+          metadata: {
+            source: 'PUT /api/cobrancas/[id]',
+            changes: {
+              valor,
+              vencimento,
+              descricao,
+              jurosPercentual,
+              multaTipo: normalizedMultaTipo,
+              multaPercentual,
+              descontoTipo: normalizedDescontoTipo,
+              descontoPercentual,
+              descontoValorFixo,
+              descontoPrazoMaximo: canonicalDescontoPrazoMaximo,
+            },
+          },
+          run: () => updatePayment(cobrancaAtual.asaasPaymentId!, updatePayload, { contaId: contaIdForAsaas }),
+        });
+        asaasCommandJobId = commandJobId;
       }
     }
 
@@ -977,7 +1256,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           ...(normalizedDescontoTipo !== undefined && { descontoTipo: normalizedDescontoTipo }),
           ...(descontoPercentual !== undefined && { descontoPercentual }),
           ...(descontoValorFixo !== undefined && { descontoValorFixo }),
-          ...(descontoPrazoMaximo !== undefined && { descontoPrazoMaximo }),
+          ...(canonicalDescontoPrazoMaximo !== undefined && {
+            descontoPrazoMaximo: canonicalDescontoPrazoMaximo,
+          }),
           ...(desconto !== undefined && { desconto }),
           // Valor final
           ...(valorFinal !== undefined && { valorFinal }),
@@ -997,6 +1278,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         mapCobrancaMutationResultToDTO({
           success: true,
           data: cobrancaAtualizada,
+          ...(asaasCommandJobId ? { commandJobId: asaasCommandJobId } : {}),
           message:
             'Alteração enviada para processamento financeiro da Alusa. A atualização pode levar alguns instantes para refletir em toda a aplicação.',
         }),
@@ -1070,7 +1352,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!cobranca) {
       const charge = await prisma.charge.findFirst({
         where: { id, contaId },
-        select: { id: true, status: true, asaasPaymentId: true, externalReference: true },
+        select: {
+          id: true,
+          status: true,
+          asaasPaymentId: true,
+          externalReference: true,
+          billingType: true,
+          invoiceUrl: true,
+          standaloneInstallmentPlanId: true,
+          standaloneSubscriptionId: true,
+        },
       });
 
       if (!charge) {
@@ -1087,17 +1378,60 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         );
       }
 
+      const localPolicy = evaluatePaymentActionPolicy({
+        entityType: 'CHARGE',
+        origin: charge.standaloneInstallmentPlanId
+          ? 'INSTALLMENT'
+          : charge.standaloneSubscriptionId
+            ? 'SUBSCRIPTION'
+            : 'STANDALONE',
+        localStatus: charge.status,
+        billingType: charge.billingType,
+        hasAsaasPaymentId: Boolean(charge.asaasPaymentId),
+        hasInvoiceUrl: Boolean(charge.invoiceUrl),
+        isInstallmentPayment: Boolean(charge.standaloneInstallmentPlanId),
+        isSubscriptionPayment: Boolean(charge.standaloneSubscriptionId),
+      });
+
+      if (!localPolicy.canCancel) {
+        return policyBlockedError({
+          action: 'CANCEL',
+          decision: localPolicy.actions.CANCEL,
+          status: charge.status,
+          source: 'LOCAL',
+        });
+      }
+
+      let asaasCommandJobId: string | null = null;
+      let remoteStatusBeforeCommand: string | null = null;
+
       // Read-before-write: conferir status atual no Asaas (tolerante a falha)
       try {
         const payment = await readPaymentFullPreflight(charge.asaasPaymentId, { contaId });
-        if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(payment.status)) {
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Cobrança paga no Asaas (${payment.status}). Não é possível cancelar.`,
-            },
-            { status: 409 },
-          );
+        remoteStatusBeforeCommand = payment.status;
+        const remotePolicy = evaluatePaymentActionPolicy({
+          entityType: 'CHARGE',
+          origin: charge.standaloneInstallmentPlanId
+            ? 'INSTALLMENT'
+            : charge.standaloneSubscriptionId
+              ? 'SUBSCRIPTION'
+              : 'STANDALONE',
+          localStatus: charge.status,
+          asaasStatus: payment.status,
+          billingType: payment.billingType ?? charge.billingType,
+          hasAsaasPaymentId: true,
+          hasInvoiceUrl: Boolean(charge.invoiceUrl || payment.invoiceUrl),
+          isInstallmentPayment: Boolean(charge.standaloneInstallmentPlanId),
+          isSubscriptionPayment: Boolean(charge.standaloneSubscriptionId),
+        });
+
+        if (!remotePolicy.canCancel) {
+          return policyBlockedError({
+            action: 'CANCEL',
+            decision: remotePolicy.actions.CANCEL,
+            status: payment.status,
+            source: 'ASAAS',
+          });
         }
 
         if (payment.deleted || payment.status === 'DELETED') {
@@ -1137,7 +1471,22 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         });
       }
 
-      const deletedPayment = await deletePayment(charge.asaasPaymentId, { contaId });
+      const { result: deletedPayment, commandJobId } = await runAsaasPaymentCommand({
+        contaId,
+        type: 'PAYMENT_CANCEL_COMMAND',
+        entityType: 'CHARGE',
+        entityId: charge.id,
+        asaasPaymentId: charge.asaasPaymentId,
+        actorId: user.id,
+        chargeId: charge.id,
+        providerStatus: remoteStatusBeforeCommand,
+        metadata: {
+          source: 'DELETE /api/cobrancas/[id]',
+          previousLocalStatus: charge.status,
+        },
+        run: () => deletePayment(charge.asaasPaymentId!, { contaId }),
+      });
+      asaasCommandJobId = commandJobId;
 
       let localStateConverged = false;
 
@@ -1180,6 +1529,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         entity: { type: 'Charge', id: charge.id },
         metadata: {
           asaasPaymentId: charge.asaasPaymentId,
+          commandJobId: asaasCommandJobId,
           statusBefore: charge.status,
           requestedBy: user.id,
         },
@@ -1199,18 +1549,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
-    // Validar se pode cancelar enquanto a cobrança ainda estiver aberta ou vencida
-    const statusRemoveveis = ['PENDENTE', 'A_VENCER', 'ATRASADO'];
-    if (!statusRemoveveis.includes(cobranca.status)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Não é possível cancelar cobrança com status ${cobranca.status}. Apenas cobranças PENDENTES, A_VENCER ou ATRASADAS podem ser canceladas.`,
-        },
-        { status: 400 },
-      );
-    }
-
     const contaIdForDelete = cobranca.matricula?.aluno?.contaId;
     if (!isAsaasEnabled() || !cobranca.asaasPaymentId || !contaIdForDelete) {
       return NextResponse.json(
@@ -1219,17 +1557,52 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
+    const localPolicy = evaluatePaymentActionPolicy({
+      entityType: 'COBRANCA',
+      origin: resolveAcademicPaymentOrigin(cobranca.tipo),
+      localStatus: cobranca.status,
+      billingType: cobranca.formaPagamento,
+      hasAsaasPaymentId: Boolean(cobranca.asaasPaymentId),
+      hasInvoiceUrl: Boolean((cobranca as unknown as { charge?: { invoiceUrl?: string | null } }).charge?.invoiceUrl),
+      isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+      isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
+    });
+
+    if (!localPolicy.canCancel) {
+      return policyBlockedError({
+        action: 'CANCEL',
+        decision: localPolicy.actions.CANCEL,
+        status: cobranca.status,
+        source: 'LOCAL',
+      });
+    }
+
+    let asaasCommandJobId: string | null = null;
+    let remoteStatusBeforeCommand: string | null = null;
+
     // Read-before-write: conferir status atual no Asaas (tolerante a falha)
     try {
       const payment = await readPaymentFullPreflight(cobranca.asaasPaymentId, { contaId: contaIdForDelete });
-      if (['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(payment.status)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Cobrança paga no Asaas (${payment.status}). Não é possível cancelar.`,
-          },
-          { status: 409 },
-        );
+      remoteStatusBeforeCommand = payment.status;
+      const remotePolicy = evaluatePaymentActionPolicy({
+        entityType: 'COBRANCA',
+        origin: resolveAcademicPaymentOrigin(cobranca.tipo),
+        localStatus: cobranca.status,
+        asaasStatus: payment.status,
+        billingType: payment.billingType ?? cobranca.formaPagamento,
+        hasAsaasPaymentId: true,
+        hasInvoiceUrl: Boolean(payment.invoiceUrl),
+        isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+        isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
+      });
+
+      if (!remotePolicy.canCancel) {
+        return policyBlockedError({
+          action: 'CANCEL',
+          decision: remotePolicy.actions.CANCEL,
+          status: payment.status,
+          source: 'ASAAS',
+        });
       }
 
       if (payment.deleted || payment.status === 'DELETED') {
@@ -1266,7 +1639,22 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       });
     }
 
-    const deletedPayment = await deletePayment(cobranca.asaasPaymentId, { contaId: contaIdForDelete });
+    const { result: deletedPayment, commandJobId } = await runAsaasPaymentCommand({
+      contaId: contaIdForDelete,
+      type: 'PAYMENT_CANCEL_COMMAND',
+      entityType: 'COBRANCA',
+      entityId: cobranca.id,
+      asaasPaymentId: cobranca.asaasPaymentId,
+      actorId: user.id,
+      cobrancaId: cobranca.id,
+      providerStatus: remoteStatusBeforeCommand,
+      metadata: {
+        source: 'DELETE /api/cobrancas/[id]',
+        previousLocalStatus: cobranca.status,
+      },
+      run: () => deletePayment(cobranca.asaasPaymentId!, { contaId: contaIdForDelete }),
+    });
+    asaasCommandJobId = commandJobId;
 
     let localStateConverged = false;
 
@@ -1299,6 +1687,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         acao: 'DELETAR',
         detalhes: {
           asaasPaymentId: cobranca.asaasPaymentId,
+          commandJobId: asaasCommandJobId,
           statusBefore: cobranca.status,
           statusAfter: localStateConverged ? 'CANCELADO' : 'CANCELAMENTO_PENDENTE',
           requestedBy: user.id,
@@ -1312,6 +1701,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       entity: { type: 'Cobranca', id: cobranca.id },
       metadata: {
         asaasPaymentId: cobranca.asaasPaymentId,
+        commandJobId: asaasCommandJobId,
         statusBefore: cobranca.status,
         requestedBy: user.id,
       },

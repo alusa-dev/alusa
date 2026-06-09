@@ -6,6 +6,16 @@ export {
 } from './guards/charge-status-guard';
 export type { ChargeAction } from './guards/charge-status-guard';
 export {
+  evaluatePaymentActionPolicy,
+  toLegacyChargeActions,
+  type PaymentActionDecision,
+  type PaymentActionPolicy,
+  type PaymentActionPolicyInput,
+  type PaymentEntityType,
+  type PaymentOrigin,
+  type PaymentPolicyAction,
+} from './policies';
+export {
   getUnifiedBadgeStatus,
   getStatusLabel,
   getStatusBadgePresentation,

@@ -34,9 +34,22 @@ vi.mock('../../foundation/audit-log.service', () => ({
   },
 }));
 
+vi.mock('../sync-payment-state-from-asaas', () => ({
+  syncPaymentStateFromAsaas: vi.fn(),
+}));
+
+vi.mock('../payment-command-ledger', () => ({
+  expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_RECEIVED_IN_CASH']),
+  registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+  markPaymentCommandSent: vi.fn(async () => undefined),
+  failPaymentCommand: vi.fn(async () => undefined),
+}));
+
 import { prisma } from '@alusa/database';
 import { confirmCashPayment, deletePayment, updatePayment } from '../asaas-ops';
 import { readPaymentStatusPreflight } from '../payment-command-preflight';
+import { syncPaymentStateFromAsaas } from '../sync-payment-state-from-asaas';
+import { markPaymentCommandSent, registerPaymentCommand } from '../payment-command-ledger';
 import { deleteCharge } from '../delete-charge';
 import { markChargeAsPaid } from '../mark-charge-as-paid';
 import { updateCharge } from '../update-charge';
@@ -111,5 +124,50 @@ describe('payment-command-preflight consumers', () => {
     expect(result).toMatchObject({ success: true });
     expect(readPaymentStatusPreflight).toHaveBeenCalledWith('pay_1', { contaId: 'conta-1' });
     expect(confirmCashPayment).toHaveBeenCalledWith('pay_1', '2026-01-04', 100, false, { contaId: 'conta-1' });
+    expect(registerPaymentCommand).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      type: 'PAYMENT_MARK_CASH_COMMAND',
+      entityType: 'COBRANCA',
+      entityId: 'cob-1',
+      asaasPaymentId: 'pay_1',
+    }));
+    expect(markPaymentCommandSent).toHaveBeenCalledWith({
+      jobId: 'job-1',
+      providerStatus: 'PENDING',
+    });
+  });
+
+  it('markChargeAsPaid é idempotente quando o Asaas já recebeu em dinheiro', async () => {
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-1',
+      status: 'PENDENTE',
+      valor: 100,
+      asaasPaymentId: 'pay_1',
+      matricula: { aluno: { contaId: 'conta-1' } },
+    } as never);
+    vi.mocked(readPaymentStatusPreflight).mockResolvedValueOnce({ status: 'RECEIVED_IN_CASH' } as never);
+    vi.mocked(syncPaymentStateFromAsaas).mockResolvedValueOnce({
+      success: true,
+      asaasPaymentId: 'pay_1',
+      paymentStatus: 'RECEIVED_IN_CASH',
+      appliedEvent: 'PAYMENT_RECEIVED_IN_CASH',
+      invoiceUrl: null,
+      bankSlipUrl: null,
+      transactionReceiptUrl: null,
+    });
+
+    const result = await markChargeAsPaid({
+      chargeId: 'cob-1',
+      contaId: 'conta-1',
+      userId: 'user-1',
+    });
+
+    expect(result).toMatchObject({ success: true, data: { asaasProcessed: true, isOffline: false } });
+    expect(confirmCashPayment).not.toHaveBeenCalled();
+    expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay_1',
+      eventName: 'PAYMENT_RECEIVED_IN_CASH',
+    });
   });
 });

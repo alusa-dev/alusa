@@ -43,6 +43,19 @@ vi.mock('@alusa/finance', () => ({
     if (status === 'DELETED') return 'CANCELADO';
     return 'PENDENTE';
   }),
+  reconcileAcademicChargesWithAsaas: vi.fn(async () => ({ items: new Map() })),
+  resolveCobrancaDisplayStatus: vi.fn(({ status, asaasStatus }) => ({
+    label: asaasStatus === 'RECEIVED_IN_CASH' ? 'Recebido em dinheiro' : status,
+    hint: null,
+  })),
+  resolveLiquidacaoFromAsaasPayment: vi.fn(({ asaasStatus, billingType }) =>
+    asaasStatus === 'RECEIVED_IN_CASH' || billingType === 'RECEIVED_IN_CASH'
+      ? 'DISPONIVEL'
+      : asaasStatus === 'CONFIRMED'
+        ? 'PENDENTE'
+        : 'NAO_APLICAVEL',
+  ),
+  readPaymentFullPreflight: vi.fn(),
   updatePayment: vi.fn(),
   auditLogService: { record: vi.fn() },
   syncPaymentStateFromAsaas: vi.fn(),
@@ -50,7 +63,7 @@ vi.mock('@alusa/finance', () => ({
 
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
-import { getPayment, isAsaasEnabled } from '@alusa/finance';
+import { getPayment, isAsaasEnabled, reconcileAcademicChargesWithAsaas } from '@alusa/finance';
 import { GET } from '@/app/api/cobrancas/[id]/route';
 
 describe('GET /api/cobrancas/[id]', () => {
@@ -509,6 +522,94 @@ describe('GET /api/cobrancas/[id]', () => {
         id: 'chg-4',
         status: 'PAGO',
         liquidacaoStatus: 'DISPONIVEL',
+      },
+    });
+  });
+
+  it('carrega detalhe acadêmico recebido em dinheiro no Asaas sem retornar 500', async () => {
+    vi.mocked(getSessionUser).mockResolvedValue({
+      id: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
+    } as never);
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-cash',
+      tipo: 'MENSALIDADE',
+      status: 'PENDENTE',
+      valor: 130,
+      vencimento: new Date('2026-06-06T00:00:00.000Z'),
+      descricao: 'Cobrança avulsa',
+      formaPagamento: 'CARTAO_CREDITO',
+      asaasPaymentId: 'pay_cash',
+      asaasStatus: 'PENDING',
+      liquidacaoStatus: 'NAO_APLICAVEL',
+      matriculaId: 'mat-1',
+      matricula: {
+        id: 'mat-1',
+        codigo: '001',
+        aluno: { id: 'aluno-1', nome: 'Aluno', contaId: 'conta-1' },
+        plano: { id: 'plano-1', nome: 'Plano', periodicidade: 'MENSAL' },
+        turma: null,
+      },
+      charge: {
+        invoiceUrl: 'https://asaas.test/invoice/pay_cash',
+        billingType: 'CREDIT_CARD',
+      },
+      pagamentos: [],
+    } as never);
+
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(isAsaasEnabled).mockReturnValueOnce(true);
+    vi.mocked(getPayment).mockResolvedValueOnce({
+      id: 'pay_cash',
+      status: 'RECEIVED_IN_CASH',
+      value: 130,
+      netValue: 130,
+      dueDate: '2026-06-06',
+      billingType: 'RECEIVED_IN_CASH',
+      invoiceUrl: 'https://asaas.test/invoice/pay_cash',
+      bankSlipUrl: null,
+      paymentDate: '2026-06-06',
+      clientPaymentDate: '2026-06-06',
+      creditDate: null,
+    } as never);
+    vi.mocked(reconcileAcademicChargesWithAsaas).mockResolvedValueOnce({
+      items: new Map([
+        [
+          'cob-cash',
+          {
+            status: 'PAGO',
+            asaasPaymentId: 'pay_cash',
+            asaasStatus: 'RECEIVED_IN_CASH',
+            vencimento: new Date('2026-06-06T00:00:00.000Z'),
+            dataPagamento: new Date('2026-06-06T00:00:00.000Z'),
+            pagoEm: new Date('2026-06-06T00:00:00.000Z'),
+            liquidacaoStatus: 'DISPONIVEL',
+            liquidadoEm: new Date('2026-06-06T00:00:00.000Z'),
+          },
+        ],
+      ]),
+    } as never);
+
+    const response = await GET(new NextRequest('http://localhost/api/cobrancas/cob-cash?fresh=1'), {
+      params: { id: 'cob-cash' },
+    });
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json).toMatchObject({
+      success: true,
+      data: {
+        id: 'cob-cash',
+        status: 'PAGO',
+        formaPagamento: 'INDEFINIDO',
+        liquidacaoStatus: 'DISPONIVEL',
+        asaasData: {
+          status: 'RECEIVED_IN_CASH',
+          billingType: 'RECEIVED_IN_CASH',
+        },
       },
     });
   });

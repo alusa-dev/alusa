@@ -102,12 +102,16 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
     status: account?.status ?? null,
   });
 
+  const asaasAccountDelegate = (prisma as typeof prisma & {
+    asaasAccount?: { update?: typeof prisma.asaasAccount.update };
+  }).asaasAccount;
+
   if (
     account &&
     account.operationalStatus !== derived &&
-    typeof prisma.asaasAccount.update === 'function'
+    typeof asaasAccountDelegate?.update === 'function'
   ) {
-    await prisma.asaasAccount.update({
+    await asaasAccountDelegate.update({
       where: { id: account.id },
       data: {
         operationalStatus: derived as never,

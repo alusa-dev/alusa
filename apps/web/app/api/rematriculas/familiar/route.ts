@@ -421,11 +421,13 @@ export async function POST(request: Request) {
 
     if (plannedPricing.totalMensalidade > 0) {
       const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
-      if (previewNextDueDate > dataFimContrato) {
+      const previewNextDueDateIso = formatIsoDate(previewNextDueDate);
+      const dataFimContratoIso = formatIsoDate(dataFimContrato);
+      if (previewNextDueDateIso > dataFimContratoIso) {
         return jsonError(
           422,
           'DATA_FIM_INVALIDA',
-          `A data de término do contrato (${formatIsoDate(dataFimContrato)}) precisa ser posterior ao primeiro vencimento (${formatIsoDate(previewNextDueDate)}). Ajuste a data de término ou o dia de vencimento.`,
+          `A data de término do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de término ou o dia de vencimento.`,
         );
       }
     }

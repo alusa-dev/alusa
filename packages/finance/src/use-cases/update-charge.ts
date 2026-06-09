@@ -142,26 +142,26 @@ function buildAsaasUpdatePayload(changes: UpdateChargeInput['changes']): Partial
     payload.description = changes.descricao;
   }
 
-  if (changes.jurosPercentual !== undefined && changes.jurosPercentual > 0) {
+  if (changes.jurosPercentual !== undefined && changes.jurosPercentual >= 0) {
     payload.interest = { value: changes.jurosPercentual };
   }
 
-  if (changes.multaPercentual !== undefined && changes.multaPercentual > 0) {
+  if (changes.multaPercentual !== undefined && changes.multaPercentual >= 0) {
     payload.fine = { value: changes.multaPercentual };
   }
 
   // Desconto
-  if (changes.descontoPercentual !== undefined && changes.descontoPercentual > 0) {
+  if (changes.descontoPercentual !== undefined) {
     const dueDateLimitDays = parseDueDateLimitDays(changes.descontoPrazoMaximo);
     payload.discount = {
-      value: changes.descontoPercentual,
+      value: Math.max(0, changes.descontoPercentual),
       type: 'PERCENTAGE',
       dueDateLimitDays,
     };
-  } else if (changes.descontoValorFixo !== undefined && changes.descontoValorFixo > 0) {
+  } else if (changes.descontoValorFixo !== undefined) {
     const dueDateLimitDays = parseDueDateLimitDays(changes.descontoPrazoMaximo);
     payload.discount = {
-      value: changes.descontoValorFixo,
+      value: Math.max(0, changes.descontoValorFixo),
       type: 'FIXED',
       dueDateLimitDays,
     };

@@ -9,6 +9,11 @@ import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asa
 import { deriveLocalAssinaturaSnapshot } from '@/src/server/matriculas/subscription-snapshot';
 import { mapBillingTypeToFormaPagamento } from '@/src/server/matriculas/recurring-billing';
 import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
+import {
+  isFinancialContextEditable,
+  resolveMatriculaFinancialContext,
+  updateFamilyFinancialLocalState,
+} from '@/src/server/matriculas/financial-context.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -99,26 +104,36 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(404, 'NAO_ENCONTRADO', 'Matrícula não encontrada');
     }
 
-    if (!matricula.asaasSubscriptionId) {
+    const financialContext = await resolveMatriculaFinancialContext({
+      db: prisma,
+      matriculaId,
+      contaId: contaCtx.contaId,
+    });
+    const targetSubscriptionId =
+      financialContext?.asaasSubscriptionId ?? matricula.asaasSubscriptionId;
+
+    if (!financialContext || !targetSubscriptionId) {
       return jsonError(400, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui vínculo financeiro ativo');
     }
 
-    const localSubscription = await prisma.subscription.findFirst({
-      where: {
-        contaId: contaCtx.contaId,
-        matriculaId: matricula.id,
-      },
-      select: {
-        status: true,
-        updatedAt: true,
-      },
-    });
-    const localSnapshot = deriveLocalAssinaturaSnapshot(
-      matricula as unknown as Record<string, unknown>,
-      localSubscription,
-    );
+    const localSnapshot =
+      financialContext.mode === 'FAMILY'
+        ? financialContext.localSnapshot
+        : deriveLocalAssinaturaSnapshot(
+            matricula as unknown as Record<string, unknown>,
+            await prisma.subscription.findFirst({
+              where: {
+                contaId: contaCtx.contaId,
+                matriculaId: matricula.id,
+              },
+              select: {
+                status: true,
+                updatedAt: true,
+              },
+            }),
+          );
 
-    if (localSnapshot?.deleted || localSnapshot?.status === 'EXPIRED') {
+    if (!isFinancialContextEditable(financialContext)) {
       return jsonError(409, 'ASSINATURA_NAO_EDITAVEL', 'O vínculo recorrente não pode ser atualizado no momento.');
     }
 
@@ -134,7 +149,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 
     try {
       await updateSubscription(
-        matricula.asaasSubscriptionId,
+        targetSubscriptionId,
         {
           billingType: billingType as 'BOLETO' | 'PIX' | 'CREDIT_CARD' | 'UNDEFINED',
           updatePendingPayments: true,
@@ -168,7 +183,10 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         actorId: sessionUser?.id ?? 'system',
         action: 'MATRICULA_SUBSCRIPTION_BILLING_TYPE_UPDATED',
         metadata: {
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
+          asaasSubscriptionId: targetSubscriptionId,
+          mode: financialContext.mode,
+          familyGroupId: financialContext.family?.id ?? null,
+          affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [matriculaId],
           previousBillingType: localSnapshot?.billingType ?? null,
           nextBillingType: billingType,
           updatePendingPayments: true,
@@ -178,7 +196,13 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 
     const nextFormaPagamento = mapBillingTypeToFormaPagamento(billingType);
     let localAlignment = null;
-    if (nextFormaPagamento) {
+    if (financialContext.mode === 'FAMILY') {
+      localAlignment = await updateFamilyFinancialLocalState({
+        db: prisma,
+        context: financialContext,
+        billingType,
+      });
+    } else if (nextFormaPagamento) {
       await prisma.matricula.update({
         where: { id: matriculaId },
         data: { formaPagamento: nextFormaPagamento },

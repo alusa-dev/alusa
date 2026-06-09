@@ -4,25 +4,19 @@ import { createAluno, deleteAluno, listAlunos } from './aluno.service';
 import { encryptSecret } from '../security/encryption';
 
 const {
-  listCustomersMock,
-  createCustomerMock,
-  updateCustomerMock,
-  deleteCustomerMock,
+  ensureAsaasCustomerForPayerMock,
+  syncAlunoInativacaoToAsaasMock,
 } = vi.hoisted(() => ({
-  listCustomersMock: vi.fn(),
-  createCustomerMock: vi.fn(),
-  updateCustomerMock: vi.fn(),
-  deleteCustomerMock: vi.fn(),
+  ensureAsaasCustomerForPayerMock: vi.fn(),
+  syncAlunoInativacaoToAsaasMock: vi.fn(),
 }));
 
-vi.mock('@alusa/asaas', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@alusa/asaas')>();
+vi.mock('@alusa/finance', async () => {
   return {
-    ...actual,
-    listCustomers: listCustomersMock,
-    createCustomer: createCustomerMock,
-    updateCustomer: updateCustomerMock,
-    deleteCustomer: deleteCustomerMock,
+    ensureAsaasCustomerForPayer: ensureAsaasCustomerForPayerMock,
+    loadAndValidateSubaccountKey: vi.fn(),
+    syncAlunoInativacaoToAsaas: syncAlunoInativacaoToAsaasMock,
+    syncAlunoToAsaasProvider: vi.fn(),
   };
 });
 
@@ -96,43 +90,44 @@ describe('Aluno Service', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     let counter = 0;
-    listCustomersMock.mockResolvedValue({
-      object: 'list',
-      hasMore: false,
-      totalCount: 0,
-      limit: 10,
-      offset: 0,
-      data: [],
-    });
-    createCustomerMock.mockImplementation(async () => {
+    ensureAsaasCustomerForPayerMock.mockImplementation(async ({ contaId: inputContaId, payer }) => {
       counter += 1;
+      const customerId = payer.asaasCustomerId ?? `cust_${counter}`;
+      const externalReference = `${payer.type.toLowerCase()}:${payer.id ?? customerId}`;
+
+      if (payer.id && payer.type === 'ALUNO') {
+        await prisma.aluno.updateMany({
+          where: { id: payer.id, contaId: inputContaId },
+          data: {
+            asaasCustomerId: customerId,
+            asaasCustomerExternalReference: externalReference,
+            asaasId: customerId,
+          },
+        });
+      }
+
+      if (payer.id && payer.type === 'RESPONSAVEL') {
+        await prisma.responsavel.updateMany({
+          where: { id: payer.id, contaId: inputContaId },
+          data: {
+            asaasCustomerId: customerId,
+            asaasCustomerExternalReference: externalReference,
+            asaasId: customerId,
+          },
+        });
+      }
+
       return {
-        id: `cust_${counter}`,
-        object: 'customer',
-        dateCreated: '2026-01-01',
-        name: 'Teste',
-        cpfCnpj: '12345678901',
-        deleted: false,
-        notificationDisabled: false,
+        ok: true,
+        customerId,
+        externalReference,
+        reused: false,
       };
     });
-    updateCustomerMock.mockResolvedValue({
-      id: 'cust_updated',
-      object: 'customer',
-      dateCreated: '2026-01-01',
-      name: 'Teste',
-      cpfCnpj: '12345678901',
-      deleted: false,
-      notificationDisabled: false,
-    });
-    deleteCustomerMock.mockResolvedValue({
-      id: 'cust_deleted',
-      object: 'customer',
-      dateCreated: '2026-01-01',
-      name: 'Teste',
-      cpfCnpj: '12345678901',
-      deleted: true,
-      notificationDisabled: false,
+    syncAlunoInativacaoToAsaasMock.mockResolvedValue({
+      success: true,
+      action: 'INACTIVATED',
+      reason: 'test',
     });
 
     await prisma.subscription.deleteMany({ where: { contaId } });
@@ -235,7 +230,7 @@ describe('Aluno Service', () => {
 
     const updated = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(updated).toBeNull();
-    expect(deleteCustomerMock).toHaveBeenCalled();
+    expect(syncAlunoInativacaoToAsaasMock).toHaveBeenCalledWith({ alunoId: aluno.id, contaId });
   });
 
   it('arquiva aluno mesmo com assinaturas ativas', async () => {
@@ -286,7 +281,7 @@ describe('Aluno Service', () => {
     const stillThere = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(stillThere).not.toBeNull();
     expect(stillThere?.status).toBe('INATIVO');
-    expect(deleteCustomerMock).not.toHaveBeenCalled();
+    expect(syncAlunoInativacaoToAsaasMock).not.toHaveBeenCalled();
   });
 
   it('arquiva aluno mesmo com matrículas ativas', async () => {
@@ -315,7 +310,7 @@ describe('Aluno Service', () => {
     const stillThere = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(stillThere).not.toBeNull();
     expect(stillThere?.status).toBe('INATIVO');
-    expect(deleteCustomerMock).not.toHaveBeenCalled();
+    expect(syncAlunoInativacaoToAsaasMock).not.toHaveBeenCalled();
   });
 
   it('trata consentimento de imagem corretamente', async () => {
@@ -367,7 +362,7 @@ describe('Aluno Service', () => {
   });
 
   it('não cria aluno quando o Asaas falha', async () => {
-    listCustomersMock.mockRejectedValueOnce(new Error('timeout'));
+    ensureAsaasCustomerForPayerMock.mockRejectedValueOnce(new Error('timeout'));
 
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
 

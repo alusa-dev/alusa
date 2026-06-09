@@ -42,6 +42,7 @@ export const financeiroCobrancaListItemDTOSchema = z.object({
     nome: z.string(),
   }),
   matriculaId: z.string().nullable().optional(),
+  eventId: z.string().nullable().optional(),
   asaasPaymentId: z.string().nullable().optional(),
   atrasado: z.boolean(),
   origin: z.string(),

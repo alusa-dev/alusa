@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { markChargeAsPaid } from '@alusa/finance';
+import { AsaasEnvError, KycNotApprovedError, markChargeAsPaid } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -13,6 +13,18 @@ function err(status: number, code: string, message: string) {
     { error: { code, message } },
     { status, headers: { 'cache-control': 'no-store' } },
   );
+}
+
+function statusFromResultCode(code: string) {
+  const statusMap: Record<string, number> = {
+    NOT_FOUND: 404,
+    ALREADY_PAID: 400,
+    STATUS_NOT_PAYABLE: 400,
+    ASAAS_STATUS_NOT_RECEIVABLE: 409,
+    ASAAS_ALREADY_PAID_SYNC_FAILED: 409,
+    INVALID_PAYMENT_DATE: 400,
+  };
+  return statusMap[code] ?? 400;
 }
 
 interface MarcarPagoBody {
@@ -53,13 +65,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     if (!result.success) {
-      const statusMap: Record<string, number> = {
-        NOT_FOUND: 404,
-        ALREADY_PAID: 400,
-        STATUS_NOT_PAYABLE: 400,
-        ASAAS_STATUS_NOT_RECEIVABLE: 400,
-      };
-      return err(statusMap[result.code] ?? 400, result.code, result.error);
+      return err(statusFromResultCode(result.code), result.code, result.error);
     }
 
     const message = result.data.isOffline
@@ -71,6 +77,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (e) {
+    if (e instanceof KycNotApprovedError) {
+      return err(409, 'KYC_NAO_APROVADO', 'Conta não aprovada para operações financeiras');
+    }
+    if (e instanceof AsaasEnvError) {
+      return err(503, 'ASAAS_INDISPONIVEL', 'Credenciais Asaas não configuradas');
+    }
     console.error('[API Marcar Pago] Erro', e);
     return err(500, 'ERRO_INTERNO', (e as Error).message);
   }

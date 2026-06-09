@@ -80,6 +80,7 @@ describe('mapAsaasTransactionToLedgerEntry', () => {
       id: 'ft_1',
       date: '2025-03-01',
       description: 'Pagamento recebido',
+      externalReference: null,
       asaasType: 'PAYMENT_RECEIVED',
       category: 'PAYMENT_RECEIVED',
       sign: 'CREDIT',

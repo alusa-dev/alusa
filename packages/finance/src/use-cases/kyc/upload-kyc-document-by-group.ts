@@ -43,6 +43,15 @@ function resolveGroupDocumentTypes(group: AsaasMyAccountDocumentGroup): string[]
   return Array.from(types);
 }
 
+function resolveUpdatedOnboardingStatus(
+  summary: GetKycSummaryResult,
+): FinancialOnboardingStatus {
+  const generalStatus = String(summary.myAccountStatus?.general ?? '').toUpperCase();
+  if (generalStatus === 'APPROVED') return 'APPROVED';
+  if (generalStatus === 'REJECTED') return 'REJECTED';
+  return 'UNDER_REVIEW';
+}
+
 export type UploadKycDocumentByGroupResult = GetKycSummaryResult & {
   updatedOnboardingStatus: FinancialOnboardingStatus;
 };
@@ -240,6 +249,6 @@ export async function uploadKycDocumentByGroup(params: {
 
   return {
     ...summary,
-    updatedOnboardingStatus: 'UNDER_REVIEW',
+    updatedOnboardingStatus: resolveUpdatedOnboardingStatus(summary),
   };
 }

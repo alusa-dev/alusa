@@ -24,19 +24,6 @@ vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
 }));
 
-vi.mock('@alusa/asaas', () => ({
-  createPayment: vi.fn(),
-  createInstallment: vi.fn(),
-  createSubscription: vi.fn(),
-  globalAsaasHooks: {
-    onApiCall: vi.fn(),
-    onCircuitOpen: vi.fn(),
-    onQuotaWarning: vi.fn(),
-    onRateLimitHit: vi.fn(),
-    removeAllListeners: vi.fn(),
-  },
-}));
-
 vi.mock('@alusa/finance', async () => {
   const actual = await vi.importActual('@alusa/finance');
   return {
@@ -230,7 +217,6 @@ describe('createStandaloneCharge - Installment API usage', () => {
 
   it('deve usar createInstallment (endpoint /v3/installments) para parcelamentos', async () => {
     const { createStandaloneCharge } = await import('@alusa/finance');
-    const { createInstallment } = await import('@alusa/asaas');
 
     // Mock de sucesso
     vi.mocked(createStandaloneCharge).mockResolvedValueOnce({

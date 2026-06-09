@@ -266,6 +266,23 @@ export async function POST(req: Request) {
       );
     }
 
+    if (willCreateSubscription) {
+      const previewNextDueDate = resolveChargeableFirstDueDate(
+        payload.dataInicio,
+        payload.vencimentoDia,
+      );
+      const previewNextDueDateIso = formatIsoDate(previewNextDueDate);
+      const dataFimContratoIso = formatIsoDate(payload.dataFimContrato);
+
+      if (previewNextDueDateIso > dataFimContratoIso) {
+        return jsonError(
+          422,
+          'DATA_FIM_INVALIDA',
+          `A data de término do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de término ou o dia de vencimento.`,
+        );
+      }
+    }
+
     const result = await criarMatricula(payload);
 
     void createEnrollmentCreatedNotification({
@@ -485,10 +502,7 @@ export async function POST(req: Request) {
             recurringContext.vencimentoDia,
           );
           const nextDueDate = formatIsoDate(nextDueDateObj);
-          const endDate =
-            recurringContext.dataFimContrato >= nextDueDateObj
-              ? formatIsoDate(recurringContext.dataFimContrato)
-              : undefined;
+          const endDate = formatIsoDate(recurringContext.dataFimContrato);
           const discountValue = recurringContext.descontoAntecipado
             ? Number(recurringContext.descontoAntecipado)
             : 0;

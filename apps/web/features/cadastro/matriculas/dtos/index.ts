@@ -150,9 +150,10 @@ export const updateMatriculaInputDTOSchema = z
     contaId: z.string().trim().optional().nullable(),
     status: matriculaStatusDTOSchema.optional(),
     dataInicio: dateStringDTOSchema.optional(),
+    dataFimContrato: dateStringDTOSchema.optional(),
     vencimentoDia: z.number().int().min(1).max(28).optional(),
   })
-  .refine((value) => value.status || value.dataInicio || value.vencimentoDia, {
+  .refine((value) => value.status || value.dataInicio || value.dataFimContrato || value.vencimentoDia, {
     message: 'Informe pelo menos um campo para atualização.',
   });
 export type UpdateMatriculaInputDTO = z.input<typeof updateMatriculaInputDTOSchema>;
@@ -388,6 +389,27 @@ export const matriculaResumoDTOSchema = z.object({
       deleted: z.boolean().default(false),
       syncError: nullableStringDTOSchema.default(null),
       syncedAt: nullableDateStringDTOSchema.default(null),
+    })
+    .nullable()
+    .default(null)
+    .optional(),
+  financialContext: z
+    .object({
+      mode: z.enum(['INDIVIDUAL', 'FAMILY']),
+      sourceMatriculaId: z.string(),
+      targetMatriculaId: z.string(),
+      familyGroupId: nullableStringDTOSchema.default(null),
+      responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable().default(null),
+      affectedMatriculaIds: z.array(z.string()).default([]),
+      alunos: z
+        .array(
+          z.object({
+            matriculaId: z.string(),
+            alunoId: z.string(),
+            nome: z.string(),
+          }),
+        )
+        .default([]),
     })
     .nullable()
     .default(null)

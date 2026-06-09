@@ -1,4 +1,3 @@
-import { deletePayment as deleteAsaasPayment } from '@alusa/asaas';
 import { Prisma, PrismaClient, EventPaymentMethod } from '@prisma/client';
 
 const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => {
@@ -20,6 +19,7 @@ import {
 
 import { prisma } from '../prisma';
 import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
+import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
 import {
   canRemoveEventParticipant,
   type EventParticipantRemovalDecision,
@@ -2039,7 +2039,7 @@ function normalizeParticipantEmails(participant: ParticipantLifecycleRecord) {
 async function collectChargesForEntries(
   db: DbClient,
   ctx: Pick<EventsContext, 'contaId'>,
-  entries: Prisma.EventFinancialEntryGetPayload<{}>[],
+  entries: Prisma.EventFinancialEntryGetPayload<Prisma.EventFinancialEntryDefaultArgs>[],
 ) {
   const asaasPaymentIds = entries
     .map((entry) => entry.asaasPaymentId)
@@ -2342,7 +2342,10 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
     if (credentials?.apiKey) {
       for (const charge of openCharges) {
         if (!charge.asaasPaymentId) continue;
-        await deleteAsaasPayment({ apiKey: credentials.apiKey, paymentId: charge.asaasPaymentId });
+        await getEventAsaasPaymentProvider().deletePayment({
+          apiKey: credentials.apiKey,
+          paymentId: charge.asaasPaymentId,
+        });
       }
     }
   }

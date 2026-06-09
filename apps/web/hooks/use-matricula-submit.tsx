@@ -123,11 +123,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('[useMatriculaSubmit] Erro na resposta da API de matrículas', {
-          status: response.status,
-          payload: payload,
-          apiError: errorData,
-        });
         const messageParts = [errorData.error?.message || `Erro HTTP ${response.status}`];
         if (Array.isArray(errorData.error?.details)) {
           messageParts.push(errorData.error.details.join(', '));
@@ -285,11 +280,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Erro desconhecido');
       setError(error);
-
-      console.error('[useMatriculaSubmit] Falha ao submeter matrícula', {
-        message: error.message,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
 
       // Toast de erro
       toast.custom(

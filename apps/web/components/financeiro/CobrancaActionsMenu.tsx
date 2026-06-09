@@ -21,6 +21,7 @@ import {
   RotateCcw,
   Trash2,
 } from '@/components/icons/icons';
+import { evaluatePaymentActionPolicy, type PaymentOrigin } from '@alusa/finance/client';
 
 /**
  * Tipo de dados da cobrança necessários para o menu de ações
@@ -31,6 +32,15 @@ export interface CobrancaActionData {
   asaasPaymentId?: string | null;
   matriculaId?: string;
   formaPagamento?: string;
+  tipo?: string | null;
+  origin?: PaymentOrigin | string | null;
+  asaasStatus?: string | null;
+  billingType?: string | null;
+  wasReceivedInCash?: boolean;
+  isInstallmentPayment?: boolean;
+  isSubscriptionPayment?: boolean;
+  valor?: number | null;
+  refundedValue?: number | null;
   atrasado?: boolean;
   /** URL pública do boleto em PDF (retornada pela API Asaas) */
   bankSlipUrl?: string | null;
@@ -55,6 +65,7 @@ type ChargeMenuAction =
   | 'VIEW_INVOICE'
   | 'RESEND_NOTIFICATION'
   | 'CONFIRM_CASH_PAYMENT'
+  | 'UNDO_CASH_PAYMENT'
   | 'REFUND'
   | 'CANCEL'
   | 'OPEN_MATRICULA';
@@ -66,6 +77,7 @@ const ACTION_LABELS: Record<ChargeMenuAction, string> = {
   VIEW_INVOICE: 'Visualizar fatura',
   RESEND_NOTIFICATION: 'Reenviar cobrança',
   CONFIRM_CASH_PAYMENT: 'Confirmar recebimento',
+  UNDO_CASH_PAYMENT: 'Desfazer recebimento',
   REFUND: 'Estornar pagamento',
   CANCEL: 'Cancelar cobrança',
   OPEN_MATRICULA: 'Ver matrícula',
@@ -76,6 +88,7 @@ const ACTION_ICONS: Record<ChargeMenuAction, React.ComponentType<{ className?: s
   VIEW_INVOICE: FileText,
   RESEND_NOTIFICATION: Mail,
   CONFIRM_CASH_PAYMENT: DollarSign,
+  UNDO_CASH_PAYMENT: RotateCcw,
   REFUND: RotateCcw,
   CANCEL: Trash2,
   OPEN_MATRICULA: Eye,
@@ -90,6 +103,36 @@ function normalizeStatus(status: string, atrasado?: boolean): NormalizedStatus {
   if (['ESTORNADO', 'ESTORNADO_PARCIAL', 'REFUNDED'].includes(normalized)) return 'REFUNDED';
   if (['PROCESSANDO', 'PROCESSING'].includes(normalized)) return 'PROCESSING';
   return 'PENDING';
+}
+
+function resolvePaymentOrigin(cobranca: CobrancaActionData): PaymentOrigin {
+  if (cobranca.origin) {
+    const origin = String(cobranca.origin).toUpperCase();
+    if (
+      origin === 'ACADEMIC' ||
+      origin === 'STANDALONE' ||
+      origin === 'INSTALLMENT' ||
+      origin === 'SUBSCRIPTION' ||
+      origin === 'EVENT' ||
+      origin === 'STORE' ||
+      origin === 'ENROLLMENT_FEE'
+    ) {
+      return origin;
+    }
+  }
+
+  switch (cobranca.tipo) {
+    case 'PARCELADA':
+      return 'INSTALLMENT';
+    case 'RECORRENTE':
+      return 'SUBSCRIPTION';
+    case 'TAXA_MATRICULA':
+      return 'ENROLLMENT_FEE';
+    case 'AVULSA':
+      return 'STANDALONE';
+    default:
+      return 'ACADEMIC';
+  }
 }
 
 type OfficialChargeLinks = {
@@ -166,19 +209,39 @@ function openOfficialChargeLink(links: OfficialChargeLinks) {
 function getRecommendedActions(cobranca: CobrancaActionData): ChargeMenuAction[] {
   const normalizedStatus = normalizeStatus(cobranca.status, cobranca.atrasado);
   const hasAsaasPaymentId = Boolean(cobranca.asaasPaymentId);
+  const wasReceivedInCash =
+    cobranca.wasReceivedInCash ||
+    String(cobranca.asaasStatus ?? '').toUpperCase() === 'RECEIVED_IN_CASH' ||
+    String(cobranca.billingType ?? cobranca.formaPagamento ?? '').toUpperCase() === 'RECEIVED_IN_CASH';
+  const policy = evaluatePaymentActionPolicy({
+    entityType: 'COBRANCA',
+    origin: resolvePaymentOrigin(cobranca),
+    localStatus: cobranca.status,
+    asaasStatus: cobranca.asaasStatus,
+    billingType: cobranca.billingType ?? cobranca.formaPagamento,
+    hasAsaasPaymentId,
+    hasInvoiceUrl: Boolean(cobranca.invoiceUrl || cobranca.bankSlipUrl),
+    wasReceivedInCash,
+    isInstallmentPayment: cobranca.isInstallmentPayment || cobranca.tipo === 'PARCELADA',
+    isSubscriptionPayment: cobranca.isSubscriptionPayment || cobranca.tipo === 'RECORRENTE',
+    paymentValue: cobranca.valor,
+    refundedValue: cobranca.refundedValue,
+  });
   const actions: ChargeMenuAction[] = ['OPEN_DETAILS'];
 
-  if (hasAsaasPaymentId) {
+  if (policy.canViewInvoice) {
     actions.push('VIEW_INVOICE');
   }
 
   if (normalizedStatus === 'PENDING' || normalizedStatus === 'OVERDUE') {
-    if (hasAsaasPaymentId) actions.push('RESEND_NOTIFICATION');
+    if (policy.canResendNotification) actions.push('RESEND_NOTIFICATION');
     actions.push('CONFIRM_CASH_PAYMENT');
-    actions.push('CANCEL');
+    if (policy.canCancel) actions.push('CANCEL');
   }
 
-  if (normalizedStatus === 'PAID') {
+  if (policy.canUndoCashPayment) {
+    actions.push('UNDO_CASH_PAYMENT');
+  } else if (policy.canRefund || normalizedStatus === 'PAID') {
     actions.push('REFUND');
   }
 
@@ -202,6 +265,12 @@ function getConfirmationCopy(action: ChargeMenuAction) {
         title: 'Estornar pagamento?',
         description: 'Esta ação solicita o estorno oficial da cobrança e a Alusa refletirá o estado confirmado pela plataforma financeira.',
         confirmText: 'Solicitar estorno',
+      };
+    case 'UNDO_CASH_PAYMENT':
+      return {
+        title: 'Desfazer recebimento em dinheiro?',
+        description: 'Esta ação desfaz no Asaas a confirmação manual de recebimento em dinheiro. O estado local será reconciliado em seguida.',
+        confirmText: 'Desfazer recebimento',
       };
     case 'CANCEL':
       return {
@@ -303,7 +372,7 @@ export function CobrancaActionsMenu({
           });
           break;
         case 'CONFIRM_CASH_PAYMENT':
-          response = await fetch(`/api/cobrancas/${cobranca.id}/confirmar-recebimento`, {
+          response = await fetch(`/api/financeiro/cobrancas/${cobranca.id}/marcar-pago`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -311,6 +380,13 @@ export function CobrancaActionsMenu({
           break;
         case 'REFUND':
           response = await fetch(`/api/cobrancas/${cobranca.id}/refund`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          break;
+        case 'UNDO_CASH_PAYMENT':
+          response = await fetch(`/api/cobrancas/${cobranca.id}/undo-receive-in-cash`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -400,7 +476,7 @@ export function CobrancaActionsMenu({
               <DropdownMenuItem
                 key={action}
                 onClick={() => {
-                  if (['CONFIRM_CASH_PAYMENT', 'REFUND', 'CANCEL'].includes(action)) {
+                  if (['CONFIRM_CASH_PAYMENT', 'UNDO_CASH_PAYMENT', 'REFUND', 'CANCEL'].includes(action)) {
                     setConfirmAction(action);
                     return;
                   }

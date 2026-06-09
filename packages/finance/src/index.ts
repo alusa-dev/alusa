@@ -4,6 +4,9 @@ import { registerAsaasHooksIntegration as initializeAsaasHooksIntegration } from
 // CORE - Definições fundamentais (Fase 0 refatoração)
 // ═══════════════════════════════════════════════════════════════════════════
 export * from './core';
+export * from './billing';
+export * from './policies';
+export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration contracts — Asaas (fachada para apps/web e packages/lib)
@@ -32,11 +35,11 @@ export {
   sanitizeRejectedWebhookPayload,
 } from './privacy/webhook-payload-sanitizer';
 export {
-  BillingV2Flags,
-  isBillingV2FlagEnabled,
-  getBillingV2Flags,
-  type BillingV2FlagName,
-} from './foundation/billing-v2-flags';
+  PaymentResolutionPolicies,
+  isPaymentResolutionPolicyEnabled,
+  getPaymentResolutionPolicies,
+  type PaymentResolutionPolicyName,
+} from './foundation/payment-resolution-policy';
 export { AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
 export {
   getAsaasBaseUrlFromEnvOrThrow,
@@ -637,6 +640,25 @@ export type {
   SyncPaymentStateFromAsaasInput,
   SyncPaymentStateFromAsaasOutput,
 } from './use-cases/sync-payment-state-from-asaas';
+export {
+  expectedEventsForPaymentCommand,
+  registerPaymentCommand,
+  markPaymentCommandSent,
+  failPaymentCommand,
+  confirmPaymentCommandsByProviderEvent,
+  markStalePaymentCommandsForReconciliation,
+} from './use-cases/payment-command-ledger';
+export { reconcilePendingPaymentCommands } from './use-cases/reconcile-pending-payment-commands';
+export type {
+  PaymentCommandEntityType,
+  PaymentCommandJobType,
+  PaymentCommandOperationalStatus,
+  RegisterPaymentCommandInput,
+} from './use-cases/payment-command-ledger';
+export type {
+  ReconcilePendingPaymentCommandsInput,
+  ReconcilePendingPaymentCommandsOutput,
+} from './use-cases/reconcile-pending-payment-commands';
 export { getFinanceiroKpisFromAsaas } from './use-cases/get-financeiro-kpis-from-asaas';
 export type {
   FinanceiroKpiSnapshot,

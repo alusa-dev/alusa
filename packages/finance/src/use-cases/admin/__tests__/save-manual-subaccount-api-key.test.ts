@@ -223,7 +223,7 @@ describe('saveManualSubaccountApiKey', () => {
     );
     expect(repairWebhookConfigDrift).toHaveBeenCalledWith({
       contaId: 'conta-1',
-      actor: { type: 'ADMIN', id: 'ops' },
+      actor: { type: 'SYSTEM' },
     });
     expect(reconcileAsaasAccount).toHaveBeenCalledWith({
       contaId: 'conta-1',

@@ -156,7 +156,7 @@ export function CobrancaActionsMenu({
 
       switch (action) {
         case 'CONFIRM_CASH_PAYMENT':
-          endpoint = `/api/financeiro/cobrancas/${cobrancaId}/receber-dinheiro`;
+          endpoint = `/api/financeiro/cobrancas/${cobrancaId}/marcar-pago`;
           break;
         case 'UNDO_CASH_PAYMENT':
           endpoint = `/api/cobrancas/${cobrancaId}/undo-receive-in-cash`;

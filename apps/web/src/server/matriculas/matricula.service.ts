@@ -767,12 +767,13 @@ export async function atualizarDetalhesMatricula(input: {
   contaId: string;
   actorId: string;
   dataInicio?: string;
+  dataFimContrato?: string;
   vencimentoDia?: number;
   metadata?: Record<string, unknown>;
 }) {
   const atual = await prisma.matricula.findFirst({
     where: { id: input.id, aluno: { contaId: input.contaId } },
-    select: { id: true, status: true, dataInicio: true, vencimentoDia: true },
+    select: { id: true, status: true, dataInicio: true, dataFimContrato: true, vencimentoDia: true },
   });
 
   if (!atual) {
@@ -788,6 +789,23 @@ export async function atualizarDetalhesMatricula(input: {
   const data: Record<string, unknown> = {};
   if (input.dataInicio) {
     data.dataInicio = new Date(input.dataInicio);
+  }
+  if (input.dataFimContrato) {
+    const nextDataInicio = input.dataInicio ? new Date(input.dataInicio) : atual.dataInicio;
+    const nextDataFimContrato = new Date(input.dataFimContrato);
+    const datasResult = validarDatasContrato(nextDataInicio, nextDataFimContrato, {
+      permitirInicioPassado: true,
+    });
+
+    if (!datasResult.success) {
+      const message =
+        datasResult.error === 'DATA_FIM_ANTES_INICIO'
+          ? 'Data de fim do contrato deve ser posterior à data de início.'
+          : 'Data de início não pode estar no passado.';
+      throw new Error(message);
+    }
+
+    data.dataFimContrato = nextDataFimContrato;
   }
   if (typeof input.vencimentoDia === 'number') {
     data.vencimentoDia = input.vencimentoDia;
@@ -810,8 +828,10 @@ export async function atualizarDetalhesMatricula(input: {
         action: 'MATRICULA_DETAILS_EDITED',
         metadata: {
           previousDataInicio: atual.dataInicio.toISOString(),
+          previousDataFimContrato: atual.dataFimContrato.toISOString(),
           previousVencimentoDia: atual.vencimentoDia,
           nextDataInicio: input.dataInicio ?? atual.dataInicio.toISOString(),
+          nextDataFimContrato: input.dataFimContrato ?? atual.dataFimContrato.toISOString(),
           nextVencimentoDia: input.vencimentoDia ?? atual.vencimentoDia,
           ...(input.metadata ?? {}),
         },
@@ -826,9 +846,9 @@ export async function editarMatricula(input: {
   matriculaId: string;
   contaId: string;
   createdById: string;
-  turmaId?: string;
-  comboId?: string;
-  planoId?: string;
+  turmaId?: string | null;
+  comboId?: string | null;
+  planoId?: string | null;
   motivo?: string;
   metadata?: Record<string, unknown>;
 }) {
@@ -857,8 +877,8 @@ export async function editarMatricula(input: {
     });
     if (!verify) throw new Error('Matrícula não encontrada');
 
-    const targetTurmaId = input.turmaId ?? verify.turmaId ?? undefined;
-    const targetComboId = input.comboId ?? verify.comboId ?? undefined;
+    const targetTurmaId = input.turmaId !== undefined ? input.turmaId : verify.turmaId;
+    const targetComboId = input.comboId !== undefined ? input.comboId : verify.comboId;
     const turmaChanged = typeof input.turmaId !== 'undefined' && input.turmaId !== verify.turmaId;
     const comboChanged = typeof input.comboId !== 'undefined' && input.comboId !== verify.comboId;
 

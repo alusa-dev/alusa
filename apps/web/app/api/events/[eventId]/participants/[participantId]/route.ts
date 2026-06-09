@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@alusa/database';
 import { unregisterEventParticipant, calculateParticipantPayment } from '@alusa/lib/events/events.service';
+import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 
 export const dynamic = 'force-dynamic';
@@ -489,6 +490,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    ensureEventAsaasPaymentProviderRegistered();
     const { eventId, participantId } = await params;
     const ctx = await getEventsContext('events.update');
 

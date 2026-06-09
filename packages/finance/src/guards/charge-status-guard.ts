@@ -14,6 +14,7 @@ import {
   getCobrancaPrecedence,
   getChargePrecedence,
 } from '../mappers/status-precedence';
+import { evaluatePaymentActionPolicy, toLegacyChargeActions } from '../policies';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -167,46 +168,29 @@ export function getAllowedActionsByChargeStatus(
   status: StatusCobranca,
   options?: { wasReceivedInCash?: boolean },
 ): ChargeAction[] {
-  const wasReceivedInCash = options?.wasReceivedInCash ?? false;
+  const policy = evaluatePaymentActionPolicy({
+    entityType: 'COBRANCA',
+    origin: 'ACADEMIC',
+    localStatus: status,
+    hasAsaasPaymentId: true,
+    hasInvoiceUrl: true,
+    wasReceivedInCash: options?.wasReceivedInCash,
+  });
+  const actions = toLegacyChargeActions(policy) as ChargeAction[];
 
-  switch (status) {
-    case 'A_VENCER':
-        return ['VIEW_INVOICE', 'CONFIRM_CASH_PAYMENT', 'CANCEL', 'EDIT'];
-
-    case 'PENDENTE':
-        return ['VIEW_INVOICE', 'CONFIRM_CASH_PAYMENT', 'CANCEL', 'EDIT'];
-
-    case 'PROCESSANDO':
-        // Pagamento em processamento - apenas visualização
-        return ['VIEW_INVOICE'];
-
-    case 'ATRASADO':
-        return ['VIEW_INVOICE', 'CONFIRM_CASH_PAYMENT', 'CANCEL'];
-
-    case 'CANCELAMENTO_PENDENTE':
-        // Aguardando confirmação de cancelamento - apenas aguardar
-        return [];
-
-    case 'PAGO':
-      // Se foi recebido em dinheiro, a reversão correta é desfazer o recebimento,
-      // não solicitar estorno.
-      if (wasReceivedInCash) {
-        return ['VIEW_INVOICE', 'UNDO_CASH_PAYMENT'];
-      }
-      return ['VIEW_INVOICE', 'REFUND'];
-
-    case 'CANCELADO':
-      // Cobrança cancelada - apenas visualização
-      return ['VIEW_INVOICE'];
-
-    case 'ESTORNADO':
-    case 'ESTORNADO_PARCIAL':
-      // Cobrança estornada - apenas visualização
-      return ['VIEW_INVOICE'];
-
-    default:
-      return ['VIEW_INVOICE'];
+  if (['A_VENCER', 'PENDENTE'].includes(status) && !actions.includes('CONFIRM_CASH_PAYMENT')) {
+    return [...actions, 'CONFIRM_CASH_PAYMENT'];
   }
+
+  if (status === 'ATRASADO') {
+    return [...actions, 'CONFIRM_CASH_PAYMENT'];
+  }
+
+  if (status === 'CANCELAMENTO_PENDENTE') {
+    return [];
+  }
+
+  return actions;
 }
 
 /**

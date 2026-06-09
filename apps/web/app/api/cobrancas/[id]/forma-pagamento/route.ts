@@ -20,6 +20,21 @@ import { mapCobrancaUpdateFormaPagamentoResultToDTO } from '@/features/financeir
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
+const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+const LOCAL_EDITABLE_COBRANCA_STATUSES = new Set(['PENDENTE', 'A_VENCER', 'ATRASADO']);
+const LOCAL_EDITABLE_CHARGE_STATUSES = new Set(['CREATED', 'OPEN', 'OVERDUE']);
+
+function mutationError(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
+  return NextResponse.json(
+    {
+      success: false,
+      code,
+      error: message,
+      ...extra,
+    },
+    { status },
+  );
+}
 
 /**
  * PUT /api/cobrancas/[id]/forma-pagamento
@@ -29,7 +44,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const rawParams = await params;
   try {
     // Removido: logs de variáveis sensíveis de ambiente
-    const { id } = cobrancaRouteParamsDTOSchema.parse(params);
+    const { id } = cobrancaRouteParamsDTOSchema.parse(rawParams);
     const body = await req.json();
     const parsedBody = cobrancaUpdateFormaPagamentoInputDTOSchema.safeParse(body);
     if (!parsedBody.success) {
@@ -66,7 +81,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       );
     }
 
-    // Buscar cobrança - MULTI-TENANT
+    // Buscar cobrança acadêmica - MULTI-TENANT
     const cobranca = await prisma.cobranca.findFirst({
       where: { id, matricula: { aluno: { contaId } } },
       include: {
@@ -78,7 +93,154 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     });
 
-    if (!cobranca) {
+    const standaloneCharge = !cobranca
+      ? await prisma.charge.findFirst({
+          where: { id, contaId },
+          select: {
+            id: true,
+            status: true,
+            asaasPaymentId: true,
+            value: true,
+            dueDate: true,
+            billingType: true,
+            invoiceUrl: true,
+          },
+        })
+      : null;
+
+    if (!cobranca && !standaloneCharge) {
+      return NextResponse.json(
+        { success: false, error: 'Cobrança não encontrada' },
+        { status: 404 },
+      );
+    }
+
+    if (standaloneCharge) {
+      if (!LOCAL_EDITABLE_CHARGE_STATUSES.has(String(standaloneCharge.status))) {
+        return mutationError(
+          String(standaloneCharge.status) === 'PAID' ? 409 : 400,
+          String(standaloneCharge.status) === 'PAID'
+            ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
+            : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
+          `Apenas cobranças em aberto podem ter a forma de pagamento alterada. Status atual: ${standaloneCharge.status}`,
+          { status: standaloneCharge.status },
+        );
+      }
+
+      if (!standaloneCharge.asaasPaymentId) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Cobrança não possui ID do Asaas. Não é possível sincronizar.',
+          },
+          { status: 400 },
+        );
+      }
+
+      if (!isAsaasEnabled()) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Integração com Asaas desabilitada. Ative FEATURE_ASAAS para sincronizar.',
+          },
+          { status: 503 },
+        );
+      }
+
+      const billingType =
+        FORMA_PAGAMENTO_TO_ASAAS[formaPagamento as keyof typeof FORMA_PAGAMENTO_TO_ASAAS] as AsaasCreatePaymentInput['billingType'] | undefined;
+
+      if (!billingType) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Forma de pagamento inválida: ${formaPagamento}`,
+          },
+          { status: 400 },
+        );
+      }
+
+      let asaasData: Awaited<ReturnType<typeof updatePayment>>;
+      try {
+        const currentPayment = await readPaymentFullPreflight(standaloneCharge.asaasPaymentId, { contaId });
+
+        if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
+          return mutationError(
+            ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status) ? 409 : 400,
+            ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status)
+              ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
+              : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
+            `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
+            { asaasStatus: currentPayment.status },
+          );
+        }
+
+        const payload: Partial<AsaasCreatePaymentInput> = {
+          billingType,
+          value: Number(currentPayment.value ?? standaloneCharge.value ?? 0),
+          dueDate: currentPayment.dueDate ?? standaloneCharge.dueDate?.toISOString().slice(0, 10),
+        };
+
+        asaasData = await updatePayment(standaloneCharge.asaasPaymentId, payload, { contaId });
+      } catch (error) {
+        if (error instanceof KycNotApprovedError) {
+          return NextResponse.json(
+            { success: false, error: 'KYC_NAO_APROVADO' },
+            { status: 409 },
+          );
+        }
+        if (error instanceof AsaasEnvError) {
+          console.error('[PUT forma-pagamento] Configuração Asaas inválida:', error.message);
+          return NextResponse.json(
+            {
+              success: false,
+              error: error.message,
+            },
+            { status: 500 },
+          );
+        }
+
+        console.error('[PUT forma-pagamento] Erro ao atualizar Charge no Asaas:', error);
+
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Erro ao sincronizar com Asaas',
+            details: {
+              paymentId: standaloneCharge.asaasPaymentId,
+              billingType,
+            },
+          },
+          { status: 500 },
+        );
+      }
+
+      const chargeAtualizada = await prisma.charge.update({
+        where: { id: standaloneCharge.id },
+        data: {
+          billingType,
+          updatedAt: new Date(),
+        },
+      });
+
+      return NextResponse.json(
+        cobrancaUpdateFormaPagamentoResultDTOSchema.parse(
+          mapCobrancaUpdateFormaPagamentoResultToDTO({
+            success: true,
+            message:
+              'Alteração enviada para processamento financeiro da Alusa. A atualização pode levar alguns instantes para refletir em toda a aplicação.',
+            data: {
+              cobranca: chargeAtualizada,
+              asaasData,
+            },
+          }),
+        ),
+        { status: 202 },
+      );
+    }
+
+    const academicCobranca = cobranca;
+    if (!academicCobranca) {
       return NextResponse.json(
         { success: false, error: 'Cobrança não encontrada' },
         { status: 404 },
@@ -86,18 +248,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     // Validar se a cobrança está pendente
-    if (cobranca.status !== 'PENDENTE' && cobranca.status !== 'A_VENCER') {
+    if (!LOCAL_EDITABLE_COBRANCA_STATUSES.has(String(academicCobranca.status))) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Apenas cobranças pendentes podem ter a forma de pagamento alterada',
+          error: 'Apenas cobranças em aberto podem ter a forma de pagamento alterada',
         },
         { status: 400 },
       );
     }
 
     // Validar se tem asaasPaymentId
-    if (!cobranca.asaasPaymentId) {
+    if (!academicCobranca.asaasPaymentId) {
       return NextResponse.json(
         {
           success: false,
@@ -135,32 +297,33 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     let asaasData: Awaited<ReturnType<typeof updatePayment>>;
     try {
-      const contaId = cobranca.matricula.aluno?.contaId;
+      const contaId = academicCobranca.matricula.aluno?.contaId;
       if (!contaId) {
         return NextResponse.json(
           { success: false, error: 'Aluno não possui conta vinculada. Não é possível sincronizar com Asaas.' },
           { status: 400 },
         );
       }
-      const currentPayment = await readPaymentFullPreflight(cobranca.asaasPaymentId, { contaId });
+      const currentPayment = await readPaymentFullPreflight(academicCobranca.asaasPaymentId, { contaId });
 
       if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
-          },
-          { status: 409 },
+        return mutationError(
+          ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status) ? 409 : 400,
+          ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status)
+            ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
+            : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
+          `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
+          { asaasStatus: currentPayment.status },
         );
       }
 
       const payload: Partial<AsaasCreatePaymentInput> = {
         billingType,
-        value: Number(currentPayment.value ?? cobranca.valor),
-        dueDate: currentPayment.dueDate ?? cobranca.vencimento.toISOString().slice(0, 10),
+        value: Number(currentPayment.value ?? academicCobranca.valor),
+        dueDate: currentPayment.dueDate ?? academicCobranca.vencimento.toISOString().slice(0, 10),
       };
 
-      asaasData = await updatePayment(cobranca.asaasPaymentId, payload, { contaId });
+      asaasData = await updatePayment(academicCobranca.asaasPaymentId, payload, { contaId });
     } catch (error) {
       if (error instanceof KycNotApprovedError) {
         return NextResponse.json(
@@ -186,7 +349,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           success: false,
           error: 'Erro ao sincronizar com Asaas',
           details: {
-            paymentId: cobranca.asaasPaymentId,
+            paymentId: academicCobranca.asaasPaymentId,
             billingType,
           },
         },
@@ -195,7 +358,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
     // Buscar contaId da matrícula através do aluno
     const matricula = await prisma.matricula.findUnique({
-      where: { id: cobranca.matriculaId },
+      where: { id: academicCobranca.matriculaId },
       include: {
         aluno: {
           select: { contaId: true },
@@ -239,10 +402,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         cobrancaId: id,
         acao: 'FORMA_PAGAMENTO_ALTERADA',
         detalhes: {
-          formaAnterior: cobranca.formaPagamento,
+          formaAnterior: academicCobranca.formaPagamento,
           formaNova: formaPagamento,
           billingTypeAsaas: billingType,
-          asaasPaymentId: cobranca.asaasPaymentId,
+          asaasPaymentId: academicCobranca.asaasPaymentId,
           dataAlteracao: new Date().toISOString(),
         },
       },

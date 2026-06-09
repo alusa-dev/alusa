@@ -41,6 +41,8 @@ export function mapBillingTypeToFormaPagamento(value?: string | null): string | 
       return 'CARTAO_CREDITO';
     case 'DEBIT_CARD':
       return 'CARTAO_DEBITO';
+    case 'RECEIVED_IN_CASH':
+      return 'INDEFINIDO';
     case 'UNDEFINED':
       return 'INDEFINIDO';
     default:

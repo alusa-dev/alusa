@@ -15,6 +15,7 @@ import {
   formatBRLInput,
   formatPercentInput,
   DISCOUNT_DUE_DATE_OPTIONS,
+  formatDiscountDueDateLimitLabel,
   type MultaTipo,
   type DescontoTipo,
   type FinancialRulesState,
@@ -137,7 +138,7 @@ export function FinancialRulesSection({
               <SelectContent>
                 {DISCOUNT_DUE_DATE_OPTIONS.map((days) => (
                   <SelectItem key={days} value={String(days)}>
-                    {days === 0 ? 'Até o vencimento' : `${days} dia(s) antes`}
+                    {formatDiscountDueDateLimitLabel(days)}
                   </SelectItem>
                 ))}
               </SelectContent>

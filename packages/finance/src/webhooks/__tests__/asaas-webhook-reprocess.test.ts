@@ -7,6 +7,7 @@ import { reprocessErroredAsaasWebhooks } from '../asaas-webhook-handler';
 
 async function cleanup(contaId: string) {
   await prisma.webhookAsaas.deleteMany({ where: { contaId } });
+  await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
   await prisma.usuario.deleteMany({ where: { contaId } });
   await prisma.conta.deleteMany({ where: { id: contaId } });
 }

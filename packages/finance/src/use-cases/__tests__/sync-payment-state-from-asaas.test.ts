@@ -11,6 +11,10 @@ vi.mock('../../webhooks/payment-webhook-handler', () => ({
   handlePaymentWebhook: vi.fn(),
 }));
 
+vi.mock('../payment-command-ledger', () => ({
+  confirmPaymentCommandsByProviderEvent: vi.fn(async () => []),
+}));
+
 describe('syncPaymentStateFromAsaas', () => {
   beforeEach(() => {
     vi.clearAllMocks();

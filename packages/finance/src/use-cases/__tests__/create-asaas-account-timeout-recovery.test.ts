@@ -143,6 +143,7 @@ describe('createAsaasAccount - timeout e recovery', () => {
     process.env.ASAAS_BASE_URL = 'https://api-sandbox.asaas.com/v3';
     process.env.NEXT_PUBLIC_APP_URL = 'https://app.alusa.com.br';
     process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET = 'test-webhook-secret';
+    delete process.env.ASAAS_ACCESS_TOKEN_RECOVERY_ENABLED;
 
     // Default: subconta não existe
     mockAsaasAccountFindUnique.mockResolvedValue(null);
@@ -235,10 +236,9 @@ describe('createAsaasAccount - timeout e recovery', () => {
 
     expect(result.asaasAccountId).toBe('acc_recovered');
     expect(result.created).toBe(true);
+    expect(result.requiresManualApiKeyRecovery).toBe(true);
     expect(mockListSubaccounts).toHaveBeenCalledTimes(2);
-    expect(mockCreateSubaccountAccessToken).toHaveBeenCalledWith(
-      expect.objectContaining({ accountId: 'acc_recovered' }),
-    );
+    expect(mockCreateSubaccountAccessToken).not.toHaveBeenCalled();
   });
 
   it('deve propagar erro se recovery não encontrar subconta', async () => {
@@ -328,10 +328,10 @@ describe('createAsaasAccount - timeout e recovery', () => {
 
     await expect(createAsaasAccount({ contaId: 'c1' })).rejects.toThrow();
 
-    // Deve ter atualizado provisionAttempts
-    expect(mockAsaasAccountUpdate).toHaveBeenCalledWith(
+    // Deve ter registrado tentativa de provisionamento no placeholder
+    expect(mockAsaasAccountUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
+        update: expect.objectContaining({
           provisionAttempts: { increment: 1 },
         }),
       }),

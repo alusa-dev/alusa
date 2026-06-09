@@ -96,6 +96,7 @@ async function cleanup(contaId: string) {
   const profile = await prisma.financeProfile.findUnique({ where: { contaId }, select: { id: true } });
 
   await prisma.auditLog.deleteMany({ where: { contaId } });
+  await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
 
   if (profile) {
     await prisma.asaasCredential.deleteMany({ where: { financeProfileId: profile.id } });

@@ -212,7 +212,15 @@ async function updateApiKeyStatus(
 }
 
 async function applyGlobalNotificationPreferencesSafe(contaId: string, customerId: string) {
-  await syncCustomerNotificationChannelsFromTenantPreferences(contaId, customerId);
+  try {
+    await syncCustomerNotificationChannelsFromTenantPreferences(contaId, customerId);
+  } catch (error) {
+    console.warn('[ensureAsaasCustomerForPayer] Falha ao aplicar preferências globais de notificação', {
+      contaId,
+      customerId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function deferGlobalNotificationPreferences(contaId: string, customerId: string) {

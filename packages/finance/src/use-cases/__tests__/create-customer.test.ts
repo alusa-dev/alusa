@@ -6,12 +6,34 @@ vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
 }));
 
-vi.mock('@alusa/asaas', () => ({
-  createCustomer: vi.fn(),
-  listCustomers: vi.fn(),
-  restoreCustomer: vi.fn(),
-  updateCustomer: vi.fn(),
+vi.mock('../../foundation/asaas-operational-guard', () => ({
+  assertAsaasTenantOperational: vi.fn(async () => ({
+    contaId: 'conta-1',
+    financeProfileId: 'fp-1',
+    asaasAccountId: 'acc-1',
+    status: 'APPROVED',
+    apiKeyStatus: 'CONNECTED',
+    webhookStatus: 'ACTIVE',
+    operationalStatus: 'OPERATIONAL',
+    hasSubaccountId: true,
+    hasApiKey: true,
+    apiKeyConnected: true,
+    webhookActive: true,
+    kycRejected: false,
+    regulatoryBlocked: false,
+  })),
 }));
+
+vi.mock('@alusa/asaas', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@alusa/asaas')>();
+  return {
+    ...actual,
+    createCustomer: vi.fn(),
+    listCustomers: vi.fn(),
+    restoreCustomer: vi.fn(),
+    updateCustomer: vi.fn(),
+  };
+});
 
 describe('createAsaasCustomer', () => {
   beforeEach(async () => {

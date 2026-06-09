@@ -6,7 +6,7 @@ import {
   refundPublicEventMapOrderByPayment,
   syncPublicEventMapOrderPaymentCreated,
 } from '@alusa/lib/events/map/event-map.service';
-import { isBillingV2FlagEnabled } from '../foundation/billing-v2-flags';
+import { isPaymentResolutionPolicyEnabled } from '../foundation/payment-resolution-policy';
 import { resolvePaymentToLocalEntity } from './payment-resolver';
 import {
   canApplyChargeStatusTransition,
@@ -25,6 +25,7 @@ import { financeSummaryReadModelService } from '../read-model/finance-summary-re
 import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
+import { confirmPaymentCommandsByProviderEvent } from '../use-cases/payment-command-ledger';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { Prisma } from '@prisma/client';
@@ -77,6 +78,17 @@ export type PaymentWebhookPayload = {
     /** Indica remoção lógica do payment no Asaas */
     deleted?: boolean | null;
   };
+};
+
+export type PaymentWebhookResult = {
+  success: boolean;
+  error?: string;
+  skipped?: boolean;
+  skipReason?: string;
+  localEntityType?: 'Cobranca' | 'Charge' | 'Payment';
+  localEntityId?: string;
+  previousStatus?: string;
+  nextStatus?: string;
 };
 
 const SENSITIVE_PAYMENT_EVENTS = new Set([
@@ -450,7 +462,7 @@ async function handleStandaloneChargeWebhook(
   contaId: string,
   payload: PaymentWebhookPayload,
   charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null }
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PaymentWebhookResult> {
   const p = payload.payment;
   const internalStatus = resolveInternalPaymentStatus({
     eventName: payload.event,
@@ -480,7 +492,29 @@ async function handleStandaloneChargeWebhook(
       event: payload.event,
       deleted: payload.payment.deleted ?? null,
     });
-    return { success: true };
+    await auditLogService.record({
+      contaId,
+      action: 'finance.webhook.standalone_charge_skipped',
+      entity: { type: 'Charge', id: charge.id },
+      metadata: {
+        event: payload.event,
+        asaasPaymentId: p.id,
+        asaasStatus: p.status,
+        billingType: p.billingType ?? null,
+        previousStatus: charge.status,
+        attemptedStatus: nextStatusCharge,
+        skipReason: 'STATUS_TRANSITION_BLOCKED',
+      },
+    });
+    return {
+      success: true,
+      skipped: true,
+      skipReason: 'STATUS_TRANSITION_BLOCKED',
+      localEntityType: 'Charge',
+      localEntityId: charge.id,
+      previousStatus: charge.status,
+      nextStatus: nextStatusCharge,
+    };
   }
 
   // Atualizar Charge
@@ -702,7 +736,7 @@ async function updateEventFinancialEntryFromWebhook(
 export async function handlePaymentWebhook(
   contaId: string,
   payload: PaymentWebhookPayload
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PaymentWebhookResult> {
   const paymentId = payload.payment?.id?.trim();
   if (!paymentId) {
     return { success: false, error: 'Payment ID ausente' };
@@ -719,12 +753,28 @@ export async function handlePaymentWebhook(
 async function handlePaymentWebhookCore(
   contaId: string,
   payload: PaymentWebhookPayload
-): Promise<{ success: boolean; error?: string }> {
+): Promise<PaymentWebhookResult> {
   try {
     payload = {
       ...payload,
       payment: await enrichPaymentWithOfficialLinks(contaId, payload.payment),
     };
+
+    try {
+      await confirmPaymentCommandsByProviderEvent({
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        eventName: payload.event,
+        providerStatus: payload.payment.status,
+      });
+    } catch (commandError) {
+      console.warn('[payment-webhook] Falha não crítica ao confirmar comando financeiro pendente', {
+        contaId,
+        asaasPaymentId: payload.payment.id,
+        event: payload.event,
+        message: commandError instanceof Error ? commandError.message : String(commandError),
+      });
+    }
 
     try {
       const paidAt =
@@ -784,9 +834,9 @@ async function handlePaymentWebhookCore(
     // (com base no rawBody) para evitar recomputar HMAC em JSON reconstruído.
 
     // ─────────────────────────────────────────────────────────────────────────
-    // FASE 1 (v2): Linkagem determinística via resolver
+    // Linkagem determinística oficial via resolver
     // ─────────────────────────────────────────────────────────────────────────
-    if (isBillingV2FlagEnabled('billing.v2_linking')) {
+    if (isPaymentResolutionPolicyEnabled('payment.webhook_deterministic_resolution')) {
       const resolveResult = await resolvePaymentToLocalEntity({
         contaId,
         asaasPaymentId: payload.payment.id,
@@ -799,7 +849,7 @@ async function handlePaymentWebhookCore(
 
       // Se resolver encontrou algo, processar de forma determinística
       if (resolveResult.type !== 'not_found') {
-        console.log('[payment-webhook] v2 resolver encontrou:', {
+        console.log('[payment-webhook] resolver determinístico encontrou:', {
           contaId,
           asaasPaymentId: payload.payment.id,
           resolveType: resolveResult.type,
@@ -822,7 +872,7 @@ async function handlePaymentWebhookCore(
         // (o código abaixo já trata esses casos)
       } else {
         // Log para auditoria de fallback
-        console.warn('[payment-webhook] v2 resolver não encontrou, usando fallback v1:', {
+        console.warn('[payment-webhook] resolver determinístico não encontrou, usando fallback compatível:', {
           contaId,
           asaasPaymentId: payload.payment.id,
           externalReference: payload.payment.externalReference,

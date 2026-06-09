@@ -6,9 +6,9 @@ const { mockUpdateFinanceStatusFromPayment } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
 }));
 
-vi.mock('../../foundation/billing-v2-flags', () => {
+vi.mock('../../foundation/payment-resolution-policy', () => {
   return {
-    isBillingV2FlagEnabled: vi.fn(() => false),
+    isPaymentResolutionPolicyEnabled: vi.fn(() => false),
   };
 });
 
@@ -78,9 +78,9 @@ describe('handlePaymentWebhook', () => {
     vi.resetAllMocks();
     mockUpdateFinanceStatusFromPayment.mockResolvedValue({ success: true });
 
-    const { isBillingV2FlagEnabled } = await import('../../foundation/billing-v2-flags');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
     const { prisma } = await import('@alusa/database');
-    vi.mocked(isBillingV2FlagEnabled).mockReturnValue(false);
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(false);
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -416,6 +416,38 @@ describe('handlePaymentWebhook', () => {
         data: expect.objectContaining({ status: 'OVERDUE' }),
       }),
     );
+  });
+
+  it('retorna skipReason quando bloqueia regressão de charge standalone', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_paid',
+      cobrancaId: null,
+      status: 'PAID',
+      asaasPaymentId: 'pay_paid',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_OVERDUE',
+      payment: {
+        id: 'pay_paid',
+        status: 'OVERDUE',
+        value: 150,
+        netValue: 150,
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      skipped: true,
+      skipReason: 'STATUS_TRANSITION_BLOCKED',
+      localEntityType: 'Charge',
+      localEntityId: 'ch_paid',
+      previousStatus: 'PAID',
+      nextStatus: 'OVERDUE',
+    });
+    expect(prisma.charge.update).not.toHaveBeenCalled();
   });
 
   it('deve marcar cobrança como ESTORNADO_PARCIAL e registrar auditoria sensível em estorno parcial', async () => {

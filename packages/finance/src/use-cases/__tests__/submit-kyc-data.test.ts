@@ -24,6 +24,14 @@ vi.mock('@alusa/asaas', async () => {
       apiKey: '$aact_sub_123',
       walletId: 'wallet-1',
     })),
+    listSubaccounts: vi.fn(async () => ({
+      object: 'list',
+      hasMore: false,
+      totalCount: 0,
+      limit: 10,
+      offset: 0,
+      data: [],
+    })),
     updateSubaccount: vi.fn(async () => ({
       object: 'account',
       id: subaccountId,
@@ -107,7 +115,7 @@ describe('submitKycData', () => {
 
       expect(vi.mocked(createSubaccount)).not.toHaveBeenCalled();
 
-      expect(result.hasAsaasAccountRecord).toBe(true);
+      expect(result.hasAsaasAccountRecord).toBe(false);
       expect(result.hasSubaccount).toBe(false);
       expect(result.status).toBe('NOT_STARTED');
     } finally {

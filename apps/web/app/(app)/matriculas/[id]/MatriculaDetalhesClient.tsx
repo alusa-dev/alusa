@@ -53,6 +53,24 @@ type MatriculaDetalhes = {
     syncError?: string | null;
     syncedAt?: string | null;
   } | null;
+  financialContext?: {
+    mode: 'INDIVIDUAL' | 'FAMILY';
+    sourceMatriculaId: string;
+    targetMatriculaId: string;
+    familyGroupId: string | null;
+    responsavelFinanceiro: {
+      id: string;
+      nome: string;
+      email?: string | null;
+      telefone?: string | null;
+    } | null;
+    affectedMatriculaIds: string[];
+    alunos: Array<{
+      matriculaId: string;
+      alunoId: string;
+      nome: string;
+    }>;
+  } | null;
   aluno: {
     id: string;
     nome: string;
@@ -294,6 +312,8 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
           <DadosMatricula
             matriculaId={matricula.id}
             matricula={matricula}
+            financialContext={matricula.financialContext}
+            assinaturaSnapshot={matricula.assinaturaSnapshot}
             pausaResumo={pausaResumo}
             cobrancas={matricula.cobrancas}
             onRefresh={loadMatricula}
@@ -323,6 +343,7 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
             matriculaId={matricula.id}
             asaasSubscriptionId={matricula.asaasSubscriptionId}
             assinaturaSnapshot={matricula.assinaturaSnapshot}
+            financialContext={matricula.financialContext}
             jurosAtual={matricula.jurosMensal || undefined}
             jurosTipoAtual={matricula.jurosTipo || undefined}
             multaAtual={matricula.multaPercentual || undefined}

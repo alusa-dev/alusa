@@ -22,6 +22,10 @@ import {
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
 import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
 import { alignLocalPendingEnrollmentCharges } from '@/src/server/matriculas/enrollment-finance-consistency.service';
+import {
+  resolveMatriculaFinancialContext,
+  updateFamilyFinancialLocalState,
+} from '@/src/server/matriculas/financial-context.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -127,6 +131,22 @@ function computeNextDueDate(currentNextDueDate: string, billingDay: number) {
   }
 
   return candidate.toISOString().slice(0, 10);
+}
+
+function formatAsaasDate(date: string | Date) {
+  const parsed = typeof date === 'string' ? new Date(date) : date;
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error('Data inválida para sincronização financeira.');
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function compareAsaasDates(left: string, right: string) {
+  return new Date(`${left}T12:00:00.000Z`).getTime() - new Date(`${right}T12:00:00.000Z`).getTime();
+}
+
+function formatPtBrDateOnly(value: string) {
+  return new Date(`${value}T12:00:00.000Z`).toLocaleDateString('pt-BR');
 }
 
 async function resolveContaId(explicit?: string | null) {
@@ -241,8 +261,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     let assinaturaSnapshot: AssinaturaSnapshot | null = null;
+    const financialContext = await resolveMatriculaFinancialContext({
+      db: prisma,
+      matriculaId: matricula.id,
+      contaId: contaCtx.contaId,
+    });
+    const targetSubscriptionId =
+      financialContext?.asaasSubscriptionId ?? matricula.asaasSubscriptionId ?? null;
 
-    if (matricula.asaasSubscriptionId) {
+    if (targetSubscriptionId) {
       const localSubscription = await prisma.subscription.findFirst({
         where: {
           contaId: contaCtx.contaId,
@@ -257,11 +284,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         matricula as unknown as Record<string, unknown>,
         localSubscription,
       );
+      const resolvedLocalSnapshot =
+        financialContext?.mode === 'FAMILY'
+          ? financialContext.localSnapshot
+          : localSnapshot;
 
       if (forceRefresh) {
         recordAsaasReadDecision('matricula_detail', 'fresh_remote');
         try {
-          const remote = await getSubscription(matricula.asaasSubscriptionId, { contaId: contaCtx.contaId });
+          const remote = await getSubscription(targetSubscriptionId, { contaId: contaCtx.contaId });
           assinaturaSnapshot = {
             asaasSubscriptionId: remote.id,
             status: remote.status,
@@ -274,19 +305,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           };
         } catch (error) {
           assinaturaSnapshot = {
-            asaasSubscriptionId: matricula.asaasSubscriptionId,
-            status: localSnapshot?.status ?? 'ACTIVE',
-            billingType: localSnapshot?.billingType ?? null,
-            value: localSnapshot?.value ?? null,
-            nextDueDate: localSnapshot?.nextDueDate ?? null,
-            deleted: localSnapshot?.deleted ?? false,
+            asaasSubscriptionId: targetSubscriptionId,
+            status: resolvedLocalSnapshot?.status ?? 'ACTIVE',
+            billingType: resolvedLocalSnapshot?.billingType ?? null,
+            value: resolvedLocalSnapshot?.value ?? null,
+            nextDueDate: resolvedLocalSnapshot?.nextDueDate ?? null,
+            deleted: resolvedLocalSnapshot?.deleted ?? false,
             syncError: (error as Error).message,
             syncedAt: new Date().toISOString(),
           };
         }
       } else {
         recordAsaasReadDecision('matricula_detail', 'local');
-        assinaturaSnapshot = localSnapshot;
+        assinaturaSnapshot = resolvedLocalSnapshot;
       }
     }
 
@@ -297,10 +328,28 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
     const mappedMatricula = {
       ...(matricula as unknown as Record<string, unknown>),
+      asaasSubscriptionId: targetSubscriptionId,
       cobrancas: familyEnrollmentCharge
         ? [familyEnrollmentCharge, ...((matricula.cobrancas ?? []) as unknown[])]
         : matricula.cobrancas,
       assinaturaSnapshot,
+      financialContext: financialContext
+        ? {
+            mode: financialContext.mode,
+            sourceMatriculaId: financialContext.sourceMatriculaId,
+            targetMatriculaId: financialContext.targetMatriculaId,
+            familyGroupId: financialContext.family?.id ?? null,
+            responsavelFinanceiro: financialContext.family?.responsavel ?? null,
+            affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [matricula.id],
+            alunos: financialContext.family?.alunos ?? [
+              {
+                matriculaId: matricula.id,
+                alunoId: matricula.aluno.id,
+                nome: matricula.aluno.nome,
+              },
+            ],
+          }
+        : null,
     };
 
     return NextResponse.json(
@@ -338,11 +387,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
 
     if (parsedBody.data.status) {
-      if (parsedBody.data.dataInicio || parsedBody.data.vencimentoDia) {
+      if (parsedBody.data.dataInicio || parsedBody.data.dataFimContrato || parsedBody.data.vencimentoDia) {
         return jsonError(
           422,
           'PAYLOAD_INVALIDO',
-          'Atualização de status não pode ser enviada junto com edição de data de início ou vencimento.',
+          'Atualização de status não pode ser enviada junto com edição de datas ou vencimento.',
         );
       }
 
@@ -373,6 +422,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       select: {
         id: true,
         asaasSubscriptionId: true,
+        dataFimContrato: true,
         vencimentoDia: true,
         formaPagamento: true,
         formaPagamentoTaxa: true,
@@ -404,11 +454,56 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           dueDate: string;
         }
       | null = null;
-    if (
+    let pendingFamilyLocalUpdate:
+      | {
+          nextDueDate?: string;
+          endDate?: string;
+        }
+      | null = null;
+    const billingDayChanged =
       typeof parsedBody.data.vencimentoDia === 'number' &&
-      parsedBody.data.vencimentoDia !== before.vencimentoDia &&
-      before.asaasSubscriptionId
+      parsedBody.data.vencimentoDia !== before.vencimentoDia;
+    const contractEndDateChanged =
+      typeof parsedBody.data.dataFimContrato === 'string' &&
+      formatAsaasDate(parsedBody.data.dataFimContrato) !== formatAsaasDate(before.dataFimContrato);
+
+    const financialContext = await resolveMatriculaFinancialContext({
+      db: prisma,
+      matriculaId: before.id,
+      contaId: contaCtx.contaId,
+    });
+    const targetSubscriptionId =
+      financialContext?.asaasSubscriptionId ?? before.asaasSubscriptionId ?? null;
+
+    if (
+      contractEndDateChanged &&
+      parsedBody.data.dataFimContrato &&
+      financialContext?.mode === 'FAMILY' &&
+      financialContext.family
     ) {
+      const nextEndDate = new Date(parsedBody.data.dataFimContrato);
+      const affectedStarts = await prisma.matricula.findMany({
+        where: {
+          contaId: contaCtx.contaId,
+          id: { in: financialContext.family.affectedMatriculaIds },
+        },
+        select: {
+          id: true,
+          dataInicio: true,
+          aluno: { select: { nome: true } },
+        },
+      });
+      const invalidStart = affectedStarts.find((item) => item.dataInicio > nextEndDate);
+      if (invalidStart) {
+        return jsonError(
+          422,
+          'DATA_FIM_FAMILIAR_INVALIDA',
+          `Data de fim familiar deve ser posterior à data de início de ${invalidStart.aluno.nome}.`,
+        );
+      }
+    }
+
+    if ((billingDayChanged || contractEndDateChanged) && targetSubscriptionId) {
       const localSubscription = await prisma.subscription.findFirst({
         where: {
           contaId: contaCtx.contaId,
@@ -423,11 +518,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         before as unknown as Record<string, unknown>,
         localSubscription,
       );
+      const resolvedLocalSnapshot =
+        financialContext?.mode === 'FAMILY'
+          ? financialContext.localSnapshot
+          : localSnapshot;
 
       let remoteSubscription: Awaited<ReturnType<typeof getSubscription>>;
 
       try {
-        remoteSubscription = await getSubscription(before.asaasSubscriptionId, { contaId: contaCtx.contaId });
+        remoteSubscription = await getSubscription(targetSubscriptionId, { contaId: contaCtx.contaId });
       } catch (error) {
         const classified = classifyAsaasSubscriptionMutationError(error);
         if (classified.kind === 'not_found' || classified.kind === 'not_editable') {
@@ -456,8 +555,8 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         );
       }
 
-      const currentNextDueDate = remoteSubscription.nextDueDate ?? localSnapshot?.nextDueDate;
-      if (!currentNextDueDate) {
+      const currentNextDueDate = remoteSubscription.nextDueDate ?? resolvedLocalSnapshot?.nextDueDate;
+      if (billingDayChanged && !currentNextDueDate) {
         return jsonError(
           409,
           'ASSINATURA_PENDENTE_SNAPSHOT',
@@ -465,14 +564,44 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         );
       }
 
-      const nextDueDate = computeNextDueDate(currentNextDueDate, parsedBody.data.vencimentoDia);
-      try {
-        await updateSubscription(
-          before.asaasSubscriptionId,
+      const subscriptionUpdatePayload: Parameters<typeof updateSubscription>[1] = {};
+      const nextDueDate =
+        billingDayChanged && currentNextDueDate
+          ? computeNextDueDate(currentNextDueDate, parsedBody.data.vencimentoDia as number)
+          : currentNextDueDate;
+      const effectiveEndDate =
+        contractEndDateChanged && parsedBody.data.dataFimContrato
+          ? formatAsaasDate(parsedBody.data.dataFimContrato)
+          : remoteSubscription.endDate
+            ? formatAsaasDate(remoteSubscription.endDate)
+            : formatAsaasDate(before.dataFimContrato);
+
+      if (nextDueDate && effectiveEndDate && compareAsaasDates(nextDueDate, effectiveEndDate) > 0) {
+        return jsonError(
+          422,
+          'ASSINATURA_PERIODO_INVALIDO',
+          `A próxima cobrança calculada (${formatPtBrDateOnly(nextDueDate)}) não pode ficar depois da data de fim da assinatura (${formatPtBrDateOnly(effectiveEndDate)}). Ajuste o dia de vencimento ou a data de fim.`,
           {
             nextDueDate,
-            updatePendingPayments: true,
+            endDate: effectiveEndDate,
+            billingDay: parsedBody.data.vencimentoDia ?? before.vencimentoDia,
           },
+        );
+      }
+
+      if (billingDayChanged && nextDueDate) {
+        subscriptionUpdatePayload.nextDueDate = nextDueDate;
+        subscriptionUpdatePayload.updatePendingPayments = true;
+      }
+
+      if (contractEndDateChanged && parsedBody.data.dataFimContrato) {
+        subscriptionUpdatePayload.endDate = formatAsaasDate(parsedBody.data.dataFimContrato);
+      }
+
+      try {
+        await updateSubscription(
+          targetSubscriptionId,
+          subscriptionUpdatePayload,
           { contaId: contaCtx.contaId },
         );
       } catch (error) {
@@ -496,20 +625,44 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       }
 
       subscriptionMetadata = {
-        asaasSubscriptionId: before.asaasSubscriptionId,
+        asaasSubscriptionId: targetSubscriptionId,
         subscriptionSync: {
-          kind: 'BILLING_DAY_UPDATED',
+          mode: financialContext?.mode ?? 'INDIVIDUAL',
+          familyGroupId: financialContext?.family?.id ?? null,
+          affectedMatriculaIds: financialContext?.family?.affectedMatriculaIds ?? [before.id],
+          kind:
+            billingDayChanged && contractEndDateChanged
+              ? 'BILLING_DAY_AND_END_DATE_UPDATED'
+              : billingDayChanged
+                ? 'BILLING_DAY_UPDATED'
+                : 'END_DATE_UPDATED',
           previousNextDueDate: currentNextDueDate,
           nextDueDate,
           previousBillingDay: before.vencimentoDia,
-          nextBillingDay: parsedBody.data.vencimentoDia,
+          nextBillingDay: parsedBody.data.vencimentoDia ?? before.vencimentoDia,
+          previousEndDate: formatAsaasDate(before.dataFimContrato),
+          nextEndDate: parsedBody.data.dataFimContrato
+            ? formatAsaasDate(parsedBody.data.dataFimContrato)
+            : formatAsaasDate(before.dataFimContrato),
         },
       };
-      pendingLocalAlignment = {
-        matriculaId: before.id,
-        contaId: contaCtx.contaId,
-        dueDate: nextDueDate,
-      };
+      pendingLocalAlignment =
+        financialContext?.mode !== 'FAMILY' && billingDayChanged && nextDueDate
+          ? {
+              matriculaId: before.id,
+              contaId: contaCtx.contaId,
+              dueDate: nextDueDate,
+            }
+          : null;
+      pendingFamilyLocalUpdate =
+        financialContext?.mode === 'FAMILY'
+          ? {
+              ...(billingDayChanged && nextDueDate ? { nextDueDate } : {}),
+              ...(contractEndDateChanged && parsedBody.data.dataFimContrato
+                ? { endDate: formatAsaasDate(parsedBody.data.dataFimContrato) }
+                : {}),
+            }
+          : null;
     }
 
     const matricula = await atualizarDetalhesMatricula({
@@ -517,6 +670,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       contaId: contaCtx.contaId,
       actorId: contaCtx.sessionUserId,
       dataInicio: parsedBody.data.dataInicio,
+      dataFimContrato: parsedBody.data.dataFimContrato,
       vencimentoDia: parsedBody.data.vencimentoDia,
       metadata: subscriptionMetadata,
     });
@@ -525,26 +679,36 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
 
-    const localAlignment = pendingLocalAlignment
-      ? await alignLocalPendingEnrollmentCharges({
+    const localAlignment = pendingFamilyLocalUpdate && financialContext
+      ? await updateFamilyFinancialLocalState({
           db: prisma,
-          matriculaId: pendingLocalAlignment.matriculaId,
-          contaId: pendingLocalAlignment.contaId,
-          dueDate: pendingLocalAlignment.dueDate,
+          context: financialContext,
+          nextDueDate: pendingFamilyLocalUpdate.nextDueDate,
+          endDate: pendingFamilyLocalUpdate.endDate,
         })
-      : null;
+      : pendingLocalAlignment
+        ? await alignLocalPendingEnrollmentCharges({
+            db: prisma,
+            matriculaId: pendingLocalAlignment.matriculaId,
+            contaId: pendingLocalAlignment.contaId,
+            dueDate: pendingLocalAlignment.dueDate,
+          })
+        : null;
 
     return NextResponse.json(
       {
         data: mapMatriculaRecordToCoreDTO(matricula as unknown as Record<string, unknown>),
         asyncSync:
-          typeof parsedBody.data.vencimentoDia === 'number' && before.asaasSubscriptionId
+          (billingDayChanged || contractEndDateChanged) && targetSubscriptionId
             ? {
                 provider: 'ASAAS',
-                fields: ['nextDueDate', 'updatePendingPayments'],
+                fields: [
+                  ...(billingDayChanged ? ['nextDueDate', 'updatePendingPayments'] : []),
+                  ...(contractEndDateChanged ? ['endDate'] : []),
+                ],
                 localAlignment,
                 message:
-                  'O dia de vencimento foi alinhado com o vínculo financeiro e pode refletir nos próximos ciclos e nas pendências ainda editáveis.',
+                  'As datas da matrícula foram alinhadas com o vínculo financeiro e podem refletir nos próximos ciclos e nas pendências ainda editáveis.',
               }
             : null,
       },

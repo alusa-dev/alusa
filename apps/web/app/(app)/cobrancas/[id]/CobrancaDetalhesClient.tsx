@@ -51,6 +51,10 @@ import {
   maskPercentInput,
   parseDecimal,
 } from '@/lib/utils/decimal-format';
+import {
+  DISCOUNT_DUE_DATE_OPTIONS,
+  formatDiscountDueDateLimitLabel,
+} from '@/lib/finance-form-utils';
 import { cn } from '@/lib/utils';
 import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import {
@@ -223,6 +227,27 @@ function openOfficialChargeLink(links: OfficialChargeLinks): boolean {
   return true;
 }
 
+const REMOTE_PAID_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
+
+function readAsaasString(cobranca: CobrancaDetalhes | null, key: string): string | null {
+  const value = cobranca?.asaasData?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim().toUpperCase() : null;
+}
+
+function getApiErrorMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const record = payload as Record<string, unknown>;
+  const error = record.error;
+  if (typeof error === 'string' && error.trim().length > 0) return error;
+  if (error && typeof error === 'object' && !Array.isArray(error)) {
+    const message = (error as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim().length > 0) return message;
+  }
+  const message = record.message;
+  if (typeof message === 'string' && message.trim().length > 0) return message;
+  return fallback;
+}
+
 export function CobrancaDetalhesClient({ id }: { id: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -257,7 +282,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   const [editJurosPercentual, setEditJurosPercentual] = useState('0,00');
 
   // Estados para ajustes financeiros - Multa
-  const [editMultaTipo, setEditMultaTipo] = useState('VALOR_FIXO');
+  const [editMultaTipo, setEditMultaTipo] = useState('PERCENTUAL');
   const [editMultaPercentual, setEditMultaPercentual] = useState('0,00');
 
   // Estados para ajustes financeiros - Desconto
@@ -271,9 +296,24 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   const formatAdjustNumber = (value?: number | null) => formatDecimalFromNumber(value ?? 0);
   const formatPercentInputChange = (inputValue: string) => maskPercentInput(inputValue) || '0,00';
 
+  const remoteAsaasStatus = readAsaasString(cobranca, 'status');
+  const remoteBillingType = readAsaasString(cobranca, 'billingType');
+  const isRemotePaid = remoteAsaasStatus ? REMOTE_PAID_STATUSES.has(remoteAsaasStatus) : false;
   const chargeStatus = cobranca?.status ?? 'PENDENTE';
-  const wasReceivedInCash = cobranca?.asaasData?.status === 'RECEIVED_IN_CASH';
-  const chargeActions = useChargeActions(chargeStatus, { wasReceivedInCash });
+  const effectiveChargeStatusForActions = isRemotePaid ? StatusCobranca.PAGO : chargeStatus;
+  const wasReceivedInCash = remoteAsaasStatus === 'RECEIVED_IN_CASH' || remoteBillingType === 'RECEIVED_IN_CASH';
+  const chargeActions = useChargeActions(effectiveChargeStatusForActions, { wasReceivedInCash });
+  const editDescontoValorAtual =
+    editDescontoTipo === 'PERCENTUAL'
+      ? parseDecimal(editDescontoPercentual)
+      : editDescontoValorFixo;
+  const isEditDescontoAtivo = editDescontoValorAtual > 0;
+
+  useEffect(() => {
+    if (isEditingAjustes && !isEditDescontoAtivo && editDescontoDias !== 0) {
+      setEditDescontoDias(0);
+    }
+  }, [editDescontoDias, isEditDescontoAtivo, isEditingAjustes]);
 
   const applyCobrancaPayload = useCallback((data: CobrancaDetalhes) => {
     setCobranca(data);
@@ -297,7 +337,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     setEditFormaPagamento(data.formaPagamento || '');
 
     setEditJurosPercentual(formatAdjustNumber(data.jurosPercentual));
-    setEditMultaTipo(data.multaTipo || 'VALOR_FIXO');
+    setEditMultaTipo(data.multaTipo || 'PERCENTUAL');
     setEditMultaPercentual(formatAdjustNumber(data.multaPercentual));
     setEditDescontoTipo(data.descontoTipo || 'VALOR_FIXO');
     setEditDescontoPercentual(formatAdjustNumber(data.descontoPercentual));
@@ -368,7 +408,35 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     setAwaitingWebhook(true);
   }, []);
 
+  const refreshAfterFinancialMutation = useCallback(
+    async (hasRemotePayment: boolean) => {
+      if (hasRemotePayment) {
+        markAwaitingWebhook();
+        try {
+          await fetch(`/api/cobrancas/${id}/sync-asaas`, {
+            method: 'POST',
+            headers: { Accept: 'application/json' },
+          });
+        } catch (syncError) {
+          console.warn('[CobrancaDetalhes] Falha ao sincronizar cobrança após alteração:', syncError);
+        }
+      }
+
+      await loadCobranca();
+    },
+    [id, loadCobranca, markAwaitingWebhook],
+  );
+
   const handleEdit = () => {
+    if (!chargeActions.canEdit && !isEditing) {
+      pushToast({
+        title: 'Edição bloqueada',
+        description: 'Cobranças já pagas ou recebidas no Asaas não podem ser editadas.',
+        variant: 'warning',
+      });
+      return;
+    }
+
     if (isEditing) {
       // Salvar alterações
       handleSaveEdit();
@@ -424,7 +492,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         const resultFormaPagamento = await resFormaPagamento.json();
 
         if (!resultFormaPagamento.success) {
-          throw new Error(resultFormaPagamento.error);
+          throw new Error(getApiErrorMessage(resultFormaPagamento, 'Erro ao alterar forma de pagamento'));
         }
 
         pushToast({
@@ -462,7 +530,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         const result = await res.json();
 
         if (!result.success) {
-          throw new Error(result.error);
+          throw new Error(getApiErrorMessage(result, 'Erro ao salvar cobrança'));
         }
 
         if (!formaPagamentoMudou) {
@@ -477,7 +545,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       }
 
       setIsEditing(false);
-      await loadCobranca(); // Recarregar dados
+      await refreshAfterFinancialMutation(Boolean(cobranca.asaasPaymentId));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({
@@ -492,6 +560,15 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
   // Funções para editar ajustes financeiros
   const handleEditAjustes = () => {
+    if (!chargeActions.canEdit && !isEditingAjustes) {
+      pushToast({
+        title: 'Edição bloqueada',
+        description: 'Cobranças já pagas ou recebidas no Asaas não podem ter ajustes alterados.',
+        variant: 'warning',
+      });
+      return;
+    }
+
     if (isEditingAjustes) {
       // Salvar alterações de ajustes
       handleSaveAjustes();
@@ -508,7 +585,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     setEditJurosPercentual(formatAdjustNumber(cobranca.jurosPercentual));
 
     // Restaurar valores originais de multa
-    setEditMultaTipo(cobranca.multaTipo || 'VALOR_FIXO');
+    setEditMultaTipo(cobranca.multaTipo || 'PERCENTUAL');
     setEditMultaPercentual(formatAdjustNumber(cobranca.multaPercentual));
 
     // Restaurar valores originais de desconto
@@ -549,7 +626,12 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       // Parse de valores de desconto
       const descontoTipo = editDescontoTipo;
       const descontoPercentual = parseDecimal(editDescontoPercentual);
-      const descontoPrazoMaximo = editDescontoDias === 0 ? 'ATE_VENCIMENTO' : `${editDescontoDias}_DIAS`;
+      const descontoAtivo =
+        descontoTipo === 'PERCENTUAL'
+          ? descontoPercentual > 0
+          : editDescontoValorFixo > 0;
+      const descontoPrazoMaximo =
+        !descontoAtivo || editDescontoDias === 0 ? 'ATE_VENCIMENTO' : `${editDescontoDias}_DIAS`;
 
       const valorBase = cobranca.valor;
 
@@ -589,7 +671,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json();
 
       if (!result.success) {
-        throw new Error(result.error);
+        throw new Error(getApiErrorMessage(result, 'Erro ao salvar ajustes'));
       }
 
       pushToast({
@@ -599,7 +681,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       });
 
       setIsEditingAjustes(false);
-      await loadCobranca(); // Recarregar dados
+      await refreshAfterFinancialMutation(Boolean(cobranca.asaasPaymentId));
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({
@@ -617,7 +699,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(payload?.error || 'Erro ao buscar cobrança no Asaas');
+      throw new Error(getApiErrorMessage(payload, 'Erro ao buscar cobrança no Asaas'));
     }
 
     const nextCobranca = payload.data as CobrancaDetalhes;
@@ -633,7 +715,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok || !payload?.success) {
-      throw new Error(payload?.error || 'Erro ao sincronizar cobrança com o Asaas');
+      throw new Error(getApiErrorMessage(payload, 'Erro ao sincronizar cobrança com o Asaas'));
     }
 
     await loadCobranca();
@@ -735,7 +817,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     if (!cobranca) return;
 
     try {
-      const res = await fetch(`/api/cobrancas/${cobranca.id}/confirmar-recebimento`, {
+      const res = await fetch(`/api/financeiro/cobrancas/${cobranca.id}/marcar-pago`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -747,7 +829,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json();
 
       if (!result.success) {
-        throw new Error(result.error);
+        throw new Error(getApiErrorMessage(result, 'Erro ao confirmar recebimento'));
       }
 
       pushToast({
@@ -791,7 +873,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json().catch(() => ({}));
 
       if (!res.ok || !result.success) {
-        throw new Error(result.error || result.message || 'Erro ao solicitar estorno');
+        throw new Error(getApiErrorMessage(result, 'Erro ao solicitar estorno'));
       }
 
       pushToast({
@@ -837,7 +919,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json().catch(() => ({}));
 
       if (!res.ok || !result.success) {
-        throw new Error(result.error || result.message || 'Erro ao desfazer recebimento');
+        throw new Error(getApiErrorMessage(result, 'Erro ao desfazer recebimento'));
       }
 
       pushToast({
@@ -877,7 +959,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json();
 
       if (!res.ok || !result.success) {
-        throw new Error(result.message || result.error || 'Erro ao reenviar cobrança');
+        throw new Error(getApiErrorMessage(result, 'Erro ao reenviar cobrança'));
       }
 
       pushToast({
@@ -928,7 +1010,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
       const result = await res.json();
 
       if (!result.success) {
-        throw new Error(result.error);
+        throw new Error(getApiErrorMessage(result, 'Erro ao remover cobrança'));
       }
 
       pushToast({
@@ -1054,8 +1136,8 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     );
   }
 
-  const isPago = cobranca.status === 'PAGO';
-  const isPendente = cobranca.status === 'PENDENTE' || cobranca.status === 'A_VENCER';
+  const isPago = cobranca.status === 'PAGO' || isRemotePaid;
+  const isPendente = chargeActions.canEdit;
   
   // URL de fatura é usado para compartilhamento
   const invoiceUrl = cobranca.asaasData?.invoiceUrl as string | undefined;
@@ -1274,9 +1356,11 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             <div className="flex flex-col items-end gap-1">
               <Badge
                 status={
-                  cobranca.status === 'PAGO' && cobranca.liquidacaoStatus === 'DISPONIVEL'
+                  isPago && cobranca.liquidacaoStatus === 'DISPONIVEL'
                     ? 'RECEIVED'
-                    : statusMap[cobranca.status]
+                    : isPago
+                      ? 'PAGO'
+                      : statusMap[cobranca.status]
                 }
               />
               {awaitingWebhook && !isCobrancaDetailTerminal(cobranca.status) ? (
@@ -1375,7 +1459,11 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             ) : (
               <input
                 type="text"
-                value={FORMA_PAGAMENTO_LABELS[editFormaPagamento] || editFormaPagamento}
+                value={
+                  wasReceivedInCash
+                    ? 'Recebido em dinheiro'
+                    : FORMA_PAGAMENTO_LABELS[editFormaPagamento] || editFormaPagamento
+                }
                 disabled
                 className="w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md"
               />
@@ -1767,24 +1855,33 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                     ?
                   </span>
                 </label>
-                <input
-                  id="descontoPrazoMaximo"
-                  type="number"
-                  min={0}
-                  value={editDescontoDias}
-                  onChange={(e) => setEditDescontoDias(Math.max(0, parseInt(e.target.value) || 0))}
-                  disabled={!isEditingAjustes}
-                  placeholder="0"
-                  className={`w-full px-3 py-2 text-sm border rounded-md ${
-                    isEditingAjustes
+                <Select
+                  value={String(editDescontoDias)}
+                  onValueChange={(value) => setEditDescontoDias(Number(value))}
+                  disabled={!isEditingAjustes || !isEditDescontoAtivo}
+                >
+                  <SelectTrigger
+                    id="descontoPrazoMaximo"
+                    className={`w-full px-3 py-2 text-sm border rounded-md ${
+                    isEditingAjustes && isEditDescontoAtivo
                       ? 'border-indigo-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white text-gray-900'
                       : 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
                   }`}
-                />
+                  >
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DISCOUNT_DUE_DATE_OPTIONS.map((days) => (
+                      <SelectItem key={days} value={String(days)}>
+                        {formatDiscountDueDateLimitLabel(days)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <p className="text-xs text-gray-500 mt-1.5">
-                  Número de dias <strong>antes do vencimento</strong> que o desconto é válido.
-                  <br />
-                  <strong>0 = até o dia do vencimento</strong> | <strong>5 = até 5 dias antes</strong>
+                  {isEditDescontoAtivo
+                    ? formatDiscountDueDateLimitLabel(editDescontoDias)
+                    : 'Informe um desconto maior que zero para ajustar o prazo máximo.'}
                 </p>
               </div>
             </div>

@@ -9,6 +9,11 @@ import {
   readPaymentFullPreflight,
   auditLogService,
   syncPaymentStateFromAsaas,
+  evaluatePaymentActionPolicy,
+  expectedEventsForPaymentCommand,
+  failPaymentCommand,
+  markPaymentCommandSent,
+  registerPaymentCommand,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import { randomUUID } from 'crypto';
@@ -21,12 +26,20 @@ import { mapCobrancaActionResultToDTO } from '@/features/financeiro/cobrancas/ma
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
-// Status do Asaas que permitem estorno
-const REFUNDABLE_STATUSES = new Set([
-  'RECEIVED',
-  'CONFIRMED',
-  'DUNNING_RECEIVED',
-]);
+function resolveAcademicPaymentOrigin(tipo?: string | null) {
+  switch (tipo) {
+    case 'PARCELADA':
+      return 'INSTALLMENT';
+    case 'RECORRENTE':
+      return 'SUBSCRIPTION';
+    case 'TAXA_MATRICULA':
+      return 'ENROLLMENT_FEE';
+    case 'AVULSA':
+      return 'STANDALONE';
+    default:
+      return 'ACADEMIC';
+  }
+}
 
 /**
  * POST /api/cobrancas/[id]/refund
@@ -68,6 +81,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             aluno: { select: { contaId: true } },
           },
         },
+        charge: {
+          select: {
+            invoiceUrl: true,
+          },
+        },
       },
     });
 
@@ -79,6 +97,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             status: true,
             asaasPaymentId: true,
             value: true,
+            billingType: true,
+            invoiceUrl: true,
+            standaloneInstallmentPlanId: true,
+            standaloneSubscriptionId: true,
           },
         })
       : null;
@@ -107,26 +129,58 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Read-before-write: verificar estado atual no Asaas
     const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId: user.contaId });
+    const policy = evaluatePaymentActionPolicy({
+      entityType: cobranca ? 'COBRANCA' : 'CHARGE',
+      origin: cobranca
+        ? resolveAcademicPaymentOrigin(cobranca.tipo)
+        : charge?.standaloneInstallmentPlanId
+          ? 'INSTALLMENT'
+          : charge?.standaloneSubscriptionId
+            ? 'SUBSCRIPTION'
+            : 'STANDALONE',
+      localStatus: cobranca?.status ?? charge?.status ?? null,
+      asaasStatus: asaasPayment.status,
+      billingType: asaasPayment.billingType ?? charge?.billingType ?? null,
+      hasAsaasPaymentId: true,
+      hasInvoiceUrl: Boolean(cobranca?.charge?.invoiceUrl || charge?.invoiceUrl || asaasPayment.invoiceUrl),
+      wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+      isInstallmentPayment: cobranca?.tipo === 'PARCELADA' || Boolean(charge?.standaloneInstallmentPlanId),
+      isSubscriptionPayment: cobranca?.tipo === 'RECORRENTE' || Boolean(charge?.standaloneSubscriptionId),
+      paymentValue: asaasPayment.value ?? Number(cobranca?.valor ?? charge?.value ?? 0),
+      refundedValue:
+        Array.isArray((asaasPayment as { refunds?: Array<{ value?: number; status?: string }> }).refunds)
+          ? (asaasPayment as { refunds?: Array<{ value?: number; status?: string }> }).refunds!
+              .filter((refund) => refund.status !== 'CANCELLED')
+              .reduce((sum, refund) => sum + Number(refund.value ?? 0), 0)
+          : Number(cobranca?.estornadoValor ?? 0),
+    });
 
-    if (asaasPayment.status === 'RECEIVED_IN_CASH') {
+    if (!policy.canRefund) {
+      const decision = policy.actions.REFUND;
       return NextResponse.json(
         {
-          error: 'Cobranças recebidas em dinheiro devem usar a ação de desfazer recebimento.',
+          error: decision.reason ?? 'Operação de estorno não permitida.',
           correlationId,
           asaasStatus: asaasPayment.status,
-          expectedAction: 'UNDO_CASH_PAYMENT',
+          code: decision.code,
+          ...(decision.hint ? { hint: decision.hint } : {}),
+          ...(decision.code === 'REFUND_NOT_ALLOWED_FOR_CASH_PAYMENT'
+            ? { expectedAction: 'UNDO_CASH_PAYMENT' }
+            : {}),
         },
         { status: 400 },
       );
     }
 
-    if (!REFUNDABLE_STATUSES.has(asaasPayment.status)) {
+    if (body.value !== undefined && !policy.canPartialRefund) {
+      const decision = policy.actions.PARTIAL_REFUND;
       return NextResponse.json(
         {
-          error: `Operação não permitida. Status atual na plataforma financeira: ${asaasPayment.status}`,
+          error: decision.reason ?? 'Estorno parcial não permitido.',
           correlationId,
           asaasStatus: asaasPayment.status,
-          allowedStatuses: Array.from(REFUNDABLE_STATUSES),
+          code: decision.code,
+          ...(decision.hint ? { hint: decision.hint } : {}),
         },
         { status: 400 },
       );
@@ -156,14 +210,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
     }
 
-    // Executar comando no Asaas
-    await refundCobranca({
-      paymentId: asaasPaymentId,
+    const command = await registerPaymentCommand({
       contaId: user.contaId,
-      value: refundValue,
-      description: body.description || `Estorno solicitado via Alusa - ${correlationId}`,
-      splitRefunds: body.splitRefunds,
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: cobranca ? 'COBRANCA' : 'CHARGE',
+      entityId: cobranca?.id ?? charge!.id,
+      asaasPaymentId,
+      expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+      correlationId,
+      actorId: user.id,
+      chargeId: charge?.id ?? null,
+      cobrancaId: cobranca?.id ?? null,
+      metadata: {
+        source: 'POST /api/cobrancas/[id]/refund',
+        previousAsaasStatus: asaasPayment.status,
+        refundValue: refundValue ?? paymentValue,
+        isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
+        splitRefunds: body.splitRefunds ?? null,
+      },
     });
+
+    // Executar comando no Asaas
+    try {
+      await refundCobranca({
+        paymentId: asaasPaymentId,
+        contaId: user.contaId,
+        value: refundValue,
+        description: body.description || `Estorno solicitado via Alusa - ${correlationId}`,
+        splitRefunds: body.splitRefunds,
+      });
+      await markPaymentCommandSent({
+        jobId: command.id,
+        providerStatus: asaasPayment.status,
+      });
+    } catch (commandError) {
+      await failPaymentCommand({ jobId: command.id, error: commandError });
+      throw commandError;
+    }
 
     try {
       await syncPaymentStateFromAsaas({
@@ -173,6 +256,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     } catch (syncError) {
       console.warn('[Refund] Falha ao sincronizar estado pós-comando', {
         correlationId,
+        commandJobId: command.id,
         asaasPaymentId,
         error: syncError instanceof Error ? syncError.message : String(syncError),
       });
@@ -208,6 +292,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           entityType: cobranca ? 'COBRANCA' : 'CHARGE',
           asaasPaymentId,
           correlationId,
+          commandJobId: command.id,
           previousAsaasStatus: asaasPayment.status,
           refundValue: refundValue ?? paymentValue,
           isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
