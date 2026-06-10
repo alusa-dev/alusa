@@ -31,7 +31,7 @@ export interface UseEntityListFilteringResult<T> {
   resetFilters: () => void;
 }
 
-const DEFAULT_PAGE_SIZE = 10;
+const DEFAULT_PAGE_SIZE = 6;
 
 export function useEntityListFiltering<T>(
   params: UseEntityListFilteringParams<T>,

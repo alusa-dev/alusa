@@ -23,6 +23,13 @@ function isAuthNotificationError(error: unknown) {
   return error instanceof NotificationRequestError && (error.status === 401 || error.status === 403);
 }
 
+function isTransientNotificationFetchError(error: unknown) {
+  return (
+    (error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch')) ||
+    (error instanceof DOMException && error.name === 'AbortError')
+  );
+}
+
 async function parseResponse<T>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => null)) as T | null;
   if (!response.ok) {
@@ -163,6 +170,9 @@ export function useNotificationsFeed(params?: {
         setItems([]);
         setUnreadCount(0);
         setTotalCount(0);
+        return;
+      }
+      if (isTransientNotificationFetchError(error)) {
         return;
       }
       console.error('[Notifications][load]', error);

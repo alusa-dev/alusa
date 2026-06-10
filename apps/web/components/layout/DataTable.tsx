@@ -59,7 +59,7 @@ export function DataTable<T extends object>({
   onSortChange,
   onRowClick,
   paginate = false,
-  pageSize = 5,
+  pageSize = 6,
 }: DataTableProps<T>) {
   const [currentPage, setCurrentPage] = React.useState(1);
 
@@ -76,15 +76,16 @@ export function DataTable<T extends object>({
   }, [data, paginate, currentPage, pageSize]);
 
   return (
-    <div className="w-full space-y-4">
-      <div className="alusa-session-panel w-full overflow-x-auto">
-        <table
-          className={cn(
-            'w-full table-fixed border-collapse bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
-            tableClassName,
-          )}
-          aria-label={ariaLabel}
-        >
+    <div className="w-full">
+      <div className="alusa-session-panel w-full overflow-hidden">
+        <div className="w-full overflow-x-auto">
+          <table
+            className={cn(
+              'w-full table-fixed border-collapse bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
+              tableClassName,
+            )}
+            aria-label={ariaLabel}
+          >
           <thead className="bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]">
             <tr>
               {columns.map((col) => {
@@ -185,17 +186,19 @@ export function DataTable<T extends object>({
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
+        {paginate && data.length > 0 && (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination
+              total={data.length}
+              page={currentPage}
+              pageSize={pageSize}
+              onChange={setCurrentPage}
+            />
+          </div>
+        )}
       </div>
-      {paginate && data.length > pageSize && (
-        <Pagination
-          total={data.length}
-          page={currentPage}
-          pageSize={pageSize}
-          onChange={setCurrentPage}
-          className="pb-2"
-        />
-      )}
     </div>
   );
 }

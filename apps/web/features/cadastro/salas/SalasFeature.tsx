@@ -33,7 +33,7 @@ import {
   type SalaStatus,
 } from './services/salas-service';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 type SortOrder = 'ASC' | 'DESC';
 type StatusFilter = StatusValue;
@@ -142,7 +142,6 @@ export function SalasFeature() {
           searchPlaceholder="Buscar por nome ou descrição..."
         />
       }
-      footer={<Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />}
     >
       <div className={table.container}>
         <SalasTable
@@ -156,6 +155,11 @@ export function SalasFeature() {
           }}
           loading={loading || userLoading}
         />
+        {total > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
       <SalaDialog

@@ -3,7 +3,6 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { CustomScrollArea } from '@/components/ui/custom-scroll-area';
 import {
   EyeIcon,
@@ -20,7 +19,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import TableLayout from '@/components/layout/TableLayout';
@@ -385,7 +383,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setCancelTarget(null);
       }
     },
-    [actionLoading, composeStatusToast, reload],
+    [actionLoading, composeStatusToast, reload, sanitizeMessage],
   );
 
 
@@ -482,7 +480,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setDeleteTarget(null);
       }
     },
-    [actionLoading, contaId, reload, formatTaxaStatus],
+    [actionLoading, contaId, reload, sanitizeMessage],
   );
 
   // Abre o comprovante EXACT do Asaas (transactionReceiptUrl > invoiceUrl)
@@ -502,7 +500,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       }
       // Fallback para página da cobrança (tem botão de visualizar comprovante)
       window.open(`/cobrancas/${cobrancaId}`, '_blank', 'noopener,noreferrer');
-    } catch (error) {
+    } catch {
       // Fallback silencioso
       window.open(`/cobrancas/${cobrancaId}`, '_blank', 'noopener,noreferrer');
     }
@@ -794,19 +792,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
     ? ['PENDENTE', 'PROCESSANDO', 'ATRASADO'].includes(cobrancaStatusAtual)
     : false;
   const cobrancaEstaPaga = cobrancaStatusAtual === 'PAGO';
-  const mensagemReenvio = (() => {
-    if (!cobrancaStatusAtual) {
-      return 'Nenhuma cobrança de taxa encontrada para esta matrícula.';
-    }
-    if (cobrancaStatusAtual === 'ATRASADO') {
-      return 'A taxa de matrícula está em atraso. Gere uma nova segunda via para compartilhar com o responsável.';
-    }
-    if (cobrancaStatusAtual === 'PROCESSANDO') {
-      return 'A taxa está sendo processada. Você pode gerar novamente os links para acompanhar o pagamento.';
-    }
-    return 'A taxa de matrícula está pendente. Deseja reenviar a cobrança para o responsável?';
-  })();
-
   // Se não houver contaId, mostrar mensagem
   if (!contaId) {
     return (
@@ -861,7 +846,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           searchPlaceholder="Buscar por aluno, plano ou turma..."
         />
       }
-      footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
     >
       <div className={table.container}>
         <DataTable
@@ -874,6 +858,11 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           }
           skeletonRows={6}
         />
+        {total > pageSize ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
       {/* Wizard de criação de matrícula */}

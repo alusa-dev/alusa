@@ -36,7 +36,7 @@ export default function ProfessoresList() {
   const [statusFilter, setStatusFilter] = useState<StatusValue>('TODOS');
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 6;
   const [editing, setEditing] = useState<Professor | null>(null);
   const [deleting, setDeleting] = useState<Professor | null>(null);
 
@@ -115,9 +115,6 @@ export default function ProfessoresList() {
           onSortChange={setSortOrder}
           searchPlaceholder="Buscar por nome ou email..."
         />
-      }
-      footer={
-        <Pagination total={ordered.length} page={page} pageSize={pageSize} onChange={setPage} />
       }
     >
       <div className="bg-white rounded-xl border overflow-hidden">
@@ -204,6 +201,11 @@ export default function ProfessoresList() {
             </div>
           </>
         )}
+        {ordered.length > pageSize ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={ordered.length} page={page} pageSize={pageSize} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
       {editing && (
         <EditEntityDialog

@@ -37,7 +37,7 @@ export function CombosFeature() {
   const [dialogMode, setDialogMode] = useState<'create' | 'edit'>('create');
   const [editing, setEditing] = useState<ComboListItem | null>(null);
 
-  const pageSize = 10;
+  const pageSize = 6;
 
   const accountMissing = !contaId;
   const deleteDialog = useDeleteDialog<ComboListItem>({
@@ -60,7 +60,6 @@ export function CombosFeature() {
     setPage,
     ordered,
     paginated,
-    resetFilters,
   } = useEntityListFiltering<ComboListItem>({
     items,
     nameAccessor: (combo) => combo.nome ?? "",
@@ -221,11 +220,11 @@ export function CombosFeature() {
       Conecte-se a uma conta para visualizar os combos cadastrados.
     </div>
   ) : (
-        <div className={table.container} data-testid="combos-table">
+    <div className={table.container} data-testid="combos-table">
       <DataTable
         columns={columns}
         data={paginated}
-            loading={loading || userLoading}
+        loading={loading || userLoading}
         rowKey={(c) => c.id}
         skeletonRows={5}
         emptyMessage={
@@ -233,6 +232,11 @@ export function CombosFeature() {
         }
         ariaLabel="Tabela de combos"
       />
+      {total > pageSize ? (
+        <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+          <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+        </div>
+      ) : null}
     </div>
   );
 
@@ -262,7 +266,6 @@ export function CombosFeature() {
             searchPlaceholder="Buscar por nome..."
           />
         }
-        footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
       >
         {tableContent}
       </TableLayout>

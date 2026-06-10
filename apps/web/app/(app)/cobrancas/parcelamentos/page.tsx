@@ -6,7 +6,7 @@
  * Lista de parcelamentos agregados. UI alinhada à página "Todas as cobranças".
  */
 
-import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Select,
@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Plus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@/components/icons/icons';
+import { Plus, ChevronLeft, ChevronRight } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
@@ -57,7 +57,7 @@ export default function ParcelamentosPage() {
   const router = useRouter();
   const [parcelamentos, setParcelamentos] = useState<Parcelamento[]>([]);
   const [page, setPage] = useState<number>(1);
-  const [pageSize] = useState<number>(12);
+  const [pageSize] = useState<number>(6);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const searchParams = useSearchParams();
   const statusFilter = searchParams.get('status') || 'all';
@@ -122,6 +122,10 @@ export default function ParcelamentosPage() {
     return items;
   }, [parcelamentos, sortOrder]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, sortOrder, statusFilter]);
+
   return (
     <TableLayout
       className="min-w-0 max-w-full pb-6"
@@ -171,19 +175,9 @@ export default function ParcelamentosPage() {
         />
       }
       footer={
-        <>
-          {orderedParcelamentos.length > 0 ? (
-            <Pagination
-              totalItems={orderedParcelamentos.length}
-              pageSize={pageSize}
-              page={page}
-              onChange={setPage}
-            />
-          ) : null}
-          <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8 lg:hidden">
-            <AsaasSeal variant="negativo-preto" />
-          </footer>
-        </>
+        <footer className="mt-8 flex min-w-0 max-w-full flex-col items-center border-t border-gray-100 pt-8 lg:hidden">
+          <AsaasSeal variant="negativo-preto" />
+        </footer>
       }
     >
       <div className="min-w-0 w-full max-w-full overflow-x-hidden rounded-lg border border-gray-200 bg-white md:rounded-xl">
@@ -349,6 +343,16 @@ export default function ParcelamentosPage() {
                 })
               )}
             </div>
+            {orderedParcelamentos.length > pageSize ? (
+              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+                <Pagination
+                  totalItems={orderedParcelamentos.length}
+                  pageSize={pageSize}
+                  page={page}
+                  onChange={setPage}
+                />
+              </div>
+            ) : null}
           </>
         )}
       </div>
@@ -382,12 +386,12 @@ function Pagination({
 
   const makePages = () => {
     const pages: (number | '…')[] = [];
-    const maxButtons = 5;
+    const maxButtons = 7;
     if (totalPages <= maxButtons + 2) {
       for (let i = 1; i <= totalPages; i++) pages.push(i);
       return pages;
     }
-    const siblings = 1;
+    const siblings = 2;
     const left = Math.max(2, page - siblings);
     const right = Math.min(totalPages - 1, page + siblings);
     pages.push(1);
@@ -399,19 +403,20 @@ function Pagination({
   };
 
   const pages = makePages();
-
   return (
-    <div className="flex flex-wrap items-center justify-center gap-2 py-6 sm:gap-3">
-      <IconButton aria-label="Primeira página" disabled={page === 1} onClick={() => onChange(1)}>
-        <ChevronsLeft className="h-4 w-4" />
-      </IconButton>
-      <IconButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
+    <div className="flex min-h-9 flex-col items-center justify-between gap-3 sm:flex-row">
+      <div className="text-xs font-medium text-gray-500">
+        Página {page} de {totalPages}
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-1">
+      <PaginationTextButton aria-label="Página anterior" disabled={page === 1} onClick={() => onChange(clamp(page - 1))}>
         <ChevronLeft className="h-4 w-4" />
-      </IconButton>
+        <span>Anterior</span>
+      </PaginationTextButton>
 
       {pages.map((p, idx) =>
         p === '…' ? (
-          <span key={`e-${idx}`} className="px-2 text-brand-accent/50">
+          <span key={`e-${idx}`} className="grid h-9 min-w-9 place-items-center px-1 text-sm font-semibold text-gray-400">
             …
           </span>
         ) : (
@@ -420,12 +425,11 @@ function Pagination({
             onClick={() => onChange(p)}
             aria-current={p === page ? 'page' : undefined}
             className={
-              'h-8 w-8 rounded-md border transition grid place-items-center ' +
-              'border-brand-accent/30 text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent ' +
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 ' +
+              'grid h-8 min-w-8 place-items-center rounded-full border px-2 text-sm font-semibold transition ' +
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 ' +
               (p === page
-                ? 'bg-brand-accent text-white border-brand-accent hover:bg-brand-accent/90'
-                : 'bg-white')
+                ? 'border-transparent bg-gray-200 text-gray-900 hover:bg-gray-200'
+                : 'border-transparent bg-transparent text-gray-700 hover:bg-white hover:text-brand-accent')
             }
           >
             {p}
@@ -433,21 +437,20 @@ function Pagination({
         ),
       )}
 
-      <IconButton
+      <PaginationTextButton
         aria-label="Próxima página"
         disabled={page === totalPages}
         onClick={() => onChange(clamp(page + 1))}
       >
+        <span>Próxima</span>
         <ChevronRight className="h-4 w-4" />
-      </IconButton>
-      <IconButton aria-label="Última página" disabled={page === totalPages} onClick={() => onChange(totalPages)}>
-        <ChevronsRight className="h-4 w-4" />
-      </IconButton>
+      </PaginationTextButton>
+      </div>
     </div>
   );
 }
 
-function IconButton({
+function PaginationTextButton({
   children,
   onClick,
   disabled,
@@ -463,7 +466,7 @@ function IconButton({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={onClick}
-      className="h-8 w-8 rounded-md border grid place-items-center transition border-brand-accent/30 bg-white text-brand-accent hover:bg-brand-accent hover:text-white hover:border-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40 disabled:text-gray-300 disabled:border-gray-200 disabled:hover:bg-white disabled:hover:text-gray-300 disabled:cursor-not-allowed"
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent px-2.5 text-sm font-semibold text-gray-700 transition hover:bg-white hover:text-brand-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent disabled:hover:text-gray-300"
     >
       {children}
     </button>

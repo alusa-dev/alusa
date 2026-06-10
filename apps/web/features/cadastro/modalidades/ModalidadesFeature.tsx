@@ -28,7 +28,7 @@ import {
 } from './services/modalidades-service';
 import { useModalidades, type UseModalidadesFilters } from './hooks/use-modalidades';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 interface ModalidadesTableProps {
   modalidades: ModalidadeListItem[];
@@ -136,7 +136,6 @@ export function ModalidadesFeature() {
             searchPlaceholder="Buscar por nome ou descrição..."
           />
         }
-        footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
       >
         <div className={table.container}>
           <ModalidadesTable
@@ -146,6 +145,11 @@ export function ModalidadesFeature() {
             onDelete={(modalidade) => deleteDialog.openDialog(modalidade)}
             loading={loading || userLoading}
           />
+          {total > pageSize ? (
+            <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+              <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+            </div>
+          ) : null}
         </div>
       </TableLayout>
 

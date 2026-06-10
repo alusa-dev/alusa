@@ -23,7 +23,7 @@ import { useTurmas, type UseTurmasFilters } from './hooks/use-turmas';
 import { cn } from '@/lib/utils';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 interface TurmasTableProps {
   turmas: TurmaListItem[];
@@ -144,7 +144,6 @@ export function TurmasFeature() {
             searchPlaceholder="Buscar por nome..."
           />
         }
-        footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
       >
         <div className={table.container}>
           <TurmasTable
@@ -161,6 +160,11 @@ export function TurmasFeature() {
             }}
             loading={loading || userLoading}
           />
+          {total > pageSize ? (
+            <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+              <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+            </div>
+          ) : null}
         </div>
       </TableLayout>
 

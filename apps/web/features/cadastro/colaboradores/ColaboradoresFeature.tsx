@@ -33,7 +33,7 @@ import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
 import { toast } from '@/components/ui/toast';
 import useCurrentUser from '@/hooks/use-current-user';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 type SortOrder = 'ASC' | 'DESC';
 type StatusFilter = StatusValue;
@@ -156,9 +156,6 @@ export function ColaboradoresFeature() {
           searchPlaceholder="Buscar por nome..."
         />
       }
-      footer={
-        <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
-      }
     >
       <div className={table.container}>
         <ColaboradoresTable
@@ -171,9 +168,13 @@ export function ColaboradoresFeature() {
           }}
           loading={loading || userLoading}
         />
+        {ordered.length > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
-      {/* Paginação movida para footer do TableLayout */}
       <ColaboradorWizardDialog
         open={wizardOpen}
         onOpenChange={(open) => {

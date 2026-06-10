@@ -24,7 +24,7 @@ import {
   type UpdateProfessorPayload,
 } from './services/professores-service';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 interface ProfessoresTableProps {
   professores: ProfessorListItem[];
@@ -134,7 +134,6 @@ export function ProfessoresFeature() {
           searchPlaceholder="Buscar por nome ou email..."
         />
       }
-      footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
     >
       <div className="bg-white rounded-xl border overflow-hidden">
         {loading || userLoading ? (
@@ -151,6 +150,11 @@ export function ProfessoresFeature() {
             }}
           />
         )}
+        {total > pageSize ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
       {editDialog.entity ? (

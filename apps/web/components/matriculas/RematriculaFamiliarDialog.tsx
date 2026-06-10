@@ -496,7 +496,7 @@ export function RematriculaFamiliarDialog({
       <DialogContent
         fullScreenMobile
         data-testid="rematricula-familiar-dialog"
-        className="max-w-6xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-w-6xl md:rounded-2xl"
+        className="w-[calc(100vw-2rem)] max-w-[1040px] gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-h-[calc(100dvh-4rem)] md:rounded-2xl"
       >
         <form
           onSubmit={handleSubmit}

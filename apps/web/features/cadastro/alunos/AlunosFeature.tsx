@@ -168,9 +168,6 @@ export function AlunosFeature() {
           searchPlaceholder="Buscar por nome..."
         />
       }
-      footer={
-        <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
-      }
     >
       <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:rounded-xl">
         <AlunosTable
@@ -185,9 +182,13 @@ export function AlunosFeature() {
           onOpenDetail={(aluno) => router.push(`/alunos/${aluno.id}`)}
           loading={loading || userLoading}
         />
+        {total > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
-      {/* Paginação removida daqui e movida para footer do TableLayout */}
       <AlunoWizardDialog
         open={wizardOpen}
         onOpenChange={(open) => {

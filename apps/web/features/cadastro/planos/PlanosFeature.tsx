@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import TableLayout from '@/components/layout/TableLayout';
 import { table } from '@/components/layout/TableStyles';
 import DataTable, { type DataTableColumn, type SortDirection } from '@/components/layout/DataTable';
@@ -24,7 +25,7 @@ import {
 } from './services/planos-service';
 import { usePlanos, type UsePlanosFilters } from './hooks/use-planos';
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 6;
 
 type WizardMode = 'create' | 'edit';
 
@@ -145,7 +146,6 @@ export function PlanosFeature() {
             searchPlaceholder="Buscar por nome ou descrição..."
           />
         }
-        footer={<Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />}
       >
         <PlanosTable
           data={paginated}
@@ -154,6 +154,11 @@ export function PlanosFeature() {
           onEdit={openEditDialog}
           onDelete={deleteDialog.openDialog}
           sortDirection={sort as SortDirection}
+          footer={
+            total > pageSize ? (
+              <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} />
+            ) : null
+          }
         />
       </TableLayout>
 
@@ -224,9 +229,10 @@ interface PlanosTableProps {
   onEdit: (_plano: PlanoListItem) => void;
   onDelete: (_plano: PlanoListItem) => void;
   sortDirection: SortDirection;
+  footer?: ReactNode;
 }
 
-function PlanosTable({ data, accountMissing, loading, onEdit, onDelete }: PlanosTableProps) {
+function PlanosTable({ data, accountMissing, loading, onEdit, onDelete, footer }: PlanosTableProps) {
   if (accountMissing) {
     return (
       <div className={cn(table.container, 'px-6 py-12 text-center text-gray-500')}>
@@ -338,6 +344,9 @@ function PlanosTable({ data, accountMissing, loading, onEdit, onDelete }: Planos
         }
         ariaLabel="Tabela de planos"
       />
+      {footer ? (
+        <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">{footer}</div>
+      ) : null}
     </div>
   );
 }

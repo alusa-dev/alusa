@@ -30,7 +30,7 @@ const INITIAL_STATE: UseMatriculasState = {
   error: null,
   total: 0,
   page: 1,
-  pageSize: 20,
+  pageSize: 6,
 };
 
 export function useMatriculas({ contaId, status, excludeStatus, search, turmaId }: UseMatriculasOptions) {
@@ -58,7 +58,7 @@ export function useMatriculas({ contaId, status, excludeStatus, search, turmaId 
           search,
           turmaId,
           page: overrides?.page ?? 1,
-          pageSize: overrides?.pageSize ?? 50,
+          pageSize: overrides?.pageSize ?? 6,
           signal: controller.signal,
         });
 

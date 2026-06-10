@@ -162,9 +162,6 @@ export function ResponsaveisFeature() {
           hideStatusFilter
         />
       }
-      footer={
-        <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
-      }
     >
       <div className={table.container}>
         <ResponsaveisTable
@@ -172,6 +169,11 @@ export function ResponsaveisFeature() {
           loading={loading || userLoading}
           onOpenDetail={(responsavel) => router.push(`/responsaveis/${responsavel.id}`)}
         />
+        {ordered.length > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={ordered.length} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
