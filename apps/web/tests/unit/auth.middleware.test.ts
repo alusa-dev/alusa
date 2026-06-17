@@ -73,6 +73,45 @@ describe('auth middleware', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('bloqueia páginas /financeiro para usuário autenticado sem papel financeiro', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1',
+      contaId: 'conta_1',
+      role: 'PROFESSOR',
+      emailVerified: true,
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const response = await middleware(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toBe('http://localhost:3000/dashboard');
+  });
+
+  it('permite páginas /financeiro para FINANCEIRO', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1',
+      contaId: 'conta_1',
+      role: 'FINANCEIRO',
+      emailVerified: true,
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const response = await middleware(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+
+    expect(response.headers.get('location')).toBeNull();
+  });
+
   it('não redireciona POST /api/auth/login/validate sem sessão', async () => {
     const response = await middleware(
       new NextRequest('http://localhost:3000/api/auth/login/validate', {

@@ -354,7 +354,7 @@ async function loadAcademicCobrancas(
   }
 
   let cobrancas = await query();
-  if (options?.reconcile !== false) {
+  if (options?.reconcile === true) {
     const reconciliation = await reconcileAcademicCharges({
       contaId,
       cobrancas,

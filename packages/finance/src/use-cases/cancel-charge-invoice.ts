@@ -15,7 +15,12 @@ import { requireKycApproved } from '../foundation/kyc-guard';
 import { FinanceBlockedError } from '../foundation/asaas-operational-guard';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
+import {
+  buildInvoiceProviderSnapshotUpdate,
+  recordUnknownInvoiceStatusIssue,
+} from '../fiscal/provider-invoice-snapshot';
 import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 
@@ -88,6 +93,30 @@ function toCancelOutput(invoice: {
   };
 }
 
+async function recordCancelReviewIssue(input: {
+  contaId: string;
+  invoiceId: string;
+  asaasInvoiceId?: string | null;
+  localStatus?: InvoiceStatus | null;
+  remoteStatus?: string | null;
+  reason: string;
+}) {
+  await upsertFinanceReconciliationIssue({
+    contaId: input.contaId,
+    entityType: 'INVOICE',
+    entityId: input.invoiceId,
+    asaasId: input.asaasInvoiceId ?? null,
+    issueType: 'INVOICE_CANCEL_REVIEW',
+    severity: 'HIGH',
+    localStatus: input.localStatus ?? null,
+    remoteStatus: input.remoteStatus ?? null,
+    metadata: {
+      reason: input.reason,
+      source: 'cancelChargeInvoice',
+    },
+  });
+}
+
 async function resolveInvoice(input: CancelChargeInvoiceInput) {
   const prisma = getFiscalPrisma();
   if (input.invoiceId) {
@@ -154,6 +183,14 @@ export async function cancelChargeInvoice(
     try {
       const municipalOptions = await asaasGetMunicipalOptions({ apiKey: credentials.apiKey });
       if (municipalOptions.supportsCancellation === false) {
+        await recordCancelReviewIssue({
+          contaId: input.contaId,
+          invoiceId: invoice.id,
+          asaasInvoiceId,
+          localStatus: invoice.status,
+          remoteStatus: 'CANCELLATION_NOT_SUPPORTED',
+          reason: 'Municipio informado pelo Asaas nao suporta cancelamento automatico de NFS-e.',
+        });
         return err('INVOICE_CANCELAMENTO_NAO_SUPORTADO');
       }
     } catch (error) {
@@ -176,23 +213,44 @@ export async function cancelChargeInvoice(
     const asaasInvoice = await asaasCancelInvoice({
       apiKey: credentials.apiKey,
       id: asaasInvoiceId,
-      idempotencyKey: `invoice-cancel:${invoice.id}`,
     });
 
     const nextStatus = mapAsaasInvoiceStatusToInternal(asaasInvoice.status);
+    const safeNextStatus = nextStatus ?? invoice.status;
 
     const updated = await prisma.invoice.update({
       where: { id: invoice.id },
       data: {
-        status: nextStatus,
+        ...buildInvoiceProviderSnapshotUpdate(asaasInvoice),
+        status: safeNextStatus,
         statusDescription: asaasInvoice.statusDescription ?? null,
         statusUpdatedAt: new Date(),
         pdfUrl: asaasInvoice.pdfUrl ?? null,
         xmlUrl: asaasInvoice.xmlUrl ?? null,
         number: asaasInvoice.number ?? null,
+        fiscalDivergence: !nextStatus || safeNextStatus === 'CANCELLATION_DENIED',
       },
       select: { id: true, asaasInvoiceId: true, status: true, statusUpdatedAt: true },
     });
+
+    if (!nextStatus) {
+      await recordUnknownInvoiceStatusIssue({
+        contaId: input.contaId,
+        invoiceId: updated.id,
+        asaasInvoiceId: updated.asaasInvoiceId,
+        rawStatus: asaasInvoice.status,
+        source: 'cancel',
+      });
+    } else if (nextStatus === 'CANCELLATION_DENIED') {
+      await recordCancelReviewIssue({
+        contaId: input.contaId,
+        invoiceId: updated.id,
+        asaasInvoiceId: updated.asaasInvoiceId,
+        localStatus: nextStatus,
+        remoteStatus: asaasInvoice.status,
+        reason: asaasInvoice.statusDescription ?? 'Cancelamento negado pela prefeitura.',
+      });
+    }
 
     await recordInvoiceAuditEvent({
       contaId: input.contaId,

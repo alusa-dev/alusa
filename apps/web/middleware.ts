@@ -23,6 +23,7 @@ const legacyDeveloperPaths = [
   '/developer/errors',
 ];
 const unsafeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const financeiroPageRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const originCheckExemptApiPrefixes = [
   '/api/auth/',
   '/api/developer/auth/',
@@ -126,6 +127,14 @@ function isProtectedPagePath(pathname: string): boolean {
   });
 }
 
+function isFinanceiroPagePath(pathname: string): boolean {
+  return pathname === '/financeiro' || pathname.startsWith('/financeiro/');
+}
+
+function canAccessFinanceiroPages(role: unknown): boolean {
+  return typeof role === 'string' && financeiroPageRoles.has(role.toUpperCase());
+}
+
 function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
   const signInUrl = new URL('/auth/login', req.nextUrl.origin);
   signInUrl.searchParams.set('callbackUrl', `${req.nextUrl.pathname}${req.nextUrl.search}`);
@@ -219,6 +228,11 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
   }
 
   const userRole = (token as { role?: string } | null)?.role;
+  if (isFinanceiroPagePath(pathname) && !canAccessFinanceiroPages(userRole)) {
+    logMiddlewareRedirect(pathname, 'financeiro_role_forbidden', 307);
+    return NextResponse.redirect(new URL('/dashboard', req.nextUrl.origin));
+  }
+
   const isAdmin = typeof userRole === 'string' && userRole.toUpperCase() === 'ADMIN';
 
   if (!isAdmin) {

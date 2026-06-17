@@ -1,7 +1,8 @@
 import { listFinancialTransactions as asaasListFinancialTransactions } from '@alusa/asaas';
-import { loadAsaasCredentials } from '@alusa/database';
+import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
+import { createHash } from 'crypto';
 
 import type {
   ExtratoResponse,
@@ -23,12 +24,14 @@ export interface GetExtratoInput {
 
 const MAX_ASAAS_LIMIT = 100;
 const MAX_WINDOW_PAGES = 50; // hard limit: 5000 transações por período
+const DEFAULT_SNAPSHOT_TTL_SECONDS = 300;
 
 interface FetchAllEntriesResult {
   entries: AsaasRawEntry[];
   officialTotalCount: number;
   fetchedCount: number;
   truncated: boolean;
+  fetchedAt?: string;
 }
 
 export async function getExtrato(
@@ -40,14 +43,24 @@ export async function getExtrato(
   const { query } = input;
 
   try {
-    // O extrato é sempre derivado exclusivamente do ledger oficial.
-    // Nenhuma linha pode nascer de payments, subscriptions, charges ou estado local.
-    const fetched = await fetchAllEntriesForPeriod(
+    // O extrato continua derivado exclusivamente do ledger oficial. O snapshot
+    // local apenas evita refetch agressivo da mesma janela operacional.
+    const cached = await readSnapshotWindow(input.contaId, query);
+    const fetched = cached ?? await fetchAllEntriesForPeriod(
       credentials.apiKey,
       query.startDate,
       query.endDate,
       query.direction,
     );
+
+    if (!cached) {
+      await persistSnapshotWindow(input.contaId, query, fetched).catch((error) => {
+        console.warn('[finance.extrato] Falha ao persistir snapshot do ledger', {
+          contaId: input.contaId,
+          error: error instanceof Error ? error.message : 'unknown',
+        });
+      });
+    }
 
     // A normalização preserva a semântica oficial do ledger.
     const normalized: LedgerEntry[] = fetched.entries.map(mapToLedgerEntry);
@@ -91,7 +104,7 @@ export async function getExtrato(
       },
       sync: {
         provider: 'ASAAS',
-        fetchedAt: new Date().toISOString(),
+        fetchedAt: fetched.fetchedAt ?? new Date().toISOString(),
         officialTotalCount: fetched.officialTotalCount,
         fetchedCount: fetched.fetchedCount,
         truncated: fetched.truncated,
@@ -112,6 +125,7 @@ interface AsaasRawEntry {
   type: string;
   date: string;
   description: string;
+  externalReference?: string | null;
   paymentId?: string | null;
   splitId?: string | null;
   transferId?: string | null;
@@ -120,6 +134,193 @@ interface AsaasRawEntry {
   invoiceId?: string | null;
   paymentDunningId?: string | null;
   creditBureauReportId?: string | null;
+}
+
+async function readSnapshotWindow(
+  contaId: string,
+  query: ExtratoQueryInput,
+): Promise<FetchAllEntriesResult | null> {
+  const windowKey = buildSnapshotWindowKey(query);
+  const minSyncedAt = new Date(Date.now() - getSnapshotTtlMs());
+
+  const window = await prisma.financialTransactionSyncWindow.findFirst({
+    where: {
+      contaId,
+      windowKey,
+      syncedAt: { gte: minSyncedAt },
+    },
+  });
+
+  if (!window) return null;
+
+  const where: {
+    contaId: string;
+    date?: { gte?: Date; lte?: Date };
+  } = { contaId };
+  const start = parseLedgerDate(query.startDate);
+  const end = parseLedgerDate(query.endDate);
+  if (start || end) {
+    where.date = {};
+    if (start) where.date.gte = start;
+    if (end) where.date.lte = end;
+  }
+
+  const rows = await prisma.financialTransactionSnapshot.findMany({
+    where,
+    orderBy: { date: query.direction === 'asc' ? 'asc' : 'desc' },
+  });
+
+  return {
+    entries: rows.map(snapshotToRawEntry),
+    officialTotalCount: window.officialTotalCount,
+    fetchedCount: window.fetchedCount,
+    truncated: window.truncated,
+    fetchedAt: window.syncedAt.toISOString(),
+  };
+}
+
+async function persistSnapshotWindow(
+  contaId: string,
+  query: ExtratoQueryInput,
+  fetched: FetchAllEntriesResult,
+): Promise<void> {
+  const now = new Date();
+  const windowKey = buildSnapshotWindowKey(query);
+
+  for (let offset = 0; offset < fetched.entries.length; offset += 100) {
+    const chunk = fetched.entries.slice(offset, offset + 100);
+    await prisma.$transaction(chunk.map((entry) => prisma.financialTransactionSnapshot.upsert({
+      where: {
+        uq_fin_tx_snapshot_conta_asaas: {
+          contaId,
+          asaasTransactionId: entry.id,
+        },
+      },
+      create: {
+        contaId,
+        asaasTransactionId: entry.id,
+        value: entry.value,
+        balance: entry.balance,
+        type: entry.type,
+        date: parseLedgerDate(entry.date) ?? now,
+        description: entry.description,
+        externalReference: entry.externalReference ?? null,
+        paymentId: entry.paymentId ?? null,
+        splitId: entry.splitId ?? null,
+        transferId: entry.transferId ?? null,
+        anticipationId: entry.anticipationId ?? null,
+        billId: entry.billId ?? null,
+        invoiceId: entry.invoiceId ?? null,
+        paymentDunningId: entry.paymentDunningId ?? null,
+        creditBureauReportId: entry.creditBureauReportId ?? null,
+        raw: entry as unknown as object,
+        fetchedAt: now,
+      },
+      update: {
+        value: entry.value,
+        balance: entry.balance,
+        type: entry.type,
+        date: parseLedgerDate(entry.date) ?? now,
+        description: entry.description,
+        externalReference: entry.externalReference ?? null,
+        paymentId: entry.paymentId ?? null,
+        splitId: entry.splitId ?? null,
+        transferId: entry.transferId ?? null,
+        anticipationId: entry.anticipationId ?? null,
+        billId: entry.billId ?? null,
+        invoiceId: entry.invoiceId ?? null,
+        paymentDunningId: entry.paymentDunningId ?? null,
+        creditBureauReportId: entry.creditBureauReportId ?? null,
+        raw: entry as unknown as object,
+        fetchedAt: now,
+      },
+    })));
+  }
+
+  await prisma.financialTransactionSyncWindow.upsert({
+    where: {
+      uq_fin_tx_sync_window_conta_key: {
+        contaId,
+        windowKey,
+      },
+    },
+    create: {
+      contaId,
+      windowKey,
+      startDate: query.startDate ?? null,
+      finishDate: query.endDate ?? null,
+      order: query.direction,
+      syncedAt: now,
+      officialTotalCount: fetched.officialTotalCount,
+      fetchedCount: fetched.fetchedCount,
+      truncated: fetched.truncated,
+    },
+    update: {
+      startDate: query.startDate ?? null,
+      finishDate: query.endDate ?? null,
+      order: query.direction,
+      syncedAt: now,
+      officialTotalCount: fetched.officialTotalCount,
+      fetchedCount: fetched.fetchedCount,
+      truncated: fetched.truncated,
+    },
+  });
+}
+
+function snapshotToRawEntry(row: {
+  asaasTransactionId: string;
+  value: unknown;
+  balance: unknown | null;
+  type: string;
+  date: Date;
+  description: string;
+  externalReference: string | null;
+  paymentId: string | null;
+  splitId: string | null;
+  transferId: string | null;
+  anticipationId: string | null;
+  billId: string | null;
+  invoiceId: string | null;
+  paymentDunningId: string | null;
+  creditBureauReportId: string | null;
+}): AsaasRawEntry {
+  return {
+    id: row.asaasTransactionId,
+    value: Number(row.value),
+    balance: row.balance === null ? 0 : Number(row.balance),
+    type: row.type,
+    date: row.date.toISOString().slice(0, 10),
+    description: row.description,
+    externalReference: row.externalReference,
+    paymentId: row.paymentId,
+    splitId: row.splitId,
+    transferId: row.transferId,
+    anticipationId: row.anticipationId,
+    billId: row.billId,
+    invoiceId: row.invoiceId,
+    paymentDunningId: row.paymentDunningId,
+    creditBureauReportId: row.creditBureauReportId,
+  };
+}
+
+function buildSnapshotWindowKey(query: ExtratoQueryInput): string {
+  const raw = JSON.stringify({
+    startDate: query.startDate ?? null,
+    endDate: query.endDate ?? null,
+    direction: query.direction,
+  });
+  return createHash('sha256').update(raw).digest('hex');
+}
+
+function getSnapshotTtlMs(): number {
+  const seconds = Number(process.env.FINANCE_EXTRATO_SNAPSHOT_TTL_SECONDS ?? DEFAULT_SNAPSHOT_TTL_SECONDS);
+  return (Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_SNAPSHOT_TTL_SECONDS) * 1000;
+}
+
+function parseLedgerDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 async function fetchAllEntriesForPeriod(

@@ -1,12 +1,14 @@
-import type { InvoiceStatus } from '@prisma/client';
+import type { InvoiceStatus, Prisma } from '@prisma/client';
 
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
+import { recordUnknownInvoiceStatusIssue } from '../fiscal/provider-invoice-snapshot';
 import {
   isAllowedInvoiceStatusTransition,
   mapAsaasInvoiceStatusToInternal,
   mapInvoiceWebhookEventToStatus,
 } from '../mappers/invoice-status.mapper';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 
 export type InvoiceWebhookPayload = {
@@ -26,6 +28,13 @@ export type InvoiceWebhookPayload = {
     deductions?: number;
     effectiveDate?: string | null;
     payment?: string | null;
+    taxes?: {
+      pisCofinsRetentionType?: string | null;
+      pisCofinsTaxStatus?: string | null;
+      operationPis?: number | null;
+      operationCofins?: number | null;
+      [key: string]: unknown;
+    } | null;
   };
 };
 
@@ -57,6 +66,51 @@ async function publishInvoiceRealtimeUpdate(params: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function toJsonObject(value: Record<string, unknown>): Prisma.InputJsonObject {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonObject;
+}
+
+function buildWebhookProviderUpdate(invoicePayload: NonNullable<InvoiceWebhookPayload['invoice']>) {
+  return {
+    providerSnapshot: toJsonObject(invoicePayload as unknown as Record<string, unknown>),
+    providerTaxes: invoicePayload.taxes
+      ? toJsonObject(invoicePayload.taxes as unknown as Record<string, unknown>)
+      : undefined,
+    rawProviderStatus: invoicePayload.status ?? null,
+    providerPisCofinsRetentionType: invoicePayload.taxes?.pisCofinsRetentionType ?? null,
+    providerPisCofinsTaxStatus: invoicePayload.taxes?.pisCofinsTaxStatus ?? null,
+    providerOperationPis: invoicePayload.taxes?.operationPis ?? null,
+    providerOperationCofins: invoicePayload.taxes?.operationCofins ?? null,
+    lastReconciledAt: new Date(),
+  };
+}
+
+async function recordInvoiceStatusDriftIssue(input: {
+  contaId: string;
+  invoiceId: string;
+  asaasInvoiceId?: string | null;
+  fromStatus: InvoiceStatus;
+  toStatus: InvoiceStatus;
+  event: string;
+  eventId?: string | null;
+}) {
+  await upsertFinanceReconciliationIssue({
+    contaId: input.contaId,
+    entityType: 'INVOICE',
+    entityId: input.invoiceId,
+    asaasId: input.asaasInvoiceId ?? null,
+    issueType: 'INVOICE_STATUS_DRIFT',
+    severity: 'HIGH',
+    localStatus: input.fromStatus,
+    remoteStatus: input.toStatus,
+    metadata: {
+      event: input.event,
+      eventId: input.eventId ?? null,
+      reason: 'Webhook fiscal fora de ordem ou regressivo bloqueado.',
+    },
+  });
 }
 
 export async function handleInvoiceWebhook(
@@ -108,8 +162,30 @@ export async function handleInvoiceWebhook(
     const payloadStatus = invoicePayload.status
       ? mapAsaasInvoiceStatusToInternal(invoicePayload.status)
       : null;
-    const nextStatus = payloadStatus ?? eventStatus ?? 'SCHEDULED';
+    const hasUnknownRawStatus = Boolean(invoicePayload.status && !payloadStatus);
+    const nextStatus = hasUnknownRawStatus ? eventStatus : payloadStatus ?? eventStatus;
+
+    if (!nextStatus) {
+      await upsertFinanceReconciliationIssue({
+        contaId,
+        entityType: 'INVOICE',
+        entityId: charge.id,
+        asaasId: invoicePayload.id,
+        issueType: 'INVOICE_UNKNOWN_STATUS',
+        severity: 'HIGH',
+        localStatus: null,
+        remoteStatus: invoicePayload.status ?? payload.event,
+        metadata: {
+          source: 'webhook',
+          event: payload.event,
+          eventId: payload.id ?? null,
+          reason: 'Webhook fiscal sem status interno resolvivel.',
+        },
+      });
+      return { handled: true, skipped: true, reason: 'UNKNOWN_PROVIDER_STATUS' };
+    }
     const invoiceId = charge.id;
+    const providerUpdate = buildWebhookProviderUpdate(invoicePayload);
 
     invoice = await prisma.invoice.upsert({
       where: { chargeId: charge.id },
@@ -135,6 +211,11 @@ export async function handleInvoiceWebhook(
         pdfUrl: invoicePayload.pdfUrl ?? null,
         xmlUrl: invoicePayload.xmlUrl ?? null,
         number: invoicePayload.number ?? null,
+        ...providerUpdate,
+        fiscalDivergence: hasUnknownRawStatus,
+        operationStatus: nextStatus === 'ERROR' ? 'FAILED' : 'IDLE',
+        operationLeaseExpiresAt: null,
+        nextAttemptAt: null,
         errorMessage:
           nextStatus === 'ERROR'
             ? invoicePayload.statusDescription ?? 'Erro na emissão fiscal'
@@ -143,6 +224,7 @@ export async function handleInvoiceWebhook(
       update: {
         asaasInvoiceId: invoicePayload.id,
         status: nextStatus,
+        ...providerUpdate,
         statusDescription: invoicePayload.statusDescription ?? undefined,
         statusUpdatedAt: new Date(),
         value: invoicePayload.value ?? undefined,
@@ -155,6 +237,10 @@ export async function handleInvoiceWebhook(
         pdfUrl: invoicePayload.pdfUrl ?? undefined,
         xmlUrl: invoicePayload.xmlUrl ?? undefined,
         number: invoicePayload.number ?? undefined,
+        fiscalDivergence: hasUnknownRawStatus,
+        operationStatus: nextStatus === 'ERROR' ? 'FAILED' : 'IDLE',
+        operationLeaseExpiresAt: null,
+        nextAttemptAt: nextStatus === 'ERROR' ? undefined : null,
         errorMessage:
           nextStatus === 'ERROR'
             ? invoicePayload.statusDescription ?? 'Erro na emissão fiscal'
@@ -163,6 +249,17 @@ export async function handleInvoiceWebhook(
               : undefined,
       },
     });
+
+    if (hasUnknownRawStatus) {
+      await recordUnknownInvoiceStatusIssue({
+        contaId,
+        invoiceId: invoice.id,
+        asaasInvoiceId: invoicePayload.id,
+        rawStatus: invoicePayload.status,
+        source: 'webhook',
+        eventId: payload.id,
+      });
+    }
 
     await recordInvoiceAuditEvent({
       contaId,
@@ -189,6 +286,53 @@ export async function handleInvoiceWebhook(
     ? mapAsaasInvoiceStatusToInternal(invoicePayload.status)
     : null;
   const nextStatus = payloadStatus ?? eventStatus;
+  const hasUnknownRawStatus = Boolean(invoicePayload.status && !payloadStatus);
+  const providerUpdate = buildWebhookProviderUpdate(invoicePayload);
+
+  if (hasUnknownRawStatus) {
+    invoice = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
+        ...providerUpdate,
+        fiscalDivergence: true,
+      },
+    });
+
+    await recordUnknownInvoiceStatusIssue({
+      contaId,
+      invoiceId: invoice.id,
+      asaasInvoiceId: invoice.asaasInvoiceId,
+      rawStatus: invoicePayload.status,
+      source: 'webhook',
+      eventId: payload.id,
+    });
+
+    await recordInvoiceAuditEvent({
+      contaId,
+      invoiceId: invoice.id,
+      action: 'webhook.invoice_unknown_status',
+      fromStatus: invoice.status,
+      toStatus: invoice.status,
+      metadata: {
+        asaasInvoiceId: invoicePayload.id,
+        webhookEventId: payload.id,
+        rawStatus: invoicePayload.status,
+      },
+      correlationId: payload.id,
+    });
+
+    await publishInvoiceRealtimeUpdate({ contaId, invoiceId: invoice.id });
+
+    return {
+      handled: true,
+      invoiceId: invoice.id,
+      skipped: true,
+      reason: 'UNKNOWN_PROVIDER_STATUS',
+      previousStatus: invoice.status,
+      nextStatus: invoice.status,
+    };
+  }
 
   if (!nextStatus) {
     return { handled: true, invoiceId: invoice.id, skipped: true, reason: 'NO_STATUS_CHANGE' };
@@ -201,6 +345,23 @@ export async function handleInvoiceWebhook(
       from: invoice.status,
       to: nextStatus,
       event: payload.event,
+    });
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
+        ...providerUpdate,
+        fiscalDivergence: true,
+      },
+    });
+    await recordInvoiceStatusDriftIssue({
+      contaId,
+      invoiceId: invoice.id,
+      asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
+      fromStatus: invoice.status,
+      toStatus: nextStatus,
+      event: payload.event,
+      eventId: payload.id,
     });
     return {
       handled: true,
@@ -219,6 +380,11 @@ export async function handleInvoiceWebhook(
     data: {
       asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
       status: nextStatus,
+      ...providerUpdate,
+      fiscalDivergence: false,
+      operationStatus: nextStatus === 'ERROR' ? 'FAILED' : 'IDLE',
+      operationLeaseExpiresAt: null,
+      nextAttemptAt: nextStatus === 'ERROR' ? undefined : null,
       statusDescription: invoicePayload.statusDescription ?? undefined,
       statusUpdatedAt: new Date(),
       pdfUrl: invoicePayload.pdfUrl ?? undefined,

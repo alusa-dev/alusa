@@ -19,7 +19,9 @@ export {
   getPisCofinsTaxStatusLabel,
   isPisCofinsTaxStatusRequired,
   isValidPisCofinsTaxStatus,
+  normalizeOperationPisCofinsRates,
   normalizePisCofinsTaxRates,
+  normalizePisCofinsTaxStatus,
   PIS_COFINS_TAX_STATUS_OPTIONS,
   PIS_COFINS_TAX_STATUS_VALUES,
   validatePisCofinsTaxRules,
@@ -37,3 +39,4 @@ export type {
   FiscalSettingsValidationIssue,
   FiscalSettingsValidationContext,
 } from './fiscal/fiscal-settings-validation';
+export type { FiscalCodeKind } from '@alusa/asaas';

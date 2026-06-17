@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 
-import type { FiscalCodeKind } from '@alusa/asaas';
+import type { FiscalCodeKind } from '@alusa/finance/fiscal-wizard-client';
 
 import type { FiscalSettingsResponseDTO, SaveFiscalSettingsInputDTO } from '../dtos';
 import { normalizeNbsCodeForAsaas } from '@alusa/finance/fiscal-wizard-client';

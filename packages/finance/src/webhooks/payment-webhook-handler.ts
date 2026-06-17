@@ -20,6 +20,7 @@ import {
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { buildPaymentExternalReference, mapAsaasToChargeStatus } from '../core';
+import { ensureAcademicChargeForCobranca } from '../fiscal/ensure-academic-charge-for-cobranca';
 import { auditLogService } from '../foundation/audit-log.service';
 import { findStandaloneSubscription } from '../foundation/standalone-subscription-store';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
@@ -504,13 +505,6 @@ async function upsertCobrancaByAsaasPaymentId(params: {
     }
     throw error;
   }
-}
-
-function buildSubscriptionChargeExternalReference(
-  subscriptionExternalReference: string,
-  paymentId: string
-): string {
-  return buildPaymentExternalReference(subscriptionExternalReference, paymentId);
 }
 
 /**
@@ -1780,7 +1774,6 @@ async function handlePaymentWebhookCore(
       return { success: true };
     }
 
-    // Garantir Charge local para cobranças de assinatura (para listagem por externalReference)
     if (payload.payment.subscription) {
       if (!subscriptionRecord) {
         subscriptionRecord = await prisma.subscription.findFirst({
@@ -1788,44 +1781,15 @@ async function handlePaymentWebhookCore(
           select: { id: true, externalReference: true },
         });
       }
-
-      if (subscriptionRecord) {
-        const subscriptionChargeExternalRef = buildSubscriptionChargeExternalReference(
-          subscriptionRecord.externalReference,
-          payload.payment.id
-        );
-
-        const subscriptionCharge = await prisma.charge.upsert({
-          where: { cobrancaId: cobranca.id },
-          update: {
-            externalReference: subscriptionChargeExternalRef,
-            asaasPaymentId: payload.payment.id,
-            billingType: payload.payment.billingType ?? null,
-            dueDate: payload.payment.dueDate ? new Date(payload.payment.dueDate) : null,
-            value: payload.payment.value,
-            description: payload.payment.description ?? null,
-            invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-          },
-          create: {
-            id: cobranca.id,
-            contaId,
-            cobrancaId: cobranca.id,
-            externalReference: subscriptionChargeExternalRef,
-            status: 'CREATED',
-            statusUpdatedAt: new Date(),
-            asaasPaymentId: payload.payment.id,
-            description: payload.payment.description ?? null,
-            value: payload.payment.value,
-            dueDate: payload.payment.dueDate ? new Date(payload.payment.dueDate) : null,
-            billingType: payload.payment.billingType ?? null,
-            invoiceUrl: payload.payment.invoiceUrl ?? null,
-          },
-          select: { id: true },
-        });
-
-        await refreshReadModel({ chargeId: subscriptionCharge.id, cobrancaId: cobranca.id });
-      }
     }
+
+    await ensureAcademicChargeForCobranca({
+      contaId,
+      cobrancaId: cobranca.id,
+      asaasPaymentId: payload.payment.id,
+      subscriptionExternalReference: subscriptionRecord?.externalReference ?? null,
+      payment: payload.payment,
+    });
 
     // 2. Calcular próximo status com base no payload (fonte de verdade)
     const normalizedAsaasStatus =

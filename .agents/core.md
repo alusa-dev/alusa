@@ -37,8 +37,13 @@ Entregar mudanças **pequenas, corretas, testáveis e reversíveis**, preservand
 
 | Tema | Agente / skill |
 |------|----------------|
+| Pipeline multi-agente / coordenação de entrega | **alusa-orchestrator** |
 | “Faz sentido no produto?” / escopo | **alusa** |
 | Detalhe RLS, `withTenantSession`, cross-tenant | **tenant** |
+| Schema/migration/constraints/idempotência DB | **alusa-prisma-data-integrity** |
+| Review adversarial vazamento tenant | **alusa-tenant-security-auditor** |
+| Cenários de teste adversarial (webhook, race, A/B) | **alusa-test-adversarial** |
+| Review final de arquitetura / camadas (pré-merge) | **alusa-architecture-reviewer** |
 | Payload/contrato HTTP Asaas, MCP | **asaas** → `.agents/asaas.md` |
 | Decisão de negócio nova sem base no código | **alusa** + stakeholder |
 
@@ -399,10 +404,14 @@ Quando o pedido for feature end-to-end: entregar dados + API + UI + testes do es
 
 ## Prisma e migrations
 
+Coordenação com **alusa-prisma-data-integrity** para constraints, idempotência e plano de migration.
+
 - Nova tabela tenant-scoped: `contaId`, FK `Conta`, índices (`contaId` primeiro em compostos)
 - Migração segura: nullable → backfill → constraint
 - Evitar cascade delete em financeiro/acadêmico/auditável
 - Não remover campo/enum em produção sem análise
+
+Detalhe: `.agents/alusa-prisma-data-integrity.md`
 
 ---
 
@@ -462,11 +471,15 @@ CSS: `apps/web/app/globals.css`
 
 - Alteração relevante → **ajustar ou criar testes**
 - Domínio puro → Vitest unitário
-- Financeiro → sucesso, erro, retry, idempotência, `contaId`
-- Fluxo crítico → Playwright quando fizer sentido
+- Financeiro → sucesso, erro, retry, idempotência, `contaId` — **+ cenários adversariais** (ver **alusa-test-adversarial**)
+- Webhook/fila → duplicata, out-of-order, falha parcial — não só happy path
+- Fluxo crítico → Playwright quando fizer sentido (matrícula → cobrança → webhook)
+- Fixture **Conta A + Conta B** em testes tenant-scoped
 - Rodar testes/typecheck do escopo antes de concluir
 - Proibido: `any`, `ts-ignore`, `eslint-disable` amplo, relaxar Zod/auth para “passar build”
 - Proibido: remover testes ou usar `skip`/`only` sem justificativa
+
+Detalhe adversarial: `.agents/alusa-test-adversarial.md` · Gate final: `.agents/alusa-architecture-reviewer.md`
 
 ---
 

@@ -6,12 +6,26 @@ vi.mock('@alusa/database', () => ({
   prisma: {
     charge: { findFirst: vi.fn() },
     invoice: { findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
+    invoiceAuditEvent: { create: vi.fn() },
   },
   loadAsaasCredentials: vi.fn(),
 }));
 
 vi.mock('@alusa/asaas', () => ({
   createInvoice: vi.fn(),
+  listAsaasInvoices: vi.fn(),
+  AsaasHttpError: class AsaasHttpError extends Error {
+    status = 500;
+  },
+}));
+
+vi.mock('../../fiscal/fiscal-prisma', async () => {
+  const { prisma } = await import('@alusa/database');
+  return { getFiscalPrisma: () => prisma };
+});
+
+vi.mock('../../webhooks/ensure-webhook-config-operational', () => ({
+  ensureWebhookConfigOperational: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock('../../foundation/feature-flags.service', () => ({
@@ -91,7 +105,7 @@ describe('createInvoice', () => {
 
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({ id: 'c1', asaasPaymentId: 'pay_1' } as never);
     vi.mocked(prisma.invoice.findUnique).mockResolvedValueOnce(null as never);
-    vi.mocked(prisma.invoice.upsert).mockResolvedValueOnce({ id: 'c1' } as never);
+    vi.mocked(prisma.invoice.upsert).mockResolvedValueOnce({ id: 'c1', status: 'SCHEDULED' } as never);
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x' } as never);
 

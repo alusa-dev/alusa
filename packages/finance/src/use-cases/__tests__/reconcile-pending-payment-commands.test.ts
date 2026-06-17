@@ -70,10 +70,12 @@ describe('reconcilePendingPaymentCommands', () => {
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
       contaId: 'conta-1',
       asaasPaymentId: 'pay-1',
+      intent: 'RECONCILIATION',
     });
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
       contaId: 'conta-2',
       asaasPaymentId: 'pay-2',
+      intent: 'RECONCILIATION',
     });
   });
 

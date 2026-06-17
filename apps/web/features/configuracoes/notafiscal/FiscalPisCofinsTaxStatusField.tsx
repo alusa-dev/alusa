@@ -74,8 +74,7 @@ export function FiscalPisCofinsTaxStatusField({
       <FiscalFieldError message={error} />
       {isRequired && !value ? (
         <p className="text-xs text-amber-700">
-          Obrigatório para emissão pelo Portal Nacional quando a escola não é optante pelo Simples
-          Nacional.
+          Obrigatório para contas do Regime Normal. Confirme o enquadramento com a contabilidade.
         </p>
       ) : null}
       <FiscalAnchoredDropdownPanel

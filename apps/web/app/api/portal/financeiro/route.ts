@@ -7,7 +7,6 @@ import {
 } from '@/features/portal/mappers';
 import { listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
 import {
-  reconcileAsaasPaymentIds,
   resolveAcademicDisplayedStatus,
 } from '@/src/server/finance/academic-payment-history';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
@@ -81,18 +80,7 @@ export async function GET() {
       return { cobrancas, standaloneCharges };
     }
 
-    let { cobrancas, standaloneCharges } = await loadPortalFinanceData();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: portalUser.contaId,
-      asaasPaymentIds: [
-        ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
-        ...standaloneCharges.map((charge) => charge.asaasId),
-      ],
-      limit: 100,
-    });
-    if (reconciliation.attempted > 0) {
-      ({ cobrancas, standaloneCharges } = await loadPortalFinanceData());
-    }
+    const { cobrancas, standaloneCharges } = await loadPortalFinanceData();
 
     // 5. Formatar dados e atualizar status de atrasadas
     const cobrancasAcademicas = cobrancas.map((c) => {

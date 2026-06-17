@@ -8,6 +8,7 @@ import {
   listFinanceiroCobrancasResultDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapFinanceiroCobrancaListItemToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,10 +16,7 @@ export const revalidate = 0;
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 function err(status: number, code: string, message: string) {
-  return NextResponse.json(
-    { error: { code, message } },
-    { status, headers: { 'cache-control': 'no-store' } },
-  );
+  return financeJsonError(status, code, message);
 }
 
 // Mapeamento de UnifiedChargeStatus para status legado (compatibilidade com UI)
@@ -251,7 +249,6 @@ export async function GET(req: NextRequest) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (e) {
-    console.error('[API Financeiro Cobrancas] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return financeInternalError('API Financeiro Cobrancas', e);
   }
 }

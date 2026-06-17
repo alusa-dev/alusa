@@ -455,16 +455,18 @@ export async function syncFiscalSettingsFromProvider(input: {
     },
   });
 
-    const [settings, services] = await Promise.all([
+    const [settings, services, invoicesEnabled, kyc] = await Promise.all([
       prisma.contaFiscalSettings.findUnique({ where: { contaId: input.contaId } }),
       prisma.fiscalService.findMany({ where: { contaId: input.contaId } }),
+      featureFlagsService.isEnabled(input.contaId, 'enableInvoices'),
+      requireKycApproved(input.contaId),
     ]);
     const readiness = computeFiscalReadiness({
       settings,
       services,
       municipalOptions: options,
-      kycApproved: true,
-      invoicesEnabled: true,
+      kycApproved: kyc.success,
+      invoicesEnabled,
     });
 
     if (settings) {

@@ -1,23 +1,32 @@
-import { getServerSession } from 'next-auth';
-import { redirect } from 'next/navigation';
+'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 
-import { authOptions } from '@/lib/auth-options';
+const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
-export default async function FinanceiroLayout({ children }: { children: ReactNode }) {
-  const session = await getServerSession(authOptions);
-  const user = (session as { user?: { id?: string; role?: string; contaId?: string } } | null)?.user;
+/**
+ * Auth de página já é garantida pelo middleware (/financeiro/*).
+ * Role gate client-side evita getServerSession bloqueante no TTFB do documento.
+ */
+export default function FinanceiroLayout({ children }: { children: ReactNode }) {
+  const { data: session, status } = useSession();
+  const router = useRouter();
 
-  if (!user?.id) {
-    redirect('/auth/login');
-  }
+  useEffect(() => {
+    if (status === 'loading') return;
 
-  const role = user.role?.toUpperCase();
-  const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-  if (!role || !allowedRoles.has(role)) {
-    redirect('/dashboard');
-  }
+    if (!session?.user?.id) {
+      router.replace('/auth/login');
+      return;
+    }
+
+    const role = session.user.role?.toUpperCase();
+    if (!role || !allowedRoles.has(role)) {
+      router.replace('/dashboard');
+    }
+  }, [router, session, status]);
 
   return children;
 }

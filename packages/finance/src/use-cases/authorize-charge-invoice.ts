@@ -7,6 +7,10 @@ import type { InvoiceStatus } from '@prisma/client';
 import { auditLogService } from '../foundation/audit-log.service';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
+import {
+  buildInvoiceProviderSnapshotUpdate,
+  recordUnknownInvoiceStatusIssue,
+} from '../fiscal/provider-invoice-snapshot';
 import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 
@@ -58,24 +62,34 @@ function authorizeBlockedMessage(status: InvoiceStatus): string {
 }
 
 async function persistInvoiceFromAsaas(
-  invoiceId: string,
-  asaasInvoice: Awaited<ReturnType<typeof asaasGetInvoice>>,
+  input: {
+    contaId: string;
+    invoiceId: string;
+    currentStatus: InvoiceStatus;
+    asaasInvoice: Awaited<ReturnType<typeof asaasGetInvoice>>;
+    source: 'authorize' | 'sync';
+  },
 ) {
   const prisma = getFiscalPrisma();
-  const nextStatus = mapAsaasInvoiceStatusToInternal(asaasInvoice.status);
-  return prisma.invoice.update({
-    where: { id: invoiceId },
+  const nextStatus = mapAsaasInvoiceStatusToInternal(input.asaasInvoice.status);
+  const safeNextStatus = nextStatus ?? input.currentStatus;
+  const updated = await prisma.invoice.update({
+    where: { id: input.invoiceId },
     data: {
-      status: nextStatus,
-      statusDescription: asaasInvoice.statusDescription ?? null,
+      ...buildInvoiceProviderSnapshotUpdate(input.asaasInvoice),
+      status: safeNextStatus,
+      statusDescription: input.asaasInvoice.statusDescription ?? null,
       statusUpdatedAt: new Date(),
-      pdfUrl: asaasInvoice.pdfUrl ?? null,
-      xmlUrl: asaasInvoice.xmlUrl ?? null,
-      number: asaasInvoice.number ?? null,
-      errorMessage: nextStatus === 'ERROR' ? asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
+      pdfUrl: input.asaasInvoice.pdfUrl ?? null,
+      xmlUrl: input.asaasInvoice.xmlUrl ?? null,
+      number: input.asaasInvoice.number ?? null,
+      fiscalDivergence: !nextStatus,
+      errorMessage:
+        safeNextStatus === 'ERROR' ? input.asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
     },
     select: {
       id: true,
+      asaasInvoiceId: true,
       status: true,
       statusUpdatedAt: true,
       pdfUrl: true,
@@ -83,6 +97,18 @@ async function persistInvoiceFromAsaas(
       number: true,
     },
   });
+
+  if (!nextStatus) {
+    await recordUnknownInvoiceStatusIssue({
+      contaId: input.contaId,
+      invoiceId: updated.id,
+      asaasInvoiceId: updated.asaasInvoiceId,
+      rawStatus: input.asaasInvoice.status,
+      source: input.source,
+    });
+  }
+
+  return updated;
 }
 
 async function resolveInvoice(input: AuthorizeChargeInvoiceInput) {
@@ -142,8 +168,30 @@ export async function authorizeChargeInvoice(
     });
     const remoteStatus = mapAsaasInvoiceStatusToInternal(remoteInvoice.status);
 
+    if (!remoteStatus) {
+      await persistInvoiceFromAsaas({
+        contaId: input.contaId,
+        invoiceId: invoice.id,
+        currentStatus: invoice.status,
+        asaasInvoice: remoteInvoice,
+        source: 'sync',
+      });
+      return err({
+        kind: 'ASAAS',
+        message:
+          'O Asaas retornou um status fiscal ainda não reconhecido pela Alusa. A nota foi marcada para revisão e não foi autorizada automaticamente.',
+        status: 409,
+      });
+    }
+
     if (remoteStatus !== 'SCHEDULED') {
-      await persistInvoiceFromAsaas(invoice.id, remoteInvoice);
+      await persistInvoiceFromAsaas({
+        contaId: input.contaId,
+        invoiceId: invoice.id,
+        currentStatus: invoice.status,
+        asaasInvoice: remoteInvoice,
+        source: 'sync',
+      });
       return err({
         kind: 'ASAAS',
         message: authorizeBlockedMessage(remoteStatus),
@@ -154,10 +202,15 @@ export async function authorizeChargeInvoice(
     const asaasInvoice = await asaasAuthorizeInvoice({
       apiKey: credentials.apiKey,
       id: invoice.asaasInvoiceId,
-      idempotencyKey: `invoice-authorize:${invoice.id}`,
     });
 
-    const updated = await persistInvoiceFromAsaas(invoice.id, asaasInvoice);
+    const updated = await persistInvoiceFromAsaas({
+      contaId: input.contaId,
+      invoiceId: invoice.id,
+      currentStatus: invoice.status,
+      asaasInvoice,
+      source: 'authorize',
+    });
 
     await recordInvoiceAuditEvent({
       contaId: input.contaId,

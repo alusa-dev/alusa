@@ -11,7 +11,7 @@ import { getServerSession } from 'next-auth';
 import {
   getAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
-  applyPreferencesToAllCustomers,
+  enqueueAsaasNotificationPreferenceSyncForTenant,
 } from '@alusa/finance';
 
 vi.mock('next-auth', () => ({
@@ -21,7 +21,7 @@ vi.mock('next-auth', () => ({
 vi.mock('@alusa/finance', () => ({
   getAsaasNotificationPreferences: vi.fn(),
   saveAsaasNotificationPreferences: vi.fn(),
-  applyPreferencesToAllCustomers: vi.fn(),
+  enqueueAsaasNotificationPreferenceSyncForTenant: vi.fn(),
 }));
 
 describe('Configurações globais de notificações Asaas', () => {
@@ -122,22 +122,25 @@ describe('Configurações globais de notificações Asaas', () => {
     expect(response.status).toBe(200);
     expect(body.preferences).toHaveLength(1);
     expect(saveAsaasNotificationPreferences).toHaveBeenCalledWith('conta-1', expect.any(Array));
-    expect(applyPreferencesToAllCustomers).not.toHaveBeenCalled();
+    expect(enqueueAsaasNotificationPreferenceSyncForTenant).not.toHaveBeenCalled();
   });
 
-  it('POST deve iniciar sincronização em lote dos registros existentes', async () => {
-    (applyPreferencesToAllCustomers as ReturnType<typeof vi.fn>).mockResolvedValue({
-      processed: 2,
-      successes: 2,
-      failures: 0,
-      errors: [],
+  it('POST deve enfileirar sincronização dos registros existentes', async () => {
+    (enqueueAsaasNotificationPreferenceSyncForTenant as ReturnType<typeof vi.fn>).mockResolvedValue({
+      enqueued: 2,
+      customerIds: ['cus_1', 'cus_2'],
     });
 
     const response = await POST();
     const body = await response.json();
 
     expect(response.status).toBe(202);
-    expect(applyPreferencesToAllCustomers).toHaveBeenCalledWith('conta-1');
+    expect(enqueueAsaasNotificationPreferenceSyncForTenant).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      reason: 'CONFIGURACAO_GLOBAL_ATUALIZADA',
+      limit: 5_000,
+    });
     expect(body.accepted).toBe(true);
+    expect(body.enqueued).toBe(2);
   });
 });

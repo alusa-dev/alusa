@@ -7,9 +7,12 @@ import {
   isPisCofinsTaxStatusRequired,
   isValidPisCofinsTaxStatus,
   normalizePisCofinsTaxRates,
+  normalizeOperationPisCofinsRates,
+  normalizePisCofinsTaxStatus,
   PIS_COFINS_TAX_STATUS_OPTIONS,
   validatePisCofinsTaxRules,
 } from '../pis-cofins-tax-status';
+import { buildAsaasInvoiceTaxes } from '../invoice-taxes';
 
 describe('pis-cofins-tax-status', () => {
   it('expõe todas as opções documentadas pelo Asaas', () => {
@@ -36,16 +39,16 @@ describe('pis-cofins-tax-status', () => {
     expect(getPisCofinsTaxStatusLabel('STANDARD_TAXABLE_OPERATION')).toContain('Alíquota Básica');
   });
 
-  it('indica obrigatoriedade no Portal Nacional fora do Simples', () => {
+  it('indica obrigatoriedade para Regime Normal fora do Simples', () => {
     expect(
-      isPisCofinsTaxStatusRequired({ simplesNacional: false, useNationalPortal: true }),
+      isPisCofinsTaxStatusRequired({ simplesNacional: false, useNationalPortal: false }),
     ).toBe(true);
     expect(
       isPisCofinsTaxStatusRequired({ simplesNacional: true, useNationalPortal: true }),
     ).toBe(false);
   });
 
-  it('exige situação tributária no Portal Nacional fora do Simples', () => {
+  it('exige situação tributária no Regime Normal fora do Simples', () => {
     const issues = validatePisCofinsTaxRules({
       simplesNacional: false,
       useNationalPortal: true,
@@ -65,9 +68,13 @@ describe('pis-cofins-tax-status', () => {
       pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
       pis: 0,
       cofins: 0,
+      operationPis: 0,
+      operationCofins: 0,
     });
 
-    expect(issues.map((issue) => issue.field)).toEqual(expect.arrayContaining(['pis', 'cofins']));
+    expect(issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining(['operationPis', 'operationCofins']),
+    );
   });
 
   it('exige zero para operação tributável com alíquota zero', () => {
@@ -75,18 +82,80 @@ describe('pis-cofins-tax-status', () => {
       pisCofinsTaxStatus: 'ZERO_RATE_TAXABLE_OPERATION',
       pis: 0.65,
       cofins: 3,
+      operationPis: 0.65,
+      operationCofins: 3,
     });
 
-    expect(issues.map((issue) => issue.field)).toEqual(expect.arrayContaining(['pis', 'cofins']));
+    expect(issues.map((issue) => issue.field)).toEqual(
+      expect.arrayContaining(['operationPis', 'operationCofins']),
+    );
   });
 
-  it('normaliza alíquotas que a API Asaas exige como null', () => {
+  it('preserva alíquotas retidas e normaliza apenas alíquotas de operação', () => {
     expect(
       normalizePisCofinsTaxRates({
         pisCofinsTaxStatus: 'NON_TAXABLE_OPERATION',
         pis: 0,
         cofins: 0,
       }),
-    ).toEqual({ pis: null, cofins: null });
+    ).toEqual({ pis: 0, cofins: 0 });
+    expect(
+      normalizeOperationPisCofinsRates({
+        pisCofinsTaxStatus: 'NON_TAXABLE_OPERATION',
+        operationPis: 0,
+        operationCofins: 0,
+      }),
+    ).toEqual({ operationPis: null, operationCofins: null });
+  });
+
+  it('migra enum depreciado para isenção nas novas gravações', () => {
+    expect(normalizePisCofinsTaxStatus('TAXABLE_CONTRIBUTION_OPERATION')).toBe(
+      'EXEMPT_CONTRIBUTION_OPERATION',
+    );
+  });
+
+  it('não envia pisCofinsRetentionType e ativa NT-007 para Regime Normal', () => {
+    const taxes = buildAsaasInvoiceTaxes({
+      simplesNacional: false,
+      retainIss: false,
+      iss: 2,
+      pis: null,
+      cofins: null,
+      csll: 0,
+      inss: 0,
+      ir: 0,
+      pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
+      operationPis: 0.65,
+      operationCofins: 3,
+    });
+
+    expect(taxes).toMatchObject({
+      pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
+      operationPis: 0.65,
+      operationCofins: 3,
+      useTaxSystemReformNT007: true,
+    });
+    expect('pisCofinsRetentionType' in taxes).toBe(false);
+  });
+
+  it('mantém payload mínimo para Simples Nacional', () => {
+    const taxes = buildAsaasInvoiceTaxes({
+      simplesNacional: true,
+      retainIss: false,
+      iss: 2,
+      pis: null,
+      cofins: null,
+      csll: 0,
+      inss: 0,
+      ir: 0,
+      pisCofinsTaxStatus: 'STANDARD_TAXABLE_OPERATION',
+      operationPis: 0.65,
+      operationCofins: 3,
+    });
+
+    expect(taxes.pisCofinsTaxStatus).toBeUndefined();
+    expect(taxes.operationPis).toBeUndefined();
+    expect(taxes.operationCofins).toBeUndefined();
+    expect(taxes.useTaxSystemReformNT007).toBeUndefined();
   });
 });

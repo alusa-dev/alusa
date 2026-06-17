@@ -1,7 +1,7 @@
 import type { AsaasInvoiceStatus } from '@alusa/asaas';
 import type { InvoiceStatus } from '@prisma/client';
 
-const KNOWN_ASAAS_STATUSES = new Set<string>([
+export const KNOWN_ASAAS_INVOICE_STATUSES = new Set<string>([
   'SCHEDULED',
   'SYNCHRONIZED',
   'AUTHORIZED',
@@ -11,12 +11,12 @@ const KNOWN_ASAAS_STATUSES = new Set<string>([
   'ERROR',
 ]);
 
-export function mapAsaasInvoiceStatusToInternal(status: AsaasInvoiceStatus): InvoiceStatus {
+export function mapAsaasInvoiceStatusToInternal(status: AsaasInvoiceStatus): InvoiceStatus | null {
   const normalized = String(status ?? '').toUpperCase();
-  if (KNOWN_ASAAS_STATUSES.has(normalized)) {
+  if (KNOWN_ASAAS_INVOICE_STATUSES.has(normalized)) {
     return normalized as InvoiceStatus;
   }
-  return 'SCHEDULED';
+  return null;
 }
 
 const STATUS_RANK: Record<InvoiceStatus, number> = {

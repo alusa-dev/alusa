@@ -30,8 +30,11 @@ Desenvolver e manter integrações **confiáveis** com o Asaas, reduzindo erro f
 
 | Tema | Agente |
 |------|--------|
+| Implementação HTTP pura em `packages/asaas` (nova função SDK, tipos, `AsaasHttp`) | **asaas-client** |
+| Pipeline webhook: inbox, idempotência, fila, DLQ, reconciliação, read models | **alusa-webhook-reliability** |
 | Isolamento `contaId` / RLS PostgreSQL | **tenant** |
 | Escopo de produto / matrícula faz sentido? | **alusa** |
+| Regras acadêmicas puras (matrícula, turma, state machine) | **alusa-education-domain** |
 | UI, componentes, “mostrar Asaas” no frontend | **core** (Asaas só backend) |
 | Organização geral do monorepo | **core** |
 
@@ -234,7 +237,7 @@ Quando for **executar chamada HTTP** no Asaas (MCP `execute-request`, teste, rec
 
 | Peça | Local |
 |------|--------|
-| HTTP client | `packages/asaas/src/client/AsaasHttp.ts` |
+| HTTP client | `packages/asaas/src/client/AsaasHttp.ts` — implementação detalhada: **asaas-client** |
 | Rate limit, circuit breaker, concurrency | `rate-limit-tracker`, `circuit-breaker`, `concurrency-limiter` |
 | Gateway/types webhook | `packages/asaas-gateway/` |
 | Funções por recurso | `packages/asaas/src/{payments,customers,subscriptions,webhooks,accounts,...}/` |
@@ -257,6 +260,7 @@ Quando for **executar chamada HTTP** no Asaas (MCP `execute-request`, teste, rec
 | Entry HTTP | `apps/web/app/api/webhooks/asaas/route.ts` |
 | Handler + registry (73 eventos) | `packages/finance/src/webhooks/` |
 | README técnico | `packages/finance/src/webhooks/README.md` |
+| Confiabilidade (inbox, idempotência, DLQ, reconciliação) | **alusa-webhook-reliability** |
 | Auth token | `asaas-webhook-auth.ts` |
 | Payment resolver (contaId) | `payment-resolver.ts` |
 | Fila | `queue-adapter.ts` (Postgres `WebhookAsaas`, SKIP LOCKED) |
@@ -549,6 +553,8 @@ Padrão:
 
 ## Referências
 
+- [asaas-client.md](./asaas-client.md) — SDK HTTP puro (`packages/asaas`)
+- [alusa-webhook-reliability.md](./alusa-webhook-reliability.md) — inbox, idempotência, fila, DLQ, reconciliação
 - [core.md](./core.md) — infra Asaas no monorepo, cache
 - [tenant.md](./tenant.md) — `contaId` vs subconta
 - [alusa.md](./alusa.md) — fluxo acadêmico-financeiro

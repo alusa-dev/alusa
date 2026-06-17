@@ -94,6 +94,7 @@ export const adminFinancialHealthResultDTOSchema = z.object({
         COMMAND_PREFLIGHT_STATUS: z.number().int().nonnegative(),
         COMMAND_PREFLIGHT_FULL: z.number().int().nonnegative(),
         RECONCILIATION: z.number().int().nonnegative(),
+        UI_FALLBACK_SYNC: z.number().int().nonnegative(),
         MANUAL_REPAIR: z.number().int().nonnegative(),
         AUTHORITATIVE_DOCUMENT: z.number().int().nonnegative(),
       }),

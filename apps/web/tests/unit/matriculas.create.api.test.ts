@@ -20,8 +20,10 @@ const {
   prismaMock: {
     matricula: {
       findUnique: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
     },
     cobranca: {
+      findFirst: vi.fn().mockResolvedValue(null),
       update: vi.fn(),
     },
   },

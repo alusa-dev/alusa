@@ -1,60 +1,52 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { getFinanceiroKpisLocal } from '@alusa/finance';
 import {
-  getFinanceiroKpisFromAsaas,
-  syncPaymentStateFromAsaas,
-} from '@alusa/finance';
+  buildTenantCacheKey,
+  isCacheLayerEnabled,
+  withTenantCache,
+} from '@/lib/cache/tenant-cache';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { privateJson } from '@/lib/private-cache';
 import {
   financeiroKpisResultDTOSchema,
 } from '@/features/financeiro/dtos';
 import { mapFinanceiroKpisResultToDTO } from '@/features/financeiro/mappers';
+import { financeInternalError, financeJsonError, logFinanceApiRequest } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-const KPI_RECONCILIATION_LIMIT = 25;
+const FINANCEIRO_KPIS_CACHE_SECONDS = 15;
+const FINANCEIRO_KPIS_STALE_SECONDS = 30;
 
 function err(status: number, code: string, message: string) {
-  return NextResponse.json(
-    { error: { code, message } },
-    { status, headers: { 'cache-control': 'no-store' } },
-  );
+  return financeJsonError(status, code, message);
 }
 
-async function reconcileFinanceiroKpisSnapshot(params: {
-  contaId: string;
-  paymentIds: string[];
-}): Promise<void> {
-  const asaasPaymentIds = params.paymentIds.slice(0, KPI_RECONCILIATION_LIMIT);
-  if (asaasPaymentIds.length === 0) return;
-
-  const syncResults = await Promise.allSettled(
-    asaasPaymentIds.map((asaasPaymentId) =>
-      syncPaymentStateFromAsaas({
-        contaId: params.contaId,
-        asaasPaymentId,
-      }),
-    ),
-  );
-
-  const failed = syncResults.filter((result) => result.status === 'rejected').length;
-  if (failed > 0) {
-    console.warn('[API Financeiro KPIs] Parte da reconciliação com Asaas falhou', {
-      contaId: params.contaId,
-      attempted: asaasPaymentIds.length,
-      failed,
-    });
-  }
+function buildFinanceiroKpisCacheKey(contaId: string, mesParam: string | null) {
+  return buildTenantCacheKey({
+    contaId,
+    area: 'finance',
+    resource: 'financeiro-kpis',
+    version: 1,
+    filterHash: mesParam ?? 'current',
+  });
 }
 
 export async function GET(request: Request) {
+  const startedAt = Date.now();
+  let cacheState: 'HIT' | 'MISS' | 'STALE' | 'BYPASS' | undefined;
+  let contaId: string | undefined;
+
   try {
     const session = await getServerSession(authOptions).catch(() => null);
     type SessUser = { id?: string; contaId?: string; role?: string };
     const user = (session as { user?: SessUser } | null)?.user;
     if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    contaId = user.contaId;
     if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
@@ -74,25 +66,48 @@ export async function GET(request: Request) {
       ? new Date(`${mesParam}-01T00:00:00Z`) 
       : new Date(agora.getFullYear(), agora.getMonth(), 1);
     const proximoMes = new Date(mesAtual.getFullYear(), mesAtual.getMonth() + 1, 1);
-    const officialSnapshot = await getFinanceiroKpisFromAsaas({
-      contaId: user.contaId,
-      mesAtual,
-      proximoMes,
-      startOfToday,
-      endOfNext30Days,
-    });
+    const loadBody = async () => {
+      const localSnapshot = await getFinanceiroKpisLocal({
+        contaId: user.contaId!,
+        mesAtual,
+        proximoMes,
+        startOfToday,
+        endOfNext30Days,
+      });
 
-    await reconcileFinanceiroKpisSnapshot({
-      contaId: user.contaId,
-      paymentIds: officialSnapshot.paymentIdsForReconcile,
-    });
+      return financeiroKpisResultDTOSchema.parse(mapFinanceiroKpisResultToDTO({ data: localSnapshot.data }));
+    };
 
-    return NextResponse.json(
-      financeiroKpisResultDTOSchema.parse(mapFinanceiroKpisResultToDTO({ data: officialSnapshot.data })),
-      { headers: { 'cache-control': 'no-store' } },
-    );
+    if (!isCacheLayerEnabled()) {
+      return NextResponse.json(
+        await loadBody(),
+        { headers: { 'cache-control': 'no-store' } },
+      );
+    }
+
+    const cached = await withTenantCache({
+      adapter: getTenantCacheAdapter(),
+      key: buildFinanceiroKpisCacheKey(user.contaId, mesParam),
+      ttlSeconds: FINANCEIRO_KPIS_CACHE_SECONDS,
+      staleWhileRevalidateSeconds: FINANCEIRO_KPIS_STALE_SECONDS,
+      lockTtlSeconds: 8,
+      waitForLockMs: 400,
+      load: loadBody,
+    });
+    cacheState = cached.state;
+
+    return privateJson(cached.body, {
+      maxAgeSeconds: FINANCEIRO_KPIS_CACHE_SECONDS,
+      staleWhileRevalidateSeconds: FINANCEIRO_KPIS_STALE_SECONDS,
+      cacheState: cached.state,
+    });
   } catch (e) {
-    console.error('[API Financeiro KPIs] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return financeInternalError('API Financeiro KPIs', e);
+  } finally {
+    logFinanceApiRequest('GET /api/financeiro/kpis', {
+      contaId,
+      durationMs: Date.now() - startedAt,
+      cacheHit: cacheState,
+    });
   }
 }

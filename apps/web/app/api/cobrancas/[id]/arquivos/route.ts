@@ -11,6 +11,12 @@ import {
 import { apiErrorResponse } from '@/lib/api/report-api-error';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import {
+  buildChargeFilesCacheKey,
+  invalidateChargeResourceCache,
+} from '@/lib/cache/invalidation';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { isCacheLayerEnabled, withTenantCache } from '@/lib/cache/tenant-cache';
+import {
   createArquivoForCobranca,
   deleteArquivoForCobranca,
   findArquivoForCobranca,
@@ -25,6 +31,7 @@ import {
   storageUrlForKey,
 } from '@/lib/r2-storage';
 import { validateUploadBuffer } from '@/lib/upload-security';
+import { privateJson } from '@/lib/private-cache';
 
 const ROUTE_TAG = 'api.cobrancas.arquivos';
 
@@ -41,6 +48,8 @@ const ALLOWED_TYPES = [
 ];
 
 const UPLOAD_DIR = join(process.cwd(), 'public', 'uploads', 'cobrancas');
+const FILES_CACHE_SECONDS = 45;
+const FILES_STALE_SECONDS = 45;
 
 type RouteContext = {
   params: { id: string } | Promise<{ id: string }>;
@@ -90,8 +99,29 @@ export async function GET(_req: NextRequest, context: RouteContext) {
         return NextResponse.json({ error: 'Cobrança não encontrada' }, { status: 404 });
       }
 
-      const body = await listArquivosForCobranca(tx, ref);
-      return NextResponse.json(body, { status: 200 });
+      const loadBody = () => listArquivosForCobranca(tx, ref);
+      if (!isCacheLayerEnabled()) {
+        return NextResponse.json(await loadBody(), {
+          status: 200,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
+
+      const cached = await withTenantCache({
+        adapter: getTenantCacheAdapter(),
+        key: buildChargeFilesCacheKey(contaId, cobrancaId),
+        ttlSeconds: FILES_CACHE_SECONDS,
+        staleWhileRevalidateSeconds: FILES_STALE_SECONDS,
+        lockTtlSeconds: 6,
+        load: loadBody,
+      });
+
+      return privateJson(cached.body, {
+        status: 200,
+        maxAgeSeconds: FILES_CACHE_SECONDS,
+        staleWhileRevalidateSeconds: FILES_STALE_SECONDS,
+        cacheState: cached.state,
+      });
     });
 
     return result;
@@ -182,6 +212,12 @@ export async function POST(req: NextRequest, context: RouteContext) {
         uploadPor: userId,
       });
 
+      await invalidateChargeResourceCache({
+        contaId,
+        cobrancaId,
+        reason: 'charge-file-upload',
+      });
+
       return NextResponse.json(body, { status: 201 });
     });
 
@@ -224,6 +260,12 @@ export async function DELETE(req: NextRequest, context: RouteContext) {
       }
 
       await deleteArquivoForCobranca(tx, arquivoId, found.kind);
+
+      await invalidateChargeResourceCache({
+        contaId,
+        cobrancaId,
+        reason: 'charge-file-delete',
+      });
 
       return NextResponse.json(deleteCobrancaArquivoResultDTOSchema.parse({ success: true }), {
         status: 200,

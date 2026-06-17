@@ -18,7 +18,7 @@ const TERMINAL_STATUSES = new Set([
   'AWAITING_CHARGEBACK_REVERSAL',
 ]);
 
-const DEFAULT_THROTTLE_MS = 30_000;
+const DEFAULT_THROTTLE_MS = 60_000;
 const lastAttemptByChargeId = new Map<string, number>();
 const DEFAULT_SYNC_ENDPOINT = (id: string) => `/api/cobrancas/${id}/sync-asaas`;
 
@@ -53,7 +53,7 @@ export function useVisibleChargeConvergence({
   enabled = true,
   items,
   refresh,
-  maxItems = 6,
+  maxItems = 4,
   throttleMs = DEFAULT_THROTTLE_MS,
   syncEndpoint = DEFAULT_SYNC_ENDPOINT,
 }: UseVisibleChargeConvergenceOptions) {

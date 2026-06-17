@@ -87,7 +87,7 @@ export default function ChargesTable() {
     enabled: statusFilters.length === 0 || statusFilters.some((status) => status !== 'PAGO'),
     items: rows,
     refresh,
-    maxItems: Math.min(pageSize, 10),
+    maxItems: Math.min(pageSize, 4),
   });
 
   useEffect(() => {

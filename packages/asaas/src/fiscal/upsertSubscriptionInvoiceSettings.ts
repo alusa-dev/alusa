@@ -5,6 +5,35 @@
  */
 import { AsaasHttp, AsaasHttpError, type AsaasHttpOptions } from '../client/AsaasHttp';
 
+export type SubscriptionInvoiceSettingsTaxesRequest = {
+  retainIss: boolean;
+  iss: number;
+  cofins: number | null;
+  csll: number;
+  inss: number;
+  ir: number;
+  pis: number | null;
+  nbsCode?: string | null;
+  taxSituationCode?: string | null;
+  taxClassificationCode?: string | null;
+  operationIndicatorCode?: string | null;
+  pisCofinsTaxStatus?: string | null;
+  operationPis?: number | null;
+  operationCofins?: number | null;
+  useTaxSystemReformNT007?: boolean;
+};
+
+export type SubscriptionInvoiceSettingsTaxesResponse =
+  SubscriptionInvoiceSettingsTaxesRequest & {
+    pisCofinsRetentionType?: string | null;
+    stateIbs?: number | null;
+    stateIbsValue?: number | null;
+    municipalIbs?: number | null;
+    municipalIbsValue?: number | null;
+    cbs?: number | null;
+    cbsValue?: number | null;
+  };
+
 export type UpsertSubscriptionInvoiceSettingsInput = {
   municipalServiceId?: string;
   municipalServiceCode?: string;
@@ -15,24 +44,7 @@ export type UpsertSubscriptionInvoiceSettingsInput = {
   receivedOnly?: boolean;
   daysBeforeDueDate?: number;
   observations?: string;
-  taxes?: {
-    retainIss: boolean;
-    iss: number;
-    cofins: number | null;
-    csll: number;
-    inss: number;
-    ir: number;
-    pis: number | null;
-    nbsCode?: string | null;
-    taxSituationCode?: string | null;
-    taxClassificationCode?: string | null;
-    operationIndicatorCode?: string | null;
-    pisCofinsRetentionType?: string | null;
-    pisCofinsTaxStatus?: string | null;
-    operationPis?: number | null;
-    operationCofins?: number | null;
-    useTaxSystemReformNT007?: boolean;
-  };
+  taxes?: SubscriptionInvoiceSettingsTaxesRequest;
 };
 
 export type SubscriptionInvoiceSettingsResponse = {
@@ -45,7 +57,7 @@ export type SubscriptionInvoiceSettingsResponse = {
   receivedOnly?: boolean | null;
   daysBeforeDueDate?: number | null;
   observations?: string | null;
-  taxes?: UpsertSubscriptionInvoiceSettingsInput['taxes'];
+  taxes?: SubscriptionInvoiceSettingsTaxesResponse;
 };
 
 export type UpsertSubscriptionInvoiceSettingsParams = {

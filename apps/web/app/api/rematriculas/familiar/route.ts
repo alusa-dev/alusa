@@ -33,7 +33,11 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
-import { processFamilyBillingOutboxEvent } from '@/src/server/family-billing/processor';
+import {
+  enqueueFamilyBillingOutbox,
+  parseFamilyBillingPayload,
+  processFamilyBillingOutboxEvent,
+} from '@/src/server/family-billing/processor';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -681,38 +685,35 @@ export async function POST(request: Request) {
       },
     });
 
-    const event = await prisma.familyBillingOutbox.create({
-      data: {
-        contaId,
+    const event = await enqueueFamilyBillingOutbox({
+      contaId,
+      aggregateType: 'REMATRICULA_FAMILIAR',
+      aggregateId: family.id,
+      rematriculaFamiliarId: family.id,
+      payload: parseFamilyBillingPayload({
         aggregateType: 'REMATRICULA_FAMILIAR',
         aggregateId: family.id,
-        eventType: 'SYNC_FAMILY_BILLING',
-        rematriculaFamiliarId: family.id,
-        payload: {
-          aggregateType: 'REMATRICULA_FAMILIAR',
-          aggregateId: family.id,
-          contaId,
-          responsavelId: responsavel.id,
-          responsavelNome: responsavel.nome,
-          totalAlunos: successCount,
-          monthlyValue: pricing.totalMensalidade,
-          enrollmentFeeValue,
-          billingType,
-          enrollmentFeeBillingType,
-          cycle: pricing.cycle,
-          nextDueDate: formatIsoDate(resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia)),
-          endDate: formatIsoDate(dataFimContrato),
-          enrollmentFeeDueDate: formatIsoDate(resolveEnrollmentFeeDueDate(dataInicio)),
-          description: `Rematrícula familiar · ${responsavel.nome} · ${successCount} alunos`,
-          actorId: user.id,
-          uiRequestId: body.uiRequestId ?? null,
-          notificationChannels: body.notificationChannels,
-          notificationChannelsConfigured: body.notificationChannelsConfigured,
-          discount: billingAdjustments.discount,
-          interest: billingAdjustments.interest,
-          fine: billingAdjustments.fine,
-        },
-      },
+        contaId,
+        responsavelId: responsavel.id,
+        responsavelNome: responsavel.nome,
+        totalAlunos: successCount,
+        monthlyValue: pricing.totalMensalidade,
+        enrollmentFeeValue,
+        billingType,
+        enrollmentFeeBillingType,
+        cycle: pricing.cycle,
+        nextDueDate: formatIsoDate(resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia)),
+        endDate: formatIsoDate(dataFimContrato),
+        enrollmentFeeDueDate: formatIsoDate(resolveEnrollmentFeeDueDate(dataInicio)),
+        description: `Rematrícula familiar · ${responsavel.nome} · ${successCount} alunos`,
+        actorId: user.id,
+        uiRequestId: body.uiRequestId ?? null,
+        notificationChannels: body.notificationChannels,
+        notificationChannelsConfigured: body.notificationChannelsConfigured,
+        discount: billingAdjustments.discount,
+        interest: billingAdjustments.interest,
+        fine: billingAdjustments.fine,
+      }),
     });
 
     try {

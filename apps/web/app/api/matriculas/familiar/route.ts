@@ -21,9 +21,10 @@ import {
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
 import {
-  executeFamilyBilling,
+  enqueueFamilyBillingOutbox,
   markFamilyBillingFailed,
   parseFamilyBillingPayload,
+  processFamilyBillingOutboxEvent,
   type FamilyBillingPayload,
 } from '@/src/server/family-billing/processor';
 
@@ -652,9 +653,32 @@ export async function POST(request: Request) {
       }
 
       try {
-        await executeFamilyBilling(payload);
-        financialStatus =
-          failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
+        const event = await enqueueFamilyBillingOutbox({
+          contaId,
+          aggregateType: 'MATRICULA_FAMILIAR',
+          aggregateId: family.id,
+          matriculaFamiliarId: family.id,
+          payload,
+        });
+
+        try {
+          await processFamilyBillingOutboxEvent(event.id);
+          financialStatus =
+            failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
+        } catch (processError) {
+          const message =
+            processError instanceof Error ? processError.message : String(processError);
+          financialError = message;
+          financialStatus = FamilyBillingStatus.FALHO;
+          console.error(
+            '[POST /api/matriculas/familiar] Falha ao processar outbox inline; retry agendado',
+            {
+              familyId: family.id,
+              eventId: event.id,
+              message,
+            },
+          );
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         financialError = message;

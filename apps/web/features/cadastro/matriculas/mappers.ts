@@ -15,6 +15,8 @@ import {
   matriculaSubscriptionTermsUpdateResultDTOSchema,
   matriculaSubscriptionValueUpdateResultDTOSchema,
   type CreateMatriculaInputDTO,
+  type MatriculaAsaasSubscriptionSyncDTO,
+  type MatriculaAsaasTaxaSyncDTO,
   type MatriculaAdjustmentTypeDTO,
   type MatriculaBillingTypeDTO,
   type MatriculaDeleteResultDTO,
@@ -396,6 +398,7 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
   body: CreateMatriculaInputDTO;
   contaId: string;
   createdById: string;
+  uiRequestId?: string;
 }) {
   const parsed = createMatriculaInputDTOSchema.parse(input.body);
   const taxaMatriculaValue = toNumber(parsed.taxaMatricula, 0) ?? 0;
@@ -438,6 +441,7 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     descontoTipo: parsed.descontoTipo ?? 'PERCENTAGE',
     prazoDesconto: toNumber(parsed.prazoDesconto, null),
     descontoIds: parsed.descontoIds ?? [],
+    uiRequestId: input.uiRequestId ?? parsed.uiRequestId ?? undefined,
   };
 }
 
@@ -458,23 +462,8 @@ export function mapCreateMatriculaResultToDTO(input: {
     responsavelFinanceiro: Record<string, unknown> | null;
     primeiroVencimento: Date;
   };
-  taxaSync: {
-    success: boolean;
-    error?: string;
-    asaasPaymentId?: string;
-    invoiceUrl?: string | null;
-    bankSlipUrl?: string | null;
-  } | null;
-  subscriptionSync: {
-    success: boolean;
-    error?: string;
-    asaasSubscriptionId?: string | null;
-    asaasPaymentId?: string | null;
-    invoiceUrl?: string | null;
-    bankSlipUrl?: string | null;
-    message?: string;
-    expectedWebhooks?: string[];
-  } | null;
+  taxaSync: MatriculaAsaasTaxaSyncDTO | null;
+  subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null;
   notificationSync?: {
     applied: { email: boolean; sms: boolean; whatsapp: boolean };
     warnings: Array<{

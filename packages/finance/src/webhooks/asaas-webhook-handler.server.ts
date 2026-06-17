@@ -33,6 +33,8 @@ import {
   sanitizeRejectedWebhookPayload,
   sanitizeWebhookPayload,
 } from '../privacy/webhook-payload-sanitizer';
+import { upsertReceivableAnticipationSnapshot } from '../services/receivable-anticipation-snapshot.service';
+import type { AsaasAnticipation, AsaasAnticipationStatus } from '@alusa/asaas';
 
 type AttemptLogEntry = {
   at: string;
@@ -143,6 +145,8 @@ type AsaasWebhookBody = {
     fee?: number;
     anticipationDays?: number;
     dueDate?: string;
+    anticipationDate?: string;
+    requestDate?: string;
     creditDate?: string;
     anticipatedDate?: string;
     createdAt?: string;
@@ -450,6 +454,40 @@ async function processAsaasWebhookForRecord(params: {
       const anticipation = payload.anticipation;
       const anticipationId = anticipation?.id ?? payload.id ?? params.webhookId;
 
+      if (anticipation?.id && anticipation.status) {
+        await upsertReceivableAnticipationSnapshot({
+          contaId,
+          anticipation: {
+            id: anticipation.id,
+            status: anticipation.status as AsaasAnticipationStatus,
+            payment: resolveAsaasReferenceId(anticipation.payment),
+            installment: resolveAsaasReferenceId(anticipation.installment),
+            value: typeof anticipation.value === 'number' ? anticipation.value : 0,
+            totalValue: typeof anticipation.totalValue === 'number' ? anticipation.totalValue : 0,
+            netValue: typeof anticipation.netValue === 'number' ? anticipation.netValue : 0,
+            fee: typeof anticipation.fee === 'number' ? anticipation.fee : 0,
+            anticipationDays:
+              typeof anticipation.anticipationDays === 'number'
+                ? anticipation.anticipationDays
+                : 0,
+            dueDate: anticipation.dueDate ?? null,
+            anticipationDate:
+              anticipation.anticipationDate
+              ?? anticipation.creditDate
+              ?? anticipation.anticipatedDate
+              ?? null,
+            requestDate:
+              anticipation.requestDate
+              ?? anticipation.createdAt
+              ?? anticipation.dateCreated
+              ?? null,
+          } satisfies AsaasAnticipation,
+          source: 'WEBHOOK',
+          sourceWebhookId: params.webhookId,
+          eventId: payload.id ?? null,
+        });
+      }
+
       await auditLogService.record({
         contaId,
         action: `finance.webhook.${event.toLowerCase()}`,
@@ -470,7 +508,7 @@ async function processAsaasWebhookForRecord(params: {
           creditDate: anticipation?.creditDate ?? null,
           anticipatedDate: anticipation?.anticipatedDate ?? null,
           webhookId: params.webhookId,
-          note: 'Anticipation state is read from Asaas on demand; webhook is kept for audit and traceability.',
+          note: 'Anticipation state persisted from official Asaas webhook for idempotent local reads.',
         },
         actor: { type: 'SYSTEM' },
       });

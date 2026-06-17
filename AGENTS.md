@@ -10,11 +10,20 @@ Contratos canônicos em **`.agents/`**:
 
 | ID | Arquivo | Uso |
 |----|---------|-----|
+| **alusa-orchestrator** | [`.agents/alusa-orchestrator.md`](.agents/alusa-orchestrator.md) | Coordenação multi-agente, pipeline, Delivery Brief — `#orchestrator` |
 | **alusa** | [`.agents/alusa.md`](.agents/alusa.md) | Produto, escopo, visão, objetivo — `#alusa` |
+| **alusa-education-domain** | [`.agents/alusa-education-domain.md`](.agents/alusa-education-domain.md) | Domínio educacional puro `packages/domain` — `#education-domain` |
 | **core** | [`.agents/core.md`](.agents/core.md) | Implementação segura, UI, camadas, testes, cache — `#core` |
 | **tenant** | [`.agents/tenant.md`](.agents/tenant.md) | Isolamento multitenancy, RLS, `contaId` — `#tenant` |
+| **alusa-tenant-security-auditor** | [`.agents/alusa-tenant-security-auditor.md`](.agents/alusa-tenant-security-auditor.md) | Revisão adversarial cross-tenant — `#tenant-audit` |
+| **alusa-prisma-data-integrity** | [`.agents/alusa-prisma-data-integrity.md`](.agents/alusa-prisma-data-integrity.md) | Schema Prisma, migrations, constraints, idempotência — `#prisma-integrity` |
 | **asaas** | [`.agents/asaas.md`](.agents/asaas.md) | API Asaas, webhooks, MCP, cobranças — `#asaas` |
+| **asaas-client** | [`.agents/asaas-client.md`](.agents/asaas-client.md) | Cliente HTTP tipado `packages/asaas` — `#asaas-client` |
+| **alusa-webhook-reliability** | [`.agents/alusa-webhook-reliability.md`](.agents/alusa-webhook-reliability.md) | Webhooks idempotentes, fila, DLQ, reconciliação — `#webhook-reliability` |
 | **finance-sync** | [`.agents/finance-sync.md`](.agents/finance-sync.md) | Sincronização financeira outbound Alusa → Asaas com reconciliação — `#finance-sync` |
+| **alusa-test-adversarial** | [`.agents/alusa-test-adversarial.md`](.agents/alusa-test-adversarial.md) | Testes adversariais (retry, cross-tenant, webhook) — `#test-adversarial` |
+| **alusa-architecture-reviewer** | [`.agents/alusa-architecture-reviewer.md`](.agents/alusa-architecture-reviewer.md) | Review final de arquitetura antes do merge — `#architecture-review` |
+| **chrome-devtools** | [`.agents/chrome-devtools.md`](.agents/chrome-devtools.md) | Automação/auditoria com Chrome DevTools MCP — somente uso explícito `#chrome-devtools` |
 | *(índice)* | [`.agents/README.md`](.agents/README.md) | Mapa e roteamento de agentes |
 
 Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core**. Contrato operacional completo (UI, fluxo, checklists): [`.agents/core.md`](.agents/core.md). Skills Cursor: `.cursor/skills/`.

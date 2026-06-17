@@ -8,7 +8,6 @@ import {
 import { mapPortalDashboardResultToDTO } from '@/features/portal/mappers';
 import { isPortalPendingStatus, listPortalStandaloneCharges } from '@/features/portal/finance-standalone';
 import {
-  reconcileAsaasPaymentIds,
   resolveAcademicDisplayedStatus,
 } from '@/src/server/finance/academic-payment-history';
 
@@ -66,18 +65,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    let { matriculas, cobrancas, standaloneCharges } = await loadDashboardData();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: portalUser.contaId,
-      asaasPaymentIds: [
-        ...cobrancas.map((cobranca) => cobranca.asaasPaymentId),
-        ...standaloneCharges.map((charge) => charge.asaasId),
-      ],
-      limit: 100,
-    });
-    if (reconciliation.attempted > 0) {
-      ({ matriculas, cobrancas, standaloneCharges } = await loadDashboardData());
-    }
+    const { matriculas, cobrancas, standaloneCharges } = await loadDashboardData();
 
     // 4. Calcular métricas
     const totalMatriculas = matriculas.length;

@@ -110,7 +110,7 @@ describe('listTransfers', () => {
       externalReference: 'transfer:tr1',
       asaasTransferId: 'asaas_tr_1',
       value: 10,
-      feeValue: 0,
+      feeValue: null,
       netValue: 10,
       status: 'DONE',
       operation: 'TED',
@@ -174,7 +174,7 @@ describe('listTransfers', () => {
     });
   });
 
-  it('deve refletir taxa oficial e valor liquido oficial do Asaas na listagem', async () => {
+  it('não deve chamar o Asaas para enriquecer a listagem por padrão', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { getTransfer } = await import('@alusa/asaas');
 
@@ -185,6 +185,8 @@ describe('listTransfers', () => {
         externalReference: 'transfer:tr3',
         asaasTransferId: 'asaas_tr_3',
         value: { toString: () => '15.36' },
+        feeValue: null,
+        netValue: null,
         destination: {
           type: 'PIX',
           pixAddressKey: 'cliente-a00001@pix.bcb.gov.br',
@@ -198,29 +200,18 @@ describe('listTransfers', () => {
         },
       ] as never);
     vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValueOnce([] as never);
-    vi.mocked(getTransfer).mockResolvedValueOnce({
-      id: 'asaas_tr_3',
-      object: 'transfer',
-      dateCreated: '2026-03-25',
-      value: 15.36,
-      netValue: 13.36,
-      transferFee: 2,
-      status: 'DONE',
-      externalReference: 'transfer:tr3',
-      operationType: 'PIX',
-      type: 'PIX',
-      effectiveDate: '2026-03-25',
-    } as never);
 
     const res = await listTransfers({ contaId: 't1', limit: 10, offset: 0, direction: 'desc' });
 
+    expect(loadAsaasCredentials).not.toHaveBeenCalled();
+    expect(getTransfer).not.toHaveBeenCalled();
     expect(res.items[0]).toMatchObject({
       id: 'tr3',
       value: 15.36,
-      feeValue: 2,
-      netValue: 13.36,
+      feeValue: null,
+      netValue: 15.36,
       operation: 'PIX',
-      transferDate: '2026-03-25',
+      transferDate: '2026-03-25T02:02:57.127Z',
     });
   });
 });

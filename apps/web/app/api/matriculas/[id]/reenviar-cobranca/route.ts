@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
-import { createAsaasPayment, formatDate, getAsaasPaymentDetails, KycNotApprovedError, mapAsaasPaymentStatusToCobranca } from '@alusa/finance';
-import { ensureAsaasCustomerForPayer } from '@alusa/finance';
+import { createCharge, getAsaasPaymentDetails, KycNotApprovedError, mapAsaasPaymentStatusToCobranca, syncPaymentStateFromAsaas } from '@alusa/finance';
 import { StatusCobranca } from '@prisma/client';
-import { calcIdade } from '@alusa/lib';
 import {
   matriculaReenviarCobrancaResultDTOSchema,
   matriculaRouteParamsDTOSchema,
@@ -218,95 +216,50 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         );
       }
 
-      console.log('[Reenviar Cobrança] Criando payment no Asaas pela primeira vez');
+      console.log('[Reenviar Cobrança] Provisionando cobrança acadêmica via createCharge');
 
       try {
-        // Obter ou criar customer
-        const aluno = matricula.aluno;
-        const idade = calcIdade(aluno.dataNasc);
-        const isMaiorDeIdade = idade >= 18;
-        const responsavel =
-          isMaiorDeIdade
-            ? null
-            : matricula.responsavelFinanceiro ||
-              aluno.responsaveis.find((rel) => rel.responsavel.financeiro)?.responsavel ||
-              aluno.responsaveis[0]?.responsavel ||
-              null;
-
-        const pagador = isMaiorDeIdade ? aluno : responsavel;
-
-        if (!pagador) {
-          return NextResponse.json(
-            { error: 'Aluno menor de idade sem responsável financeiro cadastrado' },
-            { status: 400 },
-          );
-        }
-
-        if (!pagador.cpf) {
-          return NextResponse.json({ error: 'CPF do pagador não encontrado' }, { status: 400 });
-        }
-
-        let customerId = pagador.asaasCustomerId;
-
-        if (!customerId) {
-          const createdCustomer = await ensureAsaasCustomerForPayer({
-            contaId: user.contaId,
-            payer: {
-              type: isMaiorDeIdade ? 'ALUNO' : 'RESPONSAVEL',
-              id: pagador.id,
-              name: pagador.nome || (isMaiorDeIdade ? 'Aluno' : 'Responsável'),
-              cpfCnpj: pagador.cpf,
-              email: pagador.email || undefined,
-              phone: pagador.telefone || undefined,
-              mobilePhone: pagador.telefone || undefined,
-            },
-            persist: true,
-          });
-
-          if (!createdCustomer.ok) {
-            return NextResponse.json({ error: createdCustomer.message }, { status: 500 });
-          }
-
-          customerId = createdCustomer.customerId;
-        }
-
-        const billingType =
-          cobranca.formaPagamento === 'PIX'
-            ? 'PIX'
-            : cobranca.formaPagamento === 'CARTAO_CREDITO'
-              ? 'CREDIT_CARD'
-              : 'BOLETO';
-
-        const createdPayment = await createAsaasPayment({
+        const chargeResult = await createCharge({
           contaId: user.contaId,
-          customer: customerId!,
-          billingType,
-          value: Number(cobranca.valor),
-          dueDate: formatDate(cobranca.vencimento),
-          description: cobranca.descricao || undefined,
-          externalReference: cobranca.id,
+          cobrancaId: cobranca.id,
+          actor: { type: 'USER', id: user.id },
         });
 
-        if (!createdPayment.success) {
-          if (createdPayment.error === 'KYC_NAO_APROVADO') {
-            return NextResponse.json(
-              { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras' },
-              { status: 409 },
-            );
-          }
+        let asaasPaymentId: string | null = null;
 
-          return NextResponse.json({ error: createdPayment.error }, { status: 500 });
+        if (chargeResult.success) {
+          asaasPaymentId = chargeResult.data.asaasPaymentId ?? null;
+        } else if (chargeResult.error === 'KYC_NAO_APROVADO') {
+          return NextResponse.json(
+            { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras' },
+            { status: 409 },
+          );
+        } else if (chargeResult.error === 'COBRANCA_JA_POSSUI_PAGAMENTO') {
+          const refreshed = await prisma.cobranca.findUnique({ where: { id: cobranca.id } });
+          asaasPaymentId = refreshed?.asaasPaymentId ?? null;
+          if (!asaasPaymentId) {
+            return NextResponse.json({ error: chargeResult.error }, { status: 409 });
+          }
+        } else {
+          return NextResponse.json({ error: chargeResult.error }, { status: 500 });
         }
+
+        if (!asaasPaymentId) {
+          return NextResponse.json({ error: 'ASAAS_PAYMENT_ID_NAO_RETORNADO' }, { status: 500 });
+        }
+
+        await syncPaymentStateFromAsaas({
+          contaId: user.contaId,
+          asaasPaymentId,
+          eventName: 'PAYMENT_CREATED',
+        }).catch((syncError) => {
+          console.warn('[Reenviar Cobrança] syncPaymentStateFromAsaas falhou (não crítico)', syncError);
+        });
 
         const { payment, pixQrCode } = await getAsaasPaymentDetails({
-          paymentId: createdPayment.data.id,
+          paymentId: asaasPaymentId,
           contaId: user.contaId,
-          includePixQrCode: billingType === 'PIX',
-        });
-
-        await prisma.cobranca.update({
-          where: { id: cobranca.id },
-          data: { asaasPaymentId: payment.id, updatedAt: new Date() },
+          includePixQrCode: cobranca.formaPagamento === 'PIX',
         });
 
         return NextResponse.json(
@@ -315,6 +268,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
               success: true,
               message: 'Cobrança obtida do Asaas com sucesso',
               asaasPaymentId: payment.id,
+              status: payment.status,
               invoiceUrl: payment.invoiceUrl,
               bankSlipUrl: payment.bankSlipUrl,
               pixQrCodeUrl: pixQrCode?.encodedImage
@@ -332,7 +286,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           );
         }
 
-        console.error('[Reenviar Cobrança] Erro ao criar payment no Asaas:', error);
+        console.error('[Reenviar Cobrança] Erro ao provisionar cobrança via createCharge:', error);
         return NextResponse.json(
           {
             error: 'Erro ao criar cobrança no Asaas',

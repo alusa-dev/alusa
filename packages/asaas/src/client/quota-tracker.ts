@@ -2,19 +2,15 @@
  * Quota Tracker para API do Asaas.
  *
  * O Asaas permite 25.000 requests por conta a cada 12 horas.
- * Este tracker mantém contagem em memória para emitir warnings
- * antes de atingir o limite, permitindo ajuste proativo de vazão.
- *
- * Limitações conhecidas:
- * - Contagem é por processo (não compartilhada entre instâncias)
- * - Em deploy multi-instance, cada instância conta separadamente
- * - Para tracking distribuído, usar Redis ou similar
+ * Este tracker mantém contagem distribuída via Upstash Redis quando disponível
+ * e usa memória como fallback local.
  */
 
 import { globalAsaasHooks } from './asaas-hooks';
 
 const DEFAULT_QUOTA_LIMIT = 25_000;
 const WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
+const REDIS_KEY_PREFIX = process.env.ASAAS_QUOTA_REDIS_KEY_PREFIX ?? 'alusa:asaas:quota';
 
 export interface QuotaEntry {
   count: number;
@@ -62,8 +58,47 @@ export class QuotaTracker {
     entry.count += 1;
 
     const status = this.buildStatus(entry);
+    this.emitWarnings(accountKey, status, entry.count);
 
-    if (status.warning && !status.exceeded) {
+    return status;
+  }
+
+  async incrementAsync(accountKey: string): Promise<QuotaStatus> {
+    const redisConfig = getRedisConfig();
+    if (!redisConfig) {
+      return this.increment(accountKey);
+    }
+
+    const now = Date.now();
+    const windowStartedAt = Math.floor(now / WINDOW_MS) * WINDOW_MS;
+    const windowEndsAt = windowStartedAt + WINDOW_MS;
+    const key = `${REDIS_KEY_PREFIX}:${sanitizeKeyPart(accountKey)}:${windowStartedAt}`;
+
+    try {
+      const count = await redisCommand<number>(redisConfig, ['INCR', key]);
+      if (count === 1) {
+        await redisCommand(redisConfig, ['EXPIRE', key, String(Math.ceil(WINDOW_MS / 1000) + 300)]);
+      }
+
+      const status = this.buildStatus({
+        count,
+        windowStartedAt,
+        windowEndsAt,
+      });
+      this.emitWarnings(accountKey, status, count);
+      return status;
+    } catch (error) {
+      console.warn('[quota-tracker] Redis indisponível para quota; usando fallback em memória', {
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      return this.increment(accountKey);
+    }
+  }
+
+  private emitWarnings(accountKey: string, status: QuotaStatus, currentCount: number): void {
+    const shouldEmitWarning = status.warning && !status.exceeded && currentCount % 100 === 0;
+
+    if (shouldEmitWarning) {
       console.warn('[quota-tracker] Quota API próxima do limite', {
         accountKey: accountKey.slice(0, 12),
         count: status.count,
@@ -81,7 +116,7 @@ export class QuotaTracker {
       });
     }
 
-    if (status.exceeded && entry.count === this.limit + 1) {
+    if (status.exceeded && currentCount === this.limit + 1) {
       console.error('[quota-tracker] Quota API excedida', {
         accountKey: accountKey.slice(0, 12),
         count: status.count,
@@ -96,8 +131,6 @@ export class QuotaTracker {
         exceeded: true,
       });
     }
-
-    return status;
   }
 
   getStatus(accountKey: string): QuotaStatus {
@@ -139,6 +172,47 @@ export class QuotaTracker {
   resetAll(): void {
     this.entries.clear();
   }
+}
+
+interface RedisRestConfig {
+  url: string;
+  token: string;
+}
+
+function getRedisConfig(): RedisRestConfig | null {
+  if (process.env.ASAAS_QUOTA_REDIS_ENABLED === 'false') return null;
+
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+
+  return { url: url.replace(/\/+$/, ''), token };
+}
+
+async function redisCommand<T = unknown>(config: RedisRestConfig, command: string[]): Promise<T> {
+  const response = await fetch(config.url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(command),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Redis REST ${response.status}`);
+  }
+
+  const body = await response.json() as { result?: T; error?: string };
+  if (body.error) {
+    throw new Error(body.error);
+  }
+
+  return body.result as T;
+}
+
+function sanitizeKeyPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9:_-]/g, '_');
 }
 
 const envLimit = Number(process.env.ASAAS_QUOTA_LIMIT ?? DEFAULT_QUOTA_LIMIT);

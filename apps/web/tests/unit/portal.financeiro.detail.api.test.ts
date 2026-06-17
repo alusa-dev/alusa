@@ -31,6 +31,8 @@ vi.mock('@alusa/finance', () => ({
   AsaasEnvError: class AsaasEnvError extends Error {},
   getPayment: getPaymentMock,
   isAsaasEnabled: isAsaasEnabledMock,
+  mapAsaasPaymentStatusToCobranca: vi.fn(() => 'PENDENTE'),
+  syncPaymentStateFromAsaas: vi.fn(),
 }));
 
 vi.mock('@/features/portal/api-helpers', () => ({

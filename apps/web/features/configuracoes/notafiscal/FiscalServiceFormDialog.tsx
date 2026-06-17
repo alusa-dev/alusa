@@ -15,8 +15,11 @@ import { Input } from '@/components/ui/input';
 import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import type { FiscalCodeKind } from '@alusa/asaas';
-import { normalizeNbsCodeForAsaas } from '@alusa/finance/fiscal-wizard-client';
+import {
+  type FiscalCodeKind,
+  normalizeNbsCodeForAsaas,
+  normalizeOperationPisCofinsRates,
+} from '@alusa/finance/fiscal-wizard-client';
 
 import type { FiscalServiceInputDTO } from './dtos';
 import {
@@ -86,6 +89,18 @@ const TAX_FIELDS = [
   { key: 'inss' as const, label: 'INSS (%)' },
   { key: 'ir' as const, label: 'IR (%)' },
 ];
+
+const PIS_COFINS_STATUS_WITH_REQUIRED_POSITIVE_OPERATION_RATE = new Set([
+  'STANDARD_TAXABLE_OPERATION',
+  'DIFFERENTIATED_RATE_TAXABLE_OPERATION',
+]);
+
+function parseOptionalPercent(raw: string): number | null {
+  const normalized = raw.replace(',', '.').trim();
+  if (!normalized) return null;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null;
+}
 
 export function FiscalServiceFormDialog({
   open,
@@ -170,7 +185,20 @@ export function FiscalServiceFormDialog({
         source: initial?.source ?? (initial?.asaasMunicipalServiceId ? 'MUNICIPAL_LIST' : 'MANUAL'),
         isDefault: initial?.isDefault ?? false,
       };
-      setForm(nextForm);
+      const normalizedOperationRates = simplesNacional
+        ? { operationPis: null, operationCofins: null }
+        : normalizeOperationPisCofinsRates({
+            pisCofinsTaxStatus: nextForm.pisCofinsTaxStatus,
+            operationPis: nextForm.operationPis,
+            operationCofins: nextForm.operationCofins,
+          });
+      setForm({
+        ...nextForm,
+        pisCofinsTaxStatus: simplesNacional ? undefined : nextForm.pisCofinsTaxStatus,
+        operationPis: normalizedOperationRates.operationPis,
+        operationCofins: normalizedOperationRates.operationCofins,
+        useTaxSystemReformNT007: simplesNacional ? false : nextForm.useTaxSystemReformNT007,
+      });
       setTaxPercents({
         iss: String(nextForm.iss ?? 0),
         pis: String(nextForm.pis ?? 0),
@@ -195,7 +223,33 @@ export function FiscalServiceFormDialog({
         ),
       );
     }
-  }, [open, initial, useNationalPortal]);
+  }, [open, initial, useNationalPortal, simplesNacional]);
+
+  useEffect(() => {
+    if (!open) return;
+    setForm((current) => {
+      if (simplesNacional) {
+        return {
+          ...current,
+          pisCofinsTaxStatus: undefined,
+          operationPis: null,
+          operationCofins: null,
+          useTaxSystemReformNT007: false,
+        };
+      }
+
+      const normalized = normalizeOperationPisCofinsRates({
+        pisCofinsTaxStatus: current.pisCofinsTaxStatus,
+        operationPis: current.operationPis,
+        operationCofins: current.operationCofins,
+      });
+      return {
+        ...current,
+        operationPis: normalized.operationPis,
+        operationCofins: normalized.operationCofins,
+      };
+    });
+  }, [open, simplesNacional]);
 
   // Detecta Portal Nacional / indisponibilidade da lista municipal assim que o modal abre.
   useEffect(() => {
@@ -277,6 +331,30 @@ export function FiscalServiceFormDialog({
     setForm((f) => ({ ...f, [key]: parseTaxPercent(formatted, f[key] ?? 0) }));
   }
 
+  function updatePisCofinsTaxStatus(value: string) {
+    setForm((current) => {
+      const normalized = normalizeOperationPisCofinsRates({
+        pisCofinsTaxStatus: value,
+        operationPis: current.operationPis,
+        operationCofins: current.operationCofins,
+      });
+      return {
+        ...current,
+        pisCofinsTaxStatus: value || undefined,
+        operationPis: normalized.operationPis,
+        operationCofins: normalized.operationCofins,
+      };
+    });
+  }
+
+  function updateOperationRate(key: 'operationPis' | 'operationCofins', raw: string) {
+    const value = parseOptionalPercent(raw);
+    setForm((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  }
+
   async function handleSubmit() {
     setSaving(true);
     setSubmitError(null);
@@ -296,6 +374,12 @@ export function FiscalServiceFormDialog({
         ir: parseTaxPercent(taxPercents.ir, form.ir ?? 0),
         municipalServiceCode:
           form.source === 'MUNICIPAL_LIST' ? undefined : form.municipalServiceCode,
+        pisCofinsTaxStatus: simplesNacional ? undefined : form.pisCofinsTaxStatus || undefined,
+        operationPis: simplesNacional ? null : form.operationPis ?? null,
+        operationCofins: simplesNacional ? null : form.operationCofins ?? null,
+        useTaxSystemReformNT007: simplesNacional
+          ? false
+          : form.useTaxSystemReformNT007 ?? true,
       };
       const res = await fetch(url, {
         method: isEdit ? 'PUT' : 'POST',
@@ -548,8 +632,57 @@ export function FiscalServiceFormDialog({
                   value={form.pisCofinsTaxStatus ?? ''}
                   simplesNacional={simplesNacional}
                   useNationalPortal={useNationalPortal}
-                  onChange={(value) => setForm((f) => ({ ...f, pisCofinsTaxStatus: value }))}
+                  onChange={updatePisCofinsTaxStatus}
                 />
+
+                {!simplesNacional ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className={FISCAL_WIZARD_FIELD_CLASS}>
+                      <FiscalFieldLabel
+                        label="Alíquota de operação PIS (%)"
+                        help="Use somente quando a situação tributária exigir alíquota de operação."
+                      />
+                      <Input
+                        inputMode="decimal"
+                        value={form.operationPis == null ? '' : String(form.operationPis)}
+                        disabled={
+                          !PIS_COFINS_STATUS_WITH_REQUIRED_POSITIVE_OPERATION_RATE.has(
+                            form.pisCofinsTaxStatus ?? '',
+                          )
+                        }
+                        className={fiscalInputClass(false)}
+                        placeholder={
+                          form.pisCofinsTaxStatus === 'ZERO_RATE_TAXABLE_OPERATION'
+                            ? '0'
+                            : 'Ex.: 0.65'
+                        }
+                        onChange={(event) => updateOperationRate('operationPis', event.target.value)}
+                      />
+                    </div>
+                    <div className={FISCAL_WIZARD_FIELD_CLASS}>
+                      <FiscalFieldLabel
+                        label="Alíquota de operação COFINS (%)"
+                        help="Use somente quando a situação tributária exigir alíquota de operação."
+                      />
+                      <Input
+                        inputMode="decimal"
+                        value={form.operationCofins == null ? '' : String(form.operationCofins)}
+                        disabled={
+                          !PIS_COFINS_STATUS_WITH_REQUIRED_POSITIVE_OPERATION_RATE.has(
+                            form.pisCofinsTaxStatus ?? '',
+                          )
+                        }
+                        className={fiscalInputClass(false)}
+                        placeholder={
+                          form.pisCofinsTaxStatus === 'ZERO_RATE_TAXABLE_OPERATION'
+                            ? '0'
+                            : 'Ex.: 3'
+                        }
+                        onChange={(event) => updateOperationRate('operationCofins', event.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <FiscalReferenceCodeField

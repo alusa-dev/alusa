@@ -57,7 +57,10 @@ export class WebhookRateLimiter {
 }
 
 export function isWebhookAuthScopedRateLimitEnabled(): boolean {
-  return process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT === 'true';
+  const configured = process.env.ASAAS_WEBHOOK_AUTH_SCOPED_RATE_LIMIT;
+  if (configured === 'true') return true;
+  if (configured === 'false') return false;
+  return process.env.NODE_ENV === 'production';
 }
 
 export function buildWebhookRateLimitKey(params: {

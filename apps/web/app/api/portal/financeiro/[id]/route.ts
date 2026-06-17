@@ -165,19 +165,21 @@ export async function GET(
     // 5. Usar snapshot local por padrão; remoto só com fresh=1 ou estado incerto
     let asaasData: AsaasPayment | null = null;
     const asaasPaymentId = cobranca?.asaasPaymentId ?? standaloneCharge?.asaasPaymentId ?? null;
-    const shouldFetchRemote = cobranca
-      ? shouldFetchAcademicAsaasDetail({
-          forceRefresh,
-          isAsaasActive: asaasActive,
-          cobranca: cobranca as unknown as Record<string, unknown>,
-        })
-      : standaloneCharge
-        ? shouldFetchStandaloneAsaasDetail({
+    const shouldFetchRemote = forceRefresh && (
+      cobranca
+        ? shouldFetchAcademicAsaasDetail({
             forceRefresh,
             isAsaasActive: asaasActive,
-            charge: standaloneCharge as unknown as Record<string, unknown>,
+            cobranca: cobranca as unknown as Record<string, unknown>,
           })
-        : false;
+        : standaloneCharge
+          ? shouldFetchStandaloneAsaasDetail({
+              forceRefresh,
+              isAsaasActive: asaasActive,
+              charge: standaloneCharge as unknown as Record<string, unknown>,
+            })
+          : false
+    );
 
     if (asaasActive && asaasPaymentId && shouldFetchRemote) {
       recordAsaasReadDecision('portal_financeiro_detail', forceRefresh ? 'fresh_remote' : 'remote');
@@ -419,6 +421,7 @@ export async function POST(
     const result = await syncPaymentStateFromAsaas({
       contaId: auth.user.contaId,
       asaasPaymentId: paymentId,
+      intent: 'UI_FALLBACK_SYNC',
     });
 
     if (!result.success) {

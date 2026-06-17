@@ -49,6 +49,11 @@ import {
   toNullableNumber,
 } from '@/src/server/finance/asaas-payment-detail-policy';
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
+import { logFinanceApiError } from '@/lib/api/finance-api-response';
+import { buildChargeDetailCacheKey, invalidateChargeResourceCache } from '@/lib/cache/invalidation';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
+import { privateJson } from '@/lib/private-cache';
 
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
 const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
@@ -66,6 +71,8 @@ const TERMINAL_ASAAS_PAYMENT_STATUSES = new Set([
   'AWAITING_CHARGEBACK_REVERSAL',
   'DELETED',
 ]);
+const CHARGE_DETAIL_CACHE_SECONDS = 20;
+const CHARGE_DETAIL_STALE_SECONDS = 40;
 
 function mutationError(
   status: number,
@@ -485,6 +492,44 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
+    const cacheKey = buildChargeDetailCacheKey(contaId, id);
+    const canUseDetailCache = isCacheLayerEnabled() && !forceRefresh;
+    if (canUseDetailCache) {
+      const cached = await getTenantCacheAdapter().get<unknown>(cacheKey);
+      if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
+        return privateJson(cached.body, {
+          maxAgeSeconds: CHARGE_DETAIL_CACHE_SECONDS,
+          staleWhileRevalidateSeconds: CHARGE_DETAIL_STALE_SECONDS,
+          cacheState: cached.state,
+        });
+      }
+    }
+
+    const respondDetail = async (body: unknown) => {
+      if (!canUseDetailCache) {
+        return NextResponse.json(body, { headers: { 'cache-control': 'no-store' } });
+      }
+
+      await getTenantCacheAdapter()
+        .set(cacheKey, body, {
+          ttlSeconds: CHARGE_DETAIL_CACHE_SECONDS,
+          staleWhileRevalidateSeconds: CHARGE_DETAIL_STALE_SECONDS,
+        })
+        .catch((error) => {
+          console.warn('[GET /api/cobrancas/[id]] Falha ao gravar cache de detalhe', {
+            contaId,
+            cobrancaId: id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+
+      return privateJson(body, {
+        maxAgeSeconds: CHARGE_DETAIL_CACHE_SECONDS,
+        staleWhileRevalidateSeconds: CHARGE_DETAIL_STALE_SECONDS,
+        cacheState: 'MISS',
+      });
+    };
+
     // Buscar cobrança com relações necessárias - MULTI-TENANT: filtra por contaId via aluno
     const cobranca = await prisma.cobranca.findFirst({
       where: { id, matricula: { aluno: { contaId } } },
@@ -586,7 +631,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
               ? 'Parcela'
               : 'Cobrança avulsa');
 
-        return NextResponse.json(
+        return respondDetail(
           cobrancaDetailResultDTOSchema.parse(
             mapCobrancaDetailResultToDTO({
               success: true,
@@ -703,7 +748,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
               }
             : null);
 
-        return NextResponse.json(
+        return respondDetail(
           cobrancaDetailResultDTOSchema.parse(
             mapCobrancaDetailResultToDTO({
               success: true,
@@ -865,7 +910,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const { charge: _academicCharge, ...cobrancaDetail } = effectiveCobranca;
 
-    return NextResponse.json(
+    return respondDetail(
       cobrancaDetailResultDTOSchema.parse(
         mapCobrancaDetailResultToDTO({
           success: true,
@@ -892,14 +937,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       ),
     );
   } catch (error) {
-    console.error('[GET /api/cobrancas/[id]] Erro:', error);
+    const correlationId = logFinanceApiError('GET /api/cobrancas/[id]', error);
     return NextResponse.json(
       {
         success: false,
         error: 'Erro ao buscar detalhes da cobrança',
-        details: error instanceof Error ? error.message : String(error),
+        correlationId,
       },
-      { status: 500 },
+      { status: 500, headers: { 'cache-control': 'no-store' } },
     );
   }
 }
@@ -1208,6 +1253,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       });
 
+      await invalidateChargeResourceCache({
+        contaId,
+        cobrancaId: chargeAtual.id,
+        reason: 'charge-update',
+      });
+
       return NextResponse.json(
         cobrancaMutationResultDTOSchema.parse(
           mapCobrancaMutationResultToDTO({
@@ -1370,6 +1421,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       });
     });
 
+    await invalidateChargeResourceCache({
+      contaId,
+      cobrancaId: id,
+      reason: 'cobranca-update',
+    });
+
     return NextResponse.json(
       cobrancaMutationResultDTOSchema.parse(
         mapCobrancaMutationResultToDTO({
@@ -1396,14 +1453,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         { status: 503 },
       );
     }
-    console.error('[PUT /api/cobrancas/[id]] Erro:', error);
+    const correlationId = logFinanceApiError('PUT /api/cobrancas/[id]', error);
     return NextResponse.json(
       {
         success: false,
         error: 'Erro ao atualizar cobrança',
-        details: error instanceof Error ? error.message : String(error),
+        correlationId,
       },
-      { status: 500 },
+      { status: 500, headers: { 'cache-control': 'no-store' } },
     );
   }
 }
@@ -1614,6 +1671,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
           },
         });
 
+        await invalidateChargeResourceCache({
+          contaId,
+          cobrancaId: operationalCharge.operationalId,
+          reason: 'charge-delete-event',
+        });
+
         return NextResponse.json(
           cobrancaMutationResultDTOSchema.parse(
             mapCobrancaMutationResultToDTO({
@@ -1792,6 +1855,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         },
       });
 
+      await invalidateChargeResourceCache({
+        contaId,
+        cobrancaId: charge.id,
+        reason: 'charge-delete-standalone',
+      });
+
       return NextResponse.json(
         cobrancaMutationResultDTOSchema.parse(
           mapCobrancaMutationResultToDTO({
@@ -1873,6 +1942,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
             error: webhookError instanceof Error ? webhookError.message : String(webhookError),
           });
         }
+
+        await invalidateChargeResourceCache({
+          contaId: contaIdForDelete,
+          cobrancaId: cobranca.id,
+          reason: 'charge-already-deleted',
+        });
 
         return NextResponse.json(
           cobrancaMutationResultDTOSchema.parse(
@@ -1980,6 +2055,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       }
     }
 
+    await invalidateChargeResourceCache({
+      contaId: contaIdForDelete,
+      cobrancaId: cobranca.id,
+      reason: 'charge-delete-academic',
+    });
+
     return NextResponse.json(
       cobrancaMutationResultDTOSchema.parse(
         mapCobrancaMutationResultToDTO({
@@ -2000,14 +2081,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         { status: 409 },
       );
     }
-    console.error('[DELETE /api/cobrancas/[id]] Erro:', error);
+    const correlationId = logFinanceApiError('DELETE /api/cobrancas/[id]', error);
     return NextResponse.json(
       {
         success: false,
         error: 'Erro ao remover cobrança',
-        details: error instanceof Error ? error.message : String(error),
+        correlationId,
       },
-      { status: 500 },
+      { status: 500, headers: { 'cache-control': 'no-store' } },
     );
   }
 }

@@ -85,8 +85,8 @@ export class AsaasHttp {
       throw new CircuitOpenError(circuitKey, circuitCheck.waitMs ?? 0);
     }
 
-    // Quota tracking
-    globalQuotaTracker.increment(circuitKey);
+    // Quota tracking distribuído quando Redis estiver configurado.
+    const quotaStatus = await globalQuotaTracker.incrementAsync(circuitKey);
 
     // Garantir que base termina com / para que new URL() não "coma" o /v3
     const base = this.baseUrl.endsWith('/') ? this.baseUrl : `${this.baseUrl}/`;
@@ -210,7 +210,7 @@ export class AsaasHttp {
           error: `HTTP ${response.status}`,
           circuitState: globalCircuitBreaker.getState(circuitKey),
           rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
-          quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
+          quotaRemaining: quotaStatus.remaining,
         });
       } else {
         globalAsaasHooks.emitApiCall({
@@ -222,7 +222,7 @@ export class AsaasHttp {
           success: true,
           circuitState: globalCircuitBreaker.getState(circuitKey),
           rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
-          quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
+          quotaRemaining: quotaStatus.remaining,
         });
       }
 
@@ -248,7 +248,7 @@ export class AsaasHttp {
       success: true,
       circuitState: globalCircuitBreaker.getState(circuitKey),
       rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
-      quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
+      quotaRemaining: quotaStatus.remaining,
     });
 
     return data as T;

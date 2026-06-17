@@ -8,6 +8,7 @@ import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { withPerfTimer } from '@/lib/perf-logger';
+import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -17,10 +18,7 @@ const OPERATIONAL_CACHE_SECONDS = 20;
 const OPERATIONAL_STALE_SECONDS = 40;
 
 function err(status: number, code: string, message: string) {
-  return NextResponse.json(
-    { error: { code, message } },
-    { status, headers: { 'cache-control': 'no-store' } },
-  );
+  return financeJsonError(status, code, message);
 }
 
 function buildOperationalCacheKey(
@@ -114,7 +112,6 @@ export async function GET(req: NextRequest) {
       },
     );
   } catch (e) {
-    console.error('[API finance/charges/operational] Erro:', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return financeInternalError('API finance/charges/operational', e);
   }
 }

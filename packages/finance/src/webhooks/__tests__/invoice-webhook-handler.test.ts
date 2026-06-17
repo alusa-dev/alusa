@@ -12,6 +12,7 @@ const prismaMock = vi.hoisted(() => ({
   contaFiscalSettings: {},
   fiscalService: {},
   invoiceAuditEvent: { create: vi.fn() },
+  financeReconciliationIssue: { upsert: vi.fn() },
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -100,5 +101,38 @@ describe('handleInvoiceWebhook', () => {
       }),
     );
     expect(prisma.invoiceAuditEvent.create).toHaveBeenCalled();
+  });
+
+  it('preserva status interno e abre divergência quando o Asaas envia status desconhecido', async () => {
+    vi.mocked(prisma.invoice.findFirst).mockResolvedValueOnce({
+      id: 'inv1',
+      contaId: 't1',
+      status: 'SYNCHRONIZED',
+      asaasInvoiceId: 'asaas-inv-1',
+    } as never);
+    vi.mocked(prisma.invoice.update).mockResolvedValueOnce({
+      id: 'inv1',
+      status: 'SYNCHRONIZED',
+      asaasInvoiceId: 'asaas-inv-1',
+    } as never);
+    vi.mocked(prisma.financeReconciliationIssue.upsert).mockResolvedValueOnce({ id: 'issue-1' } as never);
+
+    const result = await handleInvoiceWebhook('t1', {
+      event: 'INVOICE_UPDATED',
+      id: 'evt-unknown',
+      invoice: { id: 'asaas-inv-1', status: 'NEW_PROVIDER_STATUS' },
+    });
+
+    expect(result.reason).toBe('UNKNOWN_PROVIDER_STATUS');
+    expect(result.nextStatus).toBe('SYNCHRONIZED');
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          fiscalDivergence: true,
+          rawProviderStatus: 'NEW_PROVIDER_STATUS',
+        }),
+      }),
+    );
+    expect(prisma.financeReconciliationIssue.upsert).toHaveBeenCalled();
   });
 });

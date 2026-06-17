@@ -1,5 +1,6 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { getTransfer as asaasGetTransfer } from '@alusa/asaas';
+import type { AsaasTransfer } from '@alusa/asaas';
 
 import {
   extractWebhookTransferMetadata,
@@ -12,6 +13,8 @@ import {
 import { reconcileOpenTransfers } from './transfers/reconcile-open-transfers';
 
 const OPEN_TRANSFER_RECONCILIATION_LIMIT = 20;
+const RECONCILE_ON_READ = process.env.FIN_TRANSFERS_RECONCILE_ON_READ === 'true';
+const LIVE_ENRICH_ON_READ = process.env.FIN_TRANSFERS_LIVE_ENRICH_ON_READ === 'true';
 
 export type ListTransfersInput = {
   contaId: string;
@@ -71,12 +74,19 @@ function toNumberOrFallback(value: unknown, fallback: number): number {
 }
 
 export async function listTransfers(input: ListTransfersInput): Promise<ListTransfersOutput> {
-  const credentials = await loadAsaasCredentials(input.contaId);
+  const credentials = LIVE_ENRICH_ON_READ ? await loadAsaasCredentials(input.contaId) : null;
 
-  const { officialTransfersById } = await reconcileOpenTransfers({
-    contaId: input.contaId,
-    limit: OPEN_TRANSFER_RECONCILIATION_LIMIT,
-  });
+  const officialTransfersById = new Map<string, AsaasTransfer>();
+
+  if (RECONCILE_ON_READ) {
+    const result = await reconcileOpenTransfers({
+      contaId: input.contaId,
+      limit: OPEN_TRANSFER_RECONCILIATION_LIMIT,
+    });
+    for (const [transferId, transfer] of result.officialTransfersById) {
+      officialTransfersById.set(transferId, transfer);
+    }
+  }
 
   const rows = await prisma.transferRequest.findMany({
     where: {
@@ -165,7 +175,7 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
   const total = filteredRows.length;
   const items = filteredRows.slice(input.offset, input.offset + input.limit);
 
-  if (credentials) {
+  if (credentials && LIVE_ENRICH_ON_READ) {
     // Only fetch live data for items that still need fee resolution from Asaas
     const pagedTransferIds = items
       .map((item) => item.asaasTransferId)

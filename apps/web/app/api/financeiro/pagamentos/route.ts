@@ -3,19 +3,52 @@ import { safeGetServerSession } from '@/lib/safe-server-session';
 import { prisma } from '@/src/prisma';
 import { listFinanceiroPagamentosResultDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroPagamentoRecordToDTO } from '@/features/financeiro/mappers';
+import { financeInternalError, financeJsonError, stableQueryFingerprint } from '@/lib/api/finance-api-response';
+import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
+import {
+  buildTenantCacheKey,
+  isCacheLayerEnabled,
+  withTenantCache,
+} from '@/lib/cache/tenant-cache';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
-import { reconcileAsaasPaymentIds } from '@/src/server/finance/academic-payment-history';
+import { privateJson } from '@/lib/private-cache';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
+const PAGAMENTOS_CACHE_SECONDS = 45;
+const PAGAMENTOS_STALE_SECONDS = 45;
 
 function err(status: number, code: string, message: string) {
-  return NextResponse.json(
-    { error: { code, message } },
-    { status, headers: { 'cache-control': 'no-store' } },
-  );
+  return financeJsonError(status, code, message);
+}
+
+function buildPagamentosCacheKey(
+  contaId: string,
+  params: {
+    page: number;
+    pageSize: number;
+    status: string[];
+    formaPagamento: string[];
+    cobrancaId?: string;
+    search?: string;
+  },
+) {
+  return buildTenantCacheKey({
+    contaId,
+    area: 'finance',
+    resource: 'pagamentos',
+    version: 1,
+    filterHash: stableQueryFingerprint({
+      page: params.page,
+      pageSize: params.pageSize,
+      status: [...params.status].sort(),
+      formaPagamento: [...params.formaPagamento].sort(),
+      cobrancaId: params.cobrancaId ?? '',
+      search: params.search ?? '',
+    }),
+  });
 }
 
 // GET /api/financeiro/pagamentos
@@ -69,61 +102,74 @@ export async function GET(req: NextRequest) {
       ]);
     }
 
-    let [total, pagamentos] = await loadPagamentos();
-    const reconciliation = await reconcileAsaasPaymentIds({
-      contaId: user.contaId,
-      asaasPaymentIds: pagamentos.flatMap((pagamento) => [
-        pagamento.asaasPaymentId,
-        pagamento.cobranca.asaasPaymentId,
-      ]),
-      limit: pageSize,
-    });
-    if (reconciliation.attempted > 0) {
-      [total, pagamentos] = await loadPagamentos();
-    }
+    const loadBody = async () => {
+      const [total, pagamentos] = await loadPagamentos();
 
-    const items = pagamentos.map((p) => ({
-      id: p.id,
-      status: p.status,
-      valorPago: Number(p.valorPago),
-      dataPagamento: p.dataPagamento?.toISOString() || null,
-      formaPagamento: p.formaPagamento,
-      cobrancaId: p.cobrancaId,
-      cobranca: {
-        id: p.cobranca.id,
-        tipo: p.cobranca.tipo,
-        status: p.cobranca.status,
-        valor: Number(p.cobranca.valor),
-        vencimento: p.cobranca.vencimento.toISOString(),
-        aluno: {
-          id: p.cobranca.matricula.aluno.id,
-          nome: p.cobranca.matricula.aluno.nome,
+      const items = pagamentos.map((p) => ({
+        id: p.id,
+        status: p.status,
+        valorPago: Number(p.valorPago),
+        dataPagamento: p.dataPagamento?.toISOString() || null,
+        formaPagamento: p.formaPagamento,
+        cobrancaId: p.cobrancaId,
+        cobranca: {
+          id: p.cobranca.id,
+          tipo: p.cobranca.tipo,
+          status: p.cobranca.status,
+          valor: Number(p.cobranca.valor),
+          vencimento: p.cobranca.vencimento.toISOString(),
+          aluno: {
+            id: p.cobranca.matricula.aluno.id,
+            nome: p.cobranca.matricula.aluno.nome,
+          },
+          displayStatus: buildChargeDisplayStatusDTO({
+            localStatus: p.cobranca.status,
+            asaasStatus: p.cobranca.asaasStatus,
+            liquidacaoStatus: p.cobranca.liquidacaoStatus,
+            hasAsaasLink: Boolean(
+              p.cobranca.asaasPaymentId || p.cobranca.asaasStatus || p.cobranca.liquidacaoStatus,
+            ),
+          }),
         },
-        displayStatus: buildChargeDisplayStatusDTO({
-          localStatus: p.cobranca.status,
-          asaasStatus: p.cobranca.asaasStatus,
-          liquidacaoStatus: p.cobranca.liquidacaoStatus,
-          hasAsaasLink: Boolean(
-            p.cobranca.asaasPaymentId || p.cobranca.asaasStatus || p.cobranca.liquidacaoStatus,
-          ),
-        }),
-      },
-      asaasPaymentId: p.asaasPaymentId,
-      createdAt: p.createdAt.toISOString(),
-    }));
+        asaasPaymentId: p.asaasPaymentId,
+        createdAt: p.createdAt.toISOString(),
+      }));
 
-    return NextResponse.json(
-      listFinanceiroPagamentosResultDTOSchema.parse({
+      return listFinanceiroPagamentosResultDTOSchema.parse({
         data: items.map((item) => mapFinanceiroPagamentoRecordToDTO(item)),
         total,
         page,
         pageSize,
         totalPages: Math.ceil(total / pageSize),
+      });
+    };
+
+    if (!isCacheLayerEnabled()) {
+      return NextResponse.json(await loadBody(), { headers: { 'cache-control': 'no-store' } });
+    }
+
+    const cached = await withTenantCache({
+      adapter: getTenantCacheAdapter(),
+      key: buildPagamentosCacheKey(user.contaId, {
+        page,
+        pageSize,
+        status,
+        formaPagamento,
+        cobrancaId,
+        search,
       }),
-      { headers: { 'cache-control': 'no-store' } },
-    );
+      ttlSeconds: PAGAMENTOS_CACHE_SECONDS,
+      staleWhileRevalidateSeconds: PAGAMENTOS_STALE_SECONDS,
+      lockTtlSeconds: 8,
+      load: loadBody,
+    });
+
+    return privateJson(cached.body, {
+      maxAgeSeconds: PAGAMENTOS_CACHE_SECONDS,
+      staleWhileRevalidateSeconds: PAGAMENTOS_STALE_SECONDS,
+      cacheState: cached.state,
+    });
   } catch (e) {
-    console.error('[API Financeiro Pagamentos] Erro', e);
-    return err(500, 'ERRO_INTERNO', (e as Error).message);
+    return financeInternalError('API Financeiro Pagamentos', e);
   }
 }

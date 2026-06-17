@@ -77,8 +77,11 @@ alteracao na Alusa
 | Tema | Delegue / consulte |
 |------|--------------------|
 | Contrato oficial da API Asaas, campo, enum, endpoint | **asaas** + MCP Asaas |
+| Implementação HTTP pura em `packages/asaas` | **asaas-client** |
+| Webhook inbox, idempotência, fila, DLQ, reconciliação inbound | **alusa-webhook-reliability** |
 | Isolamento `contaId`, RLS, acesso cross-tenant | **tenant** |
 | Escopo de produto, regra academica nova | **alusa** |
+| Regras academicas puras em `@alusa/domain` | **alusa-education-domain** |
 | UI visual, componentes, layout e ergonomia | **core** |
 | Refactors amplos sem consequencia financeira | **core** |
 
@@ -264,10 +267,13 @@ Pare e reavalie se aparecer:
 
 ```txt
 alusa        -> valida regra de produto/fluxo educacional
+alusa-education-domain -> regras academicas puras em packages/domain
 core         -> implementa com arquitetura, UI e testes
 tenant       -> garante isolamento multi-tenant
 asaas        -> confirma contrato oficial da API/MCP
-finance-sync -> garante consistencia Alusa -> Asaas -> reconciliacao
+asaas-client -> implementa/revisa SDK HTTP em packages/asaas
+alusa-webhook-reliability -> inbox, idempotencia, fila, DLQ, reconciliacao inbound
+finance-sync -> garante consistencia Alusa -> Asaas -> reconciliacao outbound
 ```
 
 Use `finance-sync` junto com `asaas` sempre que a duvida envolver **como sincronizar uma mudanca de estado financeiro**, nao apenas qual endpoint existe.

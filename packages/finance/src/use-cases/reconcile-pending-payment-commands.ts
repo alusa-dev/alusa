@@ -84,6 +84,7 @@ export async function reconcilePendingPaymentCommands(
       const result = await syncPaymentStateFromAsaas({
         contaId: job.contaId,
         asaasPaymentId: payload.asaasPaymentId,
+        intent: 'RECONCILIATION',
       });
 
       if (result.success) {

@@ -354,6 +354,11 @@ export type {
   DashboardPendingPaymentsKpi,
   GetDashboardFinanceKpisLocalInput,
 } from './use-cases/get-dashboard-finance-kpis-local';
+export { getFinanceiroKpisLocal } from './use-cases/get-financeiro-kpis-local';
+export type {
+  GetFinanceiroKpisLocalInput,
+  GetFinanceiroKpisLocalOutput,
+} from './use-cases/get-financeiro-kpis-local';
 export { reconcileAcademicChargesWithAsaas } from './use-cases/reconcile-academic-charges';
 export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-academic-charges';
 export {
@@ -524,6 +529,11 @@ export {
   listCustomerIdsWithAsaas,
   applyPreferencesToAllCustomers,
 } from './services/asaas-notification-preferences.service';
+export {
+  enqueueAsaasNotificationPreferenceSync,
+  enqueueAsaasNotificationPreferenceSyncForTenant,
+  processAsaasNotificationPreferenceOutbox,
+} from './services/asaas-notification-preference-outbox.service';
 export type {
   NotificationChannels,
   NotificationPreferenceDTO,
@@ -531,6 +541,40 @@ export type {
   CustomerNotificationPreferenceDTO,
   CustomerNotificationPreferenceInput,
 } from './services/asaas-notification-preferences.service';
+export type {
+  EnqueueAsaasNotificationPreferenceSyncInput,
+  ProcessAsaasNotificationPreferenceOutboxInput,
+  ProcessAsaasNotificationPreferenceOutboxResult,
+} from './services/asaas-notification-preference-outbox.service';
+export {
+  reconcileAsaasCustomerSnapshots,
+  upsertAsaasCustomerSnapshot,
+} from './services/asaas-customer-snapshot.service';
+export type {
+  ReconcileAsaasCustomerSnapshotsInput,
+  ReconcileAsaasCustomerSnapshotsResult,
+} from './services/asaas-customer-snapshot.service';
+export {
+  rebuildFinanceBillingReadModels,
+  refreshFinanceBillingRemoteSnapshots,
+} from './read-model/billing-read-model.service';
+export type {
+  FinanceBillingReadModelResult,
+  RebuildFinanceBillingReadModelsInput,
+  RefreshFinanceBillingRemoteSnapshotsInput,
+} from './read-model/billing-read-model.service';
+export { rebuildFinanceAggregates } from './read-model/finance-aggregate.service';
+export type {
+  RebuildFinanceAggregatesInput,
+  RebuildFinanceAggregatesResult,
+} from './read-model/finance-aggregate.service';
+export { evaluateFinancialOperationalHealth } from './operational/financial-operational-health.service';
+export type {
+  EvaluateFinancialOperationalHealthInput,
+  EvaluateFinancialOperationalHealthResult,
+  FinancialOperationalAccountHealth,
+  FinancialOperationalMetric,
+} from './operational/financial-operational-health.service';
 export {
   syncCustomerNotificationsForUserSelection,
   channelPreferencesFromWizardSelection,
@@ -717,6 +761,11 @@ export type {
 } from './use-cases/request-withdraw';
 
 export { listTransfers } from './use-cases/list-transfers';
+export { reconcileOpenTransfers } from './use-cases/transfers/reconcile-open-transfers';
+export type {
+  ReconcileOpenTransfersInput,
+  ReconcileResult,
+} from './use-cases/transfers/reconcile-open-transfers';
 export type {
   ListTransfersInput,
   TransferListItem,

@@ -319,7 +319,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_AUTHORIZED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -327,7 +327,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_CANCELED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -335,7 +335,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_CANCELLATION_DENIED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -343,7 +343,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_CREATED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -351,7 +351,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_ERROR",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -359,7 +359,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_PROCESSING_CANCELLATION",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -367,7 +367,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_SYNCHRONIZED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {
@@ -375,7 +375,7 @@ exports[`Asaas Event Registry > Invariantes de negócio > todos os eventos regis
     "criticality": "INFO",
     "event": "INVOICE_UPDATED",
     "handlingMode": "STATE_CHANGE",
-    "mustProvision": false,
+    "mustProvision": true,
     "requiresReconciliation": false,
   },
   {

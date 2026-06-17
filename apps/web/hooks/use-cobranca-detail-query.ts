@@ -10,8 +10,8 @@ const TERMINAL_STATUSES = new Set<StatusCobranca>([
   'ESTORNADO_PARCIAL',
 ]);
 
-const SYNC_THROTTLE_MS = 12_000;
-const SYNC_BURST_THROTTLE_MS = 4_000;
+const SYNC_THROTTLE_MS = 30_000;
+const SYNC_BURST_THROTTLE_MS = 10_000;
 const lastSyncAttemptByChargeId = new Map<string, number>();
 
 export type CobrancaDetailQueryData = {

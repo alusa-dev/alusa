@@ -3,7 +3,7 @@ import {
   createStandaloneCharge,
   type CreateStandaloneChargeInput,
 } from '@alusa/finance';
-import { FamilyBillingOutboxStatus, FamilyBillingStatus } from '@prisma/client';
+import { FamilyBillingOutboxStatus, FamilyBillingStatus, type Prisma } from '@prisma/client';
 
 export type SupportedNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 export type SupportedBillingType = 'BOLETO' | 'PIX' | 'CREDIT_CARD';
@@ -387,6 +387,64 @@ export async function markFamilyBillingFailed(
   message: string,
 ) {
   await persistAggregateFailure(payload, message);
+}
+
+export function buildFamilyBillingDedupeKey(
+  aggregateType: FamilyBillingPayload['aggregateType'],
+  aggregateId: string,
+  eventType = 'SYNC_FAMILY_BILLING',
+) {
+  return `${aggregateType}:${aggregateId}:${eventType}`;
+}
+
+export async function enqueueFamilyBillingOutbox(input: {
+  contaId: string;
+  aggregateType: FamilyBillingPayload['aggregateType'];
+  aggregateId: string;
+  payload: FamilyBillingPayload;
+  matriculaFamiliarId?: string;
+  rematriculaFamiliarId?: string;
+  eventType?: string;
+}) {
+  const eventType = input.eventType ?? 'SYNC_FAMILY_BILLING';
+  const dedupeKey = buildFamilyBillingDedupeKey(input.aggregateType, input.aggregateId, eventType);
+
+  const existing = await prisma.familyBillingOutbox.findFirst({
+    where: { contaId: input.contaId, dedupeKey },
+  });
+  if (existing) {
+    return existing;
+  }
+
+  try {
+    return await prisma.familyBillingOutbox.create({
+      data: {
+        contaId: input.contaId,
+        aggregateType: input.aggregateType,
+        aggregateId: input.aggregateId,
+        eventType,
+        dedupeKey,
+        matriculaFamiliarId: input.matriculaFamiliarId ?? null,
+        rematriculaFamiliarId: input.rematriculaFamiliarId ?? null,
+        payload: input.payload as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002'
+    ) {
+      const raced = await prisma.familyBillingOutbox.findFirst({
+        where: { contaId: input.contaId, dedupeKey },
+      });
+      if (raced) {
+        return raced;
+      }
+    }
+    throw error;
+  }
 }
 
 export async function processFamilyBillingOutboxEvent(eventId: string) {

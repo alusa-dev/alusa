@@ -129,6 +129,23 @@ describe('API Financeiro Cobrancas', () => {
     );
   });
 
+  it('não expõe detalhes internos quando a listagem falha', async () => {
+    vi.mocked(listChargesAggregated).mockRejectedValueOnce(
+      new Error("Invalid `prisma.standaloneSubscription.findMany()` invocation: Can't reach database server at localhost:5432"),
+    );
+
+    const req = { url: 'http://test/api/financeiro/cobrancas' } as unknown as NextRequest;
+    const res = await getCobrancas(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('ERRO_INTERNO');
+    expect(json.error.message).toBe('Não foi possível concluir a operação financeira agora.');
+    expect(json.error.correlationId).toEqual(expect.any(String));
+    expect(JSON.stringify(json)).not.toContain('localhost:5432');
+    expect(JSON.stringify(json)).not.toContain('prisma.standaloneSubscription');
+  });
+
   it('retorna lista de pagamentos mock', async () => {
     mockPagamentos();
     const req = { url: 'http://test/api/financeiro/pagamentos' } as unknown as NextRequest;

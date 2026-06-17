@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import {
-  applyPreferencesToAllCustomers,
+  enqueueAsaasNotificationPreferenceSyncForTenant,
   getAsaasNotificationPreferences,
   saveAsaasNotificationPreferences,
   type NotificationPreferenceInput,
@@ -80,16 +80,16 @@ export async function POST() {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
 
-    void applyPreferencesToAllCustomers(user.contaId).catch((error) => {
-      console.error('[Config Notificacoes Asaas][POST][ASYNC_SYNC]', error, {
-        contaId: user.contaId,
-        actorId: user.id,
-      });
+    const result = await enqueueAsaasNotificationPreferenceSyncForTenant({
+      contaId: user.contaId,
+      reason: 'CONFIGURACAO_GLOBAL_ATUALIZADA',
+      limit: 5_000,
     });
 
     return json(202, {
       accepted: true,
-      message: 'Sincronização iniciada para os registros existentes.',
+      enqueued: result.enqueued,
+      message: 'Sincronização enfileirada. O job recorrente aplicará as preferências com retry controlado.',
     });
   } catch (error) {
     console.error('[Config Notificacoes Asaas][POST]', error);

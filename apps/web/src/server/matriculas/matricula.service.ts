@@ -20,6 +20,10 @@ import {
 } from '@alusa/domain';
 import { buildSeatOccupancyWhereClause } from '@alusa/lib';
 import { reconcileAcademicChargesWithAsaas } from '@alusa/finance';
+import { resolveFirstDueDate } from '@/src/server/matriculas/recurring-billing';
+import {
+  resolveInitialBillingProvisionStatus,
+} from '@/src/server/matriculas/billing-provision-status';
 
 export class MatriculaConflictError extends Error {
   readonly code:
@@ -100,14 +104,57 @@ function startOfDay(date: Date) {
   return d;
 }
 
-function resolveFirstDueDate(dataInicio: Date, vencimentoDia: number) {
-  const base = new Date(dataInicio);
-  const day = Math.min(28, Math.max(1, vencimentoDia));
-  const due = new Date(base.getFullYear(), base.getMonth(), day);
-  if (due < startOfDay(base)) {
-    return new Date(base.getFullYear(), base.getMonth() + 1, day);
-  }
-  return due;
+async function findExistingMatriculaByUiRequestId(input: {
+  contaId: string;
+  uiRequestId: string;
+}) {
+  return prisma.matricula.findFirst({
+    where: { contaId: input.contaId, uiRequestId: input.uiRequestId },
+    include: {
+      cobrancas: {
+        where: { tipo: TipoCobranca.TAXA_MATRICULA },
+        orderBy: { createdAt: 'asc' },
+        take: 1,
+      },
+      descontos: { include: { desconto: true } },
+      plano: { select: { valor: true } },
+      combo: { select: { valor: true } },
+    },
+  });
+}
+
+async function buildCriarMatriculaResultFromExisting(
+  matricula: NonNullable<Awaited<ReturnType<typeof findExistingMatriculaByUiRequestId>>>,
+) {
+  const planoValor = matricula.combo
+    ? Number(matricula.combo.valor)
+    : matricula.plano
+      ? Number(matricula.plano.valor)
+      : Number(matricula.taxaMatricula);
+
+  const preco = calcularPrecoMatricula({
+    planoValor,
+    taxaMatricula: Number(matricula.taxaMatricula),
+    descontos: matricula.descontos.map((item) => ({
+      tipo: item.desconto.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
+      valor: Number(item.desconto.valor),
+      cumulativo: false,
+    })),
+  });
+
+  const primeiroVencimento = resolveFirstDueDate(matricula.dataInicio, matricula.vencimentoDia);
+
+  return {
+    matricula,
+    cobrancas: {
+      taxa: matricula.cobrancas[0] ?? null,
+      mensalidade: null as Cobranca | null,
+    },
+    preco,
+    responsavelFinanceiro: null,
+    primeiroVencimento,
+    idempotent: true as const,
+  };
 }
 
 type MatriculaPersistence = {
@@ -339,6 +386,8 @@ export type CriarMatriculaInput = {
   prazoDesconto?: number | null;
   /** Benefícios/descontos comerciais aplicados à mensalidade */
   descontoIds?: string[] | null;
+  /** Idempotência opcional (header X-Idempotency-Key ou body) */
+  uiRequestId?: string | null;
 };
 
 type DescontoMatriculaAplicavel = {
@@ -432,6 +481,16 @@ async function aplicarDescontosMatricula(
 }
 
 export async function criarMatricula(input: CriarMatriculaInput) {
+  if (input.uiRequestId) {
+    const existing = await findExistingMatriculaByUiRequestId({
+      contaId: input.contaId,
+      uiRequestId: input.uiRequestId,
+    });
+    if (existing) {
+      return buildCriarMatriculaResultFromExisting(existing);
+    }
+  }
+
   const aluno = await prisma.aluno.findFirst({
     where: { id: input.alunoId, contaId: input.contaId },
     select: { id: true, status: true, dataNasc: true },
@@ -584,7 +643,9 @@ export async function criarMatricula(input: CriarMatriculaInput) {
 
   const primeiroVencimento = resolveFirstDueDate(input.dataInicio, input.vencimentoDia);
 
-  const result = await prisma.$transaction(async (tx) => {
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
     await assertNoDuplicateEnrollment(tx, {
       alunoId: input.alunoId,
       turmaId: input.turmaId,
@@ -620,6 +681,15 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       })),
     });
 
+    const billingProvisionStatus = resolveInitialBillingProvisionStatus({
+      billingMode: input.billingMode,
+      criarCobranca: input.criarCobranca,
+      gerarCobrancaTaxa: input.gerarCobrancaTaxa,
+      taxaIsenta: input.taxaIsenta,
+      taxaMatricula: input.taxaMatricula,
+      planoLiquido: preco.planoLiquido,
+    });
+
     const matricula = await tx.matricula.create({
       data: {
         contaId: input.contaId,
@@ -629,6 +699,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         planoId: input.planoId ?? undefined,
         comboId: input.comboId ?? undefined,
         billingMode: input.billingMode ?? BillingMode.INDIVIDUAL,
+        uiRequestId: input.uiRequestId ?? undefined,
+        billingProvisionStatus,
         dataInicio: input.dataInicio,
         dataFimContrato: input.dataFimContrato,
         taxaMatricula: input.taxaMatricula,
@@ -696,7 +768,23 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       descontosAplicaveis,
       preco,
     };
-  });
+    });
+  } catch (error) {
+    if (
+      input.uiRequestId &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      const existing = await findExistingMatriculaByUiRequestId({
+        contaId: input.contaId,
+        uiRequestId: input.uiRequestId,
+      });
+      if (existing) {
+        return buildCriarMatriculaResultFromExisting(existing);
+      }
+    }
+    throw error;
+  }
 
   return {
     matricula: result.matricula,

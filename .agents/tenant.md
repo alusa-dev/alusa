@@ -32,8 +32,9 @@ Garantir leituras, escritas, cache e políticas de banco respeitem o tenant (`Co
 
 | Tema | Agente |
 |------|--------|
+| Revisão adversarial de PR/diff em busca de vazamento cross-tenant | **alusa-tenant-security-auditor** |
 | Payloads/endpoints/tokens **Asaas** (subconta ≠ tenant local) | **asaas** |
-| Regras matrícula, cobrança, responsável financeiro, webhooks (lógica de negócio) | **finance** / **core** |
+| Regras de negócio acadêmico-financeiro (lógica de negócio) | **alusa-education-domain** / **finance** / **core** |
 | Escopo de produto | **alusa** |
 | UI, design system | **core** |
 | Criptografia de API key de subconta | **asaas** |
@@ -43,10 +44,11 @@ Garantir leituras, escritas, cache e políticas de banco respeitem o tenant (`Co
 | Tema | Especialista |
 |------|--------------|
 | Produto / princípios acadêmico-financeiro | **alusa** |
+| Regras acadêmicas puras (`@alusa/domain`) | **alusa-education-domain** |
 | API Asaas, subconta, customer, MCP | **asaas** |
 | Use case financeiro (caller passa `contaId`) | **core** + **finance** |
 | Cache Upstash, TTL, invalidação | **core** |
-| Nova tabela Prisma (schema + índices) | **core** (coordenação) |
+| Nova tabela Prisma (schema + índices + constraints) | **alusa-prisma-data-integrity** + **core** (coordenação) |
 
 ---
 
@@ -487,8 +489,21 @@ Ao implementar rota nova:
 
 ---
 
+## Distinção vs agente `alusa-tenant-security-auditor`
+
+| Pergunta | Agente |
+|----------|--------|
+| Este diff/PR vaza dados entre instituições? (audit) | **alusa-tenant-security-auditor** |
+| Como implementar `runWithTenant`, RLS, cache key? | **tenant** |
+
+Use **alusa-tenant-security-auditor** proativamente em PRs tenant-scoped; use **tenant** para corrigir e padronizar.
+
+---
+
 ## Referências
 
+- [alusa-prisma-data-integrity.md](./alusa-prisma-data-integrity.md) — schema, migrations, constraints compostas
+- [alusa-tenant-security-auditor.md](./alusa-tenant-security-auditor.md) — revisão adversarial cross-tenant
 - [core.md](./core.md) — implementação, cache Upstash
 - [alusa.md](./alusa.md) — produto, `Conta` como tenant
 - `apps/web/lib/prisma-tenant.ts`

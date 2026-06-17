@@ -53,6 +53,8 @@ export type {
   AsaasInvoice,
   AsaasInvoiceStatus,
   AsaasInvoiceTaxes,
+  AsaasInvoiceTaxesRequest,
+  AsaasInvoiceTaxesResponse,
   CreateInvoiceInput,
   PaymentStatus,
   SubscriptionStatus,

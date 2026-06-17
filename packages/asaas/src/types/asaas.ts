@@ -22,7 +22,7 @@ export type AsaasInvoiceStatus =
   | 'ERROR'
   | string;
 
-export interface AsaasInvoiceTaxes {
+export interface AsaasInvoiceTaxesRequest {
   retainIss: boolean;
   cofins: number | null;
   csll: number;
@@ -34,12 +34,27 @@ export interface AsaasInvoiceTaxes {
   taxSituationCode?: string | null;
   taxClassificationCode?: string | null;
   operationIndicatorCode?: string | null;
-  pisCofinsRetentionType?: string | null;
   pisCofinsTaxStatus?: string | null;
   operationPis?: number | null;
   operationCofins?: number | null;
   useTaxSystemReformNT007?: boolean;
 }
+
+export interface AsaasInvoiceTaxesResponse extends AsaasInvoiceTaxesRequest {
+  /**
+   * Campo calculado pelo Asaas no contrato NT-007.
+   * Não deve ser enviado nos payloads de criação/atualização de NFS-e.
+   */
+  pisCofinsRetentionType?: string | null;
+  stateIbs?: number | null;
+  stateIbsValue?: number | null;
+  municipalIbs?: number | null;
+  municipalIbsValue?: number | null;
+  cbs?: number | null;
+  cbsValue?: number | null;
+}
+
+export type AsaasInvoiceTaxes = AsaasInvoiceTaxesResponse;
 
 export interface CreateInvoiceInput {
   payment?: string;
@@ -55,7 +70,7 @@ export interface CreateInvoiceInput {
   municipalServiceCode?: string | null;
   municipalServiceName: string;
   updatePayment?: boolean;
-  taxes: AsaasInvoiceTaxes;
+  taxes: AsaasInvoiceTaxesRequest;
 }
 
 export interface AsaasInvoice {
@@ -80,7 +95,7 @@ export interface AsaasInvoice {
   observations?: string;
   estimatedTaxesDescription?: string | null;
   externalReference?: string | null;
-  taxes?: AsaasInvoiceTaxes;
+  taxes?: AsaasInvoiceTaxesResponse;
   municipalServiceId?: string | null;
   municipalServiceCode?: string | null;
   municipalServiceName?: string | null;

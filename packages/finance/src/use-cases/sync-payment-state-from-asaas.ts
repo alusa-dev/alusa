@@ -1,7 +1,7 @@
 import type { PaymentStatus as AsaasRawPaymentStatus } from '@alusa/asaas';
 import { emitBillingNotificationCandidate } from '@alusa/lib';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
-import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
+import { recordAsaasReadIntent, type AsaasReadIntent } from '../foundation/asaas-read-intent';
 import { handlePaymentWebhook } from '../webhooks/payment-webhook-handler';
 import { confirmPaymentCommandsByProviderEvent } from './payment-command-ledger';
 
@@ -9,6 +9,7 @@ export type SyncPaymentStateFromAsaasInput = {
   contaId: string;
   asaasPaymentId: string;
   eventName?: string;
+  intent?: AsaasReadIntent;
 };
 
 export type SyncPaymentStateFromAsaasOutput =
@@ -62,7 +63,7 @@ export async function syncPaymentStateFromAsaas(
     return { success: false, error: 'ASAAS_DISABLED' };
   }
 
-  recordAsaasReadIntent('RECONCILIATION');
+  recordAsaasReadIntent(input.intent ?? 'RECONCILIATION');
   const payment = await getPayment(input.asaasPaymentId, { contaId: input.contaId });
   const appliedEvent = input.eventName ?? chooseSyntheticEvent(payment.status, payment.deleted);
 

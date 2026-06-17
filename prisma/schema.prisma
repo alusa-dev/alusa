@@ -476,6 +476,16 @@ enum FamilyBillingOutboxStatus {
   FAILED
 }
 
+enum MatriculaBillingProvisionStatus {
+  NAO_APLICAVEL
+  PENDENTE
+  PROCESSANDO
+  PROVISIONADO
+  PARCIAL
+  FALHO
+  CANCELADO
+}
+
 enum FinanceWebhookSideEffectStatus {
   PENDING
   PROCESSING
@@ -486,6 +496,7 @@ enum FinanceWebhookSideEffectStatus {
 enum FinanceReconciliationEntityType {
   PAYMENT
   CHARGE
+  INVOICE
   SUBSCRIPTION
   INSTALLMENT_PLAN
   TRANSFER
@@ -498,6 +509,11 @@ enum FinanceReconciliationIssueType {
   PAYMENT_MISSING_LOCAL_ENTITY
   PAYMENT_NEEDS_REVIEW
   SUBSCRIPTION_STATUS_DRIFT
+  INVOICE_STATUS_DRIFT
+  INVOICE_UNKNOWN_STATUS
+  INVOICE_RECOVERY_REQUIRED
+  INVOICE_PROVIDER_LINK_MISSING
+  INVOICE_CANCEL_REVIEW
   TRANSFER_STATUS_DRIFT
   WEBHOOK_LAG
   WEBHOOK_DROPPED_RISK
@@ -805,142 +821,152 @@ model Colaborador {
 model Conta {
   // Tenant principal. Contas restauradas manualmente para recompor integridade
   // referencial devem manter o mesmo id e receber dados reais posteriormente.
-  id                             String                           @id @default(cuid())
-  nome                           String
-  cpfCnpj                        String?
-  status                         Status                           @default(ATIVO)
-  financeStatus                  FinanceStatus                    @default(FINANCE_NOT_STARTED)
-  financeIntegrationMode         FinanceIntegrationMode           @default(WHITELABEL_BAAS)
-  externalAsaasOnboardingStatus  ExternalAsaasOnboardingStatus    @default(NOT_STARTED)
-  deletedAt                      DateTime?
-  deletedByUserId                String?
-  deletedByUser                  Usuario?                         @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
-  deleteReason                   String?
-  createdAt                      DateTime                         @default(now())
-  updatedAt                      DateTime                         @updatedAt
+  id                                String                              @id @default(cuid())
+  nome                              String
+  cpfCnpj                           String?
+  status                            Status                              @default(ATIVO)
+  financeStatus                     FinanceStatus                       @default(FINANCE_NOT_STARTED)
+  financeIntegrationMode            FinanceIntegrationMode              @default(WHITELABEL_BAAS)
+  externalAsaasOnboardingStatus     ExternalAsaasOnboardingStatus       @default(NOT_STARTED)
+  deletedAt                         DateTime?
+  deletedByUserId                   String?
+  deletedByUser                     Usuario?                            @relation("ContaDeletedBy", fields: [deletedByUserId], references: [id])
+  deleteReason                      String?
+  createdAt                         DateTime                            @default(now())
+  updatedAt                         DateTime                            @updatedAt
   // Dono (owner) da conta — imutável na lógica de negócio
-  ownerUserId                    String?
-  ownerUser                      Usuario?                         @relation("ContaOwner", fields: [ownerUserId], references: [id])
-  usuarios                       Usuario[]                        @relation("ContaUsuarios")
-  usuariosConta                  UsuarioConta[]
-  invites                        Invite[]
-  alunos                         Aluno[]
-  turmas                         Turma[]
-  planos                         Plano[]
-  combos                         Combo[]
-  descontos                      Desconto[]
-  webhooks                       WebhookAsaas[]
-  webhooksArchive                WebhookAsaasArchive[]
-  legalAcceptances               LegalAcceptance[]
-  privacyRequests                PrivacyRequest[]
-  sensitiveAccessLogs            SensitiveAccessLog[]
-  consentRecords                 ConsentRecord[]
-  financeReconciliationIssues    FinanceReconciliationIssue[]
-  financeWebhookSideEffectOutbox FinanceWebhookSideEffectOutbox[]
-  logsFinanceiros                LogFinanceiro[]
-  logsIntegracao                 LogIntegracao[]
-  asaasIntegrationJobs           AsaasIntegrationJob[]
-  asaasNotificationPreferences   AsaasNotificationPreference[]
+  ownerUserId                       String?
+  ownerUser                         Usuario?                            @relation("ContaOwner", fields: [ownerUserId], references: [id])
+  usuarios                          Usuario[]                           @relation("ContaUsuarios")
+  usuariosConta                     UsuarioConta[]
+  invites                           Invite[]
+  alunos                            Aluno[]
+  turmas                            Turma[]
+  planos                            Plano[]
+  combos                            Combo[]
+  descontos                         Desconto[]
+  webhooks                          WebhookAsaas[]
+  webhooksArchive                   WebhookAsaasArchive[]
+  legalAcceptances                  LegalAcceptance[]
+  privacyRequests                   PrivacyRequest[]
+  sensitiveAccessLogs               SensitiveAccessLog[]
+  consentRecords                    ConsentRecord[]
+  financeReconciliationIssues       FinanceReconciliationIssue[]
+  financeWebhookSideEffectOutbox    FinanceWebhookSideEffectOutbox[]
+  logsFinanceiros                   LogFinanceiro[]
+  logsIntegracao                    LogIntegracao[]
+  asaasIntegrationJobs              AsaasIntegrationJob[]
+  asaasNotificationPreferences      AsaasNotificationPreference[]
   // Núcleo financeiro whitelabel (Fases 0+)
-  financeProfile                 FinanceProfile?
-  tenantFeatureFlags             TenantFeatureFlags?
-  auditLogs                      AuditLog[]
-  notifications                  Notification[]
-  notificationRecipients         NotificationRecipient[]
-  customers                      Customer[]
-  charges                        Charge[]
-  chargeReadModels               ChargeReadModel[]
-  financeSummaryReadModels       FinanceSummaryReadModel[]
-  invoices                       Invoice[]
-  contaFiscalSettings            ContaFiscalSettings?
-  fiscalServices                 FiscalService[]
-  invoiceAuditEvents             InvoiceAuditEvent[]
-  subscriptions                  Subscription[]
-  installmentPlans               InstallmentPlan[]
-  standaloneInstallmentPlans     StandaloneInstallmentPlan[]
-  standaloneSubscriptions        StandaloneSubscription[]
-  transferRequests               TransferRequest[]
-  pixTransferSessions            PixTransferSession[]
-  professores                    Professor[]
-  colaboradores                  Colaborador[]
-  responsaveis                   Responsavel[]
-  alunoResponsaveis              AlunoResponsavel[]
-  modalidades                    Modalidade[]
-  salas                          Sala[]
-  matriculas                     Matricula[]
-  cobrancas                      Cobranca[]
-  pagamentos                     Pagamento[]
-  turmaProfessores               TurmaProfessor[]
-  matriculaTurmas                MatriculaTurma[]
-  comboTurmas                    ComboTurma[]
-  calendarEventProfessores       CalendarEventProfessor[]
-  lancamentos                    Lancamento[]
-  centrosCusto                   CentroCusto[]
-  categoriasLancamento           CategoriaLancamento[]
-  portalEventos                  PortalEvento[]
-  portalEventoInscricoes         PortalEventoInscricao[]
-  schoolEvents                   SchoolEvent[]
-  eventMaps                      EventMap[]
-  eventMapVersions               EventMapVersion[]
-  eventMapLevels                 EventMapLevel[]
-  eventMapObjects                EventMapObject[]
-  eventMapSections               EventMapSection[]
-  eventSeats                     EventSeat[]
-  eventSeatGroups                EventSeatGroup[]
-  eventMapPublicSeats            EventMapPublicSeat[]
-  eventMapReservations           EventMapReservation[]
-  eventMapReservationSeats       EventMapReservationSeat[]
-  eventMapOrders                 EventMapOrder[]
-  eventMapOrderItems             EventMapOrderItem[]
-  eventTickets                   EventTicket[]
-  eventTicketLots                EventTicketLot[]
-  eventTicketSales               EventTicketSale[]
-  eventTicketSaleSeats           EventTicketSaleSeat[]
-  eventCostumes                  EventCostume[]
-  eventCostumeAssignments        EventCostumeAssignment[]
-  eventFinancialEntries          EventFinancialEntry[]
-  eventParticipants              EventParticipant[]
-  eventReports                   EventReport[]
-  eventAudits                    EventAudit[]
-  contratoTemplates              ContratoTemplate[]
-  contratoModelos                ContratoModelo[]
-  contratos                      Contrato[]
-  contratoEvidencias             ContractEvidence[]
-  contratoDocumentos             ContratoDocumento[]
-  rematriculaOperacoes           RematriculaOperacao[]
-  payerChangeOperacoes           PayerChangeOperacao[]
-  matriculaOperacoes             MatriculaOperacao[]
-  matriculasFamiliares           MatriculaFamiliar[]
-  rematriculasFamiliares         RematriculaFamiliar[]
-  familyBillingOutboxEvents      FamilyBillingOutbox[]
-  calendarEvents                 CalendarEvent[]
-  aulasExperimentais             AulaExperimental[]
-  attendanceRecords              AttendanceRecord[]
-  makeupClasses                  MakeupClass[]
-  aulasOperationLogs             AulasOperationLog[]
+  financeProfile                    FinanceProfile?
+  tenantFeatureFlags                TenantFeatureFlags?
+  auditLogs                         AuditLog[]
+  notifications                     Notification[]
+  notificationRecipients            NotificationRecipient[]
+  customers                         Customer[]
+  charges                           Charge[]
+  chargeReadModels                  ChargeReadModel[]
+  financeSummaryReadModels          FinanceSummaryReadModel[]
+  financialTransactionSnapshots     FinancialTransactionSnapshot[]
+  financialTransactionSyncWindows   FinancialTransactionSyncWindow[]
+  receivableAnticipationSnapshots   ReceivableAnticipationSnapshot[]
+  asaasCustomerSnapshots            AsaasCustomerSnapshot[]
+  financeSubscriptionReadModels     FinanceSubscriptionReadModel[]
+  financeInstallmentPlanReadModels  FinanceInstallmentPlanReadModel[]
+  asaasNotificationPreferenceOutbox AsaasNotificationPreferenceOutbox[]
+  financeDailyAggregates            FinanceDailyAggregate[]
+  financeMonthlyAggregates          FinanceMonthlyAggregate[]
+  financialOperationalAlerts        FinancialOperationalAlert[]
+  invoices                          Invoice[]
+  contaFiscalSettings               ContaFiscalSettings?
+  fiscalServices                    FiscalService[]
+  invoiceAuditEvents                InvoiceAuditEvent[]
+  subscriptions                     Subscription[]
+  installmentPlans                  InstallmentPlan[]
+  standaloneInstallmentPlans        StandaloneInstallmentPlan[]
+  standaloneSubscriptions           StandaloneSubscription[]
+  transferRequests                  TransferRequest[]
+  pixTransferSessions               PixTransferSession[]
+  professores                       Professor[]
+  colaboradores                     Colaborador[]
+  responsaveis                      Responsavel[]
+  alunoResponsaveis                 AlunoResponsavel[]
+  modalidades                       Modalidade[]
+  salas                             Sala[]
+  matriculas                        Matricula[]
+  cobrancas                         Cobranca[]
+  pagamentos                        Pagamento[]
+  turmaProfessores                  TurmaProfessor[]
+  matriculaTurmas                   MatriculaTurma[]
+  comboTurmas                       ComboTurma[]
+  calendarEventProfessores          CalendarEventProfessor[]
+  lancamentos                       Lancamento[]
+  centrosCusto                      CentroCusto[]
+  categoriasLancamento              CategoriaLancamento[]
+  portalEventos                     PortalEvento[]
+  portalEventoInscricoes            PortalEventoInscricao[]
+  schoolEvents                      SchoolEvent[]
+  eventMaps                         EventMap[]
+  eventMapVersions                  EventMapVersion[]
+  eventMapLevels                    EventMapLevel[]
+  eventMapObjects                   EventMapObject[]
+  eventMapSections                  EventMapSection[]
+  eventSeats                        EventSeat[]
+  eventSeatGroups                   EventSeatGroup[]
+  eventMapPublicSeats               EventMapPublicSeat[]
+  eventMapReservations              EventMapReservation[]
+  eventMapReservationSeats          EventMapReservationSeat[]
+  eventMapOrders                    EventMapOrder[]
+  eventMapOrderItems                EventMapOrderItem[]
+  eventTickets                      EventTicket[]
+  eventTicketLots                   EventTicketLot[]
+  eventTicketSales                  EventTicketSale[]
+  eventTicketSaleSeats              EventTicketSaleSeat[]
+  eventCostumes                     EventCostume[]
+  eventCostumeAssignments           EventCostumeAssignment[]
+  eventFinancialEntries             EventFinancialEntry[]
+  eventParticipants                 EventParticipant[]
+  eventReports                      EventReport[]
+  eventAudits                       EventAudit[]
+  contratoTemplates                 ContratoTemplate[]
+  contratoModelos                   ContratoModelo[]
+  contratos                         Contrato[]
+  contratoEvidencias                ContractEvidence[]
+  contratoDocumentos                ContratoDocumento[]
+  rematriculaOperacoes              RematriculaOperacao[]
+  payerChangeOperacoes              PayerChangeOperacao[]
+  matriculaOperacoes                MatriculaOperacao[]
+  matriculasFamiliares              MatriculaFamiliar[]
+  rematriculasFamiliares            RematriculaFamiliar[]
+  familyBillingOutboxEvents         FamilyBillingOutbox[]
+  calendarEvents                    CalendarEvent[]
+  aulasExperimentais                AulaExperimental[]
+  attendanceRecords                 AttendanceRecord[]
+  makeupClasses                     MakeupClass[]
+  aulasOperationLogs                AulasOperationLog[]
   // Loja / Vendas
-  products                       Product[]
-  productCategories              ProductCategory[]
-  sales                          Sale[]
-  inventoryBalances              InventoryBalance[]
-  inventoryMovements             InventoryMovement[]
-  restockOrders                  RestockOrder[]
+  products                          Product[]
+  productCategories                 ProductCategory[]
+  sales                             Sale[]
+  inventoryBalances                 InventoryBalance[]
+  inventoryMovements                InventoryMovement[]
+  restockOrders                     RestockOrder[]
   /// Fuso horário IANA para materialização da agenda (ex.: America/Sao_Paulo, America/Manaus)
-  timezone                       String                           @default("America/Sao_Paulo") @db.VarChar(64)
+  timezone                          String                              @default("America/Sao_Paulo") @db.VarChar(64)
   // Campos de endereço da conta (escola)
-  enderecoCep                    String?                          @db.Char(8)
-  enderecoLogradouro             String?
-  enderecoNumero                 String?
-  enderecoBairro                 String?
-  enderecoCidade                 String?
-  enderecoUf                     String?                          @db.Char(2)
+  enderecoCep                       String?                             @db.Char(8)
+  enderecoLogradouro                String?
+  enderecoNumero                    String?
+  enderecoBairro                    String?
+  enderecoCidade                    String?
+  enderecoUf                        String?                             @db.Char(2)
   // Credenciais de integração (criptografadas em repouso). Armazenamos separadamente para permitir rotação.
-  asaasApiKeyEncrypted           String?
-  asaasWebhookSecretEncrypted    String?
-  asaasCredsUpdatedAt            DateTime?
+  asaasApiKeyEncrypted              String?
+  asaasWebhookSecretEncrypted       String?
+  asaasCredsUpdatedAt               DateTime?
   // Política de ativação de matrícula
-  matriculaActivationPolicy      MatriculaActivationPolicy        @default(IMMEDIATE)
-  financialPolicy                ContaFinancialPolicy?
+  matriculaActivationPolicy         MatriculaActivationPolicy           @default(IMMEDIATE)
+  financialPolicy                   ContaFinancialPolicy?
 
   @@index([cpfCnpj])
   @@index([ownerUserId])
@@ -1573,54 +1599,59 @@ model Plano {
 }
 
 model Matricula {
-  id                      String                @id @default(cuid())
-  contaId                 String
-  alunoId                 String
-  responsavelFinanceiroId String?
-  turmaId                 String?
-  planoId                 String? // Opcional quando comboId é fornecido (combo define valor/periodicidade)
-  comboId                 String?
-  rematriculadaDeId       String? // Referência à matrícula origem (rematrícula)
-  dataInicio              DateTime
-  dataFim                 DateTime?
-  dataFimContrato         DateTime
-  status                  StatusMatricula       @default(ATIVA)
-  statusFinanceiro        StatusFinanceiro      @default(PENDENTE_TAXA)
-  statusContrato          StatusContrato        @default(AGUARDANDO_ASSINATURA)
-  contratoAtualId         String?               @unique
-  taxaMatricula           Decimal               @db.Decimal(12, 2)
-  taxaStatus              StatusTaxaMatricula   @default(PENDENTE)
-  taxaIsenta              Boolean               @default(false)
-  taxaJustificativa       String?
-  formaPagamento          FormaPagamento?       @default(BOLETO)
-  formaPagamentoTaxa      FormaPagamento?       @default(BOLETO)
-  vencimentoDia           Int                   @default(5)
+  id                         String                          @id @default(cuid())
+  contaId                    String
+  alunoId                    String
+  responsavelFinanceiroId    String?
+  turmaId                    String?
+  planoId                    String? // Opcional quando comboId é fornecido (combo define valor/periodicidade)
+  comboId                    String?
+  rematriculadaDeId          String? // Referência à matrícula origem (rematrícula)
+  dataInicio                 DateTime
+  dataFim                    DateTime?
+  dataFimContrato            DateTime
+  status                     StatusMatricula                 @default(ATIVA)
+  statusFinanceiro           StatusFinanceiro                @default(PENDENTE_TAXA)
+  statusContrato             StatusContrato                  @default(AGUARDANDO_ASSINATURA)
+  contratoAtualId            String?                         @unique
+  taxaMatricula              Decimal                         @db.Decimal(12, 2)
+  taxaStatus                 StatusTaxaMatricula             @default(PENDENTE)
+  taxaIsenta                 Boolean                         @default(false)
+  taxaJustificativa          String?
+  formaPagamento             FormaPagamento?                 @default(BOLETO)
+  formaPagamentoTaxa         FormaPagamento?                 @default(BOLETO)
+  vencimentoDia              Int                             @default(5)
   // Configurações financeiras de juros, multa e desconto (padrão Asaas API)
   // @see https://docs.asaas.com/docs/criando-uma-assinatura
-  jurosMensal             Decimal?              @db.Decimal(5, 2) // Ex: 1.0 = 1% ao mês
-  jurosTipo               String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
-  multaPercentual         Decimal?              @db.Decimal(5, 2) // Ex: 2.0 = 2%
-  multaTipo               String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
-  descontoAntecipado      Decimal?              @db.Decimal(5, 2) // Ex: 5.0 = 5% de desconto
-  descontoTipo            String?               @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
-  prazoDesconto           Int?                  @default(0) // Quantos dias antes do vencimento para aplicar desconto
-  asaasId                 String?               @unique
-  asaasSubscriptionId     String?               @unique
-  billingMode             BillingMode           @default(INDIVIDUAL) // Modo de cobrança (PR2)
-  matriculaFamiliarId     String?
-  timeoutAppliedAt        DateTime? // Quando timeout foi aplicado (PR3)
+  jurosMensal                Decimal?                        @db.Decimal(5, 2) // Ex: 1.0 = 1% ao mês
+  jurosTipo                  String?                         @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  multaPercentual            Decimal?                        @db.Decimal(5, 2) // Ex: 2.0 = 2%
+  multaTipo                  String?                         @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  descontoAntecipado         Decimal?                        @db.Decimal(5, 2) // Ex: 5.0 = 5% de desconto
+  descontoTipo               String?                         @default("PERCENTAGE") // FIXED ou PERCENTAGE (Asaas)
+  prazoDesconto              Int?                            @default(0) // Quantos dias antes do vencimento para aplicar desconto
+  asaasId                    String?                         @unique
+  asaasSubscriptionId        String?                         @unique
+  billingMode                BillingMode                     @default(INDIVIDUAL) // Modo de cobrança (PR2)
+  matriculaFamiliarId        String?
+  timeoutAppliedAt           DateTime? // Quando timeout foi aplicado (PR3)
   // Campos de pausa
-  pausaAtiva              Boolean               @default(false)
-  dataInicioPausa         DateTime?
-  dataRetornoPrevista     DateTime?
-  manterVaga              Boolean               @default(true)
-  cobrarDurantePausa      Boolean               @default(false)
-  motivoPausa             String?
-  integrationStatus       IntegrationSyncStatus @default(SINCRONIZADO)
-  warningCode             String?
-  version                 Int                   @default(0)
-  createdAt               DateTime              @default(now())
-  updatedAt               DateTime              @updatedAt
+  pausaAtiva                 Boolean                         @default(false)
+  dataInicioPausa            DateTime?
+  dataRetornoPrevista        DateTime?
+  manterVaga                 Boolean                         @default(true)
+  cobrarDurantePausa         Boolean                         @default(false)
+  motivoPausa                String?
+  integrationStatus          IntegrationSyncStatus           @default(SINCRONIZADO)
+  warningCode                String?
+  uiRequestId                String?
+  billingProvisionStatus     MatriculaBillingProvisionStatus @default(PENDENTE)
+  billingProvisionError      String?
+  billingProvisionAt         DateTime?
+  pendingAsaasSubscriptionId String?
+  version                    Int                             @default(0)
+  createdAt                  DateTime                        @default(now())
+  updatedAt                  DateTime                        @updatedAt
 
   conta                          Conta                     @relation(fields: [contaId], references: [id], onDelete: Restrict)
   aluno                          Aluno                     @relation(fields: [alunoId], references: [id], onDelete: Restrict)
@@ -1651,6 +1682,7 @@ model Matricula {
   rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemOrigem")
   rematriculaFamiliarItemsNova   RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemNova")
 
+  @@unique([contaId, uiRequestId], name: "uq_matricula_conta_request")
   @@index([contaId], name: "idx_matricula_conta")
   @@index([contaId, status], name: "idx_matricula_conta_status")
   @@index([contaId, statusFinanceiro], name: "idx_matricula_conta_status_financeiro")
@@ -1673,6 +1705,7 @@ model Matricula {
   @@index([dataFimContrato], name: "idx_matricula_fim_contrato")
   @@index([contratoAtualId], name: "idx_matricula_contrato_atual")
   @@index([matriculaFamiliarId], name: "idx_matricula_familiar")
+  @@index([contaId, billingProvisionStatus], name: "idx_matricula_conta_billing_provision")
 }
 
 model MatriculaFamiliar {
@@ -1794,6 +1827,7 @@ model FamilyBillingOutbox {
   processedAt           DateTime?
   lastAttemptAt         DateTime?
   lastError             String?
+  dedupeKey             String?
   matriculaFamiliarId   String?
   rematriculaFamiliarId String?
   createdAt             DateTime                  @default(now())
@@ -1803,6 +1837,7 @@ model FamilyBillingOutbox {
   matriculaFamiliar   MatriculaFamiliar?   @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
   rematriculaFamiliar RematriculaFamiliar? @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
 
+  @@unique([contaId, dedupeKey], name: "uq_family_billing_outbox_dedupe")
   @@index([contaId, status, availableAt], name: "idx_family_billing_outbox_queue")
   @@index([status, availableAt], name: "idx_family_billing_outbox_status_available")
   @@index([contaId, aggregateId], name: "idx_family_billing_outbox_conta_aggregate")
@@ -3622,6 +3657,13 @@ enum InvoiceStatus {
   ERROR
 }
 
+enum InvoiceOperationStatus {
+  IDLE
+  CREATING
+  RECONCILING
+  FAILED
+}
+
 enum FiscalAccessMethod {
   USER_PASSWORD
   TOKEN
@@ -3930,11 +3972,46 @@ model Customer {
   charges                    Charge[]
   standaloneInstallmentPlans StandaloneInstallmentPlan[]
   standaloneSubscriptions    StandaloneSubscription[]
+  asaasCustomerSnapshots     AsaasCustomerSnapshot[]
 
   @@unique([contaId, payerType, payerId])
   @@unique([contaId, asaasCustomerId])
   @@index([contaId])
   @@index([asaasCustomerId])
+}
+
+model AsaasCustomerSnapshot {
+  id      String @id @default(cuid())
+  contaId String
+
+  asaasCustomerId String
+  localCustomerId String?
+  payerType       String?
+  payerId         String?
+
+  name                 String?
+  email                String?
+  phone                String?
+  mobilePhone          String?
+  cpfCnpj              String?
+  personType           String?
+  externalReference    String?
+  notificationDisabled Boolean?
+  deleted              Boolean  @default(false)
+
+  raw       Json?
+  fetchedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  customer Customer? @relation(fields: [localCustomerId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, asaasCustomerId], name: "uq_asaas_customer_snapshot_conta_asaas")
+  @@index([contaId, fetchedAt], name: "idx_asaas_customer_snapshot_conta_fetched")
+  @@index([contaId, deleted], name: "idx_asaas_customer_snapshot_conta_deleted")
+  @@index([contaId, localCustomerId], name: "idx_asaas_customer_snapshot_conta_local")
+  @@index([asaasCustomerId], name: "idx_asaas_customer_snapshot_asaas")
 }
 
 model Charge {
@@ -4087,6 +4164,297 @@ model FinanceSummaryReadModel {
   @@index([contaId, windowEnd], name: "idx_finance_summary_conta_window_end")
 }
 
+model FinancialTransactionSnapshot {
+  id      String @id @default(cuid())
+  contaId String
+
+  asaasTransactionId String
+  value              Decimal  @db.Decimal(12, 2)
+  balance            Decimal? @db.Decimal(12, 2)
+  type               String
+  date               DateTime
+  description        String
+  externalReference  String?
+
+  paymentId            String?
+  splitId              String?
+  transferId           String?
+  anticipationId       String?
+  billId               String?
+  invoiceId            String?
+  paymentDunningId     String?
+  creditBureauReportId String?
+
+  raw       Json?
+  fetchedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, asaasTransactionId], name: "uq_fin_tx_snapshot_conta_asaas")
+  @@index([contaId, date], name: "idx_fin_tx_snapshot_conta_date")
+  @@index([contaId, type, date], name: "idx_fin_tx_snapshot_conta_type_date")
+  @@index([contaId, paymentId], name: "idx_fin_tx_snapshot_conta_payment")
+  @@index([contaId, transferId], name: "idx_fin_tx_snapshot_conta_transfer")
+  @@index([contaId, anticipationId], name: "idx_fin_tx_snapshot_conta_anticipation")
+}
+
+model FinancialTransactionSyncWindow {
+  id      String @id @default(cuid())
+  contaId String
+
+  windowKey          String
+  startDate          String?
+  finishDate         String?
+  order              String
+  syncedAt           DateTime @default(now())
+  officialTotalCount Int      @default(0)
+  fetchedCount       Int      @default(0)
+  truncated          Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, windowKey], name: "uq_fin_tx_sync_window_conta_key")
+  @@index([contaId, syncedAt], name: "idx_fin_tx_sync_window_conta_synced")
+}
+
+model ReceivableAnticipationSnapshot {
+  id      String @id @default(cuid())
+  contaId String
+
+  asaasAnticipationId String
+  status              String
+  paymentId           String?
+  installmentId       String?
+  anticipationDate    DateTime?
+  dueDate             DateTime?
+  requestDate         DateTime?
+  fee                 Decimal?  @db.Decimal(12, 2)
+  anticipationDays    Int?
+  netValue            Decimal?  @db.Decimal(12, 2)
+  totalValue          Decimal?  @db.Decimal(12, 2)
+  value               Decimal?  @db.Decimal(12, 2)
+  denialObservation   String?
+
+  source          String
+  sourceWebhookId String?
+  eventId         String?
+  raw             Json?
+  fetchedAt       DateTime @default(now())
+  statusUpdatedAt DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, asaasAnticipationId], name: "uq_receivable_anticipation_conta_asaas")
+  @@index([contaId, status], name: "idx_receivable_anticipation_conta_status")
+  @@index([contaId, paymentId], name: "idx_receivable_anticipation_conta_payment")
+  @@index([contaId, installmentId], name: "idx_receivable_anticipation_conta_installment")
+  @@index([contaId, statusUpdatedAt], name: "idx_receivable_anticipation_conta_status_updated")
+}
+
+model FinanceSubscriptionReadModel {
+  id      String @id @default(cuid())
+  contaId String
+
+  sourceKind String
+  sourceId   String
+
+  localCustomerId     String?
+  asaasCustomerId     String?
+  asaasSubscriptionId String?
+  payerName           String?
+
+  status      String
+  billingType String?
+  cycle       String?
+  value       Decimal?  @db.Decimal(12, 2)
+  nextDueDate DateTime?
+  endDate     DateTime?
+  description String?
+
+  familyGroupId String?
+  matriculaId   String?
+  contratoId    String?
+  alunoId       String?
+
+  remoteDeleted    Boolean   @default(false)
+  lastRemoteSyncAt DateTime?
+  raw              Json?
+
+  sourceCreatedAt DateTime?
+  sourceUpdatedAt DateTime?
+  projectedAt     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, sourceKind, sourceId], name: "uq_fin_subscription_rm_source")
+  @@index([contaId, status, nextDueDate], name: "idx_fin_subscription_rm_conta_status_due")
+  @@index([contaId, asaasSubscriptionId], name: "idx_fin_subscription_rm_conta_asaas")
+  @@index([contaId, localCustomerId], name: "idx_fin_subscription_rm_conta_customer")
+  @@index([contaId, matriculaId], name: "idx_fin_subscription_rm_conta_matricula")
+  @@index([contaId, familyGroupId], name: "idx_fin_subscription_rm_conta_family")
+  @@index([contaId, projectedAt], name: "idx_fin_subscription_rm_conta_projected")
+}
+
+model FinanceInstallmentPlanReadModel {
+  id      String @id @default(cuid())
+  contaId String
+
+  sourceKind String
+  sourceId   String
+
+  localCustomerId    String?
+  asaasCustomerId    String?
+  asaasInstallmentId String?
+  payerName          String?
+
+  status           String
+  billingType      String?
+  value            Decimal?  @db.Decimal(12, 2)
+  installmentCount Int?
+  firstDueDate     DateTime?
+  description      String?
+
+  familyGroupId String?
+  matriculaId   String?
+  contratoId    String?
+  alunoId       String?
+
+  remoteDeleted    Boolean   @default(false)
+  lastRemoteSyncAt DateTime?
+  raw              Json?
+
+  sourceCreatedAt DateTime?
+  sourceUpdatedAt DateTime?
+  projectedAt     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, sourceKind, sourceId], name: "uq_fin_installment_rm_source")
+  @@index([contaId, status, firstDueDate], name: "idx_fin_installment_rm_conta_status_due")
+  @@index([contaId, asaasInstallmentId], name: "idx_fin_installment_rm_conta_asaas")
+  @@index([contaId, localCustomerId], name: "idx_fin_installment_rm_conta_customer")
+  @@index([contaId, matriculaId], name: "idx_fin_installment_rm_conta_matricula")
+  @@index([contaId, familyGroupId], name: "idx_fin_installment_rm_conta_family")
+  @@index([contaId, projectedAt], name: "idx_fin_installment_rm_conta_projected")
+}
+
+model AsaasNotificationPreferenceOutbox {
+  id      String @id @default(cuid())
+  contaId String
+
+  asaasCustomerId String
+  dedupeKey       String
+  status          String  @default("PENDING")
+  reason          String?
+
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  processingAt  DateTime?
+  processedAt   DateTime?
+  lastError     String?
+  lastErrorAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, dedupeKey], name: "uq_asaas_notif_outbox_conta_dedupe")
+  @@index([status, nextAttemptAt, createdAt], name: "idx_asaas_notif_outbox_status_next")
+  @@index([contaId, status, nextAttemptAt], name: "idx_asaas_notif_outbox_conta_status_next")
+  @@index([contaId, asaasCustomerId], name: "idx_asaas_notif_outbox_conta_customer")
+}
+
+model FinanceDailyAggregate {
+  id      String @id @default(cuid())
+  contaId String
+
+  day DateTime
+
+  creditAmount     Decimal @default(0) @db.Decimal(14, 2)
+  debitAmount      Decimal @default(0) @db.Decimal(14, 2)
+  netAmount        Decimal @default(0) @db.Decimal(14, 2)
+  creditCount      Int     @default(0)
+  debitCount       Int     @default(0)
+  transactionCount Int     @default(0)
+
+  source       String   @default("FINANCIAL_TRANSACTION_SNAPSHOT")
+  calculatedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, day], name: "uq_fin_daily_aggregate_conta_day")
+  @@index([contaId, day], name: "idx_fin_daily_aggregate_conta_day")
+  @@index([contaId, calculatedAt], name: "idx_fin_daily_aggregate_conta_calculated")
+}
+
+model FinanceMonthlyAggregate {
+  id      String @id @default(cuid())
+  contaId String
+
+  month       String
+  periodStart DateTime
+  periodEnd   DateTime
+
+  creditAmount     Decimal @default(0) @db.Decimal(14, 2)
+  debitAmount      Decimal @default(0) @db.Decimal(14, 2)
+  netAmount        Decimal @default(0) @db.Decimal(14, 2)
+  creditCount      Int     @default(0)
+  debitCount       Int     @default(0)
+  transactionCount Int     @default(0)
+
+  source       String   @default("FINANCIAL_TRANSACTION_SNAPSHOT")
+  calculatedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, month], name: "uq_fin_monthly_aggregate_conta_month")
+  @@index([contaId, periodStart], name: "idx_fin_monthly_aggregate_conta_start")
+  @@index([contaId, calculatedAt], name: "idx_fin_monthly_aggregate_conta_calculated")
+}
+
+model FinancialOperationalAlert {
+  id      String @id @default(cuid())
+  contaId String
+
+  alertKey    String
+  severity    String
+  status      String  @default("OPEN")
+  title       String
+  description String?
+
+  metricValue Int?
+  threshold   Int?
+  metadata    Json?
+
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, alertKey], name: "uq_fin_operational_alert_conta_key")
+  @@index([contaId, status, severity], name: "idx_fin_operational_alert_conta_status")
+  @@index([status, lastSeenAt], name: "idx_fin_operational_alert_status_seen")
+}
+
 model StandaloneInstallmentPlan {
   id      String @id @default(cuid())
   contaId String
@@ -4200,19 +4568,35 @@ model Invoice {
   externalReference String
   asaasInvoiceId    String?
 
-  status            InvoiceStatus @default(SCHEDULED)
-  statusDescription String?
-  errorMessage      String?
-  statusUpdatedAt   DateTime      @default(now())
-  scheduledAt       DateTime?
+  status                  InvoiceStatus          @default(SCHEDULED)
+  operationStatus         InvoiceOperationStatus @default(IDLE)
+  operationStartedAt      DateTime?
+  operationLeaseExpiresAt DateTime?
+  operationAttempts       Int                    @default(0)
+  nextAttemptAt           DateTime?
+  lastErrorKind           String?
+  lastErrorMessage        String?
+  statusDescription       String?
+  errorMessage            String?
+  statusUpdatedAt         DateTime               @default(now())
+  scheduledAt             DateTime?
 
   // Snapshot da emissão
-  value              Decimal?  @db.Decimal(12, 2)
-  deductions         Decimal?  @db.Decimal(12, 2)
-  effectiveDate      DateTime?
-  serviceDescription String?
-  observations       String?
-  taxes              Json?
+  value                          Decimal?  @db.Decimal(12, 2)
+  deductions                     Decimal?  @db.Decimal(12, 2)
+  effectiveDate                  DateTime?
+  serviceDescription             String?
+  observations                   String?
+  taxes                          Json?
+  providerTaxes                  Json?
+  providerSnapshot               Json?
+  rawProviderStatus              String?
+  providerPisCofinsRetentionType String?
+  providerPisCofinsTaxStatus     String?
+  providerOperationPis           Decimal?  @db.Decimal(5, 2)
+  providerOperationCofins        Decimal?  @db.Decimal(5, 2)
+  fiscalDivergence               Boolean   @default(false)
+  lastReconciledAt               DateTime?
 
   municipalServiceCode String?
   municipalServiceName String?

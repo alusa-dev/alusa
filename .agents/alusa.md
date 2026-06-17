@@ -39,12 +39,14 @@ Ajudar o time a tomar decisões alinhadas ao produto Alusa, reduzindo:
 
 | Tema | Agente / skill |
 |------|----------------|
+| Pipeline multi-agente / entrega coordenada | **alusa-orchestrator** → `.agents/alusa-orchestrator.md` |
 | Regras universais de implementação | **core** (`.agents/core.md`) |
 | API Asaas, MCP, subconta, payloads | **asaas** → `.agents/asaas.md` |
 | Isolamento `contaId`, RLS, cross-tenant | **tenant** → `.agents/tenant.md` |
-| Webhooks idempotentes | **webhooks** *(futuro)* |
-| Use cases financeiros locais | **finance** *(futuro)* |
-| Wizard matrícula/rematrícula | **matriculas** *(futuro)* |
+| Webhooks idempotentes | **alusa-webhook-reliability** |
+| Regras acadêmicas puras (matrícula, turma, state machine) | **alusa-education-domain** |
+| Use cases financeiros locais | **finance** / **finance-sync** |
+| Wizard matrícula/rematrícula (UI + orquestração) | **core** + **alusa-education-domain** |
 
 ## Regra crítica: regras de negócio mudam
 
@@ -124,7 +126,7 @@ Variações (matrícula familiar consolidada, loja avulsa, rematrícula) mantêm
 |---------|------|--------------|
 | Plataforma / tenant | `contaId`, isolamento | `apps/web/lib/prisma-tenant.ts`, skill **tenant** |
 | Cadastro | Alunos, turmas, planos, combos | `apps/web/features/cadastro/` |
-| Matrículas | Wizard, vínculo acadêmico-financeiro | `apps/web/features/cadastro/matriculas/` |
+| Matrículas | Wizard, vínculo acadêmico-financeiro | `apps/web/features/cadastro/matriculas/` + **`packages/domain`** |
 | Financeiro | Cobranças, extrato, reconciliação | `packages/finance/` |
 | Asaas | Subconta, customer, payment | `packages/asaas/`, skill **asaas** |
 | Webhooks | Idempotência, eventos | `packages/finance/src/webhooks/` |
@@ -188,6 +190,7 @@ Sem código de produção.
 
 ## Referências
 
+- [alusa-education-domain.md](./alusa-education-domain.md) — regras acadêmicas puras
 - [core.md](./core.md) — implementação segura
 - [AGENTS.md](../AGENTS.md) — regras universais (resumo)
 - `.github/instructions/visao geral.instructions.md`

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
-const mockGetFinanceiroKpisFromAsaas = vi.hoisted(() => vi.fn());
+const mockGetFinanceiroKpisLocal = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
   getServerSession: () => mockGetServerSession(),
@@ -12,7 +12,7 @@ vi.mock('@/lib/auth-options', () => ({
 }));
 
 vi.mock('@alusa/finance', () => ({
-  getFinanceiroKpisFromAsaas: mockGetFinanceiroKpisFromAsaas,
+  getFinanceiroKpisLocal: mockGetFinanceiroKpisLocal,
 }));
 
 import { GET } from '@/app/api/financeiro/indicadores/route';
@@ -23,7 +23,7 @@ describe('GET /api/financeiro/indicadores', () => {
     mockGetServerSession.mockResolvedValue({
       user: { id: 'u1', contaId: 'conta-1', role: 'FINANCEIRO' },
     });
-    mockGetFinanceiroKpisFromAsaas.mockResolvedValue({
+    mockGetFinanceiroKpisLocal.mockResolvedValue({
       data: {
         recebidas: { valorBruto: 120, valorLiquido: 115, quantidadeDeCobrancas: 1, quantidadeDeClientes: 1 },
         recebidasEmDinheiro: { valorBruto: 80, valorLiquido: 80, quantidadeDeCobrancas: 1, quantidadeDeClientes: 1 },
@@ -47,7 +47,6 @@ describe('GET /api/financeiro/indicadores', () => {
           taxaInadimplencia: 23.1,
         },
       },
-      paymentIdsForReconcile: ['pay_1'],
     });
   });
 
@@ -67,17 +66,18 @@ describe('GET /api/financeiro/indicadores', () => {
     expect(response.status).toBe(403);
   });
 
-  it('mapeia indicadores a partir do snapshot oficial do Asaas', async () => {
+  it('mapeia indicadores a partir do snapshot local', async () => {
     const response = await GET();
     const json = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
     expect(json.data.cobrancas.pendentes).toBe(2);
     expect(json.data.cobrancas.atrasadas).toBe(1);
     expect(json.data.cobrancas.pagas).toBe(3);
     expect(json.data.cobrancas.valorPendentes).toBe(300);
     expect(json.data.cobrancas.valorPagos).toBe(260);
-    expect(mockGetFinanceiroKpisFromAsaas).toHaveBeenCalledWith(
+    expect(mockGetFinanceiroKpisLocal).toHaveBeenCalledWith(
       expect.objectContaining({
         contaId: 'conta-1',
         mesAtual: expect.any(Date),

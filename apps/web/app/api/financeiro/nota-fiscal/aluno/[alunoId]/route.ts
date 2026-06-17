@@ -2,6 +2,7 @@ import type { InvoiceStatus } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 
 import { mapNotaFiscalPessoaDetalheResultToDTO } from '@/features/financeiro/notafiscal/mappers';
+import { financeInternalError, financeJsonError } from '@/lib/api/finance-api-response';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { getFiscalInvoicePersonDetail } from '@alusa/finance';
 
@@ -20,10 +21,7 @@ const allowedStatuses = new Set<InvoiceStatus>([
 ]);
 
 function err(status: number, code: string, message: string) {
-  return NextResponse.json(
-    { error: { code, message } },
-    { status, headers: { 'cache-control': 'no-store' } },
-  );
+  return financeJsonError(status, code, message);
 }
 
 function parseStatusFilters(values: string[]): InvoiceStatus[] {
@@ -72,7 +70,6 @@ export async function GET(req: NextRequest, context: RouteContext) {
       headers: { 'cache-control': 'no-store' },
     });
   } catch (error) {
-    console.error('[API Financeiro Nota Fiscal Aluno]', error);
-    return err(500, 'ERRO_INTERNO', (error as Error).message);
+    return financeInternalError('API Financeiro Nota Fiscal Aluno', error);
   }
 }

@@ -26,6 +26,10 @@ import { err, ok } from '@alusa/shared';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
+import {
+  listReceivableAnticipationSnapshots,
+  upsertReceivableAnticipationSnapshot,
+} from '../services/receivable-anticipation-snapshot.service';
 
 export type AnticipationError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
@@ -124,6 +128,8 @@ export type ListAnticipationCandidatesOutput = {
   hasMore: boolean;
   fetchedAt: string;
 };
+
+const DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS = 300;
 
 function normalizeTarget(target: AnticipationTarget): { payment?: string; installment?: string } | null {
   if (target.targetType === 'PAYMENT' && target.payment) return { payment: target.payment };
@@ -412,6 +418,75 @@ function matchesSearch(candidate: AnticipationCandidate, search: string | undefi
     .includes(term);
 }
 
+async function buildAnticipationsOutput(params: {
+  contaId: string;
+  page: number;
+  pageSize: number;
+  data: AsaasAnticipation[];
+  total: number;
+  hasMore: boolean;
+  fetchedAt: string;
+}): Promise<ListAnticipationsOutput> {
+  const paymentContexts = await resolvePaymentContexts(
+    params.contaId,
+    params.data.map((item) => item.payment).filter((value): value is string => Boolean(value)),
+  );
+  const installmentContexts = await resolveInstallmentContexts(
+    params.contaId,
+    params.data.map((item) => item.installment).filter((value): value is string => Boolean(value)),
+  );
+
+  const items = params.data.map((item) => ({
+    ...item,
+    context:
+      (item.payment ? paymentContexts.get(item.payment) : undefined) ??
+      (item.installment ? installmentContexts.get(item.installment) : undefined) ??
+      fallbackContextFromAnticipation(item),
+  }));
+
+  const summary = items.reduce(
+    (acc, item) => {
+      acc.requestedValue += item.value;
+      acc.netValue += item.netValue;
+      acc.fees += item.fee;
+      if (item.status === 'CREDITED') acc.credited += item.netValue;
+      if (item.status === 'PENDING' || item.status === 'SCHEDULED') acc.pending += item.value;
+      if (item.status === 'DENIED') acc.denied += item.value;
+      return acc;
+    },
+    { requestedValue: 0, netValue: 0, fees: 0, credited: 0, pending: 0, denied: 0 },
+  );
+
+  return {
+    items,
+    total: params.total,
+    page: params.page,
+    pageSize: params.pageSize,
+    hasMore: params.hasMore,
+    summary: {
+      requestedValue: roundMoney(summary.requestedValue),
+      netValue: roundMoney(summary.netValue),
+      fees: roundMoney(summary.fees),
+      credited: roundMoney(summary.credited),
+      pending: roundMoney(summary.pending),
+      denied: roundMoney(summary.denied),
+    },
+    fetchedAt: params.fetchedAt,
+  };
+}
+
+function getAnticipationsSnapshotTtlMs(): number {
+  const seconds = Number(
+    process.env.FINANCE_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS
+      ?? DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS,
+  );
+  return (
+    Number.isFinite(seconds) && seconds > 0
+      ? seconds
+      : DEFAULT_ANTICIPATIONS_SNAPSHOT_TTL_SECONDS
+  ) * 1000;
+}
+
 export async function listReceivableAnticipations(
   input: ListAnticipationsInput,
 ): Promise<Result<ListAnticipationsOutput, AnticipationError>> {
@@ -419,6 +494,28 @@ export async function listReceivableAnticipations(
   if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
   try {
+    const cached = await listReceivableAnticipationSnapshots({
+      contaId: input.contaId,
+      page: input.page,
+      pageSize: input.pageSize,
+      status: input.status,
+      payment: input.payment,
+      installment: input.installment,
+      maxAgeMs: getAnticipationsSnapshotTtlMs(),
+    });
+
+    if (cached) {
+      return ok(await buildAnticipationsOutput({
+        contaId: input.contaId,
+        page: input.page,
+        pageSize: input.pageSize,
+        data: cached.items,
+        total: cached.total,
+        hasMore: cached.hasMore,
+        fetchedAt: cached.fetchedAt,
+      }));
+    }
+
     const offset = (input.page - 1) * input.pageSize;
     const response = await asaasListAnticipations({
       apiKey: credentials.apiKey,
@@ -429,52 +526,21 @@ export async function listReceivableAnticipations(
       installment: input.installment,
     });
 
-    const paymentContexts = await resolvePaymentContexts(
-      input.contaId,
-      response.data.map((item) => item.payment).filter((value): value is string => Boolean(value)),
-    );
-    const installmentContexts = await resolveInstallmentContexts(
-      input.contaId,
-      response.data.map((item) => item.installment).filter((value): value is string => Boolean(value)),
-    );
+    await Promise.allSettled(response.data.map((anticipation) => upsertReceivableAnticipationSnapshot({
+      contaId: input.contaId,
+      anticipation,
+      source: 'LIST',
+    })));
 
-    const items = response.data.map((item) => ({
-      ...item,
-      context:
-        (item.payment ? paymentContexts.get(item.payment) : undefined) ??
-        (item.installment ? installmentContexts.get(item.installment) : undefined) ??
-        fallbackContextFromAnticipation(item),
-    }));
-
-    const summary = items.reduce(
-      (acc, item) => {
-        acc.requestedValue += item.value;
-        acc.netValue += item.netValue;
-        acc.fees += item.fee;
-        if (item.status === 'CREDITED') acc.credited += item.netValue;
-        if (item.status === 'PENDING' || item.status === 'SCHEDULED') acc.pending += item.value;
-        if (item.status === 'DENIED') acc.denied += item.value;
-        return acc;
-      },
-      { requestedValue: 0, netValue: 0, fees: 0, credited: 0, pending: 0, denied: 0 },
-    );
-
-    return ok({
-      items,
+    return ok(await buildAnticipationsOutput({
+      contaId: input.contaId,
+      data: response.data,
       total: response.totalCount,
       page: input.page,
       pageSize: input.pageSize,
       hasMore: response.hasMore,
-      summary: {
-        requestedValue: roundMoney(summary.requestedValue),
-        netValue: roundMoney(summary.netValue),
-        fees: roundMoney(summary.fees),
-        credited: roundMoney(summary.credited),
-        pending: roundMoney(summary.pending),
-        denied: roundMoney(summary.denied),
-      },
       fetchedAt: new Date().toISOString(),
-    });
+    }));
   } catch {
     return err('ERRO_ASAAS');
   }
@@ -585,6 +651,18 @@ export async function requestReceivableAnticipation(params: {
       documentFilename: params.documentFilename,
     });
 
+    await upsertReceivableAnticipationSnapshot({
+      contaId: params.contaId,
+      anticipation,
+      source: 'REQUEST',
+    }).catch((error) => {
+      console.warn('[finance.anticipation] Falha ao persistir snapshot após solicitação', {
+        contaId: params.contaId,
+        anticipationId: anticipation.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    });
+
     await auditLogService.record({
       contaId: params.contaId,
       action: 'finance.anticipation.requested',
@@ -617,6 +695,18 @@ export async function cancelReceivableAnticipation(params: {
     const anticipation = await asaasCancelAnticipation({
       apiKey: credentials.apiKey,
       id: params.anticipationId,
+    });
+
+    await upsertReceivableAnticipationSnapshot({
+      contaId: params.contaId,
+      anticipation,
+      source: 'CANCEL',
+    }).catch((error) => {
+      console.warn('[finance.anticipation] Falha ao persistir snapshot após cancelamento', {
+        contaId: params.contaId,
+        anticipationId: anticipation.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
     });
 
     await auditLogService.record({

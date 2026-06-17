@@ -17,9 +17,9 @@ import { requireKycApproved } from '../foundation/kyc-guard';
 import { computeFiscalReadiness } from '../fiscal/fiscal-readiness';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import {
-  normalizePisCofinsTaxRates,
-  validatePisCofinsTaxRules,
-} from '../fiscal/pis-cofins-tax-status';
+  buildAsaasInvoiceTaxes,
+  validateAsaasInvoiceTaxesInput,
+} from '../fiscal/invoice-taxes';
 
 export type SyncSubscriptionFiscalSettingsInput = {
   contaId: string;
@@ -49,6 +49,8 @@ function asNumber(value: unknown): number {
 }
 
 function buildTaxes(service: {
+  simplesNacional: boolean;
+  useNationalPortal?: boolean | null;
   retainIss: boolean;
   iss: unknown;
   pis: unknown;
@@ -65,17 +67,13 @@ function buildTaxes(service: {
   operationCofins: unknown;
   useTaxSystemReformNT007: boolean;
 }): NonNullable<UpsertSubscriptionInvoiceSettingsInput['taxes']> {
-  const pisCofinsRates = normalizePisCofinsTaxRates({
-    pisCofinsTaxStatus: service.pisCofinsTaxStatus,
-    pis: service.pis == null ? null : asNumber(service.pis),
-    cofins: service.cofins == null ? null : asNumber(service.cofins),
-  });
-
-  return {
+  return buildAsaasInvoiceTaxes({
+    simplesNacional: service.simplesNacional,
+    useNationalPortal: service.useNationalPortal,
     retainIss: service.retainIss,
     iss: asNumber(service.iss),
-    pis: pisCofinsRates.pis,
-    cofins: pisCofinsRates.cofins,
+    pis: service.pis == null ? null : asNumber(service.pis),
+    cofins: service.cofins == null ? null : asNumber(service.cofins),
     csll: asNumber(service.csll),
     inss: asNumber(service.inss),
     ir: asNumber(service.ir),
@@ -87,7 +85,7 @@ function buildTaxes(service: {
     operationPis: service.operationPis == null ? null : asNumber(service.operationPis),
     operationCofins: service.operationCofins == null ? null : asNumber(service.operationCofins),
     useTaxSystemReformNT007: service.useTaxSystemReformNT007,
-  };
+  });
 }
 
 async function markLocal(input: SyncSubscriptionFiscalSettingsInput & {
@@ -199,12 +197,20 @@ export async function syncSubscriptionFiscalSettings(
       return ok({ configured: false, action: 'SKIPPED', reason: 'FISCAL_NOT_READY' });
     }
 
-    const pisCofinsIssues = validatePisCofinsTaxRules({
+    const pisCofinsIssues = validateAsaasInvoiceTaxesInput({
       simplesNacional: settings.simplesNacional,
       useNationalPortal: Boolean(settings.useNationalPortal),
       pisCofinsTaxStatus: defaultService.pisCofinsTaxStatus,
       pis: asNumber(defaultService.pis),
       cofins: asNumber(defaultService.cofins),
+      operationPis: defaultService.operationPis == null ? null : asNumber(defaultService.operationPis),
+      operationCofins:
+        defaultService.operationCofins == null ? null : asNumber(defaultService.operationCofins),
+      retainIss: defaultService.retainIss,
+      iss: asNumber(defaultService.iss),
+      csll: asNumber(defaultService.csll),
+      inss: asNumber(defaultService.inss),
+      ir: asNumber(defaultService.ir),
     });
     if (pisCofinsIssues.length > 0) {
       const message =
@@ -235,7 +241,11 @@ export async function syncSubscriptionFiscalSettings(
           ? settings.invoiceReceivedOnly
           : undefined,
       observations: settings.defaultObservations ?? undefined,
-      taxes: buildTaxes(defaultService),
+      taxes: buildTaxes({
+        ...defaultService,
+        simplesNacional: settings.simplesNacional,
+        useNationalPortal: settings.useNationalPortal,
+      }),
     };
 
     const existingSettings = await findSubscriptionInvoiceSettings({

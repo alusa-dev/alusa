@@ -11,7 +11,11 @@ import {
 } from '@alusa/asaas';
 import type { FiscalServiceSource } from '@prisma/client';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
-import { validatePisCofinsTaxRules } from '../fiscal/pis-cofins-tax-status';
+import {
+  normalizeOperationPisCofinsRates,
+  normalizePisCofinsTaxStatus,
+  validatePisCofinsTaxRules,
+} from '../fiscal/pis-cofins-tax-status';
 
 export type FiscalServiceInput = {
   name: string;
@@ -244,6 +248,8 @@ function hasValidPisCofinsConfiguration(
       pisCofinsTaxStatus: service.pisCofinsTaxStatus,
       pis: service.pis,
       cofins: service.cofins,
+      operationPis: service.operationPis,
+      operationCofins: service.operationCofins,
     }).length === 0
   );
 }
@@ -264,6 +270,12 @@ export async function createFiscalService(
     if (!hasValidPisCofinsConfiguration(normalized, settings)) {
       return err('PIS_COFINS_INVALIDO');
     }
+    const pisCofinsTaxStatus = normalizePisCofinsTaxStatus(normalized.pisCofinsTaxStatus);
+    const operationRates = normalizeOperationPisCofinsRates({
+      pisCofinsTaxStatus,
+      operationPis: normalized.operationPis,
+      operationCofins: normalized.operationCofins,
+    });
 
     const created = await prisma.fiscalService.create({
       data: {
@@ -286,9 +298,9 @@ export async function createFiscalService(
         taxSituationCode: normalized.taxSituationCode ?? null,
         taxClassificationCode: normalized.taxClassificationCode ?? null,
         operationIndicatorCode: normalized.operationIndicatorCode ?? null,
-        pisCofinsTaxStatus: normalized.pisCofinsTaxStatus ?? null,
-        operationPis: normalized.operationPis ?? null,
-        operationCofins: normalized.operationCofins ?? null,
+        pisCofinsTaxStatus,
+        operationPis: operationRates.operationPis,
+        operationCofins: operationRates.operationCofins,
         useTaxSystemReformNT007: normalized.useTaxSystemReformNT007 ?? false,
       },
     });
@@ -325,6 +337,12 @@ export async function updateFiscalService(
     if (settings && !hasValidPisCofinsConfiguration(normalized, settings)) {
       return err('PIS_COFINS_INVALIDO');
     }
+    const pisCofinsTaxStatus = normalizePisCofinsTaxStatus(normalized.pisCofinsTaxStatus);
+    const operationRates = normalizeOperationPisCofinsRates({
+      pisCofinsTaxStatus,
+      operationPis: normalized.operationPis,
+      operationCofins: normalized.operationCofins,
+    });
 
     const existing = await prisma.fiscalService.findFirst({
       where: { id: serviceId, contaId },
@@ -352,9 +370,9 @@ export async function updateFiscalService(
         taxSituationCode: normalized.taxSituationCode ?? null,
         taxClassificationCode: normalized.taxClassificationCode ?? null,
         operationIndicatorCode: normalized.operationIndicatorCode ?? null,
-        pisCofinsTaxStatus: normalized.pisCofinsTaxStatus ?? null,
-        operationPis: normalized.operationPis ?? null,
-        operationCofins: normalized.operationCofins ?? null,
+        pisCofinsTaxStatus,
+        operationPis: operationRates.operationPis,
+        operationCofins: operationRates.operationCofins,
         useTaxSystemReformNT007: normalized.useTaxSystemReformNT007 ?? false,
       },
     });

@@ -7,6 +7,10 @@ import type { InvoiceStatus } from '@prisma/client';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import {
+  buildInvoiceProviderSnapshotUpdate,
+  recordUnknownInvoiceStatusIssue,
+} from '../fiscal/provider-invoice-snapshot';
+import {
   isAllowedInvoiceStatusTransition,
   mapAsaasInvoiceStatusToInternal,
 } from '../mappers/invoice-status.mapper';
@@ -84,8 +88,65 @@ export async function syncInvoiceFromProvider(
       id: invoice.asaasInvoiceId,
     });
 
+    const providerSnapshot = buildInvoiceProviderSnapshotUpdate(asaasInvoice);
     const nextStatus = mapAsaasInvoiceStatusToInternal(asaasInvoice.status);
+    if (!nextStatus) {
+      const updated = await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          ...providerSnapshot,
+          fiscalDivergence: true,
+          statusDescription: asaasInvoice.statusDescription ?? invoice.statusDescription,
+        },
+        select: {
+          id: true,
+          status: true,
+          statusUpdatedAt: true,
+          pdfUrl: true,
+          xmlUrl: true,
+          number: true,
+        },
+      });
+
+      await recordUnknownInvoiceStatusIssue({
+        contaId: input.contaId,
+        invoiceId: invoice.id,
+        asaasInvoiceId: invoice.asaasInvoiceId,
+        rawStatus: asaasInvoice.status,
+        source: 'sync',
+      });
+
+      await recordInvoiceAuditEvent({
+        contaId: input.contaId,
+        invoiceId: updated.id,
+        action: 'invoice.provider_unknown_status',
+        fromStatus: invoice.status,
+        toStatus: invoice.status,
+        metadata: {
+          rawProviderStatus: asaasInvoice.status ?? null,
+          asaasInvoiceId: invoice.asaasInvoiceId,
+        },
+        correlationId: input.correlationId,
+      });
+
+      return ok({
+        invoiceId: updated.id,
+        status: updated.status,
+        statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
+        pdfUrl: updated.pdfUrl ?? null,
+        xmlUrl: updated.xmlUrl ?? null,
+        number: updated.number ?? null,
+      });
+    }
+
     if (!isAllowedInvoiceStatusTransition(invoice.status, nextStatus)) {
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          ...providerSnapshot,
+          fiscalDivergence: true,
+        },
+      });
       return ok({
         invoiceId: invoice.id,
         status: invoice.status,
@@ -99,12 +160,14 @@ export async function syncInvoiceFromProvider(
     const updated = await prisma.invoice.update({
       where: { id: invoice.id },
       data: {
+        ...providerSnapshot,
         status: nextStatus,
         statusDescription: asaasInvoice.statusDescription ?? null,
         statusUpdatedAt: new Date(),
         pdfUrl: asaasInvoice.pdfUrl ?? null,
         xmlUrl: asaasInvoice.xmlUrl ?? null,
         number: asaasInvoice.number ?? null,
+        fiscalDivergence: false,
         errorMessage: nextStatus === 'ERROR' ? asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
       },
       select: {

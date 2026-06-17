@@ -12,6 +12,11 @@ export const fiscalInvoiceEffectiveDatePeriodSchema = z.enum([
 ]);
 export const fiscalServiceSourceSchema = z.enum(['MUNICIPAL_LIST', 'MANUAL']);
 
+const nullablePercentInputSchema = z.preprocess(
+  (value) => (value === '' || value === null ? null : value),
+  z.coerce.number().min(0).max(100).nullable(),
+);
+
 export const fiscalServiceDTOSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -144,8 +149,8 @@ export const fiscalServiceInputSchema = z.object({
   taxClassificationCode: z.string().max(30).optional(),
   operationIndicatorCode: z.string().max(30).optional(),
   pisCofinsTaxStatus: z.enum(PIS_COFINS_TAX_STATUS_VALUES).optional(),
-  operationPis: z.coerce.number().min(0).max(100).nullable().optional(),
-  operationCofins: z.coerce.number().min(0).max(100).nullable().optional(),
+  operationPis: nullablePercentInputSchema.optional(),
+  operationCofins: nullablePercentInputSchema.optional(),
   useTaxSystemReformNT007: z.boolean().optional(),
 });
 

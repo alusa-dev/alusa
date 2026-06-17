@@ -142,6 +142,7 @@ export const createMatriculaInputDTOSchema = z.object({
     .optional()
     .default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
+  uiRequestId: z.string().trim().min(1).max(120).optional(),
 });
 export type CreateMatriculaInputDTO = z.input<typeof createMatriculaInputDTOSchema>;
 
@@ -518,6 +519,35 @@ export const createMatriculaPrecoDTOSchema = z.object({
 });
 export type CreateMatriculaPrecoDTO = z.infer<typeof createMatriculaPrecoDTOSchema>;
 
+export const matriculaAsaasTaxaSyncDTOSchema = z.object({
+  success: z.boolean(),
+  error: nullableStringDTOSchema.default(null).optional(),
+  asaasPaymentId: nullableStringDTOSchema.default(null).optional(),
+  invoiceUrl: nullableStringDTOSchema.default(null).optional(),
+  bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
+});
+export type MatriculaAsaasTaxaSyncDTO = z.infer<typeof matriculaAsaasTaxaSyncDTOSchema>;
+
+export const matriculaAsaasSubscriptionSyncDTOSchema = z.object({
+  success: z.boolean(),
+  error: nullableStringDTOSchema.default(null).optional(),
+  asaasSubscriptionId: nullableStringDTOSchema.default(null).optional(),
+  asaasPaymentId: nullableStringDTOSchema.default(null).optional(),
+  invoiceUrl: nullableStringDTOSchema.default(null).optional(),
+  bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
+  message: nullableStringDTOSchema.default(null).optional(),
+  expectedWebhooks: z.array(z.string()).default([]).optional(),
+});
+export type MatriculaAsaasSubscriptionSyncDTO = z.infer<
+  typeof matriculaAsaasSubscriptionSyncDTOSchema
+>;
+
+export const matriculaAsaasSyncDTOSchema = z.object({
+  taxa: matriculaAsaasTaxaSyncDTOSchema.nullable().optional(),
+  subscription: matriculaAsaasSubscriptionSyncDTOSchema.nullable().optional(),
+});
+export type MatriculaAsaasSyncDTO = z.infer<typeof matriculaAsaasSyncDTOSchema>;
+
 export const createMatriculaResultDTOSchema = z.object({
   matricula: matriculaCoreDTOSchema,
   cobrancas: z.object({
@@ -525,33 +555,7 @@ export const createMatriculaResultDTOSchema = z.object({
     mensalidade: matriculaCobrancaDTOSchema.nullable(),
   }),
   preco: createMatriculaPrecoDTOSchema,
-  asaasSync: z
-    .object({
-      taxa: z
-        .object({
-          success: z.boolean(),
-          error: nullableStringDTOSchema.default(null).optional(),
-          asaasPaymentId: nullableStringDTOSchema.default(null).optional(),
-          invoiceUrl: nullableStringDTOSchema.default(null).optional(),
-          bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
-        })
-        .nullable()
-        .optional(),
-      subscription: z
-        .object({
-          success: z.boolean(),
-          error: nullableStringDTOSchema.default(null).optional(),
-          asaasSubscriptionId: nullableStringDTOSchema.default(null).optional(),
-          asaasPaymentId: nullableStringDTOSchema.default(null).optional(),
-          invoiceUrl: nullableStringDTOSchema.default(null).optional(),
-          bankSlipUrl: nullableStringDTOSchema.default(null).optional(),
-          message: nullableStringDTOSchema.default(null).optional(),
-          expectedWebhooks: z.array(z.string()).default([]).optional(),
-        })
-        .nullable()
-        .optional(),
-    })
-    .optional(),
+  asaasSync: matriculaAsaasSyncDTOSchema.optional(),
   responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable(),
   primeiroVencimento: dateStringDTOSchema,
   notificationSync: z

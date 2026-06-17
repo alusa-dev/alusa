@@ -196,11 +196,19 @@ export function isValidPisCofinsTaxStatus(value: string | null | undefined): val
 /** Descontinuado no guia Asaas — aceito apenas para leitura de registros legados. */
 export const LEGACY_PIS_COFINS_TAX_STATUS = 'TAXABLE_CONTRIBUTION_OPERATION' as const;
 
+export function normalizePisCofinsTaxStatus(
+  value: string | null | undefined,
+): PisCofinsTaxStatus | null {
+  if (!value) return null;
+  if (value === LEGACY_PIS_COFINS_TAX_STATUS) return 'EXEMPT_CONTRIBUTION_OPERATION';
+  return isValidPisCofinsTaxStatus(value) ? value : null;
+}
+
 export function isPisCofinsTaxStatusRequired(input: {
   simplesNacional: boolean;
-  useNationalPortal: boolean;
+  useNationalPortal?: boolean;
 }): boolean {
-  return !input.simplesNacional && input.useNationalPortal;
+  return !input.simplesNacional;
 }
 
 export type PisCofinsTaxRuleInput = {
@@ -209,10 +217,12 @@ export type PisCofinsTaxRuleInput = {
   pisCofinsTaxStatus?: string | null;
   pis?: number | null;
   cofins?: number | null;
+  operationPis?: number | null;
+  operationCofins?: number | null;
 };
 
 export type PisCofinsTaxRuleIssue = {
-  field: 'pisCofinsTaxStatus' | 'pis' | 'cofins';
+  field: 'pisCofinsTaxStatus' | 'pis' | 'cofins' | 'operationPis' | 'operationCofins';
   message: string;
 };
 
@@ -224,6 +234,7 @@ const TAX_STATUS_REQUIRING_POSITIVE_RATES = new Set<string>([
 const TAX_STATUS_REQUIRING_ZERO_RATES = new Set<string>(['ZERO_RATE_TAXABLE_OPERATION']);
 
 const TAX_STATUS_REQUIRING_NULL_RATES = new Set<string>([
+  'NONE',
   'NON_TAXABLE_OPERATION',
   'TAX_SUSPENSION_OPERATION',
   'EXEMPT_CONTRIBUTION_OPERATION',
@@ -234,29 +245,36 @@ function isPositiveRate(value: number | null | undefined): boolean {
 }
 
 function isZeroRate(value: number | null | undefined): boolean {
-  return value == null || value === 0;
+  return typeof value === 'number' && Number.isFinite(value) && value === 0;
+}
+
+function isNullRate(value: number | null | undefined): boolean {
+  return value == null;
 }
 
 export function validatePisCofinsTaxRules(
   input: PisCofinsTaxRuleInput,
 ): PisCofinsTaxRuleIssue[] {
   const issues: PisCofinsTaxRuleIssue[] = [];
-  const status = input.pisCofinsTaxStatus ?? null;
+  const status = normalizePisCofinsTaxStatus(input.pisCofinsTaxStatus);
   const statusRequired = isPisCofinsTaxStatusRequired({
     simplesNacional: input.simplesNacional ?? true,
     useNationalPortal: input.useNationalPortal ?? false,
   });
 
+  if (input.simplesNacional !== false && !status) {
+    return issues;
+  }
+
   if (statusRequired && !status) {
     issues.push({
       field: 'pisCofinsTaxStatus',
-      message:
-        'Informe a situação tributária de PIS/COFINS para emissão pelo Portal Nacional fora do Simples Nacional.',
+      message: 'Informe a situação tributária de PIS/COFINS para contas fora do Simples Nacional.',
     });
     return issues;
   }
 
-  if (status && !isValidPisCofinsTaxStatus(status)) {
+  if (input.pisCofinsTaxStatus && !status) {
     issues.push({
       field: 'pisCofinsTaxStatus',
       message: 'Situação tributária de PIS/COFINS inválida.',
@@ -267,31 +285,46 @@ export function validatePisCofinsTaxRules(
   if (!status) return issues;
 
   if (TAX_STATUS_REQUIRING_POSITIVE_RATES.has(status)) {
-    if (!isPositiveRate(input.pis)) {
+    if (!isPositiveRate(input.operationPis)) {
       issues.push({
-        field: 'pis',
-        message: 'Informe uma alíquota de PIS maior que zero para esta situação tributária.',
+        field: 'operationPis',
+        message: 'Informe uma alíquota de operação de PIS maior que zero para esta situação tributária.',
       });
     }
-    if (!isPositiveRate(input.cofins)) {
+    if (!isPositiveRate(input.operationCofins)) {
       issues.push({
-        field: 'cofins',
-        message: 'Informe uma alíquota de COFINS maior que zero para esta situação tributária.',
+        field: 'operationCofins',
+        message: 'Informe uma alíquota de operação de COFINS maior que zero para esta situação tributária.',
       });
     }
   }
 
   if (TAX_STATUS_REQUIRING_ZERO_RATES.has(status)) {
-    if (!isZeroRate(input.pis)) {
+    if (!isZeroRate(input.operationPis)) {
       issues.push({
-        field: 'pis',
-        message: 'A alíquota de PIS deve ser zero para esta situação tributária.',
+        field: 'operationPis',
+        message: 'A alíquota de operação de PIS deve ser zero para esta situação tributária.',
       });
     }
-    if (!isZeroRate(input.cofins)) {
+    if (!isZeroRate(input.operationCofins)) {
       issues.push({
-        field: 'cofins',
-        message: 'A alíquota de COFINS deve ser zero para esta situação tributária.',
+        field: 'operationCofins',
+        message: 'A alíquota de operação de COFINS deve ser zero para esta situação tributária.',
+      });
+    }
+  }
+
+  if (TAX_STATUS_REQUIRING_NULL_RATES.has(status)) {
+    if (!isNullRate(input.operationPis)) {
+      issues.push({
+        field: 'operationPis',
+        message: 'A alíquota de operação de PIS deve ficar vazia para esta situação tributária.',
+      });
+    }
+    if (!isNullRate(input.operationCofins)) {
+      issues.push({
+        field: 'operationCofins',
+        message: 'A alíquota de operação de COFINS deve ficar vazia para esta situação tributária.',
       });
     }
   }
@@ -304,15 +337,26 @@ export function normalizePisCofinsTaxRates(input: {
   pis?: number | null;
   cofins?: number | null;
 }): { pis: number | null; cofins: number | null } {
-  const status = input.pisCofinsTaxStatus ?? null;
+  return {
+    pis: input.pis ?? null,
+    cofins: input.cofins ?? null,
+  };
+}
+
+export function normalizeOperationPisCofinsRates(input: {
+  pisCofinsTaxStatus?: string | null;
+  operationPis?: number | null;
+  operationCofins?: number | null;
+}): { operationPis: number | null; operationCofins: number | null } {
+  const status = normalizePisCofinsTaxStatus(input.pisCofinsTaxStatus);
   if (status && TAX_STATUS_REQUIRING_NULL_RATES.has(status)) {
-    return { pis: null, cofins: null };
+    return { operationPis: null, operationCofins: null };
   }
   if (status && TAX_STATUS_REQUIRING_ZERO_RATES.has(status)) {
-    return { pis: 0, cofins: 0 };
+    return { operationPis: 0, operationCofins: 0 };
   }
   return {
-    pis: input.pis == null ? 0 : input.pis,
-    cofins: input.cofins == null ? 0 : input.cofins,
+    operationPis: input.operationPis ?? null,
+    operationCofins: input.operationCofins ?? null,
   };
 }

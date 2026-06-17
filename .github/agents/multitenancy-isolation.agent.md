@@ -7,6 +7,8 @@ agents: []
 ---
 Adaptador Copilot para o agente canônico **`tenant`**.
 
+Para **revisão adversarial** de PR/diff (vazamento cross-tenant, findUnique sem contaId, cache, jobs) → **`.agents/alusa-tenant-security-auditor.md`**
+
 Leia e siga integralmente o contrato em:
 
 **`.agents/tenant.md`**

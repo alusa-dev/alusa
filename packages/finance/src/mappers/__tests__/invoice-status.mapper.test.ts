@@ -14,6 +14,10 @@ describe('invoice-status.mapper', () => {
     expect(mapAsaasInvoiceStatusToInternal('AUTHORIZED')).toBe('AUTHORIZED');
   });
 
+  it('não mapeia status desconhecido para SCHEDULED', () => {
+    expect(mapAsaasInvoiceStatusToInternal('NEW_PROVIDER_STATUS' as never)).toBeNull();
+  });
+
   it('mapeia eventos de webhook', () => {
     expect(mapInvoiceWebhookEventToStatus('INVOICE_AUTHORIZED')).toBe('AUTHORIZED');
     expect(mapInvoiceWebhookEventToStatus('INVOICE_SYNCHRONIZED')).toBe('SYNCHRONIZED');

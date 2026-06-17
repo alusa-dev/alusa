@@ -44,6 +44,7 @@ export type WebhookEventPolicyCategory =
   | 'SUBSCRIPTION'
   | 'TRANSFER'
   | 'ACCOUNT_STATUS'
+  | 'INVOICE'
   | 'BALANCE'
   | 'ACCESS_TOKEN'
   | 'ANTICIPATION'
@@ -1094,7 +1095,11 @@ function toPolicyCategory(category: EventCategory): WebhookEventPolicyCategory {
     return category;
   }
 
-  if (category === 'INTERNAL_TRANSFER' || category === 'INVOICE' || category === 'BILL') {
+  if (category === 'INVOICE') {
+    return 'INVOICE';
+  }
+
+  if (category === 'INTERNAL_TRANSFER' || category === 'BILL') {
     return 'AUDIT_ONLY';
   }
 
@@ -1129,7 +1134,11 @@ export function getWebhookEventPolicy(event: string): WebhookEventPolicy {
     };
   }
 
-  const isAuditOnly = definition.handled && !definition.requiresSync && definition.impactLevel === 'info';
+  const isAuditOnly =
+    definition.category !== 'INVOICE' &&
+    definition.handled &&
+    !definition.requiresSync &&
+    definition.impactLevel === 'info';
   return {
     event,
     category: toPolicyCategory(definition.category),

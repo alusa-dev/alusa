@@ -1,6 +1,7 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { createSubscription as asaasCreateSubscription, type BillingType, type Cycle } from '@alusa/asaas';
 import type { SubscriptionStatus } from '@prisma/client';
+import { IntegrationSyncStatus, MatriculaBillingProvisionStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import { resolvePayer } from '@alusa/domain';
@@ -66,6 +67,7 @@ export type CreateSubscriptionError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'ERRO_AO_CRIAR_CUSTOMER'
   | 'ERRO_AO_CRIAR_ASSINATURA'
+  | 'ERRO_AO_PERSISTIR_ASSINATURA'
   | 'END_DATE_ANTES_DA_PRIMEIRA_COBRANCA'
   | 'DATA_INVALIDA'
   | 'ERRO_INTERNO';
@@ -338,7 +340,35 @@ export async function createSubscription(
       ) {
         return err('ASSINATURA_CONFLITANTE');
       }
-      throw persistError;
+
+      console.error('[finance][createSubscription][persist] Falha após Asaas OK', {
+        matriculaId: matricula.id,
+        asaasSubscriptionId: asaasSubscription.id,
+        message: persistError instanceof Error ? persistError.message : String(persistError),
+      });
+
+      await prisma.matricula
+        .update({
+          where: { id: matricula.id },
+          data: {
+            pendingAsaasSubscriptionId: asaasSubscription.id,
+            integrationStatus: IntegrationSyncStatus.PENDENTE_SINCRONISMO,
+            billingProvisionStatus: MatriculaBillingProvisionStatus.PARCIAL,
+            billingProvisionError: 'PERSISTENCIA_LOCAL_FALHOU',
+            billingProvisionAt: new Date(),
+          },
+        })
+        .catch((compensationError) => {
+          console.error('[finance][createSubscription][compensation] Falha ao registrar pendência', {
+            matriculaId: matricula.id,
+            message:
+              compensationError instanceof Error
+                ? compensationError.message
+                : String(compensationError),
+          });
+        });
+
+      return err('ERRO_AO_PERSISTIR_ASSINATURA');
     }
 
     await auditLogService.record({

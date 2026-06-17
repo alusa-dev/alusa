@@ -18,6 +18,7 @@ describe('asaas-read-intent', () => {
       'COMMAND_PREFLIGHT_STATUS',
       'COMMAND_PREFLIGHT_FULL',
       'RECONCILIATION',
+      'UI_FALLBACK_SYNC',
       'MANUAL_REPAIR',
       'AUTHORITATIVE_DOCUMENT',
     ]);
@@ -26,6 +27,7 @@ describe('asaas-read-intent', () => {
       COMMAND_PREFLIGHT_STATUS: 0,
       COMMAND_PREFLIGHT_FULL: 0,
       RECONCILIATION: 0,
+      UI_FALLBACK_SYNC: 0,
       MANUAL_REPAIR: 0,
       AUTHORITATIVE_DOCUMENT: 0,
     });
@@ -36,6 +38,7 @@ describe('asaas-read-intent', () => {
     recordAsaasReadIntent('COMMAND_PREFLIGHT_STATUS');
     recordAsaasReadIntent('COMMAND_PREFLIGHT_FULL');
     recordAsaasReadIntent('RECONCILIATION', 2);
+    recordAsaasReadIntent('UI_FALLBACK_SYNC');
     recordAsaasReadIntent('MANUAL_REPAIR', 3);
     recordAsaasReadIntent('AUTHORITATIVE_DOCUMENT');
 
@@ -44,6 +47,7 @@ describe('asaas-read-intent', () => {
       COMMAND_PREFLIGHT_STATUS: 1,
       COMMAND_PREFLIGHT_FULL: 1,
       RECONCILIATION: 2,
+      UI_FALLBACK_SYNC: 1,
       MANUAL_REPAIR: 3,
       AUTHORITATIVE_DOCUMENT: 1,
     });

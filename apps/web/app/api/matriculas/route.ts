@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { Prisma, FormaPagamento, PeriodicidadePlano, StatusMatricula } from '@prisma/client';
+import { Prisma, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
 import {
   criarMatricula,
@@ -9,11 +9,7 @@ import {
 } from '@/src/server/matriculas/matricula.service';
 import { prisma } from '@/src/prisma';
 import {
-  createCharge,
-  createSubscription,
   ensureCustomer,
-  getAsaasPaymentDetails,
-  syncPaymentStateFromAsaas,
   syncCustomerNotificationsForUserSelection,
   channelPreferencesFromWizardSelection,
 } from '@alusa/finance';
@@ -29,15 +25,17 @@ import {
 } from '@/features/cadastro/matriculas/mappers';
 import {
   formatIsoDate,
-  mapFormaPagamentoToBillingType,
-  mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
 import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
-import { syncInitialSubscriptionPaymentFromAsaas } from '@/src/server/matriculas/subscription-payment-materialization';
+import { provisionIndividualEnrollmentBilling } from '@/src/server/matriculas/enrollment-billing.orchestrator';
+import type {
+  MatriculaAsaasSubscriptionSyncDTO,
+  MatriculaAsaasTaxaSyncDTO,
+} from '@/features/cadastro/matriculas/dtos';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -74,6 +72,13 @@ async function resolveAuthContext(explicit?: string | null) {
 
 const statusValues = new Set(Object.values(StatusMatricula));
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
+
+/**
+ * POST /api/matriculas — cria matrícula acadêmica e provisiona cobrança (taxa + assinatura).
+ *
+ * Fluxo: criarMatricula (DB) → provisionIndividualEnrollmentBilling (Asaas outbound).
+ * Idempotência opcional via body.uiRequestId ou header X-Idempotency-Key.
+ */
 
 export async function GET(req: Request) {
   try {
@@ -233,10 +238,12 @@ export async function POST(req: Request) {
 
     let payload;
     try {
+      const idempotencyHeader = req.headers.get('x-idempotency-key')?.trim() || null;
       payload = mapCreateMatriculaDTOToServiceInput({
         body: parsedBody.data,
         contaId: auth.contaId,
         createdById: auth.user.id,
+        uiRequestId: parsedBody.data.uiRequestId ?? idempotencyHeader ?? undefined,
       });
     } catch (error) {
       const message = (error as Error).message;
@@ -360,233 +367,56 @@ export async function POST(req: Request) {
       }
     }
 
-    let taxaSync: {
-      success: boolean;
-      error?: string;
-      asaasPaymentId?: string;
-      invoiceUrl?: string | null;
-      bankSlipUrl?: string | null;
-    } | null = null;
-    let subscriptionSync: {
-      success: boolean;
-      error?: string;
-      asaasSubscriptionId?: string | null;
-      asaasPaymentId?: string | null;
-      invoiceUrl?: string | null;
-      bankSlipUrl?: string | null;
-      expectedWebhooks?: string[];
-      message?: string;
-    } | null = null;
+    let taxaSync: MatriculaAsaasTaxaSyncDTO | null = null;
+    let subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null = null;
 
-    const requiresTaxConfirmation =
-      payload.gerarCobrancaTaxa && !payload.taxaIsenta && Number(result.preco.taxa ?? 0) > 0;
-
-    if (requiresTaxConfirmation && !result.cobrancas.taxa) {
-      taxaSync = { success: false, error: 'COBRANCA_TAXA_NAO_ENCONTRADA' };
-    }
-
-    if (result.cobrancas.taxa && requiresTaxConfirmation) {
-      const cobrancaTaxa = result.cobrancas.taxa;
-
-      if (cobrancaTaxa.formaPagamento !== FormaPagamento.INDEFINIDO) {
-        const chargeResult = await createCharge({
-          contaId: auth.contaId,
-          cobrancaId: cobrancaTaxa.id,
-          actor: { type: 'USER', id: auth.user.id },
-        });
-
-        if (chargeResult.success) {
-          const asaasPaymentId = chargeResult.data.asaasPaymentId ?? null;
-
-          if (asaasPaymentId && result.cobrancas.taxa) {
-            result.cobrancas.taxa = {
-              ...result.cobrancas.taxa,
-              asaasPaymentId,
-            };
-          }
-
-          if (!asaasPaymentId) {
-            taxaSync = { success: false, error: 'ASAAS_PAYMENT_ID_NAO_RETORNADO' };
-          } else {
-            try {
-              const syncResult = await syncPaymentStateFromAsaas({
-                contaId: auth.contaId,
-                asaasPaymentId,
-                eventName: 'PAYMENT_CREATED',
-              });
-
-              taxaSync = syncResult.success
-                ? { success: true, asaasPaymentId }
-                : { success: false, error: syncResult.error, asaasPaymentId };
-            } catch (err) {
-              taxaSync = {
-                success: false,
-                error: err instanceof Error ? err.message : 'ERRO_SINCRONIZAR_TAXA_ASAAS',
-                asaasPaymentId,
-              };
+    const billingOutcome = await provisionIndividualEnrollmentBilling({
+      contaId: auth.contaId,
+      actorUserId: auth.user.id,
+      matriculaId: result.matricula.id,
+      payload: {
+        criarCobranca: payload.criarCobranca,
+        gerarCobrancaTaxa: payload.gerarCobrancaTaxa,
+        taxaIsenta: payload.taxaIsenta,
+      },
+      preco: result.preco,
+      cobrancas: {
+        taxa: result.cobrancas.taxa
+          ? {
+              id: result.cobrancas.taxa.id,
+              formaPagamento: result.cobrancas.taxa.formaPagamento,
+              asaasPaymentId: result.cobrancas.taxa.asaasPaymentId,
             }
+          : null,
+        mensalidade: null,
+      },
+      matriculaSnapshot: {
+        asaasSubscriptionId: result.matricula.asaasSubscriptionId,
+      },
+    });
 
-            try {
-              const details = await getAsaasPaymentDetails({
-                contaId: auth.contaId,
-                paymentId: asaasPaymentId,
-                includePixQrCode: false,
-              });
+    taxaSync = billingOutcome.taxaSync;
+    subscriptionSync = billingOutcome.subscriptionSync;
 
-              taxaSync = {
-                ...(taxaSync ?? { success: false, asaasPaymentId }),
-                invoiceUrl: details.payment.invoiceUrl ?? null,
-                bankSlipUrl: details.payment.bankSlipUrl ?? null,
-              };
-            } catch (err) {
-              console.warn('[API Matrícula] Falha ao obter invoiceUrl do Asaas para taxa', {
-                cobrancaId: cobrancaTaxa.id,
-                asaasPaymentId,
-                message: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-        } else {
-          taxaSync = { success: false, error: chargeResult.error };
-        }
-      } else {
-        taxaSync = { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' };
-      }
-    }
-
-    const shouldCreateSubscription = payload.criarCobranca && result.preco.planoLiquido > 0;
-    const subscriptionBlockedByTax = requiresTaxConfirmation && !taxaSync?.success;
-
-    if (shouldCreateSubscription && subscriptionBlockedByTax) {
-      subscriptionSync = {
-        success: false,
-        error: 'TAXA_ASAAS_NAO_CONFIRMADA',
-        message:
-          'A mensalidade não foi criada porque a taxa de matrícula ainda não foi confirmada pelo Asaas.',
+    if (billingOutcome.cobrancas.taxa?.asaasPaymentId && result.cobrancas.taxa) {
+      result.cobrancas.taxa = {
+        ...result.cobrancas.taxa,
+        asaasPaymentId: billingOutcome.cobrancas.taxa.asaasPaymentId,
       };
     }
 
-    if (shouldCreateSubscription && !subscriptionBlockedByTax) {
-      const recurringContext = await prisma.matricula.findUnique({
-        where: { id: result.matricula.id },
-        select: {
-          id: true,
-          dataInicio: true,
-          dataFimContrato: true,
-          vencimentoDia: true,
-          formaPagamento: true,
-          descontoAntecipado: true,
-          prazoDesconto: true,
-          descontoTipo: true,
-          jurosMensal: true,
-          multaPercentual: true,
-          multaTipo: true,
-          plano: { select: { id: true, nome: true, periodicidade: true } },
-          combo: { select: { id: true, nome: true, periodicidade: true } },
-        },
+    if (billingOutcome.cobrancas.mensalidade?.id) {
+      const mensalidade = await prisma.cobranca.findFirst({
+        where: { id: billingOutcome.cobrancas.mensalidade.id, contaId: auth.contaId },
       });
+      result.cobrancas.mensalidade = mensalidade;
+    }
 
-      if (!recurringContext) {
-        subscriptionSync = { success: false, error: 'MATRICULA_NAO_ENCONTRADA' };
-      } else {
-        const billingType = mapFormaPagamentoToBillingType(recurringContext.formaPagamento);
-
-        if (!billingType) {
-          subscriptionSync = { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' };
-        } else {
-          const planoOuCombo = recurringContext.combo ?? recurringContext.plano;
-          const periodicidade = (planoOuCombo?.periodicidade ??
-            PeriodicidadePlano.MENSAL) as PeriodicidadePlano;
-          const nextDueDateObj = resolveChargeableFirstDueDate(
-            recurringContext.dataInicio,
-            recurringContext.vencimentoDia,
-          );
-          const nextDueDate = formatIsoDate(nextDueDateObj);
-          const endDate = formatIsoDate(recurringContext.dataFimContrato);
-          const discountValue = recurringContext.descontoAntecipado
-            ? Number(recurringContext.descontoAntecipado)
-            : 0;
-          const interestValue = recurringContext.jurosMensal
-            ? Number(recurringContext.jurosMensal)
-            : 0;
-          const fineValue = recurringContext.multaPercentual
-            ? Number(recurringContext.multaPercentual)
-            : 0;
-
-          const subscriptionResult = await createSubscription({
-            contaId: auth.contaId,
-            contratoId: null,
-            matriculaId: result.matricula.id,
-            value: result.preco.planoLiquido,
-            nextDueDate,
-            billingType,
-            cycle: mapPeriodicidadeToCycle(periodicidade),
-            description: planoOuCombo?.nome ? `Mensalidade - ${planoOuCombo.nome}` : 'Mensalidade',
-            endDate,
-            discount:
-              discountValue > 0
-                ? {
-                    value: discountValue,
-                    dueDateLimitDays: recurringContext.prazoDesconto ?? 0,
-                    type: (recurringContext.descontoTipo ?? 'PERCENTAGE') as 'FIXED' | 'PERCENTAGE',
-                  }
-                : undefined,
-            interest: interestValue > 0 ? { value: interestValue } : undefined,
-            fine:
-              fineValue > 0
-                ? {
-                    value: fineValue,
-                    type: (recurringContext.multaTipo ?? 'PERCENTAGE') as 'FIXED' | 'PERCENTAGE',
-                  }
-                : undefined,
-            actor: { type: 'USER', id: auth.user.id },
-          });
-
-          if (subscriptionResult.success) {
-            if (!subscriptionResult.data.asaasSubscriptionId) {
-              subscriptionSync = { success: false, error: 'ASSINATURA_SEM_ID_ASAAS' };
-            } else {
-              result.matricula = {
-                ...result.matricula,
-                asaasSubscriptionId: subscriptionResult.data.asaasSubscriptionId,
-              };
-              const initialPaymentSync = await syncInitialSubscriptionPaymentFromAsaas({
-                contaId: auth.contaId,
-                asaasSubscriptionId: subscriptionResult.data.asaasSubscriptionId,
-                targetDueDate: nextDueDateObj,
-                intent: 'RECONCILIATION',
-              });
-
-              if (initialPaymentSync.localCharge) {
-                result.cobrancas.mensalidade = initialPaymentSync.localCharge;
-              }
-
-              subscriptionSync = {
-                success: initialPaymentSync.processed || !initialPaymentSync.found,
-                asaasSubscriptionId: subscriptionResult.data.asaasSubscriptionId ?? null,
-                asaasPaymentId: initialPaymentSync.payment?.id ?? null,
-                invoiceUrl: initialPaymentSync.payment?.invoiceUrl ?? null,
-                bankSlipUrl: initialPaymentSync.payment?.bankSlipUrl ?? null,
-                expectedWebhooks:
-                  initialPaymentSync.processed || initialPaymentSync.found
-                    ? []
-                    : ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
-                message: initialPaymentSync.processed
-                  ? 'A assinatura e o primeiro ciclo foram sincronizados diretamente da API oficial do Asaas.'
-                  : initialPaymentSync.found
-                    ? 'A assinatura foi criada no Asaas, mas o primeiro ciclo oficial não pôde ser materializado localmente neste momento.'
-                    : 'A assinatura foi criada no Asaas. O primeiro ciclo será confirmado pelo webhook oficial assim que estiver disponível.',
-                error:
-                  initialPaymentSync.processed || !initialPaymentSync.found
-                    ? undefined
-                    : (initialPaymentSync.error ?? 'ERRO_SINCRONIZAR_PRIMEIRO_CICLO'),
-              };
-            }
-          } else {
-            subscriptionSync = { success: false, error: subscriptionResult.error };
-          }
-        }
-      }
+    if (billingOutcome.matriculaSnapshot.asaasSubscriptionId) {
+      result.matricula = {
+        ...result.matricula,
+        asaasSubscriptionId: billingOutcome.matriculaSnapshot.asaasSubscriptionId,
+      };
     }
 
     return NextResponse.json(

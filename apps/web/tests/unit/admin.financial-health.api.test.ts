@@ -94,6 +94,7 @@ describe('GET /api/admin/financial/health', () => {
       COMMAND_PREFLIGHT_STATUS: 3,
       COMMAND_PREFLIGHT_FULL: 1,
       RECONCILIATION: 2,
+      UI_FALLBACK_SYNC: 0,
       MANUAL_REPAIR: 1,
       AUTHORITATIVE_DOCUMENT: 1,
     });
@@ -132,6 +133,7 @@ describe('GET /api/admin/financial/health', () => {
           COMMAND_PREFLIGHT_STATUS: 3,
           COMMAND_PREFLIGHT_FULL: 1,
           RECONCILIATION: 2,
+          UI_FALLBACK_SYNC: 0,
           MANUAL_REPAIR: 1,
           AUTHORITATIVE_DOCUMENT: 1,
         },

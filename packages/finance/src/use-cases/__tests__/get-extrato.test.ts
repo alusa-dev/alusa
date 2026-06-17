@@ -20,6 +20,15 @@ vi.mock('@alusa/database', () => ({
     webhookAsaas: {
       findMany: vi.fn(async () => []),
     },
+    financialTransactionSyncWindow: {
+      findFirst: vi.fn(async () => null),
+      upsert: vi.fn(async () => ({})),
+    },
+    financialTransactionSnapshot: {
+      findMany: vi.fn(async () => []),
+      upsert: vi.fn(async () => ({})),
+    },
+    $transaction: vi.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
   },
 }));
 
