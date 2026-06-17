@@ -22,7 +22,7 @@ describe('listInvoices', () => {
         chargeId: 'c1',
         externalReference: 'invoice:i1',
         asaasInvoiceId: 'inv_1',
-        status: 'REQUESTED',
+        status: 'SCHEDULED',
         statusUpdatedAt: new Date('2026-01-04T00:00:00.000Z'),
         number: null,
         pdfUrl: null,

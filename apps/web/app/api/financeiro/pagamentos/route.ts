@@ -3,6 +3,7 @@ import { safeGetServerSession } from '@/lib/safe-server-session';
 import { prisma } from '@/src/prisma';
 import { listFinanceiroPagamentosResultDTOSchema } from '@/features/financeiro/dtos';
 import { mapFinanceiroPagamentoRecordToDTO } from '@/features/financeiro/mappers';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { reconcileAsaasPaymentIds } from '@/src/server/finance/academic-payment-history';
 
 export const dynamic = 'force-dynamic';
@@ -98,6 +99,14 @@ export async function GET(req: NextRequest) {
           id: p.cobranca.matricula.aluno.id,
           nome: p.cobranca.matricula.aluno.nome,
         },
+        displayStatus: buildChargeDisplayStatusDTO({
+          localStatus: p.cobranca.status,
+          asaasStatus: p.cobranca.asaasStatus,
+          liquidacaoStatus: p.cobranca.liquidacaoStatus,
+          hasAsaasLink: Boolean(
+            p.cobranca.asaasPaymentId || p.cobranca.asaasStatus || p.cobranca.liquidacaoStatus,
+          ),
+        }),
       },
       asaasPaymentId: p.asaasPaymentId,
       createdAt: p.createdAt.toISOString(),

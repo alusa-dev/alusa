@@ -75,6 +75,17 @@ export type UnifiedChargeItem = {
   billingType: string | null;
   /** Status unificado. */
   status: UnifiedChargeStatus;
+  /** Snapshot oficial do Asaas, quando existe. */
+  asaasStatus?: string | null;
+  /** Status de liquidação local, quando existe. */
+  liquidacaoStatus?: string | null;
+  /** Status pronto para exibição, alinhado ao Asaas. */
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   /** Tipo funcional da cobrança no domínio unificado. */
   chargeType?: 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION';
   /** Estado de vínculo local da cobrança. */

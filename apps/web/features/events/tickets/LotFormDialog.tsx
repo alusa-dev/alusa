@@ -6,6 +6,7 @@ import {
   EVENT_TICKET_LOT_STATUS_LABELS,
   EVENT_TICKET_TYPE_LABELS,
   EVENT_TICKET_TYPES,
+  type EventTicketMode,
 } from '@alusa/shared';
 
 import { Button } from '@/components/ui/button';
@@ -33,12 +34,14 @@ import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatt
 
 export function LotFormDialog({
   eventId,
+  ticketMode = 'SIMPLE',
   trigger,
   lot,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
 }: {
   eventId: string;
+  ticketMode?: EventTicketMode;
   trigger?: React.ReactNode;
   lot?: TicketLotDTO;
   open?: boolean;
@@ -48,12 +51,13 @@ export function LotFormDialog({
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen !== undefined ? controlledOpen : localOpen;
   const setOpen = controlledOnOpenChange !== undefined ? controlledOnOpenChange : setLocalOpen;
-  const [priceText, setPriceText] = useState("");
+  const [priceText, setPriceText] = useState('');
+  const isNumberedSeats = ticketMode === 'NUMBERED_SEATS';
 
   useEffect(() => {
     if (open) {
       const price = lot?.unitPrice ?? 0;
-      setPriceText(price > 0 ? price.toFixed(2).replace('.', ',') : "0,00");
+      setPriceText(price > 0 ? price.toFixed(2).replace('.', ',') : '0,00');
     }
   }, [open, lot]);
 
@@ -66,7 +70,7 @@ export function LotFormDialog({
       ]);
       toast.success({
         title: lot ? 'Lote atualizado' : 'Lote criado',
-        description: lot ? 'As alterações do lote foram salvas com sucesso.' : 'O novo lote de ingressos foi criado com sucesso.'
+        description: lot ? 'As alterações do lote foram salvas com sucesso.' : 'O novo lote de ingressos foi criado com sucesso.',
       });
       setOpen(false);
     },
@@ -82,7 +86,7 @@ export function LotFormDialog({
       name: nullableString(formData, 'name'),
       ticketType: nullableString(formData, 'ticketType'),
       unitPrice,
-      quantityTotal: numberValue(formData, 'quantityTotal'),
+      ...(isNumberedSeats ? {} : { quantityTotal: numberValue(formData, 'quantityTotal') }),
       saleStartsAt: datetimeValue(formData, 'saleStartsAt'),
       saleEndsAt: datetimeValue(formData, 'saleEndsAt'),
       status: nullableString(formData, 'status') ?? 'DRAFT',
@@ -96,7 +100,11 @@ export function LotFormDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{lot ? 'Editar lote' : 'Novo lote'}</DialogTitle>
-          <DialogDescription>Configure estoque, valor e período de vendas.</DialogDescription>
+          <DialogDescription>
+            {isNumberedSeats
+              ? 'Configure valor e período de vendas. A capacidade virá dos assentos vinculados no mapa.'
+              : 'Configure estoque, valor e período de vendas.'}
+          </DialogDescription>
         </DialogHeader>
         <form action={submit} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
@@ -112,12 +120,22 @@ export function LotFormDialog({
                   type="text"
                   value={priceText}
                   onChange={(e) => setPriceText(formatCurrencyInput(e.target.value))}
-                  className={cn(FILTER_INPUT_CLASS, "pl-10 text-right")}
+                  className={cn(FILTER_INPUT_CLASS, 'pl-10 text-right')}
                   required
                 />
               </div>
             </Field>
-            <Field label="Quantidade"><Input name="quantityTotal" type="number" min={1} defaultValue={lot?.quantityTotal ?? 1} required className={FILTER_INPUT_CLASS} /></Field>
+            {isNumberedSeats ? (
+              <Field label="Capacidade">
+                <div className="flex h-10 items-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">
+                  {lot?.quantityTotal ? `${lot.quantityTotal} assentos no mapa` : 'Definida pelos assentos do mapa'}
+                </div>
+              </Field>
+            ) : (
+              <Field label="Quantidade">
+                <Input name="quantityTotal" type="number" min={1} defaultValue={lot?.quantityTotal ?? 1} required className={FILTER_INPUT_CLASS} />
+              </Field>
+            )}
             <Field label="Início das vendas"><DateTimeField name="saleStartsAt" defaultValue={lot?.saleStartsAt ?? getRoundedNowISOString()} /></Field>
             <Field label="Fim das Vendas (opcional)"><DateTimeField name="saleEndsAt" defaultValue={lot?.saleEndsAt} /></Field>
             <Field label="Status"><NativeSelect name="status" defaultValue={lot?.status ?? 'DRAFT'} options={Object.entries(EVENT_TICKET_LOT_STATUS_LABELS).map(([value, label]) => ({ value, label }))} /></Field>
@@ -126,7 +144,6 @@ export function LotFormDialog({
           <DialogFooter><Button type="submit" disabled={mutation.isPending}>Salvar lote</Button></DialogFooter>
         </form>
       </DialogContent>
-
     </Dialog>
   );
 }

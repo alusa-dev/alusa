@@ -6,6 +6,7 @@ import {
   isItemSelected,
   isObjectInSelectedGroup,
   isSameSelectionItem,
+  resolveCanvasNodeIds,
   resolveGroupSelectionItem,
   type BoundsRect,
 } from '@alusa/domain';
@@ -40,24 +41,7 @@ export function useSelectionSession({
 }: SelectionSessionInput) {
   const selectedNodeIds = useMemo(() => {
     if (!map || selection.length === 0) return [];
-
-    const items = selection.flatMap((item) => {
-      if (item.type === 'object' || item.type === 'seat' || item.type === 'seatgroup') return [item];
-      if (item.type === 'section') {
-        const object = map.objects.find((entry) => entry.sectionId === item.id && entry.type === 'SECTION');
-        const seats = map.seats
-          .filter((seat) => seat.sectionId === item.id && seat.status !== 'SOLD')
-          .map((seat) => ({ type: 'seat' as const, id: seat.id }));
-        return object ? [{ type: 'object' as const, id: object.id }, ...seats] : seats;
-      }
-      return [];
-    });
-
-    return expandObjectSelectionItems(items, map.objects).flatMap((item) => {
-      if (item.type === 'object' || item.type === 'seat') return [`node-${item.id}`];
-      if (item.type === 'seatgroup') return [`node-seatgroup-${item.id}`];
-      return [];
-    });
+    return resolveCanvasNodeIds(map, selection);
   }, [selection, map]);
 
   const selectedObjectIds = useMemo(() => {

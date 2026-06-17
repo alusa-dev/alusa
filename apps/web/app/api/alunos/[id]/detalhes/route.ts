@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { getAsaasNotificationPreferences } from '@alusa/finance';
 import { prisma } from '@/lib/prisma';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -64,6 +65,22 @@ function mapEventChargeStatus(status: string) {
     default:
       return 'PENDENTE';
   }
+}
+
+function buildCobrancaDisplayStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  asaasPaymentId?: string | null;
+}) {
+  return buildChargeDisplayStatusDTO({
+    localStatus: input.localStatus,
+    asaasStatus: input.asaasStatus,
+    liquidacaoStatus: input.liquidacaoStatus,
+    hasAsaasLink: Boolean(
+      input.asaasPaymentId || input.asaasStatus || input.liquidacaoStatus,
+    ),
+  });
 }
 
 function sanitizePreference(preference: {
@@ -360,6 +377,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         dataPagamento: toIso(cobranca.dataPagamento),
         formaPagamento: cobranca.formaPagamento,
         asaasPaymentId: cobranca.asaasPaymentId,
+        displayStatus: buildCobrancaDisplayStatus({
+          localStatus: cobranca.status,
+          asaasStatus: cobranca.asaasStatus,
+          liquidacaoStatus: cobranca.liquidacaoStatus,
+          asaasPaymentId: cobranca.asaasPaymentId,
+        }),
         planoNome: matricula.plano?.nome ?? matricula.combo?.nome ?? null,
         createdAt: toIso(cobranca.createdAt),
         pagamentos: cobranca.pagamentos.map((pagamento) => ({
@@ -390,6 +413,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       dataPagamento: null,
       formaPagamento: charge.billingType,
       asaasPaymentId: charge.asaasPaymentId,
+      displayStatus: buildCobrancaDisplayStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        asaasPaymentId: charge.asaasPaymentId,
+      }),
       planoNome: null,
       createdAt: toIso(charge.createdAt),
       pagamentos: [],
@@ -412,6 +441,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       dataPagamento: null,
       formaPagamento: charge.billingType,
       asaasPaymentId: charge.asaasPaymentId,
+      displayStatus: buildCobrancaDisplayStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        asaasPaymentId: charge.asaasPaymentId,
+      }),
       planoNome: 'Plano familiar',
       createdAt: toIso(charge.createdAt),
       pagamentos: [],

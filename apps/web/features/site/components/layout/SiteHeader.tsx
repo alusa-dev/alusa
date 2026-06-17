@@ -61,7 +61,7 @@ export function SiteHeader() {
     ].includes(pathname || '');
 
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[#430D88]">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-[var(--alusa-purple-dark)]">
       <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between gap-6 px-6 sm:px-8">
         <Link
           href="/"
@@ -99,7 +99,7 @@ export function SiteHeader() {
               variant="primary"
               tone="dark"
               event="hero_cta_clicked"
-              className="h-10 bg-white text-[#430D88] shadow-sm"
+              className="h-10 bg-white text-[var(--alusa-purple-dark)] shadow-sm"
             >
               Criar conta grátis
             </ButtonLink>
@@ -120,7 +120,7 @@ export function SiteHeader() {
       </div>
 
       {!isLegalPage && (
-        <div className={cn('border-t border-white/10 bg-[#430D88] lg:hidden', open ? 'block' : 'hidden')}>
+        <div className={cn('border-t border-white/10 bg-[var(--alusa-purple-dark)] lg:hidden', open ? 'block' : 'hidden')}>
           <nav className="mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
             {primaryNavigation.map((item) => (
               <PrimaryNavItem

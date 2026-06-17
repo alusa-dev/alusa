@@ -1,5 +1,8 @@
-import { rotatePoint, toLocal } from '../geometry/rotation.js';
+import { normalizeRotation, rotatePoint, toLocal } from '../geometry/rotation.js';
+import { centerOf } from '../geometry/bounds.js';
+import { parentLocalToWorld, worldToParentLocal } from '../geometry/transform-compose.js';
 import { getSeatGridRowLabel } from './seat-grid.js';
+import { getSeatGroupWorldBounds } from './seat-group-bounds.js';
 import type { EventMapDTO, EventSeatDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
 
 export type SeatGroupGridResizeInput = {
@@ -66,6 +69,61 @@ export function resolveSeatGroupGridResize(input: SeatGroupGridResizeInput): Sea
     columns: newCols,
     changed: newRows !== input.lastCommittedRows || newCols !== input.lastCommittedCols,
   };
+}
+
+export function buildSeatGroupRotationPatch(
+  group: EventSeatGroupDTO,
+  seats: EventSeatDTO[],
+  pivot: { x: number; y: number },
+  angleDelta: number,
+): Pick<EventSeatGroupDTO, 'x' | 'y' | 'rotation'> {
+  const bounds = getSeatGroupWorldBounds(group, seats);
+  const center = centerOf(bounds);
+  const nextCenter = rotatePoint(center, pivot, angleDelta);
+  const localCenter = worldToParentLocal(center, group);
+  const nextRotation = normalizeRotation((group.rotation ?? 0) + angleDelta);
+  const rotatedLocalCenter = parentLocalToWorld(localCenter, {
+    x: 0,
+    y: 0,
+    rotation: nextRotation,
+  });
+
+  const roundValue = (value: number) => Number(value.toFixed(4));
+
+  return {
+    x: roundValue(nextCenter.x - rotatedLocalCenter.x),
+    y: roundValue(nextCenter.y - rotatedLocalCenter.y),
+    rotation: nextRotation,
+  };
+}
+
+type SeatGroupSeatLayoutSource = Pick<EventSeatDTO, 'rowIndex' | 'columnIndex'>;
+
+type SeatGroupLayoutSource = Pick<
+  EventSeatGroupDTO,
+  'seatWidth' | 'seatHeight' | 'gapX' | 'gapY' | 'paddingLeft' | 'paddingTop'
+>;
+
+export function getSeatGroupSeatLocalCenter(
+  group: SeatGroupLayoutSource,
+  seat: SeatGroupSeatLayoutSource,
+): { x: number; y: number } {
+  const row = seat.rowIndex ?? 0;
+  const col = seat.columnIndex ?? 0;
+  const stepX = group.seatWidth + group.gapX;
+  const stepY = group.seatHeight + group.gapY;
+
+  return {
+    x: group.paddingLeft + col * stepX + group.seatWidth / 2,
+    y: group.paddingTop + row * stepY + group.seatHeight / 2,
+  };
+}
+
+export function getSeatGroupSeatWorldCenter(
+  group: SeatGroupLayoutSource & Pick<EventSeatGroupDTO, 'x' | 'y' | 'rotation'>,
+  seat: SeatGroupSeatLayoutSource,
+): { x: number; y: number } {
+  return parentLocalToWorld(getSeatGroupSeatLocalCenter(group, seat), group);
 }
 
 export function transformSeatInGroup(
@@ -200,8 +258,10 @@ export function applySeatGroupLayoutPatch(
     typeof patch.x === 'number' || typeof patch.y === 'number' || typeof patch.rotation === 'number';
 
   if (transformChanged) {
+    let resolvedNext = next;
+
     nextMap.seats = nextMap.seats.map((seat) =>
-      seat.groupId === groupId ? transformSeatInGroup(seat, prev, next) : seat,
+      seat.groupId === groupId ? transformSeatInGroup(seat, prev, resolvedNext) : seat,
     );
   }
 

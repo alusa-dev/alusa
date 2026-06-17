@@ -130,6 +130,8 @@ function resolvePaymentOrigin(cobranca: CobrancaActionData): PaymentOrigin {
       return 'ENROLLMENT_FEE';
     case 'AVULSA':
       return 'STANDALONE';
+    case 'EVENTO':
+      return 'EVENT';
     default:
       return 'ACADEMIC';
   }

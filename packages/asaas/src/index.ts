@@ -115,6 +115,58 @@ export { getInvoice } from './invoices/getInvoice';
 export type { GetInvoiceParams } from './invoices/getInvoice';
 export { cancelInvoice } from './invoices/cancelInvoice';
 export type { CancelInvoiceParams } from './invoices/cancelInvoice';
+export { listInvoices as listAsaasInvoices } from './invoices/listInvoices';
+export type { ListInvoicesParams as ListAsaasInvoicesParams } from './invoices/listInvoices';
+export { updateInvoice } from './invoices/updateInvoice';
+export type { UpdateInvoiceParams } from './invoices/updateInvoice';
+export { authorizeInvoice } from './invoices/authorizeInvoice';
+export type { AuthorizeInvoiceParams } from './invoices/authorizeInvoice';
+export { scheduleInvoice } from './invoices/scheduleInvoice';
+export type { ScheduleInvoiceParams } from './invoices/scheduleInvoice';
+
+// Fiscal Info (NFS-e configuration)
+export { getMunicipalOptions } from './fiscal/getMunicipalOptions';
+export type { GetMunicipalOptionsParams } from './fiscal/getMunicipalOptions';
+export { getFiscalInfo } from './fiscal/getFiscalInfo';
+export type { GetFiscalInfoParams } from './fiscal/getFiscalInfo';
+export { upsertFiscalInfo } from './fiscal/upsertFiscalInfo';
+export type { UpsertFiscalInfoParams } from './fiscal/upsertFiscalInfo';
+export { listMunicipalServices } from './fiscal/listMunicipalServices';
+export type { ListMunicipalServicesParams } from './fiscal/listMunicipalServices';
+export { listNbsCodes } from './fiscal/listNbsCodes';
+export type { ListNbsCodesParams } from './fiscal/listNbsCodes';
+export { listFiscalCodes } from './fiscal/listFiscalCodes';
+export type { FiscalCodeKind, ListFiscalCodesParams } from './fiscal/listFiscalCodes';
+export { configureNationalPortal } from './fiscal/configureNationalPortal';
+export type { ConfigureNationalPortalParams } from './fiscal/configureNationalPortal';
+export {
+  deleteSubscriptionInvoiceSettings,
+  deleteSubscriptionInvoiceSettingsIfConfigured,
+  findSubscriptionInvoiceSettings,
+  getSubscriptionInvoiceSettings,
+  updateSubscriptionInvoiceSettings,
+  upsertSubscriptionInvoiceSettings,
+  type DeleteSubscriptionInvoiceSettingsParams,
+  type GetSubscriptionInvoiceSettingsParams,
+  type UpdateSubscriptionInvoiceSettingsParams,
+  type UpsertSubscriptionInvoiceSettingsInput,
+  type UpsertSubscriptionInvoiceSettingsParams,
+  type SubscriptionInvoiceSettingsResponse,
+} from './fiscal/upsertSubscriptionInvoiceSettings';
+export type {
+  AsaasFiscalAuthenticationType,
+  AsaasFiscalMunicipalOptions,
+  AsaasFiscalInfo,
+  UpsertFiscalInfoInput,
+  AsaasMunicipalService,
+  AsaasMunicipalServicesListResponse,
+  AsaasNbsCode,
+  AsaasNbsCodesListResponse,
+  AsaasFiscalCodeItem,
+  AsaasFiscalCodeListResponse,
+  ConfigureNationalPortalInput,
+  ConfigureNationalPortalResponse,
+} from './types/fiscal';
 
 // MyAccount (KYC)
 export {

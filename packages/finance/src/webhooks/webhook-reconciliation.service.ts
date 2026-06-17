@@ -13,7 +13,7 @@
  */
 
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import type { Prisma } from '@prisma/client';
+import type { ChargeStatus, Prisma } from '@prisma/client';
 import { getInstallment, getPayment, getSubscription, listInstallmentPayments, listPayments } from '@alusa/asaas';
 import type { AsaasPayment } from '@alusa/asaas';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
@@ -90,6 +90,7 @@ export interface ArchiveWebhooksResult {
 
 export interface AsaasReconcileOptions {
   contaId: string;
+  /** Janela para assinaturas/parcelamentos (pagamentos usam status local não-final). */
   windowHours?: number;
   limit?: number;
   dryRun?: boolean;
@@ -138,20 +139,198 @@ const DEFAULT_RECONCILE_WINDOW_HOURS = 24;
 const DEFAULT_RECONCILE_LIMIT = 200;
 const DEFAULT_PROCESSING_TIMEOUT_MINUTES = 5;
 
-/** Status que indicam cobrança em estado não-final (pode ter eventos pendentes) */
+/** Status acadêmico (Cobranca) que indicam estado não-final */
 const NON_FINAL_STATUSES = ['A_VENCER', 'PENDENTE', 'PROCESSANDO', 'ATRASADO'];
+
+/** Status operacional (Charge) que indicam estado não-final — alinhado a financial-read-convergence */
+const NON_FINAL_CHARGE_STATUSES: ChargeStatus[] = [
+  'CREATED',
+  'PENDING_SYNC',
+  'OPEN',
+  'OVERDUE',
+];
+
+const RECONCILE_INFLIGHT_WEBHOOK_STATUSES = ['PENDENTE', 'PROCESSANDO'] as const;
 
 const PAYMENT_EVENT_BY_STATUS: Record<string, string> = {
   PENDING: 'PAYMENT_UPDATED',
   RECEIVED: 'PAYMENT_RECEIVED',
   CONFIRMED: 'PAYMENT_CONFIRMED',
-  RECEIVED_IN_CASH: 'PAYMENT_RECEIVED_IN_CASH',
+  RECEIVED_IN_CASH: 'PAYMENT_RECEIVED',
   OVERDUE: 'PAYMENT_OVERDUE',
   REFUNDED: 'PAYMENT_REFUNDED',
   REFUND_REQUESTED: 'PAYMENT_REFUND_REQUESTED',
   REFUND_IN_PROGRESS: 'PAYMENT_REFUND_IN_PROGRESS',
   DELETED: 'PAYMENT_DELETED',
 };
+
+type PaymentReconciliationCandidate = {
+  entityId: string;
+  asaasPaymentId: string;
+  localStatus: string;
+  persistedAsaasStatus: string | null;
+  externalReference: string | null;
+  source: 'charge' | 'cobranca';
+};
+
+async function hasInflightWebhookForPayment(contaId: string, asaasPaymentId: string): Promise<boolean> {
+  const inflight = await prisma.webhookAsaas.findFirst({
+    where: {
+      contaId,
+      asaasPaymentId,
+      status: { in: [...RECONCILE_INFLIGHT_WEBHOOK_STATUSES] },
+    },
+    select: { id: true },
+  });
+  return Boolean(inflight);
+}
+
+/**
+ * Lista pagamentos locais em status não-final com integração Asaas.
+ * Dedupe por asaasPaymentId (Charge avulsa + Cobranca acadêmica).
+ */
+async function listPaymentReconciliationCandidates(
+  contaId: string,
+  limit: number,
+): Promise<PaymentReconciliationCandidate[]> {
+  const [standaloneCharges, academicCobrancas] = await Promise.all([
+    prisma.charge.findMany({
+      where: {
+        contaId,
+        asaasPaymentId: { not: null },
+        status: { in: NON_FINAL_CHARGE_STATUSES },
+      },
+      orderBy: [{ dueDate: 'asc' }, { updatedAt: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        asaasStatus: true,
+        externalReference: true,
+      },
+    }),
+    prisma.cobranca.findMany({
+      where: {
+        matricula: { aluno: { contaId } },
+        asaasPaymentId: { not: null },
+        status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
+      },
+      orderBy: { vencimento: 'asc' },
+      take: limit,
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        asaasStatus: true,
+        charge: { select: { externalReference: true } },
+      },
+    }),
+  ]);
+
+  const byPaymentId = new Map<string, PaymentReconciliationCandidate>();
+
+  for (const charge of standaloneCharges) {
+    if (!charge.asaasPaymentId) continue;
+    byPaymentId.set(charge.asaasPaymentId, {
+      entityId: charge.id,
+      asaasPaymentId: charge.asaasPaymentId,
+      localStatus: charge.status,
+      persistedAsaasStatus: charge.asaasStatus,
+      externalReference: charge.externalReference,
+      source: 'charge',
+    });
+  }
+
+  for (const cobranca of academicCobrancas) {
+    if (!cobranca.asaasPaymentId || byPaymentId.has(cobranca.asaasPaymentId)) continue;
+    byPaymentId.set(cobranca.asaasPaymentId, {
+      entityId: cobranca.id,
+      asaasPaymentId: cobranca.asaasPaymentId,
+      localStatus: cobranca.status,
+      persistedAsaasStatus: cobranca.asaasStatus,
+      externalReference: cobranca.charge?.externalReference ?? null,
+      source: 'cobranca',
+    });
+  }
+
+  return Array.from(byPaymentId.values()).slice(0, limit);
+}
+
+function resolvePaymentDriftIssueType(
+  candidate: PaymentReconciliationCandidate,
+  remoteAsaasStatus: string,
+): 'ASAAS_SNAPSHOT_STALE' | 'PAYMENT_STATUS_DRIFT' {
+  const normalizedRemote = remoteAsaasStatus.trim().toUpperCase();
+  const normalizedPersisted = (candidate.persistedAsaasStatus ?? '').trim().toUpperCase();
+  if (normalizedPersisted && normalizedPersisted !== normalizedRemote) {
+    return 'ASAAS_SNAPSHOT_STALE';
+  }
+  return 'PAYMENT_STATUS_DRIFT';
+}
+
+function hasPaymentReconciliationDrift(
+  remoteAsaasStatus: string,
+  candidate: PaymentReconciliationCandidate,
+): boolean {
+  const normalizedRemote = remoteAsaasStatus.trim().toUpperCase();
+  const normalizedPersisted = (candidate.persistedAsaasStatus ?? '').trim().toUpperCase();
+
+  if (!normalizedPersisted || normalizedPersisted !== normalizedRemote) {
+    return true;
+  }
+
+  const remoteChargeStatus = mapAsaasToChargeStatus(remoteAsaasStatus);
+
+  if (candidate.source === 'charge') {
+    return remoteChargeStatus !== candidate.localStatus;
+  }
+
+  if (remoteChargeStatus === 'PAID') {
+    return candidate.localStatus !== 'PAGO';
+  }
+  if (remoteChargeStatus === 'CANCELED') {
+    return candidate.localStatus !== 'CANCELADO';
+  }
+  if (remoteChargeStatus === 'REFUNDED') {
+    return candidate.localStatus !== 'ESTORNADO' && candidate.localStatus !== 'ESTORNADO_PARCIAL';
+  }
+  if (remoteChargeStatus === 'OVERDUE') {
+    return candidate.localStatus !== 'ATRASADO';
+  }
+  if (remoteChargeStatus === 'OPEN') {
+    return !['PENDENTE', 'A_VENCER', 'PROCESSANDO'].includes(candidate.localStatus);
+  }
+
+  return false;
+}
+
+async function attachLastWebhookAt<T extends { asaasPaymentId: string | null }>(
+  contaId: string,
+  rows: T[],
+): Promise<Array<T & { lastWebhookAt: Date | null }>> {
+  return Promise.all(
+    rows.map(async (row) => {
+      if (!row.asaasPaymentId) {
+        return { ...row, lastWebhookAt: null };
+      }
+
+      const lastWebhook = await prisma.webhookAsaas.findFirst({
+        where: {
+          contaId,
+          asaasPaymentId: row.asaasPaymentId,
+        },
+        orderBy: { recebidoEm: 'desc' },
+        select: { recebidoEm: true },
+      });
+
+      return {
+        ...row,
+        lastWebhookAt: lastWebhook?.recebidoEm ?? null,
+      };
+    }),
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GAP DETECTION
@@ -160,8 +339,8 @@ const PAYMENT_EVENT_BY_STATUS: Record<string, string> = {
 /**
  * Detecta cobranças que podem estar com eventos faltando.
  * Critérios:
- * - Cobrança em status não-final
- * - Vencimento dentro da janela (ou já vencido)
+ * - Cobrança acadêmica ou avulsa em status não-final
+ * - Vencimento dentro da janela (ou já vencido), quando aplicável
  * - Sem webhook recente (últimas 24h)
  */
 export async function detectWebhookGaps(
@@ -175,60 +354,61 @@ export async function detectWebhookGaps(
   const windowStart = new Date(now);
   windowStart.setDate(windowStart.getDate() - windowDays);
 
-  // Cobranças em status não-final com vencimento na janela
-  // Nota: Cobranca não tem contaId direto, usa join via Matricula → Aluno
-  const chargesWithMissingFinalStatus = await prisma.cobranca.findMany({
-    where: {
-      matricula: {
-        aluno: { contaId },
-      },
-      status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
-      vencimento: {
-        gte: windowStart,
-        lte: now,
-      },
-    },
-    select: {
-      id: true,
-      asaasPaymentId: true,
-      status: true,
-      vencimento: true,
-    },
-    orderBy: { vencimento: 'asc' },
-    take: chargeLimit,
-  });
-
-  // Para cada cobrança, verificar último webhook recebido
-  const chargesWithWebhookInfo = await Promise.all(
-    chargesWithMissingFinalStatus.map(async (charge) => {
-      if (!charge.asaasPaymentId) {
-        return {
-          id: charge.id,
-          asaasPaymentId: charge.asaasPaymentId,
-          status: charge.status,
-          dueDate: charge.vencimento,
-          lastWebhookAt: null,
-        };
-      }
-
-      const lastWebhook = await prisma.webhookAsaas.findFirst({
-        where: {
-          contaId,
-          asaasPaymentId: charge.asaasPaymentId,
+  const [academicCobrancas, standaloneCharges] = await Promise.all([
+    prisma.cobranca.findMany({
+      where: {
+        matricula: {
+          aluno: { contaId },
         },
-        orderBy: { recebidoEm: 'desc' },
-        select: { recebidoEm: true },
-      });
+        status: { in: NON_FINAL_STATUSES as Prisma.EnumStatusCobrancaFilter['in'] },
+        vencimento: {
+          gte: windowStart,
+          lte: now,
+        },
+      },
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        vencimento: true,
+      },
+      orderBy: { vencimento: 'asc' },
+      take: chargeLimit,
+    }),
+    prisma.charge.findMany({
+      where: {
+        contaId,
+        asaasPaymentId: { not: null },
+        status: { in: NON_FINAL_CHARGE_STATUSES },
+        OR: [{ dueDate: null }, { dueDate: { gte: windowStart, lte: now } }],
+      },
+      select: {
+        id: true,
+        asaasPaymentId: true,
+        status: true,
+        dueDate: true,
+      },
+      orderBy: { dueDate: 'asc' },
+      take: chargeLimit,
+    }),
+  ]);
 
-      return {
-        id: charge.id,
-        asaasPaymentId: charge.asaasPaymentId,
-        status: charge.status,
-        dueDate: charge.vencimento,
-        lastWebhookAt: lastWebhook?.recebidoEm ?? null,
-      };
-    })
-  );
+  const chargesWithMissingFinalStatus = [
+    ...academicCobrancas.map((cobranca) => ({
+      id: cobranca.id,
+      asaasPaymentId: cobranca.asaasPaymentId,
+      status: cobranca.status,
+      dueDate: cobranca.vencimento,
+    })),
+    ...standaloneCharges.map((charge) => ({
+      id: charge.id,
+      asaasPaymentId: charge.asaasPaymentId,
+      status: charge.status,
+      dueDate: charge.dueDate,
+    })),
+  ].slice(0, chargeLimit);
+
+  const chargesWithWebhookInfo = await attachLastWebhookAt(contaId, chargesWithMissingFinalStatus);
 
   // Filtrar cobranças sem webhook recente (24h)
   const oneDayAgo = new Date(now);
@@ -921,9 +1101,10 @@ function chooseSyntheticSubscriptionEvent(remote: {
 
 /**
  * Reconciliação ativa com Asaas:
- * - Pagamentos: compara snapshot remoto e aplica webhook sintético quando há drift.
- * - Assinaturas: aplica webhook sintético via handler (monotonicidade + side effects).
- * - Parcelamentos: detecta drift de contagem entre pagamentos remotos e locais.
+ * - Pagamentos: cobranças locais em status não-final → 1× getPayment por candidato;
+ *   aplica webhook sintético (PAYMENT_RECEIVED/CONFIRMED/…) quando há drift.
+ * - Assinaturas/parcelamentos: janela por updatedAt (windowHours).
+ * - Ignora pagamentos com webhook ainda na fila (PENDENTE/PROCESSANDO).
  */
 export async function reconcileWithAsaas(
   options: AsaasReconcileOptions
@@ -952,6 +1133,8 @@ export async function reconcileWithAsaas(
     };
   }
 
+  const paymentCandidates = await listPaymentReconciliationCandidates(options.contaId, limit);
+
   let checkedPayments = 0;
   let reconciledPayments = 0;
   let paymentDrift = 0;
@@ -961,22 +1144,7 @@ export async function reconcileWithAsaas(
   let checkedInstallments = 0;
   let installmentDrift = 0;
 
-  const [charges, subscriptions, installmentPlans, standaloneInstallments] = await Promise.all([
-    prisma.charge.findMany({
-      where: {
-        contaId: options.contaId,
-        asaasPaymentId: { not: null },
-        updatedAt: { gte: since },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: limit,
-      select: {
-        id: true,
-        asaasPaymentId: true,
-        status: true,
-        externalReference: true,
-      },
-    }),
+  const [subscriptions, installmentPlans, standaloneInstallments] = await Promise.all([
     prisma.subscription.findMany({
       where: {
         contaId: options.contaId,
@@ -1013,57 +1181,69 @@ export async function reconcileWithAsaas(
     }),
   ]);
 
-  for (const charge of charges) {
-    if (!charge.asaasPaymentId) continue;
+  for (const candidate of paymentCandidates) {
     checkedPayments += 1;
     try {
+      if (await hasInflightWebhookForPayment(options.contaId, candidate.asaasPaymentId)) {
+        continue;
+      }
+
       recordAsaasReadIntent('RECONCILIATION');
-      const remote = await getPayment({ apiKey: credentials.apiKey, paymentId: charge.asaasPaymentId });
+      const remote = await getPayment({
+        apiKey: credentials.apiKey,
+        paymentId: candidate.asaasPaymentId,
+      });
       const remoteLocalStatus = mapAsaasToChargeStatus(remote.status);
-      if (remoteLocalStatus !== charge.status) {
-        paymentDrift += 1;
-        if (!dryRun) {
-          await upsertFinanceReconciliationIssue({
-            contaId: options.contaId,
-            entityType: 'CHARGE',
-            entityId: charge.id,
-            asaasId: charge.asaasPaymentId,
-            issueType: 'PAYMENT_STATUS_DRIFT',
-            severity: 'HIGH',
-            localStatus: charge.status,
-            remoteStatus: remoteLocalStatus,
-            metadata: {
-              asaasStatus: remote.status,
-              externalReference: charge.externalReference,
-              source: 'reconcileWithAsaas',
-            },
-          });
-          const event = PAYMENT_EVENT_BY_STATUS[remote.status] ?? 'PAYMENT_UPDATED';
-          await handlePaymentWebhook(options.contaId, {
-            event,
-            payment: {
-              id: remote.id,
-              status: remote.status as never,
-              value: Number(remote.value ?? 0),
-              netValue: Number(remote.netValue ?? remote.value ?? 0),
-              originalValue: typeof remote.originalValue === 'number' ? remote.originalValue : null,
-              externalReference: remote.externalReference,
-              subscription: remote.subscription ?? null,
-              installment: remote.installment ?? null,
-              installmentNumber: null,
-              dueDate: remote.dueDate ?? null,
-              paymentDate: remote.paymentDate ?? null,
-              clientPaymentDate: remote.clientPaymentDate ?? null,
-              creditDate: remote.creditDate ?? null,
-              estimatedCreditDate: remote.estimatedCreditDate ?? null,
-              billingType: remote.billingType ?? null,
-            },
-          });
-          reconciledPayments += 1;
-        }
+      if (!hasPaymentReconciliationDrift(remote.status, candidate)) {
+        continue;
+      }
+
+      paymentDrift += 1;
+      if (!dryRun) {
+        await upsertFinanceReconciliationIssue({
+          contaId: options.contaId,
+          entityType: 'CHARGE',
+          entityId: candidate.entityId,
+          asaasId: candidate.asaasPaymentId,
+          issueType: resolvePaymentDriftIssueType(candidate, remote.status),
+          severity: 'HIGH',
+          localStatus: candidate.localStatus,
+          remoteStatus: remoteLocalStatus,
+          metadata: {
+            asaasStatus: remote.status,
+            persistedAsaasStatus: candidate.persistedAsaasStatus,
+            externalReference: candidate.externalReference ?? remote.externalReference ?? null,
+            source: 'reconcileWithAsaas',
+            candidateSource: candidate.source,
+          },
+        });
+        const event = PAYMENT_EVENT_BY_STATUS[remote.status] ?? 'PAYMENT_UPDATED';
+        await handlePaymentWebhook(options.contaId, {
+          event,
+          payment: {
+            id: remote.id,
+            status: remote.status as never,
+            value: Number(remote.value ?? 0),
+            netValue: Number(remote.netValue ?? remote.value ?? 0),
+            originalValue: typeof remote.originalValue === 'number' ? remote.originalValue : null,
+            externalReference: remote.externalReference ?? candidate.externalReference ?? undefined,
+            subscription: remote.subscription ?? null,
+            installment: remote.installment ?? null,
+            installmentNumber: null,
+            dueDate: remote.dueDate ?? null,
+            paymentDate: remote.paymentDate ?? null,
+            clientPaymentDate: remote.clientPaymentDate ?? null,
+            creditDate: remote.creditDate ?? null,
+            estimatedCreditDate: remote.estimatedCreditDate ?? null,
+            billingType: remote.billingType ?? null,
+          },
+        });
+        reconciledPayments += 1;
       }
     } catch (error) {
-      errors.push(`payment:${charge.asaasPaymentId}:${error instanceof Error ? error.message : String(error)}`);
+      errors.push(
+        `payment:${candidate.asaasPaymentId}:${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -1313,10 +1493,52 @@ export async function reconcileBilateral(
     asaasPaymentsScanned += payments.length;
 
     for (const payment of payments) {
-      // Ignorar deletados
-      if (payment.deleted) continue;
-
       try {
+        if (payment.deleted) {
+          const localCharge = await prisma.charge.findFirst({
+            where: {
+              contaId: options.contaId,
+              asaasPaymentId: payment.id,
+            },
+            select: { id: true, status: true, externalReference: true },
+          });
+
+          if (localCharge && localCharge.status !== 'CANCELED') {
+            if (!dryRun) {
+              await handlePaymentWebhook(options.contaId, {
+                event: 'PAYMENT_DELETED',
+                payment: {
+                  id: payment.id,
+                  status: 'DELETED',
+                  deleted: true,
+                  value: Number(payment.value ?? 0),
+                  netValue: Number(payment.netValue ?? payment.value ?? 0),
+                  originalValue: typeof payment.originalValue === 'number' ? payment.originalValue : null,
+                  externalReference: payment.externalReference ?? localCharge.externalReference ?? undefined,
+                  subscription: payment.subscription ?? null,
+                  installment: payment.installment ?? null,
+                  installmentNumber: null,
+                  dueDate: payment.dueDate ?? null,
+                  paymentDate: payment.paymentDate ?? null,
+                  clientPaymentDate: payment.clientPaymentDate ?? null,
+                  creditDate: payment.creditDate ?? null,
+                  estimatedCreditDate: payment.estimatedCreditDate ?? null,
+                  billingType: payment.billingType ?? null,
+                },
+              });
+            }
+            driftItems.push({
+              asaasPaymentId: payment.id,
+              asaasStatus: 'DELETED',
+              localChargeId: localCharge.id,
+              localStatus: localCharge.status,
+              driftType: 'STATUS_MISMATCH',
+              externalReference: payment.externalReference ?? null,
+            });
+          }
+          continue;
+        }
+
         // Buscar Charge local pelo asaasPaymentId
         const localCharge = await prisma.charge.findFirst({
           where: {

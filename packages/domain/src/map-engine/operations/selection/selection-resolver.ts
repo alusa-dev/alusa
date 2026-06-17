@@ -161,3 +161,34 @@ export function resolveOperationSelection(
     blocked,
   };
 }
+
+const DEFAULT_CANVAS_SELECTION_OPTIONS = {
+  preferSeatGroups: true,
+  includeSectionSeats: true,
+} as const;
+
+/** Collapses member seats into their parent seat groups for canvas drag/transform. */
+export function resolveCanvasSelection(
+  map: EventMapDTO,
+  selection: MapSelection,
+  options?: {
+    includeSectionSeats?: boolean;
+    blockLocked?: boolean;
+    blockSoldSeats?: boolean;
+    preferSeatGroups?: boolean;
+  },
+): ResolvedSelection {
+  return resolveOperationSelection(map, selection, {
+    ...DEFAULT_CANVAS_SELECTION_OPTIONS,
+    ...options,
+  });
+}
+
+export function resolveCanvasNodeIds(map: EventMapDTO, selection: MapSelection): string[] {
+  const resolved = resolveCanvasSelection(map, selection);
+  return [
+    ...resolved.objectIds.map((id) => `node-${id}`),
+    ...resolved.seatIds.map((id) => `node-${id}`),
+    ...resolved.seatGroupIds.map((id) => `node-seatgroup-${id}`),
+  ];
+}

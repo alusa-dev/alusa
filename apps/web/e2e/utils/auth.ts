@@ -32,6 +32,16 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
     select: { id: true },
   });
 
+  await prisma.usuarioConta.create({
+    data: {
+      usuarioId: user.id,
+      contaId: conta.id,
+      role: 'ADMIN',
+      status: 'ATIVO',
+      lastAccessedAt: new Date(),
+    },
+  });
+
   await prisma.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
 
   const secret = process.env.NEXTAUTH_SECRET;

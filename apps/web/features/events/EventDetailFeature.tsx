@@ -14,11 +14,11 @@ import { EventFinancialPanel } from './financial/EventFinancialPanel';
 import { EventParticipantsPanel } from './participants/EventParticipantsPanel';
 import { EventEmptyState as EmptyState } from './shared/EventEmptyState';
 import { eventQueryKeys } from './shared/event-query-keys';
-import { useEventResources } from './shared/useEventResources';
+import { useEventScopedResources } from './shared/useEventScopedResources';
 import { EventTicketsPanel } from './tickets/EventTicketsPanel';
 
 export function EventDetailFeature({ eventId }: { eventId: string }) {
-  const resources = useEventResources();
+  const scopedResources = useEventScopedResources(eventId);
   const eventQuery = useQuery({ queryKey: eventQueryKeys.event(eventId), queryFn: () => getEvent(eventId) });
   const participantsQuery = useQuery({
     queryKey: ['events', 'participants', eventId],
@@ -48,7 +48,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
             <p className="text-xs text-slate-500 mt-1">Gestão de entregas, tamanhos definidos e status de pagamentos.</p>
           </CardHeader>
           <CardContent className="p-0">
-            <EventCostumesPanel eventId={eventId} resources={resources.data} />
+            <EventCostumesPanel eventId={eventId} scopedResources={scopedResources.data} />
           </CardContent>
         </Card>
       )}
@@ -60,7 +60,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
             <p className="text-xs text-slate-500 mt-1">Acompanhe lotes ativos, vendas realizadas e cortesias emitidas.</p>
           </CardHeader>
           <CardContent className="p-0">
-            <EventTicketsPanel eventId={eventId} resources={resources.data} />
+            <EventTicketsPanel eventId={eventId} scopedResources={scopedResources.data} />
           </CardContent>
         </Card>
       )}

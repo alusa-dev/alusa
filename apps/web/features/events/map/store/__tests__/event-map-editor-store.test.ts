@@ -784,7 +784,7 @@ describe('event-map-editor-store history', () => {
     expect(store.getState().past).toHaveLength(4);
   });
 
-  it('normalizes legacy initial area names while keeping the artboard size fixed', () => {
+  it('preserves custom artboard size when updating level', () => {
     const store = useEventMapEditorStore;
     store.getState().loadMap({
       ...createMap(),
@@ -792,14 +792,14 @@ describe('event-map-editor-store history', () => {
     });
 
     expect(store.getState().map?.levels[0]?.name).toBe('Ambiente 1');
-    expect(store.getState().map?.levels[0]?.widthPx).toBe(1440);
-    expect(store.getState().map?.levels[0]?.heightPx).toBe(900);
+    expect(store.getState().map?.levels[0]?.widthPx).toBe(1600);
+    expect(store.getState().map?.levels[0]?.heightPx).toBe(1000);
 
     store.getState().updateLevel('level-1', { name: 'Mezanino', widthPx: 3000, heightPx: 2000 });
 
     expect(store.getState().map?.levels[0]?.name).toBe('Mezanino');
-    expect(store.getState().map?.levels[0]?.widthPx).toBe(1440);
-    expect(store.getState().map?.levels[0]?.heightPx).toBe(900);
+    expect(store.getState().map?.levels[0]?.widthPx).toBe(3000);
+    expect(store.getState().map?.levels[0]?.heightPx).toBe(2000);
   });
 
   it('normalizes and reapplies corridor reflow on loadMap and toPayload', () => {

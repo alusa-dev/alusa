@@ -45,16 +45,23 @@ import {
 } from '@/features/financeiro/pagamentos/payment-history-utils';
 import type {
   FinanceiroPagamentoAlunoResumoDTO,
+  FinanceiroPagamentoPessoaResumoDTO,
   FinanceiroPagamentoHistoricoResumoDTO,
 } from '@/features/financeiro/dtos';
 
 const TIPO_OPTIONS = [{ value: 'TODOS', label: 'Todas categorias' }, ...PAYMENT_HISTORY_CATEGORY_FILTER_OPTIONS];
 
-export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
+export function PagamentoAlunoDetalhesClient({
+  alunoId,
+  personType = 'ALUNO',
+}: {
+  alunoId: string;
+  personType?: 'ALUNO' | 'RESPONSAVEL';
+}) {
   const router = useRouter();
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [aluno, setAluno] = useState<FinanceiroPagamentoAlunoResumoDTO | null>(null);
+  const [pessoa, setPessoa] = useState<FinanceiroPagamentoPessoaResumoDTO | null>(null);
   const [cobrancas, setCobrancas] = useState<HistoricoCobranca[]>([]);
   const [resumo, setResumo] = useState<FinanceiroPagamentoHistoricoResumoDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +90,11 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
       }
 
       try {
-        const res = await fetch(`/api/financeiro/pagamentos/aluno/${alunoId}`, {
+        const endpoint =
+          personType === 'RESPONSAVEL'
+            ? `/api/financeiro/pagamentos/responsavel/${alunoId}`
+            : `/api/financeiro/pagamentos/aluno/${alunoId}`;
+        const res = await fetch(endpoint, {
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -92,12 +103,19 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
           throw new Error(data?.error?.message || 'Erro ao carregar dados');
         }
         const payload = await res.json();
-        if (!payload?.success || !payload?.data?.aluno) {
+        const loadedPessoa = payload?.data?.pessoa ?? payload?.data?.aluno;
+        if (!payload?.success || !loadedPessoa) {
           throw new Error('Resposta inválida do servidor');
         }
         if (controller.signal.aborted) return;
 
-        setAluno(payload.data.aluno);
+        setPessoa(
+          payload.data.pessoa ?? {
+            ...payload.data.aluno,
+            tipo: 'ALUNO',
+            alunosVinculados: [{ id: payload.data.aluno.id, nome: payload.data.aluno.nome }],
+          },
+        );
         setCobrancas(payload.data.cobrancas || []);
         setResumo(payload.data.resumo ?? null);
         hasLoadedOnceRef.current = true;
@@ -118,13 +136,13 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
         }
       }
     },
-    [alunoId],
+    [alunoId, personType],
   );
 
   useEffect(() => {
     hasLoadedOnceRef.current = false;
     setHasLoadedOnce(false);
-    setAluno(null);
+    setPessoa(null);
     setCobrancas([]);
     setResumo(null);
     setError(null);
@@ -171,7 +189,7 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
     );
   }
 
-  if (error || !aluno) {
+  if (error || !pessoa) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-8">
         <button
@@ -198,11 +216,12 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
     formaFilter,
   });
 
-  const totalPagoFiltrado = filtradas.reduce(
-    (sum, cobranca) => sum + (cobranca.pagamento ? cobranca.pagamento.valorPago : 0),
+  const movimentacoesFiltradas = filtradas.filter((cobranca) => cobranca.pagamento);
+  const totalPagoFiltrado = movimentacoesFiltradas.reduce(
+    (sum, cobranca) => sum + (cobranca.pagamento?.valorPago ?? 0),
     0,
   );
-  const totalFiltrado = filtradas.length;
+  const totalFiltrado = movimentacoesFiltradas.length;
   const filtrosAtivos = [
     Boolean(searchTerm.trim()),
     Boolean(dataInicio),
@@ -238,7 +257,7 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
       'Pagador',
       'Status',
     ];
-    const rows = filtradas.map((cobranca) => [
+    const rows = movimentacoesFiltradas.map((cobranca) => [
       getCategoryLabel(cobranca.category),
       cobranca.description ?? '',
       formatCurrency(resolveValorExibido(cobranca)),
@@ -253,7 +272,7 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `pagamentos-${aluno.nome.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
+    anchor.download = `pagamentos-${pessoa.nome.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
@@ -275,23 +294,31 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-5">
             <PersonAvatar
-              name={aluno.nome}
-              src={aluno.avatarUrl ?? aluno.foto}
+              name={pessoa.nome}
+              src={pessoa.avatarUrl ?? pessoa.foto}
               size="xl"
               className="border-2 border-white"
               fallbackClassName="bg-[linear-gradient(135deg,#9333ea_0%,#7c3aed_100%)] text-xl font-bold text-white"
             />
             <div className="space-y-1">
               <h1 className="text-[24px] font-bold tracking-tight text-slate-900">Histórico de Pagamento</h1>
-              <div className="flex items-center gap-2 text-[14px] text-slate-500">
-                <span className="font-semibold text-slate-700">{aluno.nome}</span>
-                {aluno.cpf ? (
+              <div className="flex flex-wrap items-center gap-2 text-[14px] text-slate-500">
+                <span className="font-semibold text-slate-700">{pessoa.nome}</span>
+                <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-bold uppercase text-violet-700">
+                  {pessoa.tipo === 'RESPONSAVEL' ? 'Responsável' : 'Aluno'}
+                </span>
+                {pessoa.cpf ? (
                   <>
                     <span className="h-1 w-1 rounded-full bg-slate-300" />
-                    <span>{aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}</span>
+                    <span>{pessoa.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}</span>
                   </>
                 ) : null}
               </div>
+              {pessoa.tipo === 'RESPONSAVEL' && pessoa.alunosVinculados.length > 0 ? (
+                <p className="max-w-xl text-[12px] text-slate-500">
+                  Alunos vinculados: {pessoa.alunosVinculados.map((aluno) => aluno.nome).join(', ')}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -493,17 +520,17 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
         </div>
       </div>
 
-      {cobrancas.length === 0 ? (
+      {movimentacoesFiltradas.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
-          <p className="text-sm text-gray-500">Nenhum pagamento encontrado para este aluno.</p>
-        </div>
-      ) : filtradas.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <p className="text-sm text-gray-500">Nenhum resultado com os filtros selecionados.</p>
+          <p className="text-sm text-gray-500">
+            {cobrancas.length === 0
+              ? 'Nenhum histórico financeiro encontrado para esta pessoa.'
+              : 'Nenhum resultado com os filtros selecionados.'}
+          </p>
         </div>
       ) : (
         <PaymentHistorySections
-          cobrancas={filtradas}
+          cobrancas={movimentacoesFiltradas}
           showEmptyCategories={categoryFilter === 'TODOS'}
         />
       )}
@@ -511,7 +538,7 @@ export function PagamentoAlunoDetalhesClient({ alunoId }: { alunoId: string }) {
       <ExportPaidReceiptsDialog
         open={exportReceiptsOpen}
         onOpenChange={setExportReceiptsOpen}
-        aluno={aluno}
+        aluno={pessoa as unknown as FinanceiroPagamentoAlunoResumoDTO}
         items={cobrancas}
       />
     </div>

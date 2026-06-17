@@ -146,6 +146,6 @@ describe('event map local draft', () => {
       name: 'Setor local',
       lot: { id: 'lot-1', name: 'Lote 1' },
     });
-    expect(merged.counts).toEqual({ levels: 1, sections: 1, seats: 1, availableSeats: 1 });
+    expect(merged.counts).toEqual({ levels: 1, sections: 1, seats: 1, availableSeats: 1, orders: 0 });
   });
 });

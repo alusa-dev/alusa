@@ -1,3 +1,5 @@
+import type { EventSeatGroupDTO } from '../types/event-map-types.js';
+
 export type SeatGridNumberingDirection = 'left-to-right' | 'right-to-left';
 
 export type SeatGridConfig = {
@@ -119,13 +121,36 @@ function parseSeatNumber(seat: SeatGridSequenceSeat) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
 }
 
-function inferLastSeatGridPreset(seats: SeatGridSequenceSeat[], levelId: string | null | undefined) {
-  const usableSeats = seats.filter((seat) => {
-    if (levelId && seat.levelId && seat.levelId !== levelId) return false;
-    return typeof seat.x === 'number' && typeof seat.y === 'number';
-  });
+function findLastNumberedSeat(seats: SeatGridSequenceSeat[]) {
+  let best: SeatGridSequenceSeat | null = null;
+  let maxRowIndex = -1;
+  let maxSeatNumberInMaxRow = 0;
+
+  for (const seat of seats) {
+    const rowLabel = parseSeatRowLabel(seat);
+    if (!rowLabel) continue;
+    const rowIndex = lettersToIndex(rowLabel);
+    const seatNumber = parseSeatNumber(seat) ?? 0;
+    if (rowIndex > maxRowIndex) {
+      maxRowIndex = rowIndex;
+      maxSeatNumberInMaxRow = seatNumber;
+      best = seat;
+      continue;
+    }
+    if (rowIndex === maxRowIndex && seatNumber >= maxSeatNumberInMaxRow) {
+      maxSeatNumberInMaxRow = seatNumber;
+      best = seat;
+    }
+  }
+
+  return best;
+}
+
+function inferLastSeatGridPreset(seats: SeatGridSequenceSeat[]) {
+  const usableSeats = seats.filter((seat) => typeof seat.x === 'number' && typeof seat.y === 'number');
   if (usableSeats.length === 0) return {};
 
+  const lastNumberedSeat = findLastNumberedSeat(usableSeats);
   const sortedByPosition = [...usableSeats].sort((a, b) => {
     const ay = Number(a.y ?? 0);
     const by = Number(b.y ?? 0);
@@ -133,7 +158,12 @@ function inferLastSeatGridPreset(seats: SeatGridSequenceSeat[], levelId: string 
     return Number(a.x ?? 0) - Number(b.x ?? 0);
   });
   const lastSeat = sortedByPosition.at(-1);
-  const lastSize = typeof lastSeat?.size === 'number' ? lastSeat.size : undefined;
+  const lastSize =
+    typeof lastNumberedSeat?.size === 'number'
+      ? lastNumberedSeat.size
+      : typeof lastSeat?.size === 'number'
+        ? lastSeat.size
+        : undefined;
 
   const rows = new Map<string, SeatGridSequenceSeat[]>();
   for (const seat of usableSeats) {
@@ -172,15 +202,14 @@ function inferLastSeatGridPreset(seats: SeatGridSequenceSeat[], levelId: string 
 
 export function suggestNextSeatGridConfig(
   seats: SeatGridSequenceSeat[],
-  levelId: string | null | undefined,
+  _levelId: string | null | undefined = null,
   baseConfig: SeatGridConfig = DEFAULT_SEAT_GRID_CONFIG,
 ): SeatGridConfig {
   let maxRowIndex = -1;
   let maxSeatNumberInMaxRow = 0;
-  const inheritedPreset = inferLastSeatGridPreset(seats, levelId);
+  const inheritedPreset = inferLastSeatGridPreset(seats);
 
   for (const seat of seats) {
-    if (levelId && seat.levelId && seat.levelId !== levelId) continue;
     const rowLabel = parseSeatRowLabel(seat);
     if (!rowLabel) continue;
     const rowIndex = lettersToIndex(rowLabel);
@@ -203,6 +232,39 @@ export function suggestNextSeatGridConfig(
     rowPrefix: indexToLetters(maxRowIndex),
     startNumber: maxSeatNumberInMaxRow + 1,
   });
+}
+
+export function computeSeatGridSeatLabel(
+  rowIndex: number,
+  columnIndex: number,
+  config: Pick<SeatGridConfig, 'rowPrefix' | 'startNumber' | 'numberingDirection' | 'columns'>,
+) {
+  const rowLabel = getSeatGridRowLabel(rowIndex, config.rowPrefix);
+  const visualColumnIndex =
+    config.numberingDirection === 'right-to-left' ? config.columns - columnIndex - 1 : columnIndex;
+  const seatNumber = String(config.startNumber + visualColumnIndex);
+  const displayLabel = `${rowLabel}${seatNumber}`;
+  return { rowLabel, seatNumber, displayLabel };
+}
+
+export function suggestNextSeatGroupNumbering(
+  seats: SeatGridSequenceSeat[],
+  group: Pick<EventSeatGroupDTO, 'columns' | 'numbering'>,
+): Pick<SeatGridConfig, 'rowPrefix' | 'startNumber' | 'numberingDirection' | 'columns'> {
+  const numbering = (group.numbering ?? {}) as Record<string, unknown>;
+  const numberingDirection = numbering.direction === 'right-to-left' ? 'right-to-left' : 'left-to-right';
+  const suggested = suggestNextSeatGridConfig(seats, null, {
+    ...DEFAULT_SEAT_GRID_CONFIG,
+    columns: group.columns,
+    numberingDirection,
+  });
+
+  return {
+    rowPrefix: suggested.rowPrefix,
+    startNumber: suggested.startNumber,
+    numberingDirection: suggested.numberingDirection,
+    columns: group.columns,
+  };
 }
 
 export function buildSeatGridPreview(

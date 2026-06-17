@@ -3,11 +3,13 @@ import {
   uploadCobrancaArquivoResultDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaArquivoToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { parseOperationalChargeId } from '@alusa/finance';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 
 export type CobrancaRef =
   | { kind: 'cobranca'; id: string }
-  | { kind: 'charge'; id: string };
+  | { kind: 'charge'; id: string }
+  | { kind: 'event'; id: string };
 
 export async function resolveCobrancaRef(
   tx: TenantTransactionClient,
@@ -30,10 +32,43 @@ export async function resolveCobrancaRef(
     return { kind: 'charge', id: charge.id };
   }
 
+  const parsed = parseOperationalChargeId(id);
+  if (!parsed) {
+    return null;
+  }
+
+  if (parsed.kind === 'event-entry') {
+    const entry = await tx.eventFinancialEntry.findFirst({
+      where: { id: parsed.entityId, contaId },
+      select: { id: true },
+    });
+    if (entry) return { kind: 'event', id };
+  }
+
+  if (parsed.kind === 'event-ticket-sale') {
+    const sale = await tx.eventTicketSale.findFirst({
+      where: { id: parsed.entityId, contaId },
+      select: { id: true },
+    });
+    if (sale) return { kind: 'event', id };
+  }
+
+  if (parsed.kind === 'event-map-order') {
+    const order = await tx.eventMapOrder.findFirst({
+      where: { id: parsed.entityId, contaId },
+      select: { id: true },
+    });
+    if (order) return { kind: 'event', id };
+  }
+
   return null;
 }
 
 export async function listArquivosForCobranca(tx: TenantTransactionClient, ref: CobrancaRef) {
+  if (ref.kind === 'event') {
+    return listCobrancaArquivosResultDTOSchema.parse({ arquivos: [] });
+  }
+
   const rows =
     ref.kind === 'cobranca'
       ? await tx.arquivoCobranca.findMany({
@@ -64,6 +99,10 @@ export async function createArquivoForCobranca(
   ref: CobrancaRef,
   data: CreateArquivoInput,
 ) {
+  if (ref.kind === 'event') {
+    throw new Error('Anexos não estão disponíveis para cobranças de evento.');
+  }
+
   const row =
     ref.kind === 'cobranca'
       ? await tx.arquivoCobranca.create({

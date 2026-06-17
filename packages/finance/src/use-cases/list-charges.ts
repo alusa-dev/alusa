@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
 export type ListChargesInput = {
   contaId: string;
@@ -13,6 +14,9 @@ export type ChargeListItem = {
   status: string;
   statusUpdatedAt: string;
   asaasPaymentId: string | null;
+  asaasStatus: string | null;
+  liquidacaoStatus: string | null;
+  displayStatus: ChargeDisplayStatus;
   valor: number | null;
   vencimento: string | null;
   matriculaId: string | null;
@@ -34,6 +38,8 @@ export async function listCharges(input: ListChargesInput): Promise<{ items: Cha
         id: true,
         status: true,
         asaasPaymentId: true,
+        asaasStatus: true,
+        liquidacaoStatus: true,
         externalReference: true,
         statusUpdatedAt: true,
         createdAt: true,
@@ -61,6 +67,14 @@ export async function listCharges(input: ListChargesInput): Promise<{ items: Cha
       status: item.status,
       statusUpdatedAt: item.statusUpdatedAt.toISOString(),
       asaasPaymentId: item.asaasPaymentId ?? null,
+      asaasStatus: item.asaasStatus ?? null,
+      liquidacaoStatus: item.liquidacaoStatus ?? null,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: item.status,
+        asaasStatus: item.asaasStatus,
+        liquidacaoStatus: item.liquidacaoStatus,
+        hasAsaasLink: Boolean(item.asaasPaymentId),
+      }),
       valor: item.cobranca?.valor != null ? Number(item.cobranca.valor) : null,
       vencimento: item.cobranca?.vencimento ? item.cobranca.vencimento.toISOString() : null,
       matriculaId: item.cobranca?.matriculaId ?? null,

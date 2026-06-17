@@ -14,6 +14,7 @@ import { ensureCustomer } from './ensure-customer';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { deriveDeterministicId, buildSubscriptionExternalReference, buildSafeAsaasIdempotencyKey } from '../core';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
 
 export type CreateSubscriptionInput = {
   contaId: string;
@@ -360,6 +361,25 @@ export async function createSubscription(
         fine: input.fine ?? null,
       },
     });
+
+    if (updated.asaasSubscriptionId) {
+      const fiscalSync = await syncSubscriptionFiscalSettings({
+        contaId: input.contaId,
+        subscriptionId: updated.id,
+        asaasSubscriptionId: updated.asaasSubscriptionId,
+        kind: 'ACADEMIC',
+        actor: input.actor,
+      });
+
+      if (!fiscalSync.success) {
+        console.warn('[finance][createSubscription] falha ao sincronizar invoiceSettings', {
+          contaId: input.contaId,
+          subscriptionId: updated.id,
+          asaasSubscriptionId: updated.asaasSubscriptionId,
+          error: fiscalSync.error,
+        });
+      }
+    }
 
     return ok({
       subscriptionId: updated.id,

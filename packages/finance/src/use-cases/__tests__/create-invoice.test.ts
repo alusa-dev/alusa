@@ -108,7 +108,7 @@ describe('createInvoice', () => {
       chargeId: 'c1',
       externalReference: 'invoice:c1',
       asaasInvoiceId: 'inv_1',
-      status: 'REQUESTED',
+      status: 'SCHEDULED',
       statusUpdatedAt: new Date('2026-01-04T00:00:00.000Z'),
       pdfUrl: null,
       xmlUrl: null,

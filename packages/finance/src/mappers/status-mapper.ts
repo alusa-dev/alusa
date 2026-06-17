@@ -58,12 +58,12 @@ export function getStatusBadgeConfig(status: PaymentStatus): {
 } {
   const configs: Record<PaymentStatus, ReturnType<typeof getStatusBadgeConfig>> = {
     PENDING: { variant: 'warning', label: 'Pendente' },
-    CONFIRMED: { variant: 'success', label: 'Confirmado' },
+    CONFIRMED: { variant: 'success', label: 'Confirmada' },
     OVERDUE: { variant: 'destructive', label: 'Vencido' },
-    REFUNDED: { variant: 'secondary', label: 'Reembolsado' },
-    CANCELLED: { variant: 'secondary', label: 'Cancelado' },
+    REFUNDED: { variant: 'secondary', label: 'Estornada' },
+    CANCELLED: { variant: 'secondary', label: 'Cancelada' },
     CHARGEBACK: { variant: 'destructive', label: 'Chargeback' },
-    RECEIVED_IN_CASH: { variant: 'outline', label: 'Recebido em mãos' },
+    RECEIVED_IN_CASH: { variant: 'outline', label: 'Recebida em dinheiro' },
   };
 
   return configs[status] || { variant: 'default', label: status };

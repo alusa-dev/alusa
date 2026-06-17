@@ -233,8 +233,7 @@ async function seedScenario(page: Page): Promise<Scenario> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers de localização do painel de propriedades do corredor
-// Smart corridors: apenas "Espaçamento dos assentos" (sem seção Corredor/Orientação/AutoFit).
+// Helpers de localização do painel de propriedades do corredor (MVP: corredor visual).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getSpacingSection(page: Page) {
@@ -562,7 +561,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await expect(page.getByRole('menuitem', { name: /corredor/i })).toBeVisible();
     });
 
-    test('drag no canvas cria objeto do tipo CORRIDOR e exibe painel de espaçamento', async ({ page }) => {
+    test('drag no canvas cria objeto CORRIDOR e exibe aviso de corredor visual', async ({ page }) => {
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -570,17 +569,17 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       // Drag vertical: estreito (10% da largura) e alto (50% da altura)
       await dragOnCanvas(page, box, 0.55, 0.15, 0.62, 0.80);
 
-      const spacingSection = getSpacingSection(page);
-      await expect(spacingSection).toBeVisible({ timeout: 8_000 });
-      await expect(spacingSection.locator('input').nth(0)).toBeVisible();
-      await expect(spacingSection.locator('input').nth(1)).toBeVisible();
-      await expect(spacingSection.locator('input').nth(2)).toBeVisible();
-      await expect(spacingSection.locator('input').nth(3)).toBeVisible();
+      await expect(page.getByText(/corredor visual/i)).toBeVisible({ timeout: 8_000 });
 
-      test.info().annotations.push({ type: 'info', description: 'Painel de espaçamento do corredor carregado corretamente' });
+      const snap = await getMapSnapshot(page, scenario);
+      const corridors = (snap.objects as Array<{ type: string }> ?? []).filter((o) => o.type === 'CORRIDOR');
+      expect(corridors).toHaveLength(1);
+
+      test.info().annotations.push({ type: 'info', description: 'Corredor visual criado com painel informativo' });
     });
 
     test('corredor vertical cria gap horizontal ampliado em todas as linhas', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -627,6 +626,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('corredor vertical NÃO altera espaçamento vertical', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -666,6 +666,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('corredor horizontal cria gap vertical ampliado em todas as colunas', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -691,6 +692,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('corredor horizontal NÃO altera espaçamento horizontal', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -727,6 +729,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('dois corredores verticais criam dois gaps horizontais distintos', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       // Primeiro corredor (entre colunas ~3-4)
@@ -773,6 +776,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('dois corredores horizontais criam dois gaps verticais distintos', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       // Primeiro corredor (entre linhas ~B-C)
@@ -817,6 +821,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('V + H sobrepostos: gap horizontal E vertical abertos', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       // Corredor vertical no centro
@@ -889,6 +894,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('seatGapLeft=40 empurra mais assentos à esquerda que à direita', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       await activateCorridorTool(page);
@@ -1118,8 +1124,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       await activateCorridorTool(page);
       await dragOnCanvas(page, box, 0.52, 0.10, 0.58, 0.88);
 
-      const spacingSection = getSpacingSection(page);
-      await expect(spacingSection).toBeVisible({ timeout: 8_000 });
+      await expect(page.getByText(/corredor visual/i)).toBeVisible({ timeout: 8_000 });
 
       const issues: string[] = [];
 
@@ -1137,21 +1142,6 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
       });
 
       panelOverflow.forEach((msg) => issues.push(msg));
-
-      // Campos de espaçamento visíveis (PanelField sem for → busca por label text)
-      const labelNames = ['Superior', 'Direita', 'Inferior', 'Esquerda'];
-      for (let idx = 0; idx < labelNames.length; idx++) {
-        const el = spacingSection.locator('input').nth(idx);
-        if (await el.isVisible()) {
-          const elBox = await el.boundingBox();
-          if (elBox && elBox.y + elBox.height > 720) {
-            issues.push(`Campo "${labelNames[idx]}" cortado pelo viewport (bottom=${(elBox.y + elBox.height).toFixed(0)}px)`);
-          }
-          if (elBox && elBox.x + elBox.width > 1280) {
-            issues.push(`Campo "${labelNames[idx]}" fora do viewport horizontal`);
-          }
-        }
-      }
 
       // Padding dos campos: verificar que não há inputs colados nas bordas
       const inputPaddingIssue = await page.evaluate(() => {
@@ -1272,6 +1262,7 @@ test.describe('Map Editor – Seat Grid & Corridors', () => {
     });
 
     test('corredor com rotação 90° aplica reflow no eixo correto', async ({ page }) => {
+      test.skip(true, 'MVP: reflow de assentos desativado');
       const { box } = await openEditor(page, scenario);
 
       // Cria um corredor inicialmente horizontal

@@ -44,6 +44,21 @@ export type SmartCorridorLayout = {
   thickness: number;
 };
 
+/** MVP: corredores são apenas visuais; reflow de assentos fica desligado até pós-MVP. */
+export const SMART_CORRIDOR_SEAT_REFLOW_ENABLED = false;
+
+export function isSmartCorridorSeatReflowEnabled() {
+  return SMART_CORRIDOR_SEAT_REFLOW_ENABLED;
+}
+
+export function isSmartCorridorObject(corridor: EventMapObjectDTO) {
+  return (
+    corridor.type === 'CORRIDOR' &&
+    corridor.data[SMART_CORRIDOR_KIND_KEY] === true &&
+    isSmartCorridorSeatReflowEnabled()
+  );
+}
+
 export const SMART_CORRIDOR_KIND_KEY = 'smartCorridor';
 export const CORRIDOR_THICKNESS_KEY = 'corridorThickness';
 export const CORRIDOR_SPLIT_X_KEY = 'corridorSplitX';
@@ -147,28 +162,24 @@ export function getSmartCorridorCoreRect(corridor: EventMapObjectDTO): BoundsRec
 export function normalizeSmartCorridorObject(corridor: EventMapObjectDTO) {
   corridor.rotation = normalizeRotation(corridor.rotation ?? 0);
 
-  if (corridor.data[SMART_CORRIDOR_KIND_KEY]) {
-    const rawThickness = corridor.data[CORRIDOR_THICKNESS_KEY];
-    if (rawThickness !== undefined) {
-      const thickness = Number(rawThickness);
-      if (Number.isFinite(thickness) && thickness < MIN_CORRIDOR_THICKNESS) {
-        corridor.data[CORRIDOR_THICKNESS_KEY] = MIN_CORRIDOR_THICKNESS;
-      }
+  const rawThickness = corridor.data[CORRIDOR_THICKNESS_KEY];
+  if (rawThickness !== undefined) {
+    const thickness = Number(rawThickness);
+    if (Number.isFinite(thickness) && thickness < MIN_CORRIDOR_THICKNESS) {
+      corridor.data[CORRIDOR_THICKNESS_KEY] = MIN_CORRIDOR_THICKNESS;
     }
+  }
 
-    const width = corridor.width ?? DEFAULT_CORRIDOR_THICKNESS;
-    const height = corridor.height ?? 280;
-    const axis = width >= height ? 'horizontal' : 'vertical';
+  const width = corridor.width ?? DEFAULT_CORRIDOR_THICKNESS;
+  const height = corridor.height ?? 280;
+  const axis = width >= height ? 'horizontal' : 'vertical';
 
-    if (axis === 'vertical') {
-      if (corridor.width != null && corridor.width < MIN_CORRIDOR_THICKNESS) {
-        corridor.width = MIN_CORRIDOR_THICKNESS;
-      }
-    } else {
-      if (corridor.height != null && corridor.height < MIN_CORRIDOR_THICKNESS) {
-        corridor.height = MIN_CORRIDOR_THICKNESS;
-      }
+  if (axis === 'vertical') {
+    if (corridor.width != null && corridor.width < MIN_CORRIDOR_THICKNESS) {
+      corridor.width = MIN_CORRIDOR_THICKNESS;
     }
+  } else if (corridor.height != null && corridor.height < MIN_CORRIDOR_THICKNESS) {
+    corridor.height = MIN_CORRIDOR_THICKNESS;
   }
 }
 
@@ -209,9 +220,9 @@ export function reconcileCorridorGeometry(corridor: EventMapObjectDTO) {
 
   corridor.data = {
     ...corridor.data,
-    [SMART_CORRIDOR_KIND_KEY]: true,
+    [SMART_CORRIDOR_KIND_KEY]: isSmartCorridorSeatReflowEnabled(),
     [CORRIDOR_AXIS_KEY]: readStoredCorridorAxis(corridor),
-    [CORRIDOR_AUTO_FIT_KEY]: true,
+    [CORRIDOR_AUTO_FIT_KEY]: isSmartCorridorSeatReflowEnabled(),
     [CORRIDOR_THICKNESS_KEY]: layout.thickness,
     [CORRIDOR_CORE_WIDTH_KEY]: layout.axis === 'vertical' ? layout.thickness : core.width,
     [CORRIDOR_CORE_HEIGHT_KEY]: layout.axis === 'horizontal' ? layout.thickness : core.height,

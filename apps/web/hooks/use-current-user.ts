@@ -8,6 +8,9 @@ export interface CurrentUser {
   name: string;
   role: string;
   contaId: string | null; // null quando ainda não carregado ou inexistente
+  financeIntegrationMode?: string | null;
+  externalAsaasOnboardingStatus?: string | null;
+  asaasApiKeyStatus?: string | null;
 }
 
 export function useCurrentUser() {

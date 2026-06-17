@@ -119,6 +119,10 @@ describe('listOperationalCharges', () => {
     expect(result.items.map((i) => i.status)).toEqual(
       expect.arrayContaining(['PENDING', 'OVERDUE']),
     );
+    expect(result.items[0]?.displayStatus).toMatchObject({
+      label: expect.any(String),
+      variant: expect.any(String),
+    });
   });
 
   it('retorna lista vazia quando não há itens operacionais', async () => {

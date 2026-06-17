@@ -515,3 +515,4 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
 }
 
 export * from './map/map-rules';
+export * from './map/ticket-sale-access';

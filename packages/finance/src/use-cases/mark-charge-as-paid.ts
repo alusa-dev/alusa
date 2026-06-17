@@ -3,7 +3,7 @@
  * @description Use-case para marcar cobrança como paga manualmente (FASE 5):
  * - Se tem asaasPaymentId: usar confirmCashPayment (receber em dinheiro)
  * - Se não tem Asaas (offline puro): marcar local e sinalizar "fora do Asaas"
- * - Status final confirma via Asaas/webhook quando aplicável
+ * - Após confirmar no Asaas, sincroniza estado local (webhook PAYMENT_RECEIVED é complementar)
  */
 
 import { ChargeStatus, StatusCobranca } from '@prisma/client';
@@ -19,6 +19,7 @@ import {
   markPaymentCommandSent,
   registerPaymentCommand,
 } from './payment-command-ledger';
+import { resolveOperationalChargePayment } from './resolve-operational-charge-payment';
 
 // Status que permitem marcação como pago
 const PAYABLE_STATUSES = new Set<StatusCobranca>([
@@ -82,7 +83,7 @@ export type MarkChargeAsPaidResult =
  * 2. Se tem asaasPaymentId:
  *    a. Read-before-write no Asaas
  *    b. Chama confirmCashPayment
- *    c. Status final virá via webhook
+ *    c. Sincroniza estado local via syncPaymentStateFromAsaas (PAYMENT_RECEIVED)
  * 3. Se não tem Asaas (offline):
  *    a. Marca local como PAGO
  *    b. Sinaliza como "recebido fora do Asaas"
@@ -119,18 +120,33 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
       })
     : null;
 
-  if (!cobranca && !standaloneCharge) {
+  const operationalCharge =
+    !cobranca && !standaloneCharge
+      ? await resolveOperationalChargePayment(contaId, chargeId)
+      : null;
+
+  if (!cobranca && !standaloneCharge && !operationalCharge) {
     return { success: false, error: 'Cobrança não encontrada', code: 'NOT_FOUND' };
   }
 
   const entityType = cobranca ? 'Cobranca' : 'Charge';
   const commandEntityType = cobranca ? 'COBRANCA' : 'CHARGE';
-  const entityId = cobranca?.id ?? standaloneCharge!.id;
-  const asaasPaymentId = cobranca?.asaasPaymentId ?? standaloneCharge?.asaasPaymentId ?? null;
-  const amount = Number(cobranca?.valor ?? standaloneCharge?.value ?? 0);
+  const entityId = cobranca?.id ?? standaloneCharge?.id ?? operationalCharge!.operationalId;
+  const asaasPaymentId =
+    cobranca?.asaasPaymentId ??
+    standaloneCharge?.asaasPaymentId ??
+    operationalCharge?.asaasPaymentId ??
+    null;
+  const amount = Number(
+    cobranca?.valor ?? standaloneCharge?.value ?? operationalCharge?.value ?? 0,
+  );
 
   // Já paga?
-  if (cobranca?.status === StatusCobranca.PAGO || standaloneCharge?.status === ChargeStatus.PAID) {
+  if (
+    cobranca?.status === StatusCobranca.PAGO ||
+    standaloneCharge?.status === ChargeStatus.PAID ||
+    operationalCharge?.localStatus === 'PAID'
+  ) {
     return { success: false, error: 'Cobrança já está paga', code: 'ALREADY_PAID' };
   }
 
@@ -146,6 +162,16 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
     return {
       success: false,
       error: `Cobrança com status ${standaloneCharge.status} não pode ser marcada como paga`,
+      code: 'STATUS_NOT_PAYABLE',
+    };
+  }
+  if (
+    operationalCharge &&
+    !['PENDING', 'OVERDUE', 'PROCESSING'].includes(operationalCharge.localStatus)
+  ) {
+    return {
+      success: false,
+      error: `Cobrança com status ${operationalCharge.localStatus} não pode ser marcada como paga`,
       code: 'STATUS_NOT_PAYABLE',
     };
   }
@@ -166,13 +192,10 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
     const asaasPayment = await readPaymentStatusPreflight(asaasPaymentId, { contaId });
 
     if (ASAAS_ALREADY_PAID_STATUSES.has(asaasPayment.status)) {
-      const eventName = asaasPayment.status === 'RECEIVED_IN_CASH'
-        ? 'PAYMENT_RECEIVED_IN_CASH'
-        : 'PAYMENT_RECEIVED';
       const syncResult = await syncPaymentStateFromAsaas({
         contaId,
         asaasPaymentId,
-        eventName,
+        eventName: 'PAYMENT_RECEIVED',
       });
 
       if (!syncResult.success) {
@@ -233,8 +256,19 @@ export async function markChargeAsPaid(input: MarkChargeAsPaidInput): Promise<Ma
       asaasProcessed = true;
       isOffline = false;
 
-      // Status final virá via webhook PAYMENT_RECEIVED / PAYMENT_RECEIVED_IN_CASH
-      // Não atualizamos status local aqui - webhook faz isso
+      const syncResult = await syncPaymentStateFromAsaas({
+        contaId,
+        asaasPaymentId,
+        eventName: 'PAYMENT_RECEIVED',
+      });
+
+      if (!syncResult.success) {
+        return {
+          success: false,
+          error: `Pagamento confirmado no Asaas, mas a sincronização local falhou: ${syncResult.error}`,
+          code: 'LOCAL_SYNC_FAILED',
+        };
+      }
     }
   } else {
     // 3. Offline: não tem Asaas, marcar local

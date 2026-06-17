@@ -133,13 +133,18 @@ export function buildStandaloneAsaasData(charge: Record<string, unknown>) {
 
   return {
     id: String(charge.asaasPaymentId ?? charge.id ?? ''),
-    status: null,
+    status:
+      typeof charge.asaasStatus === 'string' && charge.asaasStatus.trim().length > 0
+        ? charge.asaasStatus
+        : null,
     value: toNullableNumber(charge.value),
-    netValue: null,
+    netValue: toNullableNumber(charge.asaasNetValue),
+    originalValue: toNullableNumber(charge.asaasOriginalValue),
     dueDate: toDateOnlyString(charge.dueDate as Date | string | null | undefined),
     paymentDate: null,
     clientPaymentDate: null,
-    creditDate: null,
+    creditDate: toDateOnlyString(charge.asaasCreditDate as Date | string | null | undefined),
+    estimatedCreditDate: toDateOnlyString(charge.asaasEstimatedCreditDate as Date | string | null | undefined),
     invoiceUrl: hasOfficialAccessLink(charge.invoiceUrl) ? String(charge.invoiceUrl) : null,
     bankSlipUrl: null,
     billingType: mapFormaPagamentoToBillingType(charge.billingType as string | null | undefined),

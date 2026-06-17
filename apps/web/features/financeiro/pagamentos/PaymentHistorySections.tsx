@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronRight } from '@/components/icons/icons';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Eye } from '@/components/icons/icons';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import Pagination from '@/components/layout/Pagination';
 import { cn } from '@/lib/cn';
 import {
   PRIMARY_PAYMENT_HISTORY_CATEGORIES,
@@ -16,13 +16,14 @@ import {
   formatDate,
   getCategoryLabel,
   isPaidStatus,
-  resolveStatus,
   resolveValorExibido,
   type HistoricoCobranca,
 } from '@/features/financeiro/pagamentos/payment-history-utils';
 
 const PAYMENT_HISTORY_PAGE_SIZE = 3;
 const PAYMENT_HISTORY_PAGINATION_THRESHOLD = 4;
+const PAYMENT_HISTORY_ROW_GRID =
+  'grid grid-cols-[minmax(0,1fr)_92px_100px_100px_108px_44px] items-center gap-x-4';
 
 type PaymentHistorySectionsProps = {
   cobrancas: HistoricoCobranca[];
@@ -88,7 +89,7 @@ function PaymentHistorySection({
   }, [items.length, category]);
 
   const totalGrupo = items.reduce((sum, item) => sum + (item.pagamento ? item.pagamento.valorPago : 0), 0);
-  const pagas = items.filter((item) => isPaidStatus(item.pagamento?.status ?? item.status)).length;
+  const pagas = items.filter((item) => isPaidStatus(item.displayStatus?.status ?? item.asaasStatus ?? item.pagamento?.status ?? item.status)).length;
   const label = PAYMENT_HISTORY_CATEGORY_LABELS[category];
 
   return (
@@ -116,12 +117,22 @@ function PaymentHistorySection({
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <div className="grid grid-cols-[minmax(0,1fr)_120px_120px_130px_120px_44px] gap-0 border-b border-gray-100 bg-gray-50 px-5 py-2.5">
-            {['Descrição', 'Valor', 'Vencimento', 'Data pag.', 'Status', ''].map((header) => (
-              <span key={header} className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                {header}
-              </span>
-            ))}
+          <div
+            className={cn(
+              PAYMENT_HISTORY_ROW_GRID,
+              'border-b border-gray-100 bg-gray-50 px-5 py-2.5',
+            )}
+          >
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">Descrição</span>
+            <span className="text-right text-[11px] font-medium uppercase tracking-wide text-gray-400">Valor</span>
+            <span className="text-center text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Vencimento
+            </span>
+            <span className="text-center text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Data pag.
+            </span>
+            <span className="text-center text-[11px] font-medium uppercase tracking-wide text-gray-400">Status</span>
+            <span className="text-right text-[11px] font-medium uppercase tracking-wide text-gray-400">Ações</span>
           </div>
           <div className="divide-y divide-gray-100">
             {visibleItems.map((cobranca) => (
@@ -129,12 +140,14 @@ function PaymentHistorySection({
             ))}
           </div>
           {shouldPaginate && totalPages > 1 ? (
-            <PaymentHistorySectionPagination
-              page={currentPage}
-              totalPages={totalPages}
-              totalItems={items.length}
-              onPageChange={setPage}
-            />
+            <div className="border-t border-gray-100 bg-gray-50/50 px-5 py-3">
+              <Pagination
+                total={items.length}
+                page={currentPage}
+                pageSize={PAYMENT_HISTORY_PAGE_SIZE}
+                onChange={setPage}
+              />
+            </div>
           ) : null}
         </div>
       )}
@@ -149,40 +162,40 @@ function PaymentHistoryRow({
   cobranca: HistoricoCobranca;
   onOpenDetail: (_href: string) => void;
 }) {
-  const status = resolveStatus(cobranca);
+  const displayStatus = cobranca.displayStatus;
   const valor = resolveValorExibido(cobranca);
-  const paga = isPaidStatus(cobranca.pagamento?.status ?? '');
+  const paga = isPaidStatus(displayStatus?.status ?? cobranca.asaasStatus ?? cobranca.pagamento?.status ?? cobranca.status);
 
   return (
-    <div className="group grid grid-cols-[minmax(0,1fr)_120px_120px_130px_120px_44px] items-center gap-0 px-5 py-3 transition-colors hover:bg-gray-50/60">
-      <div className="min-w-0 pr-4">
+    <button
+      type="button"
+      onClick={() => onOpenDetail(cobranca.detailHref)}
+      className={cn(
+        PAYMENT_HISTORY_ROW_GRID,
+        'group w-full border-0 bg-transparent px-5 py-3 text-left transition-colors hover:bg-gray-50/60',
+        'cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-purple-500/30',
+      )}
+      title="Ver cobrança"
+      aria-label={`Ver cobrança: ${cobranca.description || getCategoryLabel(cobranca.category)}`}
+    >
+      <div className="min-w-0">
         <p className="truncate text-[13px] leading-snug text-gray-900">
           {cobranca.description || getCategoryLabel(cobranca.category)}
         </p>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-          {cobranca.installmentLabel ? (
-            <p className="text-[11px] text-gray-400">{cobranca.installmentLabel}</p>
-          ) : cobranca.installmentCount ? (
-            <p className="text-[11px] text-gray-400">
-              {cobranca.installmentsPaid ?? 0}/{cobranca.installmentCount} parcelas pagas
-            </p>
-          ) : null}
-          {cobranca.planName ? (
-            <p className="text-[11px] text-gray-400">{cobranca.planName}</p>
-          ) : null}
-          {cobranca.payerRole === 'RESPONSAVEL' ? (
-            <p className="text-[11px] text-violet-600">Pago por: {cobranca.payerName}</p>
-          ) : null}
-        </div>
       </div>
 
-      <div className={cn('text-[13px] font-semibold', paga ? 'text-emerald-700' : 'text-gray-900')}>
+      <div
+        className={cn(
+          'text-right text-[13px] font-semibold tabular-nums',
+          paga ? 'text-emerald-700' : 'text-gray-900',
+        )}
+      >
         {formatCurrency(valor)}
       </div>
 
-      <div className="text-[13px] text-gray-500">{formatDate(cobranca.vencimento)}</div>
+      <div className="text-center text-[13px] tabular-nums text-gray-600">{formatDate(cobranca.vencimento)}</div>
 
-      <div className="text-[13px] text-gray-700">
+      <div className="text-center text-[13px] tabular-nums text-gray-700">
         {cobranca.pagamento?.dataPagamento ? (
           <span>{formatDate(cobranca.pagamento.dataPagamento)}</span>
         ) : (
@@ -190,66 +203,18 @@ function PaymentHistoryRow({
         )}
       </div>
 
-      <div>
-        <Badge status={status} size="sm" />
+      <div className="flex justify-center">
+        {displayStatus ? <ChargeDisplayStatusBadge displayStatus={displayStatus} size="sm" /> : null}
       </div>
 
       <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => onOpenDetail(cobranca.detailHref)}
-          className="rounded-lg p-1.5 text-gray-300 opacity-0 transition-colors hover:bg-purple-50 hover:text-purple-600 group-hover:opacity-100"
-          title="Ver detalhes"
+        <span
+          className="inline-flex rounded-lg p-1.5 text-gray-400 transition-colors group-hover:bg-purple-50 group-hover:text-purple-700"
+          aria-hidden
         >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+          <Eye className="h-4 w-4" />
+        </span>
       </div>
-    </div>
-  );
-}
-
-function PaymentHistorySectionPagination({
-  page,
-  totalPages,
-  totalItems,
-  onPageChange,
-}: {
-  page: number;
-  totalPages: number;
-  totalItems: number;
-  onPageChange: (_page: number) => void;
-}) {
-  return (
-    <div
-      className="flex items-center justify-between border-t border-gray-100 bg-gray-50/50 px-5 py-3"
-      role="navigation"
-      aria-label="Paginação da categoria"
-    >
-      <span className="text-xs font-medium text-gray-500">
-        Página {page} de {totalPages} • {totalItems} {totalItems === 1 ? 'cobrança' : 'cobranças'}
-      </span>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs"
-          disabled={page <= 1}
-          onClick={() => onPageChange(page - 1)}
-        >
-          Anterior
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs"
-          disabled={page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-        >
-          Próxima
-        </Button>
-      </div>
-    </div>
+    </button>
   );
 }

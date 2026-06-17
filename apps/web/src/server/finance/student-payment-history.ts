@@ -1,10 +1,13 @@
 import { prisma } from '@/lib/prisma';
+import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
 import {
   buildCategorySummary,
+  inferStandaloneChargeType,
   normalizePaymentHistoryCategory,
   resolvePaymentHistoryDetailHref,
+  resolveStandalonePaymentHistoryTipo,
   type PaymentHistoryCategory,
-} from '@/features/financeiro/pagamentos/payment-history-categories';
+} from '@alusa/finance';
 import {
   HISTORICAL_ASAAS_PAYMENT_STATUSES,
   reconcileAcademicCharges,
@@ -12,6 +15,7 @@ import {
   resolveAcademicHistoricalPayment,
 } from '@/src/server/finance/academic-payment-history';
 import { buildAcademicAsaasData, mapBillingTypeToFormaPagamento } from '@/src/server/finance/asaas-payment-detail-policy';
+import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '@alusa/finance';
 
 type HistoricoPagamento = {
   id: string;
@@ -26,7 +30,14 @@ type HistoricoPagamento = {
 
 export type HistoricoCobrancaItem = {
   id: string;
-  sourceKind: 'cobranca' | 'charge' | 'sale';
+  sourceKind:
+    | 'cobranca'
+    | 'charge'
+    | 'sale'
+    | 'event_ticket_sale'
+    | 'event_participant_fee'
+    | 'event_financial_entry'
+    | 'event_map_order';
   sourceId: string;
   chargeType: string;
   origin: string;
@@ -39,14 +50,21 @@ export type HistoricoCobrancaItem = {
   vencimento: string | null;
   billingType: string | null;
   status: string;
+  asaasStatus: string | null;
+  liquidacaoStatus: string | null;
+  displayStatus: ChargeDisplayStatus;
   asaasPaymentId: string | null;
   matriculaId: string | null;
   groupId: string | null;
+  familyGroupId: string | null;
   isGroup: boolean;
   installmentCount: number | null;
   installmentsPaid: number | null;
   installmentLabel: string | null;
   planName: string | null;
+  eventId?: string | null;
+  externalReference?: string | null;
+  originType?: string | null;
   detailHref: string;
   createdAt: string;
   pagamento: HistoricoPagamento | null;
@@ -71,20 +89,7 @@ function resolveStandaloneChargeType(charge: {
   standaloneSubscriptionId: string | null;
   externalReference: string;
 }) {
-  if (charge.standaloneInstallmentPlanId || charge.externalReference.includes(':installment:')) {
-    return 'INSTALLMENT';
-  }
-  if (charge.standaloneSubscriptionId || charge.externalReference.includes(':subscription:')) {
-    return 'SUBSCRIPTION';
-  }
-  return 'ONE_TIME';
-}
-
-function resolveStandaloneTipo(chargeType: string, hasSale: boolean) {
-  if (hasSale) return 'LOJA';
-  if (chargeType === 'INSTALLMENT') return 'PARCELADA';
-  if (chargeType === 'SUBSCRIPTION') return 'RECORRENTE';
-  return 'AVULSA';
+  return inferStandaloneChargeType(charge);
 }
 
 function parseInstallmentFromDescription(description: string | null | undefined) {
@@ -129,7 +134,18 @@ function resolvePayerRole(params: {
 function buildHistoricoItem(
   base: Omit<HistoricoCobrancaItem, 'category' | 'detailHref'>,
 ): HistoricoCobrancaItem {
-  const category = normalizePaymentHistoryCategory(base);
+  const category = normalizePaymentHistoryCategory({
+    tipo: base.tipo,
+    chargeType: base.chargeType,
+    origin: base.origin,
+    sourceKind: base.sourceKind,
+    description: base.description,
+    familyGroupId: base.familyGroupId,
+    externalReference: base.externalReference ?? null,
+    originType: base.originType ?? null,
+    eventId: base.eventId ?? null,
+    hasSale: base.origin === 'LOJA' && base.sourceKind !== 'sale' ? true : undefined,
+  });
   return {
     ...base,
     category,
@@ -137,6 +153,7 @@ function buildHistoricoItem(
       sourceKind: base.sourceKind,
       sourceId: base.sourceId,
       category,
+      eventId: base.eventId ?? null,
     }),
   };
 }
@@ -297,6 +314,7 @@ async function loadAcademicCobrancas(
         asaasStatus: true,
         asaasValue: true,
         asaasNetValue: true,
+        liquidacaoStatus: true,
         lastAsaasFetchAt: true,
         matriculaId: true,
         createdAt: true,
@@ -471,6 +489,21 @@ export async function getStudentPaymentHistory(
   alunoNome: string,
   options?: GetStudentPaymentHistoryOptions,
 ) {
+  if (options?.reconcile !== true) {
+    const ledger = await buildPersonPaymentLedger({
+      contaId,
+      personType: 'ALUNO',
+      personId: alunoId,
+    });
+
+    if (ledger) {
+      return {
+        cobrancas: ledger.cobrancas,
+        resumo: ledger.resumo,
+      };
+    }
+  }
+
   const scope = await resolveStudentPaymentScope(contaId, alunoId);
   const responsavelNameSet = new Set(scope.responsavelNames.values());
   const cobrancasAcademicas = await loadAcademicCobrancas(contaId, alunoId, options);
@@ -514,9 +547,18 @@ export async function getStudentPaymentHistory(
         remotePaymentStatus: cobranca.asaasStatus ?? null,
         dueDate: cobranca.vencimento,
       }),
+      asaasStatus: cobranca.asaasStatus,
+      liquidacaoStatus: cobranca.liquidacaoStatus,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: cobranca.status,
+        asaasStatus: cobranca.asaasStatus,
+        liquidacaoStatus: cobranca.liquidacaoStatus,
+        hasAsaasLink: Boolean(cobranca.asaasPaymentId),
+      }),
       asaasPaymentId: cobranca.asaasPaymentId,
       matriculaId: cobranca.matriculaId,
       groupId,
+      familyGroupId: cobranca.charge?.familyGroupId ?? null,
       isGroup: Boolean(groupId),
       installmentCount: parsedInstallment?.total ?? null,
       installmentsPaid: null,
@@ -565,6 +607,8 @@ export async function getStudentPaymentHistory(
       status: true,
       externalReference: true,
       asaasPaymentId: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
       value: true,
       dueDate: true,
       billingType: true,
@@ -602,12 +646,18 @@ export async function getStudentPaymentHistory(
     if (!chargeBelongsToStudent({ charge, alunoId, scope })) continue;
 
     const chargeType = resolveStandaloneChargeType(charge);
-    const tipo = resolveStandaloneTipo(chargeType, Boolean(charge.sale));
-    const value = Number(charge.value ?? charge.sale?.total ?? 0);
-    const paidAt = (charge.statusUpdatedAt ?? charge.updatedAt ?? charge.createdAt).toISOString();
     const sourceDescription = charge.sale
       ? `Loja #${String(charge.sale.saleNumber).padStart(4, '0')}`
       : charge.description;
+    const tipo = resolveStandalonePaymentHistoryTipo({
+      chargeType,
+      hasSale: Boolean(charge.sale),
+      familyGroupId: charge.familyGroupId,
+      description: sourceDescription,
+      externalReference: charge.externalReference,
+    });
+    const value = Number(charge.value ?? charge.sale?.total ?? 0);
+    const paidAt = (charge.statusUpdatedAt ?? charge.updatedAt ?? charge.createdAt).toISOString();
     const payerName = charge.payerName ?? alunoNome;
     const groupId =
       charge.standaloneInstallmentPlanId ??
@@ -641,9 +691,18 @@ export async function getStudentPaymentHistory(
       vencimento: charge.dueDate?.toISOString() ?? charge.createdAt.toISOString(),
       billingType: charge.sale?.paymentMethod ?? charge.billingType,
       status: 'PAGO',
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        hasAsaasLink: Boolean(charge.asaasPaymentId),
+      }),
       asaasPaymentId: charge.asaasPaymentId,
       matriculaId: charge.sale?.matriculaId ?? null,
       groupId,
+      familyGroupId: charge.familyGroupId,
       isGroup: Boolean(groupId),
       installmentCount: charge.standaloneInstallmentPlan?.installmentCount ?? parsedInstallment?.total ?? null,
       installmentsPaid: null,
@@ -655,6 +714,8 @@ export async function getStudentPaymentHistory(
           matriculaPlanNames: scope.matriculaPlanNames,
           description: sourceDescription,
         }),
+      eventId: null,
+      externalReference: charge.externalReference,
       createdAt: charge.createdAt.toISOString(),
       pagamento: {
         id: charge.id,
@@ -734,9 +795,13 @@ export async function getStudentPaymentHistory(
       vencimento: sale.createdAt.toISOString(),
       billingType: sale.paymentMethod,
       status: 'PAGO',
+      asaasStatus: null,
+      liquidacaoStatus: null,
+      displayStatus: resolveChargeDisplayStatus({ localStatus: 'PAGO' }),
       asaasPaymentId: null,
       matriculaId: sale.matriculaId,
       groupId: null,
+      familyGroupId: null,
       isGroup: false,
       installmentCount: null,
       installmentsPaid: null,

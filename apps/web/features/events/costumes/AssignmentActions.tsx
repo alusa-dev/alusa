@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from '@/components/ui/toast';
 
-import { updateCostumeAssignment, type CostumeAssignmentDTO, type CostumeDTO, type EventResources } from '../events-service';
+import { updateCostumeAssignment, type CostumeAssignmentDTO, type CostumeDTO, type EventScopedResources } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { EditAssignmentFormDialog } from './EditAssignmentFormDialog';
 
@@ -24,12 +24,12 @@ export function AssignmentActions({
   assignment,
   eventId,
   costumes,
-  resources,
+  scopedResources,
 }: {
   assignment: CostumeAssignmentDTO;
   eventId: string;
   costumes: CostumeDTO[];
-  resources?: EventResources;
+  scopedResources?: EventScopedResources;
 }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
@@ -134,7 +134,7 @@ export function AssignmentActions({
         eventId={eventId}
         assignment={assignment}
         costumes={costumes}
-        resources={resources}
+        scopedResources={scopedResources}
       />
 
       <ConfirmDialog

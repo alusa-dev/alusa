@@ -8,7 +8,7 @@ type LegalSidebarNavProps = {
 export function LegalSidebarNav({ activeHref }: LegalSidebarNavProps) {
   return (
     <div className="lg:pt-2.5">
-      <Link href="/legal" className="text-sm font-medium text-slate-500 hover:text-[#5c2f91] transition-colors">
+      <Link href="/legal" className="text-sm font-medium text-slate-500 hover:text-[#340e63] transition-colors">
         Legal
       </Link>
       <nav aria-label="Páginas legais" className="mt-5">

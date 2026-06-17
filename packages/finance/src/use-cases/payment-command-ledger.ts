@@ -67,7 +67,8 @@ export function expectedEventsForPaymentCommand(type: PaymentCommandJobType): st
     case 'PAYMENT_UNDO_CASH_COMMAND':
       return ['PAYMENT_RECEIVED_IN_CASH_UNDONE', 'PAYMENT_UPDATED', 'PAYMENT_OVERDUE'];
     case 'PAYMENT_MARK_CASH_COMMAND':
-      return ['PAYMENT_RECEIVED_IN_CASH'];
+      // Asaas emite PAYMENT_RECEIVED (billingType RECEIVED_IN_CASH), não PAYMENT_RECEIVED_IN_CASH.
+      return ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'];
     case 'PAYMENT_UPDATE_COMMAND':
       return ['PAYMENT_UPDATED'];
   }

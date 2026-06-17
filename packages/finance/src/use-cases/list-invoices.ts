@@ -1,5 +1,6 @@
-import { prisma } from '@alusa/database';
 import type { InvoiceStatus } from '@prisma/client';
+
+import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 
 export type ListInvoicesInput = {
   contaId: string;
@@ -40,6 +41,7 @@ type InvoiceRecord = {
 };
 
 export async function listInvoices(input: ListInvoicesInput): Promise<ListInvoicesOutput> {
+  const prisma = getFiscalPrisma();
   const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
   const offset = Math.max(input.offset ?? 0, 0);
 

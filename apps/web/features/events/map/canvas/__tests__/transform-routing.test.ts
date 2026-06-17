@@ -10,7 +10,7 @@ const OBJECTS: any[] = [
 ];
 
 describe('transform-routing', () => {
-  it('uses corridor pipeline when corridors are in multi selection without text', () => {
+  it('uses generic pipeline when smart seat reflow is disabled', () => {
     const routing = resolveTransformRouting({
       selectedNodeCount: 2,
       selectedObjectIds: ['c1', 'r1'],
@@ -20,7 +20,7 @@ describe('transform-routing', () => {
       selectionContainsSeatsOrSections: false,
     });
 
-    expect(routing.kind).toBe('corridor');
+    expect(routing.kind).toBe('generic');
     expect(routing.transformDisabled).toBe(false);
   });
 

@@ -123,12 +123,21 @@ export const updateEventMapDraftSchema = z.object({
   seats: z.array(eventSeatSchema).default([]),
 });
 
+export const updateEventMapSettingsSchema = z
+  .object({
+    name: requiredText('Informe o nome do mapa.').optional(),
+    publicEnabled: z.boolean().optional(),
+  })
+  .refine((value) => value.name !== undefined || value.publicEnabled !== undefined, {
+    message: 'Informe ao menos uma configuração para salvar.',
+  });
+
 export const duplicateEventMapSchema = z.object({
   name: requiredText('Informe o nome do novo mapa.').optional(),
 });
 
 export const publicSeatReservationSchema = z.object({
-  seatIds: z.array(idSchema).min(1, 'Selecione pelo menos um assento.').max(12, 'Selecione no máximo 12 assentos por compra.'),
+  seatIds: z.array(idSchema).min(1, 'Selecione pelo menos um assento.'),
   checkoutKey: z.string().trim().min(12).max(120).optional().nullable(),
   buyerName: z.string().trim().max(120).optional().nullable(),
   buyerEmail: z.string().trim().email('Informe um e-mail válido.').max(180).optional().nullable(),
@@ -150,7 +159,14 @@ export const publicCheckoutSchema = z.object({
 
 export type CreateEventMapInput = z.infer<typeof createEventMapSchema>;
 export type UpdateEventMapDraftInput = z.infer<typeof updateEventMapDraftSchema>;
+export type UpdateEventMapSettingsInput = z.infer<typeof updateEventMapSettingsSchema>;
 export type DuplicateEventMapInput = z.infer<typeof duplicateEventMapSchema>;
 export type EventSeatGroupInput = z.infer<typeof eventSeatGroupSchema>;
 export type PublicSeatReservationInput = z.infer<typeof publicSeatReservationSchema>;
+export const staffSeatReservationSchema = z.object({
+  seatIds: z.array(idSchema).min(1, 'Selecione pelo menos um assento.'),
+  holdToken: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional().nullable()),
+});
+
+export type StaffSeatReservationInput = z.infer<typeof staffSeatReservationSchema>;
 export type PublicCheckoutInput = z.infer<typeof publicCheckoutSchema>;

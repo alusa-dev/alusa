@@ -20,16 +20,16 @@ import {
   cancelTicketSale,
   deleteTicketSale,
   markTicketSalePaid,
-  refundPublicEventMapOrder,
+  refundEventCharge,
   refundTicketSale,
-  type EventResources,
+  type EventScopedResources,
   type TicketLotDTO,
   type TicketSaleDTO,
 } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { EditSaleFormDialog } from './EditSaleFormDialog';
 
-export function TicketActions({ sale, eventId, lots, resources }: { sale: TicketSaleDTO; eventId: string; lots: TicketLotDTO[]; resources?: EventResources }) {
+export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: TicketSaleDTO; eventId: string; lots: TicketLotDTO[]; scopedResources?: EventScopedResources }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -44,7 +44,7 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
   };
 
   const refundPublic = useMutation({
-    mutationFn: () => refundPublicEventMapOrder(sale.eventMapOrderId ?? sale.id),
+    mutationFn: () => refundEventCharge(`event-map-order:${sale.eventMapOrderId ?? sale.id}`),
     onSuccess: async () => {
       await invalidate();
       toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
@@ -67,7 +67,9 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
   });
 
   if (sale.source === 'PUBLIC_ORDER') {
-    const hasActions = Boolean(sale.invoiceUrl || sale.ticketsUrl || (sale.status === 'PAID' && sale.eventMapOrderId));
+    const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
+    const canRefundPublic = sale.status === 'PAID' && Boolean(sale.eventMapOrderId) && !isRefundProcessing;
+    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundPublic);
     if (!hasActions) return <span className="text-slate-400">-</span>;
 
     return (
@@ -79,9 +81,14 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
-            {sale.status === 'RESERVED' && sale.invoiceUrl ? (
+            {sale.chargeDetailUrl ? (
               <DropdownMenuItem asChild>
-                <Link href={sale.invoiceUrl} target="_blank">Cobrança</Link>
+                <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
+              </DropdownMenuItem>
+            ) : null}
+            {sale.invoiceUrl ? (
+              <DropdownMenuItem asChild>
+                <Link href={sale.invoiceUrl} target="_blank">Abrir fatura Asaas</Link>
               </DropdownMenuItem>
             ) : null}
             {sale.ticketsUrl ? (
@@ -89,9 +96,9 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
                 <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
               </DropdownMenuItem>
             ) : null}
-            {sale.status === 'PAID' && sale.eventMapOrderId ? (
+            {canRefundPublic ? (
               <>
-                {(sale.ticketsUrl || sale.invoiceUrl) ? <DropdownMenuSeparator /> : null}
+                {(sale.ticketsUrl || sale.invoiceUrl || sale.chargeDetailUrl) ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
                   className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
                   onClick={() => setRefundOpen(true)}
@@ -127,9 +134,21 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-52">
-          <DropdownMenuItem onClick={() => setEditOpen(true)}>
-            Editar
-          </DropdownMenuItem>
+          {sale.chargeDetailUrl ? (
+            <DropdownMenuItem asChild>
+              <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
+            </DropdownMenuItem>
+          ) : null}
+          {sale.ticketsUrl && sale.hasSeatedTickets ? (
+            <DropdownMenuItem asChild>
+              <Link href={sale.ticketsUrl} target="_blank">Ver ingressos</Link>
+            </DropdownMenuItem>
+          ) : null}
+          {!sale.hasSeatedTickets ? (
+            <DropdownMenuItem onClick={() => setEditOpen(true)}>
+              Editar
+            </DropdownMenuItem>
+          ) : null}
 
           {sale.status === 'PENDING' && (
             <DropdownMenuItem onClick={() => paid.mutate()}>
@@ -168,7 +187,7 @@ export function TicketActions({ sale, eventId, lots, resources }: { sale: Ticket
         eventId={eventId}
         sale={sale}
         lots={lots}
-        resources={resources}
+        scopedResources={scopedResources}
       />
 
       <ConfirmDialog

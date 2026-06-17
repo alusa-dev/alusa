@@ -5,6 +5,8 @@ export type SortOrder = 'ASC' | 'DESC';
 
 export interface UseEntityListFilteringParams<T> {
   items: T[];
+  /** Total vindo da API; quando informado, substitui ordered.length no clamp de página. */
+  externalTotal?: number;
   statusAccessor?: (_item: T) => StatusValue | string | null | undefined;
   nameAccessor?: (_item: T) => string | null | undefined; // usado para ordenação padrão
   searchPredicate?: (_item: T, _search: string, _digits: string) => boolean; // se não passar, usa nameAccessor
@@ -38,6 +40,7 @@ export function useEntityListFiltering<T>(
 ): UseEntityListFilteringResult<T> {
   const {
     items,
+    externalTotal,
     statusAccessor,
     nameAccessor,
     searchPredicate,
@@ -86,12 +89,13 @@ export function useEntityListFiltering<T>(
     });
   }, [filtered, sort, nameAccessor]);
 
-  const total = ordered.length;
+  const total = externalTotal ?? ordered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   useEffect(() => {
+    if (externalTotal === undefined && items.length === 0) return;
     if (page > totalPages) setPage(totalPages);
-  }, [page, totalPages]);
+  }, [externalTotal, items.length, page, totalPages]);
 
   const paginated = useMemo(() => {
     const start = (page - 1) * pageSize;

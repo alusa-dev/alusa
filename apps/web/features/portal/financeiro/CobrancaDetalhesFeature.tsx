@@ -6,25 +6,14 @@ import { useRouter } from 'next/navigation';
 import { ChevronLeft, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import { isPaidDisplayStatus, isPendingDisplayStatus } from '@/lib/finance/charge-display-status';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaCompartilharButton } from '@/components/financeiro/CobrancaCompartilharButton';
 import type { PortalFinanceiroDetailDTO } from '@/features/portal/dtos';
 
 const PAYMENT_NOTICE =
   'Pagamentos e mudanças na forma de cobrança são realizados pela secretaria. Entre em contato para receber sua fatura.';
-
-const statusBadgeMap: Record<string, StatusType> = {
-  PENDENTE: 'PENDENTE',
-  A_VENCER: 'A_VENCER',
-  ATRASADO: 'ATRASADO',
-  PROCESSANDO: 'PROCESSANDO',
-  PAGO: 'PAGO',
-  CANCELADO: 'CANCELADO',
-  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
-  ESTORNADO: 'ESTORNADO',
-  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
-};
 
 const formaPagamentoLabel: Record<string, string> = {
   PIX: 'PIX',
@@ -174,7 +163,6 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
     );
   }
 
-  const badgeStatus = statusBadgeMap[cobranca.status] ?? 'PENDING';
   const vencimentoFormatado = formatDate(cobranca.vencimento);
   const diasAtraso = getDiasAtraso(cobranca.vencimento);
   const invoiceLink = buildInvoiceUrl(cobranca);
@@ -187,8 +175,8 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
   const tipoDisplay = tipoCobrancaLabel[cobranca.tipo] ?? cobranca.tipo;
   const modalidadeDisplay = cobranca.matricula.turma?.modalidade.nome ?? 'Não informada';
   const turmaDisplay = cobranca.matricula.turma?.nome ?? 'Não informada';
-  const isPago = cobranca.status === 'PAGO';
-  const isPendente = ['PENDENTE', 'ATRASADO', 'A_VENCER'].includes(cobranca.status);
+  const isPago = isPaidDisplayStatus(cobranca.displayStatus);
+  const isPendente = isPendingDisplayStatus(cobranca.displayStatus);
   const hasAutomaticPayment =
     cobranca.formaPagamento === 'CARTAO_CREDITO' &&
     Boolean(cobranca.matricula.responsavelFinanceiro?.hasSavedCard);
@@ -310,7 +298,7 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div>
               <p className="text-sm font-medium text-gray-500 mb-2">Situação</p>
-              <Badge status={badgeStatus} />
+              <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} />
               {diasAtraso ? (
                 <p className="mt-2 text-sm font-medium text-rose-600">
                   Atrasada há {diasAtraso} {diasAtraso > 1 ? 'dias' : 'dia'}

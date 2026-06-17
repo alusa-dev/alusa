@@ -1,6 +1,7 @@
 export const eventQueryKeys = {
   events: ['events'] as const,
   resources: ['events', 'resources'] as const,
+  scopedResources: (eventId: string) => ['events', 'scoped-resources', eventId] as const,
   event: (id: string) => ['events', 'detail', id] as const,
   lots: (id?: string) => ['events', 'lots', id ?? 'all'] as const,
   sales: (id?: string) => ['events', 'sales', id ?? 'all'] as const,

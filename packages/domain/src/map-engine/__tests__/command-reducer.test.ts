@@ -211,6 +211,31 @@ describe('map command reducer', () => {
     });
   });
 
+  it('rotates a seat group through ROTATE_SELECTION around the visual group center', () => {
+    const map = createSeatGroupMap();
+
+    const result = executeMapCommand(
+      map,
+      {
+        type: 'ROTATE_SELECTION',
+        payload: {
+          selection: [{ type: 'seatgroup', id: 'group-1' }],
+          angleDelta: 37,
+          mode: 'free',
+        },
+      },
+      {
+        activeLevelId: 'level-1',
+        selection: [{ type: 'seatgroup', id: 'group-1' }],
+      },
+    );
+
+    expect(result.map.seatGroups[0]).toMatchObject({ rotation: 37 });
+    expect(result.map.seatGroups[0]?.x).not.toBe(map.seatGroups[0]?.x);
+    expect(result.map.seatGroups[0]?.y).not.toBe(map.seatGroups[0]?.y);
+    expect(result.map.seats.every((seat) => seat.rotation === 37)).toBe(true);
+  });
+
   it('preserves labels and technical codes when a seat group layout is resized', () => {
     const result = executeMapCommand(createSeatGroupMap(), {
       type: 'UPDATE_SEAT_GROUP',

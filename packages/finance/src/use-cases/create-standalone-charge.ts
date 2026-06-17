@@ -10,6 +10,7 @@ import { ensureCustomer } from './ensure-customer';
 import { listPayments } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
+import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
 import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
@@ -784,6 +785,23 @@ export async function createStandaloneCharge(
           expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
         },
       });
+
+      const fiscalSync = await syncSubscriptionFiscalSettings({
+        contaId: input.contaId,
+        subscriptionId: persisted.id,
+        asaasSubscriptionId: subscription.id,
+        kind: 'STANDALONE',
+        actor: input.actor,
+      });
+
+      if (!fiscalSync.success) {
+        console.warn('[createStandaloneCharge] Falha ao sincronizar invoiceSettings', {
+          contaId: input.contaId,
+          standaloneSubscriptionId: persisted.id,
+          asaasSubscriptionId: subscription.id,
+          error: fiscalSync.error,
+        });
+      }
 
       await materializeFirstSubscriptionPayment({
         contaId: input.contaId,

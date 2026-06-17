@@ -21,6 +21,7 @@ import {
   cobrancaRouteParamsDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaActionResultToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -102,9 +103,120 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       : null;
 
     if (!cobranca && !charge) {
+      const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, id);
+      if (!paymentLookup) {
+        return NextResponse.json(
+          { error: 'Cobrança não encontrada', correlationId },
+          { status: 404 },
+        );
+      }
+
+      const asaasPaymentId = paymentLookup.asaasPaymentId;
+      if (!asaasPaymentId) {
+        return NextResponse.json(
+          { error: 'Cobrança sem integração Asaas', correlationId },
+          { status: 400 },
+        );
+      }
+
+      if (!isAsaasEnabled()) {
+        return NextResponse.json(
+          { error: 'Integração Asaas desabilitada', correlationId },
+          { status: 503 },
+        );
+      }
+
+      const asaasPayment = await readPaymentStatusPreflight(asaasPaymentId, { contaId: user.contaId });
+      const policy = evaluatePaymentActionPolicy({
+        entityType: 'COBRANCA',
+        origin: 'EVENT',
+        localStatus: paymentLookup.localStatus,
+        asaasStatus: asaasPayment.status,
+        billingType: paymentLookup.billingType,
+        hasAsaasPaymentId: true,
+        hasInvoiceUrl: Boolean(paymentLookup.invoiceUrl),
+        wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+      });
+
+      if (!policy.canUndoCashPayment) {
+        const decision = policy.actions.UNDO_CASH_PAYMENT;
+        return NextResponse.json(
+          {
+            error: decision.reason ?? `Operação não permitida. Status atual no Asaas: ${asaasPayment.status}`,
+            correlationId,
+            asaasStatus: asaasPayment.status,
+            code: decision.code,
+            ...(decision.hint ? { hint: decision.hint } : {}),
+          },
+          { status: 400 },
+        );
+      }
+
+      const command = await registerPaymentCommand({
+        contaId: user.contaId,
+        type: 'PAYMENT_UNDO_CASH_COMMAND',
+        entityType: 'CHARGE',
+        entityId: id,
+        asaasPaymentId,
+        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_UNDO_CASH_COMMAND'),
+        correlationId,
+        actorId: user.id,
+        metadata: {
+          source: 'POST /api/cobrancas/[id]/undo-receive-in-cash',
+          origin: 'EVENT',
+          previousAsaasStatus: asaasPayment.status,
+        },
+      });
+
+      try {
+        await undoCashPayment(asaasPaymentId, { contaId: user.contaId });
+        await markPaymentCommandSent({
+          jobId: command.id,
+          providerStatus: asaasPayment.status,
+        });
+      } catch (commandError) {
+        await failPaymentCommand({ jobId: command.id, error: commandError });
+        throw commandError;
+      }
+
+      try {
+        await syncPaymentStateFromAsaas({
+          contaId: user.contaId,
+          asaasPaymentId,
+        });
+      } catch (syncError) {
+        console.warn('[UndoCash] Falha ao sincronizar estado pós-comando (event)', {
+          correlationId,
+          commandJobId: command.id,
+          asaasPaymentId,
+          error: syncError instanceof Error ? syncError.message : String(syncError),
+        });
+      }
+
+      await auditLogService.record({
+        contaId: user.contaId,
+        action: 'finance.charge.undo_cash_requested',
+        entity: { type: 'Charge', id },
+        metadata: {
+          correlationId,
+          asaasPaymentId,
+          origin: 'EVENT',
+          previousAsaasStatus: asaasPayment.status,
+          requestedBy: user.id,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
       return NextResponse.json(
-        { error: 'Cobrança não encontrada', correlationId },
-        { status: 404 },
+        cobrancaActionResultDTOSchema.parse(
+          mapCobrancaActionResultToDTO({
+            success: true,
+            message: 'Desfazer recebimento solicitado. Status será atualizado via webhook.',
+            pending: true,
+            correlationId,
+          }),
+        ),
+        { status: 202 },
       );
     }
 

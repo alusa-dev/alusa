@@ -21,6 +21,15 @@ export type FinanceiroCobrancasQueryDTO = z.infer<typeof financeiroCobrancasQuer
 export const financeiroCobrancaInstallmentDTOSchema = z.object({
   id: z.string(),
   status: z.string(),
+  asaasStatus: z.string().nullable().optional(),
+  displayStatus: z
+    .object({
+      status: z.string(),
+      label: z.string(),
+      hint: z.string().nullable(),
+      variant: z.enum(['success', 'warning', 'danger', 'info', 'neutral']),
+    })
+    .optional(),
   valor: z.number(),
   vencimento: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
@@ -34,7 +43,16 @@ export const financeiroCobrancaListItemDTOSchema = z.object({
   tipo: z.string(),
   formaPagamento: z.string().nullable().optional(),
   status: z.string(),
+  asaasStatus: z.string().nullable().optional(),
   liquidacaoStatus: z.string().nullable().optional(),
+  displayStatus: z
+    .object({
+      status: z.string(),
+      label: z.string(),
+      hint: z.string().nullable(),
+      variant: z.enum(['success', 'warning', 'danger', 'info', 'neutral']),
+    })
+    .optional(),
   valor: z.number(),
   vencimento: z.string().nullable().optional(),
   aluno: z.object({

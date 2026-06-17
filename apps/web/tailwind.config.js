@@ -55,9 +55,9 @@ export default {
           900: '#581c87'
         },
         alusa: {
-          purple: '#5c2f91',
-          'purple-hover': '#4b217a',
-          'purple-dark': '#430D88',
+          purple: '#340e63',
+          'purple-hover': '#280a4d',
+          'purple-dark': '#340e63',
           'purple-deeper': '#0F0C26',
           'purple-muted': '#686868',
           'purple-tint': '#f4f2ff',

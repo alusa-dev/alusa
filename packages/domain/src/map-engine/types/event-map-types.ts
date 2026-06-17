@@ -126,6 +126,7 @@ export type EventMapDTO = {
     sections: number;
     seats: number;
     availableSeats: number;
+    orders?: number;
   };
 };
 

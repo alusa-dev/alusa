@@ -26,6 +26,7 @@ const ROTATION_SNAPS_15 = [
 type TransformContextRef = MutableRefObject<{
   selectedNodeIds: string[];
   transformKind: 'uniform' | 'corridor' | 'generic' | null;
+  forceUniformSeatGroupScale?: boolean;
 }>;
 
 type KeyboardSessionInput = {
@@ -157,6 +158,7 @@ export function useKeyboardSession({
     function onShiftKey(event: KeyboardEvent) {
       if (event.key !== 'Shift') return;
       if (transformContextRef.current.transformKind !== 'generic') return;
+      if (transformContextRef.current.forceUniformSeatGroupScale) return;
       setTransformerScaleOptions(resolveGenericTransformerScaleOptions(event.type === 'keydown'));
     }
 

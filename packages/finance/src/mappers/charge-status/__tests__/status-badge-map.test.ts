@@ -70,7 +70,8 @@ describe('getStatusLabel', () => {
     expect(getStatusLabel('PAGO')).toBe('Pago');
     expect(getStatusLabel('A_VENCER')).toBe('A vencer');
     expect(getStatusLabel('ATRASADO')).toBe('Atrasado');
-    expect(getStatusLabel('RECEIVED')).toBe('Recebido');
+    expect(getStatusLabel('CONFIRMED')).toBe('Confirmada');
+    expect(getStatusLabel('RECEIVED')).toBe('Recebida');
     expect(getStatusLabel('CANCELAMENTO_PENDENTE')).toBe('Cancelamento pendente');
   });
 });

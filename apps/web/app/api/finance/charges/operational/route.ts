@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { listOperationalCharges } from '@alusa/finance';
+import { listOperationalCharges, reconcileOperationalChargeLinks } from '@alusa/finance';
 
 import { buildTenantCacheKey, withTenantCache } from '@/lib/cache/tenant-cache';
 import { getTenantCacheAdapter } from '@/lib/cache/server-cache';
@@ -61,8 +61,19 @@ export async function GET(req: NextRequest) {
     const tipoFilter = url.searchParams.getAll('tipo').filter(Boolean);
     const contaId = user.contaId!;
 
-    const load = () =>
-      withPerfTimer(
+    const load = async () => {
+      await withPerfTimer(
+        'finance',
+        'reconcileOperationalChargeLinks',
+        () =>
+          reconcileOperationalChargeLinks({
+            contaId,
+            actor: { type: 'USER', id: user.id! },
+          }),
+        { contaId },
+      );
+
+      return withPerfTimer(
         'finance',
         'listOperationalCharges',
         () =>
@@ -75,6 +86,7 @@ export async function GET(req: NextRequest) {
           }),
         { contaId },
       );
+    };
 
     if (!isCacheLayerEnabled()) {
       const result = await load();

@@ -26,6 +26,8 @@ export interface AsaasHttpConfig {
 export interface AsaasHttpOptions {
   headers?: Record<string, string>;
   params?: Record<string, unknown>;
+  /** Status HTTP tratados como ausência esperada (ex.: 404 em GET de recurso opcional). */
+  expectedErrorStatuses?: number[];
 }
 
 export class AsaasHttpError extends Error {
@@ -178,38 +180,51 @@ export class AsaasHttp {
     }
 
     if (!response.ok) {
-      // Registrar falha no circuit breaker
-      globalCircuitBreaker.recordFailure(circuitKey, response.status);
+      const isExpectedError = (options?.expectedErrorStatuses ?? []).includes(response.status);
 
-      // Log diagnóstico para erros — inclui request body para depuração
-      if (isEmptyBody || response.status >= 400) {
-        console.warn('[asaas.http] Resposta de erro', {
-          method,
-          path: url.pathname,
-          status: response.status,
-          statusText: response.statusText,
-          contentType,
-          emptyBody: isEmptyBody,
-          requestBodyPreview: body
-            ? JSON.stringify(body).slice(0, 500)
-            : undefined,
-          idempotencyKey: options?.headers?.['Idempotency-Key'] ?? undefined,
+      if (!isExpectedError) {
+        globalCircuitBreaker.recordFailure(circuitKey, response.status);
+
+        if (isEmptyBody || response.status >= 400) {
+          console.warn('[asaas.http] Resposta de erro', {
+            method,
+            path: url.pathname,
+            status: response.status,
+            statusText: response.statusText,
+            contentType,
+            emptyBody: isEmptyBody,
+            requestBodyPreview: body
+              ? JSON.stringify(body).slice(0, 500)
+              : undefined,
+            idempotencyKey: options?.headers?.['Idempotency-Key'] ?? undefined,
+          });
+        }
+
+        globalAsaasHooks.emitApiCall({
+          method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
+          endpoint: url.pathname,
+          accountKey: circuitKey,
+          httpStatus: response.status,
+          durationMs: Date.now() - startedAt,
+          success: false,
+          error: `HTTP ${response.status}`,
+          circuitState: globalCircuitBreaker.getState(circuitKey),
+          rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
+          quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
+        });
+      } else {
+        globalAsaasHooks.emitApiCall({
+          method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
+          endpoint: url.pathname,
+          accountKey: circuitKey,
+          httpStatus: response.status,
+          durationMs: Date.now() - startedAt,
+          success: true,
+          circuitState: globalCircuitBreaker.getState(circuitKey),
+          rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
+          quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
         });
       }
-
-      // Hook para observabilidade em erro
-      globalAsaasHooks.emitApiCall({
-        method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
-        endpoint: url.pathname,
-        accountKey: circuitKey,
-        httpStatus: response.status,
-        durationMs: Date.now() - startedAt,
-        success: false,
-        error: `HTTP ${response.status}`,
-        circuitState: globalCircuitBreaker.getState(circuitKey),
-        rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
-        quotaRemaining: globalQuotaTracker.getStatus(circuitKey).remaining,
-      });
 
       const errorMessage = this.extractErrorMessage(data);
       throw new AsaasHttpError(

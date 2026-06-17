@@ -68,7 +68,7 @@ export function IntegracoesFeature() {
         description={asaasCard.description}
         icon={
           <Image
-            src="/asaas/asaas-icon.png"
+            src="/integrations/asaas-icon.png"
             alt="Asaas"
             width={48}
             height={48}

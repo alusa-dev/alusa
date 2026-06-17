@@ -7,6 +7,7 @@ import { handleSubscriptionWebhook } from './subscription-webhook-handler';
 import { handleInstallmentWebhook } from './installment-webhook-handler';
 import { handleAccountWebhook } from './account-webhook-handler';
 import { handleInternalTransferWebhook } from './internal-transfer-webhook-handler';
+import { handleInvoiceWebhook } from './invoice-webhook-handler';
 import { auditLogService } from '../foundation/audit-log.service';
 import { computeNextRetryAt } from './webhook-backoff';
 import { withCorrelationId, generateCorrelationId } from '../foundation/correlation';
@@ -115,6 +116,21 @@ type AsaasWebhookBody = {
     status?: unknown;
     externalReference?: string;
     deleted?: unknown;
+  };
+  invoice?: {
+    id: string;
+    status?: string | null;
+    statusDescription?: string | null;
+    externalReference?: string | null;
+    pdfUrl?: string | null;
+    xmlUrl?: string | null;
+    number?: string | null;
+    serviceDescription?: string | null;
+    observations?: string | null;
+    value?: number;
+    deductions?: number;
+    effectiveDate?: string | null;
+    payment?: string | null;
   };
   anticipation?: {
     id?: string;
@@ -387,6 +403,21 @@ async function processAsaasWebhookForRecord(params: {
       };
     }
 
+    if (event.startsWith('INVOICE_')) {
+      const result = await handleInvoiceWebhook(contaId, {
+        event,
+        id: payload.id,
+        invoice: payload.invoice,
+      });
+
+      return {
+        ok: result.handled,
+        httpStatus: result.handled ? 200 : 400,
+        error: result.reason,
+        duracaoMs: Date.now() - startedAt,
+      };
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // INTERNAL_TRANSFER_* — Transferências internas entre subcontas
     // Eventos: INTERNAL_TRANSFER_CREDIT, INTERNAL_TRANSFER_DEBIT
@@ -517,6 +548,16 @@ async function processAsaasWebhookForRecord(params: {
             lastApiKeyCheckAt: new Date(),
           },
         });
+        if (
+          nextApiKeyStatus === 'EXPIRED' ||
+          nextApiKeyStatus === 'DISABLED' ||
+          nextApiKeyStatus === 'DELETED'
+        ) {
+          const { markExternalAsaasApiKeyUnhealthy } = await import(
+            '../use-cases/external-asaas/mark-external-asaas-api-key-unhealthy'
+          );
+          await markExternalAsaasApiKeyUnhealthy(contaId);
+        }
         await syncAsaasOperationalStatus(contaId);
       }
 

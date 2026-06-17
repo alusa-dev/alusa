@@ -149,7 +149,7 @@ function SidebarPreview() {
     >
       <div style={{ padding: '28px 16px 31px' }}>
         <img
-          src="/brand/alusa-logo-dark.svg"
+          src="/brand/logo-dark.svg"
           alt=""
           width={132}
           height={40}

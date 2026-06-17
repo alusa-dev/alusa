@@ -394,6 +394,16 @@ async function processWebhookReplay(params: {
             lastApiKeyCheckAt: new Date(),
           },
         });
+        if (
+          nextApiKeyStatus === 'EXPIRED' ||
+          nextApiKeyStatus === 'DISABLED' ||
+          nextApiKeyStatus === 'DELETED'
+        ) {
+          const { markExternalAsaasApiKeyUnhealthy } = await import(
+            '../use-cases/external-asaas/mark-external-asaas-api-key-unhealthy'
+          );
+          await markExternalAsaasApiKeyUnhealthy(contaId);
+        }
         await syncAsaasOperationalStatus(contaId);
       }
 

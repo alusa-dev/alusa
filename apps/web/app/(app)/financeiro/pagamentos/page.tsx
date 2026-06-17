@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
+import TableLayout from '@/components/layout/TableLayout';
+import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import Pagination from '@/components/layout/Pagination';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -13,14 +14,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ChevronRight, Search, User, X } from '@/components/icons/icons';
+import { Search, User, X } from '@/components/icons/icons';
 import { pushToast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
+import { maskCpf } from '@alusa/lib/client';
 
-interface AlunoComPagamentos {
+interface PessoaComPagamentos {
   id: string;
+  tipo: 'ALUNO' | 'RESPONSAVEL';
   nome: string;
   cpf: string | null;
+  cpfMasked?: string | null;
   foto: string | null;
   avatarUrl?: string | null;
   totalPagamentos: number;
@@ -42,31 +45,39 @@ const formatDate = (dateStr: string) => {
 
 const STATUS_OPTIONS = [
   { value: 'TODOS', label: 'Todos status' },
-  { value: 'PAGO', label: 'Pago' },
-  { value: 'CONFIRMADO', label: 'Confirmado' },
-  { value: 'RECEIVED', label: 'Recebido' },
+  { value: 'CONFIRMED', label: 'Confirmada' },
+  { value: 'RECEIVED', label: 'Recebida' },
+  { value: 'RECEIVED_IN_CASH', label: 'Recebida em dinheiro' },
+  { value: 'PAGO', label: 'Pago manual/local' },
   { value: 'ESTORNADO', label: 'Estornado' },
 ];
 
-const getAvatarSrc = (aluno: AlunoComPagamentos) => aluno.avatarUrl ?? aluno.foto;
+const PAGE_SIZE = 20;
+
+const getAvatarSrc = (pessoa: PessoaComPagamentos) => pessoa.avatarUrl ?? pessoa.foto;
+const getPessoaHref = (pessoa: PessoaComPagamentos) =>
+  pessoa.tipo === 'RESPONSAVEL'
+    ? `/financeiro/pagamentos/responsavel/${pessoa.id}`
+    : `/financeiro/pagamentos/${pessoa.id}`;
+
+const formatCpf = (pessoa: PessoaComPagamentos) =>
+  pessoa.cpfMasked ?? (pessoa.cpf ? maskCpf(pessoa.cpf) : '—');
 
 export default function FinanceiroPagamentosPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [alunos, setAlunos] = useState<AlunoComPagamentos[]>([]);
+  const [pessoas, setPessoas] = useState<PessoaComPagamentos[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODOS');
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
         page: String(page),
-        pageSize: String(pageSize),
+        pageSize: String(PAGE_SIZE),
       });
       if (searchQuery.trim()) {
         params.set('q', searchQuery.trim());
@@ -86,24 +97,22 @@ export default function FinanceiroPagamentosPage() {
           description: data?.error?.message || 'Falha ao carregar dados',
           variant: 'error',
         });
-        setAlunos([]);
+        setPessoas([]);
         return;
       }
 
       const payload = await res.json();
-      setAlunos(payload.data || []);
+      setPessoas(payload.data || []);
       setTotal(payload.total || 0);
-      setTotalPages(Math.max(1, payload.totalPages || 1));
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({ title: 'Erro', description: errMsg, variant: 'error' });
-      setAlunos([]);
+      setPessoas([]);
       setTotal(0);
-      setTotalPages(1);
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, searchQuery, statusFilter]);
+  }, [page, searchQuery, statusFilter]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -125,275 +134,175 @@ export default function FinanceiroPagamentosPage() {
     statusFilter !== 'TODOS' ? `Status: ${statusLabel}` : null,
   ].filter(Boolean) as string[];
 
-  const cellX = 'px-4 md:px-6';
+  const columns = useMemo<DataTableColumn<PessoaComPagamentos>[]>(
+    () => [
+      {
+        id: 'pessoa',
+        header: 'Cliente',
+        width: 'min-w-0 lg:w-[30%]',
+        align: 'left',
+        noWrap: false,
+        skeleton: (
+          <div className="flex items-center gap-2 lg:gap-3">
+            <div className="h-9 w-9 rounded-full bg-gray-200 lg:h-10 lg:w-10" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-40 rounded bg-gray-200" />
+              <div className="h-3 w-28 rounded bg-gray-200 lg:hidden" />
+            </div>
+          </div>
+        ),
+        render: (pessoa) => (
+          <div className="flex min-w-0 items-center gap-2 lg:gap-3">
+            <PersonAvatar
+              name={pessoa.nome}
+              src={getAvatarSrc(pessoa)}
+              size="md"
+              className="h-9 w-9 lg:h-10 lg:w-10"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] font-normal text-gray-900">{pessoa.nome}</div>
+              <div className="mt-0.5 text-[12px] tabular-nums leading-snug text-gray-500 lg:hidden">
+                {formatCpf(pessoa)}
+              </div>
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'cpf',
+        header: 'CPF',
+        width: 'lg:w-[14%]',
+        align: 'center',
+        headerClassName: 'hidden lg:table-cell',
+        cellClassName: 'hidden lg:table-cell',
+        render: (pessoa) => (
+          <span className="tabular-nums leading-[20px]">{formatCpf(pessoa)}</span>
+        ),
+        skeleton: <div className="hidden h-4 w-24 rounded bg-gray-200 lg:block" />,
+      },
+      {
+        id: 'historico',
+        header: 'Histórico',
+        width: 'lg:w-[14%]',
+        align: 'center',
+        render: (pessoa) => (
+          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-700">
+            {pessoa.pagamentosCount} pagos
+          </span>
+        ),
+        skeleton: <div className="mx-auto h-4 w-16 rounded bg-gray-200" />,
+      },
+      {
+        id: 'total',
+        header: 'Total pago',
+        width: 'lg:w-[16%]',
+        align: 'center',
+        render: (pessoa) => (
+          <span className="font-medium tabular-nums text-gray-900">
+            {formatCurrency(pessoa.valorTotal)}
+          </span>
+        ),
+        skeleton: <div className="mx-auto h-4 w-20 rounded bg-gray-200" />,
+      },
+      {
+        id: 'ultima',
+        header: 'Última',
+        width: 'lg:w-[14%]',
+        align: 'center',
+        render: (pessoa) => (
+          <span className="tabular-nums text-gray-700">
+            {pessoa.ultimoPagamento ? formatDate(pessoa.ultimoPagamento) : '—'}
+          </span>
+        ),
+        skeleton: <div className="mx-auto h-4 w-20 rounded bg-gray-200" />,
+      },
+    ],
+    [],
+  );
 
   return (
-    <div className="w-full min-w-0 space-y-4 sm:space-y-6">
-      {/* Título + filtros no mesmo bloco: alinhamento consistente no mobile */}
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
-        <div className="space-y-1 pb-4">
-          <h1 className="text-xl font-semibold tracking-tight text-gray-900 sm:text-[22px] md:text-2xl">
-            Pagamentos
-          </h1>
-          <p className="text-[13px] leading-snug text-gray-500 sm:max-w-2xl">
-            Histórico por aluno. Toque em um aluno para ver o detalhamento.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-gray-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 sm:left-4" />
-              <Input
-                placeholder="Buscar por nome..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-11 border border-gray-300 bg-white pl-9 pr-10 text-[13px] shadow-none sm:h-10 sm:pl-10"
-              />
-              {searchQuery ? (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700 sm:right-4"
-                  aria-label="Limpar busca"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:flex-nowrap lg:shrink-0">
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-[13px] text-gray-700 shadow-none sm:h-10 lg:min-w-[170px]">
-                <SelectValue placeholder="Todos status" />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {STATUS_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="mt-3 flex min-h-6 flex-wrap items-center gap-2 sm:mt-4">
-          {chipsFiltros.length > 0 ? (
-            chipsFiltros.map((chip) => (
-              <span
-                key={chip}
-                className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:px-3 sm:text-xs"
+    <TableLayout
+      title="Pagamentos"
+      subtitle="Histórico financeiro local por aluno e responsável. Toque em uma pessoa para ver o detalhamento."
+      filtersBar={
+        <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end lg:gap-2">
+          <div className="relative w-full min-w-0 shrink-0 lg:w-[360px] xl:w-[420px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]" />
+            <Input
+              placeholder="Buscar por nome..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-10 rounded-lg border-slate-200 pl-10 pr-10 shadow-none alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 transition-colors hover:text-slate-700"
+                aria-label="Limpar busca"
               >
-                {chip}
-              </span>
-            ))
-          ) : (
-            <p className="text-[11px] leading-snug text-slate-500 sm:text-xs">
-              Use a busca e o status para refinar o histórico.
-            </p>
-          )}
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white px-3 text-[13px] text-gray-700 shadow-none lg:min-w-[170px] lg:w-auto alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)]">
+              <SelectValue placeholder="Todos status" />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {STATUS_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-      </div>
-
-      {/* Lista (mobile: cartões) / tabela (md+) */}
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        {loading ? (
-          <>
-            {/* Skeleton desktop */}
-            <div className="hidden md:block">
-              <div className={cn('border-b bg-gray-50 py-3', cellX)}>
-                <div className="grid grid-cols-12 gap-4">
-                  <Skeleton className="col-span-4 h-4" />
-                  <Skeleton className="col-span-2 h-4" />
-                  <Skeleton className="col-span-3 h-4" />
-                  <Skeleton className="col-span-2 h-4" />
-                  <Skeleton className="col-span-1 h-4" />
-                </div>
-              </div>
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className={cn('py-4', cellX)}>
-                  <div className="grid grid-cols-12 items-center gap-4">
-                    <div className="col-span-4 flex items-center gap-3">
-                      <Skeleton className="h-10 w-10 rounded-full" />
-                      <div className="flex-1 space-y-2">
-                        <Skeleton className="h-4 w-48" />
-                        <Skeleton className="h-4 w-32" />
-                      </div>
-                    </div>
-                    <Skeleton className="col-span-2 mx-auto h-4 w-12" />
-                    <Skeleton className="col-span-3 mx-auto h-4 w-28" />
-                    <Skeleton className="col-span-2 mx-auto h-4 w-24" />
-                    <Skeleton className="col-span-1 ml-auto h-4 w-4" />
-                  </div>
-                </div>
-              ))}
-            </div>
-            {/* Skeleton mobile */}
-            <div className="divide-y md:hidden">
-              {[...Array(6)].map((_, i) => (
-                <div key={i} className="flex gap-3 px-4 py-4">
-                  <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <Skeleton className="h-4 w-[85%] max-w-xs" />
-                    <Skeleton className="h-3 w-24" />
-                    <Skeleton className="h-3 w-full max-w-[12rem]" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
+      }
+    >
+      <div className="mb-3 flex min-h-6 flex-wrap items-center gap-2 px-1 sm:mb-4">
+        {chipsFiltros.length > 0 ? (
+          chipsFiltros.map((chip) => (
+            <span
+              key={chip}
+              className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[11px] font-medium text-violet-700 sm:px-3 sm:text-xs"
+            >
+              {chip}
+            </span>
+          ))
         ) : (
-          <>
-            {/* Cabeçalho tabela — só md+ */}
-            <div className={cn('hidden border-b bg-gray-50 py-3 md:block', cellX)}>
-              <div className="grid grid-cols-12 gap-4 text-[11px] font-medium uppercase tracking-wider text-gray-500">
-                <div className="col-span-4">Aluno</div>
-                <div className="col-span-2 text-center">Histórico</div>
-                <div className="col-span-3 text-center">Total pago</div>
-                <div className="col-span-2 text-center">Última</div>
-                <div className="col-span-1" />
-              </div>
-            </div>
-
-            <div className="divide-y">
-              {alunos.length === 0 ? (
-                <div className={cn('py-12 text-center text-gray-500 sm:py-14', cellX)}>
-                  <User className="mx-auto mb-3 h-12 w-12 text-gray-400" />
-                  <p className="text-sm leading-snug">Nenhum aluno com histórico de pagamento encontrado</p>
-                  {filtrosAtivos > 0 ? (
-                    <p className="mt-2 text-xs text-slate-400">Tente ajustar busca ou status.</p>
-                  ) : null}
-                </div>
-              ) : (
-                <>
-                  {/* Mobile: cartões */}
-                  <div className="md:hidden">
-                    {alunos.map((aluno) => (
-                      <button
-                        key={aluno.id}
-                        type="button"
-                        className="group flex w-full gap-3 px-4 py-4 text-left transition-colors active:bg-gray-50"
-                        onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
-                      >
-                        <PersonAvatar
-                          name={aluno.nome}
-                          src={getAvatarSrc(aluno)}
-                          size="lg"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="line-clamp-2 text-[14px] font-medium leading-snug text-gray-900">
-                              {aluno.nome}
-                            </span>
-                            <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-gray-300 group-hover:text-violet-600" />
-                          </div>
-                          {aluno.cpf ? (
-                            <p className="mt-0.5 text-[11px] text-gray-500">
-                              {aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}
-                            </p>
-                          ) : null}
-                          <div className="mt-2 flex flex-col gap-1.5 text-[12px]">
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <span className="rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-700">
-                                {aluno.pagamentosCount} pagamentos
-                              </span>
-                              <span className="font-semibold tabular-nums text-gray-900">
-                                {formatCurrency(aluno.valorTotal)}
-                              </span>
-                            </div>
-                            <p className="text-gray-600">
-                              <span className="text-gray-500">Última: </span>
-                              {aluno.ultimoPagamento ? formatDate(aluno.ultimoPagamento) : '—'}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Desktop: tabela */}
-                  <div className="hidden md:block">
-                    {alunos.map((aluno) => (
-                      <div
-                        key={aluno.id}
-                        className="group cursor-pointer bg-white px-6 py-4 transition-colors hover:bg-gray-50"
-                        onClick={() => router.push(`/financeiro/pagamentos/${aluno.id}`)}
-                      >
-                        <div className="grid grid-cols-12 items-center gap-4">
-                          <div className="col-span-4 flex items-center gap-3">
-                            <PersonAvatar
-                              name={aluno.nome}
-                              src={getAvatarSrc(aluno)}
-                              size="md"
-                            />
-                            <div className="min-w-0">
-                              <div className="truncate text-[13px] font-normal text-gray-900">{aluno.nome}</div>
-                              {aluno.cpf ? (
-                                <p className="mt-0.5 text-[11px] text-gray-500">
-                                  CPF:{' '}
-                                  {aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}
-                                </p>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div className="col-span-2 text-center">
-                            <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-700">
-                              {aluno.pagamentosCount} itens
-                            </span>
-                          </div>
-
-                          <div className="col-span-3 text-center text-[13px] font-medium text-gray-900">
-                            {formatCurrency(aluno.valorTotal)}
-                          </div>
-
-                          <div className="col-span-2 text-center text-[13px] text-gray-700">
-                            {aluno.ultimoPagamento ? formatDate(aluno.ultimoPagamento) : '—'}
-                          </div>
-
-                          <div className="col-span-1 flex justify-end">
-                            <ChevronRight className="h-4 w-4 text-gray-300 transition-colors group-hover:text-violet-600" />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </>
+          <p className="text-[11px] leading-snug text-slate-500 sm:text-xs">
+            Use a busca e o status para refinar o histórico.
+          </p>
         )}
       </div>
-      <div className="flex flex-col gap-2 text-[13px] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
-        <span>
-          {total === 0 ? 'Nenhum registro' : `${total} aluno${total === 1 ? '' : 's'} com histórico`}
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 rounded-lg border-gray-300 px-3 text-[13px]"
-            disabled={loading || page <= 1}
-            onClick={() => setPage((current) => Math.max(1, current - 1))}
-          >
-            Anterior
-          </Button>
-          <span className="min-w-20 text-center tabular-nums">
-            {page} / {totalPages}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-9 rounded-lg border-gray-300 px-3 text-[13px]"
-            disabled={loading || page >= totalPages}
-            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
-          >
-            Próxima
-          </Button>
-        </div>
+
+      <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:rounded-xl">
+        <DataTable
+          columns={columns}
+          data={pessoas}
+          rowKey={(pessoa) => `${pessoa.tipo}:${pessoa.id}`}
+          loading={loading}
+          skeletonRows={5}
+          onRowClick={(pessoa) => router.push(getPessoaHref(pessoa))}
+          emptyMessage={
+            <div className="px-6 py-12 text-center text-gray-500">
+              <User className="mx-auto mb-3 h-12 w-12 text-gray-400" />
+              <p className="text-sm leading-snug">Nenhuma pessoa com histórico financeiro encontrada</p>
+              {filtrosAtivos > 0 ? (
+                <p className="mt-2 text-xs text-slate-400">Tente ajustar busca ou status.</p>
+              ) : null}
+            </div>
+          }
+          ariaLabel="Tabela de pagamentos"
+        />
+        {!loading && total > PAGE_SIZE ? (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <Pagination total={total} page={page} pageSize={PAGE_SIZE} onChange={setPage} />
+          </div>
+        ) : null}
       </div>
-    </div>
+    </TableLayout>
   );
 }

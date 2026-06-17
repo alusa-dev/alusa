@@ -10,6 +10,8 @@ export type ExternalAsaasOnboardingState = {
   asaasAccountId: string | null;
   asaasEmail: string | null;
   hasApiKey: boolean;
+  apiKeyStatus: string;
+  webhookStatus: string | null;
 };
 
 export async function getExternalAsaasOnboardingState(contaId: string): Promise<ExternalAsaasOnboardingState> {
@@ -29,6 +31,8 @@ export async function getExternalAsaasOnboardingState(contaId: string): Promise<
               asaasAccountId: true,
               asaasAccountEmail: true,
               apiKeyEncrypted: true,
+              apiKeyStatus: true,
+              webhookStatus: true,
             },
           },
         },
@@ -50,5 +54,7 @@ export async function getExternalAsaasOnboardingState(contaId: string): Promise<
     asaasAccountId: conta.financeProfile?.asaasAccount?.asaasAccountId ?? null,
     asaasEmail: conta.financeProfile?.asaasAccount?.asaasAccountEmail ?? null,
     hasApiKey: Boolean(conta.financeProfile?.asaasAccount?.apiKeyEncrypted),
+    apiKeyStatus: conta.financeProfile?.asaasAccount?.apiKeyStatus ?? 'MISSING',
+    webhookStatus: conta.financeProfile?.asaasAccount?.webhookStatus ?? null,
   };
 }

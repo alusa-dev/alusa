@@ -8,6 +8,7 @@ const mapToEventPaymentMethod = (method?: string | null): EventPaymentMethod => 
 };
 
 import {
+  buildStaffSaleTicketsUrl,
   calculateEventMetrics,
   resolveEventParticipantPayment,
   validateCostumeAssignmentStatusTransition,
@@ -25,6 +26,12 @@ import {
   type EventParticipantRemovalDecision,
   type EventParticipantRemovalFacts,
 } from './event-participant-lifecycle';
+import {
+  assertEventScopedAssignmentLinks,
+  assertEventScopedTicketSaleLinks,
+  listEventScopedResources,
+  type EventScopedResources,
+} from './event-participant-scope';
 import type {
   CreateCostumeAssignmentInput,
   CreateCostumeInput,
@@ -624,6 +631,15 @@ export async function updateSchoolEventStatus(ctx: EventsContext, eventId: strin
   });
 }
 
+export type { EventScopedResources } from './event-participant-scope';
+
+export async function getEventScopedResources(
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+): Promise<EventScopedResources> {
+  return listEventScopedResources(prisma, ctx.contaId, eventId);
+}
+
 export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
   const [users, alunos, responsaveis, turmas, events] = await Promise.all([
     prisma.usuario.findMany({
@@ -725,6 +741,10 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
       throw new EventsError('LOTE_JA_EXISTE', 'Já existe um lote com este nome neste evento.', 409);
     }
 
+    if (event.ticketMode !== 'NUMBERED_SEATS' && (!input.quantityTotal || input.quantityTotal < 1)) {
+      throw new EventsError('QUANTIDADE_INVALIDA', 'Informe a quantidade do lote.', 422);
+    }
+
     const lot = await tx.eventTicketLot.create({
       data: {
         contaId: ctx.contaId,
@@ -732,7 +752,7 @@ export async function createTicketLot(ctx: EventsContext, input: CreateTicketLot
         name: input.name,
         ticketType: input.ticketType,
         unitPrice: decimal(input.unitPrice),
-        quantityTotal: input.quantityTotal,
+        quantityTotal: event.ticketMode === 'NUMBERED_SEATS' ? 0 : (input.quantityTotal ?? 0),
         saleStartsAt: input.saleStartsAt,
         saleEndsAt: input.saleEndsAt,
         status: input.status,
@@ -776,7 +796,7 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
       }
     }
 
-    if (input.quantityTotal != null && input.quantityTotal < current.quantitySold) {
+    if (input.quantityTotal != null && current.event.ticketMode !== 'NUMBERED_SEATS' && input.quantityTotal < current.quantitySold) {
       throw new EventsError('QUANTIDADE_INVALIDA', 'A quantidade total não pode ser menor que a vendida.', 422);
     }
 
@@ -807,7 +827,7 @@ export async function updateTicketLot(ctx: EventsContext, lotId: string, input: 
         name: input.name,
         ticketType: input.ticketType,
         unitPrice: input.unitPrice == null ? undefined : decimal(input.unitPrice),
-        quantityTotal: input.quantityTotal,
+        quantityTotal: current.event.ticketMode === 'NUMBERED_SEATS' ? undefined : input.quantityTotal,
         saleStartsAt: input.saleStartsAt,
         saleEndsAt: input.saleEndsAt,
         status: input.status,
@@ -841,6 +861,11 @@ export function mapTicketSale(
     };
   }>,
 ) {
+  const source = sale.eventMapOrderId ? ('PUBLIC_ORDER' as const) : ('MANUAL_SALE' as const);
+  const chargeDetailUrl = sale.eventMapOrderId
+    ? `/cobrancas/event-map-order:${sale.eventMapOrderId}`
+    : `/cobrancas/event-ticket-sale:${sale.id}`;
+
   return {
     id: sale.id,
     contaId: sale.contaId,
@@ -865,9 +890,11 @@ export function mapTicketSale(
     revenueEntryId: sale.revenueEntryId,
     createdAt: sale.createdAt.toISOString(),
     updatedAt: sale.updatedAt.toISOString(),
-    source: sale.eventMapOrderId ? ('PUBLIC_ORDER' as const) : ('MANUAL_SALE' as const),
+    source,
     eventMapOrderId: sale.eventMapOrderId,
     asaasPaymentId: sale.asaasPaymentId,
+    paymentStatus: sale.paymentStatus,
+    chargeDetailUrl,
   };
 }
 
@@ -939,8 +966,10 @@ function mapPendingPublicOrderAsTicketSale(
     source: 'PUBLIC_ORDER' as const,
     eventMapOrderId: order.id,
     asaasPaymentId: order.asaasPaymentId,
+    paymentStatus: order.paymentStatus,
     reservationExpiresAt: toIso(order.expiresAt),
     invoiceUrl: order.invoiceUrl,
+    chargeDetailUrl: `/cobrancas/event-map-order:${order.id}`,
     ticketsUrl: null,
   };
 }
@@ -955,6 +984,15 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
         aluno: { select: { id: true, nome: true } },
         responsavel: { select: { id: true, nome: true } },
         createdBy: { select: { id: true, nome: true } },
+        saleSeats: {
+          select: {
+            id: true,
+            sectionName: true,
+            seatLabel: true,
+            unitPriceSnapshot: true,
+          },
+          orderBy: [{ sectionName: 'asc' }, { seatLabel: 'asc' }],
+        },
       },
       orderBy: [{ soldAt: 'desc' }, { createdAt: 'desc' }],
     }),
@@ -986,26 +1024,45 @@ export async function listTicketSales(ctx: Pick<EventsContext, 'contaId'>, input
   const publicOrders = publicOrderIds.length
     ? await prisma.eventMapOrder.findMany({
         where: { contaId: ctx.contaId, id: { in: publicOrderIds } },
-        select: { id: true, status: true, accessToken: true, invoiceUrl: true, asaasPaymentId: true },
+        select: { id: true, status: true, accessToken: true, invoiceUrl: true, asaasPaymentId: true, paymentStatus: true },
       })
     : [];
   const publicOrdersById = new Map(publicOrders.map((order) => [order.id, order]));
 
   const mappedSales = sales.map((sale) => {
     const dto = mapTicketSale(sale);
-    if (!sale.eventMapOrderId) return dto;
+    if (sale.eventMapOrderId) {
+      const order = publicOrdersById.get(sale.eventMapOrderId);
+      return {
+        ...dto,
+        source: 'PUBLIC_ORDER' as const,
+        asaasPaymentId: dto.asaasPaymentId ?? order?.asaasPaymentId ?? null,
+        paymentStatus: dto.paymentStatus ?? order?.paymentStatus ?? null,
+        invoiceUrl: order?.invoiceUrl ?? null,
+        chargeDetailUrl: order ? `/cobrancas/event-map-order:${order.id}` : dto.chargeDetailUrl,
+        ticketsUrl:
+          order?.status === 'CONFIRMED'
+            ? `/api/events/public-orders/${order.id}/tickets`
+            : null,
+      };
+    }
 
-    const order = publicOrdersById.get(sale.eventMapOrderId);
-    return {
-      ...dto,
-      source: 'PUBLIC_ORDER' as const,
-      asaasPaymentId: dto.asaasPaymentId ?? order?.asaasPaymentId ?? null,
-      invoiceUrl: order?.invoiceUrl ?? null,
-      ticketsUrl:
-        order?.status === 'CONFIRMED'
-          ? `/api/events/public-orders/${order.id}/tickets`
-          : null,
-    };
+    if (sale.saleSeats.length > 0) {
+      return {
+        ...dto,
+        source: 'MANUAL_SALE' as const,
+        hasSeatedTickets: true,
+        seats: sale.saleSeats.map((seat) => ({
+          id: seat.id,
+          sectionName: seat.sectionName,
+          seatLabel: seat.seatLabel,
+          unitPrice: toMoney(seat.unitPriceSnapshot),
+        })),
+        ticketsUrl: buildStaffSaleTicketsUrl(sale.id, sale.status, sale.saleSeats.length),
+      };
+    }
+
+    return dto;
   });
 
   return [...mappedSales, ...pendingOrders.map(mapPendingPublicOrderAsTicketSale)].sort(
@@ -1053,11 +1110,37 @@ async function syncLotQuantity(tx: Prisma.TransactionClient, contaId: string, lo
 }
 
 export async function createTicketSale(ctx: EventsContext, input: CreateTicketSaleInput) {
+  if (input.holdToken) {
+    const { createSeatedTicketSale } = await import('./map/staff-map-sales.service');
+    const result = await createSeatedTicketSale(ctx, { ...input, holdToken: input.holdToken });
+    const primary = await getTicketSaleDto(prisma, ctx.contaId, result.primarySaleId);
+    return { ...primary, groupedSaleIds: result.saleIds };
+  }
+
+  if (!input.lotId || !input.quantity) {
+    throw new EventsError('DADOS_VENDA_INVALIDOS', 'Informe lote e quantidade para venda simples.', 422);
+  }
+
+  const event = await prisma.schoolEvent.findFirst({
+    where: { id: input.eventId, contaId: ctx.contaId },
+    select: { ticketMode: true },
+  });
+  if (event?.ticketMode === 'NUMBERED_SEATS') {
+    throw new EventsError(
+      'VENDA_ASSENTO_OBRIGATORIA',
+      'Este evento usa assentos numerados. Selecione os assentos no mapa antes de registrar a venda.',
+      409,
+    );
+  }
+
+  const lotId = input.lotId;
+  const quantity = input.quantity;
+
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${input.lotId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "EventTicketLot" WHERE id = ${lotId} AND "contaId" = ${ctx.contaId} FOR UPDATE`;
 
     const lot = await tx.eventTicketLot.findFirst({
-      where: { id: input.lotId, contaId: ctx.contaId, eventId: input.eventId },
+      where: { id: lotId, contaId: ctx.contaId, eventId: input.eventId },
       include: { event: true },
     });
     if (!lot) throw new EventsError('LOTE_NAO_ENCONTRADO', 'Lote não encontrado.', 404);
@@ -1080,7 +1163,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
       _sum: { quantity: true },
     });
     const quantitySold = sold._sum.quantity ?? 0;
-    if (quantitySold + input.quantity > lot.quantityTotal) {
+    if (quantitySold + quantity > lot.quantityTotal) {
       throw new EventsError('ESTOQUE_INSUFICIENTE', 'Não há ingressos suficientes neste lote.', 409);
     }
 
@@ -1089,8 +1172,13 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
       throw new EventsError('STATUS_VENDA_INVALIDO', 'Use pendente, pago ou cortesia ao criar venda.', 422);
     }
 
+    await assertEventScopedTicketSaleLinks(tx, ctx.contaId, input.eventId, {
+      alunoId: input.alunoId,
+      responsavelId: input.responsavelId,
+    });
+
     const unitPrice = toMoney(lot.unitPrice);
-    const totalAmount = saleStatus === 'COMPLIMENTARY' ? 0 : unitPrice * input.quantity;
+    const totalAmount = saleStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
     const sale = await tx.eventTicketSale.create({
       data: {
         contaId: ctx.contaId,
@@ -1099,7 +1187,7 @@ export async function createTicketSale(ctx: EventsContext, input: CreateTicketSa
         buyerName: input.buyerName,
         alunoId: input.alunoId,
         responsavelId: input.responsavelId,
-        quantity: input.quantity,
+        quantity,
         unitPriceSnapshot: decimal(unitPrice),
         totalAmount: decimal(totalAmount),
         paymentMethod: input.paymentMethod,
@@ -1201,6 +1289,8 @@ export async function cancelTicketSale(ctx: EventsContext, saleId: string, reaso
       data: { status: 'CANCELLED', cancelledAt: new Date() },
     });
     await syncLotQuantity(tx, ctx.contaId, current.lotId);
+    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
+    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -1236,6 +1326,8 @@ export async function refundTicketSale(ctx: EventsContext, saleId: string, reaso
       data: { status: 'REFUNDED', refundedAt: now, actualAmount: current.totalAmount, refundedAmount: current.totalAmount, netAmount: decimal(0) },
     });
     await syncLotQuantity(tx, ctx.contaId, current.lotId);
+    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
+    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
 
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
@@ -1480,6 +1572,13 @@ export async function createCostumeAssignment(ctx: EventsContext, input: CreateC
     if (input.status === 'DELIVERED' && !input.alunoId) {
       throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
     }
+
+    await assertEventScopedAssignmentLinks(tx, ctx.contaId, input.eventId, {
+      alunoId: input.alunoId,
+      turmaId: input.turmaId,
+      requireAluno: input.status === 'DELIVERED',
+    });
+
     if (input.returnedAt && !input.deliveredAt) {
       throw new EventsError('DEVOLUCAO_INVALIDA', 'Não é possível devolver antes da entrega.', 422);
     }
@@ -1555,6 +1654,16 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
     if (!current) throw new EventsError('VINCULO_NAO_ENCONTRADO', 'Vínculo de figurino não encontrado.', 404);
     assertOperationalEvent(current.event.status);
 
+    const targetAlunoId = input.alunoId === undefined ? current.alunoId : input.alunoId;
+    const targetTurmaId = input.turmaId === undefined ? current.turmaId : input.turmaId;
+    const targetStatus = input.status ?? current.status;
+
+    await assertEventScopedAssignmentLinks(tx, ctx.contaId, current.eventId, {
+      alunoId: targetAlunoId,
+      turmaId: targetTurmaId,
+      requireAluno: targetStatus === 'DELIVERED',
+    });
+
     if (input.status) {
       const transition = validateCostumeAssignmentStatusTransition(current.status, input.status);
       if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
@@ -1565,7 +1674,7 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
           400,
         );
       }
-      if (input.status === 'DELIVERED' && !current.alunoId) {
+      if (input.status === 'DELIVERED' && !targetAlunoId) {
         throw new EventsError('ALUNO_OBRIGATORIO', 'Informe o aluno antes de marcar entrega.', 422);
       }
     }
@@ -1645,8 +1754,21 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
       },
     });
 
-    const chargedValue = toMoney(updated.chargedValue);
-    if (updated.billingMode !== 'SEPARATE_CHARGE') {
+    if (updated.status === 'CANCELLED' && updated.revenueEntryId) {
+      await tx.eventFinancialEntry.updateMany({
+        where: {
+          contaId: ctx.contaId,
+          id: updated.revenueEntryId,
+          originType: 'COSTUME_ASSIGNMENT',
+        },
+        data: {
+          status: 'CANCELLED',
+          cancelledAt: now,
+          actualAmount: null,
+          realizedAt: null,
+        },
+      });
+    } else if (updated.billingMode !== 'SEPARATE_CHARGE') {
       if (updated.revenueEntryId) {
         await tx.eventFinancialEntry.deleteMany({
           where: { contaId: ctx.contaId, id: updated.revenueEntryId, originType: 'COSTUME_ASSIGNMENT' },
@@ -1657,6 +1779,7 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
         });
       }
     } else if (updated.revenueEntryId) {
+      const chargedValue = toMoney(updated.chargedValue);
       const targetCostume = await tx.eventCostume.findFirst({
         where: { id: updated.costumeId, contaId: ctx.contaId },
       });
@@ -1681,31 +1804,34 @@ export async function updateCostumeAssignment(ctx: EventsContext, assignmentId: 
           data: { revenueEntryId: null },
         });
       }
-    } else if (chargedValue > 0) {
-      const targetCostume = await tx.eventCostume.findFirst({
-        where: { id: updated.costumeId, contaId: ctx.contaId },
-      });
-      if (targetCostume) {
-        const entry = await tx.eventFinancialEntry.create({
-          data: {
-            contaId: ctx.contaId,
-            eventId: updated.eventId,
-            type: 'REVENUE',
-            category: 'Figurino',
-            description: targetCostume.name,
-            originType: 'COSTUME_ASSIGNMENT',
-            originId: updated.id,
-            expectedAmount: decimal(chargedValue),
-            actualAmount: targetIsPaid ? decimal(chargedValue) : null,
-            status: targetIsPaid ? 'RECEIVED' : 'PENDING',
-            realizedAt: targetIsPaid ? now : null,
-            createdByUserId: ctx.userId,
-          },
+    } else {
+      const chargedValue = toMoney(updated.chargedValue);
+      if (chargedValue > 0) {
+        const targetCostume = await tx.eventCostume.findFirst({
+          where: { id: updated.costumeId, contaId: ctx.contaId },
         });
-        await tx.eventCostumeAssignment.update({
-          where: { id: updated.id },
-          data: { revenueEntryId: entry.id },
-        });
+        if (targetCostume) {
+          const entry = await tx.eventFinancialEntry.create({
+            data: {
+              contaId: ctx.contaId,
+              eventId: updated.eventId,
+              type: 'REVENUE',
+              category: 'Figurino',
+              description: targetCostume.name,
+              originType: 'COSTUME_ASSIGNMENT',
+              originId: updated.id,
+              expectedAmount: decimal(chargedValue),
+              actualAmount: targetIsPaid ? decimal(chargedValue) : null,
+              status: targetIsPaid ? 'RECEIVED' : 'PENDING',
+              realizedAt: targetIsPaid ? now : null,
+              createdByUserId: ctx.userId,
+            },
+          });
+          await tx.eventCostumeAssignment.update({
+            where: { id: updated.id },
+            data: { revenueEntryId: entry.id },
+          });
+        }
       }
     }
 
@@ -3102,6 +3228,17 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
     assertOperationalEvent(current.lot.event.status);
 
+    const seatedSaleCount = await tx.eventTicketSaleSeat.count({
+      where: { contaId: ctx.contaId, saleId },
+    });
+    if (seatedSaleCount > 0 && (input.lotId != null || input.quantity != null)) {
+      throw new EventsError(
+        'VENDA_ASSENTO_BLOQUEADA',
+        'Vendas com assentos numerados não podem ter lote ou quantidade alterados. Cancele e registre novamente.',
+        409,
+      );
+    }
+
     const lotId = input.lotId ?? current.lotId;
     const lot = lotId === current.lotId ? current.lot : await tx.eventTicketLot.findFirst({
       where: { id: lotId, contaId: ctx.contaId },
@@ -3131,6 +3268,15 @@ export async function updateTicketSale(ctx: EventsContext, saleId: string, input
     const paymentMethod = input.paymentMethod ?? current.paymentMethod;
 
     const resolvedStatus = paymentMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : newStatus;
+
+    const targetAlunoId = input.alunoId === undefined ? current.alunoId : input.alunoId;
+    const targetResponsavelId =
+      input.responsavelId === undefined ? current.responsavelId : input.responsavelId;
+
+    await assertEventScopedTicketSaleLinks(tx, ctx.contaId, current.eventId, {
+      alunoId: targetAlunoId,
+      responsavelId: targetResponsavelId,
+    });
 
     const unitPrice = toMoney(lot.unitPrice);
     const totalAmount = resolvedStatus === 'COMPLIMENTARY' ? 0 : unitPrice * quantity;
@@ -3262,6 +3408,9 @@ export async function deleteTicketSale(ctx: EventsContext, saleId: string) {
         where: { id: current.revenueEntryId },
       });
     }
+
+    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
+    await releaseSeatsForTicketSale(tx, ctx.contaId, saleId);
 
     await tx.eventTicketSale.delete({
       where: { id: saleId },

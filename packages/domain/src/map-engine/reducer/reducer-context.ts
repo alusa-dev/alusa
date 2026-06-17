@@ -33,6 +33,7 @@ export function updateCounts(map: EventMapDTO) {
     sections: map.sections.length,
     seats: map.seats.length,
     availableSeats: map.seats.filter((seat) => seat.status === 'AVAILABLE' && seat.publicVisible).length,
+    orders: map.counts.orders ?? 0,
   };
 }
 
@@ -67,7 +68,7 @@ export function createDefaultSection(
     levelId,
     sectionId,
     type: 'SECTION',
-    data: { label: sectionName, fill: color },
+    data: { label: sectionName, fill: color, fillEnabled: false, opacity: 0 },
     x: point.x,
     y: point.y,
     width: size?.width ?? 320,

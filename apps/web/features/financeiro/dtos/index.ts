@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { chargeDisplayStatusDTOSchema } from '@/lib/finance/charge-display-status';
 
 export const financeiroRouteIdParamsDTOSchema = z.object({
   id: z.string().min(1),
@@ -91,6 +92,7 @@ export const financeiroPagamentoCobrancaDTOSchema = z.object({
   valor: z.number(),
   vencimento: z.string(),
   aluno: financeiroPagamentoAlunoDTOSchema,
+  displayStatus: chargeDisplayStatusDTOSchema,
 });
 
 export type FinanceiroPagamentoCobrancaDTO = z.infer<typeof financeiroPagamentoCobrancaDTOSchema>;
@@ -203,6 +205,7 @@ export const paymentHistoryCategorySchema = z.enum([
   'PARCELAMENTO',
   'ASSINATURA',
   'LOJA',
+  'EVENTOS',
   'OUTROS',
 ]);
 
@@ -225,7 +228,15 @@ export type FinanceiroPagamentoHistoricoPagamentoDTO = z.infer<
 
 export const financeiroPagamentoHistoricoCobrancaDTOSchema = z.object({
   id: z.string(),
-  sourceKind: z.enum(['cobranca', 'charge', 'sale']),
+  sourceKind: z.enum([
+    'cobranca',
+    'charge',
+    'sale',
+    'event_ticket_sale',
+    'event_participant_fee',
+    'event_financial_entry',
+    'event_map_order',
+  ]),
   sourceId: z.string(),
   chargeType: z.string(),
   origin: z.string(),
@@ -238,6 +249,16 @@ export const financeiroPagamentoHistoricoCobrancaDTOSchema = z.object({
   vencimento: z.string().nullable(),
   billingType: z.string().nullable(),
   status: z.string(),
+  asaasStatus: z.string().nullable().optional(),
+  liquidacaoStatus: z.string().nullable().optional(),
+  displayStatus: z
+    .object({
+      status: z.string(),
+      label: z.string(),
+      hint: z.string().nullable(),
+      variant: z.enum(['success', 'warning', 'danger', 'info', 'neutral']),
+    })
+    .optional(),
   asaasPaymentId: z.string().nullable(),
   matriculaId: z.string().nullable(),
   groupId: z.string().nullable(),
@@ -283,6 +304,75 @@ export const financeiroPagamentoAlunoCobrancasResultDTOSchema = z.object({
 
 export type FinanceiroPagamentoAlunoCobrancasResultDTO = z.infer<
   typeof financeiroPagamentoAlunoCobrancasResultDTOSchema
+>;
+
+export const financeiroPagamentoPessoaTipoDTOSchema = z.enum(['ALUNO', 'RESPONSAVEL']);
+
+export type FinanceiroPagamentoPessoaTipoDTO = z.infer<
+  typeof financeiroPagamentoPessoaTipoDTOSchema
+>;
+
+export const financeiroPagamentoPessoaResumoDTOSchema = z.object({
+  id: z.string(),
+  tipo: financeiroPagamentoPessoaTipoDTOSchema,
+  nome: z.string(),
+  email: z.string().nullable().optional(),
+  telefone: z.string().nullable().optional(),
+  cpf: z.string().nullable(),
+  cpfMasked: z.string().nullable().optional(),
+  foto: z.string().nullable(),
+  avatarUrl: z.string().nullable().optional(),
+  alunosVinculados: z
+    .array(
+      z.object({
+        id: z.string(),
+        nome: z.string(),
+      }),
+    )
+    .default([]),
+});
+
+export type FinanceiroPagamentoPessoaResumoDTO = z.infer<
+  typeof financeiroPagamentoPessoaResumoDTOSchema
+>;
+
+export const financeiroPagamentoPessoaIndexItemDTOSchema = financeiroPagamentoPessoaResumoDTOSchema.extend({
+  totalPagamentos: z.number(),
+  valorTotal: z.number(),
+  valorEmAberto: z.number(),
+  ultimoPagamento: z.string().nullable(),
+  pagamentosCount: z.number().int().nonnegative(),
+  cobrancasAbertasCount: z.number().int().nonnegative(),
+});
+
+export type FinanceiroPagamentoPessoaIndexItemDTO = z.infer<
+  typeof financeiroPagamentoPessoaIndexItemDTOSchema
+>;
+
+export const listFinanceiroPagamentoPessoaIndexResultDTOSchema = z.object({
+  data: z.array(financeiroPagamentoPessoaIndexItemDTOSchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  totalPages: z.number().int().nonnegative(),
+});
+
+export type ListFinanceiroPagamentoPessoaIndexResultDTO = z.infer<
+  typeof listFinanceiroPagamentoPessoaIndexResultDTOSchema
+>;
+
+export const financeiroPagamentoPessoaHistoricoResultDTOSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    pessoa: financeiroPagamentoPessoaResumoDTOSchema,
+    aluno: financeiroPagamentoAlunoResumoDTOSchema.optional(),
+    cobrancas: z.array(financeiroPagamentoHistoricoCobrancaDTOSchema),
+    resumo: financeiroPagamentoHistoricoResumoDTOSchema,
+  }),
+});
+
+export type FinanceiroPagamentoPessoaHistoricoResultDTO = z.infer<
+  typeof financeiroPagamentoPessoaHistoricoResultDTOSchema
 >;
 
 const formaPagamentoList = [

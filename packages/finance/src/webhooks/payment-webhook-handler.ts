@@ -3,6 +3,8 @@ import type { PaymentStatus } from '@alusa/asaas';
 import {
   cancelPublicEventMapOrderByPayment,
   confirmPublicEventMapOrderPayment,
+  markPublicEventMapOrderRefundProcessingByPayment,
+  reconcileEventMapOrderFinancialStateFromAsaas,
   refundPublicEventMapOrderByPayment,
   syncPublicEventMapOrderPaymentCreated,
 } from '@alusa/lib/events/map/event-map.service';
@@ -27,6 +29,7 @@ import { withSessionAdvisoryLock } from '../core/idempotency.service';
 import { getPayment, isAsaasEnabled } from '../use-cases/asaas-ops';
 import { confirmPaymentCommandsByProviderEvent } from '../use-cases/payment-command-ledger';
 import { fulfillReservedSaleOnPayment } from '../use-cases/store-inventory';
+import { handleChargeInvoicePaymentEvent } from '../use-cases/handle-charge-invoice-payment-event';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { Prisma } from '@prisma/client';
 import type {
@@ -352,6 +355,26 @@ function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): Liq
   });
 }
 
+function buildChargeAsaasSnapshotUpdate(payload: PaymentWebhookPayload): Record<string, unknown> {
+  const p = payload.payment;
+  const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
+  return {
+    asaasStatus: p.status ?? null,
+    asaasValue: p.value,
+    asaasNetValue: p.netValue,
+    asaasOriginalValue: p.originalValue ?? null,
+    asaasFeeValue: p.value - p.netValue,
+    asaasCreditDate: p.creditDate ? new Date(p.creditDate) : null,
+    asaasEstimatedCreditDate: p.estimatedCreditDate ? new Date(p.estimatedCreditDate) : null,
+    lastAsaasFetchAt: new Date(),
+    liquidacaoStatus,
+    liquidadoEm:
+      liquidacaoStatus === 'DISPONIVEL'
+        ? new Date(p.creditDate ?? p.paymentDate ?? p.clientPaymentDate ?? Date.now())
+        : null,
+  };
+}
+
 type CobrancaSelect = {
   id: true;
   matriculaId: true;
@@ -492,6 +515,15 @@ async function handleStandaloneChargeWebhook(
       event: payload.event,
       deleted: payload.payment.deleted ?? null,
     });
+    await prisma.charge.update({
+      where: { id: charge.id },
+      data: {
+        statusUpdatedAt: new Date(),
+        ...buildChargeAsaasSnapshotUpdate(payload),
+        ...(charge.asaasPaymentId ? {} : { asaasPaymentId: p.id }),
+      },
+    });
+    await refreshReadModel({ chargeId: charge.id });
     await auditLogService.record({
       contaId,
       action: 'finance.webhook.standalone_charge_skipped',
@@ -504,6 +536,7 @@ async function handleStandaloneChargeWebhook(
         previousStatus: charge.status,
         attemptedStatus: nextStatusCharge,
         skipReason: 'STATUS_TRANSITION_BLOCKED',
+        snapshotPersisted: true,
       },
     });
     return {
@@ -522,6 +555,7 @@ async function handleStandaloneChargeWebhook(
     status: nextStatusCharge,
     statusUpdatedAt: new Date(),
     value: p.value,
+    ...buildChargeAsaasSnapshotUpdate(payload),
   };
 
   const dueDateUpdate = resolveChargeDueDateUpdate(p.dueDate);
@@ -565,6 +599,25 @@ async function handleStandaloneChargeWebhook(
         error: fulfillError instanceof Error ? fulfillError.message : String(fulfillError),
       });
     }
+  }
+
+  try {
+    await handleChargeInvoicePaymentEvent({
+      contaId,
+      chargeId: charge.id,
+      asaasPaymentId: p.id,
+      event: payload.event,
+      providerStatus: p.status,
+    });
+  } catch (invoiceSideEffectError) {
+    console.error('[handleStandaloneChargeWebhook] Falha ao aplicar side effect fiscal:', {
+      chargeId: charge.id,
+      contaId,
+      error:
+        invoiceSideEffectError instanceof Error
+          ? invoiceSideEffectError.message
+          : String(invoiceSideEffectError),
+    });
   }
 
   await auditLogService.record({
@@ -786,7 +839,7 @@ async function handlePaymentWebhookCore(
         ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH', 'PAYMENT_DUNNING_RECEIVED'].includes(payload.event) ||
         ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(payload.payment.status)
       ) {
-        await confirmPublicEventMapOrderPayment({
+        const eventPaymentParams = {
           contaId,
           asaasPaymentId: payload.payment.id,
           externalReference: payload.payment.externalReference,
@@ -794,7 +847,20 @@ async function handlePaymentWebhookCore(
           invoiceUrl: payload.payment.invoiceUrl ?? null,
           paidAt,
           paidAmount: payload.payment.value,
-        });
+        };
+        try {
+          const confirmed = await confirmPublicEventMapOrderPayment(eventPaymentParams);
+          if (!confirmed) {
+            await reconcileEventMapOrderFinancialStateFromAsaas(eventPaymentParams);
+          }
+        } catch (confirmError) {
+          console.warn('[payment-webhook] Confirmação completa do pedido público falhou; tentando reconciliação financeira', {
+            contaId,
+            asaasPaymentId: payload.payment.id,
+            message: confirmError instanceof Error ? confirmError.message : String(confirmError),
+          });
+          await reconcileEventMapOrderFinancialStateFromAsaas(eventPaymentParams);
+        }
       } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
         await syncPublicEventMapOrderPaymentCreated({
           contaId,
@@ -817,6 +883,13 @@ async function handlePaymentWebhookCore(
           externalReference: payload.payment.externalReference,
           refundedAmount: payload.payment.value,
           partial: true,
+        });
+      } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
+        await markPublicEventMapOrderRefundProcessingByPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
         });
       } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
         await cancelPublicEventMapOrderByPayment({
@@ -1058,6 +1131,7 @@ async function handlePaymentWebhookCore(
               customerId: standaloneSubRecord.customerId,
               standaloneSubscriptionId: standaloneSubRecord.id,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
+              ...buildChargeAsaasSnapshotUpdate(payload),
             },
             create: {
               contaId,
@@ -1073,6 +1147,7 @@ async function handlePaymentWebhookCore(
               customerId: standaloneSubRecord.customerId,
               standaloneSubscriptionId: standaloneSubRecord.id,
               invoiceUrl: payload.payment.invoiceUrl ?? null,
+              ...buildChargeAsaasSnapshotUpdate(payload),
             },
             select: { id: true },
           });
@@ -1154,6 +1229,7 @@ async function handlePaymentWebhookCore(
                 description,
                 customerId,
                 invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
+                ...buildChargeAsaasSnapshotUpdate(payload),
               },
               create: {
                 contaId,
@@ -1168,6 +1244,7 @@ async function handlePaymentWebhookCore(
                 billingType: payload.payment.billingType ?? billingTypeFromMetadata,
                 customerId,
                 invoiceUrl: payload.payment.invoiceUrl ?? null,
+                ...buildChargeAsaasSnapshotUpdate(payload),
               },
               select: { id: true },
             });
@@ -1460,6 +1537,7 @@ async function handlePaymentWebhookCore(
               billingType: payload.payment.billingType ?? standalonePlan.billingType,
               dueDate: vencimento,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
+              ...buildChargeAsaasSnapshotUpdate(payload),
             },
             create: {
               contaId,
@@ -1475,6 +1553,7 @@ async function handlePaymentWebhookCore(
               customerId: standalonePlan.customer.id,
               invoiceUrl: payload.payment.invoiceUrl ?? null,
               standaloneInstallmentPlanId: standalonePlan.id,
+              ...buildChargeAsaasSnapshotUpdate(payload),
             },
             select: { id: true },
           });
@@ -1538,6 +1617,7 @@ async function handlePaymentWebhookCore(
           description: '[NEEDS_REVIEW] Payment sem vínculo local',
           value: payload.payment.value,
           invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
+          ...buildChargeAsaasSnapshotUpdate(payload),
         },
         create: {
           contaId,
@@ -1551,6 +1631,7 @@ async function handlePaymentWebhookCore(
           dueDate: placeholderDueDate,
           billingType: payload.payment.billingType ?? null,
           invoiceUrl: payload.payment.invoiceUrl ?? null,
+          ...buildChargeAsaasSnapshotUpdate(payload),
         },
         select: { id: true },
       });
@@ -1655,6 +1736,7 @@ async function handlePaymentWebhookCore(
       eventName: payload.event,
       asaasPaymentStatus: normalizedAsaasStatus || null,
       billingType: payload.payment.billingType ?? null,
+      deleted: payload.payment.deleted ?? null,
     });
     const currentStatus = cobranca.status;
     const occurredAt = new Date();
@@ -1997,10 +2079,6 @@ async function handlePaymentWebhookCore(
             select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true },
           });
 
-    if (charge && !charge.asaasPaymentId) {
-      await prisma.charge.update({ where: { id: charge.id }, data: { asaasPaymentId: payload.payment.id } });
-    }
-
     if (charge) {
       // Recalcular nextStatusCharge com base no status atual do Charge
       const nextStatusChargeForThisCharge = computeNextChargeStatus({
@@ -2008,6 +2086,10 @@ async function handlePaymentWebhookCore(
         internalStatus,
         eventName: payload.event,
       });
+      const baseChargeUpdate = {
+        ...buildChargeAsaasSnapshotUpdate(payload),
+        ...(charge.asaasPaymentId ? {} : { asaasPaymentId: payload.payment.id }),
+      };
 
       if (charge.status !== nextStatusChargeForThisCharge) {
         const canProgressCharge = canApplyChargeStatusTransition({
@@ -2018,17 +2100,47 @@ async function handlePaymentWebhookCore(
         if (canProgressCharge) {
           await prisma.charge.update({
             where: { id: charge.id },
-            data: { status: nextStatusChargeForThisCharge, statusUpdatedAt: new Date() },
+            data: { ...baseChargeUpdate, status: nextStatusChargeForThisCharge, statusUpdatedAt: new Date() },
           });
         } else {
-          // Regressão em charge também é bloqueada
+          // Regressão em charge também é bloqueada — persiste snapshot Asaas mesmo assim
           console.warn('⚠️ Regressão de status charge bloqueada:', {
             chargeId: charge.id,
             currentStatus: charge.status,
             attemptedStatus: nextStatusChargeForThisCharge,
           });
+          await prisma.charge.update({
+            where: { id: charge.id },
+            data: { ...baseChargeUpdate, statusUpdatedAt: new Date() },
+          });
         }
+      } else {
+        await prisma.charge.update({
+          where: { id: charge.id },
+          data: baseChargeUpdate,
+        });
       }
+    }
+
+    try {
+      await handleChargeInvoicePaymentEvent({
+        contaId,
+        chargeId: charge?.id ?? null,
+        asaasPaymentId: p.id,
+        event: payload.event,
+        providerStatus: p.status,
+      });
+    } catch (invoiceSideEffectError) {
+      console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {
+        contaId,
+        cobrancaId: cobranca.id,
+        chargeId: charge?.id ?? null,
+        asaasPaymentId: p.id,
+        error:
+          invoiceSideEffectError instanceof Error
+            ? invoiceSideEffectError.message
+            : String(invoiceSideEffectError),
+      });
     }
 
     // 6. Materializar Pagamento ao confirmar; Lançamento somente quando liquidado

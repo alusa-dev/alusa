@@ -63,9 +63,6 @@ export function AlunosFeature() {
     setStatus: setStatusFilter,
     sort,
     setSort,
-    page,
-    setPage,
-    setPageSize,
     resetFilters,
   } = useEntityListFiltering({
     items: [],
@@ -75,11 +72,10 @@ export function AlunosFeature() {
     initialSort: 'ASC',
   });
 
-  const { items, total, loading, reload, remove } = useAlunos({
+  const { items, total, loading, reload, remove, page, setPage } = useAlunos({
     contaId,
     q: searchTerm,
     status: statusFilter,
-    page,
     pageSize: PAGE_SIZE,
     sortOrder: sort as SortOrder,
   });
@@ -109,14 +105,6 @@ export function AlunosFeature() {
 
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
   const [wizardOpen, setWizardOpen] = useState(false);
-
-  useEffect(() => {
-    setPageSize(PAGE_SIZE);
-  }, [setPageSize]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [searchTerm, statusFilter, setPage]);
 
   useEffect(() => {
     const handler = () => {

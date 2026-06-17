@@ -7,7 +7,6 @@ import type { ComponentType } from 'react';
 import {
   Armchair,
   Ban,
-  Box,
   Circle,
   Grid2X2,
   Hand,
@@ -15,9 +14,7 @@ import {
   MousePointer2,
   PanelTop,
   Shapes,
-  Rows3,
   Square,
-  Table2,
   Type,
   ZoomIn,
 } from 'lucide-react';
@@ -44,15 +41,10 @@ type ToolbarTool = {
 };
 
 const presetTools: ToolbarTool[] = [
-  { id: 'section', label: 'Adicionar setor', shortcut: 'S', icon: Square },
-  { id: 'row', label: 'Adicionar fileira', shortcut: 'R', icon: Rows3 },
-  { id: 'seat', label: 'Adicionar assento', shortcut: 'C', icon: Armchair },
-  { id: 'table', label: 'Adicionar mesa', icon: Table2 },
+  { id: 'seat', label: 'Organizar assentos', shortcut: 'C', icon: Armchair },
   { id: 'stage', label: 'Adicionar palco', icon: PanelTop },
-  { id: 'booth', label: 'Camarote', icon: Box },
-  { id: 'blocked', label: 'Sessão bloqueada', icon: Ban },
   { id: 'corridor', label: 'Corredor', icon: Grid2X2 },
-  { id: 'general', label: 'Área geral', icon: Circle },
+  { id: 'blocked', label: 'Sessão bloqueada', icon: Ban },
 ];
 
 const shapeTools: ToolbarTool[] = [
@@ -126,12 +118,23 @@ function ToolbarDropdown({
   );
 }
 
-export function FloatingMapToolbar({ activeTool, onToolChange }: { activeTool: MapTool; onToolChange: (tool: MapTool) => void }) {
+export function FloatingMapToolbar({
+  activeTool,
+  onToolChange,
+  className,
+}: {
+  activeTool: MapTool;
+  onToolChange: (tool: MapTool) => void;
+  className?: string;
+}) {
   return (
     <TooltipProvider>
       <div
         data-testid="map-toolbar"
-        className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur"
+        className={cn(
+          'flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-300/30 backdrop-blur',
+          className,
+        )}
       >
         {tools.map((tool) => {
           const Icon = tool.icon;

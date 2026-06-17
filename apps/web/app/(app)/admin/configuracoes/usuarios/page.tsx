@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import UsuarioEditDialog from '@/components/usuarios/UsuarioEditDialog';
 import InviteLinkModal from '@/components/invite/InviteLinkModal';
-import { buildInviteUrl } from '@alusa/lib/client';
+import { buildInviteUrl } from '@alusa/lib/invite/build-invite-url';
 
 type Role = 'PROFESSOR' | 'RECEPCAO' | 'FINANCEIRO' | 'RESPONSAVEL' | 'ADMIN';
 type UserStatus = 'ATIVO' | 'INATIVO';

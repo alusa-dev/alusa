@@ -100,8 +100,8 @@ describe('getStatusBadgeConfig', () => {
 
   it('retorna labels em português', () => {
     expect(getStatusBadgeConfig(PAYMENT_STATUSES.PENDING).label).toBe('Pendente');
-    expect(getStatusBadgeConfig(PAYMENT_STATUSES.CONFIRMED).label).toBe('Confirmado');
+    expect(getStatusBadgeConfig(PAYMENT_STATUSES.CONFIRMED).label).toBe('Confirmada');
     expect(getStatusBadgeConfig(PAYMENT_STATUSES.CHARGEBACK).label).toBe('Chargeback');
-    expect(getStatusBadgeConfig(PAYMENT_STATUSES.RECEIVED_IN_CASH).label).toBe('Recebido em mãos');
+    expect(getStatusBadgeConfig(PAYMENT_STATUSES.RECEIVED_IN_CASH).label).toBe('Recebida em dinheiro');
   });
 });

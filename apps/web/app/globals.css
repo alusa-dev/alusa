@@ -18,9 +18,9 @@
 /* Site marketing — escopo público (data-area="public") */
 [data-area='public'] {
 	color-scheme: light;
-	--alusa-purple: #5b3df5;
-	--alusa-purple-hover: #4a2fe0;
-	--alusa-purple-dark: #430d88;
+	--alusa-purple: #340e63;
+	--alusa-purple-hover: #280a4d;
+	--alusa-purple-dark: #340e63;
 	--alusa-purple-deeper: #140a3d;
 	--alusa-footer: #140528;
 	--alusa-purple-muted: #3d2d8a;
@@ -35,7 +35,7 @@
 }
 
 [data-area='public'] ::selection {
-	background: rgba(91, 61, 245, 0.22);
+	background: rgba(52, 14, 99, 0.22);
 	color: var(--alusa-purple-deeper);
 }
 
@@ -221,6 +221,35 @@ html:not([data-theme='dark']) .alusa-dashboard-kpi-tile:active {
 	outline: none !important;
 	--tw-ring-offset-shadow: 0 0 #0000 !important;
 	--tw-ring-shadow: 0 0 #0000 !important;
+}
+
+/* Vendas — card de modo de cliente selecionado (lilás KPI; sem traço/borda roxa em foco). */
+.alusa-venda-customer-card--selected,
+.alusa-venda-customer-card--selected:hover,
+.alusa-venda-customer-card--selected:focus,
+.alusa-venda-customer-card--selected:focus-visible,
+.alusa-venda-customer-card--selected:active {
+	background-color: #e6d6fb !important;
+	border-width: 0 !important;
+	border-style: solid !important;
+	border-color: transparent !important;
+	outline: none !important;
+	outline-offset: 0 !important;
+	box-shadow: none !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+	-webkit-tap-highlight-color: transparent;
+}
+
+[data-theme='dark'] .alusa-venda-customer-card--selected,
+[data-theme='dark'] .alusa-venda-customer-card--selected:hover,
+[data-theme='dark'] .alusa-venda-customer-card--selected:focus,
+[data-theme='dark'] .alusa-venda-customer-card--selected:focus-visible,
+[data-theme='dark'] .alusa-venda-customer-card--selected:active {
+	background: linear-gradient(165deg, var(--color-card-bg-purple) 0%, var(--color-bg-card-soft) 55%) !important;
+	border-width: 1px !important;
+	border-style: solid !important;
+	border-color: var(--color-border-default) !important;
 }
 
 /* Lilás (#f4ecfd): sem halo de outline/toque — não mascara sombras de filhos. */

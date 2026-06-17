@@ -62,6 +62,7 @@ export function ReactivateParticipantDialog({
       queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
       queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+      queryClient.invalidateQueries({ queryKey: eventQueryKeys.scopedResources(eventId) });
       toast.success({ title: 'Aluno reinscrito', description: 'A inscrição foi reativada e uma nova cobrança foi gerada quando aplicável.' });
       onOpenChange(false);
     },

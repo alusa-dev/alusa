@@ -1,6 +1,6 @@
 "use client";
 import React from 'react';
-import { cn } from '@/lib/utils';
+import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 
 interface AuthShellProps {
@@ -9,21 +9,7 @@ interface AuthShellProps {
     heroContent?: React.ReactNode;
 }
 
-/** Wordmark no tom brand-primary (#19143A) — máscara sobre o SVG roxo original */
-function AlusaWordmarkBrandDark({ className }: { className?: string }) {
-    return (
-        <span
-            className={cn(
-                'inline-block h-8 w-auto max-w-full shrink-0 bg-brand-primary aspect-[1555.6/473.48]',
-                '[mask-image:url("/brand/logo.svg")] [mask-size:contain] [mask-repeat:no-repeat] [mask-position:left_center]',
-                '[-webkit-mask-image:url("/brand/logo.svg")] [-webkit-mask-size:contain] [-webkit-mask-repeat:no-repeat] [-webkit-mask-position:left_center]',
-                className
-            )}
-            role="img"
-            aria-label="Alusa"
-        />
-    );
-}
+const SIDEBAR_WORDMARK_COLOR = '#3e1f63';
 
 const defaultHeroContent = (
     <div className="max-w-[360px]">
@@ -35,7 +21,7 @@ const defaultHeroContent = (
 
 export default function AuthShell({
     children,
-    heroImageSrc = '/images/image-login.jpg',
+    heroImageSrc = '/images/auth/login.jpg',
     heroContent = defaultHeroContent,
 }: AuthShellProps) {
     return (
@@ -52,11 +38,7 @@ export default function AuthShell({
                 <div className="absolute inset-0 z-10 flex flex-col justify-start px-12 py-12 xl:px-14 xl:py-14">
                     <div className="flex flex-col gap-16">
                         <div>
-                            <img
-                                src="/brand/logo.svg"
-                                alt="Alusa"
-                                className="h-8 brightness-0 invert"
-                            />
+                            <BrandWordmark variant="white" className="h-8" />
                         </div>
                         {heroContent}
                     </div>
@@ -72,7 +54,7 @@ export default function AuthShell({
                     <div className="flex min-h-0 flex-1 flex-col justify-start lg:min-h-screen lg:justify-center lg:px-8 lg:py-16">
                         <header className="shrink-0 lg:hidden">
                             <div className="flex w-full items-center justify-start pb-6 pt-[max(1.5rem,env(safe-area-inset-top))]">
-                                <AlusaWordmarkBrandDark />
+                                <BrandWordmark variant="purple" className="h-8" />
                             </div>
                             <div className="-mx-4 border-b border-gray-200" aria-hidden="true" />
                         </header>

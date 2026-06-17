@@ -270,7 +270,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
   return (
     <AuthShell
-      heroImageSrc="/brand/image-register.jpg"
+      heroImageSrc="/images/auth/register.jpg"
       heroContent={(
         <div className="flex w-full justify-center -mt-6">
           <p className="max-w-[460px] text-center text-[30px] font-normal leading-tight tracking-[-0.02em] text-white drop-shadow-[0_6px_18px_rgba(0,0,0,0.24)]">

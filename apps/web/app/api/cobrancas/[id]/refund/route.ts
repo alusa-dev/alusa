@@ -23,6 +23,7 @@ import {
   cobrancaRouteParamsDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaActionResultToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -106,9 +107,183 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       : null;
 
     if (!cobranca && !charge) {
+      const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, id);
+      if (!paymentLookup || paymentLookup.entityType !== 'EVENT') {
+        return NextResponse.json(
+          { error: 'Cobrança não encontrada', correlationId },
+          { status: 404 },
+        );
+      }
+
+      const asaasPaymentId = paymentLookup.asaasPaymentId;
+      if (!asaasPaymentId) {
+        return NextResponse.json(
+          { error: 'Cobrança sem integração com a plataforma financeira', correlationId },
+          { status: 400 },
+        );
+      }
+
+      if (!isAsaasEnabled()) {
+        return NextResponse.json(
+          { error: 'Integração financeira desabilitada', correlationId },
+          { status: 503 },
+        );
+      }
+
+      const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId: user.contaId });
+      const policy = evaluatePaymentActionPolicy({
+        entityType: 'COBRANCA',
+        origin: 'EVENT',
+        localStatus: paymentLookup.localStatus,
+        asaasStatus: asaasPayment.status,
+        billingType: asaasPayment.billingType ?? paymentLookup.billingType,
+        hasAsaasPaymentId: true,
+        hasInvoiceUrl: Boolean(paymentLookup.invoiceUrl || asaasPayment.invoiceUrl),
+        wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+        paymentValue: asaasPayment.value ?? paymentLookup.value ?? 0,
+        refundedValue: paymentLookup.operational?.refundedAmount ?? 0,
+      });
+
+      if (!policy.canRefund) {
+        const decision = policy.actions.REFUND;
+        return NextResponse.json(
+          {
+            error: decision.reason ?? 'Operação de estorno não permitida.',
+            correlationId,
+            asaasStatus: asaasPayment.status,
+            code: decision.code,
+            ...(decision.hint ? { hint: decision.hint } : {}),
+            ...(decision.code === 'REFUND_NOT_ALLOWED_FOR_CASH_PAYMENT'
+              ? { expectedAction: 'UNDO_CASH_PAYMENT' }
+              : {}),
+          },
+          { status: 400 },
+        );
+      }
+
+      if (body.value !== undefined && paymentLookup.operational?.kind === 'event-map-order') {
+        return NextResponse.json(
+          {
+            error: 'Estorno parcial de pedido com assentos ainda não é permitido.',
+            correlationId,
+            code: 'EVENT_SEATED_ORDER_PARTIAL_REFUND_NOT_SUPPORTED',
+            hint: 'Para liberar assentos com segurança, solicite o estorno total da cobrança. Estorno parcial exige escolher quais ingressos/assentos serão cancelados.',
+          },
+          { status: 400 },
+        );
+      }
+
+      if (body.value !== undefined && !policy.canPartialRefund) {
+        const decision = policy.actions.PARTIAL_REFUND;
+        return NextResponse.json(
+          {
+            error: decision.reason ?? 'Estorno parcial não permitido.',
+            correlationId,
+            asaasStatus: asaasPayment.status,
+            code: decision.code,
+            ...(decision.hint ? { hint: decision.hint } : {}),
+          },
+          { status: 400 },
+        );
+      }
+
+      const refundValue = body.value;
+      const paymentValue = asaasPayment.value ?? paymentLookup.value ?? 0;
+
+      if (refundValue !== undefined) {
+        if (refundValue <= 0) {
+          return NextResponse.json(
+            { error: 'Valor de estorno deve ser positivo', correlationId },
+            { status: 400 },
+          );
+        }
+        if (refundValue > paymentValue) {
+          return NextResponse.json(
+            { error: 'Valor de estorno não pode exceder o valor da cobrança', correlationId },
+            { status: 400 },
+          );
+        }
+      }
+
+      const command = await registerPaymentCommand({
+        contaId: user.contaId,
+        type: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: id,
+        asaasPaymentId,
+        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+        correlationId,
+        actorId: user.id,
+        metadata: {
+          source: 'POST /api/cobrancas/[id]/refund',
+          origin: 'EVENT',
+          previousAsaasStatus: asaasPayment.status,
+          refundValue: refundValue ?? paymentValue,
+          isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
+          splitRefunds: body.splitRefunds ?? null,
+        },
+      });
+
+      try {
+        await refundCobranca({
+          paymentId: asaasPaymentId,
+          contaId: user.contaId,
+          value: refundValue,
+          description: body.description || `Estorno solicitado via Alusa - ${correlationId}`,
+          splitRefunds: body.splitRefunds,
+        });
+        await markPaymentCommandSent({
+          jobId: command.id,
+          providerStatus: asaasPayment.status,
+        });
+      } catch (commandError) {
+        await failPaymentCommand({ jobId: command.id, error: commandError });
+        throw commandError;
+      }
+
+      try {
+        await syncPaymentStateFromAsaas({
+          contaId: user.contaId,
+          asaasPaymentId,
+        });
+      } catch (syncError) {
+        console.warn('[Refund] Falha ao sincronizar estado pós-comando (event)', {
+          correlationId,
+          commandJobId: command.id,
+          asaasPaymentId,
+          error: syncError instanceof Error ? syncError.message : String(syncError),
+        });
+      }
+
+      await auditLogService.record({
+        contaId: user.contaId,
+        action: 'finance.charge.refund_requested',
+        entity: { type: 'Charge', id },
+        metadata: {
+          correlationId,
+          asaasPaymentId,
+          origin: 'EVENT',
+          previousAsaasStatus: asaasPayment.status,
+          refundValue: refundValue ?? paymentValue,
+          isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
+          description: body.description,
+          requestedBy: user.id,
+          requestedByRole: user.role,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
       return NextResponse.json(
-        { error: 'Cobrança não encontrada', correlationId },
-        { status: 404 },
+        cobrancaActionResultDTOSchema.parse(
+          mapCobrancaActionResultToDTO({
+            success: true,
+            message: 'Estorno solicitado. Status será atualizado via webhook.',
+            pending: true,
+            correlationId,
+            refundValue: refundValue ?? paymentValue,
+          }),
+        ),
+        { status: 202 },
       );
     }
 

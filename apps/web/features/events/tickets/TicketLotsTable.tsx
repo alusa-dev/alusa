@@ -3,9 +3,8 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MoreVertical } from 'lucide-react';
-import { EVENT_TICKET_LOT_STATUS_LABELS, EVENT_TICKET_TYPE_LABELS } from '@alusa/shared';
+import { EVENT_TICKET_LOT_STATUS_LABELS, EVENT_TICKET_TYPE_LABELS, type EventTicketMode } from '@alusa/shared';
 
-import DataTable from '@/components/layout/DataTable';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -19,8 +18,8 @@ import { toast } from '@/components/ui/toast';
 
 import { deleteTicketLot, formatCurrency, type TicketLotDTO } from '../events-service';
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
+import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { EventSoftBadge as SoftBadge, type EventSoftBadgeTone } from '../shared/EventSoftBadge';
-import { EventTablePanel as TablePanel } from '../shared/EventTablePanel';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { LotFormDialog } from './LotFormDialog';
 
@@ -33,7 +32,7 @@ const LOT_STATUS_TONES: Record<TicketLotDTO['status'], EventSoftBadgeTone> = {
   ARCHIVED: 'neutral',
 };
 
-function LotActions({ lot, eventId }: { lot: TicketLotDTO; eventId: string }) {
+function LotActions({ lot, eventId, ticketMode }: { lot: TicketLotDTO; eventId: string; ticketMode: EventTicketMode }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -85,6 +84,7 @@ function LotActions({ lot, eventId }: { lot: TicketLotDTO; eventId: string }) {
         open={editOpen}
         onOpenChange={setEditOpen}
         eventId={eventId}
+        ticketMode={ticketMode}
         lot={lot}
       />
 
@@ -103,25 +103,39 @@ function LotActions({ lot, eventId }: { lot: TicketLotDTO; eventId: string }) {
   );
 }
 
-export function TicketLotsTable({ lots, eventId, loading }: { lots: TicketLotDTO[]; eventId: string; loading: boolean }) {
+export function TicketLotsTable({
+  lots,
+  eventId,
+  ticketMode = 'SIMPLE',
+  loading,
+}: {
+  lots: TicketLotDTO[];
+  eventId: string;
+  ticketMode?: EventTicketMode;
+  loading: boolean;
+}) {
+  const isNumberedSeats = ticketMode === 'NUMBERED_SEATS';
+
   return (
-    <TablePanel>
-      <DataTable
-        paginate={true}
-        pageSize={5}
-        columns={[
+    <EventPaginatedDataTable
+      columns={[
           { id: 'name', header: 'Lote', width: 'w-[24%]', align: 'left', render: (lot: TicketLotDTO) => <span className="font-medium text-slate-950">{lot.name}</span> },
           { id: 'type', header: 'Tipo', width: 'w-[16%]', align: 'left', render: (lot: TicketLotDTO) => EVENT_TICKET_TYPE_LABELS[lot.ticketType] },
           { id: 'price', header: 'Valor', width: 'w-[15%]', align: 'right', render: (lot: TicketLotDTO) => formatCurrency(lot.unitPrice) },
-          { id: 'stock', header: 'Vendido/Total', width: 'w-[18%]', align: 'right', render: (lot: TicketLotDTO) => lot.quantitySold + '/' + lot.quantityTotal },
+          {
+            id: 'stock',
+            header: isNumberedSeats ? 'Vendido/Assentos' : 'Vendido/Total',
+            width: 'w-[18%]',
+            align: 'right',
+            render: (lot: TicketLotDTO) => lot.quantitySold + '/' + lot.quantityTotal,
+          },
           { id: 'status', header: 'Status', width: 'w-[15%]', align: 'center', render: (lot: TicketLotDTO) => <SoftBadge tone={LOT_STATUS_TONES[lot.status]}>{EVENT_TICKET_LOT_STATUS_LABELS[lot.status]}</SoftBadge> },
-          { id: 'actions', header: 'Ações', width: 'w-[12%]', align: 'right', render: (lot: TicketLotDTO) => <LotActions lot={lot} eventId={eventId} /> },
+          { id: 'actions', header: 'Ações', width: 'w-[12%]', align: 'right', render: (lot: TicketLotDTO) => <LotActions lot={lot} eventId={eventId} ticketMode={ticketMode} /> },
         ]}
-        data={lots}
-        rowKey={(lot) => lot.id}
-        loading={loading}
-        emptyMessage={<EmptyState title="Nenhum lote criado." description="Crie um lote para começar a registrar vendas de ingressos deste evento." />}
-      />
-    </TablePanel>
+      data={lots}
+      rowKey={(lot) => lot.id}
+      loading={loading}
+      emptyMessage={<EmptyState title="Nenhum lote criado." description="Crie um lote para começar a registrar vendas de ingressos deste evento." />}
+    />
   );
 }

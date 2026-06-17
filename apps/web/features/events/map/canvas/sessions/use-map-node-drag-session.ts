@@ -71,11 +71,18 @@ export function useMapNodeDragSession({
   const getSectionGroupNodeIds = useCallback(
     (sectionId: string) => {
       const linkedObject = levelObjects.find((object) => object.sectionId === sectionId && object.type === 'SECTION');
-      const seatNodeIds = levelSeats
-        .filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD')
+      const sectionSeats = levelSeats.filter((seat) => seat.sectionId === sectionId && seat.status !== 'SOLD');
+      const seatGroupIds = [
+        ...new Set(sectionSeats.map((seat) => seat.groupId).filter((groupId): groupId is string => Boolean(groupId))),
+      ];
+      const seatGroupNodeIds = seatGroupIds.map((groupId) => `node-seatgroup-${groupId}`);
+      const looseSeatNodeIds = sectionSeats
+        .filter((seat) => !seat.groupId)
         .map((seat) => `node-${seat.id}`);
 
-      return linkedObject ? [`node-${linkedObject.id}`, ...seatNodeIds] : seatNodeIds;
+      return linkedObject
+        ? [`node-${linkedObject.id}`, ...seatGroupNodeIds, ...looseSeatNodeIds]
+        : [...seatGroupNodeIds, ...looseSeatNodeIds];
     },
     [levelObjects, levelSeats],
   );
@@ -138,7 +145,11 @@ export function useMapNodeDragSession({
       const currentSelection = currentState.selection;
       const currentObjects =
         currentState.map?.objects.filter((object) => object.levelId === activeLevelId && !object.hidden) ?? levelObjects;
-      const dragTarget = resolveDragTarget(nodeId, item, currentSelection, currentObjects);
+      const dragTarget = resolveDragTarget(nodeId, item, currentSelection, currentState.map ?? {
+        objects: currentObjects,
+        seats: [],
+        seatGroups: [],
+      });
       const draggedSeat = item?.type === 'seat' ? currentState.map?.seats.find((seat) => seat.id === item.id) : null;
       const shouldDragSeatSection =
         item?.type === 'seat' && item.id !== individualSeatDragId && Boolean(draggedSeat?.sectionId);

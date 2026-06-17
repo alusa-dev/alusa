@@ -7,6 +7,7 @@ import {
   getObjectGroupId,
   moveSelection,
   resizeSelection,
+  validateDuplicateSelection,
   type EventMapDTO,
   type EventMapObjectDTO,
   type EventSeatDTO,
@@ -225,16 +226,211 @@ describe('selection actions', () => {
     expect(result.patches).toEqual([]);
   });
 
-  it('duplicates a grouped seat by duplicating the whole seat group', () => {
+  it('duplicates a grouped seat by duplicating the whole seat group with a new sector', () => {
     const result = duplicateSelection({
       map: sectionMap(),
       selection: [{ type: 'seat', id: 'seat-1' }],
       runtime: deterministicRuntime(),
     });
 
+    const duplicatedGroup = result.map.seatGroups?.find((entry) => entry.id !== 'seatgroup-1');
+
+    expect(result.map.sections).toHaveLength(2);
     expect(result.map.seatGroups).toHaveLength(2);
-    expect(result.map.seats.filter((entry) => entry.groupId === 'seatgroup-copy-1')).toHaveLength(2);
-    expect(result.selection).toContainEqual({ type: 'seatgroup', id: 'seatgroup-copy-1' });
+    expect(result.map.seats.filter((entry) => entry.groupId === duplicatedGroup?.id)).toHaveLength(2);
+    expect(result.selection).toEqual([{ type: 'seatgroup', id: duplicatedGroup?.id }]);
+  });
+
+  it('duplicates a seat group with sequential labels after the last map seat', () => {
+    const group = seatGroup('seatgroup-1', {
+      rows: 2,
+      columns: 2,
+      numbering: { rowPrefix: 'A', startNumber: 1, direction: 'left-to-right' },
+    });
+    const seats = [
+      seat('seat-a1', {
+        groupId: group.id,
+        rowIndex: 0,
+        columnIndex: 0,
+        rowLabel: 'A',
+        seatNumber: '1',
+        displayLabel: 'A1',
+        technicalCode: 'SETOR-1-A1',
+        x: 120,
+        y: 120,
+      }),
+      seat('seat-a2', {
+        groupId: group.id,
+        rowIndex: 0,
+        columnIndex: 1,
+        rowLabel: 'A',
+        seatNumber: '2',
+        displayLabel: 'A2',
+        technicalCode: 'SETOR-1-A2',
+        x: 150,
+        y: 120,
+      }),
+      seat('seat-b1', {
+        groupId: group.id,
+        rowIndex: 1,
+        columnIndex: 0,
+        rowLabel: 'B',
+        seatNumber: '1',
+        displayLabel: 'B1',
+        technicalCode: 'SETOR-1-B1',
+        x: 120,
+        y: 150,
+      }),
+      seat('seat-b2', {
+        groupId: group.id,
+        rowIndex: 1,
+        columnIndex: 1,
+        rowLabel: 'B',
+        seatNumber: '2',
+        displayLabel: 'B2',
+        technicalCode: 'SETOR-1-B2',
+        x: 150,
+        y: 150,
+      }),
+    ];
+
+    const map = baseMap({
+      sections: [
+        {
+          id: 'section-1',
+          levelId: 'level-1',
+          lotId: null,
+          lot: null,
+          name: 'Setor 1',
+          color: '#6d28d9',
+          capacity: 4,
+          status: 'ACTIVE',
+          notes: null,
+        },
+      ],
+      objects: [sectionObject()],
+      seatGroups: [group],
+      seats,
+      counts: { levels: 1, sections: 1, seats: seats.length, availableSeats: seats.length },
+    });
+
+    const result = duplicateSelection({
+      map,
+      selection: [{ type: 'seatgroup', id: group.id }],
+      runtime: deterministicRuntime(),
+    });
+
+    const duplicatedGroup = result.map.seatGroups?.find((entry) => entry.id !== group.id);
+    const duplicatedSeats = result.map.seats
+      .filter((entry) => entry.groupId === duplicatedGroup?.id)
+      .sort((left, right) => {
+        const rowDiff = (left.rowIndex ?? 0) - (right.rowIndex ?? 0);
+        if (rowDiff !== 0) return rowDiff;
+        return (left.columnIndex ?? 0) - (right.columnIndex ?? 0);
+      });
+
+    expect(result.map.sections).toHaveLength(2);
+    expect(duplicatedSeats.map((entry) => entry.displayLabel)).toEqual(['B3', 'B4', 'C3', 'C4']);
+    expect(new Set(result.map.seats.map((entry) => entry.displayLabel)).size).toBe(result.map.seats.length);
+    expect(new Set(result.map.seats.map((entry) => entry.technicalCode)).size).toBe(result.map.seats.length);
+    expect(result.map.seatGroups?.find((entry) => entry.id === duplicatedGroup?.id)?.numbering).toMatchObject({
+      rowPrefix: 'B',
+      startNumber: 3,
+      direction: 'left-to-right',
+    });
+    expect(result.selection).toEqual([{ type: 'seatgroup', id: duplicatedGroup?.id }]);
+  });
+
+  it('keeps lotId when duplicating a seated sector', () => {
+    const group = seatGroup('seatgroup-1', { name: 'Setor 1' });
+    const map = baseMap({
+      sections: [
+        {
+          id: 'section-1',
+          levelId: 'level-1',
+          lotId: 'lot-vip',
+          lot: null,
+          name: 'Setor 1',
+          color: '#6d28d9',
+          capacity: 2,
+          status: 'ACTIVE',
+          notes: null,
+        },
+      ],
+      seatGroups: [group],
+      seats: [
+        seat('seat-1', { groupId: group.id, sectionId: 'section-1' }),
+        seat('seat-2', { groupId: group.id, sectionId: 'section-1', x: 150, y: 120 }),
+      ],
+      counts: { levels: 1, sections: 1, seats: 2, availableSeats: 2 },
+    });
+
+    const result = duplicateSelection({
+      map,
+      selection: [{ type: 'seatgroup', id: group.id }],
+      runtime: deterministicRuntime(),
+    });
+
+    const duplicatedSection = result.map.sections.find((section) => section.id !== 'section-1');
+    expect(duplicatedSection?.lotId).toBe('lot-vip');
+    expect(duplicatedSection?.name).toBe('Setor 1 (cópia)');
+  });
+
+  it('blocks duplicate when two or more seat groups are selected', () => {
+    const firstGroup = seatGroup('seatgroup-1', { name: 'Setor 1' });
+    const secondGroup = seatGroup('seatgroup-2', { name: 'Setor 2', x: 320, y: 110 });
+    const map = baseMap({
+      sections: [
+        {
+          id: 'section-1',
+          levelId: 'level-1',
+          lotId: null,
+          lot: null,
+          name: 'Setor 1',
+          color: '#6d28d9',
+          capacity: 2,
+          status: 'ACTIVE',
+          notes: null,
+        },
+        {
+          id: 'section-2',
+          levelId: 'level-1',
+          lotId: null,
+          lot: null,
+          name: 'Setor 2',
+          color: '#0f766e',
+          capacity: 2,
+          status: 'ACTIVE',
+          notes: null,
+        },
+      ],
+      seatGroups: [firstGroup, secondGroup],
+      seats: [
+        seat('seat-1', { groupId: firstGroup.id, sectionId: 'section-1' }),
+        seat('seat-2', { groupId: secondGroup.id, sectionId: 'section-2', x: 350, y: 120 }),
+      ],
+      counts: { levels: 1, sections: 2, seats: 2, availableSeats: 2 },
+    });
+
+    const validation = validateDuplicateSelection(map, [
+      { type: 'seatgroup', id: firstGroup.id },
+      { type: 'seatgroup', id: secondGroup.id },
+    ]);
+    expect(validation.ok).toBe(false);
+
+    const result = duplicateSelection({
+      map,
+      selection: [
+        { type: 'seat', id: 'seat-1' },
+        { type: 'seat', id: 'seat-2' },
+      ],
+      runtime: deterministicRuntime(),
+    });
+
+    expect(result.map.seatGroups).toHaveLength(2);
+    expect(result.map.seats).toHaveLength(2);
+    expect(result.selection).toEqual([]);
+    expect(result.warnings).toContain('Selecione apenas um grupo de assentos para duplicar.');
   });
 
   it('duplicates a full section and undo removes every created section, group, object and seat', () => {

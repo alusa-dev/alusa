@@ -4,6 +4,7 @@ import {
   CORRIDOR_AXIS_KEY,
   CORRIDOR_SPLIT_X_KEY,
   CORRIDOR_SPLIT_Y_KEY,
+  isSmartCorridorSeatReflowEnabled,
   MIN_CORRIDOR_THICKNESS,
   readStoredCorridorAxis,
   reconcileCorridorGeometry,
@@ -683,6 +684,8 @@ function applySmartCorridorStackReflow(
 }
 
 export function applyCorridorReflow(map: EventMapDTO, options?: CorridorReflowOptions) {
+  if (!isSmartCorridorSeatReflowEnabled()) return;
+
   const maxIterations = options?.maxIterations ?? CORRIDOR_DRAG_COMMIT_ITERATIONS;
   const freezeAutoFitCorridorIds = new Set(options?.freezeAutoFitCorridorIds ?? []);
   const allCorridors = map.objects.filter(isCorridor);

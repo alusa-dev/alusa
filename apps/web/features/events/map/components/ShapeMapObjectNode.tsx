@@ -40,7 +40,7 @@ export function ShapeMapObjectNode({
   const width = object.width ?? 180;
   const height = object.height ?? 90;
   const shape = typeof object.data.shape === 'string' ? object.data.shape : null;
-  const opacity = Number(object.data.opacity ?? (object.type === 'SECTION' ? 0.15 : 1));
+  const opacity = Number(object.data.opacity ?? (object.type === 'SECTION' ? 0 : 1));
   const cornerRadius = Number(object.data.cornerRadius ?? (object.type === 'TABLE' ? 999 : shape ? 0 : 8));
   const selectionItem: MapSelectionItem =
     object.sectionId ? { type: 'section', id: object.sectionId } : { type: 'object', id: object.id };

@@ -13,8 +13,8 @@ import {
   translateSectionCorridorBase,
 } from '../../layout/corridor/index.js';
 import {
-  MAP_AREA_HEIGHT_PX,
-  MAP_AREA_WIDTH_PX,
+  clampArtboardHeight,
+  clampArtboardWidth,
 } from '../../doc/levels.js';
 import { applyObjectPatchWithCorridorMetadata } from './corridor.js';
 import { applySeatGroupPatch } from './seat-group.js';
@@ -135,7 +135,7 @@ export function handleUpdateItems(
                 data: {
                   ...object.data,
                   ...(patch.name ? { label: patch.name } : {}),
-                  ...(patch.color ? { fill: patch.color } : {}),
+                  ...(patch.color && object.type !== 'SECTION' ? { fill: patch.color } : {}),
                 },
               }
             : object,
@@ -149,13 +149,13 @@ export function handleUpdateItems(
     state.nextMap.levels = state.nextMap.levels.map((level) => {
       const patch = levelPatchById.get(level.id);
       if (!patch) return level;
-      const { widthPx: _widthPx, heightPx: _heightPx, unit: _unit, sortOrder: _sortOrder, ...allowedPatch } = patch;
+      const { sortOrder: _sortOrder, widthPx, heightPx, unit, ...allowedPatch } = patch;
       return {
         ...level,
         ...allowedPatch,
-        widthPx: MAP_AREA_WIDTH_PX,
-        heightPx: MAP_AREA_HEIGHT_PX,
-        unit: 'px',
+        widthPx: widthPx !== undefined ? clampArtboardWidth(widthPx) : level.widthPx,
+        heightPx: heightPx !== undefined ? clampArtboardHeight(heightPx) : level.heightPx,
+        unit: unit ?? level.unit ?? 'px',
       };
     });
     applyMapLevels(state.nextMap);

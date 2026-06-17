@@ -1,20 +1,44 @@
 'use client';
 
 import type { PublicMapViewModel } from './public-map-adapter';
+import { getSeatGroupSeatWorldCenter, MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
 
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, CheckCircle2, ExternalLink, Loader2, MapPin, ShoppingCart, Ticket, Check, Copy, CreditCard, QrCode, User } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ExternalLink, Loader2, MapPin, ShoppingCart, Ticket, Check, Copy, CreditCard, QrCode, User, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
+import { PublicMapKpiTile } from './PublicMapKpiTile';
+import { PublicMapLevelTabs } from './PublicMapLevelTabs';
+import { PublicOrderReservationCountdown } from './PublicOrderReservationCountdown';
+import {
+  publicOrderStatusLabel,
+  publicSeatStatusLabel,
+  publicSeatTooltip,
+} from './public-order-utils';
+import {
+  filterPublicMapObjectsByLevel,
+  filterPublicMapRenderableObjects,
+  filterPublicMapSeatsByLevel,
+  getDefaultPublicMapLevelId,
+  getPublicMapLevelById,
+  resolvePublicMapLevels,
+  type PublicMapLevelView,
+} from './public-map-level-view';
+import { PublicMapTextSvg } from './public-map-text-render';
+import { PublicMapViewport } from './PublicMapViewport';
+
 import { findCEP } from '@/lib/cep';
 import { formatCepBR, formatCpfCnpjBR, isValidCepBR, isValidCpfCnpjBR, onlyDigits } from '@/lib/formatters';
 
 type PublicSeat = PublicMapViewModel['seats'][number];
+type PublicSeatGroup = NonNullable<PublicMapViewModel['seatGroups']>[number];
 type PublicObject = {
   id: string;
+  levelId?: string | null;
+  sectionId?: string | null;
   type: string;
   x: number;
   y: number;
@@ -24,7 +48,6 @@ type PublicObject = {
   hidden?: boolean;
   data?: Record<string, unknown>;
 };
-type PublicLevel = { widthPx: number; heightPx: number; name?: string };
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -48,6 +71,14 @@ function objectStyle(object: PublicObject) {
   if (object.type === 'STAGE') return { fill: '#111827', stroke: '#111827', dash: undefined };
   if (object.type === 'BLOCKED_AREA') return { fill: '#fee2e2', stroke: '#ef4444', dash: '7 5' };
   if (object.type === 'TEXT') return { fill: 'transparent', stroke: 'transparent', dash: undefined };
+  if (object.type === 'SECTION') {
+    const fillEnabled = data.fillEnabled === true;
+    return {
+      fill: fillEnabled && typeof data.fill === 'string' ? data.fill : 'transparent',
+      stroke: fillEnabled ? '#7c3aed' : 'transparent',
+      dash: undefined,
+    };
+  }
   return {
     fill: typeof data.fill === 'string' ? data.fill : '#f8fafc',
     stroke: object.type === 'SECTION' ? '#7c3aed' : '#cbd5e1',
@@ -80,6 +111,11 @@ export function PublicMapExperience({
   mode?: 'public' | 'preview';
 }) {
   const [seats, setSeats] = useState<PublicSeat[]>(map.seats);
+  const panelLevels = useMemo(
+    () => resolvePublicMapLevels(map.levels as PublicMapLevelView[]),
+    [map.levels],
+  );
+  const [activeLevelId, setActiveLevelId] = useState(() => getDefaultPublicMapLevelId(panelLevels));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [step, setStep] = useState<'SELECTION' | 'IDENTIFICATION' | 'PAYMENT_METHOD' | 'CONFIRMATION'>('SELECTION');
   
@@ -100,12 +136,16 @@ export function PublicMapExperience({
   // Component UX states
   const [isCepLoading, setIsCepLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedStatusLink, setCopiedStatusLink] = useState(false);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
+  const [isSyncingPayment, setIsSyncingPayment] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<{
     orderId: string;
     accessToken: string;
     ticketsUrl: string | null;
+    ticketsHtmlUrl?: string | null;
     invoiceUrl: string | null;
     status: string;
     expiresAt: string;
@@ -114,8 +154,33 @@ export function PublicMapExperience({
     pixQrCode: { encodedImage: string; payload: string; expirationDate: string } | null;
   } | null>(null);
 
-  const level = ((map.levels as PublicLevel[])[0] ?? { widthPx: 1440, heightPx: 900 }) as PublicLevel;
-  const objects = (map.objects as PublicObject[]).filter((object) => !object.hidden);
+  useEffect(() => {
+    setActiveLevelId((current) => {
+      if (current && panelLevels.some((level) => level.id === current)) return current;
+      return getDefaultPublicMapLevelId(panelLevels);
+    });
+  }, [panelLevels]);
+
+  const activeLevel = useMemo(
+    () => getPublicMapLevelById(panelLevels, activeLevelId),
+    [activeLevelId, panelLevels],
+  );
+  const levelObjects = useMemo(
+    () =>
+      filterPublicMapRenderableObjects(
+        { seatGroups: map.seatGroups, seats: map.seats },
+        map.objects as PublicObject[],
+        activeLevel.id,
+      ),
+    [activeLevel.id, map.objects, map.seatGroups, map.seats],
+  );
+  const levelSeats = useMemo(
+    () => filterPublicMapSeatsByLevel(seats, activeLevel.id),
+    [activeLevel.id, seats],
+  );
+  const seatGroupById = useMemo(() => {
+    return new Map((map.seatGroups ?? []).map((group) => [group.id, group as PublicSeatGroup]));
+  }, [map.seatGroups]);
   const selectedSeats = useMemo(
     () => seats.filter((seat) => selectedIds.includes(seat.id)),
     [seats, selectedIds],
@@ -168,6 +233,73 @@ export function PublicMapExperience({
     }
   }
 
+  function copyStatusLink() {
+    const href =
+      order?.statusUrl && typeof window !== 'undefined'
+        ? new URL(order.statusUrl, window.location.origin).toString()
+        : typeof window !== 'undefined'
+          ? window.location.href
+          : '';
+    if (!href) return;
+    navigator.clipboard.writeText(href);
+    setCopiedStatusLink(true);
+    setTimeout(() => setCopiedStatusLink(false), 2000);
+  }
+
+  async function handleSyncPayment() {
+    if (!order) return;
+    setIsSyncingPayment(true);
+    setError(null);
+    try {
+      const result = await parseApiResponse<{
+        synced: boolean;
+        order: {
+          orderId: string;
+          status: string;
+          ticketsUrl: string | null;
+          ticketsHtmlUrl?: string | null;
+          invoiceUrl: string | null;
+          expiresAt: string | null;
+          items: Array<{ ticketCode: string | null; seatLabel: string; sectionName: string }>;
+        };
+      }>(
+        await fetch(
+          `/api/public/event-map-orders/${order.orderId}/sync-payment?token=${encodeURIComponent(order.accessToken)}`,
+          { method: 'POST' },
+        ),
+      );
+      setOrder((current) =>
+        current
+          ? {
+              ...current,
+              status: result.order.status,
+              ticketsUrl: result.order.ticketsUrl,
+              ticketsHtmlUrl: result.order.ticketsHtmlUrl,
+              invoiceUrl: result.order.invoiceUrl,
+              expiresAt: result.order.expiresAt ?? current.expiresAt,
+              items: result.order.items.map((item) => ({
+                ticketCode: item.ticketCode ?? '',
+                seatLabel: item.seatLabel,
+                sectionName: item.sectionName,
+              })),
+            }
+          : current,
+      );
+    } catch (syncError) {
+      setError((syncError as Error).message);
+    } finally {
+      setIsSyncingPayment(false);
+    }
+  }
+
+  function resetCheckoutFlow() {
+    setOrder(null);
+    setStep('SELECTION');
+    setPollTimedOut(false);
+    setError(null);
+    setCheckoutKey(createCheckoutKey());
+  }
+
   function copyPixPayload() {
     if (order?.pixQrCode?.payload) {
       navigator.clipboard.writeText(order.pixQrCode.payload);
@@ -204,6 +336,7 @@ export function PublicMapExperience({
         orderId: string;
         accessToken: string;
         ticketsUrl: string | null;
+        ticketsHtmlUrl?: string | null;
         invoiceUrl: string | null;
         status: string;
         expiresAt: string;
@@ -254,12 +387,19 @@ export function PublicMapExperience({
     const accessToken = order.accessToken;
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const startedAt = Date.now();
 
     async function pollStatus() {
+      if (Date.now() - startedAt > 12 * 60 * 1000) {
+        if (!cancelled) setPollTimedOut(true);
+        return;
+      }
+
       try {
         const status = await parseApiResponse<{
           orderId: string;
           ticketsUrl: string | null;
+          ticketsHtmlUrl?: string | null;
           invoiceUrl: string | null;
           status: string;
           expiresAt: string | null;
@@ -275,6 +415,7 @@ export function PublicMapExperience({
                 ...current,
                 status: status.status,
                 ticketsUrl: status.ticketsUrl,
+                ticketsHtmlUrl: status.ticketsHtmlUrl,
                 invoiceUrl: status.invoiceUrl,
                 expiresAt: status.expiresAt ?? current.expiresAt,
                 items: status.items.map((item) => ({
@@ -307,13 +448,13 @@ export function PublicMapExperience({
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 md:flex-row md:items-center md:justify-between">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-3 py-4 sm:gap-4 sm:px-4 sm:py-5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-accent">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-accent sm:text-xs">
               {mode === 'preview' ? 'Pré-visualização' : 'Mapa público'}
             </p>
-            <h1 className="mt-1 truncate text-2xl font-semibold text-slate-950">{map.event.name}</h1>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+            <h1 className="mt-1 text-xl font-semibold text-slate-950 sm:text-2xl">{map.event.name}</h1>
+            <div className="mt-2 flex flex-col gap-1 text-sm text-slate-600 sm:flex-row sm:flex-wrap sm:gap-x-4 sm:gap-y-1">
               <span className="inline-flex items-center gap-1.5">
                 <CalendarDays className="h-4 w-4" />
                 {formatDate(map.event.startsAt)}
@@ -326,58 +467,101 @@ export function PublicMapExperience({
               ) : null}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <strong className="block text-slate-950">{seats.length}</strong>
-              <span className="text-xs text-slate-500">assentos</span>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <strong className="block text-emerald-700">{seats.filter((seat) => seat.status === 'AVAILABLE').length}</strong>
-              <span className="text-xs text-slate-500">livres</span>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <strong className="block text-slate-950">{formatCurrency(total)}</strong>
-              <span className="text-xs text-slate-500">seleção</span>
-            </div>
+          <div className="grid w-full grid-cols-3 gap-1.5 sm:max-w-md sm:gap-2 md:ml-auto">
+            <PublicMapKpiTile
+              title="Assentos"
+              value={String(seats.length)}
+              description="Capacidade do mapa"
+            />
+            <PublicMapKpiTile
+              title="Livres"
+              value={String(seats.filter((seat) => seat.status === 'AVAILABLE').length)}
+              description="Disponíveis para compra"
+            />
+            <PublicMapKpiTile
+              title="Seleção"
+              value={formatCurrency(total)}
+              description={selectedSeats.length > 0 ? `${selectedSeats.length} assento(s) escolhido(s)` : 'Nenhum assento selecionado'}
+            />
           </div>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div
+        className={`mx-auto grid max-w-7xl gap-3 px-3 py-4 sm:gap-4 sm:px-4 sm:py-5 lg:grid-cols-[minmax(0,1fr)_360px]${
+          mode === 'public' && step === 'SELECTION' && selectedSeats.length > 0 ? ' pb-24 lg:pb-5' : ''
+        }`}
+      >
         <section className="min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-950">{map.name}</h2>
-            <p className="text-xs text-slate-500">{level.name ?? 'Ambiente principal'}</p>
+          <div className="border-b border-slate-100 px-3 py-3 sm:px-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-slate-950">{map.name}</h2>
+                <p className="text-xs text-slate-500">
+                  {activeLevel.name}
+                  {panelLevels.length > 1 ? (
+                    <span className="text-slate-400">
+                      {' '}
+                      · {levelSeats.length} assentos · {levelSeats.filter((seat) => seat.status === 'AVAILABLE').length} livres
+                    </span>
+                  ) : null}
+                </p>
+              </div>
+              <PublicMapLevelTabs
+                levels={panelLevels}
+                activeLevelId={activeLevel.id}
+                onLevelChange={setActiveLevelId}
+              />
+            </div>
+            {mode === 'public' ? (
+              <div className="mt-3 grid grid-cols-2 gap-1.5 text-xs sm:flex sm:flex-wrap sm:gap-2">
+                {(['AVAILABLE', 'HELD', 'SOLD', 'BLOCKED'] as const).map((statusKey) => (
+                  <span
+                    key={statusKey}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600"
+                  >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        statusKey === 'AVAILABLE'
+                          ? 'bg-emerald-500'
+                          : statusKey === 'HELD'
+                            ? 'bg-amber-400'
+                            : statusKey === 'SOLD'
+                              ? 'bg-slate-300'
+                              : 'bg-rose-300'
+                      }`}
+                      aria-hidden
+                    />
+                    {publicSeatStatusLabel(statusKey)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </div>
-          <div className="overflow-auto bg-slate-50 p-4">
-            <svg
-              data-testid="public-event-map-canvas"
-              viewBox={`0 0 ${level.widthPx} ${level.heightPx}`}
-              className="min-h-[520px] w-full rounded-lg bg-white"
-              role="img"
-              aria-label={`Mapa de assentos de ${map.event.name}`}
-            >
-              <rect x={0} y={0} width={level.widthPx} height={level.heightPx} fill="#fff" stroke="#cbd5e1" />
-              {objects.map((object) => {
+          <PublicMapViewport
+            artboardWidth={activeLevel.widthPx}
+            artboardHeight={activeLevel.heightPx}
+            levelId={activeLevel.id}
+            ariaLabel={`Mapa de assentos de ${map.event.name} — ${activeLevel.name}`}
+          >
+              <rect
+                data-map-background
+                x={0}
+                y={0}
+                width={activeLevel.widthPx}
+                height={activeLevel.heightPx}
+                fill="#fff"
+                stroke={MAP_ARTBOARD_STROKE}
+                strokeWidth={MAP_ARTBOARD_STROKE_WIDTH}
+              />
+              {levelObjects.map((object) => {
                 const style = objectStyle(object);
                 const width = object.width ?? 0;
                 const height = object.height ?? 0;
                 const cx = object.x + width / 2;
                 const cy = object.y + height / 2;
                 if (object.type === 'TEXT') {
-                  const text = typeof object.data?.text === 'string' ? object.data.text : 'Texto';
-                  return (
-                    <text
-                      key={object.id}
-                      x={object.x}
-                      y={object.y}
-                      transform={`rotate(${object.rotation} ${object.x} ${object.y})`}
-                      fill="#111827"
-                      fontSize={Number(object.data?.fontSize ?? 18)}
-                    >
-                      {text}
-                    </text>
-                  );
+                  return <PublicMapTextSvg key={object.id} object={object} />;
                 }
                 return (
                   <rect
@@ -395,24 +579,31 @@ export function PublicMapExperience({
                   />
                 );
               })}
-              {seats.map((seat) => {
+              {levelSeats.map((seat) => {
                 const selected = selectedIds.includes(seat.id);
-                const radius = Math.max((seat.size ?? 28) / 2, 8);
+                const group = seat.groupId ? seatGroupById.get(seat.groupId) : null;
+                const center = group ? getSeatGroupSeatWorldCenter(group, seat) : { x: seat.x, y: seat.y };
+                const rotation = group ? group.rotation : seat.rotation;
+                const radius = Math.max((group?.seatWidth ?? seat.size ?? 28) / 2, 8);
                 const interactive = mode === 'public';
                 return (
-                  <g key={seat.id} transform={`rotate(${seat.rotation} ${seat.x} ${seat.y})`}>
+                  <g key={seat.id} transform={`rotate(${rotation} ${center.x} ${center.y})`}>
+                    {interactive ? (
+                      <title>{publicSeatTooltip(seat.status, seat.displayLabel, seat.sectionName)}</title>
+                    ) : null}
                     <circle
+                      data-public-seat
                       data-testid={`public-seat-${seat.technicalCode}`}
-                      cx={seat.x}
-                      cy={seat.y}
+                      cx={center.x}
+                      cy={center.y}
                       r={radius}
                       strokeWidth={selected ? 4 : 2}
                       className={`${seatClasses(seat, selected, interactive)} ${seat.status === 'AVAILABLE' && interactive ? 'cursor-pointer' : 'cursor-not-allowed'}`}
                       onClick={() => toggleSeat(seat)}
                     />
                     <text
-                      x={seat.x}
-                      y={seat.y + 4}
+                      x={center.x}
+                      y={center.y + 4}
                       textAnchor="middle"
                       className="pointer-events-none select-none fill-white text-[12px] font-semibold"
                     >
@@ -421,8 +612,7 @@ export function PublicMapExperience({
                   </g>
                 );
               })}
-            </svg>
-          </div>
+          </PublicMapViewport>
         </section>
 
         <aside className="space-y-4">
@@ -705,32 +895,105 @@ export function PublicMapExperience({
 
           {step === 'CONFIRMATION' && order && (
             <div className="space-y-4">
-              <section className={`rounded-lg border bg-white p-4 shadow-sm ${order.status === 'CONFIRMED' ? 'border-emerald-200' : 'border-amber-200'}`}>
-                <div className={`flex items-center gap-2 ${order.status === 'CONFIRMED' ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {order.status === 'CONFIRMED' ? <CheckCircle2 className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
-                  <h2 className="text-sm font-semibold">{order.status === 'CONFIRMED' ? 'Pagamento confirmado!' : 'Reserva criada!'}</h2>
+              <section
+                className={`rounded-lg border bg-white p-4 shadow-sm ${
+                  order.status === 'CONFIRMED'
+                    ? 'border-emerald-200'
+                    : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
+                      ? 'border-rose-200'
+                      : 'border-amber-200'
+                }`}
+              >
+                <div
+                  className={`flex items-center gap-2 ${
+                    order.status === 'CONFIRMED'
+                      ? 'text-emerald-700'
+                      : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
+                        ? 'text-rose-700'
+                        : 'text-amber-700'
+                  }`}
+                >
+                  {order.status === 'CONFIRMED' ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED' ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  )}
+                  <h2 className="text-sm font-semibold">
+                    {order.status === 'CONFIRMED'
+                      ? 'Pagamento confirmado!'
+                      : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
+                        ? publicOrderStatusLabel(order.status)
+                        : 'Reserva criada!'}
+                  </h2>
                 </div>
                 <p className="mt-2 text-sm text-slate-650">
                   {order.status === 'CONFIRMED'
                     ? 'Seus ingressos foram emitidos e já podem ser baixados.'
-                    : 'Seus assentos ficam reservados até:'}
+                    : order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED'
+                      ? 'Esta reserva não está mais disponível. Selecione novos assentos no mapa.'
+                      : 'Complete o pagamento para garantir seus ingressos.'}
                 </p>
+                {order.status === 'PAYMENT_PENDING' ? (
+                  <PublicOrderReservationCountdown expiresAt={order.expiresAt} className="mt-2 text-xs" />
+                ) : null}
                 {order.status === 'CONFIRMED' && order.ticketsUrl ? (
-                  <Button asChild className="mt-3 w-full bg-emerald-700 text-white hover:bg-emerald-800">
-                    <a href={order.ticketsUrl} target="_blank" rel="noreferrer">
-                      <Ticket className="h-4 w-4" />
-                      Baixar ingressos
-                    </a>
-                  </Button>
-                ) : (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <Button asChild className="w-full bg-emerald-700 text-white hover:bg-emerald-800">
+                      <a href={order.ticketsUrl} target="_blank" rel="noreferrer">
+                        <Ticket className="h-4 w-4" />
+                        Baixar ingressos (PDF)
+                      </a>
+                    </Button>
+                    {order.ticketsHtmlUrl ? (
+                      <Button asChild variant="outline" className="w-full">
+                        <a href={order.ticketsHtmlUrl} target="_blank" rel="noreferrer">
+                          Ver ingressos online
+                        </a>
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : order.status === 'PAYMENT_PENDING' ? (
                   <div className="mt-2 rounded-lg bg-slate-50 p-3 text-center border border-slate-100">
                     <strong className="block text-sm text-slate-900">{formatDate(order.expiresAt)}</strong>
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Realize o pagamento para garantir seus ingressos</span>
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Prazo para pagamento
+                    </span>
                   </div>
-                )}
+                ) : null}
               </section>
 
-              {order.status !== 'CONFIRMED' && paymentMethod === 'PIX' && order.pixQrCode ? (
+              {order.status === 'PAYMENT_PENDING' ? (
+                <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                  <strong>Guarde este link</strong> para retornar ao pedido após o pagamento.
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 h-8"
+                    onClick={copyStatusLink}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    {copiedStatusLink ? 'Link copiado' : 'Copiar link do pedido'}
+                  </Button>
+                </div>
+              ) : null}
+
+              {pollTimedOut && order.status === 'PAYMENT_PENDING' ? (
+                <p className="text-sm text-slate-600 rounded-lg bg-slate-50 px-3 py-2">
+                  A confirmação está demorando. Se você já pagou, use &quot;Já paguei&quot; abaixo.
+                </p>
+              ) : null}
+
+              {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+
+              {order.status !== 'CONFIRMED' &&
+              order.status !== 'EXPIRED' &&
+              order.status !== 'CANCELLED' &&
+              order.status !== 'REFUNDED' &&
+              paymentMethod === 'PIX' &&
+              order.pixQrCode ? (
                 <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm text-center space-y-4">
                   <div className="flex items-center gap-1.5 justify-center text-brand-accent font-semibold text-sm">
                     <QrCode className="h-4 w-4" />
@@ -779,7 +1042,7 @@ export function PublicMapExperience({
                     </div>
                   )}
                 </section>
-              ) : order.status !== 'CONFIRMED' ? (
+              ) : order.status === 'PAYMENT_PENDING' ? (
                 <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm space-y-3">
                   <h3 className="font-semibold text-sm text-slate-900">Finalize seu Pagamento</h3>
                   <p className="text-xs text-slate-600">
@@ -797,6 +1060,16 @@ export function PublicMapExperience({
                   ) : (
                     <p className="text-xs text-amber-700">Cobrança criada sem link público de pagamento.</p>
                   )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={isSyncingPayment}
+                    onClick={handleSyncPayment}
+                  >
+                    {isSyncingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Já paguei — verificar agora
+                  </Button>
                 </section>
               ) : null}
 
@@ -805,7 +1078,10 @@ export function PublicMapExperience({
                   <h3 className="text-sm font-semibold text-slate-950">Ingressos emitidos</h3>
                   <div className="mt-3 space-y-2">
                     {order.items.map((item) => (
-                      <div key={`${item.sectionName}-${item.seatLabel}`} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm">
+                      <div
+                        key={`${item.sectionName}-${item.seatLabel}`}
+                        className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm"
+                      >
                         <span>
                           <strong>{item.seatLabel}</strong>
                           <span className="ml-2 text-slate-500">{item.sectionName}</span>
@@ -816,10 +1092,36 @@ export function PublicMapExperience({
                   </div>
                 </section>
               ) : null}
+
+              {order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED' ? (
+                <Button type="button" className="w-full bg-brand-accent text-white" onClick={resetCheckoutFlow}>
+                  Nova compra no mapa
+                </Button>
+              ) : null}
             </div>
           )}
         </aside>
       </div>
+
+      {mode === 'public' && step === 'SELECTION' && selectedSeats.length > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-3 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur-sm pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] lg:hidden">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs text-slate-500">
+                {selectedSeats.length} {selectedSeats.length === 1 ? 'assento' : 'assentos'}
+              </p>
+              <p className="text-lg font-semibold text-slate-950">{formatCurrency(total)}</p>
+            </div>
+            <Button
+              type="button"
+              className="shrink-0 bg-brand-accent px-5 text-white hover:bg-brand-accent/90"
+              onClick={() => setStep('IDENTIFICATION')}
+            >
+              Continuar
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
 import { cobrancaRouteParamsDTOSchema } from '@/features/financeiro/cobrancas/dtos';
 import { syncPaymentStateFromAsaas } from '@alusa/finance';
+import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -26,19 +27,8 @@ export async function POST(
 
     const { id: cobrancaId } = cobrancaRouteParamsDTOSchema.parse(await params);
 
-    const cobranca = await prisma.cobranca.findFirst({
-      where: { id: cobrancaId, matricula: { aluno: { contaId: user.contaId } } },
-      select: { asaasPaymentId: true },
-    });
-
-    const charge = !cobranca
-      ? await prisma.charge.findFirst({
-          where: { id: cobrancaId, contaId: user.contaId },
-          select: { asaasPaymentId: true },
-        })
-      : null;
-
-    const paymentId = cobranca?.asaasPaymentId ?? charge?.asaasPaymentId;
+    const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, cobrancaId);
+    const paymentId = paymentLookup?.asaasPaymentId ?? null;
 
     if (!paymentId) {
       return NextResponse.json(

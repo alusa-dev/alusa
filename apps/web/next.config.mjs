@@ -120,14 +120,32 @@ const nextConfig = {
           },
         ],
       },
+      {
+        source: '/images/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+      {
+        source: '/integrations/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
     ];
   },
   webpack: (config, { dev, isServer }) => {
     if (dev) {
-      Object.defineProperty(config, 'devtool', {
-        get() { return 'source-map'; },
-        set() {}
-      });
+      // Evita crescimento ilimitado do cache em memória durante sessões longas de `next dev`.
+      if (config.cache && typeof config.cache === 'object') {
+        config.cache.maxMemoryGenerations = 1;
+      }
     }
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)
     config.resolve = config.resolve || {};
@@ -152,6 +170,10 @@ const nextConfig = {
       dev ? 'errors/asaas-customer-ensure-error.ts' : 'errors/asaas-customer-ensure-error.js',
     );
     config.resolve.alias['@alusa/lib/client'] = resolvePath(libBase, dev ? 'client.ts' : 'client.js');
+    config.resolve.alias['@alusa/lib/invite/build-invite-url'] = resolvePath(
+      libBase,
+      dev ? 'invite/build-invite-url.ts' : 'invite/build-invite-url.js',
+    );
     config.resolve.alias['@alusa/lib/events/map'] = resolvePath(libBase, 'events/map');
     config.resolve.alias['@alusa/lib/events'] = resolvePath(libBase, 'events');
     config.resolve.alias['@alusa/lib/prisma'] = resolvePath(libBase, dev ? 'prisma.ts' : 'prisma.js');

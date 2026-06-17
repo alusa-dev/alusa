@@ -10,6 +10,7 @@ import {
   reconcileAsaasPaymentIds,
   resolveAcademicDisplayedStatus,
 } from '@/src/server/finance/academic-payment-history';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { jsonNoStore } from '@/lib/http-security';
 
 export async function GET() {
@@ -95,15 +96,26 @@ export async function GET() {
 
     // 5. Formatar dados e atualizar status de atrasadas
     const cobrancasAcademicas = cobrancas.map((c) => {
+      const localStatus = resolveAcademicDisplayedStatus({
+        localCobrancaStatus: c.status,
+        remotePaymentStatus: c.asaasStatus,
+        dueDate: c.vencimento,
+      });
+      const displayStatus = buildChargeDisplayStatusDTO({
+        localStatus,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId || c.asaasStatus || c.liquidacaoStatus),
+      });
+
       return {
         id: c.id,
         valor: Number(c.valor),
         vencimento: c.vencimento.toISOString(),
-        status: resolveAcademicDisplayedStatus({
-          localCobrancaStatus: c.status,
-          remotePaymentStatus: c.asaasStatus,
-          dueDate: c.vencimento,
-        }),
+        status: localStatus,
+        displayStatus,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
         formaPagamento: c.formaPagamento,
         asaasId: c.asaasId,
         matricula: {

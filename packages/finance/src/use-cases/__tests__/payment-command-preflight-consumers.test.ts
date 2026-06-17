@@ -39,7 +39,7 @@ vi.mock('../sync-payment-state-from-asaas', () => ({
 }));
 
 vi.mock('../payment-command-ledger', () => ({
-  expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_RECEIVED_IN_CASH']),
+  expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED']),
   registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
   markPaymentCommandSent: vi.fn(async () => undefined),
   failPaymentCommand: vi.fn(async () => undefined),
@@ -114,6 +114,15 @@ describe('payment-command-preflight consumers', () => {
       matricula: { aluno: { contaId: 'conta-1' } },
     } as never);
     vi.mocked(readPaymentStatusPreflight).mockResolvedValueOnce({ status: 'PENDING' } as never);
+    vi.mocked(syncPaymentStateFromAsaas).mockResolvedValueOnce({
+      success: true,
+      asaasPaymentId: 'pay_1',
+      paymentStatus: 'RECEIVED_IN_CASH',
+      appliedEvent: 'PAYMENT_RECEIVED',
+      invoiceUrl: null,
+      bankSlipUrl: null,
+      transactionReceiptUrl: null,
+    });
 
     const result = await markChargeAsPaid({
       chargeId: 'cob-1',
@@ -135,6 +144,11 @@ describe('payment-command-preflight consumers', () => {
       jobId: 'job-1',
       providerStatus: 'PENDING',
     });
+    expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay_1',
+      eventName: 'PAYMENT_RECEIVED',
+    });
   });
 
   it('markChargeAsPaid é idempotente quando o Asaas já recebeu em dinheiro', async () => {
@@ -150,7 +164,7 @@ describe('payment-command-preflight consumers', () => {
       success: true,
       asaasPaymentId: 'pay_1',
       paymentStatus: 'RECEIVED_IN_CASH',
-      appliedEvent: 'PAYMENT_RECEIVED_IN_CASH',
+      appliedEvent: 'PAYMENT_RECEIVED',
       invoiceUrl: null,
       bankSlipUrl: null,
       transactionReceiptUrl: null,
@@ -167,7 +181,7 @@ describe('payment-command-preflight consumers', () => {
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
       contaId: 'conta-1',
       asaasPaymentId: 'pay_1',
-      eventName: 'PAYMENT_RECEIVED_IN_CASH',
+      eventName: 'PAYMENT_RECEIVED',
     });
   });
 });

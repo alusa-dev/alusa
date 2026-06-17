@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import { drainFinanceWebhookSideEffectOutbox } from '@alusa/finance';
 import { publicCheckoutSchema } from '@alusa/lib/events/map/event-map.schema';
 import { completePublicEventMapCheckout } from '@alusa/lib/events/map/event-map.service';
 
@@ -18,7 +19,9 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     ensureEventAsaasPaymentProviderRegistered();
     const { publicSlug } = await params;
     const body = publicCheckoutSchema.parse(await request.json());
-    return NextResponse.json({ data: await completePublicEventMapCheckout(publicSlug, body) });
+    const data = await completePublicEventMapCheckout(publicSlug, body);
+    await drainFinanceWebhookSideEffectOutbox({ limit: 8 }).catch(() => null);
+    return NextResponse.json({ data });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_CHECKOUT_MAPA_PUBLICO');
   }

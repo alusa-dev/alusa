@@ -203,12 +203,20 @@ export type LoadKeyResult =
 async function updateApiKeyStatus(
   asaasAccountId: string | null | undefined,
   status: 'CONNECTED' | 'REVOKED',
+  contaId?: string | null,
 ) {
   if (!asaasAccountId) return;
   await prisma.asaasAccount.update({
     where: { id: asaasAccountId },
     data: { apiKeyStatus: status },
   });
+
+  if (status === 'REVOKED' && contaId) {
+    const { markExternalAsaasApiKeyUnhealthy } = await import(
+      './external-asaas/mark-external-asaas-api-key-unhealthy'
+    );
+    await markExternalAsaasApiKeyUnhealthy(contaId);
+  }
 }
 
 async function applyGlobalNotificationPreferencesSafe(contaId: string, customerId: string) {
@@ -275,7 +283,7 @@ export async function loadAndValidateSubaccountKey(contaId: string): Promise<Loa
       await updateApiKeyStatus(profile?.asaasAccount?.id ?? null, 'CONNECTED');
     } catch (error) {
       if (error instanceof AsaasHttpError && (error.status === 401 || error.status === 403)) {
-        await updateApiKeyStatus(profile?.asaasAccount?.id ?? null, 'REVOKED');
+        await updateApiKeyStatus(profile?.asaasAccount?.id ?? null, 'REVOKED', contaId);
         return {
           ok: false,
           code: 'INVALID_KEY',
@@ -593,7 +601,7 @@ export async function ensureAsaasCustomerForPayer(
     };
   } catch (error) {
     if (error instanceof AsaasHttpError && (error.status === 401 || error.status === 403)) {
-      await updateApiKeyStatus(keyResult.asaasAccountId ?? null, 'REVOKED');
+      await updateApiKeyStatus(keyResult.asaasAccountId ?? null, 'REVOKED', input.contaId);
       return {
         ok: false,
         error: 'INVALID_KEY',

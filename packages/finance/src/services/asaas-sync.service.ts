@@ -355,6 +355,28 @@ export async function persistAsaasPaymentSnapshot(
       },
     });
 
+    const linkedCharge = await prisma.charge.findFirst({
+      where: { cobrancaId },
+      select: { id: true },
+    });
+    if (linkedCharge) {
+      await prisma.charge.update({
+        where: { id: linkedCharge.id },
+        data: {
+          asaasStatus: snapshot.asaasStatus,
+          asaasValue: snapshot.value,
+          asaasNetValue: snapshot.netValue,
+          asaasOriginalValue: snapshot.originalValue,
+          asaasFeeValue: snapshot.feeValue,
+          asaasCreditDate: snapshot.creditDate ? new Date(snapshot.creditDate) : null,
+          asaasEstimatedCreditDate: snapshot.estimatedCreditDate ? new Date(snapshot.estimatedCreditDate) : null,
+          lastAsaasFetchAt: snapshot.fetchedAt,
+          liquidacaoStatus,
+          liquidadoEm,
+        },
+      });
+    }
+
     console.log('✅ Snapshot Asaas persistido:', {
       cobrancaId,
       asaasPaymentId: snapshot.asaasPaymentId,

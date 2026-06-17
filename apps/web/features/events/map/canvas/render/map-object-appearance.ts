@@ -98,7 +98,8 @@ export function isObjectAppearanceEnabled(value: unknown, fallback = true) {
 
 export function getObjectAppearance(object: EventMapObjectDTO) {
   const style = objectStyle(object);
-  const fillEnabled = isObjectAppearanceEnabled(object.data.fillEnabled);
+  const fillEnabledDefault = object.type === 'SECTION' ? false : true;
+  const fillEnabled = isObjectAppearanceEnabled(object.data.fillEnabled, fillEnabledDefault);
   const strokeEnabled = isObjectAppearanceEnabled(object.data.strokeEnabled);
   const strokeWidthEnabled = isObjectAppearanceEnabled(object.data.strokeWidthEnabled);
   const strokeWidth = Number(object.data.strokeWidth ?? 1.5);

@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+const chargeDisplayStatusSchema = z.object({
+  status: z.string(),
+  label: z.string(),
+  hint: z.string().nullable(),
+  variant: z.enum(['success', 'warning', 'danger', 'info', 'neutral']),
+  source: z.enum(['asaas', 'liquidacao', 'local']).optional(),
+});
+
 const isoDateStringDTOSchema = z
   .string()
   .min(1)
@@ -112,6 +120,9 @@ export const portalFinanceiroListItemDTOSchema = z.object({
   valor: z.number(),
   vencimento: isoDateStringDTOSchema,
   status: z.string(),
+  displayStatus: chargeDisplayStatusSchema,
+  asaasStatus: nullableStringDTOSchema.default(null).optional(),
+  liquidacaoStatus: nullableStringDTOSchema.default(null).optional(),
   formaPagamento: nullableStringDTOSchema.default(null),
   asaasId: nullableStringDTOSchema.default(null).optional(),
   invoiceUrl: nullableStringDTOSchema.default(null).optional(),
@@ -145,6 +156,9 @@ export const portalFinanceiroDetailDTOSchema = z.object({
   valor: z.number(),
   vencimento: isoDateStringDTOSchema,
   status: z.string(),
+  displayStatus: chargeDisplayStatusSchema,
+  asaasStatus: nullableStringDTOSchema.default(null).optional(),
+  liquidacaoStatus: nullableStringDTOSchema.default(null).optional(),
   formaPagamento: nullableStringDTOSchema.default(null),
   asaasPaymentId: nullableStringDTOSchema.default(null),
   asaasId: nullableStringDTOSchema.default(null),

@@ -110,7 +110,7 @@ const ticketLotBaseSchema = z
     name: requiredText('Informe o nome do lote.'),
     ticketType: z.enum(EVENT_TICKET_TYPES),
     unitPrice: moneySchema,
-    quantityTotal: positiveIntSchema,
+    quantityTotal: z.coerce.number().int().nonnegative().optional(),
     saleStartsAt: optionalDate,
     saleEndsAt: optionalDate,
     status: z.enum(EVENT_TICKET_LOT_STATUSES).optional().default('DRAFT'),
@@ -137,18 +137,29 @@ export const updateTicketLotSchema = ticketLotBaseSchema
     },
   );
 
-export const createTicketSaleSchema = z.object({
-  eventId: eventIdSchema,
-  lotId: z.string().trim().min(1),
-  buyerName: requiredText('Informe o comprador.'),
-  alunoId: optionalId,
-  responsavelId: optionalId,
-  quantity: positiveIntSchema,
-  paymentMethod: z.enum(EVENT_PAYMENT_METHODS),
-  status: z.enum(EVENT_TICKET_SALE_STATUSES).optional().default('PENDING'),
-  soldAt: optionalDate,
-  notes: optionalText,
-});
+export const createTicketSaleSchema = z
+  .object({
+    eventId: eventIdSchema,
+    lotId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
+    buyerName: requiredText('Informe o comprador.'),
+    alunoId: optionalId,
+    responsavelId: optionalId,
+    quantity: z.preprocess(emptyToUndefined, positiveIntSchema.optional()),
+    paymentMethod: z.enum(EVENT_PAYMENT_METHODS),
+    status: z.enum(EVENT_TICKET_SALE_STATUSES).optional().default('PENDING'),
+    soldAt: optionalDate,
+    notes: optionalText,
+    holdToken: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
+  })
+  .superRefine((input, ctx) => {
+    if (input.holdToken) return;
+    if (!input.lotId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Selecione o lote.', path: ['lotId'] });
+    }
+    if (!input.quantity || input.quantity < 1) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Informe a quantidade.', path: ['quantity'] });
+    }
+  });
 
 export const updateTicketSaleSchema = z.object({
   lotId: z.string().trim().min(1).optional(),

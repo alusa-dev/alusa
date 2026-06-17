@@ -95,9 +95,9 @@ export function WelcomeWizardDialog({ open, userName: _userName, onComplete }: W
         fullScreenMobile
         onEscapeKeyDown={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
-        className="max-w-[720px] overflow-hidden rounded-[28px] sm:rounded-[28px] border border-[#ebe3fb] bg-white p-0 shadow-[0_20px_60px_rgba(0,0,0,0.22),0_4px_16px_rgba(0,0,0,0.08)] [&>button.absolute]:hidden"
+        className="max-w-[720px] overflow-hidden rounded-[24px] sm:rounded-[24px] border border-[#ebe3fb] bg-white p-0 shadow-[0_20px_60px_rgba(0,0,0,0.22),0_4px_16px_rgba(0,0,0,0.08)] [&>button.absolute]:hidden"
       >
-        <div className="flex min-h-[560px] select-none flex-col overflow-hidden rounded-[28px] bg-white px-5 py-5 sm:px-6 sm:py-6">
+        <div className="flex min-h-[540px] select-none flex-col px-3 pt-3 pb-4 sm:px-4 sm:pt-4 sm:pb-5">
           <div className="relative overflow-hidden">
             <AnimatePresence initial={false} custom={direction} mode="popLayout">
               <motion.div
@@ -108,7 +108,7 @@ export function WelcomeWizardDialog({ open, userName: _userName, onComplete }: W
                 exit={{ x: direction * -60, opacity: 0 }}
                 transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
               >
-                <div className="relative aspect-[16/8.8] overflow-hidden rounded-[20px] bg-[radial-gradient(circle_at_top,rgba(123,86,184,0.18),transparent_52%),linear-gradient(135deg,#f8f4ff_0%,#f2ebff_52%,#efe8ff_100%)]">
+                <div className="relative aspect-[16/8.2] w-full overflow-hidden rounded-[12px] bg-[radial-gradient(circle_at_top,rgba(123,86,184,0.18),transparent_52%),linear-gradient(135deg,#f8f4ff_0%,#f2ebff_52%,#efe8ff_100%)] sm:rounded-[8px]">
                   {step.imageSrc ? (
                     <Image
                       src={step.imageSrc}
@@ -133,12 +133,12 @@ export function WelcomeWizardDialog({ open, userName: _userName, onComplete }: W
                   )}
                 </div>
 
-                <DialogHeader className="mt-5 items-center space-y-0 text-center sm:mt-6">
-                  <DialogTitle className="max-w-none whitespace-nowrap text-center text-[1.55rem] font-semibold leading-[1.08] tracking-[-0.03em] text-slate-900 sm:text-[1.8rem]">
+                <DialogHeader className="items-center space-y-0 pt-4 text-center sm:pt-5">
+                  <DialogTitle className="max-w-[28ch] text-center text-[1.25rem] font-semibold leading-snug tracking-[-0.02em] text-slate-900 sm:max-w-none sm:text-[1.375rem]">
                     {stepIndex === 0 ? 'Seja bem-vindo(a) à Alusa!' : step.title}
                   </DialogTitle>
 
-                  <DialogDescription className="max-w-[44ch] pt-3 pb-6 text-center text-[15px] leading-7 text-slate-500 sm:text-base">
+                  <DialogDescription className="mx-auto max-w-[28rem] pt-2 text-pretty text-center text-[13px] leading-5 text-slate-500 sm:max-w-[30rem] sm:text-[15px] sm:leading-6">
                     {step.description}
                   </DialogDescription>
                 </DialogHeader>
@@ -146,7 +146,7 @@ export function WelcomeWizardDialog({ open, userName: _userName, onComplete }: W
             </AnimatePresence>
           </div>
 
-          <DialogFooter className="mt-auto w-full pt-5 sm:justify-center">
+          <DialogFooter className="mt-auto w-full pt-4 sm:justify-center sm:pt-5">
             <div className="flex w-full items-center justify-center gap-3">
               <Button
                 type="button"

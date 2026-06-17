@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { ChargeListItemDTO, UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import { parseExternalReference } from '../core';
+import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 
 export type ChargeOrigin = 'ACADEMIC' | 'STANDALONE' | 'all';
 
@@ -352,6 +353,8 @@ export async function listChargesAggregated(
             status: true,
             statusUpdatedAt: true,
             asaasPaymentId: true,
+            asaasStatus: true,
+            liquidacaoStatus: true,
             createdAt: true,
             // Novos campos para listagem
             payerName: true,
@@ -382,6 +385,7 @@ export async function listChargesAggregated(
             cobrancaId: true,
             externalReference: true,
             status: true,
+            asaasStatus: true,
           },
         })
       : Promise.resolve([]),
@@ -497,7 +501,14 @@ export async function listChargesAggregated(
     dueDate: c.vencimento?.toISOString() ?? null,
     billingType: mapBillingType(c.formaPagamento),
     status: mapCobrancaStatus(c.status),
+    asaasStatus: c.asaasStatus,
     liquidacaoStatus: c.liquidacaoStatus,
+    displayStatus: resolveChargeDisplayStatus({
+      localStatus: c.status,
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      hasAsaasLink: Boolean(c.asaasPaymentId),
+    }),
     createdAt: c.createdAt?.toISOString() ?? new Date().toISOString(),
     sourceId: c.id,
     matriculaId: c.matriculaId,
@@ -528,7 +539,14 @@ export async function listChargesAggregated(
       dueDate: c.dueDate?.toISOString() ?? null,
       billingType: c.billingType,
       status: mapChargeStatus(c.status),
-      liquidacaoStatus: null,
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       createdAt: c.createdAt?.toISOString() ?? new Date().toISOString(),
       sourceId: c.id,
       matriculaId: null,
@@ -591,7 +609,9 @@ export async function listChargesAggregated(
       dueDate: subscription.nextDueDate.toISOString(),
       billingType: subscription.billingType,
       status: 'PENDING' as const,
+      asaasStatus: null,
       liquidacaoStatus: null,
+      displayStatus: resolveChargeDisplayStatus({ localStatus: 'PENDING' }),
       createdAt: subscription.createdAt.toISOString(),
       sourceId: subscription.id,
       matriculaId: null,
@@ -615,7 +635,12 @@ export async function listChargesAggregated(
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,
       status: mapEventFinancialEntryStatus(entry.status),
+      asaasStatus: null,
       liquidacaoStatus: null,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: mapEventFinancialEntryStatus(entry.status) === 'PAID' ? 'PAGO' : entry.status,
+        hasAsaasLink: Boolean(entry.asaasPaymentId),
+      }),
       createdAt: entry.createdAt.toISOString(),
       sourceId: entry.id,
       matriculaId: null,
@@ -633,7 +658,12 @@ export async function listChargesAggregated(
       dueDate: sale.soldAt.toISOString(),
       billingType: sale.paymentMethod,
       status: mapEventTicketSaleStatus(sale.status),
+      asaasStatus: null,
       liquidacaoStatus: null,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: mapEventTicketSaleStatus(sale.status) === 'PAID' ? 'PAGO' : sale.status,
+        hasAsaasLink: Boolean(sale.asaasPaymentId),
+      }),
       createdAt: sale.createdAt.toISOString(),
       sourceId: sale.id,
       matriculaId: null,
@@ -651,7 +681,12 @@ export async function listChargesAggregated(
       dueDate: order.expiresAt?.toISOString() ?? null,
       billingType: order.paymentMethod ?? order.paymentProvider,
       status: mapEventMapOrderStatus(order.status),
+      asaasStatus: null,
       liquidacaoStatus: null,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: mapEventMapOrderStatus(order.status) === 'PAID' ? 'PAGO' : order.status,
+        hasAsaasLink: Boolean(order.asaasPaymentId),
+      }),
       createdAt: order.createdAt.toISOString(),
       sourceId: order.id,
       matriculaId: null,
@@ -765,7 +800,9 @@ export async function listChargesAggregated(
         dueDate: nextDue?.dueDate ?? parcelas[parcelas.length - 1]?.dueDate ?? null,
         billingType: plan.billingType,
         status: groupStatus,
+        asaasStatus: null,
         liquidacaoStatus: null,
+        displayStatus: resolveChargeDisplayStatus({ localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus }),
         createdAt: plan.createdAt.toISOString(),
         sourceId: planId,
         matriculaId: plan.matricula.id,
@@ -868,7 +905,9 @@ export async function listChargesAggregated(
         dueDate: nextDue?.dueDate ?? parcelas[parcelas.length - 1]?.dueDate ?? plan.firstDueDate.toISOString(),
         billingType: plan.billingType,
         status: groupStatus,
+        asaasStatus: null,
         liquidacaoStatus: null,
+        displayStatus: resolveChargeDisplayStatus({ localStatus: groupStatus === 'PAID' ? 'PAGO' : groupStatus }),
         createdAt: plan.createdAt.toISOString(),
         sourceId: planId,
         matriculaId: null,

@@ -1,12 +1,15 @@
 'use client';
 import type { EventMapDTO } from '../api/event-map-service';
+import { MapSettingsDialog } from './MapSettingsDialog';
 
 import { cn } from '@/lib/utils';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { ArrowLeft, CheckCircle2, Copy, Eye, Save, Send, Settings } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { BrandWordmark } from '@/components/brand/BrandWordmark';
 import { toast } from '@/components/ui/toast';
 
 export function MapEditorHeader({
@@ -15,15 +18,19 @@ export function MapEditorHeader({
   isPublishing,
   onSave,
   onPublish,
+  onSettingsSaved,
 }: {
   map: EventMapDTO;
   isSaving: boolean;
   isPublishing: boolean;
   onSave: () => void;
   onPublish: () => void;
+  onSettingsSaved: (map: EventMapDTO) => void;
 }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const previewUrl = `/events/${map.eventId}/maps/${map.id}/preview`;
   const publicUrl = map.publicUrl;
+  const settingsDisabled = map.status === 'ARCHIVED';
 
   function handlePreview() {
     window.open(previewUrl, '_blank', 'noopener,noreferrer');
@@ -50,23 +57,32 @@ export function MapEditorHeader({
       </header>
 
       <div className="absolute left-[4.75rem] top-4 z-30 flex h-12 max-w-[calc(100%-6rem)] items-center gap-3 rounded-lg border border-slate-200 bg-white/95 px-4 shadow-lg shadow-slate-300/30 backdrop-blur">
-        <img
-          src="/brand/alusa-logo-dark.svg"
-          alt="Alusa"
-          width={92}
-          height={28}
-          className="h-7 w-[92px] shrink-0 object-contain"
-          draggable={false}
-        />
+        <BrandWordmark variant="purple" className="h-7 w-[92px]" width={92} height={28} />
         <span className="h-6 w-px shrink-0 bg-slate-200" aria-hidden />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold text-slate-950">{map.name?.trim() || 'Sem título'}</h1>
         </div>
         <span className="h-6 w-px shrink-0 bg-slate-200" aria-hidden />
-        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 rounded-lg text-slate-600 hover:bg-slate-100">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0 rounded-lg text-slate-600 hover:bg-slate-100"
+          onClick={() => setSettingsOpen(true)}
+          disabled={settingsDisabled}
+          aria-label="Configurações do mapa"
+        >
           <Settings className="h-4 w-4" />
         </Button>
       </div>
+
+      <MapSettingsDialog
+        map={map}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        disabled={settingsDisabled}
+        onSaved={onSettingsSaved}
+      />
 
       <div className="absolute right-4 top-4 z-30 flex h-12 items-center gap-2 rounded-lg border border-slate-200 bg-white/95 px-1.5 shadow-lg shadow-slate-300/30 backdrop-blur">
         <Button

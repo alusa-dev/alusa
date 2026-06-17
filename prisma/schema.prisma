@@ -252,6 +252,11 @@ enum EventMapReservationStatus {
   CANCELLED
 }
 
+enum EventMapReservationSource {
+  PUBLIC_CHECKOUT
+  STAFF_MANUAL
+}
+
 enum EventMapOrderStatus {
   PAYMENT_PENDING
   CONFIRMED
@@ -497,6 +502,7 @@ enum FinanceReconciliationIssueType {
   WEBHOOK_LAG
   WEBHOOK_DROPPED_RISK
   WEBHOOK_CONFIG_DRIFT
+  ASAAS_SNAPSHOT_STALE
 }
 
 enum FinanceReconciliationIssueSeverity {
@@ -846,6 +852,9 @@ model Conta {
   chargeReadModels               ChargeReadModel[]
   financeSummaryReadModels       FinanceSummaryReadModel[]
   invoices                       Invoice[]
+  contaFiscalSettings            ContaFiscalSettings?
+  fiscalServices                 FiscalService[]
+  invoiceAuditEvents             InvoiceAuditEvent[]
   subscriptions                  Subscription[]
   installmentPlans               InstallmentPlan[]
   standaloneInstallmentPlans     StandaloneInstallmentPlan[]
@@ -886,6 +895,7 @@ model Conta {
   eventTickets                   EventTicket[]
   eventTicketLots                EventTicketLot[]
   eventTicketSales               EventTicketSale[]
+  eventTicketSaleSeats           EventTicketSaleSeat[]
   eventCostumes                  EventCostume[]
   eventCostumeAssignments        EventCostumeAssignment[]
   eventFinancialEntries          EventFinancialEntry[]
@@ -1078,40 +1088,41 @@ model Usuario {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  colaborador               Colaborador?
+  colaborador                 Colaborador?
   // Backrelation para vínculo opcional com Responsavel (1-1)
-  responsavel               Responsavel?
+  responsavel                 Responsavel?
   // Backrelation para vínculo opcional com Aluno (1-1)
-  aluno                     Aluno?
-  checkoutLinksCriados      CheckoutLink[]
-  matriculaLogs             MatriculaLog[]
-  logsFinanceiros           LogFinanceiro[]
-  lancamentosCriados        Lancamento[]
-  rematriculasOperacoes     RematriculaOperacao[]
-  payerChangeOperacoes      PayerChangeOperacao[]
-  matriculaOperacoes        MatriculaOperacao[]
-  notifications             NotificationRecipient[]
-  attendanceRecorded        AttendanceRecord[]       @relation("AttendanceRecordedBy")
-  makeupClassesCreated      MakeupClass[]            @relation("MakeupClassCreatedBy")
-  authActionTokens          AuthActionToken[]
-  legalAcceptances          LegalAcceptance[]
-  cookieConsents            CookieConsent[]
-  privacyRequests           PrivacyRequest[]
-  sensitiveAccessLogs       SensitiveAccessLog[]
-  consentRecords            ConsentRecord[]
-  salesOperated             Sale[]                   @relation("SalesOperated")
-  inventoryMovementsCreated InventoryMovement[]      @relation("InventoryMovementActor")
-  restockOrdersCreated      RestockOrder[]           @relation("RestockOrderCreatedBy")
-  schoolEventsResponsible   SchoolEvent[]            @relation("SchoolEventResponsibleUser")
-  schoolEventsCreated       SchoolEvent[]            @relation("SchoolEventCreatedBy")
-  eventMapVersionsPublished EventMapVersion[]        @relation("EventMapVersionPublishedBy")
-  eventTicketSalesCreated   EventTicketSale[]        @relation("EventTicketSaleCreatedBy")
-  eventAssignmentsDelivered EventCostumeAssignment[] @relation("EventCostumeAssignmentDeliveredBy")
-  eventFinancialEntries     EventFinancialEntry[]    @relation("EventFinancialEntryCreatedBy")
-  eventReportsGenerated     EventReport[]            @relation("EventReportGeneratedBy")
-  eventAudits               EventAudit[]             @relation("EventAuditActor")
-  acessosConta              UsuarioConta[]           @relation("UsuarioContaUsuario")
-  acessosConvidados         UsuarioConta[]           @relation("UsuarioContaInvitedBy")
+  aluno                       Aluno?
+  checkoutLinksCriados        CheckoutLink[]
+  matriculaLogs               MatriculaLog[]
+  logsFinanceiros             LogFinanceiro[]
+  lancamentosCriados          Lancamento[]
+  rematriculasOperacoes       RematriculaOperacao[]
+  payerChangeOperacoes        PayerChangeOperacao[]
+  matriculaOperacoes          MatriculaOperacao[]
+  notifications               NotificationRecipient[]
+  attendanceRecorded          AttendanceRecord[]       @relation("AttendanceRecordedBy")
+  makeupClassesCreated        MakeupClass[]            @relation("MakeupClassCreatedBy")
+  authActionTokens            AuthActionToken[]
+  legalAcceptances            LegalAcceptance[]
+  cookieConsents              CookieConsent[]
+  privacyRequests             PrivacyRequest[]
+  sensitiveAccessLogs         SensitiveAccessLog[]
+  consentRecords              ConsentRecord[]
+  salesOperated               Sale[]                   @relation("SalesOperated")
+  inventoryMovementsCreated   InventoryMovement[]      @relation("InventoryMovementActor")
+  restockOrdersCreated        RestockOrder[]           @relation("RestockOrderCreatedBy")
+  schoolEventsResponsible     SchoolEvent[]            @relation("SchoolEventResponsibleUser")
+  schoolEventsCreated         SchoolEvent[]            @relation("SchoolEventCreatedBy")
+  eventMapVersionsPublished   EventMapVersion[]        @relation("EventMapVersionPublishedBy")
+  eventTicketSalesCreated     EventTicketSale[]        @relation("EventTicketSaleCreatedBy")
+  eventMapReservationsCreated EventMapReservation[]    @relation("EventMapReservationCreatedBy")
+  eventAssignmentsDelivered   EventCostumeAssignment[] @relation("EventCostumeAssignmentDeliveredBy")
+  eventFinancialEntries       EventFinancialEntry[]    @relation("EventFinancialEntryCreatedBy")
+  eventReportsGenerated       EventReport[]            @relation("EventReportGeneratedBy")
+  eventAudits                 EventAudit[]             @relation("EventAuditActor")
+  acessosConta                UsuarioConta[]           @relation("UsuarioContaUsuario")
+  acessosConvidados           UsuarioConta[]           @relation("UsuarioContaInvitedBy")
 
   @@index([contaId])
 }
@@ -2186,16 +2197,16 @@ model WebhookAsaasRejection {
 
 model LegalAcceptance {
   id              String   @id @default(cuid())
-  contaId          String?
-  userId           String?
-  documentType     String
-  documentVersion  String
-  acceptedAt       DateTime @default(now())
-  ipHash           String?
-  userAgentHash    String?
-  locale           String   @default("pt-BR")
-  source           String
-  metadata         Json?
+  contaId         String?
+  userId          String?
+  documentType    String
+  documentVersion String
+  acceptedAt      DateTime @default(now())
+  ipHash          String?
+  userAgentHash   String?
+  locale          String   @default("pt-BR")
+  source          String
+  metadata        Json?
 
   conta Conta?   @relation(fields: [contaId], references: [id], onDelete: SetNull)
   user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -2207,17 +2218,17 @@ model LegalAcceptance {
 }
 
 model CookieConsent {
-  id              String   @id @default(cuid())
-  anonymousId     String?
-  userId          String?
-  categories      Json
-  acceptedAt      DateTime?
-  rejectedAt      DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  ipHash          String?
-  userAgentHash   String?
-  policyVersion   String
+  id            String    @id @default(cuid())
+  anonymousId   String?
+  userId        String?
+  categories    Json
+  acceptedAt    DateTime?
+  rejectedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  ipHash        String?
+  userAgentHash String?
+  policyVersion String
 
   user Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -2227,25 +2238,25 @@ model CookieConsent {
 }
 
 model PrivacyRequest {
-  id              String   @id @default(cuid())
-  contaId          String?
-  userId           String?
-  requestType      String
-  status           String   @default("PENDING_REVIEW")
-  action           String?
-  subjectType      String?
-  subjectId        String?
-  requesterEmail   String?
-  requesterName    String?
-  details          String?
-  resultUrl        String?
-  rejectedReason   String?
-  ipHash           String?
-  userAgentHash    String?
-  metadata         Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  completedAt      DateTime?
+  id             String    @id @default(cuid())
+  contaId        String?
+  userId         String?
+  requestType    String
+  status         String    @default("PENDING_REVIEW")
+  action         String?
+  subjectType    String?
+  subjectId      String?
+  requesterEmail String?
+  requesterName  String?
+  details        String?
+  resultUrl      String?
+  rejectedReason String?
+  ipHash         String?
+  userAgentHash  String?
+  metadata       Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  completedAt    DateTime?
 
   conta Conta?   @relation(fields: [contaId], references: [id], onDelete: SetNull)
   user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -2257,20 +2268,20 @@ model PrivacyRequest {
 }
 
 model SensitiveAccessLog {
-  id             String   @id @default(cuid())
-  contaId         String
-  actorUserId     String?
-  action          String
-  entityType      String
-  entityId        String?
-  reason          String?
-  requestId       String?
-  ipHash          String?
-  userAgentHash   String?
-  before          Json?
-  after           Json?
-  metadata        Json?
-  createdAt       DateTime @default(now())
+  id            String   @id @default(cuid())
+  contaId       String
+  actorUserId   String?
+  action        String
+  entityType    String
+  entityId      String?
+  reason        String?
+  requestId     String?
+  ipHash        String?
+  userAgentHash String?
+  before        Json?
+  after         Json?
+  metadata      Json?
+  createdAt     DateTime @default(now())
 
   conta     Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   actorUser Usuario? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -2283,25 +2294,25 @@ model SensitiveAccessLog {
 }
 
 model ConsentRecord {
-  id              String   @id @default(cuid())
-  contaId          String
-  userId           String?
-  subjectType      String
-  subjectId        String?
-  consentType      String
-  legalBasis       String
-  status           String   @default("GRANTED")
-  documentVersion  String?
-  grantedAt        DateTime @default(now())
-  revokedAt        DateTime?
-  source           String
-  ipHash           String?
-  userAgentHash    String?
-  metadata         Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String    @id @default(cuid())
+  contaId         String
+  userId          String?
+  subjectType     String
+  subjectId       String?
+  consentType     String
+  legalBasis      String
+  status          String    @default("GRANTED")
+  documentVersion String?
+  grantedAt       DateTime  @default(now())
+  revokedAt       DateTime?
+  source          String
+  ipHash          String?
+  userAgentHash   String?
+  metadata        Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  conta Conta   @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  conta Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   user  Usuario? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([contaId, subjectType, subjectId], name: "idx_consent_record_subject")
@@ -2724,14 +2735,14 @@ model EventMap {
   publishedAt        DateTime?
   archivedAt         DateTime?
 
-  conta      Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event      SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  versions   EventMapVersion[]
-  levels     EventMapLevel[]
-  objects    EventMapObject[]
-  sections   EventMapSection[]
-  seats      EventSeat[]
-  seatGroups EventSeatGroup[]
+  conta        Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event        SchoolEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  versions     EventMapVersion[]
+  levels       EventMapLevel[]
+  objects      EventMapObject[]
+  sections     EventMapSection[]
+  seats        EventSeat[]
+  seatGroups   EventSeatGroup[]
   publicSeats  EventMapPublicSeat[]
   reservations EventMapReservation[]
   orders       EventMapOrder[]
@@ -2754,10 +2765,10 @@ model EventMapVersion {
   publishedAt       DateTime       @default(now())
   createdAt         DateTime       @default(now())
 
-  conta       Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  map         EventMap              @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
-  publishedBy Usuario?              @relation("EventMapVersionPublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
-  publicSeats EventMapPublicSeat[]
+  conta        Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  map          EventMap              @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  publishedBy  Usuario?              @relation("EventMapVersionPublishedBy", fields: [publishedByUserId], references: [id], onDelete: SetNull)
+  publicSeats  EventMapPublicSeat[]
   reservations EventMapReservation[]
   orders       EventMapOrder[]
 
@@ -2940,6 +2951,7 @@ model EventMapPublicSeat {
   version          EventMapVersion           @relation(fields: [versionId], references: [id], onDelete: Cascade)
   reservationSeats EventMapReservationSeat[]
   orderItems       EventMapOrderItem[]
+  saleSeats        EventTicketSaleSeat[]
 
   @@unique([contaId, versionId, originalSeatId], name: "uq_event_map_public_seat_conta_version_original")
   @@unique([contaId, versionId, technicalCode], name: "uq_event_map_public_seat_conta_version_code")
@@ -2948,32 +2960,36 @@ model EventMapPublicSeat {
 }
 
 model EventMapReservation {
-  id          String                    @id @default(cuid())
-  contaId     String
-  eventId     String
-  eventMapId  String
-  versionId   String
-  holdToken   String                    @unique
-  checkoutKey String?
-  status      EventMapReservationStatus @default(HELD)
-  buyerName   String?
-  buyerEmail  String?
-  expiresAt   DateTime
-  consumedAt  DateTime?
-  cancelledAt DateTime?
-  createdAt   DateTime                  @default(now())
-  updatedAt   DateTime                  @updatedAt
+  id              String                    @id @default(cuid())
+  contaId         String
+  eventId         String
+  eventMapId      String
+  versionId       String
+  holdToken       String                    @unique
+  checkoutKey     String?
+  source          EventMapReservationSource @default(PUBLIC_CHECKOUT)
+  status          EventMapReservationStatus @default(HELD)
+  buyerName       String?
+  buyerEmail      String?
+  expiresAt       DateTime
+  consumedAt      DateTime?
+  cancelledAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
 
-  conta   Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event   SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  map     EventMap                  @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
-  version EventMapVersion           @relation(fields: [versionId], references: [id], onDelete: Cascade)
-  seats   EventMapReservationSeat[]
-  order   EventMapOrder?
+  conta     Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  map       EventMap                  @relation(fields: [eventMapId], references: [id], onDelete: Cascade)
+  version   EventMapVersion           @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  createdBy Usuario?                  @relation("EventMapReservationCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  seats     EventMapReservationSeat[]
+  order     EventMapOrder?
 
+  @@unique([contaId, eventMapId, checkoutKey], name: "uq_event_map_reservation_conta_map_checkout_key")
   @@index([contaId, eventMapId, versionId, status], name: "idx_event_map_reservation_conta_map_version_status")
   @@index([contaId, expiresAt, status], name: "idx_event_map_reservation_conta_expires_status")
-  @@unique([contaId, eventMapId, checkoutKey], name: "uq_event_map_reservation_conta_map_checkout_key")
+  @@index([contaId, source, status], name: "idx_event_map_reservation_conta_source_status")
 }
 
 model EventMapReservationSeat {
@@ -2992,17 +3008,17 @@ model EventMapReservationSeat {
 }
 
 model EventMapOrder {
-  id            String              @id @default(cuid())
-  contaId       String
-  eventId       String
-  eventMapId    String
-  versionId     String
-  reservationId String?             @unique
-  buyerName     String
-  buyerEmail    String
-  buyerDocument String?
-  totalAmount   Decimal             @default(0) @db.Decimal(12, 2)
-  status        EventMapOrderStatus @default(PAYMENT_PENDING)
+  id              String              @id @default(cuid())
+  contaId         String
+  eventId         String
+  eventMapId      String
+  versionId       String
+  reservationId   String?             @unique
+  buyerName       String
+  buyerEmail      String
+  buyerDocument   String?
+  totalAmount     Decimal             @default(0) @db.Decimal(12, 2)
+  status          EventMapOrderStatus @default(PAYMENT_PENDING)
   paymentProvider String?
   asaasCustomerId String?
   asaasPaymentId  String?
@@ -3011,13 +3027,13 @@ model EventMapOrder {
   invoiceUrl      String?
   expiresAt       DateTime?
   paidAt          DateTime?
-  refundedAmount  Decimal           @default(0) @db.Decimal(12, 2)
-  accessToken   String              @unique
-  confirmedAt   DateTime?
-  cancelledAt   DateTime?
-  refundedAt    DateTime?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  refundedAmount  Decimal             @default(0) @db.Decimal(12, 2)
+  accessToken     String              @unique
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+  refundedAt      DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   conta       Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event       SchoolEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -3055,26 +3071,31 @@ model EventMapOrderItem {
 }
 
 model EventTicket {
-  id              String            @id @default(cuid())
-  contaId         String
-  eventId         String
-  eventMapOrderId String
-  orderItemId     String            @unique
-  ticketCode      String            @unique
-  status          EventTicketStatus @default(VALID)
-  issuedAt        DateTime          @default(now())
-  usedAt          DateTime?
-  cancelledAt     DateTime?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  id                String            @id @default(cuid())
+  contaId           String
+  eventId           String
+  eventMapOrderId   String?
+  orderItemId       String?           @unique
+  eventTicketSaleId String?
+  saleSeatId        String?           @unique
+  ticketCode        String            @unique
+  status            EventTicketStatus @default(VALID)
+  issuedAt          DateTime          @default(now())
+  usedAt            DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  conta     Conta             @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event     SchoolEvent       @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  order     EventMapOrder     @relation(fields: [eventMapOrderId], references: [id], onDelete: Cascade)
-  orderItem EventMapOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  conta     Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  order     EventMapOrder?       @relation(fields: [eventMapOrderId], references: [id], onDelete: Cascade)
+  orderItem EventMapOrderItem?   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  sale      EventTicketSale?     @relation(fields: [eventTicketSaleId], references: [id], onDelete: Cascade)
+  saleSeat  EventTicketSaleSeat? @relation(fields: [saleSeatId], references: [id], onDelete: Cascade)
 
   @@index([contaId, eventId, status], name: "idx_event_ticket_conta_event_status")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_conta_order")
+  @@index([contaId, eventTicketSaleId], name: "idx_event_ticket_conta_sale")
 }
 
 model EventTicketSale {
@@ -3106,12 +3127,14 @@ model EventTicketSale {
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
 
-  conta       Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event       SchoolEvent    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  lot         EventTicketLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
-  aluno       Aluno?         @relation(fields: [alunoId], references: [id], onDelete: SetNull)
-  responsavel Responsavel?   @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
-  createdBy   Usuario?       @relation("EventTicketSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  conta       Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  lot         EventTicketLot        @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  aluno       Aluno?                @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  responsavel Responsavel?          @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  createdBy   Usuario?              @relation("EventTicketSaleCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  saleSeats   EventTicketSaleSeat[]
+  tickets     EventTicket[]
 
   @@index([contaId], name: "idx_event_ticket_sale_conta")
   @@index([contaId, eventId, status], name: "idx_event_ticket_sale_conta_event_status")
@@ -3121,6 +3144,27 @@ model EventTicketSale {
   @@index([contaId, responsavelId], name: "idx_event_ticket_sale_conta_responsavel")
   @@index([contaId, asaasPaymentId], name: "idx_event_ticket_sale_conta_asaas_payment")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_sale_conta_map_order")
+}
+
+model EventTicketSaleSeat {
+  id                String   @id @default(cuid())
+  contaId           String
+  saleId            String
+  publicSeatId      String
+  unitPriceSnapshot Decimal  @default(0) @db.Decimal(12, 2)
+  sectionName       String
+  seatLabel         String
+  technicalCode     String
+  createdAt         DateTime @default(now())
+
+  conta      Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  sale       EventTicketSale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  publicSeat EventMapPublicSeat @relation(fields: [publicSeatId], references: [id], onDelete: Restrict)
+  ticket     EventTicket?
+
+  @@unique([saleId, publicSeatId], name: "uq_event_ticket_sale_seat_sale_public_seat")
+  @@index([contaId, publicSeatId], name: "idx_event_ticket_sale_seat_conta_public_seat")
+  @@index([contaId, saleId], name: "idx_event_ticket_sale_seat_conta_sale")
 }
 
 model EventCostume {
@@ -3151,24 +3195,24 @@ model EventCostume {
 }
 
 model EventCostumeAssignment {
-  id                String                       @id @default(cuid())
+  id                String                            @id @default(cuid())
   contaId           String
   eventId           String
   costumeId         String
   alunoId           String?
   turmaId           String?
   definedSize       String?
-  status            EventCostumeAssignmentStatus @default(PENDING)
+  status            EventCostumeAssignmentStatus      @default(PENDING)
   billingMode       EventCostumeAssignmentBillingMode @default(SEPARATE_CHARGE)
-  chargedValue      Decimal?                     @db.Decimal(12, 2)
-  isPaid            Boolean                      @default(false)
+  chargedValue      Decimal?                          @db.Decimal(12, 2)
+  isPaid            Boolean                           @default(false)
   deliveredAt       DateTime?
   returnedAt        DateTime?
   deliveredByUserId String?
   notes             String?
   revenueEntryId    String?
-  createdAt         DateTime                     @default(now())
-  updatedAt         DateTime                     @updatedAt
+  createdAt         DateTime                          @default(now())
+  updatedAt         DateTime                          @updatedAt
 
   conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event       SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -3209,8 +3253,8 @@ model EventFinancialEntry {
   paymentStatus   String?
   cancelledAt     DateTime?
   refundedAt      DateTime?
-  refundedAmount  Decimal                 @default(0) @db.Decimal(12, 2)
-  netAmount       Decimal?                @db.Decimal(12, 2)
+  refundedAmount  Decimal                   @default(0) @db.Decimal(12, 2)
+  netAmount       Decimal?                  @db.Decimal(12, 2)
   createdAt       DateTime                  @default(now())
   updatedAt       DateTime                  @updatedAt
 
@@ -3228,26 +3272,26 @@ model EventFinancialEntry {
 }
 
 model EventParticipant {
-  id            String               @id @default(cuid())
-  contaId       String
-  eventId       String
-  type          EventParticipantType
-  alunoId       String?
-  turmaId       String?
-  responsavelId String?
-  displayName   String?
-  notes         String?
-  registrationFeeCharged Decimal            @default(0) @db.Decimal(12, 2)
-  isFeePaid              Boolean            @default(false)
-  feePaymentMethod       String?
-  revenueEntryId         String?
+  id                      String               @id @default(cuid())
+  contaId                 String
+  eventId                 String
+  type                    EventParticipantType
+  alunoId                 String?
+  turmaId                 String?
+  responsavelId           String?
+  displayName             String?
+  notes                   String?
+  registrationFeeCharged  Decimal              @default(0) @db.Decimal(12, 2)
+  isFeePaid               Boolean              @default(false)
+  feePaymentMethod        String?
+  revenueEntryId          String?
   financialStatusSnapshot String?
-  feePaidAmount          Decimal            @default(0) @db.Decimal(12, 2)
-  feeRefundedAmount      Decimal            @default(0) @db.Decimal(12, 2)
-  cancelledAt            DateTime?
-  cancelledReason        String?
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  feePaidAmount           Decimal              @default(0) @db.Decimal(12, 2)
+  feeRefundedAmount       Decimal              @default(0) @db.Decimal(12, 2)
+  cancelledAt             DateTime?
+  cancelledReason         String?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
 
   conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
   event       SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -3569,11 +3613,49 @@ enum FinanceProfileRegulatoryStatus {
 }
 
 enum InvoiceStatus {
-  REQUESTED
-  ISSUED
-  CANCELING
+  SCHEDULED
+  SYNCHRONIZED
+  AUTHORIZED
+  PROCESSING_CANCELLATION
   CANCELED
+  CANCELLATION_DENIED
   ERROR
+}
+
+enum FiscalAccessMethod {
+  USER_PASSWORD
+  TOKEN
+  CERTIFICATE
+}
+
+enum FiscalEmissionMode {
+  MANUAL
+  ON_PAYMENT
+}
+
+enum FiscalInvoiceEffectiveDatePeriod {
+  ON_PAYMENT_CONFIRMATION
+  ON_PAYMENT_DUE_DATE
+  BEFORE_PAYMENT_DUE_DATE
+  ON_DUE_DATE_MONTH
+  ON_NEXT_MONTH
+}
+
+enum FiscalReadinessStatus {
+  NOT_CONFIGURED
+  PENDING
+  READY
+}
+
+enum FiscalSyncStatus {
+  SYNCED
+  PENDING
+  DIVERGED
+}
+
+enum FiscalServiceSource {
+  MUNICIPAL_LIST
+  MANUAL
 }
 
 enum FinanceIntegrationMode {
@@ -3868,6 +3950,18 @@ model Charge {
 
   asaasPaymentId String? @unique
 
+  // Snapshot Asaas - usado para exibir o status oficial da cobranca
+  asaasStatus              String?
+  asaasValue               Decimal?         @db.Decimal(12, 2)
+  asaasNetValue            Decimal?         @db.Decimal(12, 2)
+  asaasOriginalValue       Decimal?         @db.Decimal(12, 2)
+  asaasFeeValue            Decimal?         @db.Decimal(12, 2)
+  asaasCreditDate          DateTime?
+  asaasEstimatedCreditDate DateTime?
+  lastAsaasFetchAt         DateTime?
+  liquidacaoStatus         LiquidacaoStatus @default(NAO_APLICAVEL)
+  liquidadoEm              DateTime?
+
   // Campos para listagem de standalone charges (sem vínculo com Cobranca)
   // Preenchidos na criação para evitar consultas externas
   payerName     String? // Nome do pagador (aluno ou responsável)
@@ -3902,6 +3996,8 @@ model Charge {
   @@index([contaId, standaloneInstallmentPlanId, dueDate], name: "idx_charge_conta_plan_due")
   @@index([contaId, createdAt], name: "idx_charge_conta_created")
   @@index([contaId, status, createdAt], name: "idx_charge_conta_status_created")
+  @@index([contaId, asaasStatus], name: "idx_charge_conta_asaas_status")
+  @@index([contaId, liquidacaoStatus], name: "idx_charge_conta_liquidacao")
   @@index([contaId, asaasPaymentId], name: "idx_charge_conta_asaas_payment")
   @@index([asaasPaymentId])
   @@index([customerId])
@@ -3922,12 +4018,14 @@ model ChargeReadModel {
   linkStatus String  @default("LINKED")
   groupId    String?
 
-  description String?
-  payerName   String
-  value       Decimal   @db.Decimal(12, 2)
-  dueDate     DateTime?
-  billingType String?
-  status      String
+  description      String?
+  payerName        String
+  value            Decimal          @db.Decimal(12, 2)
+  dueDate          DateTime?
+  billingType      String?
+  status           String
+  asaasStatus      String?
+  liquidacaoStatus LiquidacaoStatus @default(NAO_APLICAVEL)
 
   asaasPaymentId String?
   matriculaId    String?
@@ -3954,6 +4052,8 @@ model ChargeReadModel {
   @@index([contaId, origin, chargeType, isGroup, status, createdAt], name: "idx_charge_read_model_main_listing")
   @@index([contaId, payerName], name: "idx_charge_read_model_conta_payer")
   @@index([contaId, asaasPaymentId], name: "idx_charge_read_model_conta_asaas_payment")
+  @@index([contaId, asaasStatus], name: "idx_charge_read_model_conta_asaas_status")
+  @@index([contaId, liquidacaoStatus], name: "idx_charge_read_model_conta_liquidacao")
   @@index([contaId, groupId], name: "idx_charge_read_model_conta_group")
   @@index([contaId, matriculaId], name: "idx_charge_read_model_conta_matricula")
   @@index([contaId, alunoId], name: "idx_charge_read_model_conta_aluno")
@@ -4036,7 +4136,10 @@ model StandaloneSubscription {
   status          SubscriptionStatus @default(REQUESTED)
   statusUpdatedAt DateTime           @default(now())
 
-  asaasSubscriptionId String? @unique
+  asaasSubscriptionId            String?   @unique
+  asaasInvoiceSettingsConfigured Boolean   @default(false)
+  fiscalInvoiceSettingsSyncedAt  DateTime?
+  fiscalInvoiceSettingsError     String?
 
   cycle         String
   billingType   String
@@ -4056,6 +4159,7 @@ model StandaloneSubscription {
   @@unique([contaId, idempotencyKey])
   @@index([contaId])
   @@index([status])
+  @@index([contaId, asaasInvoiceSettingsConfigured], name: "idx_standalone_subscription_conta_invoice_settings")
   @@index([contaId, status, nextDueDate], name: "idx_standalone_subscription_conta_status_due")
   @@index([asaasSubscriptionId])
   @@index([customerId])
@@ -4088,16 +4192,27 @@ model Invoice {
 
   chargeId String @unique
 
-  externalReference String  @unique
-  asaasInvoiceId    String? @unique
+  cobrancaId      String?
+  matriculaId     String?
+  responsavelId   String?
+  fiscalServiceId String?
 
-  status          InvoiceStatus @default(REQUESTED)
-  statusUpdatedAt DateTime      @default(now())
+  externalReference String
+  asaasInvoiceId    String?
 
-  // Snapshot mínimo
-  value         Decimal?  @db.Decimal(12, 2)
-  deductions    Decimal?  @db.Decimal(12, 2)
-  effectiveDate DateTime?
+  status            InvoiceStatus @default(SCHEDULED)
+  statusDescription String?
+  errorMessage      String?
+  statusUpdatedAt   DateTime      @default(now())
+  scheduledAt       DateTime?
+
+  // Snapshot da emissão
+  value              Decimal?  @db.Decimal(12, 2)
+  deductions         Decimal?  @db.Decimal(12, 2)
+  effectiveDate      DateTime?
+  serviceDescription String?
+  observations       String?
+  taxes              Json?
 
   municipalServiceCode String?
   municipalServiceName String?
@@ -4109,12 +4224,124 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta  Conta  @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  charge Charge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  conta         Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  charge        Charge              @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  fiscalService FiscalService?      @relation(fields: [fiscalServiceId], references: [id], onDelete: SetNull)
+  auditEvents   InvoiceAuditEvent[]
+
+  @@unique([contaId, externalReference])
+  @@unique([contaId, asaasInvoiceId])
+  @@index([contaId])
+  @@index([contaId, status])
+  @@index([cobrancaId])
+  @@index([asaasInvoiceId])
+}
+
+model ContaFiscalSettings {
+  id      String @id @default(cuid())
+  contaId String @unique
+
+  fiscalEmail                        String?
+  municipalInscription               String?
+  stateInscription                   String?
+  aedf                               String?
+  simplesNacional                    Boolean  @default(false)
+  culturalProjectsPromoter           Boolean  @default(false)
+  cnae                               String?
+  specialTaxRegime                   String?
+  serviceListItem                    String?
+  nbsCode                            String?
+  rpsSerie                           String?
+  rpsNumber                          Int?
+  loteNumber                         Int?
+  nationalPortalTaxCalculationRegime String?
+  useNationalPortal                  Boolean?
+
+  accessMethod          FiscalAccessMethod?
+  accessConfiguredAt    DateTime?
+  passwordConfigured    Boolean             @default(false)
+  accessTokenConfigured Boolean             @default(false)
+  certificateConfigured Boolean             @default(false)
+
+  defaultDescriptionTemplate String?
+  defaultObservations        String?
+  defaultDeductions          Decimal?                         @db.Decimal(12, 2)
+  emissionMode               FiscalEmissionMode               @default(MANUAL)
+  invoiceEffectiveDatePeriod FiscalInvoiceEffectiveDatePeriod @default(ON_PAYMENT_CONFIRMATION)
+  invoiceDaysBeforeDueDate   Int?
+  invoiceReceivedOnly        Boolean                          @default(true)
+
+  readinessStatus     FiscalReadinessStatus @default(NOT_CONFIGURED)
+  readinessIssues     Json?
+  syncStatus          FiscalSyncStatus      @default(SYNCED)
+  lastSyncError       String?
+  lastSyncedAt        DateTime?
+  asaasFiscalSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
+}
+
+model FiscalService {
+  id      String @id @default(cuid())
+  contaId String
+
+  name                 String
+  municipalServiceCode String
+  source               FiscalServiceSource @default(MANUAL)
+  nationalTaxCode      String?
+  nbsCode              String?
+  defaultDescription   String?
+  isDefault            Boolean             @default(false)
+
+  iss       Decimal @default(0) @db.Decimal(5, 2)
+  pis       Decimal @default(0) @db.Decimal(5, 2)
+  cofins    Decimal @default(0) @db.Decimal(5, 2)
+  csll      Decimal @default(0) @db.Decimal(5, 2)
+  inss      Decimal @default(0) @db.Decimal(5, 2)
+  ir        Decimal @default(0) @db.Decimal(5, 2)
+  retainIss Boolean @default(false)
+
+  asaasMunicipalServiceId String?
+  taxSituationCode        String?
+  taxClassificationCode   String?
+  operationIndicatorCode  String?
+  pisCofinsTaxStatus      String?
+  operationPis            Decimal? @db.Decimal(5, 2)
+  operationCofins         Decimal? @db.Decimal(5, 2)
+  useTaxSystemReformNT007 Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
 
   @@index([contaId])
-  @@index([status])
-  @@index([asaasInvoiceId])
+  @@index([contaId, isDefault])
+}
+
+model InvoiceAuditEvent {
+  id        String @id @default(cuid())
+  contaId   String
+  invoiceId String
+
+  action        String
+  fromStatus    InvoiceStatus?
+  toStatus      InvoiceStatus?
+  metadata      Json?
+  correlationId String?
+
+  createdAt DateTime @default(now())
+
+  conta   Conta   @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([contaId])
+  @@index([invoiceId])
+  @@index([contaId, createdAt])
 }
 
 model Subscription {
@@ -4129,7 +4356,10 @@ model Subscription {
   status          SubscriptionStatus @default(REQUESTED)
   statusUpdatedAt DateTime           @default(now())
 
-  asaasSubscriptionId String? @unique
+  asaasSubscriptionId            String?   @unique
+  asaasInvoiceSettingsConfigured Boolean   @default(false)
+  fiscalInvoiceSettingsSyncedAt  DateTime?
+  fiscalInvoiceSettingsError     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4143,6 +4373,7 @@ model Subscription {
   @@unique([contaId, matriculaId])
   @@index([contaId])
   @@index([status])
+  @@index([contaId, asaasInvoiceSettingsConfigured], name: "idx_subscription_conta_invoice_settings")
   @@index([contaId, status, createdAt], name: "idx_subscription_conta_status_created")
   @@index([asaasSubscriptionId])
 }

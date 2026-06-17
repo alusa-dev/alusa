@@ -50,6 +50,7 @@ export {
   canProgressCobrancaStatus,
   canProgressChargeStatus,
   computeNextCobrancaStatus,
+  applyCobrancaStatusPrecedence,
   computeNextChargeStatus,
   // Liquidação
   computeLiquidacaoStatus,

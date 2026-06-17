@@ -32,10 +32,19 @@ export type EventListResult = {
 
 export type EventResources = {
   users: Array<{ id: string; nome: string; email: string | null; role: string }>;
+  /** Catálogo global da conta — não usar em operações dentro do evento; preferir `EventScopedResources`. */
   alunos: Array<{ id: string; nome: string }>;
   responsaveis: Array<{ id: string; nome: string }>;
   turmas: Array<{ id: string; nome: string }>;
   events: Array<{ id: string; name: string; startsAt: string; status: SchoolEventStatus }>;
+};
+
+export type EventScopedPerson = { id: string; nome: string };
+
+export type EventScopedResources = {
+  alunos: EventScopedPerson[];
+  turmas: EventScopedPerson[];
+  responsaveis: EventScopedPerson[];
 };
 
 export type TicketLotDTO = {
@@ -69,6 +78,7 @@ export type TicketSaleDTO = {
   paymentMethod: EventPaymentMethod | string | null;
   paymentMethodLabel?: string | null;
   status: EventTicketSaleStatus | 'RESERVED';
+  paymentStatus?: string | null;
   soldAt: string;
   paidAt: string | null;
   cancelledAt?: string | null;
@@ -83,7 +93,10 @@ export type TicketSaleDTO = {
   asaasPaymentId?: string | null;
   reservationExpiresAt?: string | null;
   invoiceUrl?: string | null;
+  chargeDetailUrl?: string | null;
   ticketsUrl?: string | null;
+  seats?: Array<{ id: string; sectionName: string; seatLabel: string; unitPrice: number }>;
+  hasSeatedTickets?: boolean;
 };
 
 export type CostumeDTO = {
@@ -297,6 +310,13 @@ export async function listResources() {
   return parseResponse<EventResources>(await fetch('/api/events/resources', { cache: 'no-store' }));
 }
 
+export async function listEventScopedResources(eventId: string) {
+  const json = await parseResponse<JsonEnvelope<EventScopedResources>>(
+    await fetch(`/api/events/${eventId}/resources`, { cache: 'no-store' }),
+  );
+  return json.data;
+}
+
 export async function listTicketLots(eventId?: string) {
   const query = buildParams({ eventId });
   return (await parseResponse<JsonEnvelope<TicketLotDTO[]>>(await fetch(`/api/events/ticket-lots?${query}`, { cache: 'no-store' }))).data;
@@ -358,6 +378,14 @@ export async function refundTicketSale(id: string, reason?: string) {
   }))).data;
 }
 
+export async function refundEventCharge(chargeId: string, reason?: string) {
+  return (await parseResponse<JsonEnvelope<{ success: boolean; pending?: boolean; correlationId?: string; message?: string }>>(await fetch(`/api/cobrancas/${encodeURIComponent(chargeId)}/refund`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ description: reason }),
+  }))).data;
+}
+
 export async function refundPublicEventMapOrder(orderId: string, reason?: string) {
   return (await parseResponse<JsonEnvelope<{ success: boolean; pending?: boolean; correlationId?: string }>>(await fetch(`/api/events/public-orders/${orderId}/refund`, {
     method: 'POST',
@@ -380,6 +408,58 @@ export async function deleteTicketSale(id: string) {
   }))).data;
 }
 
+export type StaffSeatChip = {
+  id: string;
+  sectionName: string;
+  displayLabel: string;
+  lotId: string | null;
+  lotName: string | null;
+  unitPrice: number;
+};
+
+export type StaffSeatReservationResult = {
+  reservationId: string;
+  holdToken: string;
+  expiresAt: string;
+  seats: StaffSeatChip[];
+  totalAmount: number;
+};
+
+export async function getStaffEventMapSalesView(eventId: string, mapId: string) {
+  return (
+    await parseResponse<JsonEnvelope<import('@alusa/lib/events/map/staff-map-sales.service').StaffEventMapSalesViewDTO>>(
+      await fetch(`/api/events/${eventId}/maps/${mapId}/staff-sales`, { cache: 'no-store' }),
+    )
+  ).data;
+}
+
+export async function reserveStaffSeats(
+  eventId: string,
+  mapId: string,
+  payload: { seatIds: string[]; holdToken?: string | null },
+) {
+  const hasHold = Boolean(payload.holdToken);
+  const url = hasHold
+    ? `/api/events/${eventId}/staff-reservations/${encodeURIComponent(payload.holdToken!)}?mapId=${encodeURIComponent(mapId)}`
+    : `/api/events/${eventId}/maps/${mapId}/staff-reservations`;
+  return (
+    await parseResponse<JsonEnvelope<StaffSeatReservationResult>>(
+      await fetch(url, {
+        method: hasHold ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seatIds: payload.seatIds, holdToken: payload.holdToken ?? null }),
+      }),
+    )
+  ).data;
+}
+
+export async function releaseStaffSeatReservation(eventId: string, holdToken: string) {
+  return (
+    await parseResponse<JsonEnvelope<{ released: boolean }>>(
+      await fetch(`/api/events/${eventId}/staff-reservations/${encodeURIComponent(holdToken)}`, { method: 'DELETE' }),
+    )
+  ).data;
+}
 
 export async function listCostumes(eventId?: string) {
   const query = buildParams({ eventId });

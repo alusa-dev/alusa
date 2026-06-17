@@ -1,11 +1,12 @@
 'use client';
-import { getSelectableItems, mergeEventMapWithLocalDraft, validateGroupCandidates } from '@alusa/domain';
+import { getSelectableItems, mergeEventMapWithLocalDraft, validateDuplicateSelection, validateGroupCandidates, validatePublishableEventMap, getPrimarySelection, type EventMapDTO, type EventTicketMode } from '@alusa/domain';
 import { registerEventMapE2EBridge, unregisterEventMapE2EBridge } from '../browser/event-map-e2e-bridge';
 import { clearEventMapLocalDraft, readEventMapLocalDraft, writeEventMapLocalDraft } from '../browser/local-draft-storage';
 import { listTicketLots } from '../../events-service';
 import { getEventMap, publishEventMap, saveEventMapDraft } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 import { FloatingMapToolbar } from './FloatingMapToolbar';
+import { FloatingTextFormatToolbar } from './FloatingTextFormatToolbar';
 import { MapAreasPanel } from './MapAreasPanel';
 import { MapBottomBar } from './MapBottomBar';
 import { MapEditorHeader } from './MapEditorHeader';
@@ -14,7 +15,7 @@ import { MapLayersPanel } from './MapLayersPanel';
 import { MapPropertiesPanel } from './MapPropertiesPanel';
 
 import dynamic from 'next/dynamic';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { toast } from '@/components/ui/toast';
@@ -32,6 +33,32 @@ const eventMapEditorQueryKeys = {
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
+}
+
+function buildPublishValidationInput(map: EventMapDTO) {
+  return {
+    ticketMode: map.event.ticketMode as EventTicketMode,
+    levelsCount: map.levels.length,
+    sections: map.sections.map((section) => ({ id: section.id, name: section.name, lotId: section.lotId })),
+    seats: map.seats.map((seat) => ({
+      id: seat.id,
+      sectionId: seat.sectionId,
+      status: seat.status,
+      publicVisible: seat.publicVisible,
+    })),
+  };
+}
+
+function formatPublishValidationErrors(map: EventMapDTO, errors: string[]) {
+  const sectionsWithoutLot = map.sections.filter((section) => !section.lotId).map((section) => section.name);
+  return errors
+    .map((error) => {
+      if (error.includes('lote') && sectionsWithoutLot.length > 0) {
+        return `${error} Vincule um lote em: ${sectionsWithoutLot.join(', ')}.`;
+      }
+      return error;
+    })
+    .join(' ');
 }
 
 export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: string }) {
@@ -53,12 +80,23 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   const setTool = useEventMapEditorStore((state) => state.setTool);
   const isDirty = useEventMapEditorStore((state) => state.isDirty);
   const markSaved = useEventMapEditorStore((state) => state.markSaved);
+  const patchMapSettings = useEventMapEditorStore((state) => state.patchMapSettings);
   const toPayload = useEventMapEditorStore((state) => state.toPayload);
+  const updateObject = useEventMapEditorStore((state) => state.updateObject);
+  const selection = useEventMapEditorStore((state) => state.selection);
   const spacePanPreviousToolRef = useRef<typeof tool | null>(null);
   const zoomKeyDownAtRef = useRef(0);
   const loadedMapIdRef = useRef<string | null>(null);
 
   const ZOOM_TAP_THRESHOLD_MS = 250;
+
+  const selectedTextObject = useMemo(() => {
+    if (!map || getSelectableItems(selection).length !== 1) return null;
+    const primary = getPrimarySelection(selection);
+    if (!primary || primary.type !== 'object') return null;
+    const object = map.objects.find((entry) => entry.id === primary.id);
+    return object?.type === 'TEXT' ? object : null;
+  }, [map, selection]);
 
   useEffect(() => {
     if (mapQuery.data && loadedMapIdRef.current !== mapQuery.data.id) {
@@ -124,9 +162,57 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
   });
 
   async function handlePublish() {
-    const payload = map?.status !== 'ARCHIVED' && isDirty ? toPayload() : null;
-    if (isDirty && !payload) throw new Error('Mapa ainda não carregado.');
-    await publishMutation.mutateAsync(payload);
+    const state = useEventMapEditorStore.getState();
+    const currentMap = state.map;
+    if (!currentMap) {
+      toast.error({ title: 'Mapa ainda não carregado.' });
+      return;
+    }
+
+    let validation = validatePublishableEventMap(buildPublishValidationInput(currentMap));
+    if (!validation.ok) {
+      const lots = lotsQuery.data ?? [];
+      const onlyMissingLot = validation.errors.length === 1 && validation.errors[0]?.includes('lote');
+      const defaultLot = lots.length === 1 ? lots[0] : null;
+
+      if (onlyMissingLot && defaultLot) {
+        for (const section of currentMap.sections) {
+          if (!section.lotId) {
+            state.updateSection(section.id, { lotId: defaultLot.id });
+          }
+        }
+        const refreshedMap = useEventMapEditorStore.getState().map ?? currentMap;
+        validation = validatePublishableEventMap(buildPublishValidationInput(refreshedMap));
+        if (validation.ok) {
+          toast.info({
+            title: 'Lote vinculado automaticamente',
+            description: `Todos os setores foram vinculados ao lote "${defaultLot.name}".`,
+          });
+        }
+      }
+    }
+
+    if (!validation.ok) {
+      const mapForMessage = useEventMapEditorStore.getState().map ?? currentMap;
+      toast.error({
+        title: 'Não foi possível publicar',
+        description: formatPublishValidationErrors(mapForMessage, validation.errors),
+      });
+      return;
+    }
+
+    const latestState = useEventMapEditorStore.getState();
+    const payload = latestState.isDirty ? latestState.toPayload() : null;
+    if (latestState.isDirty && !payload) {
+      toast.error({ title: 'Mapa ainda não carregado.' });
+      return;
+    }
+
+    try {
+      await publishMutation.mutateAsync(payload);
+    } catch {
+      // publishMutation.onError already surfaces the toast
+    }
   }
 
   useEffect(() => {
@@ -169,6 +255,12 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       }
       if ((event.metaKey || event.ctrlKey) && key === 'd') {
         event.preventDefault();
+        if (!store.map) return;
+        const validation = validateDuplicateSelection(store.map, store.selection);
+        if (!validation.ok) {
+          toast.warning({ title: 'Não foi possível duplicar', description: validation.reason });
+          return;
+        }
         store.duplicateSelection();
         return;
       }
@@ -204,8 +296,6 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
       if (key === 'v') store.setTool('select');
       if (key === 'h') store.setTool('pan');
       if (key === 't') store.setTool('text');
-      if (key === 's') store.setTool('section');
-      if (key === 'r') store.setTool('row');
       if (key === 'c') store.setTool('seat');
     }
 
@@ -270,6 +360,13 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
         isPublishing={publishMutation.isPending}
         onSave={() => saveMutation.mutate()}
         onPublish={handlePublish}
+        onSettingsSaved={(savedMap) => {
+          patchMapSettings({
+            name: savedMap.name,
+            publicEnabled: savedMap.publicEnabled,
+          });
+          queryClient.setQueryData(eventMapEditorQueryKeys.map(eventId, mapId), savedMap);
+        }}
       />
       <div className="min-h-0 flex-1">
         <section className="relative h-full min-w-0 overflow-hidden">
@@ -277,7 +374,18 @@ export function EventMapEditor({ eventId, mapId }: { eventId: string; mapId: str
             <MapAreasPanel />
             <MapLayersPanel />
           </div>
-          {!readOnly ? <FloatingMapToolbar activeTool={tool} onToolChange={setTool} /> : null}
+          {!readOnly ? (
+            <div className="pointer-events-auto absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+              <FloatingMapToolbar activeTool={tool} onToolChange={setTool} />
+              {selectedTextObject ? (
+                <FloatingTextFormatToolbar
+                  object={selectedTextObject}
+                  disabled={map.status === 'ARCHIVED'}
+                  onUpdate={(patch) => updateObject(selectedTextObject.id, patch)}
+                />
+              ) : null}
+            </div>
+          ) : null}
           <MapCanvas readOnly={readOnly} />
           <MapBottomBar />
           <div className={!['select', 'pan', 'zoom'].includes(tool) ? 'pointer-events-none' : ''}>

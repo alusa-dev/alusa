@@ -49,7 +49,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { refundPublicEventMapOrder } from '@/features/events/events-service';
+import { refundEventCharge } from '@/features/events/events-service';
 import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
 import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
 import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
@@ -373,7 +373,7 @@ export function ParticipantDetailsFeature({
   });
 
   const refundPublicOrderMutation = useMutation({
-    mutationFn: async (orderId: string) => refundPublicEventMapOrder(orderId),
+    mutationFn: async (orderId: string) => refundEventCharge(`event-map-order:${orderId}`),
     onSuccess: async () => {
       await Promise.all([
         refetch(),
@@ -650,11 +650,13 @@ export function ParticipantDetailsFeature({
   }, [participant]);
 
   const renderTicketActions = (sale: any) => {
-    const canRefund = sale.source === 'PUBLIC_ORDER' && sale.status === 'PAID' && sale.eventMapOrderId;
+    const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
+    const canRefund = sale.source === 'PUBLIC_ORDER' && sale.status === 'PAID' && sale.eventMapOrderId && !isRefundProcessing;
     const canViewTicket = sale.source === 'PUBLIC_ORDER' && sale.ticketsUrl;
-    const canViewCharge = sale.source === 'PUBLIC_ORDER' && sale.status === 'RESERVED' && sale.invoiceUrl;
+    const canViewCharge = sale.source === 'PUBLIC_ORDER' && sale.chargeDetailUrl;
+    const canViewAsaasInvoice = sale.source === 'PUBLIC_ORDER' && sale.invoiceUrl;
 
-    if (!canRefund && !canViewTicket && !canViewCharge) {
+    if (!canRefund && !canViewTicket && !canViewCharge && !canViewAsaasInvoice) {
       return <span className="text-slate-400">-</span>;
     }
 
@@ -675,7 +677,12 @@ export function ParticipantDetailsFeature({
         <DropdownMenuContent align="end" className="w-52">
           {canViewCharge ? (
             <DropdownMenuItem asChild>
-              <Link href={sale.invoiceUrl} target="_blank">Cobrança</Link>
+              <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
+            </DropdownMenuItem>
+          ) : null}
+          {canViewAsaasInvoice ? (
+            <DropdownMenuItem asChild>
+              <Link href={sale.invoiceUrl} target="_blank">Abrir fatura Asaas</Link>
             </DropdownMenuItem>
           ) : null}
           {canViewTicket ? (
@@ -685,7 +692,7 @@ export function ParticipantDetailsFeature({
           ) : null}
           {canRefund ? (
             <>
-              {(canViewCharge || canViewTicket) ? <DropdownMenuSeparator /> : null}
+              {(canViewCharge || canViewAsaasInvoice || canViewTicket) ? <DropdownMenuSeparator /> : null}
               <DropdownMenuItem
                 className="text-rose-700 focus:text-rose-700"
                 onClick={() => setRefundOrderTarget({ orderId: sale.eventMapOrderId, buyerName: sale.buyerName })}

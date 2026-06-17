@@ -1,5 +1,5 @@
 'use client';
-import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeRotation, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
+import { DEFAULT_CORRIDOR_THICKNESS, MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, MIN_CORRIDOR_THICKNESS, SEAT_GRID_SECTION_PADDING, applyCorridorReflow, applyCorridorRotationPreservingCenter, buildLevelLayerSortOrderPatches, buildSeatGridPreview, computeArtboardFitView, executeMapCommand, expandObjectSelectionItems, getNextGroupDisplayName, getNextLevelSortOrder, getObjectGroupId, getObjectGroupLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, getSelectableItems, getTextModeFromCreation, inferCorridorAxisFromSize, isCorridorRotationOnlyTransform, isPlateiaBaseLevel, normalizeMapLevels, normalizeRotation, normalizeSeatGridConfig, normalizeSelection, normalizeTextData, persistCorridorMetadataOnly, reconcileCorridorGeometry, reorderLevelPanelChildItems, replaceSelection, sanitizeGroupMembership, sanitizeTextObjectData, setObjectGroupData, sortLevelPanelChildren, toggleSelectionItem, translateSeatCorridorBase, translateSectionCorridorBase, updateCorridorSplitAnchorsOnDrag, validateGroupCandidates, withAutoObjectLabel, withDuplicateObjectLabel } from '@alusa/domain';
 import type { EventMapDTO, EventMapDraftPayload, EventMapLevelDTO, EventMapObjectDTO, EventMapSectionDTO, EventSeatDTO, EventSeatGroupDTO, MapCommand, MapSelection, MapSelectionItem, MapTool, SeatGridConfig } from '@alusa/domain';
 
 import { create } from 'zustand';
@@ -91,9 +91,11 @@ type EventMapEditorState = {
   groupSelection: () => void;
   ungroupSelection: () => void;
   nudgeSelection: (delta: { x: number; y: number }) => void;
+  reorderLevelLayers: (levelId: string, fromIndex: number, toIndex: number) => void;
   undo: () => void;
   redo: () => void;
   markSaved: (map?: EventMapDTO) => void;
+  patchMapSettings: (patch: { name?: string; publicEnabled?: boolean }) => void;
   toPayload: () => EventMapDraftPayload | null;
   setInlineTextEditorActive: (active: boolean) => void;
 };
@@ -370,7 +372,7 @@ function createDefaultSection(map: EventMapDTO, levelId: string, point: { x: num
     levelId,
     sectionId,
     type: 'SECTION',
-    data: { label: sectionName, fill: color },
+    data: { label: sectionName, fill: color, fillEnabled: false, opacity: 0 },
     x: point.x,
     y: point.y,
     width: size?.width ?? 320,
@@ -396,6 +398,7 @@ function updateCounts(map: EventMapDTO) {
     sections: map.sections.length,
     seats: map.seats.length,
     availableSeats: map.seats.filter((seat) => seat.status === 'AVAILABLE' && seat.publicVisible).length,
+    orders: map.counts.orders ?? 0,
   };
 }
 
@@ -721,6 +724,21 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
     set((state) => runCommand(state, { type: 'UNGROUP_SELECTION', payload: { selection: state.selection } })),
   nudgeSelection: (delta) =>
     set((state) => runCommand(state, { type: 'NUDGE_SELECTION', payload: { delta } })),
+  reorderLevelLayers: (levelId, fromIndex, toIndex) =>
+    set((state) => {
+      if (!state.map) return state;
+      const items = sortLevelPanelChildren(state.map.sections, state.map.objects, levelId);
+      const reordered = reorderLevelPanelChildItems(items, fromIndex, toIndex);
+      const patches = buildLevelLayerSortOrderPatches(state.map, reordered);
+      const orderChanged = items.some(
+        (item, index) => item.id !== reordered[index]?.id || item.kind !== reordered[index]?.kind,
+      );
+      if (patches.length === 0 || !orderChanged) return state;
+      return runCommand(state, {
+        type: 'UPDATE_ITEMS',
+        payload: { objects: patches },
+      });
+    }),
   undo: () =>
     set((state) => {
       const last = state.past.at(-1);
@@ -779,6 +797,17 @@ export const useEventMapEditorStore = create<EventMapEditorState>((set, get) => 
         isDirty: false,
         past: [],
         future: [],
+      };
+    }),
+  patchMapSettings: (patch) =>
+    set((state) => {
+      if (!state.map) return state;
+      return {
+        map: {
+          ...state.map,
+          ...(patch.name !== undefined ? { name: patch.name } : {}),
+          ...(patch.publicEnabled !== undefined ? { publicEnabled: patch.publicEnabled } : {}),
+        },
       };
     }),
   setInlineTextEditorActive: (active) => set({ inlineTextEditorActive: active }),

@@ -94,7 +94,7 @@ describe('API Finance Invoices', () => {
       contaId: 'c1',
       limit: 5,
       offset: 5,
-      status: 'REQUESTED',
+      status: 'SCHEDULED',
     });
   });
 
@@ -168,7 +168,7 @@ describe('API Finance Invoices', () => {
         chargeId: 'ch_1',
         externalReference: 'invoice:ch_1',
         asaasInvoiceId: 'inv_1',
-        status: 'REQUESTED',
+        status: 'SCHEDULED',
         statusUpdatedAt: '2026-01-04T00:00:00.000Z',
         pdfUrl: null,
         xmlUrl: null,
@@ -198,7 +198,7 @@ describe('API Finance Invoices', () => {
         chargeId: 'ch_1',
         externalReference: 'invoice:ch_1',
         asaasInvoiceId: 'inv_1',
-        status: 'REQUESTED',
+        status: 'SCHEDULED',
       },
     });
   });

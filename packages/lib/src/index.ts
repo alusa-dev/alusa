@@ -92,3 +92,4 @@ export * from './events/events.service';
 export * from './events/event-asaas-payment-provider';
 export * from './events/map/event-map.schema';
 export * from './events/map/event-map.service';
+export * from './events/map/staff-map-sales.service';

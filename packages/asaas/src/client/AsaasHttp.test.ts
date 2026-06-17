@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { AsaasHttp } from './AsaasHttp';
+import { globalAsaasHooks } from './asaas-hooks';
 import { getAsaasBaseUrlForApiKeyOrThrow } from './asaasBaseUrl.ts';
 
 process.env.ASAAS_BASE_URL = process.env.ASAAS_BASE_URL ?? 'https://api-sandbox.asaas.com/v3';
@@ -76,6 +77,29 @@ describe('AsaasHttp (idempotência + retry)', () => {
 
     await expect(client.get('/balance')).rejects.toMatchObject({ name: 'AsaasHttpError', status: 400 });
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('404 esperado não emite log de erro nem success=false no hook', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hookSpy = vi.spyOn(globalAsaasHooks, 'emitApiCall');
+
+    const client = new AsaasHttp({ apiKey: 'k' });
+    mockFetchOnce(404, { message: 'not found' });
+
+    await expect(
+      client.get('/subscriptions/sub_123/invoiceSettings', { expectedErrorStatuses: [404] }),
+    ).rejects.toMatchObject({ name: 'AsaasHttpError', status: 404 });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(hookSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        httpStatus: 404,
+        success: true,
+      }),
+    );
+
+    warnSpy.mockRestore();
+    hookSpy.mockRestore();
   });
 
   it('faz retry em 500 e depois retorna sucesso', async () => {

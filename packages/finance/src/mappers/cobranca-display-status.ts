@@ -1,8 +1,11 @@
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
+import { resolveChargeDisplayStatus } from './asaas-display-status';
 
 export type CobrancaDisplayStatus = {
+  status?: string;
   label: string;
   hint: string | null;
+  variant?: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
 };
 
 const TERMINAL_STATUSES = new Set<StatusCobranca>([
@@ -56,64 +59,12 @@ export function resolveCobrancaDisplayStatus(params: {
   liquidacaoStatus?: LiquidacaoStatus | null;
   asaasStatus?: string | null;
 }): CobrancaDisplayStatus {
-  const { status, liquidacaoStatus, asaasStatus } = params;
-  const remote = (asaasStatus ?? '').trim().toUpperCase();
-
-  if (status === 'PROCESSANDO' || remote === 'AWAITING_RISK_ANALYSIS') {
-    return {
-      label: 'Processando',
-      hint: 'Pagamento em análise de risco no Asaas.',
-    };
-  }
-
-  if (status === 'A_VENCER') {
-    return { label: 'A vencer', hint: 'Aguardando pagamento — vencimento futuro.' };
-  }
-
-  if (status === 'PENDENTE') {
-    return { label: 'Pendente', hint: 'Aguardando pagamento.' };
-  }
-
-  if (status === 'ATRASADO' || remote === 'OVERDUE' || remote === 'DUNNING_REQUESTED') {
-    return { label: 'Atrasado', hint: 'Cobrança vencida.' };
-  }
-
-  if (status === 'CANCELAMENTO_PENDENTE') {
-    return { label: 'Cancelando', hint: 'Aguardando confirmação de cancelamento no Asaas.' };
-  }
-
-  if (status === 'CANCELADO') {
-    return { label: 'Cancelado', hint: null };
-  }
-
-  if (status === 'ESTORNADO_PARCIAL') {
-    return { label: 'Estorno parcial', hint: null };
-  }
-
-  if (status === 'ESTORNADO') {
-    return { label: 'Estornado', hint: null };
-  }
-
-  if (status === 'PAGO') {
-    if (remote === 'RECEIVED_IN_CASH') {
-      return { label: 'Pago', hint: 'Recebido em dinheiro (confirmação manual).' };
-    }
-
-    if (liquidacaoStatus === 'PENDENTE' || remote === 'CONFIRMED') {
-      return {
-        label: 'Pago',
-        hint: 'Pagamento confirmado — aguardando crédito na conta Asaas.',
-      };
-    }
-
-    if (liquidacaoStatus === 'DISPONIVEL' || remote === 'RECEIVED' || remote === 'DUNNING_RECEIVED') {
-      return { label: 'Pago', hint: 'Valor creditado ou disponível.' };
-    }
-
-    return { label: 'Pago', hint: null };
-  }
-
-  return { label: status, hint: null };
+  return resolveChargeDisplayStatus({
+    localStatus: params.status,
+    liquidacaoStatus: params.liquidacaoStatus,
+    asaasStatus: params.asaasStatus,
+    hasAsaasLink: Boolean(params.asaasStatus || params.liquidacaoStatus),
+  });
 }
 
 export function isCobrancaStatusTerminal(status: StatusCobranca): boolean {

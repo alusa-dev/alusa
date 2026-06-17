@@ -6,6 +6,11 @@
  */
 
 import type { StatusCobranca, ChargeStatus } from '@prisma/client';
+import {
+  getChargeDisplayStatusLabel,
+  getChargeDisplayStatusVariant,
+  isAsaasPaymentStatus,
+} from '../asaas-display-status';
 
 /**
  * Tipos de badge suportados pelo componente Badge
@@ -139,7 +144,7 @@ const CHARGE_STATUS_BADGE: Record<ChargeStatus, StatusBadgeConfig> = {
   },
   PAID: {
     badgeType: 'CONFIRMED',
-    label: 'Paga',
+    label: 'Pago',
     variant: 'success',
     icon: '✅',
     description: 'Pagamento confirmado',
@@ -205,24 +210,31 @@ export function getUnifiedBadgeStatus(status: StatusCobranca | ChargeStatus | st
 }
 
 const LEGACY_STATUS_LABELS: Record<string, string> = {
-  CONFIRMED: 'Confirmado',
-  CONFIRMADO: 'Confirmado',
-  RECEIVED: 'Recebido',
-  RECEBIDO: 'Recebido',
+  CONFIRMED: 'Confirmada',
+  CONFIRMADO: 'Pago',
+  RECEIVED: 'Recebida',
+  RECEBIDO: 'Recebida',
   PENDING: 'Pendente',
-  OVERDUE: 'Atrasado',
-  CANCELED: 'Cancelado',
-  CANCELLED: 'Cancelado',
-  REFUNDED: 'Estornado',
-  REFUND_REQUESTED: 'Reembolso solicitado',
+  OVERDUE: 'Vencida',
+  CANCELED: 'Cancelada',
+  CANCELLED: 'Cancelada',
+  REFUNDED: 'Estornada',
+  REFUND_REQUESTED: 'Estorno solicitado',
+  REFUND_IN_PROGRESS: 'Estorno em processamento',
+  CHARGEBACK_REQUESTED: 'Chargeback solicitado',
+  CHARGEBACK_DISPUTE: 'Chargeback em disputa',
+  AWAITING_CHARGEBACK_REVERSAL: 'Aguardando reversão',
+  DUNNING_REQUESTED: 'Negativação solicitada',
+  DUNNING_RECEIVED: 'Recebida',
+  AWAITING_RISK_ANALYSIS: 'Em análise',
   FAILED: 'Falha no pagamento',
   EXPIRED: 'Expirado',
   EXPIRADO: 'Expirado',
   CREATED: 'Criada',
   OPEN: 'Aberta',
-  PAID: 'Paga',
+  PAID: 'Pago',
   MANUAL: 'Pago manualmente',
-  RECEIVED_IN_CASH: 'Pago em dinheiro',
+  RECEIVED_IN_CASH: 'Recebida em dinheiro',
   CONCLUIDO: 'Concluído',
   AGUARDANDO: 'Aguardando',
 };
@@ -248,6 +260,7 @@ function humanizeStatusToken(status: string): string {
 export function getStatusLabel(status: string): string {
   const normalized = status?.trim().toUpperCase() ?? '';
   if (!normalized) return '';
+  if (isAsaasPaymentStatus(normalized)) return getChargeDisplayStatusLabel(normalized);
 
   const cobrancaConfig = COBRANCA_STATUS_BADGE[normalized as StatusCobranca];
   if (cobrancaConfig) return cobrancaConfig.label;
@@ -270,6 +283,14 @@ export function getStatusBadgePresentation(status: string): {
   variant: StatusBadgeUiVariant;
 } {
   const normalized = status?.trim().toUpperCase() ?? '';
+  if (isAsaasPaymentStatus(normalized)) {
+    const variant = getChargeDisplayStatusVariant(normalized);
+    return {
+      label: getChargeDisplayStatusLabel(normalized),
+      variant: variant === 'danger' ? 'destructive' : variant,
+    };
+  }
+
   const variantMap: Record<StatusBadgeConfig['variant'], StatusBadgeUiVariant> = {
     success: 'success',
     warning: 'warning',

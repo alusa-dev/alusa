@@ -96,6 +96,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
     queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
     queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
     queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.scopedResources(eventId) });
   };
 
   const registerMutation = useMutation({

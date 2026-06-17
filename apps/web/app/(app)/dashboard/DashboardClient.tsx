@@ -15,13 +15,15 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { useFinanceRealtimeSync } from '@/hooks/use-finance-realtime-sync';
 import { DashboardSecondaryChunkSkeleton } from './dashboard-secondary-skeletons';
 import WelcomeWizardDialog from './WelcomeWizardDialog';
+import { dismissWelcomeWizard, fetchWelcomeWizardStatus } from './welcome-wizard-service';
+import { isExternalAsaasApiKeyHealthy } from '@/lib/external-asaas-api-key-health';
 import type { SerializableDashboardPrefetch } from '@/lib/dashboard/prefetch-dashboard-data-serializable';
 import {
   useDashboardFinanceKpisQuery,
   useDashboardMetricsQuery,
 } from '@/hooks/use-dashboard-queries';
 
-const FORCE_PERSISTENT_WELCOME_WIZARD = false;
+const FORCE_PERSISTENT_WELCOME_WIZARD = process.env.NODE_ENV !== 'production';
 
 const KycDashboardCard = dynamic(
   () =>
@@ -68,6 +70,7 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
   const [kycCardDismissed, setKycCardDismissed] = useState(false);
   const [periodoTaxaMatricula, setPeriodoTaxaMatricula] = useState<PeriodoTaxaMatricula>('1a');
   const [welcomeWizardOpen, setWelcomeWizardOpen] = useState(false);
+  const [welcomeWizardCheckedForUserId, setWelcomeWizardCheckedForUserId] = useState<string | null>(null);
   const { verification, loading: verificationLoading, isApproved } = useKycEnforcement();
 
   const metricsQuery = useDashboardMetricsQuery(initialData?.metrics ?? null);
@@ -119,6 +122,40 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
       setWelcomeWizardOpen(true);
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (FORCE_PERSISTENT_WELCOME_WIZARD) return;
+    if (welcomeWizardCheckedForUserId === user.id) return;
+
+    const isExternalMode = user.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
+    if (isExternalMode && !isExternalAsaasApiKeyHealthy(user)) return;
+
+    const controller = new AbortController();
+
+    void fetchWelcomeWizardStatus(controller.signal)
+      .then((status) => {
+        if (status.shouldShow) {
+          setWelcomeWizardOpen(true);
+        }
+        setWelcomeWizardCheckedForUserId(user.id);
+      })
+      .catch((error) => {
+        if ((error as Error).name === 'AbortError') return;
+        console.warn('[DashboardClient] Falha ao carregar wizard de boas-vindas', error);
+        setWelcomeWizardCheckedForUserId(user.id);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [
+    user?.asaasApiKeyStatus,
+    user?.externalAsaasOnboardingStatus,
+    user?.financeIntegrationMode,
+    user?.id,
+    welcomeWizardCheckedForUserId,
+  ]);
 
   const handleGoToCadastro = useCallback(() => {
     router.push('/alunos');
@@ -190,7 +227,11 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
         open={welcomeWizardOpen}
         userName={user?.name}
         onComplete={async () => {
+          if (!FORCE_PERSISTENT_WELCOME_WIZARD) {
+            await dismissWelcomeWizard();
+          }
           setWelcomeWizardOpen(false);
+          setWelcomeWizardCheckedForUserId(user?.id ?? null);
         }}
       />
     </>

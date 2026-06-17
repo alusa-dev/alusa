@@ -1,4 +1,5 @@
 import type { LevelBounds } from '@alusa/domain';
+import { MAP_ARTBOARD_STROKE, MAP_ARTBOARD_STROKE_WIDTH } from '@alusa/domain';
 import type { RefObject } from 'react';
 import type Konva from 'konva';
 import { Layer, Rect, Stage } from 'react-konva';
@@ -111,7 +112,7 @@ export function MapCanvasStage({
       onWheel={onWheel}
     >
       <Layer listening={false}>
-        <Rect x={0} y={0} width={level.widthPx} height={level.heightPx} fill="#ffffff" stroke="#cbd5e1" strokeWidth={2} />
+        <Rect x={0} y={0} width={level.widthPx} height={level.heightPx} fill="#ffffff" stroke={MAP_ARTBOARD_STROKE} strokeWidth={MAP_ARTBOARD_STROKE_WIDTH} />
       </Layer>
 
       <Layer ref={contentLayerRef as RefObject<Konva.Layer>}>

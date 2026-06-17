@@ -20,12 +20,13 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 
-import { formatCurrency, updateTicketSale, type EventResources, type TicketLotDTO, type TicketSaleDTO } from '../events-service';
+import { formatCurrency, updateTicketSale, type EventScopedResources, type TicketLotDTO, type TicketSaleDTO } from '../events-service';
 import { EventDateTimeField as DateTimeField } from '../shared/EventDateTimeField';
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { datetimeValue, FILTER_INPUT_CLASS, nullableString, numberValue } from '../shared/event-form-utils';
+import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 
 export function EditSaleFormDialog({
   open,
@@ -33,14 +34,14 @@ export function EditSaleFormDialog({
   eventId,
   sale,
   lots,
-  resources,
+  scopedResources,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   eventId: string;
   sale: TicketSaleDTO;
   lots: TicketLotDTO[];
-  resources?: EventResources;
+  scopedResources?: EventScopedResources;
 }) {
   const queryClient = useQueryClient();
   const mutation = useMutation({
@@ -108,7 +109,7 @@ export function EditSaleFormDialog({
                 name="alunoId"
                 placeholder="Opcional"
                 defaultValue={sale.aluno?.id ?? ''}
-                options={(resources?.alunos ?? []).map((item) => ({ value: item.id, label: item.nome }))}
+                options={mergeScopedPersonOptions(scopedResources?.alunos ?? [], sale.aluno)}
               />
             </Field>
             <Field label="Responsável vinculado">
@@ -116,7 +117,7 @@ export function EditSaleFormDialog({
                 name="responsavelId"
                 placeholder="Opcional"
                 defaultValue={sale.responsavel?.id ?? ''}
-                options={(resources?.responsaveis ?? []).map((item) => ({ value: item.id, label: item.nome }))}
+                options={mergeScopedPersonOptions(scopedResources?.responsaveis ?? [], sale.responsavel)}
               />
             </Field>
             <Field label="Quantidade">

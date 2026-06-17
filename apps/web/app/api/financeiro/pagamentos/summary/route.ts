@@ -1,117 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { safeGetServerSession } from '@/lib/safe-server-session';
-import { prisma } from '@/src/prisma';
-import { listFinanceiroPagamentoSummaryResultDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroPagamentoSummaryItemToDTO } from '@/features/financeiro/mappers';
 import {
-  HISTORICAL_ASAAS_PAYMENT_STATUSES,
-  resolveAcademicDisplayedStatus,
-  resolveAcademicHistoricalPayment,
-} from '@/src/server/finance/academic-payment-history';
+  listFinanceiroPagamentoPessoaIndexResultDTOSchema,
+} from '@/features/financeiro/dtos';
+import { mapFinanceiroPagamentoPessoaIndexItemToDTO } from '@/features/financeiro/mappers';
+import { listPersonPaymentLedgerIndex } from '@/src/server/finance/person-payment-ledger';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
-
-function buildStatusVariants(status: string | null | undefined): string[] {
-  const upper = status?.trim().toUpperCase();
-  if (!upper) return [];
-
-  switch (upper) {
-    case 'CONFIRMED':
-      return ['CONFIRMED', 'CONFIRMADO', 'PAGO'];
-    case 'CONFIRMADO':
-      return ['CONFIRMADO', 'CONFIRMED', 'PAGO'];
-    case 'RECEIVED':
-    case 'RECEIVED_IN_CASH':
-    case 'DUNNING_RECEIVED':
-    case 'PAGO':
-      return [upper, 'PAGO'];
-    case 'REFUNDED':
-    case 'REFUND_IN_PROGRESS':
-    case 'REFUND_REQUESTED':
-    case 'CHARGEBACK_REQUESTED':
-    case 'CHARGEBACK_DISPUTE':
-    case 'AWAITING_CHARGEBACK_REVERSAL':
-    case 'ESTORNADO':
-      return [upper, 'ESTORNADO'];
-    default:
-      return [upper];
-  }
-}
-
-function matchesStatusFilter(filters: string[], statuses: Array<string | null | undefined>): boolean {
-  if (filters.length === 0) return true;
-
-  const variants = new Set(statuses.flatMap((status) => buildStatusVariants(status)));
-  return filters.some((filter) => variants.has(filter.trim().toUpperCase()));
-}
-
-async function loadCobrancas(params: { contaId: string; search?: string }) {
-  return prisma.cobranca.findMany({
-    where: {
-      matricula: {
-        aluno: {
-          contaId: params.contaId,
-          ...(params.search
-            ? { nome: { contains: params.search, mode: 'insensitive' as const } }
-            : {}),
-        },
-      },
-      OR: [
-        { pagamentos: { some: {} } },
-        { dataPagamento: { not: null } },
-        { pagoEm: { not: null } },
-        { status: { in: ['PAGO', 'ESTORNADO'] } },
-        { asaasStatus: { in: [...HISTORICAL_ASAAS_PAYMENT_STATUSES] } },
-      ],
-    },
-    orderBy: [{ vencimento: 'desc' }, { createdAt: 'desc' }],
-    select: {
-      id: true,
-      status: true,
-      valor: true,
-      vencimento: true,
-      dataPagamento: true,
-      pagoEm: true,
-      pagoPor: true,
-      formaPagamento: true,
-      asaasPaymentId: true,
-      asaasStatus: true,
-      asaasValue: true,
-      asaasNetValue: true,
-      lastAsaasFetchAt: true,
-      createdAt: true,
-      pagamentos: {
-        orderBy: [{ dataPagamento: 'desc' }, { createdAt: 'desc' }],
-        take: 1,
-        select: {
-          id: true,
-          status: true,
-          valorPago: true,
-          dataPagamento: true,
-          formaPagamento: true,
-          comprovante: true,
-          asaasPaymentId: true,
-          createdAt: true,
-        },
-      },
-      matricula: {
-        select: {
-          aluno: {
-            select: {
-              id: true,
-              nome: true,
-              cpf: true,
-              foto: true,
-            },
-          },
-        },
-      },
-    },
-  });
-}
 
 function err(status: number, code: string, message: string) {
   return NextResponse.json(
@@ -121,7 +19,7 @@ function err(status: number, code: string, message: string) {
 }
 
 // GET /api/financeiro/pagamentos/summary
-// Retorna lista de alunos com agregação apenas de cobranças que tiveram pagamento
+// Retorna o índice financeiro local por pessoa (aluno e responsável).
 export async function GET(req: NextRequest) {
   try {
     const session = await safeGetServerSession();
@@ -137,83 +35,18 @@ export async function GET(req: NextRequest) {
     const page = Math.max(1, Number(url.searchParams.get('page') || '1'));
     const pageSize = Math.min(50, Math.max(1, Number(url.searchParams.get('pageSize') || '20')));
 
-    const cobrancas = await loadCobrancas({ contaId: user.contaId, search });
-
-    // Agrupar histórico de pagamentos por aluno
-    const alunosMap = new Map<
-      string,
-      {
-        id: string;
-        nome: string;
-        cpf: string | null;
-        foto: string | null;
-        totalPagamentos: number;
-        valorTotal: number;
-        ultimoPagamento: string | null;
-        pagamentosCount: number;
-      }
-    >();
-
-    for (const cobranca of cobrancas) {
-      const alunoId = cobranca.matricula.aluno.id;
-      const aluno = cobranca.matricula.aluno;
-      const pagamento = resolveAcademicHistoricalPayment(cobranca);
-      if (!pagamento) continue;
-
-      const displayedStatus = resolveAcademicDisplayedStatus({
-        localCobrancaStatus: cobranca.status,
-        remotePaymentStatus: cobranca.asaasStatus ?? null,
-        dueDate: cobranca.vencimento,
-      });
-
-      if (!matchesStatusFilter(statusFilters, [pagamento.status, displayedStatus])) {
-        continue;
-      }
-
-      if (!alunosMap.has(alunoId)) {
-        alunosMap.set(alunoId, {
-          id: alunoId,
-          nome: aluno.nome,
-          cpf: aluno.cpf,
-          foto: aluno.foto,
-          totalPagamentos: 0,
-          valorTotal: 0,
-          ultimoPagamento: null,
-          pagamentosCount: 0,
-        });
-      }
-
-      const alunoData = alunosMap.get(alunoId)!;
-      alunoData.totalPagamentos += Number(pagamento.valorPago);
-      alunoData.valorTotal += Number(pagamento.valorPago);
-      alunoData.pagamentosCount += 1;
-
-      const ultimaMovimentacao =
-        pagamento.dataPagamento ||
-        cobranca.vencimento.toISOString() ||
-        cobranca.createdAt.toISOString();
-
-      if (!alunoData.ultimoPagamento || ultimaMovimentacao > alunoData.ultimoPagamento) {
-        alunoData.ultimoPagamento = ultimaMovimentacao;
-      }
-    }
-
-    // Converter para array e ordenar
-    const alunos = Array.from(alunosMap.values()).sort((a, b) => {
-      if (!a.ultimoPagamento) return 1;
-      if (!b.ultimoPagamento) return -1;
-      return b.ultimoPagamento.localeCompare(a.ultimoPagamento);
+    const result = await listPersonPaymentLedgerIndex({
+      contaId: user.contaId,
+      search,
+      statusFilters,
+      page,
+      pageSize,
     });
-    const total = alunos.length;
-    const paginatedAlunos = alunos.slice((page - 1) * pageSize, page * pageSize);
 
     return NextResponse.json(
-      listFinanceiroPagamentoSummaryResultDTOSchema.parse({
-        data: paginatedAlunos.map((item) => mapFinanceiroPagamentoSummaryItemToDTO(item)),
-        total,
-        page,
-        pageSize,
-        totalPages: Math.ceil(total / pageSize),
+      listFinanceiroPagamentoPessoaIndexResultDTOSchema.parse({
+        ...result,
+        data: result.data.map((item) => mapFinanceiroPagamentoPessoaIndexItemToDTO(item)),
       }),
       { headers: { 'cache-control': 'no-store' } },
     );

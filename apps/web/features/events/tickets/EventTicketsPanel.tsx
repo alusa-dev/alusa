@@ -6,7 +6,10 @@ import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
-import { listTicketLots, listTicketSales, type EventResources } from '../events-service';
+import { resolveActivePublishedEventMap } from '@alusa/domain/events';
+
+import { listEventMaps } from '../map/api/event-map-service';
+import { getEvent, listTicketLots, listTicketSales, type EventScopedResources } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { OUTLINE_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { LotFormDialog } from './LotFormDialog';
@@ -16,11 +19,20 @@ import { TicketMetricsPanel } from './TicketMetricsPanel';
 import { TicketReservationsTable } from './TicketReservationsTable';
 import { TicketSalesTable } from './TicketSalesTable';
 
-export function EventTicketsPanel({ eventId, resources }: { eventId: string; resources?: EventResources }) {
+export function EventTicketsPanel({ eventId, scopedResources }: { eventId: string; scopedResources?: EventScopedResources }) {
+  const eventQuery = useQuery({ queryKey: eventQueryKeys.event(eventId), queryFn: () => getEvent(eventId) });
   const lots = useQuery({ queryKey: eventQueryKeys.lots(eventId), queryFn: () => listTicketLots(eventId) });
   const sales = useQuery({ queryKey: eventQueryKeys.sales(eventId), queryFn: () => listTicketSales(eventId) });
+  const mapsQuery = useQuery({
+    queryKey: ['events', 'maps', eventId],
+    queryFn: () => listEventMaps(eventId),
+    enabled: (eventQuery.data?.ticketMode ?? 'SIMPLE') === 'NUMBERED_SEATS',
+  });
+
+  const event = eventQuery.data;
   const lotRows = lots.data ?? [];
   const saleRows = sales.data ?? [];
+  const publishedMapId = resolveActivePublishedEventMap(mapsQuery.data ?? [])?.id ?? null;
   const manualSaleRows = saleRows.filter((sale) => sale.status !== 'RESERVED');
   const reservedRows = saleRows.filter((sale) => sale.status === 'RESERVED');
   const revenue = manualSaleRows.filter((sale) => sale.status === 'PAID').reduce((sum, sale) => sum + sale.totalAmount, 0);
@@ -37,18 +49,36 @@ export function EventTicketsPanel({ eventId, resources }: { eventId: string; res
           <TabsTrigger value="metrics">Métricas</TabsTrigger>
         </TabsList>
         <div className="flex flex-wrap gap-2 md:justify-end">
-          <LotFormDialog eventId={eventId} trigger={<Button variant="outline" className={OUTLINE_BUTTON_CLASS}><Plus className="h-4 w-4" /> Lote</Button>} />
-          <SaleFormDialog eventId={eventId} lots={lotRows} resources={resources} trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Venda</Button>} />
+          <LotFormDialog
+            eventId={eventId}
+            ticketMode={event?.ticketMode ?? 'SIMPLE'}
+            trigger={<Button variant="outline" className={OUTLINE_BUTTON_CLASS}><Plus className="h-4 w-4" /> Lote</Button>}
+          />
+          {event ? (
+            <SaleFormDialog
+              eventId={eventId}
+              event={event}
+              lots={lotRows}
+              scopedResources={scopedResources}
+              publishedMapId={publishedMapId}
+              trigger={<Button className={PRIMARY_BUTTON_CLASS}><Plus className="h-4 w-4" /> Venda</Button>}
+            />
+          ) : null}
         </div>
       </div>
       <TabsContent value="sales">
-        <TicketSalesTable sales={manualSaleRows} eventId={eventId} lots={lotRows} resources={resources} loading={sales.isLoading} />
+        <TicketSalesTable sales={manualSaleRows} eventId={eventId} lots={lotRows} scopedResources={scopedResources} loading={sales.isLoading} />
       </TabsContent>
       <TabsContent value="reserved">
-        <TicketReservationsTable reservations={reservedRows} eventId={eventId} lots={lotRows} resources={resources} loading={sales.isLoading} />
+        <TicketReservationsTable reservations={reservedRows} eventId={eventId} lots={lotRows} scopedResources={scopedResources} loading={sales.isLoading} />
       </TabsContent>
       <TabsContent value="lots">
-        <TicketLotsTable lots={lotRows} eventId={eventId} loading={lots.isLoading} />
+        <TicketLotsTable
+          lots={lotRows}
+          eventId={eventId}
+          ticketMode={event?.ticketMode ?? 'SIMPLE'}
+          loading={lots.isLoading}
+        />
       </TabsContent>
       <TabsContent value="metrics">
         <TicketMetricsPanel revenue={revenue} pending={pending} sold={manualSaleRows.reduce((sum, sale) => sum + sale.quantity, 0)} complimentary={complimentary} />

@@ -22,12 +22,11 @@ export const FORMA_LABELS: Record<string, string> = {
 
 export const STATUS_OPTIONS = [
   { value: 'TODOS', label: 'Todos status' },
-  { value: 'PAGO', label: 'Pago' },
-  { value: 'CONFIRMADO', label: 'Confirmado' },
-  { value: 'CONFIRMED', label: 'Confirmado Asaas' },
-  { value: 'RECEIVED', label: 'Recebido' },
-  { value: 'RECEIVED_IN_CASH', label: 'Recebido em dinheiro' },
-  { value: 'DUNNING_RECEIVED', label: 'Recebido por régua' },
+  { value: 'CONFIRMED', label: 'Confirmada' },
+  { value: 'RECEIVED', label: 'Recebida' },
+  { value: 'RECEIVED_IN_CASH', label: 'Recebida em dinheiro' },
+  { value: 'DUNNING_RECEIVED', label: 'Recebida por negativação' },
+  { value: 'PAGO', label: 'Pago manual/local' },
   { value: 'ESTORNADO', label: 'Estornado' },
 ];
 
@@ -69,9 +68,9 @@ export function getInitials(nome: string) {
 }
 
 export function resolveStatus(c: HistoricoCobranca): StatusType {
-  const raw = c.pagamento ? c.pagamento.status : c.status;
+  const raw = c.displayStatus?.status ?? c.asaasStatus ?? c.status;
   const map: Record<string, StatusType> = {
-    CONFIRMADO: 'CONFIRMADO',
+    CONFIRMADO: 'PAGO',
     PAGO: 'PAGO',
     PENDENTE: 'PENDENTE',
     A_VENCER: 'A_VENCER',
@@ -90,6 +89,13 @@ export function resolveStatus(c: HistoricoCobranca): StatusType {
     PAID: 'PAID',
     OPEN: 'OPEN',
     CREATED: 'CREATED',
+    DUNNING_RECEIVED: 'DUNNING_RECEIVED',
+    REFUND_IN_PROGRESS: 'REFUND_IN_PROGRESS',
+    CHARGEBACK_REQUESTED: 'CHARGEBACK_REQUESTED',
+    CHARGEBACK_DISPUTE: 'CHARGEBACK_DISPUTE',
+    AWAITING_CHARGEBACK_REVERSAL: 'AWAITING_CHARGEBACK_REVERSAL',
+    DUNNING_REQUESTED: 'DUNNING_REQUESTED',
+    AWAITING_RISK_ANALYSIS: 'AWAITING_RISK_ANALYSIS',
   };
   return map[raw] ?? 'PENDENTE';
 }
@@ -177,8 +183,15 @@ export function filterHistoricoCobrancas(
     }
 
     if (filters.statusFilter !== 'TODOS') {
-      const status = c.pagamento ? c.pagamento.status : c.status;
-      if (status !== filters.statusFilter) return false;
+      const status = c.displayStatus?.status ?? c.asaasStatus ?? (c.pagamento ? c.pagamento.status : c.status);
+      const variants = new Set([
+        status,
+        c.status,
+        c.asaasStatus ?? '',
+        status === 'PAID' ? 'PAGO' : '',
+        status === 'PAGO' ? 'PAID' : '',
+      ]);
+      if (!variants.has(filters.statusFilter)) return false;
     }
 
     if (filters.categoryFilter !== 'TODOS' && c.category !== filters.categoryFilter) {

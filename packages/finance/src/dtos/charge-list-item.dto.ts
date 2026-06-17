@@ -11,7 +11,14 @@ export type ChargeListItemDTO = {
   dueDate: string | null;
   billingType: string | null;
   status: UnifiedChargeStatus;
+  asaasStatus: string | null;
   liquidacaoStatus: string | null;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   createdAt: string;
   // IDs internos para debug/ações
   sourceId: string;

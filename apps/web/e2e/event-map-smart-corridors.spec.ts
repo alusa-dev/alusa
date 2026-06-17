@@ -54,7 +54,7 @@ async function setupEditorWithGrid(page: import('@playwright/test').Page, label:
   return { scenario, geometry };
 }
 
-test.describe('Event map smart corridors', () => {
+test.describe.skip('Event map smart corridors', () => {
   test.describe.configure({ timeout: 120_000 });
   test.use({ viewport: { width: 1600, height: 1000 } });
 
@@ -491,7 +491,7 @@ test.describe('Event map smart corridors', () => {
   });
 });
 
-test.describe('Event map smart corridors API regression', () => {
+test.describe.skip('Event map smart corridors API regression', () => {
   test('saved map keeps 100 seats after corridor workflow', async ({ page }) => {
     const scenario = await seedEmptyMapEditor(page, 'api-regression');
     await openEventMapEditor(page, scenario);

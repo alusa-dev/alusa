@@ -2,11 +2,34 @@ import {
   CORRIDOR_REFLOW_ITERATIONS,
   buildSmartCorridorDragPreview,
   extractGroupDragCommitUpdates,
+  isSmartCorridorSeatReflowEnabled,
   resolveCorridorDragMode,
+  resolveOperationSelection,
 } from '@alusa/domain';
 import type { EventMapDTO } from '../../api/event-map-service';
 import type { GroupDragState } from '../sessions/use-drag-session';
 import type { TransformCommitPayload } from './build-canvas-transform-command';
+import type { MapSelectionItem } from '@alusa/domain';
+
+function selectionFromDragOrigin(map: EventMapDTO, origin: Map<string, { x: number; y: number }>): MapSelectionItem[] {
+  const items: MapSelectionItem[] = [];
+
+  for (const nodeId of origin.keys()) {
+    if (nodeId.startsWith('node-seatgroup-')) {
+      items.push({ type: 'seatgroup', id: nodeId.replace('node-seatgroup-', '') });
+      continue;
+    }
+
+    const id = nodeId.replace(/^node-/, '');
+    if (map.objects.some((object) => object.id === id)) {
+      items.push({ type: 'object', id });
+    } else if (map.seats.some((seat) => seat.id === id)) {
+      items.push({ type: 'seat', id });
+    }
+  }
+
+  return items;
+}
 
 export type GroupDragCommitResult = {
   kind: 'corridor' | 'generic' | 'noop';
@@ -35,7 +58,7 @@ export function buildGroupDragCommit({
   });
   const movingCorridor = corridorNodeIds.length > 0;
 
-  if (movingCorridor && baseMap) {
+  if (movingCorridor && baseMap && isSmartCorridorSeatReflowEnabled()) {
     const corridorIds = corridorNodeIds.map((nodeId) => nodeId.replace(/^node-/, ''));
     const dragMode = corridorDragMode || resolveCorridorDragMode(baseMap, drag, corridorIds);
     const preview = buildSmartCorridorDragPreview(baseMap, drag, corridorNodeIds, {
@@ -66,21 +89,38 @@ export function buildGroupDragCommit({
   const seatUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
   const seatGroupUpdates: Array<{ id: string; patch: { x: number; y: number } }> = [];
 
-  for (const [nodeId, start] of drag.origin) {
-    const isSeatGroupNode = nodeId.startsWith('node-seatgroup-');
-    const id = isSeatGroupNode ? nodeId.replace('node-seatgroup-', '') : nodeId.replace('node-', '');
+  if (!map) return { kind: 'noop', payload: null };
+
+  const resolved = resolveOperationSelection(map, selectionFromDragOrigin(map, drag.origin), {
+    preferSeatGroups: true,
+    includeSectionSeats: true,
+  });
+
+  for (const id of resolved.seatGroupIds) {
+    const start = drag.origin.get(`node-seatgroup-${id}`);
+    if (!start) continue;
     const nx = start.x + delta.x;
     const ny = start.y + delta.y;
-
     if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) continue;
+    seatGroupUpdates.push({ id, patch: { x: nx, y: ny } });
+  }
 
-    if (isSeatGroupNode && map?.seatGroups?.some((group) => group.id === id)) {
-      seatGroupUpdates.push({ id, patch: { x: nx, y: ny } });
-    } else if (map?.objects.some((object) => object.id === id)) {
-      objectUpdates.push({ id, patch: { x: nx, y: ny } });
-    } else if (map?.seats.some((seat) => seat.id === id)) {
-      seatUpdates.push({ id, patch: { x: nx, y: ny } });
-    }
+  for (const id of resolved.objectIds) {
+    const start = drag.origin.get(`node-${id}`);
+    if (!start) continue;
+    const nx = start.x + delta.x;
+    const ny = start.y + delta.y;
+    if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) continue;
+    objectUpdates.push({ id, patch: { x: nx, y: ny } });
+  }
+
+  for (const id of resolved.seatIds) {
+    const start = drag.origin.get(`node-${id}`);
+    if (!start) continue;
+    const nx = start.x + delta.x;
+    const ny = start.y + delta.y;
+    if (Math.abs(delta.x) < 0.5 && Math.abs(delta.y) < 0.5) continue;
+    seatUpdates.push({ id, patch: { x: nx, y: ny } });
   }
 
   if (objectUpdates.length > 0 || seatUpdates.length > 0 || seatGroupUpdates.length > 0) {

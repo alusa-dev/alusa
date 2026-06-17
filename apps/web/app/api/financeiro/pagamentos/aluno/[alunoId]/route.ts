@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { financeiroPagamentoAlunoParamsDTOSchema } from '@/features/financeiro/dtos';
-import { mapFinanceiroPagamentoAlunoCobrancasResultToDTO } from '@/features/financeiro/mappers';
+import { mapFinanceiroPagamentoPessoaHistoricoResultToDTO } from '@/features/financeiro/mappers';
 import { getStudentPaymentHistory } from '@/src/server/finance/student-payment-history';
+import { buildPersonPaymentLedger } from '@/src/server/finance/person-payment-ledger';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -57,13 +58,32 @@ export async function GET(
       );
     }
 
-    const historico = await getStudentPaymentHistory(contaId, alunoId, aluno.nome, {
-      reconcile,
-    });
+    const ledger =
+      reconcile
+        ? null
+        : await buildPersonPaymentLedger({
+            contaId,
+            personType: 'ALUNO',
+            personId: alunoId,
+          });
+    const historico =
+      ledger ??
+      (await getStudentPaymentHistory(contaId, alunoId, aluno.nome, {
+        reconcile,
+      }));
+    const pessoa =
+      'pessoa' in historico
+        ? historico.pessoa
+        : {
+            ...aluno,
+            tipo: 'ALUNO' as const,
+            alunosVinculados: [{ id: aluno.id, nome: aluno.nome }],
+          };
 
-    const payload = mapFinanceiroPagamentoAlunoCobrancasResultToDTO({
+    const payload = mapFinanceiroPagamentoPessoaHistoricoResultToDTO({
       success: true,
       data: {
+        pessoa,
         aluno,
         cobrancas: historico.cobrancas,
         resumo: historico.resumo,

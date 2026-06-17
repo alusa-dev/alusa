@@ -1,4 +1,4 @@
-import { DEFAULT_SEAT_GRID_CONFIG, SEAT_GRID_SECTION_PADDING, buildSeatGridPreview, getSeatGridPreviewBounds, getSeatGridRowLabel, normalizeSeatGridConfig, suggestNextSeatGridConfig } from '../index';
+import { DEFAULT_SEAT_GRID_CONFIG, SEAT_GRID_SECTION_PADDING, buildSeatGridPreview, computeSeatGridSeatLabel, getSeatGridPreviewBounds, getSeatGridRowLabel, normalizeSeatGridConfig, suggestNextSeatGridConfig } from '../index';
 
 import { describe, expect, it } from 'vitest';
 
@@ -94,17 +94,46 @@ describe('seat-grid', () => {
     expect(config.verticalSpacing).toBe(56);
   });
 
-  it('ignores seats from other levels when suggesting the next row', () => {
+  it('continues numbering across all map environments', () => {
     const config = suggestNextSeatGridConfig(
       [
         { levelId: 'level-2', rowLabel: 'Z', seatNumber: '8', displayLabel: 'Z8' },
         { levelId: 'level-1', rowLabel: 'B', seatNumber: '8', displayLabel: 'B8' },
       ],
-      'level-1',
+      'level-2',
       DEFAULT_SEAT_GRID_CONFIG,
     );
 
-    expect(config.rowPrefix).toBe('B');
+    expect(config.rowPrefix).toBe('Z');
     expect(config.startNumber).toBe(9);
+  });
+
+  it('inherits numbering and spacing from another environment when the active one is empty', () => {
+    const config = suggestNextSeatGridConfig(
+      [
+        { levelId: 'level-1', rowLabel: 'A', seatNumber: '1', displayLabel: 'A1', x: 100, y: 100, size: 30 },
+        { levelId: 'level-1', rowLabel: 'A', seatNumber: '2', displayLabel: 'A2', x: 144, y: 100, size: 30 },
+        { levelId: 'level-1', rowLabel: 'I', seatNumber: '8', displayLabel: 'I8', x: 408, y: 156, size: 30 },
+      ],
+      'level-2',
+      DEFAULT_SEAT_GRID_CONFIG,
+    );
+
+    expect(config.rowPrefix).toBe('I');
+    expect(config.startNumber).toBe(9);
+    expect(config.seatSize).toBe(30);
+    expect(config.horizontalSpacing).toBe(44);
+    expect(config.verticalSpacing).toBe(56);
+  });
+
+  it('computes sequential labels for duplicated grid seats', () => {
+    const labels = computeSeatGridSeatLabel(1, 1, {
+      rowPrefix: 'B',
+      startNumber: 3,
+      numberingDirection: 'left-to-right',
+      columns: 2,
+    });
+
+    expect(labels).toEqual({ rowLabel: 'C', seatNumber: '4', displayLabel: 'C4' });
   });
 });

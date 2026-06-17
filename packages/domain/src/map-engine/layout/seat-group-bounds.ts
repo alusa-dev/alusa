@@ -1,6 +1,6 @@
 import type { EventSeatDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
 import type { BoundsRect } from '../geometry/bounds.js';
-import { parentLocalToWorld, worldToParentLocal } from '../geometry/transform-compose.js';
+import { parentLocalToWorld } from '../geometry/transform-compose.js';
 
 export type SeatGroupTightBounds = BoundsRect & {
   effectiveRows: number;
@@ -8,21 +8,29 @@ export type SeatGroupTightBounds = BoundsRect & {
   seatCount: number;
 };
 
-function getSeatLocalCenter(group: EventSeatGroupDTO, seat: EventSeatDTO) {
-  return worldToParentLocal({ x: seat.x, y: seat.y }, group);
+function getConfiguredSeatGroupBounds(group: EventSeatGroupDTO): SeatGroupTightBounds {
+  return getSeatGroupBoundsForDimensions(group, group.rows, group.columns, 0);
 }
 
-function getConfiguredSeatGroupBounds(group: EventSeatGroupDTO): SeatGroupTightBounds {
+function getSeatGroupBoundsForDimensions(
+  group: EventSeatGroupDTO,
+  rows: number,
+  columns: number,
+  seatCount: number,
+): SeatGroupTightBounds {
   const stepX = group.seatWidth + group.gapX;
   const stepY = group.seatHeight + group.gapY;
+  const effectiveRows = Math.max(1, rows);
+  const effectiveColumns = Math.max(1, columns);
+
   return {
     x: 0,
     y: 0,
-    width: group.paddingLeft + group.columns * stepX - group.gapX + group.paddingRight,
-    height: group.paddingTop + group.rows * stepY - group.gapY + group.paddingBottom,
-    effectiveRows: group.rows,
-    effectiveColumns: group.columns,
-    seatCount: 0,
+    width: group.paddingLeft + effectiveColumns * stepX - group.gapX + group.paddingRight,
+    height: group.paddingTop + effectiveRows * stepY - group.gapY + group.paddingBottom,
+    effectiveRows,
+    effectiveColumns,
+    seatCount,
   };
 }
 
@@ -31,41 +39,12 @@ export function getSeatGroupTightBounds(
   seats: EventSeatDTO[],
 ): SeatGroupTightBounds {
   const groupSeats = seats.filter((seat) => seat.groupId === group.id && seat.publicVisible);
-  if (groupSeats.length === 0) {
-    return getConfiguredSeatGroupBounds(group);
-  }
+  if (groupSeats.length === 0) return getConfiguredSeatGroupBounds(group);
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let maxRow = -1;
-  let maxColumn = -1;
+  const maxRow = Math.max(...groupSeats.map((seat) => seat.rowIndex ?? 0));
+  const maxColumn = Math.max(...groupSeats.map((seat) => seat.columnIndex ?? 0));
 
-  for (const seat of groupSeats) {
-    const center = getSeatLocalCenter(group, seat);
-    const size = seat.size ?? group.seatWidth;
-    const radius = size / 2;
-    minX = Math.min(minX, center.x - radius);
-    minY = Math.min(minY, center.y - radius);
-    maxX = Math.max(maxX, center.x + radius);
-    maxY = Math.max(maxY, center.y + radius);
-
-    if (typeof seat.rowIndex === 'number') maxRow = Math.max(maxRow, seat.rowIndex);
-    if (typeof seat.columnIndex === 'number') maxColumn = Math.max(maxColumn, seat.columnIndex);
-  }
-
-  const x = minX - group.paddingLeft;
-  const y = minY - group.paddingTop;
-  return {
-    x: Number(x.toFixed(4)),
-    y: Number(y.toFixed(4)),
-    width: Number((maxX - minX + group.paddingLeft + group.paddingRight).toFixed(4)),
-    height: Number((maxY - minY + group.paddingTop + group.paddingBottom).toFixed(4)),
-    effectiveRows: Math.max(1, maxRow + 1),
-    effectiveColumns: Math.max(1, maxColumn + 1),
-    seatCount: groupSeats.length,
-  };
+  return getSeatGroupBoundsForDimensions(group, maxRow + 1, maxColumn + 1, groupSeats.length);
 }
 
 export function getSeatGroupWorldBounds(

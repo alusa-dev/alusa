@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import type { ChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { pushToast } from '@/components/ui/toast';
 import { ClipboardDocumentCheck as Receipt, Eye } from '@/components/icons/icons';
 
@@ -29,6 +31,7 @@ interface Pagamento {
     valor: number;
     vencimento: string;
     descricao: string | null;
+    displayStatus?: ChargeDisplayStatusDTO;
   };
   asaasPaymentId: string | null;
   createdAt: string;
@@ -265,7 +268,14 @@ export function PagamentoDetalhesDialog({
                             <div>
                               <p className="text-xs text-gray-500 font-medium">Status Cobrança</p>
                               <p className="mt-1">
-                                <Badge status={pag.cobranca.status as StatusType} size="sm" />
+                                {pag.cobranca.displayStatus ? (
+                                  <ChargeDisplayStatusBadge
+                                    displayStatus={pag.cobranca.displayStatus}
+                                    size="sm"
+                                  />
+                                ) : (
+                                  <Badge status={pag.cobranca.status as StatusType} size="sm" />
+                                )}
                               </p>
                             </div>
                           </div>

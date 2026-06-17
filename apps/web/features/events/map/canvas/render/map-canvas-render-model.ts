@@ -2,7 +2,6 @@ import type { CorridorUnionGroup, LevelRenderStackItem, MapSelection, MapSelecti
 import type { RefObject } from 'react';
 import type Konva from 'konva';
 import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../api/event-map-service';
-import type { SeatGroupResizeStartState } from '../../components/SeatGroupResizeHandles';
 import { getTextEditorDimensions } from './text-editor-layout';
 import type { TextEditorState } from './text-editor-layout';
 
@@ -23,7 +22,6 @@ export type MapCanvasRenderHandlers = {
   onUpdateSeatPosition: (seatId: string, x: number, y: number) => void;
   onUpdateSeatGroupPosition: (groupId: string, x: number, y: number) => void;
   onOpenTextEditor: (object: EventMapObjectDTO, node: Konva.Text) => void;
-  onSeatGroupResizeStart: (state: SeatGroupResizeStartState) => void;
 };
 
 export type MapCanvasRenderState = {

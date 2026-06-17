@@ -43,6 +43,7 @@ export function useMapTransformRouting({
     selectedNodeIds: string[];
     transformKind: ReturnType<typeof resolveTransformRouting>['kind'];
     levelBounds: LevelBounds | null;
+    forceUniformSeatGroupScale?: boolean;
   }>;
 }) {
   const mixedTextAndShapes = useMemo(() => {
@@ -84,6 +85,14 @@ export function useMapTransformRouting({
   const transformPipelineActive = transformRouting.kind !== null;
   const disableResizeForMixedSmartCorridorSelection = transformRouting.transformDisabled;
   const disableRotateForMixedSmartCorridorSelection = transformRouting.transformDisabled;
+  const selectedSeatGroupHasRotation = useMemo(() => {
+    if (!map || selectedSeatGroupIds.length === 0) return false;
+    return selectedSeatGroupIds.some((id) => {
+      const group = map.seatGroups?.find((entry) => entry.id === id);
+      return Boolean(group && Math.abs((group.rotation ?? 0) % 360) > 0.001);
+    });
+  }, [map, selectedSeatGroupIds]);
+  const forceUniformSeatGroupScale = selectedSeatGroupIds.length >= 2 || selectedSeatGroupHasRotation;
 
   transformContextRef.current = {
     selectedObjectIds,
@@ -92,6 +101,7 @@ export function useMapTransformRouting({
     selectedNodeIds,
     transformKind: transformRouting.kind,
     levelBounds,
+    forceUniformSeatGroupScale,
   };
 
   const selectedTextTransformAnchors = useMemo(() => {
@@ -110,6 +120,7 @@ export function useMapTransformRouting({
     transformPipelineActive,
     disableResizeForMixedSmartCorridorSelection,
     disableRotateForMixedSmartCorridorSelection,
+    forceUniformSeatGroupScale,
     selectedTextTransformAnchors,
   };
 }

@@ -21,5 +21,5 @@ export default async function PublicEventMapOrderPage({ params, searchParams }: 
   if (!order) notFound();
   if (order.map.publicSlug !== publicSlug) notFound();
 
-  return <PublicOrderStatusPage initialOrder={order} token={token} />;
+  return <PublicOrderStatusPage initialOrder={order} token={token} publicSlug={publicSlug} />;
 }

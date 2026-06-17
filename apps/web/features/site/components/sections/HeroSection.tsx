@@ -5,9 +5,27 @@ import { ButtonLink } from '@/features/site/components/ui/ButtonLink';
 import { cn } from '@/features/site/lib/cn';
 import { ProofStrip } from './ProofStrip';
 
+const HERO_FIGURE_SRC = '/images/site/hero/hero-section.png?v=202606152320';
+
 export function HeroSection() {
   return (
     <section className="relative overflow-hidden bg-[var(--alusa-purple-dark)] text-white">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-12 left-0 right-0 z-[1] md:bottom-16"
+      >
+        <div className="mx-auto max-w-7xl overflow-hidden px-6 sm:px-8">
+          <ProofStrip />
+        </div>
+      </div>
+      <img
+        src={HERO_FIGURE_SRC}
+        alt=""
+        aria-hidden="true"
+        fetchPriority="high"
+        decoding="async"
+        className="pointer-events-none absolute inset-0 z-[2] h-full w-full object-cover object-center"
+      />
       <VerticalGridLines tone="dark" />
       <div className="relative z-10 mx-auto max-w-7xl px-6 sm:px-8 flex min-h-[75vh] flex-col justify-center py-20 lg:py-32">
         <ScrollReveal hero onMount className="max-w-4xl py-12">
@@ -34,18 +52,13 @@ export function HeroSection() {
                 }
                 className={cn(
                   'h-12 w-full rounded-full text-sm font-medium sm:w-auto sm:min-w-[12rem]',
-                  i === 0 ? 'bg-white text-[#430D88] shadow-none' : 'border border-white/20 text-white'
+                  i === 0 ? 'bg-white text-[var(--alusa-purple-dark)] shadow-none' : 'border border-white/20 text-white'
                 )}
               >
                 {cta.label}
               </ButtonLink>
             ))}
           </div>
-        </ScrollReveal>
-
-        {/* Floating Loop Proof Strip */}
-        <ScrollReveal hero onMount delay={280} className="absolute bottom-12 left-0 right-0 z-20 md:bottom-16">
-          <ProofStrip />
         </ScrollReveal>
       </div>
     </section>

@@ -62,6 +62,22 @@ type WalkInDocumentStatus =
 
 const STEP_LABELS = ['Cliente', 'Produtos', 'Pagamento'] as const;
 
+const WIZARD_STEP_ACTIVE_CLASSNAME =
+  'bg-[#e6d6fb] text-brand-accent alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]';
+
+const CUSTOMER_MODE_CARD_SELECTED_CLASSNAME =
+  'alusa-venda-customer-card--selected text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]';
+
+function customerModeCardClass(selected: boolean) {
+  return cn(
+    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl p-4 text-left transition-colors active:scale-[0.99] sm:min-h-0 sm:p-5',
+    'outline-none ring-0 ring-offset-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
+    selected
+      ? CUSTOMER_MODE_CARD_SELECTED_CLASSNAME
+      : 'border-2 border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+  );
+}
+
 type CartItem = {
   productId: string;
   productName: string;
@@ -654,9 +670,9 @@ export function CreateSaleFeature() {
                   >
                     <div
                       className={cn(
-                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-all',
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors',
                         isDone && 'bg-brand-accent text-white',
-                        isActive && 'bg-brand-accent text-white ring-4 ring-brand-accent/20',
+                        isActive && WIZARD_STEP_ACTIVE_CLASSNAME,
                         !isDone && !isActive && 'bg-slate-100 text-slate-400',
                       )}
                     >
@@ -699,12 +715,8 @@ export function CreateSaleFeature() {
                 <button
                   type="button"
                   onClick={() => setCustomerMode('REGISTRADO')}
-                  className={cn(
-                    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl border-2 p-4 text-left transition-all active:scale-[0.99] sm:min-h-0 sm:p-5',
-                    customerMode === 'REGISTRADO'
-                      ? 'border-brand-accent bg-brand-accent/5'
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
-                  )}
+                  className={customerModeCardClass(customerMode === 'REGISTRADO')}
+                  onMouseUp={(event) => event.currentTarget.blur()}
                 >
                   {customerMode === 'REGISTRADO' && (
                     <span className="absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full bg-brand-accent">
@@ -715,15 +727,27 @@ export function CreateSaleFeature() {
                     className={cn(
                       'flex h-10 w-10 items-center justify-center rounded-lg',
                       customerMode === 'REGISTRADO'
-                        ? 'bg-brand-accent/10 text-brand-accent'
+                        ? 'bg-[#f4ecfd] text-brand-accent alusa-dark:bg-[color:var(--color-bg-card-soft)]'
                         : 'bg-slate-100 text-slate-500',
                     )}
                   >
                     <User className="h-5 w-5" />
                   </span>
                   <span>
-                    <span className="block font-medium text-slate-900">Buscar Cliente</span>
-                    <span className="mt-0.5 block text-sm text-slate-500">
+                    <span
+                      className={cn(
+                        'block font-medium',
+                        customerMode === 'REGISTRADO' ? 'text-[#2b2634]' : 'text-slate-900',
+                      )}
+                    >
+                      Buscar Cliente
+                    </span>
+                    <span
+                      className={cn(
+                        'mt-0.5 block text-sm',
+                        customerMode === 'REGISTRADO' ? 'text-[#2b2634]/70' : 'text-slate-500',
+                      )}
+                    >
                       Pessoa já cadastrada no sistema
                     </span>
                   </span>
@@ -732,12 +756,8 @@ export function CreateSaleFeature() {
                 <button
                   type="button"
                   onClick={() => setCustomerMode('AVULSO')}
-                  className={cn(
-                    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl border-2 p-4 text-left transition-all active:scale-[0.99] sm:min-h-0 sm:p-5',
-                    customerMode === 'AVULSO'
-                      ? 'border-brand-accent bg-brand-accent/5'
-                      : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
-                  )}
+                  className={customerModeCardClass(customerMode === 'AVULSO')}
+                  onMouseUp={(event) => event.currentTarget.blur()}
                 >
                   {customerMode === 'AVULSO' && (
                     <span className="absolute right-4 top-4 flex h-5 w-5 items-center justify-center rounded-full bg-brand-accent">
@@ -748,15 +768,27 @@ export function CreateSaleFeature() {
                     className={cn(
                       'flex h-10 w-10 items-center justify-center rounded-lg',
                       customerMode === 'AVULSO'
-                        ? 'bg-brand-accent/10 text-brand-accent'
+                        ? 'bg-[#f4ecfd] text-brand-accent alusa-dark:bg-[color:var(--color-bg-card-soft)]'
                         : 'bg-slate-100 text-slate-500',
                     )}
                   >
                     <UserPlus className="h-5 w-5" />
                   </span>
                   <span>
-                    <span className="block font-medium text-slate-900">Cliente avulso</span>
-                    <span className="mt-0.5 block text-sm text-slate-500">
+                    <span
+                      className={cn(
+                        'block font-medium',
+                        customerMode === 'AVULSO' ? 'text-[#2b2634]' : 'text-slate-900',
+                      )}
+                    >
+                      Cliente avulso
+                    </span>
+                    <span
+                      className={cn(
+                        'mt-0.5 block text-sm',
+                        customerMode === 'AVULSO' ? 'text-[#2b2634]/70' : 'text-slate-500',
+                      )}
+                    >
                       Pessoa não cadastrada no sistema
                     </span>
                   </span>

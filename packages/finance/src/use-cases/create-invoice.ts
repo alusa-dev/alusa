@@ -1,28 +1,35 @@
-import { prisma, loadAsaasCredentials } from '@alusa/database';
+import { loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { createInvoice as asaasCreateInvoice, type AsaasInvoiceStatus } from '@alusa/asaas';
+import { createInvoice as asaasCreateInvoice } from '@alusa/asaas';
 import type { InvoiceStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
+import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
+import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
+import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+
+export type {
+  ScheduleChargeInvoiceInput,
+  ScheduleChargeInvoiceOutput,
+  ScheduleChargeInvoiceError,
+} from './schedule-charge-invoice';
+
+export { scheduleChargeInvoice } from './schedule-charge-invoice';
 
 export type CreateInvoiceInput = {
   contaId: string;
   chargeId: string;
-
   serviceDescription: string;
   observations: string;
-
   value: number;
   deductions: number;
-  effectiveDate: string; // YYYY-MM-DD
-
+  effectiveDate: string;
   municipalServiceCode?: string;
   municipalServiceName: string;
-
   taxes: {
     retainIss: boolean;
     cofins: number;
@@ -32,9 +39,7 @@ export type CreateInvoiceInput = {
     pis: number;
     iss: number;
   };
-
   updatePayment?: boolean;
-
   actor: { type: 'USER' | 'SYSTEM' | 'ADMIN'; id?: string };
 };
 
@@ -64,18 +69,12 @@ function buildCanonicalInvoiceExternalReference(invoiceId: string): string {
   return `invoice:${invoiceId}`;
 }
 
-function mapAsaasInvoiceStatusToInternal(status: AsaasInvoiceStatus): InvoiceStatus {
-  if (status === 'AUTHORIZED') return 'ISSUED';
-  if (status === 'PROCESSING_CANCELLATION') return 'CANCELING';
-  if (status === 'CANCELED') return 'CANCELED';
-  if (status === 'ERROR' || status === 'CANCELLATION_DENIED') return 'ERROR';
-  return 'REQUESTED'; // SCHEDULED e desconhecidos
-}
-
+/** Legacy manual invoice creation (API /api/finance/invoices). Prefer scheduleChargeInvoice. */
 export async function createInvoice(
-  input: CreateInvoiceInput
+  input: CreateInvoiceInput,
 ): Promise<Result<CreateInvoiceOutput, CreateInvoiceError>> {
   try {
+    const prisma = getFiscalPrisma();
     const enabled = await featureFlagsService.isEnabled(input.contaId, 'enableInvoices');
     if (!enabled) return err('FEATURE_DISABLED');
 
@@ -84,7 +83,7 @@ export async function createInvoice(
 
     const charge = await prisma.charge.findFirst({
       where: { id: input.chargeId, contaId: input.contaId },
-      select: { id: true, asaasPaymentId: true },
+      select: { id: true, asaasPaymentId: true, cobrancaId: true },
     });
 
     if (!charge) return err('CHARGE_NAO_ENCONTRADO');
@@ -106,7 +105,7 @@ export async function createInvoice(
       },
     });
 
-    if (existing?.asaasInvoiceId) {
+    if (existing?.asaasInvoiceId && existing.status !== 'ERROR') {
       return ok({
         invoiceId: existing.id,
         chargeId: existing.chargeId,
@@ -128,22 +127,35 @@ export async function createInvoice(
       where: { chargeId: charge.id },
       update: {
         externalReference,
-        status: 'REQUESTED',
+        status: 'SCHEDULED',
         statusUpdatedAt: new Date(),
+        serviceDescription: input.serviceDescription,
+        observations: input.observations,
+        taxes: input.taxes,
+        value: input.value,
+        deductions: input.deductions,
+        effectiveDate: new Date(`${input.effectiveDate}T00:00:00.000Z`),
+        scheduledAt: new Date(),
+        cobrancaId: charge.cobrancaId,
       },
       create: {
         id: invoiceId,
         contaId: input.contaId,
         chargeId: charge.id,
         externalReference,
-        status: 'REQUESTED',
+        status: 'SCHEDULED',
+        serviceDescription: input.serviceDescription,
+        observations: input.observations,
+        taxes: input.taxes,
         value: input.value,
         deductions: input.deductions,
         effectiveDate: new Date(`${input.effectiveDate}T00:00:00.000Z`),
+        scheduledAt: new Date(),
         municipalServiceCode: input.municipalServiceCode,
         municipalServiceName: input.municipalServiceName,
+        cobrancaId: charge.cobrancaId,
       },
-      select: { id: true },
+      select: { id: true, status: true },
     });
 
     const credentials = await loadAsaasCredentials(input.contaId);
@@ -176,10 +188,12 @@ export async function createInvoice(
       data: {
         asaasInvoiceId: asaasInvoice.id,
         status: nextStatus,
+        statusDescription: asaasInvoice.statusDescription ?? null,
         statusUpdatedAt: new Date(),
         pdfUrl: asaasInvoice.pdfUrl ?? null,
         xmlUrl: asaasInvoice.xmlUrl ?? null,
         number: asaasInvoice.number ?? null,
+        errorMessage: nextStatus === 'ERROR' ? asaasInvoice.statusDescription ?? 'Erro na emissão' : null,
       },
       select: {
         id: true,
@@ -193,6 +207,15 @@ export async function createInvoice(
         number: true,
         createdAt: true,
       },
+    });
+
+    await recordInvoiceAuditEvent({
+      contaId: input.contaId,
+      invoiceId: updated.id,
+      action: 'invoice.scheduled',
+      fromStatus: invoiceRecord.status,
+      toStatus: updated.status,
+      metadata: { asaasInvoiceId: updated.asaasInvoiceId },
     });
 
     await auditLogService.record({

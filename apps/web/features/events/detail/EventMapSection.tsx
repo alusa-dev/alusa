@@ -3,18 +3,36 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { EventMapPanel } from '../map/components/EventMapPanel';
+import { EventPublicOrdersPanel } from '../map/components/EventPublicOrdersPanel';
 import { type SchoolEventDTO } from '../events-service';
 
 export function EventMapSection({ event }: { event: SchoolEventDTO }) {
+  const ticketMode = event.ticketMode ?? (event.hasTickets ? 'SIMPLE' : 'NONE');
+  const showPublicOrders = ticketMode === 'NUMBERED_SEATS';
+
   return (
-    <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <CardHeader className="p-0 pb-4">
-        <CardTitle className="text-base font-semibold text-slate-800">Mapa do Evento</CardTitle>
-        <p className="text-xs text-slate-500 mt-1">Organize setores, fileiras e assentos para a bilheteria.</p>
-      </CardHeader>
-      <CardContent className="p-0">
-        <EventMapPanel event={event} />
-      </CardContent>
-    </Card>
+    <div className="space-y-5">
+      <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <CardHeader className="p-0 pb-4">
+          <CardTitle className="text-base font-semibold text-slate-800">Mapa do Evento</CardTitle>
+          <p className="text-xs text-slate-500 mt-1">Organize setores, fileiras e assentos para a bilheteria.</p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <EventMapPanel event={event} />
+        </CardContent>
+      </Card>
+
+      {showPublicOrders ? (
+        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <CardHeader className="p-0 pb-4">
+            <CardTitle className="text-base font-semibold text-slate-800">Bilheteria online</CardTitle>
+            <p className="text-xs text-slate-500 mt-1">Pedidos públicos, reconciliação e check-in de ingressos.</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <EventPublicOrdersPanel event={event} />
+          </CardContent>
+        </Card>
+      ) : null}
+    </div>
   );
 }

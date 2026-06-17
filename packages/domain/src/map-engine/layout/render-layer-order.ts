@@ -1,4 +1,5 @@
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../types/event-map-types.js';
+import { getSeatGroupSectionId } from '../selection/seated-sector.js';
 import { getCorridorUnionGroups } from './corridor-union.js';
 
 export type LevelRenderStackItem =
@@ -15,14 +16,6 @@ function getSectionObjectById(objects: EventMapObjectDTO[]) {
     }
   }
   return bySectionId;
-}
-
-function getSeatGroupSectionId(group: EventSeatGroupDTO, seats: EventSeatDTO[]) {
-  const sectionIds = seats
-    .filter((seat) => seat.groupId === group.id)
-    .map((seat) => seat.sectionId)
-    .filter((sectionId): sectionId is string => Boolean(sectionId));
-  return sectionIds[0] ?? null;
 }
 
 function getSeatGroupSortOrder(

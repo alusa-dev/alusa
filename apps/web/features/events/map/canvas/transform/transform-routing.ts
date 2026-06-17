@@ -1,3 +1,4 @@
+import { isSmartCorridorSeatReflowEnabled } from '@alusa/domain';
 import type { EventMapObjectDTO } from '../../api/event-map-service';
 
 export type MapTransformRoutingKind = 'corridor' | 'uniform' | 'generic' | null;
@@ -74,7 +75,7 @@ export function resolveTransformRouting(input: TransformRoutingInput): Transform
 
   if (hasCorridor) {
     return {
-      kind: 'corridor',
+      kind: isSmartCorridorSeatReflowEnabled() ? 'corridor' : 'generic',
       corridorIds,
       transformDisabled: false,
       blockedMixedCorridorText: false,

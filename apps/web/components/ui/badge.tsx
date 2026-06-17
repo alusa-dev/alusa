@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getStatusLabel } from '@alusa/finance/client';
+import { getStatusBadgePresentation, getStatusLabel } from '@alusa/finance/client';
 import { cn } from '@/lib/cn';
 
 export type BadgeVariant =
@@ -22,19 +22,19 @@ const VARIANT_STYLES: Record<BadgeVariant, string> = {
 };
 
 const statusConfig = {
-  CONFIRMED: { text: 'Confirmado', className: 'alusa-badge alusa-badge-tone-success' },
-  CONFIRMADO: { text: 'Confirmado', className: 'alusa-badge alusa-badge-tone-success' },
-  RECEIVED: { text: 'Recebido', className: 'alusa-badge alusa-badge-tone-success' },
-  RECEBIDO: { text: 'Recebido', className: 'alusa-badge alusa-badge-tone-success' },
+  CONFIRMED: { text: 'Confirmada', className: 'alusa-badge alusa-badge-tone-success' },
+  CONFIRMADO: { text: 'Pago', className: 'alusa-badge alusa-badge-tone-success' },
+  RECEIVED: { text: 'Recebida', className: 'alusa-badge alusa-badge-tone-success' },
+  RECEBIDO: { text: 'Recebida', className: 'alusa-badge alusa-badge-tone-success' },
   PAGO: { text: 'Pago', className: 'alusa-badge alusa-badge-tone-success' },
-  PAID: { text: 'Paga', className: 'alusa-badge alusa-badge-tone-success' },
+  PAID: { text: 'Pago', className: 'alusa-badge alusa-badge-tone-success' },
   PENDING: { text: 'Pendente', className: 'alusa-badge alusa-badge-tone-warning' },
   PENDENTE: { text: 'Pendente', className: 'alusa-badge alusa-badge-tone-warning' },
   A_VENCER: { text: 'A vencer', className: 'alusa-badge alusa-badge-tone-info' },
   OPEN: { text: 'Aberta', className: 'alusa-badge alusa-badge-tone-warning' },
   CREATED: { text: 'Criada', className: 'alusa-badge alusa-badge-tone-info' },
-  OVERDUE: { text: 'Atrasado', className: 'alusa-badge alusa-badge-tone-danger' },
-  ATRASADO: { text: 'Atrasado', className: 'alusa-badge alusa-badge-tone-danger' },
+  OVERDUE: { text: 'Vencida', className: 'alusa-badge alusa-badge-tone-danger' },
+  ATRASADO: { text: 'Vencida', className: 'alusa-badge alusa-badge-tone-danger' },
   CANCELAMENTO_PENDENTE: {
     text: 'Cancelamento pendente',
     className: 'alusa-badge alusa-badge-tone-warning',
@@ -42,16 +42,23 @@ const statusConfig = {
   ESTORNADO_PARCIAL: { text: 'Estorno parcial', className: 'alusa-badge alusa-badge-tone-neutral' },
   PENDING_SYNC: { text: 'Sincronizando', className: 'alusa-badge alusa-badge-tone-info' },
   FAILED: { text: 'Falha no Pagamento', className: 'alusa-badge alusa-badge-tone-danger' },
-  REFUNDED: { text: 'Reembolsado', className: 'alusa-badge alusa-badge-tone-warning' },
-  REFUND_REQUESTED: { text: 'Reembolso Solicitado', className: 'alusa-badge alusa-badge-tone-warning' },
-  CANCELED: { text: 'Cancelado', className: 'alusa-badge alusa-badge-tone-neutral' },
-  CANCELADO: { text: 'Cancelado', className: 'alusa-badge alusa-badge-tone-neutral' },
+  REFUNDED: { text: 'Estornada', className: 'alusa-badge alusa-badge-tone-neutral' },
+  REFUND_REQUESTED: { text: 'Estorno solicitado', className: 'alusa-badge alusa-badge-tone-neutral' },
+  REFUND_IN_PROGRESS: { text: 'Estorno em processamento', className: 'alusa-badge alusa-badge-tone-neutral' },
+  CHARGEBACK_REQUESTED: { text: 'Chargeback solicitado', className: 'alusa-badge alusa-badge-tone-danger' },
+  CHARGEBACK_DISPUTE: { text: 'Chargeback em disputa', className: 'alusa-badge alusa-badge-tone-danger' },
+  AWAITING_CHARGEBACK_REVERSAL: { text: 'Aguardando reversão', className: 'alusa-badge alusa-badge-tone-warning' },
+  DUNNING_REQUESTED: { text: 'Negativação solicitada', className: 'alusa-badge alusa-badge-tone-danger' },
+  DUNNING_RECEIVED: { text: 'Recebida', className: 'alusa-badge alusa-badge-tone-success' },
+  AWAITING_RISK_ANALYSIS: { text: 'Em análise', className: 'alusa-badge alusa-badge-tone-info' },
+  CANCELED: { text: 'Cancelada', className: 'alusa-badge alusa-badge-tone-neutral' },
+  CANCELADO: { text: 'Cancelada', className: 'alusa-badge alusa-badge-tone-neutral' },
   EXPIRADO: { text: 'Expirado', className: 'alusa-badge alusa-badge-tone-neutral' },
   ASSINADO: { text: 'Assinado', className: 'alusa-badge alusa-badge-tone-success' },
   ISENTO: { text: 'Isento', className: 'alusa-badge alusa-badge-tone-neutral' },
   MANUAL: { text: 'Pago Manualmente', className: 'alusa-badge alusa-badge-tone-brand' },
-  RECEIVED_IN_CASH: { text: 'Pago em Dinheiro', className: 'alusa-badge alusa-badge-tone-brand' },
-  ESTORNADO: { text: 'Estornado', className: 'alusa-badge alusa-badge-tone-danger' },
+  RECEIVED_IN_CASH: { text: 'Recebida em dinheiro', className: 'alusa-badge alusa-badge-tone-brand' },
+  ESTORNADO: { text: 'Estornada', className: 'alusa-badge alusa-badge-tone-neutral' },
   PROCESSANDO: { text: 'Processando', className: 'alusa-badge alusa-badge-tone-warning' },
   ATIVO: { text: 'Ativo', className: 'alusa-badge alusa-badge-tone-success' },
   ENCERRADO: { text: 'Encerrado', className: 'alusa-badge alusa-badge-tone-neutral' },
@@ -99,6 +106,11 @@ export type StatusType = keyof typeof statusConfig;
 
 type BadgeSize = 'sm' | 'default' | 'lg';
 
+function presentationToTone(variant: ReturnType<typeof getStatusBadgePresentation>['variant']) {
+  if (variant === 'destructive') return 'danger';
+  return variant;
+}
+
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
   variant?: BadgeVariant;
   status?: StatusType;
@@ -125,7 +137,7 @@ export const Badge: React.FC<BadgeProps> = ({
   if (status) {
     const config = statusConfig[status] ?? {
       text: getStatusLabel(status),
-      className: 'alusa-badge alusa-badge-fallback',
+      className: `alusa-badge alusa-badge-tone-${presentationToTone(getStatusBadgePresentation(status).variant)}`,
     };
     return (
       <span
@@ -155,9 +167,16 @@ export function formatStatusLabel(status: string): string {
 }
 
 export function isStatusPaid(status: StatusType): boolean {
-  return ['CONFIRMED', 'RECEIVED', 'PAGO', 'MANUAL', 'RECEIVED_IN_CASH', 'CONCLUIDO'].includes(
-    status,
-  );
+  return [
+    'CONFIRMED',
+    'RECEIVED',
+    'DUNNING_RECEIVED',
+    'RECEIVED_IN_CASH',
+    'PAGO',
+    'PAID',
+    'MANUAL',
+    'CONCLUIDO',
+  ].includes(status);
 }
 
 export function isStatusPending(status: StatusType): boolean {

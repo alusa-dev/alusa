@@ -114,11 +114,7 @@ export function handleAddObject(
       height: 280,
       data: {
         fill: '#f8fafc',
-        smartCorridor: true,
-        seatGapTop: 8,
-        seatGapRight: 8,
-        seatGapBottom: 8,
-        seatGapLeft: 8,
+        smartCorridor: false,
         corridorThickness: 32,
       },
     },
@@ -148,17 +144,13 @@ export function handleAddObject(
     const height = typeof objectHeight === 'number' ? objectHeight : config.height;
     const axis = inferCorridorAxisFromSize(width, height);
     const rawThickness = axis === 'vertical' ? width : height;
-    objectData.smartCorridor = true;
-    objectData.seatGapTop = 8;
-    objectData.seatGapRight = 8;
-    objectData.seatGapBottom = 8;
-    objectData.seatGapLeft = 8;
+    objectData.smartCorridor = false;
     objectData.corridorThickness =
       rawThickness >= MIN_CORRIDOR_THICKNESS
         ? Math.min(rawThickness, 240)
         : DEFAULT_CORRIDOR_THICKNESS;
     objectData.corridorAxis = axis;
-    objectData.corridorAutoFit = true;
+    objectData.corridorAutoFit = false;
   }
 
   const object: EventMapObjectDTO = {
@@ -307,7 +299,7 @@ export function handleAddSeatGrid(
     levelId: level.id,
     sectionId,
     type: 'SECTION',
-    data: { label: sectionName, fill: color, opacity: 0.1, cornerRadius: 10 },
+    data: { label: sectionName, fill: color, fillEnabled: false, opacity: 0, cornerRadius: 10 },
     x: sectionBounds.x,
     y: sectionBounds.y,
     width: sectionBounds.width,

@@ -1,12 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock prisma antes de importar o service
 vi.mock('@alusa/database', () => ({
   prisma: {
     cobranca: {
       findMany: vi.fn(),
     },
+    charge: {
+      findMany: vi.fn(),
+    },
     subscription: {
+      findMany: vi.fn(),
+    },
+    installmentPlan: {
+      findMany: vi.fn(),
+    },
+    standaloneInstallmentPlan: {
       findMany: vi.fn(),
     },
     webhookAsaas: {
@@ -15,63 +23,98 @@ vi.mock('@alusa/database', () => ({
       count: vi.fn(),
     },
   },
+  loadAsaasCredentials: vi.fn(),
 }));
 
-import { prisma } from '@alusa/database';
+vi.mock('@alusa/asaas', () => ({
+  getPayment: vi.fn(),
+  getSubscription: vi.fn(),
+  getInstallment: vi.fn(),
+  listInstallmentPayments: vi.fn(),
+  listPayments: vi.fn(),
+}));
+
+vi.mock('../payment-webhook-handler', () => ({
+  handlePaymentWebhook: vi.fn(),
+}));
+
+vi.mock('../subscription-webhook-handler', () => ({
+  handleSubscriptionWebhook: vi.fn(),
+}));
+
+vi.mock('../../reconciliation/finance-reconciliation-issue.service', () => ({
+  upsertFinanceReconciliationIssue: vi.fn(),
+}));
+
+vi.mock('../../foundation/asaas-read-intent', () => ({
+  recordAsaasReadIntent: vi.fn(),
+}));
+
+import { prisma, loadAsaasCredentials } from '@alusa/database';
+import { getPayment } from '@alusa/asaas';
+import { handlePaymentWebhook } from '../payment-webhook-handler';
+import { upsertFinanceReconciliationIssue } from '../../reconciliation/finance-reconciliation-issue.service';
 import {
   detectWebhookGaps,
   getWebhookMetrics,
   listWebhooks,
+  reconcileWithAsaas,
 } from '../webhook-reconciliation.service';
 
 describe('webhook-reconciliation.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([]);
+    vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'test-key' } as never);
+    vi.mocked(handlePaymentWebhook).mockResolvedValue({ success: true } as never);
   });
 
   describe('detectWebhookGaps', () => {
-    it('deve retornar cobranças em status não-final sem webhook recente', async () => {
-      const mockCharges = [
+    it('deve retornar cobranças acadêmicas e avulsas em status não-final sem webhook recente', async () => {
+      const mockCobrancas = [
         {
-          id: 'charge-1',
+          id: 'cob-1',
           asaasPaymentId: 'pay_123',
           status: 'ATRASADO',
-          dataVencimento: new Date('2026-01-20'),
+          vencimento: new Date('2026-01-20'),
         },
+      ];
+      const mockStandaloneCharges = [
         {
-          id: 'charge-2',
-          asaasPaymentId: null,
-          status: 'PENDENTE',
-          dataVencimento: new Date('2026-01-22'),
+          id: 'ch-1',
+          asaasPaymentId: 'pay_456',
+          status: 'OPEN',
+          dueDate: new Date('2026-01-22'),
         },
       ];
 
-      vi.mocked(prisma.cobranca.findMany).mockResolvedValue(mockCharges as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue(mockCobrancas as never);
+      vi.mocked(prisma.charge.findMany).mockResolvedValue(mockStandaloneCharges as never);
       vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
       vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
 
       const result = await detectWebhookGaps('conta-1', { windowDays: 7 });
 
       expect(result.chargesWithMissingFinalStatus).toHaveLength(2);
-      expect(result.chargesWithMissingFinalStatus[0].id).toBe('charge-1');
-      expect(result.chargesWithMissingFinalStatus[0].lastWebhookAt).toBeNull();
+      expect(result.chargesWithMissingFinalStatus.map((item) => item.id)).toEqual(['cob-1', 'ch-1']);
     });
 
     it('deve filtrar cobranças com webhook recente', async () => {
       const now = new Date();
       const recentWebhookDate = new Date(now);
-      recentWebhookDate.setHours(recentWebhookDate.getHours() - 6); // 6 horas atrás
+      recentWebhookDate.setHours(recentWebhookDate.getHours() - 6);
 
-      const mockCharges = [
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([
         {
-          id: 'charge-1',
+          id: 'cob-1',
           asaasPaymentId: 'pay_123',
           status: 'ATRASADO',
-          dataVencimento: new Date('2026-01-20'),
+          vencimento: new Date('2026-01-20'),
         },
-      ];
-
-      vi.mocked(prisma.cobranca.findMany).mockResolvedValue(mockCharges as never);
+      ] as never);
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
       vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue({
         recebidoEm: recentWebhookDate,
       } as never);
@@ -79,8 +122,94 @@ describe('webhook-reconciliation.service', () => {
 
       const result = await detectWebhookGaps('conta-1', { windowDays: 7 });
 
-      // Cobrança com webhook recente não deve aparecer no gap
       expect(result.chargesWithMissingFinalStatus).toHaveLength(0);
+    });
+  });
+
+  describe('reconcileWithAsaas', () => {
+    it('reconcilia charge avulsa em status não-final quando Asaas está pago', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([
+        {
+          id: 'ch-1',
+          asaasPaymentId: 'pay_1',
+          status: 'OPEN',
+          externalReference: 'alusa:ch-1',
+        },
+      ] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockResolvedValue({
+        id: 'pay_1',
+        status: 'CONFIRMED',
+        value: 360,
+        netValue: 350,
+        dueDate: '2026-06-13',
+        billingType: 'CREDIT_CARD',
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.checkedPayments).toBe(1);
+      expect(result.paymentDrift).toBe(1);
+      expect(result.reconciledPayments).toBe(1);
+      expect(getPayment).toHaveBeenCalledWith({
+        apiKey: 'test-key',
+        paymentId: 'pay_1',
+      });
+      expect(handlePaymentWebhook).toHaveBeenCalledWith(
+        'conta-1',
+        expect.objectContaining({
+          event: 'PAYMENT_CONFIRMED',
+          payment: expect.objectContaining({ id: 'pay_1', status: 'CONFIRMED' }),
+        }),
+      );
+      expect(upsertFinanceReconciliationIssue).toHaveBeenCalled();
+    });
+
+    it('não chama Asaas quando webhook ainda está na fila', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([
+        {
+          id: 'ch-1',
+          asaasPaymentId: 'pay_1',
+          status: 'OPEN',
+          externalReference: null,
+        },
+      ] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue({ id: 'wh-1' } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.checkedPayments).toBe(1);
+      expect(result.paymentDrift).toBe(0);
+      expect(getPayment).not.toHaveBeenCalled();
+      expect(handlePaymentWebhook).not.toHaveBeenCalled();
+    });
+
+    it('não reconcilia quando status local já converge com o Asaas', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([
+        {
+          id: 'ch-1',
+          asaasPaymentId: 'pay_1',
+          status: 'OPEN',
+          externalReference: null,
+        },
+      ] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockResolvedValue({
+        id: 'pay_1',
+        status: 'PENDING',
+        value: 360,
+        netValue: 360,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.checkedPayments).toBe(1);
+      expect(result.paymentDrift).toBe(0);
+      expect(result.reconciledPayments).toBe(0);
+      expect(handlePaymentWebhook).not.toHaveBeenCalled();
     });
   });
 
@@ -108,7 +237,7 @@ describe('webhook-reconciliation.service', () => {
         PAYMENT_OVERDUE: 1,
       });
       expect(result.errorRate).toBe(0.25);
-      expect(result.avgDurationMs).toBe(125); // (100+200+50+150)/4
+      expect(result.avgDurationMs).toBe(125);
     });
 
     it('deve retornar métricas vazias quando não há webhooks', async () => {
@@ -172,7 +301,7 @@ describe('webhook-reconciliation.service', () => {
             evento: { contains: 'PAYMENT' },
             asaasPaymentId: 'pay_123',
           }),
-        })
+        }),
       );
     });
   });

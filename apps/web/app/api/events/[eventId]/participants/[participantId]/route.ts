@@ -156,7 +156,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             source: 'PUBLIC_ORDER',
             eventMapOrderId: order.id,
             asaasPaymentId: order.asaasPaymentId,
+            paymentStatus: order.paymentStatus,
             invoiceUrl: order.invoiceUrl,
+            chargeDetailUrl: `/cobrancas/event-map-order:${order.id}`,
             ticketsUrl: order.status === 'CONFIRMED' ? `/api/events/public-orders/${order.id}/tickets` : null,
             lot: {
               id: primaryLot?.id ?? `public-order:${order.id}`,

@@ -7,7 +7,6 @@ import type { EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/
 import { CorridorMapObject, buildCorridorMapObjectProps } from './CorridorMapObject';
 import { LooseSeatNode } from './LooseSeatNode';
 import { SeatGroupNode } from './SeatGroupNode';
-import type { SeatGroupResizeStartState } from './SeatGroupResizeHandles';
 import { ShapeMapObjectNode } from './ShapeMapObjectNode';
 import { TextMapObjectNode } from './TextMapObjectNode';
 
@@ -146,12 +145,9 @@ export function MapRenderStack({
               group={group}
               groupSeats={groupSeats}
               selection={state.selection}
-              zoom={state.zoom}
               placementToolActive={state.placementToolActive}
               readOnly={state.readOnly}
               tool={state.tool}
-              containerRef={state.containerRef}
-              getPointerPoint={state.getPointerPoint}
               onSelect={handlers.onSelect}
               onDoubleClickSelectIndividual={handlers.onDoubleClickSelectIndividualSeat}
               onDragStart={handlers.onDragStart}
@@ -159,7 +155,6 @@ export function MapRenderStack({
               onDragEnd={handlers.onDragEnd}
               onTransformEnd={handlers.onSeatGroupTransformEnd}
               onCommitPosition={(x, y) => handlers.onUpdateSeatGroupPosition(group.id, x, y)}
-              onResizeStart={handlers.onSeatGroupResizeStart}
             />
           );
         }

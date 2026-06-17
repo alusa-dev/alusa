@@ -13,6 +13,7 @@ import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventSelector } from '../shared/EventSelector';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { useEventResources } from '../shared/useEventResources';
+import { useEventScopedResources } from '../shared/useEventScopedResources';
 import { EventTicketsPanel } from '../tickets/EventTicketsPanel';
 
 export function EventOperationsFeature({ section }: { section: 'tickets' | 'costumes' | 'financial' | 'reports' }) {
@@ -20,6 +21,7 @@ export function EventOperationsFeature({ section }: { section: 'tickets' | 'cost
   const firstEventId = resources.data?.events[0]?.id;
   const [eventId, setEventId] = useState<string | undefined>(undefined);
   const selectedEventId = eventId || firstEventId;
+  const scopedResources = useEventScopedResources(selectedEventId);
   const event = useQuery({
     queryKey: selectedEventId ? eventQueryKeys.event(selectedEventId) : ['events', 'none'],
     queryFn: () => getEvent(selectedEventId!),
@@ -43,9 +45,9 @@ export function EventOperationsFeature({ section }: { section: 'tickets' | 'cost
       {!selectedEventId ? (
         <EmptyState title="Nenhum evento criado ainda." description="Crie um evento antes de configurar ingressos, figurinos ou financeiro." />
       ) : section === 'tickets' ? (
-        <EventTicketsPanel eventId={selectedEventId} resources={resources.data} />
+        <EventTicketsPanel eventId={selectedEventId} scopedResources={scopedResources.data} />
       ) : section === 'costumes' ? (
-        <EventCostumesPanel eventId={selectedEventId} resources={resources.data} />
+        <EventCostumesPanel eventId={selectedEventId} scopedResources={scopedResources.data} />
       ) : section === 'financial' ? (
         <EventFinancialPanel eventId={selectedEventId} event={event.data} />
       ) : (

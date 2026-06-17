@@ -33,8 +33,6 @@ export function useMapStagePointerSession({
   setIndividualSeatDragId,
   getMarqueeSelection,
   openNewTextEditor,
-  handleSeatGroupResizeMove,
-  endSeatGroupResize,
   creationDraft,
   setCreationDraft,
   marqueeDraft,
@@ -63,8 +61,6 @@ export function useMapStagePointerSession({
     height: number | null;
     textMode: TextMode;
   }) => void;
-  handleSeatGroupResizeMove: () => boolean;
-  endSeatGroupResize: () => boolean;
   creationDraft: CreationDraft | null;
   setCreationDraft: Dispatch<SetStateAction<CreationDraft | null>>;
   marqueeDraft: MarqueeDraft | null;
@@ -129,8 +125,6 @@ export function useMapStagePointerSession({
 
   const handleStageMouseMove = useCallback(
     (_event: Konva.KonvaEventObject<MouseEvent>) => {
-      if (handleSeatGroupResizeMove()) return;
-
       if (marqueeDraft && tool === 'select') {
         const point = getPointerPoint();
         if (!point) return;
@@ -143,13 +137,11 @@ export function useMapStagePointerSession({
       if (!point) return;
       setCreationDraft((draft) => (draft ? { ...draft, current: point } : null));
     },
-    [creationDraft, getPointerPoint, handleSeatGroupResizeMove, marqueeDraft, setCreationDraft, setMarqueeDraft, tool],
+    [creationDraft, getPointerPoint, marqueeDraft, setCreationDraft, setMarqueeDraft, tool],
   );
 
   const handleStageMouseUp = useCallback(
     (_event: Konva.KonvaEventObject<MouseEvent>) => {
-      if (endSeatGroupResize()) return;
-
       if (marqueeDraft && tool === 'select') {
         const point = getPointerPoint() ?? marqueeDraft.current;
         const box = normalizeBoundsRect(marqueeDraft.start, point);
@@ -211,7 +203,6 @@ export function useMapStagePointerSession({
     [
       addObjectAt,
       creationDraft,
-      endSeatGroupResize,
       getMarqueeSelection,
       getPointerPoint,
       levelId,

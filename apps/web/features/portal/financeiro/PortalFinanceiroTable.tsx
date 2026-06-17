@@ -15,7 +15,8 @@ import {
   Eye,
 } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import { isPaidDisplayStatus, isPendingDisplayStatus } from '@/lib/finance/charge-display-status';
 import type { PortalFinanceiroListItemDTO } from '@/features/portal/dtos';
 
 const PAYMENT_NOTICE =
@@ -71,9 +72,9 @@ export function PortalFinanceiroTable() {
 
     // Filtro por status
     if (filter === 'pendentes') {
-      filtered = filtered.filter((c) => c.status === 'PENDENTE' || c.status === 'ATRASADO');
+      filtered = filtered.filter((c) => isPendingDisplayStatus(c.displayStatus));
     } else if (filter === 'pagas') {
-      filtered = filtered.filter((c) => c.status === 'PAGO');
+      filtered = filtered.filter((c) => isPaidDisplayStatus(c.displayStatus));
     }
 
     // Busca por texto
@@ -104,11 +105,11 @@ export function PortalFinanceiroTable() {
   }, [filter, searchTerm]);
 
   const totalPendente = cobrancas
-    .filter((c) => c.status === 'PENDENTE' || c.status === 'ATRASADO')
+    .filter((c) => isPendingDisplayStatus(c.displayStatus))
     .reduce((sum, c) => sum + c.valor, 0);
 
   const totalPago = cobrancas
-    .filter((c) => c.status === 'PAGO')
+    .filter((c) => isPaidDisplayStatus(c.displayStatus))
     .reduce((sum, c) => sum + c.valor, 0);
 
   const formatCurrency = (value: number) => {
@@ -194,13 +195,13 @@ export function PortalFinanceiroTable() {
           <FilterButton
             label="Pendentes"
             active={filter === 'pendentes'}
-            count={cobrancas.filter((c) => c.status === 'PENDENTE' || c.status === 'ATRASADO').length}
+            count={cobrancas.filter((c) => isPendingDisplayStatus(c.displayStatus)).length}
             onClick={() => setFilter('pendentes')}
           />
           <FilterButton
             label="Pagas"
             active={filter === 'pagas'}
-            count={cobrancas.filter((c) => c.status === 'PAGO').length}
+            count={cobrancas.filter((c) => isPaidDisplayStatus(c.displayStatus)).length}
             onClick={() => setFilter('pagas')}
           />
         </div>
@@ -247,7 +248,7 @@ export function PortalFinanceiroTable() {
           ) : (
             paginatedCobrancas.map((cobranca) => {
               const vencimento = new Date(cobranca.vencimento);
-              const isAtrasado = vencimento < new Date() && cobranca.status === 'PENDENTE';
+              const isAtrasado = isPendingDisplayStatus(cobranca.displayStatus) && vencimento < new Date();
 
               return (
                 <div
@@ -301,7 +302,7 @@ export function PortalFinanceiroTable() {
 
                     {/* Status */}
                     <div className="col-span-2 flex justify-center">
-                      <Badge status={cobranca.status as StatusType} size="sm" />
+                      <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} size="sm" />
                     </div>
 
                     {/* Ações */}

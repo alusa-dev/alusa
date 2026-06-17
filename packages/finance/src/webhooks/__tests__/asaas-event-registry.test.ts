@@ -187,7 +187,6 @@ describe('Asaas Event Registry', () => {
 
     it('não deve ter handlers para eventos que não afetam fluxo Alusa', () => {
       const nonAlusaEvents = [
-        'INVOICE_CREATED',
         'BILL_CREATED',
         'MOBILE_PHONE_RECHARGE_PENDING',
         'CHECKOUT_CREATED',
@@ -195,6 +194,19 @@ describe('Asaas Event Registry', () => {
 
       for (const event of nonAlusaEvents) {
         expect(isHandledEvent(event), `Evento ${event} não deve ter handler`).toBe(false);
+      }
+    });
+
+    it('deve ter handlers para eventos de nota fiscal', () => {
+      const invoiceEvents = [
+        'INVOICE_CREATED',
+        'INVOICE_AUTHORIZED',
+        'INVOICE_CANCELED',
+        'INVOICE_ERROR',
+      ];
+
+      for (const event of invoiceEvents) {
+        expect(isHandledEvent(event), `Evento ${event} deve ter handler`).toBe(true);
       }
     });
   });

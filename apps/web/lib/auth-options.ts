@@ -14,6 +14,7 @@ declare module 'next-auth/jwt' {
     financeStatus?: string;
     financeIntegrationMode?: string;
     externalAsaasOnboardingStatus?: string;
+    asaasApiKeyStatus?: string;
     emailVerified?: boolean;
     accountActive?: boolean;
   }
@@ -25,6 +26,7 @@ async function loadContaAuthState(contaId: string | null) {
       financeStatus: 'FINANCE_NOT_STARTED',
       financeIntegrationMode: 'WHITELABEL_BAAS',
       externalAsaasOnboardingStatus: 'NOT_STARTED',
+      asaasApiKeyStatus: 'MISSING',
     };
   }
 
@@ -34,6 +36,15 @@ async function loadContaAuthState(contaId: string | null) {
       financeStatus: true,
       financeIntegrationMode: true,
       externalAsaasOnboardingStatus: true,
+      financeProfile: {
+        select: {
+          asaasAccount: {
+            select: {
+              apiKeyStatus: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -41,6 +52,7 @@ async function loadContaAuthState(contaId: string | null) {
     financeStatus: conta?.financeStatus ?? 'FINANCE_NOT_STARTED',
     financeIntegrationMode: conta?.financeIntegrationMode ?? 'WHITELABEL_BAAS',
     externalAsaasOnboardingStatus: conta?.externalAsaasOnboardingStatus ?? 'NOT_STARTED',
+    asaasApiKeyStatus: conta?.financeProfile?.asaasAccount?.apiKeyStatus ?? 'MISSING',
   };
 }
 
@@ -140,6 +152,7 @@ export const authOptions: NextAuthOptions = {
             (token as any).financeStatus = contaState.financeStatus;
             (token as any).financeIntegrationMode = contaState.financeIntegrationMode;
             (token as any).externalAsaasOnboardingStatus = contaState.externalAsaasOnboardingStatus;
+            (token as any).asaasApiKeyStatus = contaState.asaasApiKeyStatus;
           }
 
           if (!access.ok) {
@@ -148,6 +161,7 @@ export const authOptions: NextAuthOptions = {
             (token as any).financeStatus = 'FINANCE_NOT_STARTED';
             (token as any).financeIntegrationMode = 'WHITELABEL_BAAS';
             (token as any).externalAsaasOnboardingStatus = 'NOT_STARTED';
+            (token as any).asaasApiKeyStatus = 'MISSING';
           }
         } catch {
           (token as any).accountActive = (token as any).accountActive !== false;
@@ -174,6 +188,7 @@ export const authOptions: NextAuthOptions = {
         (token as any).financeIntegrationMode ?? 'WHITELABEL_BAAS';
       (session.user as any).externalAsaasOnboardingStatus =
         (token as any).externalAsaasOnboardingStatus ?? 'NOT_STARTED';
+      (session.user as any).asaasApiKeyStatus = (token as any).asaasApiKeyStatus ?? 'MISSING';
 
       // Buscar foto atual do usuário para refletir na UI
       try {

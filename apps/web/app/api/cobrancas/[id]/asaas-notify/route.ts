@@ -9,6 +9,7 @@ import {
   cobrancaRouteParamsDTOSchema,
 } from '@/features/financeiro/cobrancas/dtos';
 import { mapCobrancaNotifyResultToDTO } from '@/features/financeiro/cobrancas/mappers';
+import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -49,21 +50,8 @@ export async function POST(
       );
     }
 
-    // Validar que a cobrança pertence ao tenant
-    const cobranca = await prisma.cobranca.findFirst({
-      where: { id: cobrancaId, matricula: { aluno: { contaId: user.contaId } } },
-      select: { asaasPaymentId: true },
-    });
-
-    // Também verificar em Charge (standalone)
-    const charge = !cobranca
-      ? await prisma.charge.findFirst({
-          where: { id: cobrancaId, contaId: user.contaId },
-          select: { asaasPaymentId: true },
-        })
-      : null;
-
-    const paymentId = cobranca?.asaasPaymentId ?? charge?.asaasPaymentId;
+    const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, cobrancaId);
+    const paymentId = paymentLookup?.asaasPaymentId ?? null;
 
     if (!paymentId) {
       return NextResponse.json(

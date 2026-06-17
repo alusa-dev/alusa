@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
 import { normalizeChargeStatus } from '../dtos/unified-billing';
+import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +26,9 @@ export type StandaloneChargeItem = {
   dueDate: string | null;
   billingType: string | null;
   status: UnifiedChargeStatus;
+  asaasStatus: string | null;
+  liquidacaoStatus: string | null;
+  displayStatus: ChargeDisplayStatus;
   chargeType: 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION';
   linkStatus: 'LINKED' | 'UNLINKED' | 'NEEDS_REVIEW';
   groupId: string | null;
@@ -166,6 +170,8 @@ export async function listStandaloneCharges(
       select: {
         id: true,
         status: true,
+        asaasStatus: true,
+        liquidacaoStatus: true,
         asaasPaymentId: true,
         payerName: true,
         description: true,
@@ -189,6 +195,14 @@ export async function listStandaloneCharges(
     dueDate: c.dueDate?.toISOString() ?? null,
     billingType: c.billingType,
     status: normalizeChargeStatus(c.status),
+    asaasStatus: c.asaasStatus,
+    liquidacaoStatus: c.liquidacaoStatus,
+    displayStatus: resolveChargeDisplayStatus({
+      localStatus: c.status,
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      hasAsaasLink: Boolean(c.asaasPaymentId),
+    }),
     chargeType: 'ONE_TIME',
     linkStatus: c.asaasPaymentId ? 'LINKED' : 'NEEDS_REVIEW',
     groupId: null,

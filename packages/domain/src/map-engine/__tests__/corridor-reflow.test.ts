@@ -1,4 +1,4 @@
-import { CORRIDOR_REFLOW_ITERATIONS, MIN_CORRIDOR_THICKNESS, applyCorridorPreviewPatch, applyCorridorReflow, buildSeatGridPreview, buildSmartCorridorDragPreview, buildSmartCorridorTransformPreview, cloneEventMap, effectiveCorridorAxisAtRotation, extractCorridorDragCommitUpdates, extractGroupDragCommitUpdates, getCorridorRenderBounds, getCorridorWorldCenter, getSeatBounds, intersectsRect, readStoredCorridorAxis, resetCorridorPreviewFromBase, resolveCorridorAxis, resolveCorridorDragMode, resolveSmartCorridorLayout, snapSmartCorridorRotation, updateCorridorSplitAnchorsOnDrag } from '../index';
+import { CORRIDOR_REFLOW_ITERATIONS, MIN_CORRIDOR_THICKNESS, SMART_CORRIDOR_SEAT_REFLOW_ENABLED, applyCorridorPreviewPatch, applyCorridorReflow, buildSeatGridPreview, buildSmartCorridorDragPreview, buildSmartCorridorTransformPreview, cloneEventMap, effectiveCorridorAxisAtRotation, extractCorridorDragCommitUpdates, extractGroupDragCommitUpdates, getCorridorRenderBounds, getCorridorWorldCenter, getSeatBounds, intersectsRect, readStoredCorridorAxis, resetCorridorPreviewFromBase, resolveCorridorAxis, resolveCorridorDragMode, resolveSmartCorridorLayout, snapSmartCorridorRotation, updateCorridorSplitAnchorsOnDrag } from '../index';
 import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../index';
 
 import { describe, expect, it } from 'vitest';
@@ -159,7 +159,9 @@ function assertNoSeatIntersectsCorridors(map: EventMapDTO) {
   }
 }
 
-describe('corridor-reflow', () => {
+const describeSmartCorridorReflow = SMART_CORRIDOR_SEAT_REFLOW_ENABLED ? describe : describe.skip;
+
+describeSmartCorridorReflow('corridor-reflow', () => {
   it('opens a gap for a single corridor and restores seats when it is removed', () => {
     const map = buildSeatGridMap(2, 4);
     const baseSeats = map.seats.map((seat) => ({ id: seat.id, x: seat.x, y: seat.y }));

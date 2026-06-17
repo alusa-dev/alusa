@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
-export const invoiceStatusSchema = z.enum(['REQUESTED', 'ISSUED', 'CANCELING', 'CANCELED', 'ERROR']);
+export const invoiceStatusSchema = z.enum([
+  'SCHEDULED',
+  'SYNCHRONIZED',
+  'AUTHORIZED',
+  'PROCESSING_CANCELLATION',
+  'CANCELED',
+  'CANCELLATION_DENIED',
+  'ERROR',
+]);
 
 export const createInvoiceResultDTOSchema = z
   .object({

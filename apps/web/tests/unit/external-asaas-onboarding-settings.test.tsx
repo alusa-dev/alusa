@@ -45,6 +45,8 @@ describe('ExternalAsaasOnboarding settings', () => {
           asaasAccountId: 'acc_1',
           asaasEmail: 'financeiro@escola.com',
           hasApiKey: true,
+          apiKeyStatus: 'CONNECTED',
+          webhookStatus: 'ACTIVE',
         },
       }),
     });
@@ -56,6 +58,10 @@ describe('ExternalAsaasOnboarding settings', () => {
     const input = await screen.findByPlaceholderText('$aact_hmlg_••••••••••••••••');
 
     expect(screen.getByText('Como obter a API key no Asaas')).toBeInTheDocument();
+    expect(screen.getByText('Conta Asaas conectada')).toBeInTheDocument();
+    expect(screen.getByText('Salva na Alusa e ativa para operações financeiras.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('acc_1')).toBeInTheDocument();
+    expect(screen.getByText('financeiro@escola.com')).toBeInTheDocument();
     expect(screen.getByText('1')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
@@ -69,8 +75,6 @@ describe('ExternalAsaasOnboarding settings', () => {
     expect(
       screen.getByText('Copie a API key exibida no Asaas e cole no campo abaixo para testar ou substituir a credencial.'),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Conta Asaas')).not.toBeInTheDocument();
-    expect(screen.queryByText('E-mail da conta')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Testar conexão' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Substituir' })).not.toBeInTheDocument();
 
@@ -93,6 +97,8 @@ describe('ExternalAsaasOnboarding settings', () => {
             asaasAccountId: 'acc_1',
             asaasEmail: 'financeiro@escola.com',
             hasApiKey: true,
+            apiKeyStatus: 'CONNECTED',
+            webhookStatus: 'ACTIVE',
           },
         }),
       })

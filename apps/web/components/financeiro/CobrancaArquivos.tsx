@@ -32,7 +32,7 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
   const loadArquivos = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/cobrancas/${cobrancaId}/arquivos`);
+      const res = await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos`);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Erro ao carregar arquivos');
@@ -68,7 +68,7 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch(`/api/cobrancas/${cobrancaId}/arquivos`, {
+      const res = await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos`, {
         method: 'POST',
         body: formData,
       });
@@ -115,7 +115,9 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
     }
 
     try {
-      const res = await fetch(`/api/cobrancas/${cobrancaId}/arquivos?arquivoId=${arquivoId}`, {
+      const res = await fetch(
+        `/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos?arquivoId=${encodeURIComponent(arquivoId)}`,
+        {
         method: 'DELETE',
       });
 

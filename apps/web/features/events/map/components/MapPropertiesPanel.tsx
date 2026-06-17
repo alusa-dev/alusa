@@ -1,25 +1,71 @@
 'use client';
-import { MAP_AREA_HEIGHT_PX, MAP_AREA_WIDTH_PX, TEXT_MODE_LABELS, applyTextModePatch, getPrimarySelection, getSelectableItems, getTextDecorationParts, getTextMode, normalizeRotation } from '@alusa/domain';
+import {
+  TEXT_MODE_LABELS,
+  applyArtboardOrientation,
+  applyTextModePatch,
+  clampArtboardHeight,
+  clampArtboardWidth,
+  getArtboardOrientation,
+  getPrimarySelection,
+  getSelectableItems,
+  getTextMode,
+  normalizeRotation,
+  resolveSeatedSectorFromSelection,
+  shortestRotationDelta,
+  validateDuplicateSelection,
+} from '@alusa/domain';
 import type { TextMode } from '@alusa/domain';
 import type { TicketLotDTO } from '../../events-service';
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
+import type { EventMapDTO, EventMapLevelDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../api/event-map-service';
 import { useEventMapEditorStore } from '../store/event-map-editor-store';
 
 import { cn } from '@/lib/utils';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AlignCenter, AlignLeft, AlignRight, Bold, Italic, Strikethrough, Underline } from 'lucide-react';
+import { RectangleHorizontal, RectangleVertical, CircleAlert } from 'lucide-react';
 
 import { EVENT_SEAT_STATUS_LABELS, EVENT_SEAT_STATUSES } from '@alusa/shared';
 
+import { SeatedSectorProperties } from './SeatedSectorProperties';
+import {
+  MAP_PANEL_COLOR_INPUT_CLASS,
+  MAP_PANEL_FIELD_CLASS,
+  MAP_PANEL_GRID_CLASS,
+  MAP_PANEL_SECTION_CLASS,
+  MAP_PANEL_SECTION_TITLE_CLASS,
+  MAP_PANEL_SELECT_TRIGGER_CLASS,
+  MAP_TEXT_AREA_CLASS,
+} from './text-format-options';
+import {
+  MAP_PANEL_SELECT_NONE_VALUE,
+  MapPanelSelect,
+  mapNullableSelectChange,
+  mapNullableSelectValue,
+} from './MapPanelSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
-const FIELD_CLASS = 'h-9 rounded-lg border-slate-200 bg-white text-sm shadow-none';
-const COLOR_INPUT_CLASS = 'h-9 w-11 shrink-0 rounded-lg border border-slate-200 bg-white p-1';
+const FIELD_CLASS = MAP_PANEL_FIELD_CLASS;
+const SELECT_TRIGGER_CLASS = MAP_PANEL_SELECT_TRIGGER_CLASS;
+const COLOR_INPUT_CLASS = MAP_PANEL_COLOR_INPUT_CLASS;
+const PANEL_GRID_CLASS = MAP_PANEL_GRID_CLASS;
 
 function toNumber(value: string, fallback = 0) {
   const parsed = Number(value);
@@ -30,10 +76,38 @@ function numberValue(value: number | null | undefined, fallback = 0) {
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
 }
 
-function PanelField({ label, children }: { label: string; children: ReactNode }) {
+function PanelField({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs font-medium text-slate-500">{label}</Label>
+      <div className="flex items-center gap-1.5">
+        <Label className="text-xs font-medium text-slate-500">{label}</Label>
+        {hint ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-slate-400 transition-colors hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30"
+                  aria-label={hint}
+                >
+                  <CircleAlert className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-56 text-xs">
+                {hint}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
+      </div>
       {children}
     </div>
   );
@@ -74,27 +148,152 @@ function isAppearanceFlagEnabled(value: unknown, fallback = true) {
 
 function PanelSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
-      {children}
+    <section className={MAP_PANEL_SECTION_CLASS}>
+      <h3 className={MAP_PANEL_SECTION_TITLE_CLASS}>{title}</h3>
+      <div className="space-y-3">{children}</div>
     </section>
   );
 }
 
-function ToggleButton({ active, disabled, label, children, onClick }: { active: boolean; disabled: boolean; label: string; children: ReactNode; onClick: () => void }) {
+function ArtboardSizeInput({
+  label,
+  value,
+  disabled,
+  clamp,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  disabled: boolean;
+  clamp: (next: number) => number;
+  onCommit: (next: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing) setDraft(String(value));
+  }, [isEditing, value]);
+
+  function commitDraft() {
+    const trimmed = draft.trim();
+    const parsed = trimmed === '' ? value : toNumber(trimmed, value);
+    const next = clamp(parsed);
+    setDraft(String(next));
+    setIsEditing(false);
+    if (next !== value) onCommit(next);
+  }
+
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      disabled={disabled}
-      aria-label={label}
-      aria-pressed={active}
-      onClick={onClick}
-      className={cn('h-8 w-8 rounded-md border border-slate-200 text-slate-600', active && 'border-brand-accent bg-brand-accent text-white hover:bg-brand-accent hover:text-white')}
-    >
-      {children}
-    </Button>
+    <PanelField label={label}>
+      <Input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={draft}
+        disabled={disabled}
+        aria-label={label}
+        className={cn(FIELD_CLASS, '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none')}
+        onFocus={() => setIsEditing(true)}
+        onBlur={commitDraft}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            commitDraft();
+            event.currentTarget.blur();
+          }
+          if (event.key === 'Escape') {
+            setDraft(String(value));
+            setIsEditing(false);
+            event.currentTarget.blur();
+          }
+        }}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === '' || /^\d+$/.test(next)) setDraft(next);
+        }}
+      />
+    </PanelField>
+  );
+}
+
+function LevelArtboardProperties({
+  level,
+  disabled,
+  onUpdate,
+}: {
+  level: EventMapLevelDTO;
+  disabled: boolean;
+  onUpdate: (patch: Partial<Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>>) => void;
+}) {
+  const orientation = getArtboardOrientation(level);
+
+  return (
+    <PanelSection title="Prancheta">
+      <PanelField label="Orientação">
+        <div
+          className="grid w-full grid-cols-2 gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1"
+          role="tablist"
+          aria-label="Orientação da prancheta"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={orientation === 'landscape'}
+            disabled={disabled}
+            className={cn(
+              'inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+              orientation === 'landscape'
+                ? 'bg-white text-slate-950 shadow-sm'
+                : 'text-slate-600 hover:text-slate-950',
+              disabled && 'pointer-events-none opacity-50',
+            )}
+            onClick={() => onUpdate(applyArtboardOrientation(level, 'landscape'))}
+          >
+            <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
+              <RectangleHorizontal className="h-3.5 w-3.5" />
+            </span>
+            Horizontal
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={orientation === 'portrait'}
+            disabled={disabled}
+            className={cn(
+              'inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+              orientation === 'portrait'
+                ? 'bg-white text-slate-950 shadow-sm'
+                : 'text-slate-600 hover:text-slate-950',
+              disabled && 'pointer-events-none opacity-50',
+            )}
+            onClick={() => onUpdate(applyArtboardOrientation(level, 'portrait'))}
+          >
+            <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
+              <RectangleVertical className="h-3.5 w-3.5" />
+            </span>
+            Vertical
+          </button>
+        </div>
+      </PanelField>
+      <div className={PANEL_GRID_CLASS}>
+        <ArtboardSizeInput
+          label="Largura"
+          value={level.widthPx}
+          disabled={disabled}
+          clamp={clampArtboardWidth}
+          onCommit={(widthPx) => onUpdate({ widthPx })}
+        />
+        <ArtboardSizeInput
+          label="Altura"
+          value={level.heightPx}
+          disabled={disabled}
+          clamp={clampArtboardHeight}
+          onCommit={(heightPx) => onUpdate({ heightPx })}
+        />
+      </div>
+      <p className="text-xs text-slate-500">Pressione Enter ou saia do campo para aplicar o tamanho.</p>
+    </PanelSection>
   );
 }
 
@@ -111,14 +310,10 @@ function TextProperties({
 }) {
   const data = object.data;
   const textMode = getTextMode(object);
-  const { underline, lineThrough } = getTextDecorationParts(data);
   const fill = String(data.fill ?? '#0f172a');
   const stroke = String(data.stroke ?? '#000000');
   const strokeWidth = numberValue(typeof data.strokeWidth === 'number' ? data.strokeWidth : Number(data.strokeWidth), 0);
   const opacity = numberValue(typeof data.opacity === 'number' ? data.opacity : Number(data.opacity), 1);
-  const fontSize = numberValue(typeof data.fontSize === 'number' ? data.fontSize : Number(data.fontSize), 22);
-  const fontFamily = String(data.fontFamily ?? 'Inter, sans-serif');
-  const align = String(data.align ?? 'left');
   const verticalAlign = String(data.verticalAlign ?? 'top');
   const lineHeight = numberValue(typeof data.lineHeight === 'number' ? data.lineHeight : Number(data.lineHeight), 1.2);
   const letterSpacing = numberValue(typeof data.letterSpacing === 'number' ? data.letterSpacing : Number(data.letterSpacing), 0);
@@ -132,39 +327,29 @@ function TextProperties({
     onUpdate(applyTextModePatch(mode, object));
   }
 
-  function toggleDecoration(key: 'underline' | 'lineThrough') {
-    const next = { ...getTextDecorationParts(data) };
-    next[key] = !next[key];
-    updateData({
-      underline: next.underline,
-      lineThrough: next.lineThrough,
-      textDecoration: undefined,
-    });
-  }
-
   return (
     <>
       <PanelSection title="Texto">
         <PanelField label="Modo">
-          <select
-            value={textMode}
-            disabled={disabled}
-            onChange={(event) => setTextMode(event.target.value as TextMode)}
-            className={cn(FIELD_CLASS, 'w-full px-3')}
-          >
-            {(Object.entries(TEXT_MODE_LABELS) as [TextMode, string][]).map(([mode, label]) => (
-              <option key={mode} value={mode}>
-                {label}
-              </option>
-            ))}
-          </select>
+          <Select value={textMode} disabled={disabled} onValueChange={(value) => setTextMode(value as TextMode)}>
+            <SelectTrigger className={SELECT_TRIGGER_CLASS}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="text-[13px]">
+              {(Object.entries(TEXT_MODE_LABELS) as [TextMode, string][]).map(([mode, label]) => (
+                <SelectItem key={mode} value={mode}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </PanelField>
         <PanelField label="Conteúdo">
-          <textarea
+          <Textarea
             value={String(data.text ?? '')}
             disabled={contentDisabled}
             onChange={(event) => updateData({ text: event.target.value, label: event.target.value })}
-            className={cn(FIELD_CLASS, 'min-h-24 w-full resize-none px-3 py-2')}
+            className={MAP_TEXT_AREA_CLASS}
           />
           {inlineEditorActive ? (
             <p className="text-xs text-slate-500">Edição em andamento no canvas.</p>
@@ -173,7 +358,7 @@ function TextProperties({
       </PanelSection>
 
       <PanelSection title="Dimensão">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={PANEL_GRID_CLASS}>
           <PanelField label="X"><Input type="number" value={object.x} disabled={disabled} onChange={(event) => onUpdate({ x: toNumber(event.target.value, object.x) })} className={FIELD_CLASS} /></PanelField>
           <PanelField label="Y"><Input type="number" value={object.y} disabled={disabled} onChange={(event) => onUpdate({ y: toNumber(event.target.value, object.y) })} className={FIELD_CLASS} /></PanelField>
           {textMode !== 'auto' ? (
@@ -205,40 +390,31 @@ function TextProperties({
       </PanelSection>
 
       <PanelSection title="Tipografia">
-        <PanelField label="Fonte">
-          <select value={fontFamily} disabled={disabled} onChange={(event) => updateData({ fontFamily: event.target.value })} className={cn(FIELD_CLASS, 'w-full px-3')}>
-            <option value="Inter, sans-serif">Inter</option>
-            <option value="Arial, sans-serif">Arial</option>
-            <option value="Helvetica, Arial, sans-serif">Helvetica</option>
-            <option value="Georgia, serif">Georgia</option>
-            <option value="'Times New Roman', serif">Times New Roman</option>
-            <option value="'Courier New', monospace">Courier New</option>
-          </select>
-        </PanelField>
+        <p className="text-xs text-slate-500">
+          Use a barra flutuante abaixo do mapa para fonte, tamanho, estilo e alinhamento.
+        </p>
 
-        <div className="grid grid-cols-2 gap-3">
-          <PanelField label="Tamanho"><Input type="number" min={1} value={fontSize} disabled={disabled} onChange={(event) => updateData({ fontSize: Math.max(1, toNumber(event.target.value, fontSize)) })} className={FIELD_CLASS} /></PanelField>
+        <div className={PANEL_GRID_CLASS}>
           <PanelField label="Linha"><Input type="number" min={0.5} step={0.1} value={lineHeight} disabled={disabled} onChange={(event) => updateData({ lineHeight: Math.max(0.5, toNumber(event.target.value, lineHeight)) })} className={FIELD_CLASS} /></PanelField>
           <PanelField label="Espaçamento"><Input type="number" value={letterSpacing} disabled={disabled} onChange={(event) => updateData({ letterSpacing: toNumber(event.target.value, letterSpacing) })} className={FIELD_CLASS} /></PanelField>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <ToggleButton active={data.fontWeight === 'bold'} disabled={disabled} label="Negrito" onClick={() => updateData({ fontWeight: data.fontWeight === 'bold' ? 'normal' : 'bold' })}><Bold className="h-4 w-4" /></ToggleButton>
-          <ToggleButton active={Boolean(data.italic)} disabled={disabled} label="Itálico" onClick={() => updateData({ italic: !data.italic })}><Italic className="h-4 w-4" /></ToggleButton>
-          <ToggleButton active={underline} disabled={disabled} label="Sublinhado" onClick={() => toggleDecoration('underline')}><Underline className="h-4 w-4" /></ToggleButton>
-          <ToggleButton active={lineThrough} disabled={disabled} label="Tachado" onClick={() => toggleDecoration('lineThrough')}><Strikethrough className="h-4 w-4" /></ToggleButton>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <ToggleButton active={align === 'left'} disabled={disabled} label="Alinhar à esquerda" onClick={() => updateData({ align: 'left' })}><AlignLeft className="h-4 w-4" /></ToggleButton>
-          <ToggleButton active={align === 'center'} disabled={disabled} label="Centralizar" onClick={() => updateData({ align: 'center' })}><AlignCenter className="h-4 w-4" /></ToggleButton>
-          <ToggleButton active={align === 'right'} disabled={disabled} label="Alinhar à direita" onClick={() => updateData({ align: 'right' })}><AlignRight className="h-4 w-4" /></ToggleButton>
-          <select value={verticalAlign} disabled={disabled || textMode === 'auto'} onChange={(event) => updateData({ verticalAlign: event.target.value })} className={cn(FIELD_CLASS, 'w-28 px-2 text-xs')}>
-            <option value="top">Topo</option>
-            <option value="middle">Meio</option>
-            <option value="bottom">Base</option>
-          </select>
-        </div>
+        <PanelField label="Alinhamento vertical">
+          <Select
+            value={verticalAlign}
+            disabled={disabled || textMode === 'auto'}
+            onValueChange={(value) => updateData({ verticalAlign: value })}
+          >
+            <SelectTrigger className={SELECT_TRIGGER_CLASS}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="text-[13px]">
+              <SelectItem value="top">Topo</SelectItem>
+              <SelectItem value="middle">Meio</SelectItem>
+              <SelectItem value="bottom">Base</SelectItem>
+            </SelectContent>
+          </Select>
+        </PanelField>
       </PanelSection>
 
       <PanelSection title="Aparência">
@@ -273,12 +449,8 @@ function ObjectProperties({
   const stroke = String(object.data.stroke ?? '#64748b');
   const strokeWidth = numberValue(typeof object.data.strokeWidth === 'number' ? object.data.strokeWidth : Number(object.data.strokeWidth), 1.5);
   const strokeStyle = String(object.data.strokeStyle ?? (object.type === 'CORRIDOR' ? 'dashed' : 'solid'));
-  const opacity = numberValue(typeof object.data.opacity === 'number' ? object.data.opacity : Number(object.data.opacity), object.type === 'SECTION' ? 0.15 : 1);
+  const opacity = numberValue(typeof object.data.opacity === 'number' ? object.data.opacity : Number(object.data.opacity), object.type === 'SECTION' ? 0 : 1);
   const cornerRadius = numberValue(typeof object.data.cornerRadius === 'number' ? object.data.cornerRadius : Number(object.data.cornerRadius), object.type === 'TABLE' ? 999 : object.data.shape ? 0 : 8);
-  const seatGapTop = numberValue(typeof object.data.seatGapTop === 'number' ? object.data.seatGapTop : Number(object.data.seatGapTop), 8);
-  const seatGapRight = numberValue(typeof object.data.seatGapRight === 'number' ? object.data.seatGapRight : Number(object.data.seatGapRight), 8);
-  const seatGapBottom = numberValue(typeof object.data.seatGapBottom === 'number' ? object.data.seatGapBottom : Number(object.data.seatGapBottom), 8);
-  const seatGapLeft = numberValue(typeof object.data.seatGapLeft === 'number' ? object.data.seatGapLeft : Number(object.data.seatGapLeft), 8);
   const fillEnabled = isAppearanceFlagEnabled(object.data.fillEnabled);
   const strokeEnabled = isAppearanceFlagEnabled(object.data.strokeEnabled);
   const strokeWidthEnabled = isAppearanceFlagEnabled(object.data.strokeWidthEnabled);
@@ -302,7 +474,7 @@ function ObjectProperties({
       </PanelSection>
 
       <PanelSection title="Dimensão">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={PANEL_GRID_CLASS}>
           <PanelField label="X">
             <Input type="number" value={numberValue(object.x)} disabled={disabled} onChange={(event) => onUpdate({ x: toNumber(event.target.value, numberValue(object.x)) })} className={FIELD_CLASS} />
           </PanelField>
@@ -337,81 +509,39 @@ function ObjectProperties({
       </PanelSection>
 
       {object.type === 'CORRIDOR' ? (
-          <PanelSection title="Espaçamento dos assentos">
-          <div className="grid grid-cols-2 gap-3">
-            <PanelField label="Superior">
-              <Input
-                data-testid="corridor-seat-gap-top"
-                type="number"
-                min={0}
-                value={seatGapTop}
-                disabled={disabled}
-                onChange={(event) => updateData({ seatGapTop: Math.max(0, toNumber(event.target.value, seatGapTop)) })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
-            <PanelField label="Direita">
-              <Input
-                data-testid="corridor-seat-gap-right"
-                type="number"
-                min={0}
-                value={seatGapRight}
-                disabled={disabled}
-                onChange={(event) => updateData({ seatGapRight: Math.max(0, toNumber(event.target.value, seatGapRight)) })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
-            <PanelField label="Inferior">
-              <Input
-                data-testid="corridor-seat-gap-bottom"
-                type="number"
-                min={0}
-                value={seatGapBottom}
-                disabled={disabled}
-                onChange={(event) => updateData({ seatGapBottom: Math.max(0, toNumber(event.target.value, seatGapBottom)) })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
-            <PanelField label="Esquerda">
-              <Input
-                data-testid="corridor-seat-gap-left"
-                type="number"
-                min={0}
-                value={seatGapLeft}
-                disabled={disabled}
-                onChange={(event) => updateData({ seatGapLeft: Math.max(0, toNumber(event.target.value, seatGapLeft)) })}
-                className={FIELD_CLASS}
-              />
-            </PanelField>
-          </div>
-          <p className="text-xs text-slate-500">Define a folga mínima entre o corpo do corredor e os assentos.</p>
-        </PanelSection>
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          Corredor visual: não desloca assentos. Interseções entre dois ou mais corredores continuam destacadas no mapa.
+        </p>
       ) : null}
 
       <PanelSection title="Aparência">
-        <PanelField label={`Opacidade ${Math.round(opacity * 100)}%`}>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={Math.round(opacity * 100)}
-            disabled={disabled}
-            onChange={(event) => updateData({ opacity: Number(event.target.value) / 100 })}
-            className="h-9 w-full accent-[color:var(--brand-accent,#6d28d9)]"
-          />
-        </PanelField>
+        {object.type !== 'SECTION' ? (
+          <PanelField label={`Opacidade ${Math.round(opacity * 100)}%`}>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(opacity * 100)}
+              disabled={disabled}
+              onChange={(event) => updateData({ opacity: Number(event.target.value) / 100 })}
+              className="h-9 w-full accent-[color:var(--brand-accent,#6d28d9)]"
+            />
+          </PanelField>
+        ) : null}
 
-        <PanelToggleField
-          label="Preenchimento"
-          enabled={fillEnabled}
-          disabled={disabled}
-          onEnabledChange={(enabled) => updateData({ fillEnabled: enabled })}
-        >
-          <div className="flex gap-2">
-            <input type="color" value={fill} disabled={disabled || !fillEnabled} onChange={(event) => updateData({ fill: event.target.value })} className={COLOR_INPUT_CLASS} />
-            <Input value={fill} disabled={disabled || !fillEnabled} onChange={(event) => updateData({ fill: event.target.value })} className={FIELD_CLASS} />
-          </div>
-        </PanelToggleField>
+        {object.type !== 'SECTION' ? (
+          <PanelToggleField
+            label="Preenchimento"
+            enabled={fillEnabled}
+            disabled={disabled}
+            onEnabledChange={(enabled) => updateData({ fillEnabled: enabled })}
+          >
+            <div className="flex gap-2">
+              <input type="color" value={fill} disabled={disabled || !fillEnabled} onChange={(event) => updateData({ fill: event.target.value })} className={COLOR_INPUT_CLASS} />
+              <Input value={fill} disabled={disabled || !fillEnabled} onChange={(event) => updateData({ fill: event.target.value })} className={FIELD_CLASS} />
+            </div>
+          </PanelToggleField>
+        ) : null}
 
         <PanelToggleField
           label="Traçado"
@@ -425,7 +555,7 @@ function ObjectProperties({
           </div>
         </PanelToggleField>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={PANEL_GRID_CLASS}>
           <PanelToggleField
             label="Espessura"
             enabled={strokeWidthEnabled}
@@ -435,16 +565,17 @@ function ObjectProperties({
             <Input type="number" min={0} value={strokeWidth} disabled={disabled || !strokeWidthEnabled} onChange={(event) => updateData({ strokeWidth: Math.max(0, toNumber(event.target.value, strokeWidth)) })} className={FIELD_CLASS} />
           </PanelToggleField>
           <PanelField label="Estilo">
-            <select
+            <MapPanelSelect
               value={strokeStyle}
               disabled={disabled || !strokeControlsEnabled}
-              onChange={(event) => updateData({ strokeStyle: event.target.value })}
-              className={cn(FIELD_CLASS, 'w-full px-3', !strokeControlsEnabled && 'opacity-50')}
-            >
-              <option value="solid">Sólido</option>
-              <option value="dashed">Tracejado</option>
-              <option value="dotted">Pontilhado</option>
-            </select>
+              className={!strokeControlsEnabled ? 'opacity-50' : undefined}
+              options={[
+                { value: 'solid', label: 'Sólido' },
+                { value: 'dashed', label: 'Tracejado' },
+                { value: 'dotted', label: 'Pontilhado' },
+              ]}
+              onValueChange={(value) => updateData({ strokeStyle: value })}
+            />
           </PanelField>
         </div>
 
@@ -470,10 +601,24 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
   const updateSeat = useEventMapEditorStore((state) => state.updateSeat);
   const updateObject = useEventMapEditorStore((state) => state.updateObject);
   const updateLevel = useEventMapEditorStore((state) => state.updateLevel);
+  const fitArtboardToView = useEventMapEditorStore((state) => state.fitArtboardToView);
   const updateSeatGroup = useEventMapEditorStore((state) => state.updateSeatGroup);
+  const applyTransform = useEventMapEditorStore((state) => state.applyTransform);
   const deleteSeatGroup = useEventMapEditorStore((state) => state.deleteSeatGroup);
+  const deleteSection = useEventMapEditorStore((state) => state.deleteSection);
   const inlineTextEditorActive = useEventMapEditorStore((state) => state.inlineTextEditorActive);
   const disabled = status === 'ARCHIVED';
+  const multiSelectCount = getSelectableItems(selection).length;
+
+  const seatedSector = useMemo(() => {
+    if (!map || multiSelectCount > 1) return null;
+    return resolveSeatedSectorFromSelection(map, selection);
+  }, [map, multiSelectCount, selection]);
+
+  const duplicateValidation = useMemo(() => {
+    if (!map) return { ok: true as const };
+    return validateDuplicateSelection(map, selection);
+  }, [map, selection]);
 
   const selected = useMemo(() => {
     if (!map || selection.length === 0) return null;
@@ -487,7 +632,32 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
     return null;
   }, [map, selection]);
 
-  const multiSelectCount = getSelectableItems(selection).length;
+  function updateLevelArtboard(
+    levelId: string,
+    patch: Partial<Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>>,
+  ) {
+    updateLevel(levelId, patch);
+    fitArtboardToView();
+  }
+
+  function updateSectionObjectData(objectId: string, patch: { label?: string }) {
+    const object = map?.objects.find((entry) => entry.id === objectId);
+    if (!object) return;
+    updateObject(objectId, { data: { ...object.data, ...patch } });
+  }
+
+  function rotateSeatGroupLikeCanvas(groupId: string, nextRotation: number, currentRotation: number) {
+    const angleDelta = shortestRotationDelta(currentRotation, nextRotation);
+    if (Math.abs(angleDelta) < 0.001) return;
+    applyTransform({
+      type: 'ROTATE_SELECTION',
+      payload: {
+        selection: [{ type: 'seatgroup', id: groupId }],
+        angleDelta,
+        mode: 'free',
+      },
+    });
+  }
 
   return (
     <aside
@@ -499,24 +669,39 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
         <p className="text-xs text-slate-500">Configurações do item selecionado</p>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
         {multiSelectCount > 1 ? (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             <p className="font-medium text-slate-900">{multiSelectCount} itens selecionados</p>
             <p className="mt-1 text-xs text-slate-500">
-              Mova, duplique ou exclua em lote. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.
+              {duplicateValidation.ok
+                ? 'Mova, duplique ou exclua em lote. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.'
+                : 'Mova ou exclua em lote. Duplique apenas um grupo de assentos por vez. Use ⌘/Ctrl + G para agrupar e ⌘/Ctrl + U para desagrupar.'}
             </p>
           </div>
         ) : null}
 
-        {!selected?.value ? (
+        {!selected?.value && !seatedSector ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
             Selecione uma prancheta, setor, cadeira ou objeto para editar propriedades.
           </div>
         ) : null}
 
-        {multiSelectCount <= 1 && selected?.type === 'section' && selected.value! ? (
-          <>
+        {multiSelectCount <= 1 && seatedSector ? (
+          <SeatedSectorProperties
+            context={seatedSector}
+            lots={lots}
+            disabled={disabled}
+            onUpdateSection={updateSection}
+            onUpdateSeatGroup={updateSeatGroup}
+            onUpdateSectionObject={updateSectionObjectData}
+            onRotateSeatGroup={rotateSeatGroupLikeCanvas}
+            onDeleteSection={deleteSection}
+          />
+        ) : null}
+
+        {multiSelectCount <= 1 && selected?.type === 'section' && selected.value! && !seatedSector ? (
+          <PanelSection title="Setor">
             <PanelField label="Nome do setor">
               <Input
                 value={selected.value!.name}
@@ -525,37 +710,19 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 className={FIELD_CLASS}
               />
             </PanelField>
-            <PanelField label="Cor">
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={selected.value!.color}
-                  disabled={disabled}
-                  onChange={(event) => updateSection(selected.value!.id, { color: event.target.value })}
-                  className="h-9 w-12 rounded-lg border border-slate-200 bg-white p-1"
-                />
-                <Input
-                  value={selected.value!.color}
-                  disabled={disabled}
-                  onChange={(event) => updateSection(selected.value!.id, { color: event.target.value })}
-                  className={FIELD_CLASS}
-                />
-              </div>
-            </PanelField>
             <PanelField label="Lote vinculado">
-              <select
-                value={selected.value!.lotId ?? ''}
+              <MapPanelSelect
+                value={mapNullableSelectValue(selected.value!.lotId)}
                 disabled={disabled}
-                onChange={(event) => updateSection(selected.value!.id, { lotId: event.target.value || null })}
-                className={cn(FIELD_CLASS, 'w-full px-3')}
-              >
-                <option value="">Sem lote</option>
-                {lots.map((lot) => (
-                  <option key={lot.id} value={lot.id}>
-                    {lot.name}
-                  </option>
-                ))}
-              </select>
+                placeholder="Sem lote"
+                options={[
+                  { value: MAP_PANEL_SELECT_NONE_VALUE, label: 'Sem lote' },
+                  ...lots.map((lot) => ({ value: lot.id, label: lot.name })),
+                ]}
+                onValueChange={(value) =>
+                  updateSection(selected.value!.id, { lotId: mapNullableSelectChange(value) })
+                }
+              />
             </PanelField>
             <PanelField label="Capacidade">
               <Input
@@ -567,7 +734,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 className={FIELD_CLASS}
               />
             </PanelField>
-          </>
+          </PanelSection>
         ) : null}
 
         {multiSelectCount <= 1 && selected?.type === 'seat' && selected.value! ? (
@@ -588,7 +755,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 className={FIELD_CLASS}
               />
             </PanelField>
-            <div className="grid grid-cols-2 gap-3">
+            <div className={PANEL_GRID_CLASS}>
               <PanelField label="Fileira">
                 <Input
                   value={selected.value!.rowLabel ?? ''}
@@ -607,20 +774,19 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
               </PanelField>
             </div>
             <PanelField label="Status">
-              <select
+              <MapPanelSelect
                 value={selected.value!.status}
                 disabled={disabled}
-                onChange={(event) => updateSeat(selected.value!.id, { status: event.target.value as EventSeatDTO['status'] })}
-                className={cn(FIELD_CLASS, 'w-full px-3')}
-              >
-                {EVENT_SEAT_STATUSES.map((statusOption) => (
-                  <option key={statusOption} value={statusOption}>
-                    {EVENT_SEAT_STATUS_LABELS[statusOption]}
-                  </option>
-                ))}
-              </select>
+                options={EVENT_SEAT_STATUSES.map((statusOption) => ({
+                  value: statusOption,
+                  label: EVENT_SEAT_STATUS_LABELS[statusOption],
+                }))}
+                onValueChange={(value) =>
+                  updateSeat(selected.value!.id, { status: value as EventSeatDTO['status'] })
+                }
+              />
             </PanelField>
-            <div className="grid grid-cols-2 gap-3">
+            <div className={PANEL_GRID_CLASS}>
               <PanelField label="X">
                 <Input type="number" value={selected.value!.x} disabled={disabled} onChange={(event) => updateSeat(selected.value!.id, { x: Number(event.target.value) })} className={FIELD_CLASS} />
               </PanelField>
@@ -631,7 +797,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
           </>
         ) : null}
 
-        {multiSelectCount <= 1 && selected?.type === 'seatgroup' && selected.value ? (
+        {multiSelectCount <= 1 && selected?.type === 'seatgroup' && selected.value && !seatedSector ? (
           <>
             <PanelSection title="Grupo de cadeiras">
               <PanelField label="Nome">
@@ -642,7 +808,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                   className={FIELD_CLASS}
                 />
               </PanelField>
-              <div className="grid grid-cols-2 gap-3">
+              <div className={PANEL_GRID_CLASS}>
                 <PanelField label="Fileiras">
                   <Input type="number" min={1} max={50} value={selected.value.rows} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { rows: Math.max(1, toNumber(event.target.value, selected.value!.rows)) })} className={FIELD_CLASS} />
                 </PanelField>
@@ -652,7 +818,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
               </div>
             </PanelSection>
             <PanelSection title="Cadeira">
-              <div className="grid grid-cols-2 gap-3">
+              <div className={PANEL_GRID_CLASS}>
                 <PanelField label="Largura">
                   <Input type="number" min={8} value={selected.value.seatWidth} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatWidth: Math.max(8, toNumber(event.target.value, selected.value!.seatWidth)) })} className={FIELD_CLASS} />
                 </PanelField>
@@ -660,7 +826,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                   <Input type="number" min={8} value={selected.value.seatHeight} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { seatHeight: Math.max(8, toNumber(event.target.value, selected.value!.seatHeight)) })} className={FIELD_CLASS} />
                 </PanelField>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className={PANEL_GRID_CLASS}>
                 <PanelField label="Espaç. horizontal">
                   <Input type="number" min={0} value={selected.value.gapX} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { gapX: Math.max(0, toNumber(event.target.value, selected.value!.gapX)) })} className={FIELD_CLASS} />
                 </PanelField>
@@ -670,7 +836,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
               </div>
             </PanelSection>
             <PanelSection title="Posição">
-              <div className="grid grid-cols-2 gap-3">
+              <div className={PANEL_GRID_CLASS}>
                 <PanelField label="X">
                   <Input type="number" value={selected.value.x} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { x: toNumber(event.target.value, selected.value!.x) })} className={FIELD_CLASS} />
                 </PanelField>
@@ -679,7 +845,19 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 </PanelField>
               </div>
               <PanelField label="Rotação">
-                <Input type="number" value={selected.value.rotation} disabled={disabled} onChange={(event) => updateSeatGroup(selected.value!.id, { rotation: toNumber(event.target.value, 0) })} className={FIELD_CLASS} />
+                <Input
+                  type="number"
+                  value={selected.value.rotation}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    rotateSeatGroupLikeCanvas(
+                      selected.value!.id,
+                      toNumber(event.target.value, 0),
+                      selected.value!.rotation ?? 0,
+                    )
+                  }
+                  className={FIELD_CLASS}
+                />
               </PanelField>
             </PanelSection>
             <Button
@@ -714,7 +892,7 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
 
         {multiSelectCount <= 1 && selected?.type === 'level' && selected.value! ? (
           <>
-            <PanelField label="Nome">
+            <PanelField label="Nome" hint="O nome aparece nas abas públicas do mapa.">
               <Input
                 value={selected.value!.name}
                 disabled={disabled}
@@ -722,16 +900,11 @@ export function MapPropertiesPanel({ lots, status }: { lots: TicketLotDTO[]; sta
                 className={FIELD_CLASS}
               />
             </PanelField>
-            <p className="text-xs text-slate-500">O nome aparece nas abas públicas do mapa.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <PanelField label="Largura">
-                <Input type="number" value={MAP_AREA_WIDTH_PX} disabled className={FIELD_CLASS} />
-              </PanelField>
-              <PanelField label="Altura">
-                <Input type="number" value={MAP_AREA_HEIGHT_PX} disabled className={FIELD_CLASS} />
-              </PanelField>
-            </div>
-            <p className="text-xs text-slate-500">Tamanho fixo de prancheta web desktop.</p>
+            <LevelArtboardProperties
+              level={selected.value!}
+              disabled={disabled}
+              onUpdate={(patch) => updateLevelArtboard(selected.value!.id, patch)}
+            />
           </>
         ) : null}
       </div>

@@ -4,6 +4,7 @@ import {
   CORRIDOR_REFLOW_ITERATIONS,
   buildSmartCorridorDragPreview,
   cloneEventMap,
+  isSmartCorridorSeatReflowEnabled,
   resolveCorridorDragMode,
 } from '@alusa/domain';
 import type { CorridorDragMode } from '@alusa/domain';
@@ -147,6 +148,7 @@ export function useCorridorPreviewSession({
   }, [cancelCorridorPreviewFrame, runCorridorDragPreviewFrame]);
 
   const isSmartCorridorPreviewDrag = useCallback((event: Konva.KonvaEventObject<DragEvent>) => {
+    if (!isSmartCorridorSeatReflowEnabled()) return false;
     if (isCorridorLivePreviewRef.current) return true;
     if (!corridorPreviewBaseMapRef.current) return false;
 

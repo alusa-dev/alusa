@@ -18,26 +18,27 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
-import { updateCostumeAssignment, type CostumeAssignmentDTO, type CostumeDTO, type EventResources } from '../events-service';
+import { updateCostumeAssignment, type CostumeAssignmentDTO, type CostumeDTO, type EventScopedResources } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, nullableString } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
+import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 import { COSTUME_BILLING_OPTIONS } from './costume-billing-ui';
 
 export function EditAssignmentFormDialog({
   eventId,
   assignment,
   costumes,
-  resources,
+  scopedResources,
   open,
   onOpenChange,
 }: {
   eventId: string;
   assignment: CostumeAssignmentDTO;
   costumes: CostumeDTO[];
-  resources?: EventResources;
+  scopedResources?: EventScopedResources;
   open: boolean;
   onOpenChange: (val: boolean) => void;
 }) {
@@ -107,7 +108,7 @@ export function EditAssignmentFormDialog({
                 name="alunoId"
                 defaultValue={assignment.aluno?.id || ""}
                 placeholder="Opcional"
-                options={(resources?.alunos ?? []).map((item) => ({ value: item.id, label: item.nome }))}
+                options={mergeScopedPersonOptions(scopedResources?.alunos ?? [], assignment.aluno)}
               />
             </Field>
             <Field label="Turma">
@@ -115,7 +116,7 @@ export function EditAssignmentFormDialog({
                 name="turmaId"
                 defaultValue={assignment.turma?.id || ""}
                 placeholder="Opcional"
-                options={(resources?.turmas ?? []).map((item) => ({ value: item.id, label: item.nome }))}
+                options={mergeScopedPersonOptions(scopedResources?.turmas ?? [], assignment.turma)}
               />
             </Field>
             <Field label="Tamanho definido">

@@ -19,15 +19,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
-import { createCostumeAssignment, type CostumeDTO, type EventResources } from '../events-service';
+import { createCostumeAssignment, type CostumeDTO, type EventScopedResources } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { EventNativeSelect as NativeSelect } from '../shared/EventNativeSelect';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, nullableString } from '../shared/event-form-utils';
 import { formatCurrencyInput, parseCurrencyInput } from '../shared/event-formatters';
+import { mergeScopedPersonOptions } from '../shared/event-scoped-resource-options';
 import { COSTUME_BILLING_OPTIONS } from './costume-billing-ui';
 
-export function AssignmentFormDialog({ eventId, costumes, resources, trigger }: { eventId: string; costumes: CostumeDTO[]; resources?: EventResources; trigger: React.ReactNode }) {
+export function AssignmentFormDialog({ eventId, costumes, scopedResources, trigger }: { eventId: string; costumes: CostumeDTO[]; scopedResources?: EventScopedResources; trigger: React.ReactNode }) {
 
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -75,12 +76,12 @@ export function AssignmentFormDialog({ eventId, costumes, resources, trigger }: 
     }}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Defina o vínculo, entrega e forma de cobrança.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Vincular figurino</DialogTitle><DialogDescription>Defina o vínculo com alunos ou turmas inscritos neste evento, entrega e forma de cobrança.</DialogDescription></DialogHeader>
         <form action={submit} className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="Figurino"><NativeSelect name="costumeId" required placeholder="Selecione" options={costumes.map((item) => ({ value: item.id, label: item.name }))} /></Field>
-            <Field label="Aluno"><NativeSelect name="alunoId" placeholder="Opcional" options={(resources?.alunos ?? []).map((item) => ({ value: item.id, label: item.nome }))} /></Field>
-            <Field label="Turma"><NativeSelect name="turmaId" placeholder="Opcional" options={(resources?.turmas ?? []).map((item) => ({ value: item.id, label: item.nome }))} /></Field>
+            <Field label="Aluno"><NativeSelect name="alunoId" placeholder="Opcional" options={mergeScopedPersonOptions(scopedResources?.alunos ?? [])} /></Field>
+            <Field label="Turma"><NativeSelect name="turmaId" placeholder="Opcional" options={mergeScopedPersonOptions(scopedResources?.turmas ?? [])} /></Field>
             <Field label="Tamanho definido"><Input name="definedSize" className={FILTER_INPUT_CLASS} /></Field>
             <Field label="Status"><NativeSelect name="status" defaultValue="PENDING" options={Object.entries(EVENT_COSTUME_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => ({ value, label }))} /></Field>
             <Field label="Forma de cobrança">

@@ -50,6 +50,8 @@ type ExportPaidReceiptsPdfInput = {
   aluno: PaidReceiptAluno;
   items: PaidReceiptItem[];
   escola?: PaidReceiptEscola | null;
+  disposition?: 'download' | 'open';
+  targetWindow?: Window | null;
 };
 
 const PAGE = {
@@ -86,6 +88,8 @@ const BRAND = {
   infoText: [31, 74, 82] as const,
   neutralBg: [230, 228, 234] as const,
   neutralText: [56, 50, 66] as const,
+  warningBg: [254, 243, 199] as const,
+  warningText: [146, 64, 14] as const,
   muted: [104, 104, 104] as const,
   muted2: [130, 130, 130] as const,
   stroke: [221, 221, 221] as const,
@@ -95,14 +99,33 @@ const BRAND = {
 
 type PdfDoc = import('jspdf').default;
 type Rgb = readonly [number, number, number];
-type BadgeTone = 'success' | 'brand' | 'info' | 'neutral';
+type BadgeTone = 'success' | 'brand' | 'info' | 'neutral' | 'warning';
 
 const BADGE_TONES: Record<BadgeTone, { bg: Rgb; text: Rgb }> = {
   success: { bg: BRAND.successBg, text: BRAND.successText },
   brand: { bg: BRAND.purpleBg, text: BRAND.purple },
   info: { bg: BRAND.infoBg, text: BRAND.infoText },
   neutral: { bg: BRAND.neutralBg, text: BRAND.neutralText },
+  warning: { bg: BRAND.warningBg, text: BRAND.warningText },
 };
+
+const REFUNDED_RECEIPT_STATUSES = new Set([
+  'REFUNDED',
+  'ESTORNADO',
+  'ESTORNADO_PARCIAL',
+  'PARTIALLY_REFUNDED',
+]);
+
+function resolveReceiptStatusBadge(item: PaidReceiptItem): { label: string; tone: BadgeTone } {
+  const status = (item.pagamento?.status ?? '').toUpperCase();
+  if (status === 'ESTORNADO_PARCIAL' || status === 'PARTIALLY_REFUNDED') {
+    return { label: 'Estornado parcial', tone: 'warning' };
+  }
+  if (REFUNDED_RECEIPT_STATUSES.has(status)) {
+    return { label: 'Estornado', tone: 'warning' };
+  }
+  return { label: 'Pago', tone: 'success' };
+}
 
 let cachedLogoDataUrl: string | null = null;
 
@@ -160,6 +183,10 @@ function ellipsize(value: string | null | undefined, max = 72) {
 }
 
 function resolveTypeLabel(item: PaidReceiptItem) {
+  if (item.chargeType === 'EVENT_TICKET' || item.tipo === 'EVENT_TICKET') {
+    return 'Ingressos';
+  }
+
   if (item.chargeType === 'EVENT_REGISTRATION_FEE' || item.tipo === 'EVENT_REGISTRATION_FEE') {
     return 'Taxa de inscrição';
   }
@@ -252,7 +279,7 @@ async function loadAlusaLogoDataUrl() {
   if (typeof window === 'undefined') return null;
 
   try {
-    const response = await fetch('/brand/alusa-logo-dark.svg');
+    const response = await fetch('/brand/logo-dark.svg');
     const svgText = await response.text();
     const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
     const blobUrl = URL.createObjectURL(blob);
@@ -361,7 +388,15 @@ function drawGridCell(
   );
 }
 
-function drawValorGridCell(doc: PdfDoc, x: number, y: number, width: number, height: number, value: string) {
+function drawValorGridCell(
+  doc: PdfDoc,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  value: string,
+  item: PaidReceiptItem,
+) {
   fillRgb(doc, BRAND.white);
   strokeRgb(doc, BRAND.stroke);
   doc.setLineWidth(0.55);
@@ -376,7 +411,8 @@ function drawValorGridCell(doc: PdfDoc, x: number, y: number, width: number, hei
   const valueFontSize = 9.2;
   const badgeRight = x + width - RECEIPT_LAYOUT.cellPaddingX;
   const badgeY = y + (height - pillHeight) / 2;
-  const badgeWidth = drawAlusaBadge(doc, 'Pago', badgeRight, badgeY, 'success', 'right');
+  const { label, tone } = resolveReceiptStatusBadge(item);
+  const badgeWidth = drawAlusaBadge(doc, label, badgeRight, badgeY, tone, 'right');
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(valueFontSize);
@@ -455,7 +491,7 @@ function drawReceiptCard(
     'Descrição',
     item.description ?? resolveTypeLabel(item),
   );
-  drawValorGridCell(doc, innerX + colWidth, chargeGridY + rowHeight, colWidth, rowHeight, formatCurrency(value));
+  drawValorGridCell(doc, innerX + colWidth, chargeGridY + rowHeight, colWidth, rowHeight, formatCurrency(value), item);
   drawGridCell(doc, innerX, chargeGridY + rowHeight * 2, colWidth, rowHeight, 'Tipo', resolveTypeLabel(item));
   drawGridCell(doc, innerX + colWidth, chargeGridY + rowHeight * 2, colWidth, rowHeight, 'Forma', resolvePaymentLabel(item));
   drawGridCell(doc, innerX, chargeGridY + rowHeight * 3, colWidth, rowHeight, 'Pagamento', formatDate(paidAt));
@@ -503,5 +539,27 @@ export async function exportPaidReceiptsPdf(input: ExportPaidReceiptsPdfInput) {
   });
 
   const fileName = `comprovantes-pagos-${sanitizeFileName(input.aluno.nome)}-${generatedAt.toISOString().slice(0, 10)}.pdf`;
+
+  if (input.disposition === 'open') {
+    const blob = new Blob([doc.output('arraybuffer')], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const targetWindow = input.targetWindow && !input.targetWindow.closed ? input.targetWindow : null;
+
+    if (targetWindow) {
+      targetWindow.location.href = url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      return;
+    }
+
+    const opened = window.open(url, '_blank');
+    if (!opened) {
+      doc.save(fileName);
+      URL.revokeObjectURL(url);
+      return;
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return;
+  }
+
   doc.save(fileName);
 }

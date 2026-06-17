@@ -73,7 +73,8 @@ describe('object-groups', () => {
 
   it('expands drag target to all grouped objects on drag start', () => {
     const objects = [object('a', 'group-1'), object('b', 'group-1'), object('c')];
-    const result = resolveDragTarget('node-a', { type: 'object', id: 'a' }, [], objects);
+    const map = { objects, seats: [], seatGroups: [] };
+    const result = resolveDragTarget('node-a', { type: 'object', id: 'a' }, [], map);
 
     expect(result.nodeIds).toEqual(['node-a', 'node-b']);
     expect(result.selectionItems).toEqual([
@@ -83,6 +84,33 @@ describe('object-groups', () => {
   });
 
   it('preserves seat group nodes when resolving mixed drag targets', () => {
+    const objects = [object('a')];
+    const map = {
+      objects,
+      seats: [],
+      seatGroups: [
+        {
+          id: 'group-1',
+          levelId: 'level-1',
+          name: 'Setor 1',
+          x: 100,
+          y: 100,
+          rotation: 0,
+          rows: 2,
+          columns: 2,
+          seatWidth: 20,
+          seatHeight: 20,
+          gapX: 10,
+          gapY: 10,
+          paddingTop: 8,
+          paddingRight: 8,
+          paddingBottom: 8,
+          paddingLeft: 8,
+          numbering: {},
+          locked: false,
+        },
+      ],
+    };
     const result = resolveDragTarget(
       'node-seatgroup-group-1',
       { type: 'seatgroup', id: 'group-1' },
@@ -90,14 +118,99 @@ describe('object-groups', () => {
         { type: 'seatgroup', id: 'group-1' },
         { type: 'object', id: 'a' },
       ],
-      [object('a')],
+      map,
     );
 
-    expect(result.nodeIds).toEqual(['node-seatgroup-group-1', 'node-a']);
+    expect(result.nodeIds).toEqual(['node-a', 'node-seatgroup-group-1']);
     expect(result.selectionItems).toEqual([
-      { type: 'seatgroup', id: 'group-1' },
       { type: 'object', id: 'a' },
+      { type: 'seatgroup', id: 'group-1' },
     ]);
+  });
+
+  it('collapses grouped seats into the parent seat group drag target', () => {
+    const objects: EventMapObjectDTO[] = [];
+    const map = {
+      objects,
+      seatGroups: [
+        {
+          id: 'group-1',
+          levelId: 'level-1',
+          name: 'Setor 1',
+          x: 100,
+          y: 100,
+          rotation: 0,
+          rows: 2,
+          columns: 2,
+          seatWidth: 20,
+          seatHeight: 20,
+          gapX: 10,
+          gapY: 10,
+          paddingTop: 8,
+          paddingRight: 8,
+          paddingBottom: 8,
+          paddingLeft: 8,
+          numbering: {},
+          locked: false,
+        },
+      ],
+      seats: [
+        {
+          id: 'seat-1',
+          levelId: 'level-1',
+          sectionId: 'section-1',
+          objectId: null,
+          groupId: 'group-1',
+          rowIndex: 0,
+          columnIndex: 0,
+          technicalCode: 'A-1',
+          displayLabel: 'A1',
+          rowLabel: 'A',
+          seatNumber: '1',
+          status: 'AVAILABLE',
+          accessible: false,
+          publicVisible: true,
+          x: 118,
+          y: 118,
+          size: 20,
+          rotation: 0,
+        },
+        {
+          id: 'seat-2',
+          levelId: 'level-1',
+          sectionId: 'section-1',
+          objectId: null,
+          groupId: 'group-1',
+          rowIndex: 0,
+          columnIndex: 1,
+          technicalCode: 'A-2',
+          displayLabel: 'A2',
+          rowLabel: 'A',
+          seatNumber: '2',
+          status: 'AVAILABLE',
+          accessible: false,
+          publicVisible: true,
+          x: 148,
+          y: 118,
+          size: 20,
+          rotation: 0,
+        },
+      ],
+    };
+
+    const result = resolveDragTarget(
+      'node-seatgroup-group-1',
+      { type: 'seatgroup', id: 'group-1' },
+      [
+        { type: 'seatgroup', id: 'group-1' },
+        { type: 'seat', id: 'seat-1' },
+        { type: 'seat', id: 'seat-2' },
+      ],
+      map,
+    );
+
+    expect(result.nodeIds).toEqual(['node-seatgroup-group-1']);
+    expect(result.selectionItems).toEqual([{ type: 'seatgroup', id: 'group-1' }]);
   });
 
   it('validates group candidates and rejects mixed levels', () => {

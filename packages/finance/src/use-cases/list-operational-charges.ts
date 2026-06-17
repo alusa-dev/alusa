@@ -9,6 +9,7 @@ import {
   getEndOfCurrentMonth,
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
+import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -164,6 +165,27 @@ function mapEventMapOrderStatus(status: string): UnifiedChargeItem['status'] {
     default:
       return 'PENDING';
   }
+}
+
+function buildItemDisplayStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  asaasPaymentId?: string | null;
+}): NonNullable<UnifiedChargeItem['displayStatus']> {
+  const resolved = resolveChargeDisplayStatus({
+    localStatus: input.localStatus,
+    asaasStatus: input.asaasStatus ?? null,
+    liquidacaoStatus: input.liquidacaoStatus ?? null,
+    hasAsaasLink: Boolean(input.asaasPaymentId),
+  });
+
+  return {
+    status: resolved.status,
+    label: resolved.label,
+    hint: resolved.hint,
+    variant: resolved.variant,
+  };
 }
 
 function shouldExposeInOperationalQueue(params: {
@@ -387,7 +409,8 @@ async function buildOperationalChargesCollection(
       orderBy: { dueDate: 'asc' },
       select: {
         id: true, contaId: true, externalReference: true, status: true,
-        asaasPaymentId: true, createdAt: true, payerName: true,
+        asaasPaymentId: true, asaasStatus: true, liquidacaoStatus: true,
+        createdAt: true, payerName: true,
         description: true, value: true, dueDate: true, billingType: true,
         standaloneInstallmentPlanId: true, standaloneSubscriptionId: true, familyGroupId: true, invoiceUrl: true,
         customer: {
@@ -582,6 +605,14 @@ async function buildOperationalChargesCollection(
       dueDate: c.vencimento?.toISOString() ?? null,
       billingType: mapBillingType(c.formaPagamento),
       status: normalizeCobrancaStatus(c.status),
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      displayStatus: buildItemDisplayStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        asaasPaymentId: c.asaasPaymentId,
+      }),
       chargeType: inferAcademicChargeType(c.tipo),
       linkStatus: c.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
       asaasPaymentId: c.asaasPaymentId,
@@ -627,6 +658,14 @@ async function buildOperationalChargesCollection(
       dueDate: c.dueDate?.toISOString() ?? null,
       billingType: c.billingType,
       status: normalizeChargeStatus(c.status),
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      displayStatus: buildItemDisplayStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        asaasPaymentId: c.asaasPaymentId,
+      }),
       chargeType,
       linkStatus: c.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
       asaasPaymentId: c.asaasPaymentId,
@@ -671,6 +710,12 @@ async function buildOperationalChargesCollection(
           dueDate: subscription.nextDueDate.toISOString(),
           billingType: subscription.billingType,
           status: 'PENDING',
+          asaasStatus: null,
+          liquidacaoStatus: null,
+          displayStatus: buildItemDisplayStatus({
+            localStatus: 'PENDENTE',
+            asaasPaymentId: null,
+          }),
           chargeType: 'SUBSCRIPTION',
           linkStatus: subscription.asaasSubscriptionId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
           asaasPaymentId: null,
@@ -689,7 +734,9 @@ async function buildOperationalChargesCollection(
       });
 
   const eventItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] = [
-    ...eventFinancialEntries.map((entry) => ({
+    ...eventFinancialEntries.map((entry) => {
+      const unifiedStatus = mapEventFinancialEntryStatus(entry.status);
+      return {
       id: `event-entry:${entry.id}`,
       origin: 'EVENT' as const,
       description: `${entry.event.name} · ${entry.description || entry.category}`,
@@ -697,7 +744,13 @@ async function buildOperationalChargesCollection(
       value: Number(entry.expectedAmount),
       dueDate: entry.dueDate?.toISOString() ?? null,
       billingType: entry.paymentMethod,
-      status: mapEventFinancialEntryStatus(entry.status),
+      status: unifiedStatus,
+      asaasStatus: null,
+      liquidacaoStatus: null,
+      displayStatus: buildItemDisplayStatus({
+        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        asaasPaymentId: entry.asaasPaymentId,
+      }),
       chargeType: 'ONE_TIME' as const,
       linkStatus: entry.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
       asaasPaymentId: entry.asaasPaymentId,
@@ -713,8 +766,11 @@ async function buildOperationalChargesCollection(
       installmentsPaid: null,
       _planId: null,
       _subscriptionKey: null,
-    })),
-    ...eventTicketSales.map((sale) => ({
+    };
+    }),
+    ...eventTicketSales.map((sale) => {
+      const unifiedStatus = mapEventTicketSaleStatus(sale.status);
+      return {
       id: `event-ticket-sale:${sale.id}`,
       origin: 'EVENT' as const,
       description: `${sale.event.name} · ${sale.quantity} ingresso(s)`,
@@ -722,7 +778,13 @@ async function buildOperationalChargesCollection(
       value: Number(sale.totalAmount),
       dueDate: sale.soldAt.toISOString(),
       billingType: sale.paymentMethod,
-      status: mapEventTicketSaleStatus(sale.status),
+      status: unifiedStatus,
+      asaasStatus: null,
+      liquidacaoStatus: null,
+      displayStatus: buildItemDisplayStatus({
+        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        asaasPaymentId: sale.asaasPaymentId,
+      }),
       chargeType: 'ONE_TIME' as const,
       linkStatus: sale.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
       asaasPaymentId: sale.asaasPaymentId,
@@ -738,8 +800,11 @@ async function buildOperationalChargesCollection(
       installmentsPaid: null,
       _planId: null,
       _subscriptionKey: null,
-    })),
-    ...eventMapOrders.map((order) => ({
+    };
+    }),
+    ...eventMapOrders.map((order) => {
+      const unifiedStatus = mapEventMapOrderStatus(order.status);
+      return {
       id: `event-map-order:${order.id}`,
       origin: 'EVENT' as const,
       description: `${order.event.name} · Pedido de ingresso`,
@@ -747,7 +812,13 @@ async function buildOperationalChargesCollection(
       value: Number(order.totalAmount),
       dueDate: order.expiresAt?.toISOString() ?? null,
       billingType: order.paymentMethod ?? order.paymentProvider,
-      status: mapEventMapOrderStatus(order.status),
+      status: unifiedStatus,
+      asaasStatus: null,
+      liquidacaoStatus: null,
+      displayStatus: buildItemDisplayStatus({
+        localStatus: unifiedChargeStatusToLocal(unifiedStatus),
+        asaasPaymentId: order.asaasPaymentId,
+      }),
       chargeType: 'ONE_TIME' as const,
       linkStatus: order.asaasPaymentId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
       asaasPaymentId: order.asaasPaymentId,
@@ -764,7 +835,8 @@ async function buildOperationalChargesCollection(
       installmentsPaid: null,
       _planId: null,
       _subscriptionKey: null,
-    })),
+    };
+    }),
   ].filter((item) => !tipoFilter?.length || tipoFilter.includes(item.tipo ?? ''));
 
   // =================================================================

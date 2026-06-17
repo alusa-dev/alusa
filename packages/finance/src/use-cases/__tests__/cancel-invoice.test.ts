@@ -61,7 +61,7 @@ describe('cancelInvoice', () => {
     vi.mocked(prisma.invoice.findFirst).mockResolvedValueOnce({
       id: 'i1',
       asaasInvoiceId: 'inv_1',
-      status: 'REQUESTED',
+      status: 'SCHEDULED',
     } as never);
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x' } as never);

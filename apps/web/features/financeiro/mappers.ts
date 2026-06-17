@@ -7,11 +7,14 @@ import {
   financeiroPagamentoAlunoCobrancasResultDTOSchema,
   financeiroPagamentoAlunoHistoricoResultDTOSchema,
   financeiroPagamentoDTOSchema,
+  financeiroPagamentoPessoaHistoricoResultDTOSchema,
+  financeiroPagamentoPessoaIndexItemDTOSchema,
   financeiroPagamentoSummaryItemDTOSchema,
   financeiroSaldoResultDTOSchema,
   listFinanceiroLancamentoCategoriasResultDTOSchema,
 } from './dtos';
 import { withResolvedAvatarFields } from '@/lib/media/avatar-url';
+import { maskCpf as privacyMaskCpf } from '@alusa/shared';
 
 function toIsoString(value: Date | string | null | undefined) {
   if (!value) return null;
@@ -46,6 +49,25 @@ export function mapFinanceiroPagamentoSummaryItemToDTO(record: Record<string, un
   return financeiroPagamentoSummaryItemDTOSchema.parse({
     ...record,
     ...resolved,
+  });
+}
+
+export function mapFinanceiroPagamentoPessoaIndexItemToDTO(record: Record<string, unknown>) {
+  const id = String(record.id);
+  const tipo = record.tipo === 'RESPONSAVEL' ? 'responsavel' : 'aluno';
+  const resolved = withResolvedAvatarFields(tipo, {
+    id,
+    foto: (record.foto as string | null | undefined) ?? null,
+  });
+  const cpfOriginal = (record.cpf as string | null | undefined) ?? null;
+  const cpfMasked = cpfOriginal ? privacyMaskCpf(cpfOriginal) : null;
+
+  return financeiroPagamentoPessoaIndexItemDTOSchema.parse({
+    ...record,
+    ...resolved,
+    alunosVinculados: [],
+    cpfMasked,
+    cpf: cpfMasked,
   });
 }
 
@@ -96,6 +118,34 @@ export function mapFinanceiroPagamentoAlunoCobrancasResultToDTO(record: Record<s
       ? {
           ...data,
           aluno: resolvedAluno,
+        }
+      : data,
+  });
+}
+
+export function mapFinanceiroPagamentoPessoaHistoricoResultToDTO(record: Record<string, unknown>) {
+  const data = record.data as Record<string, unknown> | undefined;
+  const pessoa = data?.pessoa as Record<string, unknown> | undefined;
+  const resolvedPessoa =
+    pessoa && typeof pessoa.id === 'string'
+      ? {
+          ...pessoa,
+          ...withResolvedAvatarFields(
+            pessoa.tipo === 'RESPONSAVEL' ? 'responsavel' : 'aluno',
+            {
+              id: pessoa.id,
+              foto: (pessoa.foto as string | null | undefined) ?? null,
+            },
+          ),
+        }
+      : pessoa;
+
+  return financeiroPagamentoPessoaHistoricoResultDTOSchema.parse({
+    ...record,
+    data: data
+      ? {
+          ...data,
+          pessoa: resolvedPessoa,
         }
       : data,
   });

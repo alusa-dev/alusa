@@ -1,6 +1,9 @@
-import type { EventMapObjectDTO } from '../types/event-map-types.js';
+import type { EventMapDTO, EventMapObjectDTO } from '../types/event-map-types.js';
 
+import { resolveCanvasSelection } from '../operations/selection/selection-resolver.js';
 import { getSelectableItems, selectionKey, type MapSelectionItem } from '../selection/selection-utils.js';
+
+export type DragTargetMap = Pick<EventMapDTO, 'objects' | 'seats' | 'seatGroups'>;
 
 export const OBJECT_GROUP_ID_KEY = 'groupId';
 export const OBJECT_GROUP_LABEL_KEY = 'groupLabel';
@@ -233,17 +236,18 @@ export function resolveDragTarget(
   nodeId: string,
   item: MapSelectionItem | undefined,
   selection: MapSelectionItem[],
-  objects: EventMapObjectDTO[],
+  map: DragTargetMap,
 ) {
-  const expandedSelection = expandObjectSelectionItems(getSelectableItems(selection), objects);
-  const expandedNodeIds = expandedSelection.flatMap((entry) => {
-    if (entry.type === 'object' || entry.type === 'seat') return [`node-${entry.id}`];
-    if (entry.type === 'seatgroup') return [`node-seatgroup-${entry.id}`];
-    return [];
-  });
+  const objects = map.objects;
+  const resolved = resolveCanvasSelection(map as EventMapDTO, selection);
+  const resolvedNodeIds = [
+    ...resolved.objectIds.map((id) => `node-${id}`),
+    ...resolved.seatIds.map((id) => `node-${id}`),
+    ...resolved.seatGroupIds.map((id) => `node-seatgroup-${id}`),
+  ];
 
-  if (item && expandedNodeIds.includes(nodeId) && expandedNodeIds.length > 1) {
-    return { selectionItems: expandedSelection, nodeIds: expandedNodeIds };
+  if (item && resolvedNodeIds.includes(nodeId) && resolvedNodeIds.length > 1) {
+    return { selectionItems: resolved.selection, nodeIds: resolvedNodeIds };
   }
 
   if (item?.type === 'object') {

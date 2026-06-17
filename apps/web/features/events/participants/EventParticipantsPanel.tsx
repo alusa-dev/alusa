@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import DataTable from '@/components/layout/DataTable';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -18,7 +17,7 @@ import {
   type SchoolEventDTO,
 } from '../events-service';
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
-import { EventTablePanel as TablePanel } from '../shared/EventTablePanel';
+import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { ParticipantActions } from './ParticipantActions';
 import { ParticipantPaymentMethod, ParticipantPaymentStatusBadge } from './ParticipantPaymentBadge';
@@ -47,6 +46,7 @@ export function EventParticipantsPanel({
     queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId] });
     queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) });
     queryClient.invalidateQueries({ queryKey: eventQueryKeys.finance(eventId) });
+    queryClient.invalidateQueries({ queryKey: eventQueryKeys.scopedResources(eventId) });
   };
 
   const unregisterMutation = useMutation({
@@ -87,11 +87,8 @@ export function EventParticipantsPanel({
         <RegisterParticipantDialog eventId={eventId} event={event} open={isRegisterOpen} onOpenChange={setIsRegisterOpen} />
       </CardHeader>
       <CardContent className="p-0">
-        <TablePanel>
-          <DataTable
-            paginate={true}
-            pageSize={5}
-            columns={[
+        <EventPaginatedDataTable
+          columns={[
               {
                 id: 'student',
                 header: 'Aluno',
@@ -154,10 +151,9 @@ export function EventParticipantsPanel({
             data={participants}
             rowKey={(part) => part.id}
             loading={loading}
-            onRowClick={(part) => router.push('/events/' + eventId + '/participants/' + part.id)}
-            emptyMessage={<EmptyState title="Nenhum aluno inscrito." description="Inscreva manualmente os alunos participantes do evento." />}
-          />
-        </TablePanel>
+          onRowClick={(part) => router.push('/events/' + eventId + '/participants/' + part.id)}
+          emptyMessage={<EmptyState title="Nenhum aluno inscrito." description="Inscreva manualmente os alunos participantes do evento." />}
+        />
       </CardContent>
 
       <ReactivateParticipantDialog

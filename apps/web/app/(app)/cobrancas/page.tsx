@@ -25,7 +25,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, ChevronLeft, ChevronRight } from '@/components/icons/icons';
 import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import dynamic from 'next/dynamic';
@@ -40,7 +41,12 @@ import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-const formatDate = (dateStr: string) => new Date(dateStr || '').toLocaleDateString('pt-BR');
+const formatDate = (dateStr?: string | null) => {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleDateString('pt-BR');
+};
 
 const getTipoLabel = (tipo: string) => {
   const labels: Record<string, string> = {
@@ -60,6 +66,12 @@ type Cobranca = {
   description?: string | null;
   tipo?: string;
   status?: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   valor: number;
   vencimento?: string;
   payerName?: string;
@@ -139,6 +151,7 @@ export default function CobrancasTodasPage() {
             description: (item.description as string | null | undefined) ?? null,
             tipo: item.tipo as string | undefined,
             status: item.status as string | undefined,
+            displayStatus: item.displayStatus as Cobranca['displayStatus'],
             valor: (item.value as number) ?? 0,
             vencimento: item.dueDate as string | undefined,
             payerName: item.payerName as string | undefined,
@@ -160,6 +173,7 @@ export default function CobrancasTodasPage() {
           description: (item.description as string | null | undefined) ?? null,
           tipo: item.tipo as string | undefined,
           status: item.status as string | undefined,
+          displayStatus: item.displayStatus as Cobranca['displayStatus'],
           valor: (item.valor as number) ?? 0,
           vencimento: item.vencimento as string | undefined,
           payerName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
@@ -339,18 +353,35 @@ export default function CobrancasTodasPage() {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
                   const isSubscriptionGroup = cobranca.isGroup && cobranca.groupType === 'SUBSCRIPTION';
-                  const badgeStatus = (cobranca.status ?? 'PENDENTE') as StatusType;
+                  const displayStatus =
+                    cobranca.displayStatus ??
+                    (cobranca.status
+                      ? buildChargeDisplayStatusDTO({ localStatus: cobranca.status })
+                      : undefined);
 
                   const handleRowClick = () => {
                     if (isInstallmentGroup && cobranca.groupId) {
                       router.push(`/cobrancas/parcelamentos/${cobranca.groupId}`);
                     } else if (isSubscriptionGroup && cobranca.groupId) {
                       router.push(`/cobrancas/assinaturas/${cobranca.groupId}`);
-                    } else if (cobranca.origin === 'EVENT') {
-                      router.push(cobranca.eventId ? `/events/${cobranca.eventId}` : '/events');
                     } else {
                       router.push(`/cobrancas/${cobranca.id}`);
                     }
+                  };
+
+                  const actionMenuCobranca = {
+                    id: cobranca.id,
+                    status: (cobranca.status ?? '') as string,
+                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
+                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
+                    matriculaId: cobranca.matriculaId ?? '',
+                    formaPagamento: cobranca.formaPagamento ?? undefined,
+                    tipo: cobranca.tipo ?? undefined,
+                    origin: cobranca.origin,
+                    valor: cobranca.valor ?? undefined,
+                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
+                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
+                    atrasado: isOverdue,
                   };
 
                   return (
@@ -412,21 +443,9 @@ export default function CobrancasTodasPage() {
                             onKeyDown={(e) => e.stopPropagation()}
                           >
                             <div className="shrink-0">
-                              {!cobranca.isGroup && cobranca.origin !== 'EVENT' ? (
+                              {!cobranca.isGroup ? (
                                 <CobrancaActionsMenu
-                                  cobranca={{
-                                    id: cobranca.id,
-                                    status: (cobranca.status ?? '') as string,
-                                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
-                                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
-                                    matriculaId: cobranca.matriculaId ?? '',
-                                    formaPagamento: cobranca.formaPagamento ?? undefined,
-                                    tipo: cobranca.tipo ?? undefined,
-                                    valor: cobranca.valor ?? undefined,
-                                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
-                                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
-                                    atrasado: isOverdue,
-                                  }}
+                                  cobranca={actionMenuCobranca}
                                   onPrint={() => handlePrint(cobranca)}
                                   onActionComplete={() => refresh()}
                                   variant="icon"
@@ -434,11 +453,13 @@ export default function CobrancasTodasPage() {
                               ) : null}
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
-                              <Badge
-                                status={badgeStatus}
-                                size="sm"
-                                className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
-                              />
+                              {displayStatus ? (
+                                <ChargeDisplayStatusBadge
+                                  displayStatus={displayStatus}
+                                  size="sm"
+                                  className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
+                                />
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -477,28 +498,18 @@ export default function CobrancasTodasPage() {
                               </div>
                             </div>
                             <div className="col-span-1 flex justify-center">
-                              <Badge status={badgeStatus} size="sm" />
+                              {displayStatus ? (
+                                <ChargeDisplayStatusBadge displayStatus={displayStatus} size="sm" />
+                              ) : null}
                             </div>
                             <div
                               className="col-span-1 flex justify-center"
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={(e) => e.stopPropagation()}
                             >
-                              {!cobranca.isGroup && cobranca.origin !== 'EVENT' && (
+                              {!cobranca.isGroup && (
                                 <CobrancaActionsMenu
-                                  cobranca={{
-                                    id: cobranca.id,
-                                    status: (cobranca.status ?? '') as string,
-                                    asaasPaymentId: cobranca.asaasPaymentId ?? undefined,
-                                    invoiceUrl: cobranca.invoiceUrl ?? undefined,
-                                    matriculaId: cobranca.matriculaId ?? '',
-                                    formaPagamento: cobranca.formaPagamento ?? undefined,
-                                    tipo: cobranca.tipo ?? undefined,
-                                    valor: cobranca.valor ?? undefined,
-                                    isInstallmentPayment: cobranca.tipo === 'PARCELADA',
-                                    isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
-                                    atrasado: isOverdue,
-                                  }}
+                                  cobranca={actionMenuCobranca}
                                   onPrint={() => handlePrint(cobranca)}
                                   onActionComplete={() => refresh()}
                                   variant="icon"

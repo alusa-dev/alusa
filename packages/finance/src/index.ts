@@ -6,6 +6,7 @@ import { registerAsaasHooksIntegration as initializeAsaasHooksIntegration } from
 export * from './core';
 export * from './billing';
 export * from './policies';
+export * from './payment-history';
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,8 +125,21 @@ export {
   getCobrancaStatusBadge as getCobrancaBadgeConfig,
   getChargeStatusBadge as getChargeBadgeConfig,
 } from './mappers/charge-status';
+export {
+  ASAAS_PAYMENT_STATUS_VALUES,
+  getAsaasDisplayStatus,
+  getChargeDisplayStatusLabel,
+  getChargeDisplayStatusVariant,
+  isAsaasPaymentStatus,
+  resolveChargeDisplayStatus,
+} from './mappers/charge-status';
 export type {
+  AsaasPaymentStatus as AsaasDisplayPaymentStatus,
   BadgeStatusType,
+  ChargeDisplayStatus,
+  ChargeDisplayStatusCode,
+  ChargeDisplayStatusVariant,
+  ResolveChargeDisplayStatusInput,
   StatusBadgeConfig as ChargeBadgeConfig,
 } from './mappers/charge-status';
 
@@ -345,6 +359,7 @@ export type { ReconcileAcademicChargesResult } from './use-cases/reconcile-acade
 export {
   connectExternalAsaasAccount,
   getExternalAsaasOnboardingState,
+  markExternalAsaasApiKeyUnhealthy,
 } from './use-cases/external-asaas';
 export type { ConnectExternalAsaasAccountResult } from './use-cases/external-asaas/connect-external-asaas-account';
 export type { ExternalAsaasOnboardingState } from './use-cases/external-asaas/get-external-asaas-onboarding-state';
@@ -797,6 +812,143 @@ export type {
   ListInvoicesOutput,
 } from './use-cases/list-invoices';
 
+// Fiscal invoice settings & charge operations
+export {
+  getFiscalInvoiceSettings,
+  getFiscalMunicipalOptions,
+  syncFiscalSettingsFromProvider,
+  configureFiscalNationalPortal,
+} from './use-cases/get-fiscal-invoice-settings';
+export type {
+  FiscalInvoiceSettingsOutput,
+  FiscalServiceOutput,
+  GetFiscalInvoiceSettingsError,
+} from './use-cases/get-fiscal-invoice-settings';
+export {
+  saveFiscalInvoiceSettings,
+  getFiscalReadiness,
+} from './use-cases/save-fiscal-invoice-settings';
+export {
+  saveFiscalCoreSettings,
+} from './use-cases/save-fiscal-core-settings';
+export type {
+  SaveFiscalCoreSettingsInput,
+  SaveFiscalCoreSettingsOutput,
+  SaveFiscalCoreSettingsError,
+} from './use-cases/save-fiscal-core-settings';
+export type {
+  SaveFiscalInvoiceSettingsInput,
+  SaveFiscalInvoiceSettingsOutput,
+  SaveFiscalInvoiceSettingsError,
+  SaveFiscalInvoiceSettingsFailure,
+} from './use-cases/save-fiscal-invoice-settings';
+export {
+  FISCAL_WIZARD_STEP_LABELS,
+  validateFiscalWizardStep,
+  validateFiscalCoreSettingsDraft,
+  validateFiscalSettingsDraft,
+} from './fiscal/fiscal-settings-validation';
+export type {
+  FiscalWizardStepId,
+  FiscalSettingsDraft,
+  FiscalSettingsValidationIssue,
+  FiscalSettingsValidationContext,
+} from './fiscal/fiscal-settings-validation';
+export {
+  createFiscalService,
+  updateFiscalService,
+  deleteFiscalService,
+  listFiscalServices,
+  listFiscalReferenceCodes,
+  listProviderMunicipalServices,
+  listProviderNbsCodes,
+} from './use-cases/manage-fiscal-services';
+export type {
+  FiscalServiceInput,
+  ListFiscalReferenceCodesInput,
+  ListMunicipalServicesInput,
+  ListNbsCodesInput,
+  ManageFiscalServiceError,
+} from './use-cases/manage-fiscal-services';
+export { scheduleChargeInvoice } from './use-cases/schedule-charge-invoice';
+export type {
+  ScheduleChargeInvoiceInput,
+  ScheduleChargeInvoiceOutput,
+  ScheduleChargeInvoiceError,
+} from './use-cases/schedule-charge-invoice';
+export { emitChargeInvoice } from './use-cases/emit-charge-invoice';
+export type {
+  EmitChargeInvoiceInput,
+  EmitChargeInvoiceOutput,
+  EmitChargeInvoiceError,
+} from './use-cases/emit-charge-invoice';
+export { cancelChargeInvoice } from './use-cases/cancel-charge-invoice';
+export type {
+  CancelChargeInvoiceInput,
+  CancelChargeInvoiceOutput,
+  CancelChargeInvoiceError,
+} from './use-cases/cancel-charge-invoice';
+export { handleChargeInvoicePaymentEvent } from './use-cases/handle-charge-invoice-payment-event';
+export type {
+  HandleChargeInvoicePaymentEventInput,
+  HandleChargeInvoicePaymentEventOutput,
+} from './use-cases/handle-charge-invoice-payment-event';
+export { syncSubscriptionFiscalSettings } from './use-cases/sync-subscription-fiscal-settings';
+export type {
+  SyncSubscriptionFiscalSettingsInput,
+  SyncSubscriptionFiscalSettingsOutput,
+  SyncSubscriptionFiscalSettingsError,
+} from './use-cases/sync-subscription-fiscal-settings';
+export { authorizeChargeInvoice } from './use-cases/authorize-charge-invoice';
+export type {
+  AuthorizeChargeInvoiceInput,
+  AuthorizeChargeInvoiceOutput,
+  AuthorizeChargeInvoiceError,
+} from './use-cases/authorize-charge-invoice';
+export {
+  syncInvoiceFromProvider,
+  getChargeInvoiceByCobranca,
+} from './use-cases/sync-invoice-from-provider';
+export { reconcileStaleInvoices } from './use-cases/reconcile-stale-invoices';
+export type {
+  ReconcileStaleInvoicesInput,
+  ReconcileStaleInvoicesOutput,
+} from './use-cases/reconcile-stale-invoices';
+export { getChargeInvoiceDetail } from './use-cases/get-charge-invoice-detail';
+export type {
+  ChargeInvoiceDetailOutput,
+  GetChargeInvoiceDetailError,
+} from './use-cases/get-charge-invoice-detail';
+export type {
+  SyncInvoiceFromProviderInput,
+  SyncInvoiceFromProviderOutput,
+  SyncInvoiceFromProviderError,
+} from './use-cases/sync-invoice-from-provider';
+export { handleInvoiceWebhook } from './webhooks/invoice-webhook-handler';
+export type { InvoiceWebhookPayload, InvoiceWebhookResult } from './webhooks/invoice-webhook-handler';
+export {
+  buildInvoiceDescriptionFromTemplate,
+  DEFAULT_INVOICE_DESCRIPTION_TEMPLATE,
+  INVOICE_TEMPLATE_VARIABLES,
+} from './fiscal/invoice-description-template';
+export type { InvoiceDescriptionContext } from './fiscal/invoice-description-template';
+export {
+  mapAsaasInvoiceStatusToInternal,
+  isAllowedInvoiceStatusTransition,
+} from './mappers/invoice-status.mapper';
+export { resolveChargeFromRouteRef } from './fiscal/resolve-charge-route-ref';
+export type { ChargeRouteRef } from './fiscal/resolve-charge-route-ref';
+export {
+  evaluateChargeInvoiceEligibility,
+  isInvoicePaymentPaidEvent,
+  isInvoicePaymentSensitiveEvent,
+} from './fiscal/charge-invoice-eligibility';
+export type {
+  ChargeInvoiceEligibility,
+  ChargeInvoiceEligibilityReason,
+  ChargeInvoiceEligibilitySeverity,
+} from './fiscal/charge-invoice-eligibility';
+
 // Refactor Billing v2 - FASE 5 (mutações alinhadas ao Asaas)
 export { updateCharge } from './use-cases/update-charge';
 export type { UpdateChargeInput, UpdateChargeResult } from './use-cases/update-charge';
@@ -807,6 +959,27 @@ export type {
   MarkChargeAsPaidInput,
   MarkChargeAsPaidResult,
 } from './use-cases/mark-charge-as-paid';
+export {
+  parseOperationalChargeId,
+  resolveOperationalChargePayment,
+  mapOperationalStatusToCobrancaDisplay,
+} from './use-cases/resolve-operational-charge-payment';
+export type {
+  OperationalChargeKind,
+  ResolvedOperationalChargePayment,
+} from './use-cases/resolve-operational-charge-payment';
+export {
+  reconcileOperationalChargeLinks,
+} from './use-cases/reconcile-operational-charge-links';
+export type {
+  ReconcileOperationalChargeLinksInput,
+  ReconcileOperationalChargeLinksResult,
+} from './use-cases/reconcile-operational-charge-links';
+export { backfillAsaasPaymentSnapshots } from './use-cases/backfill-asaas-payment-snapshots';
+export type {
+  BackfillAsaasPaymentSnapshotsInput,
+  BackfillAsaasPaymentSnapshotsResult,
+} from './use-cases/backfill-asaas-payment-snapshots';
 
 // Admin tools
 export { testarConexaoAsaas } from './use-cases/admin/test-asaas-connection';

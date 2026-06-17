@@ -19,6 +19,10 @@ import {
   shouldFetchStandaloneAsaasDetail,
 } from '@/src/server/finance/asaas-payment-detail-policy';
 import { recordAsaasReadDecision } from '@/src/server/finance/asaas-read-observability';
+import {
+  resolveAcademicDisplayedStatus,
+} from '@/src/server/finance/academic-payment-history';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { jsonNoStore } from '@/lib/http-security';
 
 function resolveInvoiceUrl(value: unknown): string | null {
@@ -99,6 +103,8 @@ export async function GET(
       statusUpdatedAt: Date;
       billingType: string | null;
       asaasPaymentId: string | null;
+      asaasStatus: string | null;
+      liquidacaoStatus: import('@prisma/client').LiquidacaoStatus;
       invoiceUrl: string | null;
       payerName: string | null;
       description: string | null;
@@ -133,6 +139,8 @@ export async function GET(
             statusUpdatedAt: true,
             billingType: true,
             asaasPaymentId: true,
+            asaasStatus: true,
+            liquidacaoStatus: true,
             invoiceUrl: true,
             payerName: true,
             description: true,
@@ -197,12 +205,28 @@ export async function GET(
 
     // 6. Formatar e retornar
     const response = cobranca
-      ? {
+      ? (() => {
+          const localStatus = resolveAcademicDisplayedStatus({
+            localCobrancaStatus: cobranca.status,
+            remotePaymentStatus: cobranca.asaasStatus,
+            dueDate: cobranca.vencimento,
+          });
+          const displayStatus = buildChargeDisplayStatusDTO({
+            localStatus,
+            asaasStatus: cobranca.asaasStatus,
+            liquidacaoStatus: cobranca.liquidacaoStatus,
+            hasAsaasLink: Boolean(cobranca.asaasPaymentId || cobranca.asaasStatus || cobranca.liquidacaoStatus),
+          });
+
+          return {
           id: cobranca.id,
           tipo: cobranca.tipo,
           valor: Number(cobranca.valor),
           vencimento: cobranca.vencimento.toISOString(),
-          status: cobranca.status,
+          status: localStatus,
+          displayStatus,
+          asaasStatus: cobranca.asaasStatus,
+          liquidacaoStatus: cobranca.liquidacaoStatus,
           formaPagamento: cobranca.formaPagamento,
           asaasId: cobranca.asaasId,
           asaasPaymentId: cobranca.asaasPaymentId,
@@ -246,13 +270,26 @@ export async function GET(
             status: p.status,
             formaPagamento: p.formaPagamento,
           })),
-        }
-      : {
+        };
+        })()
+      : (() => {
+          const localStatus = mapChargeStatusToPortalStatus(standaloneCharge!.status, standaloneCharge!.dueDate);
+          const displayStatus = buildChargeDisplayStatusDTO({
+            localStatus: standaloneCharge!.status,
+            asaasStatus: standaloneCharge!.asaasStatus,
+            liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
+            hasAsaasLink: Boolean(standaloneCharge!.asaasPaymentId),
+          });
+
+          return {
           id: standaloneCharge!.id,
           tipo: 'AVULSA',
           valor: Number(standaloneCharge!.value ?? 0),
           vencimento: (standaloneCharge!.dueDate ?? new Date()).toISOString(),
-          status: mapChargeStatusToPortalStatus(standaloneCharge!.status, standaloneCharge!.dueDate),
+          status: localStatus,
+          displayStatus,
+          asaasStatus: standaloneCharge!.asaasStatus,
+          liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
           formaPagamento: standaloneCharge!.billingType,
           asaasId: standaloneCharge!.asaasPaymentId,
           asaasPaymentId: standaloneCharge!.asaasPaymentId,
@@ -275,6 +312,7 @@ export async function GET(
           },
           pagamentos: [],
         };
+        })();
 
     return jsonNoStore(
       portalFinanceiroDetailDTOSchema.parse(mapPortalFinanceiroDetailToDTO(response)),

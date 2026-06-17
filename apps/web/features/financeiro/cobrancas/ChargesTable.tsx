@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
-import { Badge, type StatusType } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 
 // Helper para formatar tipo de cobrança
@@ -20,6 +20,12 @@ interface ChargeRow {
   id: string;
   tipo: string;
   status: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   valor: number;
   vencimento: string | null;
   aluno: { id: string; nome: string };
@@ -217,7 +223,9 @@ export default function ChargesTable() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge status={r.status as StatusType} size="sm" />
+                    {r.displayStatus ? (
+                      <ChargeDisplayStatusBadge displayStatus={r.displayStatus} size="sm" />
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <CobrancaActionsMenu

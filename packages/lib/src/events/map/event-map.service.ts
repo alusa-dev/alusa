@@ -1,9 +1,15 @@
+import { getPayment } from '@alusa/asaas';
 import { FinanceWebhookSideEffectStatus, Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
+  canCreateEventMap,
   canEditEventMapDraft,
+  countTicketLotCapacitiesFromMap,
   decideEventMapDeletion,
   isPublicEventMapVisible,
+  MAX_EVENT_MAPS_PER_EVENT,
+  resolvePublishedMapReplacement,
+  sortEventMapsForDisplay,
   validatePublicSeatSelection,
   validateEventMapStatusTransition,
   validatePublishableEventMap,
@@ -19,6 +25,7 @@ import type {
   PublicCheckoutInput,
   PublicSeatReservationInput,
   UpdateEventMapDraftInput,
+  UpdateEventMapSettingsInput,
 } from './event-map.schema';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -42,6 +49,13 @@ const eventMapInclude = {
 } satisfies Prisma.EventMapInclude;
 
 type EventMapRecord = Prisma.EventMapGetPayload<{ include: typeof eventMapInclude }>;
+
+const eventMapListInclude = {
+  ...eventMapInclude,
+  _count: { select: { orders: true } },
+} satisfies Prisma.EventMapInclude;
+
+type EventMapListRecord = Prisma.EventMapGetPayload<{ include: typeof eventMapListInclude }>;
 
 function toNumber(value: Prisma.Decimal | number | string | null | undefined): number {
   if (value == null) return 0;
@@ -96,6 +110,16 @@ function publicMapPath(publicSlug: string | null | undefined) {
 
 function publicOrderTicketsPath(orderId: string, accessToken: string) {
   return `/api/public/event-map-orders/${orderId}/tickets?token=${encodeURIComponent(accessToken)}`;
+}
+
+function publicOrderTicketsHtmlPath(
+  publicSlug: string | null | undefined,
+  orderId: string,
+  accessToken: string,
+) {
+  const slug = publicSlug?.trim();
+  const query = `token=${encodeURIComponent(accessToken)}`;
+  return slug ? `/m/${slug}/pedido/${orderId}/ingressos?${query}` : null;
 }
 
 function publicOrderStatusPath(publicSlug: string | null | undefined, orderId: string, accessToken: string) {
@@ -195,7 +219,7 @@ async function getMapRecordOrThrow(db: DbClient, contaId: string, eventId: strin
   return map;
 }
 
-function mapEventMap(record: EventMapRecord) {
+function mapEventMap(record: EventMapRecord | EventMapListRecord) {
   return {
     id: record.id,
     contaId: record.contaId,
@@ -309,21 +333,26 @@ function mapEventMap(record: EventMapRecord) {
       sections: record.sections.length,
       seats: record.seats.length,
       availableSeats: record.seats.filter((seat) => seat.status === 'AVAILABLE' && seat.publicVisible).length,
+      orders: '_count' in record && record._count ? record._count.orders : 0,
     },
   };
 }
 
 export type EventMapDTO = ReturnType<typeof mapEventMap>;
 
+function operationalEventMapsWhere(contaId: string, eventId: string): Prisma.EventMapWhereInput {
+  return { contaId, eventId, status: { not: 'ARCHIVED' } };
+}
+
 export async function listEventMaps(ctx: Pick<EventsContext, 'contaId'>, eventId: string) {
   await getEventForMapOrThrow(prisma, ctx.contaId, eventId);
   const maps = await prisma.eventMap.findMany({
-    where: { contaId: ctx.contaId, eventId },
-    include: eventMapInclude,
+    where: operationalEventMapsWhere(ctx.contaId, eventId),
+    include: eventMapListInclude,
     orderBy: [{ updatedAt: 'desc' }],
   });
 
-  return maps.map(mapEventMap);
+  return sortEventMapsForDisplay(maps.map(mapEventMap));
 }
 
 export async function getEventMap(ctx: Pick<EventsContext, 'contaId'>, eventId: string, mapId: string) {
@@ -334,6 +363,15 @@ export async function createEventMap(ctx: EventsContext, eventId: string, input:
   return prisma.$transaction(async (tx) => {
     const event = await getEventForMapOrThrow(tx, ctx.contaId, eventId);
     assertNumberedSeatEvent(event);
+
+    const mapCount = await tx.eventMap.count({ where: operationalEventMapsWhere(ctx.contaId, eventId) });
+    if (!canCreateEventMap(mapCount)) {
+      throw new EventsError(
+        'LIMITE_MAPAS_EVENTO',
+        `Cada evento pode ter no máximo ${MAX_EVENT_MAPS_PER_EVENT} mapas.`,
+        409,
+      );
+    }
 
     const created = await tx.eventMap.create({
       data: {
@@ -405,6 +443,44 @@ function validateDraftReferences(input: UpdateEventMapDraftInput) {
       throw new EventsError('CODIGO_ASSENTO_DUPLICADO', `O código técnico ${seat.technicalCode} está duplicado.`, 422);
     }
     technicalCodes.add(seat.technicalCode);
+  }
+}
+
+async function syncNumberedSeatLotCapacities(
+  tx: Prisma.TransactionClient,
+  ctx: Pick<EventsContext, 'contaId'>,
+  eventId: string,
+  input: {
+    sections: Array<{ id: string; lotId?: string | null }>;
+    seats: Array<{ sectionId: string; publicVisible?: boolean }>;
+  },
+) {
+  const event = await tx.schoolEvent.findFirst({
+    where: { id: eventId, contaId: ctx.contaId },
+    select: { ticketMode: true },
+  });
+  if (event?.ticketMode !== 'NUMBERED_SEATS') return;
+
+  const capacityByLotId = countTicketLotCapacitiesFromMap(input);
+  const lots = await tx.eventTicketLot.findMany({
+    where: { contaId: ctx.contaId, eventId },
+    select: { id: true, quantitySold: true, status: true },
+  });
+
+  for (const lot of lots) {
+    const seatCapacity = capacityByLotId.get(lot.id) ?? 0;
+    const quantityTotal = Math.max(seatCapacity, lot.quantitySold);
+    const nextStatus =
+      lot.status === 'ACTIVE' && lot.quantitySold >= quantityTotal && quantityTotal > 0
+        ? 'SOLD_OUT'
+        : lot.status === 'SOLD_OUT' && lot.quantitySold < quantityTotal
+          ? 'ACTIVE'
+          : lot.status;
+
+    await tx.eventTicketLot.update({
+      where: { id: lot.id },
+      data: { quantityTotal, status: nextStatus },
+    });
   }
 }
 
@@ -577,7 +653,119 @@ export async function updateEventMapDraft(
       },
     });
 
+    await syncNumberedSeatLotCapacities(tx, ctx, eventId, {
+      sections: input.sections,
+      seats: input.seats,
+    });
+
     return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId));
+  });
+}
+
+export async function updateEventMapSettings(
+  ctx: EventsContext,
+  eventId: string,
+  mapId: string,
+  input: UpdateEventMapSettingsInput,
+) {
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.eventMap.findFirst({ where: { id: mapId, contaId: ctx.contaId, eventId } });
+    if (!current) throw new EventsError('MAPA_NAO_ENCONTRADO', 'Mapa do evento não encontrado.', 404);
+    assertMapEditable(current);
+
+    if (input.publicEnabled !== undefined && current.status !== 'PUBLISHED') {
+      throw new EventsError(
+        'MAPA_NAO_PUBLICADO',
+        'Somente mapas publicados podem ter a venda pública ativada ou pausada.',
+        422,
+      );
+    }
+
+    await tx.eventMap.update({
+      where: { id: mapId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.publicEnabled !== undefined ? { publicEnabled: input.publicEnabled } : {}),
+      },
+    });
+
+    await recordMapAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.map.settings.update',
+      entityId: mapId,
+      eventId,
+      before: current,
+      after: {
+        name: input.name ?? current.name,
+        publicEnabled: input.publicEnabled ?? current.publicEnabled,
+      },
+    });
+  });
+
+  return getEventMap(ctx, eventId, mapId);
+}
+
+async function replaceCurrentPublishedMap(
+  tx: Prisma.TransactionClient,
+  ctx: EventsContext,
+  eventId: string,
+  excludingMapId: string,
+) {
+  const current = await tx.eventMap.findFirst({
+    where: { contaId: ctx.contaId, eventId, status: 'PUBLISHED', id: { not: excludingMapId } },
+  });
+  if (!current) return;
+
+  const ordersCount = await tx.eventMapOrder.count({
+    where: { contaId: ctx.contaId, eventMapId: current.id },
+  });
+  const replacement = resolvePublishedMapReplacement(ordersCount);
+
+  if (replacement === 'ARCHIVE') {
+    const archived = await tx.eventMap.update({
+      where: { id: current.id },
+      data: {
+        status: 'ARCHIVED',
+        publicEnabled: false,
+        publicSlug: null,
+        publishedVersionId: null,
+        archivedAt: new Date(),
+      },
+    });
+    await recordMapAudit(tx, {
+      contaId: ctx.contaId,
+      actorUserId: ctx.userId,
+      action: 'events.map.archive',
+      entityId: current.id,
+      eventId,
+      before: current,
+      after: archived,
+      metadata: { reason: 'Substituído por novo mapa publicado com histórico de pedidos.' },
+    });
+    return;
+  }
+
+  const demoted = await tx.eventMap.update({
+    where: { id: current.id },
+    data: {
+      status: 'DRAFT',
+      publicEnabled: false,
+      publishedVersionId: null,
+      publicSlug: null,
+      publishedAt: null,
+      archivedAt: null,
+    },
+  });
+  await recordMapAudit(tx, {
+    contaId: ctx.contaId,
+    actorUserId: ctx.userId,
+    action: 'events.map.demote',
+    entityId: current.id,
+    eventId,
+    before: current,
+    after: demoted,
+    metadata: { reason: 'Substituído por novo mapa publicado sem histórico de pedidos.' },
   });
 }
 
@@ -586,6 +774,10 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
     const map = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
     const transition = validateEventMapStatusTransition(map.status, 'PUBLISHED');
     if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
+
+    if (map.status === 'DRAFT') {
+      await replaceCurrentPublishedMap(tx, ctx, eventId, mapId);
+    }
 
     const publishValidation = validatePublishableEventMap({
       ticketMode: map.event.ticketMode,
@@ -659,7 +851,12 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
               y: seat.y,
               size: seat.size,
               rotation: seat.rotation,
-              metadata: toInputJson({ objectId: seat.objectId, groupId: seat.groupId }),
+              metadata: toInputJson({
+                objectId: seat.objectId,
+                groupId: seat.groupId,
+                rowIndex: seat.rowIndex,
+                columnIndex: seat.columnIndex,
+              }),
             };
           }),
       });
@@ -686,7 +883,13 @@ export async function publishEventMap(ctx: EventsContext, eventId: string, mapId
       after: { status: 'PUBLISHED', version: nextVersion, publicSlug },
     });
 
-    return mapEventMap(await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId));
+    const publishedMap = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
+    await syncNumberedSeatLotCapacities(tx, ctx, eventId, {
+      sections: publishedMap.sections.map((section) => ({ id: section.id, lotId: section.lotId })),
+      seats: publishedMap.seats.map((seat) => ({ sectionId: seat.sectionId, publicVisible: seat.publicVisible })),
+    });
+
+    return mapEventMap(publishedMap);
   });
 }
 
@@ -712,7 +915,13 @@ export async function deleteEventMap(ctx: EventsContext, eventId: string, mapId:
     if (decision.action === 'ARCHIVE') {
       const archived = await tx.eventMap.update({
         where: { id: mapId },
-        data: { status: 'ARCHIVED', publicEnabled: false, archivedAt: new Date() },
+        data: {
+          status: 'ARCHIVED',
+          publicEnabled: false,
+          publicSlug: null,
+          publishedVersionId: null,
+          archivedAt: new Date(),
+        },
       });
       await recordMapAudit(tx, {
         contaId: ctx.contaId,
@@ -726,6 +935,32 @@ export async function deleteEventMap(ctx: EventsContext, eventId: string, mapId:
       });
 
       return { ok: true, action: 'ARCHIVE' as const };
+    }
+
+    if (decision.action === 'DEMOTE_TO_DRAFT') {
+      const demoted = await tx.eventMap.update({
+        where: { id: mapId },
+        data: {
+          status: 'DRAFT',
+          publicEnabled: false,
+          publishedVersionId: null,
+          publicSlug: null,
+          publishedAt: null,
+          archivedAt: null,
+        },
+      });
+      await recordMapAudit(tx, {
+        contaId: ctx.contaId,
+        actorUserId: ctx.userId,
+        action: 'events.map.demote',
+        entityId: mapId,
+        eventId,
+        before: map,
+        after: demoted,
+        metadata: { reason: decision.reason },
+      });
+
+      return { ok: true, action: 'DEMOTE_TO_DRAFT' as const };
     }
 
     await tx.eventMap.delete({ where: { id: mapId } });
@@ -749,6 +984,15 @@ export async function duplicateEventMap(
   input: DuplicateEventMapInput = {},
 ) {
   return prisma.$transaction(async (tx) => {
+    const mapCount = await tx.eventMap.count({ where: operationalEventMapsWhere(ctx.contaId, eventId) });
+    if (!canCreateEventMap(mapCount)) {
+      throw new EventsError(
+        'LIMITE_MAPAS_EVENTO',
+        `Cada evento pode ter no máximo ${MAX_EVENT_MAPS_PER_EVENT} mapas.`,
+        409,
+      );
+    }
+
     const source = await getMapRecordOrThrow(tx, ctx.contaId, eventId, mapId);
     const levelIdMap = new Map<string, string>();
     const sectionIdMap = new Map<string, string>();
@@ -932,11 +1176,18 @@ type PublicCheckoutOrderRecord = Prisma.EventMapOrderGetPayload<{
 }>;
 
 function mapPublicSeat(seat: EventMapPublicSeatRecord) {
+  const metadata = seat.metadata && typeof seat.metadata === 'object' && !Array.isArray(seat.metadata)
+    ? (seat.metadata as Record<string, unknown>)
+    : {};
+
   return {
     id: seat.id,
     originalSeatId: seat.originalSeatId,
     levelId: seat.levelId,
     sectionId: seat.sectionId,
+    groupId: typeof metadata.groupId === 'string' ? metadata.groupId : null,
+    rowIndex: typeof metadata.rowIndex === 'number' ? metadata.rowIndex : null,
+    columnIndex: typeof metadata.columnIndex === 'number' ? metadata.columnIndex : null,
     sectionName: seat.sectionName,
     lotId: seat.lotId,
     lotName: seat.lotName,
@@ -1009,6 +1260,10 @@ async function buildPublicCheckoutResponse(
     asaasPaymentId: order.asaasPaymentId,
     invoiceUrl: order.invoiceUrl,
     ticketsUrl: order.status === 'CONFIRMED' ? publicOrderTicketsPath(order.id, order.accessToken) : null,
+    ticketsHtmlUrl:
+      order.status === 'CONFIRMED'
+        ? publicOrderTicketsHtmlPath(params?.publicSlug, order.id, order.accessToken)
+        : null,
     statusUrl: publicOrderStatusPath(params?.publicSlug, order.id, order.accessToken),
     items: order.items.map((item) => ({
       ticketCode: item.ticket?.ticketCode ?? '',
@@ -1210,7 +1465,6 @@ export async function reservePublicEventMapSeats(publicSlug: string, input: Publ
     const selection = validatePublicSeatSelection({
       requestedSeatIds: input.seatIds,
       seats: seats.map((seat) => ({ id: seat.id, status: seat.status, publicVisible: seat.publicVisible })),
-      maxSeats: 12,
     });
     if (!selection.ok) throw new EventsError('ASSENTOS_INDISPONIVEIS', selection.reason, 409);
 
@@ -1504,6 +1758,22 @@ export async function completePublicEventMapCheckout(publicSlug: string, input: 
       },
       include: { items: { include: { ticket: true } } },
     });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueuePublicOrderCreatedEmail(tx, {
+        contaId: pending.map.contaId,
+        orderId: updated.id,
+        buyerEmail: updated.buyerEmail,
+        buyerName: updated.buyerName,
+        eventName: pending.map.event.name,
+        eventStartsAt: pending.map.event.startsAt,
+        statusPath: publicOrderStatusPath(pending.map.publicSlug, updated.id, updated.accessToken),
+        invoiceUrl: updated.invoiceUrl,
+        paymentMethod: input.paymentMethod,
+        expiresAt: pending.expiresAt,
+      });
+    });
+
     return buildPublicCheckoutResponse(updated, {
       apiKey: credentials.apiKey,
       paymentMethod: input.paymentMethod,
@@ -1553,6 +1823,10 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
   const reservedSeats = order.reservation?.seats.map((seat) => seat.publicSeat) ?? [];
   const confirmedItems = order.items;
   const ticketsUrl = order.status === 'CONFIRMED' ? publicOrderTicketsPath(order.id, order.accessToken) : null;
+  const ticketsHtmlUrl =
+    order.status === 'CONFIRMED'
+      ? publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken)
+      : null;
 
   return {
     orderId: order.id,
@@ -1566,6 +1840,7 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     paidAt: order.paidAt?.toISOString() ?? null,
     confirmedAt: order.confirmedAt?.toISOString() ?? null,
     ticketsUrl,
+    ticketsHtmlUrl,
     statusUrl: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     event: {
       ...order.event,
@@ -1609,14 +1884,20 @@ async function enqueuePublicOrderTicketEmail(
     eventStartsAt: Date;
     ticketCount: number;
     ticketsPath: string;
+    ticketsHtmlPath?: string | null;
     statusPath: string;
+    dedupeSuffix?: string;
   },
 ) {
+  const dedupeKey = params.dedupeSuffix
+    ? `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_EMAIL:${params.orderId}:${params.dedupeSuffix}`
+    : `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_EMAIL:${params.orderId}`;
+
   await tx.financeWebhookSideEffectOutbox.createMany({
     data: {
       contaId: params.contaId,
       effectType: 'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
-      dedupeKey: `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_EMAIL:${params.orderId}`,
+      dedupeKey,
       payload: toAuditJson({
         orderId: params.orderId,
         buyerEmail: params.buyerEmail,
@@ -1625,7 +1906,45 @@ async function enqueuePublicOrderTicketEmail(
         eventStartsAt: params.eventStartsAt.toISOString(),
         ticketCount: params.ticketCount,
         ticketsPath: params.ticketsPath,
+        ticketsHtmlPath: params.ticketsHtmlPath ?? null,
         statusPath: params.statusPath,
+      }),
+      status: FinanceWebhookSideEffectStatus.PENDING,
+    },
+    skipDuplicates: true,
+  });
+}
+
+async function enqueuePublicOrderCreatedEmail(
+  tx: Prisma.TransactionClient,
+  params: {
+    contaId: string;
+    orderId: string;
+    buyerEmail: string;
+    buyerName: string;
+    eventName: string;
+    eventStartsAt: Date;
+    statusPath: string;
+    invoiceUrl: string | null;
+    paymentMethod: string;
+    expiresAt: Date;
+  },
+) {
+  await tx.financeWebhookSideEffectOutbox.createMany({
+    data: {
+      contaId: params.contaId,
+      effectType: 'EVENT_PUBLIC_ORDER_CREATED_EMAIL',
+      dedupeKey: `${params.contaId}:EVENT_PUBLIC_ORDER_CREATED_EMAIL:${params.orderId}`,
+      payload: toAuditJson({
+        orderId: params.orderId,
+        buyerEmail: params.buyerEmail,
+        buyerName: params.buyerName,
+        eventName: params.eventName,
+        eventStartsAt: params.eventStartsAt.toISOString(),
+        statusPath: params.statusPath,
+        invoiceUrl: params.invoiceUrl,
+        paymentMethod: params.paymentMethod,
+        expiresAt: params.expiresAt.toISOString(),
       }),
       status: FinanceWebhookSideEffectStatus.PENDING,
     },
@@ -1846,6 +2165,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
       eventStartsAt: order.event.startsAt,
       ticketCount: createdItems.length,
       ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
+      ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
       statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
     });
 
@@ -1855,6 +2175,76 @@ export async function confirmPublicEventMapOrderPayment(params: {
       ticketsCreated: createdItems.length,
     };
   });
+}
+
+const PAID_ASAAS_PAYMENT_STATUSES = new Set([
+  'CONFIRMED',
+  'RECEIVED',
+  'RECEIVED_IN_CASH',
+  'DUNNING_RECEIVED',
+]);
+
+/**
+ * Converge financial state when the payment is confirmed in Asaas but the full
+ * public-order confirmation flow cannot run (ex.: reserva expirada).
+ */
+export async function reconcileEventMapOrderFinancialStateFromAsaas(params: {
+  contaId: string;
+  asaasPaymentId: string;
+  externalReference?: string | null;
+  paymentStatus?: string | null;
+  invoiceUrl?: string | null;
+  paidAt?: Date | string | null;
+  paidAmount?: number | null;
+}): Promise<{ orderId: string; status: 'CONFIRMED'; financialOnly: true } | null> {
+  const paymentStatus = (params.paymentStatus ?? '').trim().toUpperCase();
+  if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) return null;
+
+  const order = await prisma.eventMapOrder.findFirst({
+    where: {
+      ...eventMapOrderPaymentWhere(params),
+      status: 'PAYMENT_PENDING',
+    },
+    select: { id: true, eventId: true, confirmedAt: true },
+  });
+  if (!order) return null;
+
+  const paidAt = params.paidAt ? new Date(params.paidAt) : new Date();
+  if (Number.isNaN(paidAt.getTime())) {
+    return null;
+  }
+
+  await prisma.eventMapOrder.update({
+    where: { id: order.id },
+    data: {
+      status: 'CONFIRMED',
+      asaasPaymentId: params.asaasPaymentId,
+      paymentStatus,
+      paymentProvider: 'ASAAS',
+      invoiceUrl: params.invoiceUrl ?? undefined,
+      paidAt,
+      confirmedAt: order.confirmedAt ?? paidAt,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      contaId: params.contaId,
+      actorType: 'SYSTEM',
+      actorId: null,
+      action: 'events.map.public.payment.reconcile_financial',
+      entityType: 'EventMapOrder',
+      entityId: order.id,
+      metadata: toAuditJson({
+        eventId: order.eventId,
+        asaasPaymentId: params.asaasPaymentId,
+        paymentStatus,
+        financialOnly: true,
+      }),
+    },
+  });
+
+  return { orderId: order.id, status: 'CONFIRMED', financialOnly: true };
 }
 
 export async function cancelPublicEventMapOrder(orderId: string, reason?: string | null) {
@@ -1970,6 +2360,51 @@ export async function refundPublicEventMapOrderByPayment(params: {
   });
 }
 
+export async function markPublicEventMapOrderRefundProcessingByPayment(params: {
+  contaId: string;
+  asaasPaymentId: string;
+  externalReference?: string | null;
+  paymentStatus: string;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.eventMapOrder.findFirst({
+      where: eventMapOrderPaymentWhere(params),
+    });
+    if (!order) return null;
+
+    const updated = await tx.eventMapOrder.update({
+      where: { id: order.id },
+      data: {
+        paymentStatus: params.paymentStatus,
+      },
+    });
+
+    const sales = await tx.eventTicketSale.findMany({
+      where: { contaId: order.contaId, eventMapOrderId: order.id },
+      select: { id: true },
+    });
+    const saleIds = sales.map((sale) => sale.id);
+
+    await tx.eventTicketSale.updateMany({
+      where: { contaId: order.contaId, eventMapOrderId: order.id },
+      data: { paymentStatus: params.paymentStatus },
+    });
+
+    if (saleIds.length > 0) {
+      await tx.eventFinancialEntry.updateMany({
+        where: {
+          contaId: order.contaId,
+          originType: 'TICKET_SALE',
+          originId: { in: saleIds },
+        },
+        data: { paymentStatus: params.paymentStatus },
+      });
+    }
+
+    return { orderId: updated.id, status: updated.status, paymentStatus: updated.paymentStatus };
+  });
+}
+
 export async function getPublicEventMapOrderTickets(orderId: string, accessToken: string) {
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, accessToken, status: 'CONFIRMED' },
@@ -2053,5 +2488,374 @@ export async function getEventMapOrderTicketsForAdmin(contaId: string, orderId: 
       ticketStatus: item.ticket?.status ?? 'VALID',
       seat: mapPublicSeat(item.publicSeat),
     })),
+  };
+}
+
+const PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS = 60 * 60 * 1000;
+const PUBLIC_ORDER_SYNC_PAYMENT_WINDOW_MS = 15 * 60 * 1000;
+const PUBLIC_ORDER_SYNC_PAYMENT_MAX_PER_WINDOW = 8;
+
+async function countRecentOrderAuditActions(
+  contaId: string,
+  orderId: string,
+  action: string,
+  sinceMs: number,
+) {
+  const since = new Date(Date.now() - sinceMs);
+  return prisma.auditLog.count({
+    where: {
+      contaId,
+      entityType: 'EventMapOrder',
+      entityId: orderId,
+      action,
+      createdAt: { gte: since },
+    },
+  });
+}
+
+export async function requestPublicOrderTicketEmailResend(orderId: string, accessToken: string) {
+  const order = await prisma.eventMapOrder.findFirst({
+    where: { id: orderId, accessToken, status: 'CONFIRMED' },
+    include: {
+      event: { select: { name: true, startsAt: true } },
+      map: { select: { publicSlug: true } },
+      items: { include: { ticket: true } },
+    },
+  });
+  if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido confirmado não encontrado.', 404);
+
+  const recentResends = await countRecentOrderAuditActions(
+    order.contaId,
+    order.id,
+    'events.map.public.tickets_email.resend',
+    PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS,
+  );
+  if (recentResends >= 3) {
+    throw new EventsError('LIMITE_REENVIO_EMAIL', 'Limite de reenvios atingido. Aguarde alguns minutos.', 429);
+  }
+
+  const ticketCount = order.items.filter((item) => item.ticket).length;
+  const dedupeSuffix = `resend:${Math.floor(Date.now() / PUBLIC_ORDER_RESEND_EMAIL_WINDOW_MS)}`;
+
+  await prisma.$transaction(async (tx) => {
+    await enqueuePublicOrderTicketEmail(tx, {
+      contaId: order.contaId,
+      orderId: order.id,
+      buyerEmail: order.buyerEmail,
+      buyerName: order.buyerName,
+      eventName: order.event.name,
+      eventStartsAt: order.event.startsAt,
+      ticketCount,
+      ticketsPath: publicOrderTicketsPath(order.id, order.accessToken),
+      ticketsHtmlPath: publicOrderTicketsHtmlPath(order.map.publicSlug, order.id, order.accessToken),
+      statusPath: publicOrderStatusPath(order.map.publicSlug, order.id, order.accessToken),
+      dedupeSuffix,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        contaId: order.contaId,
+        actorType: 'SYSTEM',
+        actorId: null,
+        action: 'events.map.public.tickets_email.resend',
+        entityType: 'EventMapOrder',
+        entityId: order.id,
+        metadata: toAuditJson({ buyerEmail: order.buyerEmail }),
+      },
+    });
+  });
+
+  return { ok: true as const, orderId: order.id, buyerEmail: order.buyerEmail };
+}
+
+export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, accessToken: string) {
+  const order = await prisma.eventMapOrder.findFirst({
+    where: { id: orderId, accessToken },
+    select: {
+      id: true,
+      contaId: true,
+      status: true,
+      asaasPaymentId: true,
+      accessToken: true,
+    },
+  });
+  if (!order) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado.', 404);
+
+  if (order.status === 'CONFIRMED') {
+    return {
+      synced: false as const,
+      status: order.status,
+      order: await getPublicEventMapOrderStatus(orderId, accessToken),
+    };
+  }
+
+  if (order.status === 'EXPIRED' || order.status === 'CANCELLED' || order.status === 'REFUNDED') {
+    throw new EventsError('PEDIDO_ENCERRADO', 'Este pedido não está disponível para pagamento.', 409);
+  }
+
+  if (!order.asaasPaymentId) {
+    throw new EventsError('COBRANCA_AUSENTE', 'Cobrança ainda não foi gerada para este pedido.', 409);
+  }
+
+  const recentSyncs = await countRecentOrderAuditActions(
+    order.contaId,
+    order.id,
+    'events.map.public.sync_payment',
+    PUBLIC_ORDER_SYNC_PAYMENT_WINDOW_MS,
+  );
+  if (recentSyncs >= PUBLIC_ORDER_SYNC_PAYMENT_MAX_PER_WINDOW) {
+    throw new EventsError('LIMITE_SINCRONIZACAO', 'Aguarde alguns minutos antes de tentar novamente.', 429);
+  }
+
+  const credentials = await loadDecryptedAsaasCredentials(order.contaId);
+  if (!credentials?.apiKey) {
+    throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Integração Asaas não configurada.', 409);
+  }
+
+  const payment = await getPayment({ apiKey: credentials.apiKey, paymentId: order.asaasPaymentId });
+  const paymentStatus = (payment.status ?? '').trim().toUpperCase();
+
+  await prisma.auditLog.create({
+    data: {
+      contaId: order.contaId,
+      actorType: 'SYSTEM',
+      actorId: null,
+      action: 'events.map.public.sync_payment',
+      entityType: 'EventMapOrder',
+      entityId: order.id,
+      metadata: toAuditJson({ asaasPaymentId: order.asaasPaymentId, paymentStatus }),
+    },
+  });
+
+  if (!PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) {
+    return {
+      synced: false as const,
+      status: order.status,
+      paymentStatus,
+      order: await getPublicEventMapOrderStatus(orderId, accessToken),
+    };
+  }
+
+  try {
+    await confirmPublicEventMapOrderPayment({
+      contaId: order.contaId,
+      asaasPaymentId: order.asaasPaymentId,
+      externalReference: `event-map-order:${order.id}`,
+      paymentStatus,
+      invoiceUrl: payment.invoiceUrl ?? null,
+      paidAt: payment.paymentDate ?? payment.clientPaymentDate ?? new Date(),
+      paidAmount: payment.value ?? null,
+    });
+  } catch (confirmError) {
+    if (confirmError instanceof EventsError) {
+      await reconcileEventMapOrderFinancialStateFromAsaas({
+        contaId: order.contaId,
+        asaasPaymentId: order.asaasPaymentId,
+        externalReference: `event-map-order:${order.id}`,
+        paymentStatus,
+        invoiceUrl: payment.invoiceUrl ?? null,
+        paidAt: payment.paymentDate ?? payment.clientPaymentDate ?? new Date(),
+        paidAmount: payment.value ?? null,
+      }).catch(() => null);
+    } else {
+      throw confirmError;
+    }
+  }
+
+  return {
+    synced: true as const,
+    status: 'CONFIRMED' as const,
+    order: await getPublicEventMapOrderStatus(orderId, accessToken),
+  };
+}
+
+export async function listEventPublicMapOrdersForAdmin(contaId: string, eventId: string) {
+  const orders = await prisma.eventMapOrder.findMany({
+    where: { contaId, eventId },
+    orderBy: { createdAt: 'desc' },
+    take: 250,
+    select: {
+      id: true,
+      buyerName: true,
+      buyerEmail: true,
+      totalAmount: true,
+      status: true,
+      paymentMethod: true,
+      paymentStatus: true,
+      asaasPaymentId: true,
+      createdAt: true,
+      expiresAt: true,
+      confirmedAt: true,
+      paidAt: true,
+      map: { select: { id: true, name: true, publicSlug: true } },
+      items: { select: { id: true } },
+      tickets: { select: { id: true, status: true } },
+    },
+  });
+
+  return orders.map((order) => ({
+    id: order.id,
+    buyerName: order.buyerName,
+    buyerEmail: order.buyerEmail,
+    totalAmount: toMoney(order.totalAmount),
+    status: order.status,
+    paymentMethod: order.paymentMethod,
+    paymentStatus: order.paymentStatus,
+    asaasPaymentId: order.asaasPaymentId,
+    createdAt: order.createdAt.toISOString(),
+    expiresAt: order.expiresAt?.toISOString() ?? null,
+    confirmedAt: order.confirmedAt?.toISOString() ?? null,
+    paidAt: order.paidAt?.toISOString() ?? null,
+    map: order.map,
+    seatCount: order.items.length,
+    ticketCount: order.tickets.length,
+    ticketsUsed: order.tickets.filter((ticket) => ticket.status === 'USED').length,
+  }));
+}
+
+export type EventPublicMapOrderListItemDTO = Awaited<ReturnType<typeof listEventPublicMapOrdersForAdmin>>[number];
+
+export async function verifyEventMapTicketForCheckIn(contaId: string, eventId: string, ticketCode: string) {
+  const normalized = ticketCode.trim().toUpperCase();
+  if (!normalized) {
+    throw new EventsError('CODIGO_INVALIDO', 'Informe o código do ingresso.', 422);
+  }
+
+  const ticket = await prisma.eventTicket.findFirst({
+    where: { contaId, eventId, ticketCode: normalized },
+    include: {
+      order: {
+        select: {
+          id: true,
+          buyerName: true,
+          buyerEmail: true,
+          status: true,
+        },
+      },
+      orderItem: {
+        select: {
+          sectionName: true,
+          seatLabel: true,
+          technicalCode: true,
+        },
+      },
+      sale: {
+        select: {
+          id: true,
+          buyerName: true,
+          status: true,
+        },
+      },
+      saleSeat: {
+        select: {
+          sectionName: true,
+          seatLabel: true,
+          technicalCode: true,
+        },
+      },
+    },
+  });
+
+  if (!ticket) throw new EventsError('INGRESSO_NAO_ENCONTRADO', 'Ingresso não encontrado para este evento.', 404);
+
+  const seat = ticket.orderItem
+    ? {
+        sectionName: ticket.orderItem.sectionName,
+        seatLabel: ticket.orderItem.seatLabel,
+        technicalCode: ticket.orderItem.technicalCode,
+      }
+    : ticket.saleSeat
+      ? {
+          sectionName: ticket.saleSeat.sectionName,
+          seatLabel: ticket.saleSeat.seatLabel,
+          technicalCode: ticket.saleSeat.technicalCode,
+        }
+      : null;
+
+  if (!seat) throw new EventsError('INGRESSO_INVALIDO', 'Ingresso sem assento vinculado.', 409);
+
+  return {
+    ticketId: ticket.id,
+    ticketCode: ticket.ticketCode,
+    status: ticket.status,
+    usedAt: ticket.usedAt?.toISOString() ?? null,
+    order: ticket.order,
+    sale: ticket.sale,
+    seat,
+  };
+}
+
+export async function markEventMapTicketUsed(
+  contaId: string,
+  eventId: string,
+  ticketCode: string,
+  actorUserId: string,
+) {
+  const verified = await verifyEventMapTicketForCheckIn(contaId, eventId, ticketCode);
+
+  if (verified.status === 'USED') {
+    return { ok: true as const, alreadyUsed: true, ticket: verified };
+  }
+
+  if (verified.status !== 'VALID') {
+    throw new EventsError('INGRESSO_INVALIDO', 'Ingresso não pode ser utilizado.', 409);
+  }
+
+  if (verified.order && verified.order.status !== 'CONFIRMED') {
+    throw new EventsError('PEDIDO_NAO_CONFIRMADO', 'Pedido do ingresso não está confirmado.', 409);
+  }
+
+  if (verified.sale && !['PAID', 'COMPLIMENTARY'].includes(verified.sale.status)) {
+    throw new EventsError('VENDA_NAO_CONFIRMADA', 'Venda do ingresso não está confirmada.', 409);
+  }
+
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.eventTicket.update({
+      where: { id: verified.ticketId },
+      data: { status: 'USED', usedAt: now },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        contaId,
+        actorType: 'USER',
+        actorId: actorUserId,
+        action: 'events.map.ticket.check_in',
+        entityType: 'EventTicket',
+        entityId: verified.ticketId,
+        metadata: toAuditJson({
+          eventId,
+          orderId: verified.order?.id ?? verified.sale?.id ?? null,
+          ticketCode: verified.ticketCode,
+        }),
+      },
+    });
+
+    await tx.eventAudit.create({
+      data: {
+        contaId,
+        eventId,
+        actorUserId,
+        action: 'events.map.ticket.check_in',
+        entityType: 'EventTicket',
+        entityId: verified.ticketId,
+        metadata: toAuditJson({
+          orderId: verified.order?.id ?? verified.sale?.id ?? null,
+          ticketCode: verified.ticketCode,
+          seatLabel: verified.seat.seatLabel,
+        }),
+      },
+    });
+  });
+
+  return {
+    ok: true as const,
+    alreadyUsed: false,
+    ticket: {
+      ...verified,
+      status: 'USED' as const,
+      usedAt: now.toISOString(),
+    },
   };
 }

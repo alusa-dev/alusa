@@ -179,4 +179,11 @@ describe('payment-command-ledger', () => {
       severity: 'HIGH',
     }));
   });
+
+  it('espera PAYMENT_RECEIVED para comando de recebimento em dinheiro', () => {
+    expect(expectedEventsForPaymentCommand('PAYMENT_MARK_CASH_COMMAND')).toEqual([
+      'PAYMENT_RECEIVED',
+      'PAYMENT_CONFIRMED',
+    ]);
+  });
 });

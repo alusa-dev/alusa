@@ -14,6 +14,7 @@ export type Cycle = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'BIMONTHLY' | 'QUARTERLY
 
 export type AsaasInvoiceStatus =
   | 'SCHEDULED'
+  | 'SYNCHRONIZED'
   | 'AUTHORIZED'
   | 'PROCESSING_CANCELLATION'
   | 'CANCELED'
@@ -23,12 +24,21 @@ export type AsaasInvoiceStatus =
 
 export interface AsaasInvoiceTaxes {
   retainIss: boolean;
-  cofins: number;
+  cofins: number | null;
   csll: number;
   inss: number;
   ir: number;
-  pis: number;
+  pis: number | null;
   iss: number;
+  nbsCode?: string | null;
+  taxSituationCode?: string | null;
+  taxClassificationCode?: string | null;
+  operationIndicatorCode?: string | null;
+  pisCofinsRetentionType?: string | null;
+  pisCofinsTaxStatus?: string | null;
+  operationPis?: number | null;
+  operationCofins?: number | null;
+  useTaxSystemReformNT007?: boolean;
 }
 
 export interface CreateInvoiceInput {
@@ -41,8 +51,8 @@ export interface CreateInvoiceInput {
   value: number;
   deductions: number;
   effectiveDate: string; // YYYY-MM-DD
-  municipalServiceId?: string;
-  municipalServiceCode?: string;
+  municipalServiceId?: string | null;
+  municipalServiceCode?: string | null;
   municipalServiceName: string;
   updatePayment?: boolean;
   taxes: AsaasInvoiceTaxes;
@@ -75,6 +85,29 @@ export interface AsaasInvoice {
   municipalServiceCode?: string | null;
   municipalServiceName?: string | null;
 }
+
+export interface AsaasInvoiceListResponse {
+  object?: 'list' | string;
+  hasMore?: boolean;
+  totalCount?: number;
+  limit?: number;
+  offset?: number;
+  data?: AsaasInvoice[];
+}
+
+export type UpdateInvoiceInput = Partial<
+  Pick<
+    CreateInvoiceInput,
+    | 'serviceDescription'
+    | 'observations'
+    | 'externalReference'
+    | 'value'
+    | 'deductions'
+    | 'effectiveDate'
+    | 'updatePayment'
+    | 'taxes'
+  >
+>;
 
 // ==================== FINANCE (BALANCE) ====================
 

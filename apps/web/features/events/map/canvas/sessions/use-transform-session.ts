@@ -48,6 +48,7 @@ type TransformContextRef = MutableRefObject<{
   selectedNodeIds: string[];
   transformKind: TransformKind;
   levelBounds: LevelBounds | null;
+  forceUniformSeatGroupScale?: boolean;
 }>;
 
 type TransformSessionInput = {
@@ -183,7 +184,11 @@ export function useTransformSession({
         setTransformerScaleOptions(resolveUniformTransformerScaleOptions());
       } else if (transformKind === 'generic') {
         setIsTransformSessionActive(true);
-        setTransformerScaleOptions(resolveGenericTransformerScaleOptions(false));
+        setTransformerScaleOptions(
+          ctx.forceUniformSeatGroupScale
+            ? resolveUniformTransformerScaleOptions()
+            : resolveGenericTransformerScaleOptions(false),
+        );
       }
 
       const session = beginMapTransformSession({

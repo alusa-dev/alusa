@@ -3,6 +3,7 @@ import type { ChargeStatus, StatusCobranca } from '@prisma/client';
 
 import { parseExternalReference } from '../core';
 import { normalizeChargeStatus, normalizeCobrancaStatus } from '../dtos/unified-billing';
+import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 import type { ListStandaloneChargesInput, ListStandaloneChargesOutput, StandaloneChargeItem } from '../use-cases/list-standalone-charges';
 
 type ChargeType = 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION';
@@ -134,6 +135,8 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       dueDate,
       billingType,
       status: statusFromCharge(charge.status),
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: charge.asaasPaymentId,
       matriculaId: charge.cobranca?.matriculaId ?? null,
       alunoId: charge.cobranca?.matricula.aluno.id ?? null,
@@ -160,6 +163,8 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       dueDate,
       billingType,
       status: statusFromCharge(charge.status),
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: charge.asaasPaymentId,
       matriculaId: charge.cobranca?.matriculaId ?? null,
       alunoId: charge.cobranca?.matricula.aluno.id ?? null,
@@ -192,7 +197,7 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
 
   const linkedCharge = await prisma.charge.findFirst({
     where: { cobrancaId: cobranca.id },
-    select: { id: true, externalReference: true, asaasPaymentId: true, familyGroupId: true },
+    select: { id: true, externalReference: true, asaasPaymentId: true, familyGroupId: true, asaasStatus: true, liquidacaoStatus: true },
   });
 
   const chargeType = inferChargeType({
@@ -226,6 +231,8 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
       status: statusFromCobranca(cobranca.status),
+      asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
+      liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
       matriculaId: cobranca.matriculaId,
       alunoId: cobranca.matricula.aluno.id,
@@ -252,6 +259,8 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
       status: statusFromCobranca(cobranca.status),
+      asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
+      liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
       matriculaId: cobranca.matriculaId,
       alunoId: cobranca.matricula.aluno.id,
@@ -402,6 +411,14 @@ export async function listStandaloneChargesFromReadModel(
     dueDate: row.dueDate?.toISOString() ?? null,
     billingType: row.billingType,
     status: row.status as StandaloneChargeItem['status'],
+    asaasStatus: row.asaasStatus,
+    liquidacaoStatus: row.liquidacaoStatus,
+    displayStatus: resolveChargeDisplayStatus({
+      localStatus: row.status,
+      asaasStatus: row.asaasStatus,
+      liquidacaoStatus: row.liquidacaoStatus,
+      hasAsaasLink: Boolean(row.asaasPaymentId),
+    }),
     chargeType: 'ONE_TIME',
     linkStatus: row.linkStatus as StandaloneChargeItem['linkStatus'],
     groupId: row.groupId,

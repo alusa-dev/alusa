@@ -31,7 +31,7 @@ function FooterLink({ link }: { link: SiteNavItem }) {
 
 export function SiteFooter() {
   return (
-    <footer className="relative overflow-hidden border-t border-[#5c2f91]/40 bg-[#140528] text-white">
+    <footer className="relative overflow-hidden border-t border-[#340e63]/40 bg-[#140528] text-white">
       <VerticalGridLines tone="dark" />
       <div className="relative z-10 mx-auto grid max-w-7xl gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[1.15fr_2fr] lg:gap-16 lg:py-20">
         <div>

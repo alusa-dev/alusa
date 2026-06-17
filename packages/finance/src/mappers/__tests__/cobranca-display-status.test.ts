@@ -8,7 +8,8 @@ describe('resolveCobrancaDisplayStatus', () => {
       liquidacaoStatus: 'PENDENTE',
       asaasStatus: 'CONFIRMED',
     });
-    expect(result.hint).toContain('aguardando crédito');
+    expect(result.label).toBe('Confirmada');
+    expect(result.hint).toContain('saldo ainda não disponibilizado');
   });
 
   it('indica processando para análise de risco', () => {
@@ -16,6 +17,6 @@ describe('resolveCobrancaDisplayStatus', () => {
       status: 'PROCESSANDO',
       asaasStatus: 'AWAITING_RISK_ANALYSIS',
     });
-    expect(result.label).toBe('Processando');
+    expect(result.label).toBe('Em analise');
   });
 });

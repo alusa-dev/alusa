@@ -243,12 +243,15 @@ export function canProgressChargeStatus(
  * Calcula o próximo status considerando precedência
  * Retorna o status com maior precedência
  */
-export function computeNextCobrancaStatus(
+export function applyCobrancaStatusPrecedence(
   currentStatus: StatusCobranca,
   proposedStatus: StatusCobranca
 ): StatusCobranca {
   return canProgressCobrancaStatus(currentStatus, proposedStatus) ? proposedStatus : currentStatus;
 }
+
+/** @deprecated Use applyCobrancaStatusPrecedence */
+export const computeNextCobrancaStatus = applyCobrancaStatusPrecedence;
 
 /**
  * Calcula o próximo ChargeStatus considerando precedência

@@ -52,6 +52,7 @@ export function mergeEventMapWithLocalDraft(map: EventMapDTO, payload: EventMapD
       sections: payload.sections.length,
       seats: payload.seats.length,
       availableSeats: payload.seats.filter((seat) => seat.status === 'AVAILABLE' && seat.publicVisible).length,
+      orders: map.counts.orders ?? 0,
     },
   };
 }

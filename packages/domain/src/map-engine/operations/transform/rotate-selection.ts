@@ -1,4 +1,4 @@
-import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO, EventSeatGroupDTO } from '../../types/event-map-types.js';
+import type { EventMapDTO, EventMapObjectDTO, EventSeatDTO } from '../../types/event-map-types.js';
 import type { MapSelection } from '../../selection/selection-utils.js';
 import { resolveOperationSelection } from '../selection/selection-resolver.js';
 import { getObjectBounds } from '../../layout/object-bounds.js';
@@ -16,7 +16,7 @@ import {
   getCorridorWorldCenter,
 } from '../../layout/corridor-rotation.js';
 import { getSeatGroupWorldBounds } from '../../layout/seat-group-bounds.js';
-import { parentLocalToWorld, worldToParentLocal } from '../../geometry/transform-compose.js';
+import { buildSeatGroupRotationPatch } from '../../layout/seat-group-transform.js';
 import { emptyTransformPatchSet, hasTransformPatches, type TransformPatchSet } from './transform-types.js';
 import { buildUndoTransformPatches } from './transform-patches.js';
 
@@ -170,30 +170,6 @@ function buildSeatRotationPatch(seat: EventSeatDTO, pivot: Point2D, angleDelta: 
   return {
     ...roundPoint(nextPoint),
     rotation: normalizeRotation((seat.rotation ?? 0) + angleDelta),
-  };
-}
-
-function buildSeatGroupRotationPatch(
-  group: EventSeatGroupDTO,
-  seats: EventSeatDTO[],
-  pivot: Point2D,
-  angleDelta: number,
-) {
-  const bounds = getSeatGroupWorldBounds(group, seats);
-  const center = centerOf(bounds);
-  const nextCenter = rotatePoint(center, pivot, angleDelta);
-  const localCenter = worldToParentLocal(center, group);
-  const nextRotation = normalizeRotation((group.rotation ?? 0) + angleDelta);
-  const rotatedLocalCenter = parentLocalToWorld(localCenter, {
-    x: 0,
-    y: 0,
-    rotation: nextRotation,
-  });
-
-  return {
-    x: roundValue(nextCenter.x - rotatedLocalCenter.x),
-    y: roundValue(nextCenter.y - rotatedLocalCenter.y),
-    rotation: nextRotation,
   };
 }
 

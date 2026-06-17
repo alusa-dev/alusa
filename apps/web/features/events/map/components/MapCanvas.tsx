@@ -35,7 +35,6 @@ import { useMapStagePointerSession } from '../canvas/sessions/use-map-stage-poin
 import { useMapTextEditorCommit } from '../canvas/sessions/use-map-text-editor-commit';
 import { useMapTextEditorOpen } from '../canvas/sessions/use-map-text-editor-open';
 import { useMapTransformRouting } from '../canvas/sessions/use-map-transform-routing';
-import { useSeatGroupResizeSession } from '../canvas/sessions/use-seat-group-resize-session';
 import { useSelectionSession } from '../canvas/sessions/use-selection-session';
 import { useSnapGuidesSession } from '../canvas/sessions/use-snap-guides-session';
 import { useTextEditorSession } from '../canvas/sessions/use-text-editor-session';
@@ -74,6 +73,7 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     selectedNodeIds: [] as string[],
     transformKind: null as ReturnType<typeof resolveTransformRouting>['kind'],
     levelBounds: null as LevelBounds | null,
+    forceUniformSeatGroupScale: false,
   });
   const [isTransformSessionActive, setIsTransformSessionActive] = useState(false);
   const [transformerScaleOptions, setTransformerScaleOptions] = useState<TransformerScaleOptions>(
@@ -134,12 +134,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     () => getMapPointerPoint(stageRef, pan, zoom),
     [pan, zoom],
   );
-
-  const { beginSeatGroupResize, handleSeatGroupResizeMove, endSeatGroupResize } = useSeatGroupResizeSession({
-    containerRef,
-    getPointerPoint,
-    updateSeatGroup,
-  });
 
   const levelView = useMapLevelViewModel({
     map,
@@ -335,8 +329,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     setIndividualSeatDragId,
     getMarqueeSelection,
     openNewTextEditor,
-    handleSeatGroupResizeMove,
-    endSeatGroupResize,
     creationDraft,
     setCreationDraft,
     marqueeDraft,
@@ -434,7 +426,6 @@ export function MapCanvas({ readOnly }: { readOnly: boolean }) {
     onUpdateSeatPosition: (seatId, x, y) => updateSeat(seatId, { x, y }),
     onUpdateSeatGroupPosition: (groupId, x, y) => updateSeatGroup(groupId, { x, y }),
     onOpenTextEditor: openTextEditor,
-    onSeatGroupResizeStart: beginSeatGroupResize,
   });
 
   const textEditorDimensions = buildTextEditorOverlayDimensions(textEditor);

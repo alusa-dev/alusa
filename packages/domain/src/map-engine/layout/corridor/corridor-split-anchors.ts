@@ -10,6 +10,7 @@ import {
   DEFAULT_CORRIDOR_THICKNESS,
   getSmartCorridorCoreRect,
   inferSmartCorridorAxisFromCoreRect,
+  isSmartCorridorSeatReflowEnabled,
   normalizeSmartCorridorObject,
   readCorridorThickness,
   resolveSmartCorridorLayout,
@@ -40,9 +41,9 @@ export function persistSmartCorridorMetadata(corridor: EventMapObjectDTO) {
   const layout = resolveSmartCorridorLayout(corridor);
   corridor.data = {
     ...corridor.data,
-    [SMART_CORRIDOR_KIND_KEY]: true,
+    [SMART_CORRIDOR_KIND_KEY]: isSmartCorridorSeatReflowEnabled(),
     [CORRIDOR_AXIS_KEY]: layout.axis,
-    [CORRIDOR_AUTO_FIT_KEY]: true,
+    [CORRIDOR_AUTO_FIT_KEY]: isSmartCorridorSeatReflowEnabled(),
     [CORRIDOR_THICKNESS_KEY]: layout.thickness,
     [CORRIDOR_CORE_WIDTH_KEY]: layout.axis === 'vertical' ? layout.thickness : layout.coreRect.width,
     [CORRIDOR_CORE_HEIGHT_KEY]: layout.axis === 'horizontal' ? layout.thickness : layout.coreRect.height,
@@ -242,7 +243,7 @@ export function updateCorridorSplitAnchorsOnDrag(
 ) {
   const nextData: Record<string, unknown> = {
     ...corridor.data,
-    [SMART_CORRIDOR_KIND_KEY]: true,
+    [SMART_CORRIDOR_KIND_KEY]: isSmartCorridorSeatReflowEnabled(),
   };
 
   const prevX = previous?.data[CORRIDOR_SPLIT_X_KEY];

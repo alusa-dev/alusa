@@ -1,6 +1,7 @@
 import type { ChargeStatus } from '@prisma/client';
 
 import prisma from '@/lib/prisma';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 
 type PortalScopedPayerIds = {
   alunoIds: string[];
@@ -77,6 +78,8 @@ export async function listPortalStandaloneCharges(params: {
       dueDate: true,
       billingType: true,
       asaasPaymentId: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
       invoiceUrl: true,
       payerName: true,
       description: true,
@@ -89,14 +92,23 @@ export async function listPortalStandaloneCharges(params: {
 
   return charges.map((charge) => {
     const vencimento = charge.dueDate ?? new Date();
-    const status = mapChargeStatusToPortalStatus(charge.status, charge.dueDate);
+    const localStatus = mapChargeStatusToPortalStatus(charge.status, charge.dueDate);
+    const displayStatus = buildChargeDisplayStatusDTO({
+      localStatus: charge.status,
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus,
+      hasAsaasLink: Boolean(charge.asaasPaymentId),
+    });
 
     return {
       id: charge.id,
       tipo: 'AVULSA',
       valor: Number(charge.value ?? 0),
       vencimento,
-      status,
+      status: localStatus,
+      displayStatus,
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus,
       formaPagamento: charge.billingType ?? null,
       asaasId: charge.asaasPaymentId ?? null,
       invoiceUrl: charge.invoiceUrl ?? null,

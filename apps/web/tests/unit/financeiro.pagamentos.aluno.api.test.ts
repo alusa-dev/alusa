@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 const mockSafeGetServerSession = vi.hoisted(() => vi.fn());
 const mockAlunoFindFirst = vi.hoisted(() => vi.fn());
 const mockGetStudentPaymentHistory = vi.hoisted(() => vi.fn());
+const mockBuildPersonPaymentLedger = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/safe-server-session', () => ({
   safeGetServerSession: mockSafeGetServerSession,
@@ -11,6 +12,10 @@ vi.mock('@/lib/safe-server-session', () => ({
 
 vi.mock('@/src/server/finance/student-payment-history', () => ({
   getStudentPaymentHistory: mockGetStudentPaymentHistory,
+}));
+
+vi.mock('@/src/server/finance/person-payment-ledger', () => ({
+  buildPersonPaymentLedger: mockBuildPersonPaymentLedger,
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -37,7 +42,17 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
       cpf: null,
       foto: null,
     });
-    mockGetStudentPaymentHistory.mockResolvedValue({
+    const ledger = {
+      pessoa: {
+        id: 'aluno-1',
+        tipo: 'ALUNO',
+        nome: 'Aluno Financeiro',
+        email: 'aluno@test.dev',
+        telefone: null,
+        cpf: null,
+        foto: null,
+        alunosVinculados: [{ id: 'aluno-1', nome: 'Aluno Financeiro' }],
+      },
       cobrancas: [
         {
           id: 'cb1',
@@ -86,10 +101,13 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
           PARCELAMENTO: { count: 0, totalPago: 0 },
           ASSINATURA: { count: 0, totalPago: 0 },
           LOJA: { count: 0, totalPago: 0 },
+          EVENTOS: { count: 0, totalPago: 0 },
           OUTROS: { count: 0, totalPago: 0 },
         },
       },
-    });
+    };
+    mockBuildPersonPaymentLedger.mockResolvedValue(ledger);
+    mockGetStudentPaymentHistory.mockResolvedValue(ledger);
   });
 
   it('retorna 200 quando params vem como Promise com alunoId valido', async () => {
@@ -102,6 +120,7 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
     expect(response.status).toBe(200);
     expect(json.success).toBe(true);
     expect(json.data.aluno.nome).toBe('Aluno Financeiro');
+    expect(json.data.pessoa.tipo).toBe('ALUNO');
   });
 
   it('retorna 400 com mensagem quando alunoId vem vazio', async () => {
@@ -146,6 +165,11 @@ describe('GET /api/financeiro/pagamentos/aluno/[alunoId]', () => {
     });
     expect(json.data.resumo.totalPago).toBe(150);
     expect(json.data.resumo.porCategoria.MENSALIDADE.totalPago).toBe(150);
-    expect(mockGetStudentPaymentHistory).toHaveBeenCalledWith('conta-1', 'aluno-1', 'Aluno Financeiro');
+    expect(mockBuildPersonPaymentLedger).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      personType: 'ALUNO',
+      personId: 'aluno-1',
+    });
+    expect(mockGetStudentPaymentHistory).not.toHaveBeenCalled();
   });
 });

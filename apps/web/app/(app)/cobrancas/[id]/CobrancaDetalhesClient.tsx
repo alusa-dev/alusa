@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { InfoCallout, InfoCalloutLink } from '@/components/ui/info-callout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import { Badge, formatStatusLabel, type StatusType } from '@/components/ui/badge';
+import { formatStatusLabel } from '@/components/ui/badge';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
 import { StatusCobranca } from '@prisma/client';
 import { useChargeActions } from '@/hooks/use-charge-actions';
 import {
@@ -37,6 +38,7 @@ import {
 } from '@/components/ui/select';
 import { CobrancaCompartilharButton } from '@/components/financeiro/CobrancaCompartilharButton';
 import { CobrancaArquivos } from '@/components/financeiro/CobrancaArquivos';
+import { CobrancaNotaFiscal } from '@/components/financeiro/CobrancaNotaFiscal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
@@ -61,6 +63,12 @@ import {
   isCobrancaDetailTerminal,
   useCobrancaDetailQuery,
 } from '@/hooks/use-cobranca-detail-query';
+import {
+  buildEventTicketSaleReceiptInput,
+  canViewManualEventTicketSaleReceipt,
+} from '@/features/events/tickets/event-ticket-sale-receipt';
+import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
+import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
 
 const DETAIL_SECTION_MAX = 'mx-auto w-full max-w-4xl';
 
@@ -105,19 +113,6 @@ function formatDate(value: string): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('pt-BR');
 }
 
-// Mapeamento de StatusCobranca para StatusType
-const statusMap: Record<StatusCobranca, StatusType> = {
-  PENDENTE: 'PENDENTE',
-  A_VENCER: 'A_VENCER',
-  PROCESSANDO: 'PROCESSANDO',
-  PAGO: 'PAGO',
-  ATRASADO: 'ATRASADO',
-  CANCELADO: 'CANCELADO',
-  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
-  ESTORNADO: 'ESTORNADO',
-  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
-};
-
 type CobrancaDetalhes = {
   id: string;
   tipo: string;
@@ -137,7 +132,12 @@ type CobrancaDetalhes = {
   valorLiquido?: number | null;
   taxaAsaas?: number | null;
   liquidacaoStatus?: 'NAO_APLICAVEL' | 'PENDENTE' | 'DISPONIVEL' | null;
-  displayStatus?: { label: string; hint: string | null };
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
 
   // Juros
   jurosPercentual?: number;
@@ -195,6 +195,14 @@ type CobrancaDetalhes = {
     createdAt: string;
   }>;
   asaasData?: Record<string, unknown>;
+  origin?: string;
+  eventId?: string | null;
+  eventDetails?: {
+    eventName: string;
+    buyerName: string;
+    seats: Array<{ id: string; sectionName: string; seatLabel: string; unitPrice: number }>;
+    ticketsUrl: string | null;
+  } | null;
 };
 
 type OfficialChargeLinks = {
@@ -729,8 +737,37 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     };
   }
 
+  const handleVisualizarComprovanteAlusa = async () => {
+    if (!cobranca) return;
+
+    const previewTab = window.open('about:blank', '_blank');
+
+    try {
+      const { aluno, item } = buildEventTicketSaleReceiptInput(cobranca);
+      await exportPaidReceiptsPdf({
+        aluno,
+        items: [item],
+        escola: await loadPaidReceiptSchoolProfile(),
+        disposition: 'open',
+        targetWindow: previewTab,
+      });
+    } catch (error) {
+      previewTab?.close();
+      pushToast({
+        title: 'Erro ao gerar comprovante',
+        description: error instanceof Error ? error.message : 'Não foi possível gerar o comprovante da venda.',
+        variant: 'error',
+      });
+    }
+  };
+
   const handleVisualizarFatura = async () => {
     if (!cobranca) return;
+
+    if (canViewManualEventTicketSaleReceipt(cobranca)) {
+      await handleVisualizarComprovanteAlusa();
+      return;
+    }
 
     // Se a cobrança está paga, verificar se há comprovante
     if (isPago && cobranca.pagamentos && cobranca.pagamentos.length > 0) {
@@ -1137,6 +1174,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   }
 
   const isPago = cobranca.status === 'PAGO' || isRemotePaid;
+  const canViewAlusaEventTicketReceipt = canViewManualEventTicketSaleReceipt(cobranca);
   const isPendente = chargeActions.canEdit;
   
   // URL de fatura é usado para compartilhamento
@@ -1232,8 +1270,8 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
               </>
             )}
 
-            {/* Botão Visualizar Comprovante (quando pago) */}
-            {!isEditing && isPago && (
+            {/* Botão Visualizar Comprovante (quando pago ou estornado) */}
+            {!isEditing && (isPago || canViewAlusaEventTicketReceipt) && (
               <Button
                 onClick={handleVisualizarFatura}
                 className="h-10 w-full justify-center bg-green-600 px-4 text-white hover:bg-green-700 sm:w-auto"
@@ -1354,15 +1392,9 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
               </div>
             )}
             <div className="flex flex-col items-end gap-1">
-              <Badge
-                status={
-                  isPago && cobranca.liquidacaoStatus === 'DISPONIVEL'
-                    ? 'RECEIVED'
-                    : isPago
-                      ? 'PAGO'
-                      : statusMap[cobranca.status]
-                }
-              />
+              {cobranca.displayStatus ? (
+                <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} />
+              ) : null}
               {awaitingWebhook && !isCobrancaDetailTerminal(cobranca.status) ? (
                 <p className="text-right text-xs text-indigo-600">Atualizando status…</p>
               ) : null}
@@ -1889,6 +1921,63 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         </div>
       </div>
 
+      {cobranca.origin === 'EVENT' && cobranca.eventDetails ? (
+        <div className={cn(DETAIL_SECTION_MAX, 'rounded-xl border border-gray-200 bg-white shadow-sm')}>
+          <div className="border-b border-gray-100 px-4 py-4 sm:px-6 sm:py-5">
+            <h2 className="text-lg font-semibold text-gray-900 sm:text-xl">Ingressos e assentos</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              Detalhes operacionais vinculados a esta cobrança de evento.
+            </p>
+          </div>
+
+          <div className="space-y-4 px-4 py-5 sm:px-6 sm:py-6">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <span className="block text-xs text-gray-600">Evento</span>
+                <p className="mt-1 text-sm font-medium text-gray-900">{cobranca.eventDetails.eventName}</p>
+              </div>
+              <div>
+                <span className="block text-xs text-gray-600">Comprador</span>
+                <p className="mt-1 text-sm font-medium text-gray-900">{cobranca.eventDetails.buyerName}</p>
+              </div>
+            </div>
+
+            {cobranca.eventDetails.seats.length > 0 ? (
+              <div>
+                <span className="block text-xs text-gray-600">Assentos</span>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {cobranca.eventDetails.seats.map((seat) => (
+                    <span
+                      key={seat.id}
+                      className="inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700"
+                    >
+                      {seat.sectionName} · {seat.seatLabel} · {formatBRL(seat.unitPrice)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600">Esta cobrança não possui assentos marcados vinculados.</p>
+            )}
+
+            <div className="flex flex-wrap gap-2">
+              {cobranca.eventId ? (
+                <Button asChild variant="outline" className="h-10 border-gray-300 text-gray-700 hover:bg-gray-50">
+                  <a href={`/eventos/${cobranca.eventId}`}>Ver evento</a>
+                </Button>
+              ) : null}
+              {cobranca.eventDetails.ticketsUrl ? (
+                <Button asChild className="h-10 bg-brand-accent text-white hover:bg-brand-accent/90">
+                  <a href={cobranca.eventDetails.ticketsUrl} target="_blank" rel="noreferrer">
+                    Ver ingressos
+                  </a>
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Dados do Aluno */}
       <div className={cn(DETAIL_SECTION_MAX, 'bg-white rounded-xl border border-gray-200 shadow-sm')}>
         <div className="px-4 py-4 border-b border-gray-100 sm:px-6 sm:py-5">
@@ -1985,8 +2074,14 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
         </div>
       </div>
 
-      {/* Arquivos e Documentos */}
-      <CobrancaArquivos cobrancaId={cobranca.id} sectionClassName={sectionClass} />
+      {cobranca.origin !== 'EVENT' ? (
+        <CobrancaNotaFiscal cobrancaId={cobranca.id} sectionClassName={sectionClass} />
+      ) : null}
+
+      {/* Arquivos e Documentos — cobranças de evento usam comprovante/link do Asaas, sem anexos locais */}
+      {cobranca.origin !== 'EVENT' ? (
+        <CobrancaArquivos cobrancaId={cobranca.id} sectionClassName={sectionClass} />
+      ) : null}
 
       <div className={cn('flex justify-center pt-2', DETAIL_SECTION_MAX)}>
         <AsaasSeal variant="negativo-preto" />

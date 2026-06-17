@@ -33,15 +33,15 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     cleanup();
   });
 
-  it('abre o modal para conta externa com onboarding principal concluido e api key pendente', async () => {
+  it('abre o modal na primeira configuracao da api key', async () => {
     useSessionMock.mockReturnValue({
       status: 'authenticated',
       data: {
         user: {
           role: 'ADMIN',
-          financeStatus: 'FINANCE_APPROVED',
           financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
           externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+          asaasApiKeyStatus: 'MISSING',
         },
       },
     });
@@ -56,15 +56,84 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     expect(screen.getByTestId('external-asaas-onboarding')).toHaveTextContent('variant:modal');
   });
 
-  it('nao abre o modal quando a conta externa ja esta pronta', async () => {
+  it('nao abre o modal quando a chave esta saudavel e conectada', async () => {
     useSessionMock.mockReturnValue({
       status: 'authenticated',
       data: {
         user: {
           role: 'ADMIN',
-          financeStatus: 'FINANCE_APPROVED',
           financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
           externalAsaasOnboardingStatus: 'READY',
+          asaasApiKeyStatus: 'CONNECTED',
+        },
+      },
+    });
+
+    const { ExternalAsaasOnboardingPersistentModal } = await import(
+      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+    );
+
+    render(<ExternalAsaasOnboardingPersistentModal />);
+
+    expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument();
+  });
+
+  it('nao abre o modal quando webhook ainda esta pendente mas a chave continua conectada', async () => {
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          role: 'ADMIN',
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'WEBHOOK_PENDING',
+          asaasApiKeyStatus: 'CONNECTED',
+        },
+      },
+    });
+
+    const { ExternalAsaasOnboardingPersistentModal } = await import(
+      '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+    );
+
+    render(<ExternalAsaasOnboardingPersistentModal />);
+
+    expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument();
+  });
+
+  it('reabre o modal quando a chave foi expirada, desabilitada ou excluida no Asaas', async () => {
+    for (const asaasApiKeyStatus of ['EXPIRED', 'DISABLED', 'DELETED', 'REVOKED'] as const) {
+      cleanup();
+      useSessionMock.mockReturnValue({
+        status: 'authenticated',
+        data: {
+          user: {
+            role: 'ADMIN',
+            financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+            externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+            asaasApiKeyStatus,
+          },
+        },
+      });
+
+      const { ExternalAsaasOnboardingPersistentModal } = await import(
+        '@/components/external-asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+      );
+
+      render(<ExternalAsaasOnboardingPersistentModal />);
+
+      expect(screen.getByTestId('dialog-root')).toBeInTheDocument();
+    }
+  });
+
+  it('nao abre o modal para papeis sem permissao financeira', async () => {
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          role: 'USER',
+          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
+          asaasApiKeyStatus: 'MISSING',
         },
       },
     });

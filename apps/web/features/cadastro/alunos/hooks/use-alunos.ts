@@ -6,61 +6,89 @@ export interface UseAlunosOptions {
   contaId: string | null | undefined;
   q?: string;
   status?: string;
-  page?: number;
   pageSize?: number;
   sortOrder?: 'ASC' | 'DESC';
 }
+
+interface UseAlunosState {
+  items: AlunoListItem[];
+  total: number;
+  loading: boolean;
+  error: string | null;
+  page: number;
+  pageSize: number;
+}
+
+const INITIAL_STATE: UseAlunosState = {
+  items: [],
+  total: 0,
+  loading: false,
+  error: null,
+  page: 1,
+  pageSize: 6,
+};
 
 export function useAlunos({
   contaId,
   q = '',
   status = 'TODOS',
-  page = 1,
   pageSize = 6,
   sortOrder = 'ASC',
 }: UseAlunosOptions) {
-  const [items, setItems] = useState<AlunoListItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<UseAlunosState>({ ...INITIAL_STATE, pageSize });
   const abortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
-    if (!contaId) {
-      setItems([]);
-      setTotal(0);
-      return;
-    }
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await listAlunos({
-        contaId,
-        signal: controller.signal,
-        q,
-        status,
-        page,
-        pageSize,
-        sortOrder,
-      });
-      setItems(data.items);
-      setTotal(data.total);
-    } catch (err) {
-      if ((err as { name?: string }).name === 'AbortError') {
+  const load = useCallback(
+    async (overrides?: { page?: number; pageSize?: number }) => {
+      if (!contaId) {
+        setState((prev) => ({ ...prev, items: [], total: 0, loading: false }));
         return;
       }
-      setItems([]);
-      setTotal(0);
-      setError((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [contaId, page, pageSize, q, sortOrder, status]);
+
+      if (abortRef.current) {
+        abortRef.current.abort();
+      }
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      const page = overrides?.page ?? 1;
+      const effectivePageSize = overrides?.pageSize ?? pageSize;
+
+      setState((prev) => ({ ...prev, loading: true, error: null }));
+      try {
+        const data = await listAlunos({
+          contaId,
+          signal: controller.signal,
+          q,
+          status,
+          page,
+          pageSize: effectivePageSize,
+          sortOrder,
+        });
+        setState({
+          items: data.items,
+          total: data.total,
+          loading: false,
+          error: null,
+          page: data.page ?? page,
+          pageSize: data.pageSize ?? effectivePageSize,
+        });
+      } catch (err) {
+        if ((err as { name?: string }).name === 'AbortError') {
+          return;
+        }
+        setState((prev) => ({
+          ...prev,
+          loading: false,
+          items: [],
+          total: 0,
+          page: 1,
+          error: (err as Error).message,
+        }));
+      }
+    },
+    [contaId, pageSize, q, sortOrder, status],
+  );
 
   useEffect(() => {
     void load();
@@ -69,24 +97,39 @@ export function useAlunos({
 
   useEffect(() => {
     if (!contaId) {
-      setItems([]);
-      setTotal(0);
-      setLoading(false);
+      setState((prev) => ({ ...prev, items: [], total: 0, loading: false, page: 1 }));
     }
   }, [contaId]);
 
+  const reload = useCallback(() => {
+    void load({ page: state.page, pageSize: state.pageSize });
+  }, [load, state.page, state.pageSize]);
+
+  const setPage = useCallback(
+    (page: number) => {
+      void load({ page, pageSize: state.pageSize });
+    },
+    [load, state.pageSize],
+  );
+
   const remove = useCallback(async ({ id, reason }: { id: string; reason?: string }) => {
     await deleteAluno({ id, reason });
-    setItems((prev) => prev.filter((aluno) => aluno.id !== id));
-    setTotal((prev) => Math.max(0, prev - 1));
+    setState((prev) => ({
+      ...prev,
+      items: prev.items.filter((aluno) => aluno.id !== id),
+      total: Math.max(0, prev.total - 1),
+    }));
   }, []);
 
   return {
-    items,
-    total,
-    loading,
-    error,
-    reload: load,
+    items: state.items,
+    total: state.total,
+    loading: state.loading,
+    error: state.error,
+    page: state.page,
+    pageSize: state.pageSize,
+    reload,
+    setPage,
     remove,
   };
 }

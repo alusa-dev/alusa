@@ -7,6 +7,64 @@ const LEGACY_PLATEIA_LEVEL_NAMES = new Set(['Plano de fundo', 'Plateia']);
 export const PLATEIA_BASE_SORT_ORDER = 0;
 export const MAP_AREA_WIDTH_PX = 1440;
 export const MAP_AREA_HEIGHT_PX = 900;
+export const MAP_ARTBOARD_STROKE = '#94a3b8';
+export const MAP_ARTBOARD_STROKE_WIDTH = 1;
+export const MAP_AREA_MIN_WIDTH_PX = 320;
+export const MAP_AREA_MIN_HEIGHT_PX = 240;
+export const MAP_AREA_MAX_WIDTH_PX = 20000;
+export const MAP_AREA_MAX_HEIGHT_PX = 20000;
+
+export type ArtboardOrientation = 'landscape' | 'portrait';
+
+export function clampArtboardWidth(widthPx: number) {
+  return Math.min(MAP_AREA_MAX_WIDTH_PX, Math.max(MAP_AREA_MIN_WIDTH_PX, Math.round(widthPx)));
+}
+
+export function clampArtboardHeight(heightPx: number) {
+  return Math.min(MAP_AREA_MAX_HEIGHT_PX, Math.max(MAP_AREA_MIN_HEIGHT_PX, Math.round(heightPx)));
+}
+
+export function normalizeArtboardDimensions(widthPx: number, heightPx: number) {
+  return {
+    widthPx: clampArtboardWidth(widthPx),
+    heightPx: clampArtboardHeight(heightPx),
+  };
+}
+
+export function resolveLevelArtboardSize(level: Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>) {
+  const rawWidth = Number.isFinite(level.widthPx) && level.widthPx > 0 ? level.widthPx : MAP_AREA_WIDTH_PX;
+  const rawHeight = Number.isFinite(level.heightPx) && level.heightPx > 0 ? level.heightPx : MAP_AREA_HEIGHT_PX;
+  return normalizeArtboardDimensions(rawWidth, rawHeight);
+}
+
+export function getArtboardOrientation(level: Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>): ArtboardOrientation {
+  return level.widthPx >= level.heightPx ? 'landscape' : 'portrait';
+}
+
+export function swapArtboardOrientation(level: Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>) {
+  return normalizeArtboardDimensions(level.heightPx, level.widthPx);
+}
+
+export function applyArtboardOrientation(
+  level: Pick<EventMapLevelDTO, 'widthPx' | 'heightPx'>,
+  orientation: ArtboardOrientation,
+) {
+  const current = getArtboardOrientation(level);
+  if (current === orientation) {
+    return resolveLevelArtboardSize(level);
+  }
+  return swapArtboardOrientation(level);
+}
+
+function withNormalizedArtboard<T extends EventMapLevelDTO>(level: T): T {
+  const { widthPx, heightPx } = resolveLevelArtboardSize(level);
+  return {
+    ...level,
+    widthPx,
+    heightPx,
+    unit: 'px',
+  };
+}
 
 export function isPlateiaBaseLevel(level: Pick<EventMapLevelDTO, 'sortOrder'>) {
   return level.sortOrder === PLATEIA_BASE_SORT_ORDER;
@@ -23,34 +81,25 @@ export function normalizeMapLevels(levels: EventMapLevelDTO[]): EventMapLevelDTO
 
   const normalizedOthers = otherLevels
     .sort((left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name, 'pt-BR'))
-    .map((level, index) => ({
+    .map((level, index) => withNormalizedArtboard({
       ...level,
       sortOrder: index + 1,
-      widthPx: MAP_AREA_WIDTH_PX,
-      heightPx: MAP_AREA_HEIGHT_PX,
-      unit: 'px',
     }));
 
-  const normalizedBase = baseLevels.map((level) => ({
+  const normalizedBase = baseLevels.map((level) => withNormalizedArtboard({
     ...level,
     sortOrder: PLATEIA_BASE_SORT_ORDER,
     name: normalizeBaseLevelName(level.name),
-    widthPx: MAP_AREA_WIDTH_PX,
-    heightPx: MAP_AREA_HEIGHT_PX,
-    unit: 'px',
   }));
 
   if (normalizedBase.length === 0 && normalizedOthers.length > 0) {
     const [first, ...rest] = normalizedOthers;
     return [
-      {
+      withNormalizedArtboard({
         ...first,
         sortOrder: PLATEIA_BASE_SORT_ORDER,
         name: normalizeBaseLevelName(first.name),
-        widthPx: MAP_AREA_WIDTH_PX,
-        heightPx: MAP_AREA_HEIGHT_PX,
-        unit: 'px',
-      },
+      }),
       ...rest.map((level, index) => ({ ...level, sortOrder: index + 1 })),
     ];
   }
