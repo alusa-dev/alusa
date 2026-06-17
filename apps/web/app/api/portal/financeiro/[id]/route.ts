@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
-import { AsaasEnvError, getPayment, isAsaasEnabled } from '@alusa/finance';
+import { AsaasEnvError, getPayment, isAsaasEnabled, syncPaymentStateFromAsaas } from '@alusa/finance';
 import type { AsaasPayment } from '@alusa/finance';
 import { requirePortalUser, resolvePortalAlunoIds } from '@/features/portal/api-helpers';
 import {
@@ -29,6 +29,15 @@ function resolveInvoiceUrl(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
+function resolveAsaasStatus(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -37,7 +46,7 @@ export async function GET(
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
-    const { id } = portalRouteIdParamsDTOSchema.parse(params);
+    const { id } = portalRouteIdParamsDTOSchema.parse(rawParams);
     const alunoIds = await resolvePortalAlunoIds(auth.user);
 
     const forceRefresh = req.nextUrl.searchParams.get('fresh') === '1';
@@ -206,14 +215,21 @@ export async function GET(
     // 6. Formatar e retornar
     const response = cobranca
       ? (() => {
+          const remoteStatus = resolveAsaasStatus(
+            asaasData?.status,
+            effectiveAsaasData && 'status' in effectiveAsaasData
+              ? effectiveAsaasData.status
+              : null,
+            cobranca.asaasStatus,
+          );
           const localStatus = resolveAcademicDisplayedStatus({
             localCobrancaStatus: cobranca.status,
-            remotePaymentStatus: cobranca.asaasStatus,
+            remotePaymentStatus: remoteStatus,
             dueDate: cobranca.vencimento,
           });
           const displayStatus = buildChargeDisplayStatusDTO({
             localStatus,
-            asaasStatus: cobranca.asaasStatus,
+            asaasStatus: remoteStatus,
             liquidacaoStatus: cobranca.liquidacaoStatus,
             hasAsaasLink: Boolean(cobranca.asaasPaymentId || cobranca.asaasStatus || cobranca.liquidacaoStatus),
           });
@@ -225,7 +241,7 @@ export async function GET(
           vencimento: cobranca.vencimento.toISOString(),
           status: localStatus,
           displayStatus,
-          asaasStatus: cobranca.asaasStatus,
+          asaasStatus: remoteStatus,
           liquidacaoStatus: cobranca.liquidacaoStatus,
           formaPagamento: cobranca.formaPagamento,
           asaasId: cobranca.asaasId,
@@ -273,10 +289,26 @@ export async function GET(
         };
         })()
       : (() => {
-          const localStatus = mapChargeStatusToPortalStatus(standaloneCharge!.status, standaloneCharge!.dueDate);
+          const remoteStatus = resolveAsaasStatus(
+            asaasData?.status,
+            effectiveAsaasData && 'status' in effectiveAsaasData
+              ? effectiveAsaasData.status
+              : null,
+            standaloneCharge!.asaasStatus,
+          );
+          const localStatus = remoteStatus
+            ? resolveAcademicDisplayedStatus({
+                localCobrancaStatus: mapChargeStatusToPortalStatus(
+                  standaloneCharge!.status,
+                  standaloneCharge!.dueDate,
+                ),
+                remotePaymentStatus: remoteStatus,
+                dueDate: standaloneCharge!.dueDate ?? new Date(),
+              })
+            : mapChargeStatusToPortalStatus(standaloneCharge!.status, standaloneCharge!.dueDate);
           const displayStatus = buildChargeDisplayStatusDTO({
-            localStatus: standaloneCharge!.status,
-            asaasStatus: standaloneCharge!.asaasStatus,
+            localStatus,
+            asaasStatus: remoteStatus,
             liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
             hasAsaasLink: Boolean(standaloneCharge!.asaasPaymentId),
           });
@@ -288,7 +320,7 @@ export async function GET(
           vencimento: (standaloneCharge!.dueDate ?? new Date()).toISOString(),
           status: localStatus,
           displayStatus,
-          asaasStatus: standaloneCharge!.asaasStatus,
+          asaasStatus: remoteStatus,
           liquidacaoStatus: standaloneCharge!.liquidacaoStatus,
           formaPagamento: standaloneCharge!.billingType,
           asaasId: standaloneCharge!.asaasPaymentId,
@@ -322,6 +354,91 @@ export async function GET(
     return jsonNoStore(
       { error: 'Erro ao buscar cobrança' }, 
       { status: 500 }
+    );
+  }
+}
+
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const rawParams = await params;
+  try {
+    const auth = await requirePortalUser();
+    if ('response' in auth) return auth.response;
+
+    const { id } = portalRouteIdParamsDTOSchema.parse(rawParams);
+    const alunoIds = await resolvePortalAlunoIds(auth.user);
+
+    const cobranca = await prisma.cobranca.findFirst({
+      where: {
+        id,
+        matricula: {
+          alunoId: { in: alunoIds },
+          aluno: { contaId: auth.user.contaId },
+        },
+      },
+      select: { asaasPaymentId: true },
+    });
+
+    let paymentId = cobranca?.asaasPaymentId ?? null;
+
+    if (!paymentId) {
+      const payerScope = await resolvePortalScopedPayerIds(auth.user.contaId, alunoIds);
+      const payerFilters: Array<{ customer: { payerType: 'ALUNO' | 'RESPONSAVEL'; payerId: { in: string[] } } }> = [];
+
+      if (payerScope.alunoIds.length) {
+        payerFilters.push({ customer: { payerType: 'ALUNO', payerId: { in: payerScope.alunoIds } } });
+      }
+      if (payerScope.responsavelIds.length) {
+        payerFilters.push({ customer: { payerType: 'RESPONSAVEL', payerId: { in: payerScope.responsavelIds } } });
+      }
+
+      const charge = payerFilters.length
+        ? await prisma.charge.findFirst({
+            where: {
+              id,
+              contaId: auth.user.contaId,
+              cobrancaId: null,
+              OR: payerFilters,
+            },
+            select: { asaasPaymentId: true },
+          })
+        : null;
+
+      paymentId = charge?.asaasPaymentId ?? null;
+    }
+
+    if (!paymentId) {
+      return jsonNoStore(
+        { success: false, error: 'Cobrança não encontrada ou sem integração Asaas' },
+        { status: 404 },
+      );
+    }
+
+    const result = await syncPaymentStateFromAsaas({
+      contaId: auth.user.contaId,
+      asaasPaymentId: paymentId,
+    });
+
+    if (!result.success) {
+      return jsonNoStore({ success: false, error: result.error }, { status: 502 });
+    }
+
+    return jsonNoStore({
+      success: true,
+      asaasPaymentId: result.asaasPaymentId,
+      paymentStatus: result.paymentStatus,
+      appliedEvent: result.appliedEvent,
+    });
+  } catch (error) {
+    console.error('[Portal Financeiro][sync-asaas] Erro:', error);
+    return jsonNoStore(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Erro ao sincronizar cobrança',
+      },
+      { status: 500 },
     );
   }
 }

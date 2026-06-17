@@ -4,6 +4,7 @@ import type { InstallmentStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { parseExternalReference } from '../core';
+import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 
 export type InstallmentWebhookPayload = {
   event: string;
@@ -247,6 +248,22 @@ export async function handleInstallmentWebhook(
           resolutionMethod: computed?.method ?? null,
           resolutionDetails: computed?.details ?? null,
         },
+      });
+    }
+
+    try {
+      await publishFinanceEvent({
+        contaId,
+        type: 'installment.updated',
+        entityId: installmentPlan.id,
+        asaasPaymentId: payload.payment.id,
+        revision: Date.now(),
+      });
+    } catch (publishError) {
+      console.warn('[finance][handleInstallmentWebhook][realtime-publish-failed]', {
+        contaId,
+        installmentPlanId: installmentPlan.id,
+        error: publishError instanceof Error ? publishError.message : String(publishError),
       });
     }
 

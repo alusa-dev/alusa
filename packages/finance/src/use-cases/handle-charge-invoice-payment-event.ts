@@ -86,6 +86,24 @@ export async function handleChargeInvoicePaymentEvent(
   if (isInvoicePaymentSensitiveEvent(input.event, input.providerStatus)) {
     if (!invoice) return { handled: true, action: 'SKIPPED', reason: 'NO_INVOICE' };
 
+    if (invoice.status === 'PROCESSING_CANCELLATION') {
+      return {
+        handled: true,
+        action: 'SKIPPED',
+        invoiceId: invoice.id,
+        reason: 'INVOICE_CANCEL_IN_PROGRESS',
+      };
+    }
+
+    if (invoice.status === 'CANCELED') {
+      return {
+        handled: true,
+        action: 'SKIPPED',
+        invoiceId: invoice.id,
+        reason: 'INVOICE_ALREADY_CANCELED',
+      };
+    }
+
     if (!AUTO_CANCELABLE_STATUSES.has(invoice.status)) {
       await auditLogService.record({
         contaId: input.contaId,

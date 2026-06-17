@@ -25,6 +25,7 @@ vi.mock('../../foundation/audit-log.service', () => ({
   auditLogService: { record: vi.fn() },
 }));
 
+import { cancelChargeInvoice } from '../cancel-charge-invoice';
 import { handleChargeInvoicePaymentEvent } from '../handle-charge-invoice-payment-event';
 
 describe('handleChargeInvoicePaymentEvent', () => {
@@ -53,5 +54,31 @@ describe('handleChargeInvoicePaymentEvent', () => {
     expect(result.action).toBe('SKIPPED');
     expect(result.reason).toBe('SUBSCRIPTION_NATIVE_EMISSION');
     expect(mocks.emitChargeInvoice).not.toHaveBeenCalled();
+  });
+
+  it('ignora estorno quando NFS-e já está em processamento de cancelamento', async () => {
+    mocks.prisma.contaFiscalSettings.findUnique.mockResolvedValueOnce({ emissionMode: 'ON_PAYMENT' });
+    mocks.prisma.invoice.findFirst.mockResolvedValueOnce({
+      id: 'inv-1',
+      status: 'PROCESSING_CANCELLATION',
+      asaasInvoiceId: 'asaas-inv-1',
+    });
+    mocks.prisma.charge.findFirst.mockResolvedValueOnce({ id: 'charge-1' });
+
+    const result = await handleChargeInvoicePaymentEvent({
+      contaId: 't1',
+      chargeId: 'charge-1',
+      asaasPaymentId: 'pay-1',
+      event: 'PAYMENT_REFUNDED',
+      providerStatus: 'REFUNDED',
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      action: 'SKIPPED',
+      reason: 'INVOICE_CANCEL_IN_PROGRESS',
+      invoiceId: 'inv-1',
+    });
+    expect(cancelChargeInvoice).not.toHaveBeenCalled();
   });
 });

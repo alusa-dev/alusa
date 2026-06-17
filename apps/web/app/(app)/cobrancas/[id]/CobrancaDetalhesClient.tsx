@@ -387,8 +387,21 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   }, [detailQuery.data, applyCobrancaPayload]);
 
   useEffect(() => {
-    setLoading(detailQuery.isLoading && !detailQuery.data);
-  }, [detailQuery.isLoading, detailQuery.data]);
+    const data = detailQuery.data;
+    if (!data?.asaasPaymentId) return;
+    if (isCobrancaDetailTerminal(data.status as StatusCobranca)) return;
+    if (data.status !== 'PROCESSANDO' && data.status !== 'CANCELAMENTO_PENDENTE') return;
+    setAwaitingWebhook(true);
+  }, [detailQuery.data]);
+
+  useEffect(() => {
+    if (!awaitingWebhook) return;
+    void detailQuery.refetch();
+  }, [awaitingWebhook]);
+
+  useEffect(() => {
+    setLoading(detailQuery.isLoading && !detailQuery.data && !cobranca);
+  }, [detailQuery.isLoading, detailQuery.data, cobranca]);
 
   useEffect(() => {
     if (!detailQuery.error) return;
@@ -401,13 +414,16 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     enabled: Boolean(cobranca) && !isEditing && !isEditingAjustes,
     cobrancaId: id,
     realtime: { cobrancaQueries: false },
-    intervalMs: awaitingWebhook ? 5_000 : 20_000,
+    realtimePollIntervalMs: awaitingWebhook ? 3_000 : 12_000,
+    intervalMs: null,
     minIntervalMs: 4_000,
   });
 
   useEffect(() => {
     if (!awaitingWebhook || !cobranca?.status) return;
-    if (isCobrancaDetailTerminal(cobranca.status)) {
+    const status = cobranca.status as StatusCobranca;
+    const isTransient = status === 'PROCESSANDO' || status === 'CANCELAMENTO_PENDENTE';
+    if (isCobrancaDetailTerminal(status) || !isTransient) {
       setAwaitingWebhook(false);
     }
   }, [awaitingWebhook, cobranca?.status]);
@@ -1391,14 +1407,9 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                 <span className="text-sm font-medium">Modo de edição</span>
               </div>
             )}
-            <div className="flex flex-col items-end gap-1">
-              {cobranca.displayStatus ? (
-                <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} />
-              ) : null}
-              {awaitingWebhook && !isCobrancaDetailTerminal(cobranca.status) ? (
-                <p className="text-right text-xs text-indigo-600">Atualizando status…</p>
-              ) : null}
-            </div>
+            {cobranca.displayStatus ? (
+              <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} />
+            ) : null}
           </div>
         </div>
 

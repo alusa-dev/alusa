@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/src/prisma';
 import type { Prisma } from '@prisma/client';
 import { appHealthResultDTOSchema } from '@/features/system/dtos';
@@ -8,10 +8,12 @@ import { NO_STORE_HEADERS } from '@/lib/http-security';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    // Upsert da conta demo em ambientes de desenvolvimento/teste
-    if (process.env.NODE_ENV !== 'production') {
+    const lite = req.nextUrl.searchParams.get('lite') === '1';
+
+    // Upsert da conta demo em ambientes de desenvolvimento/teste (não no ping leve do layout)
+    if (process.env.NODE_ENV !== 'production' && !lite) {
       // 1) Garante a conta antes do usuário para evitar P2003 (FK)
       let conta = await prisma.conta.upsert({
         where: { id: 'conta-default' },

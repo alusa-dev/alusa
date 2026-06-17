@@ -21,11 +21,49 @@ async function resolveAuth(): Promise<SessionUser | null> {
   return (session as { user?: SessionUser } | null)?.user ?? null;
 }
 
+type ResponsavelSearchRow = {
+  id: string;
+  nome: string;
+  cpf: string | null;
+  asaasCustomerId: string | null;
+};
+
+function alunoMatchesQueryDirectly(
+  aluno: { nome: string; cpf: string | null },
+  query: string,
+  digitsQuery: string,
+): boolean {
+  if (aluno.nome.toLowerCase().includes(query.toLowerCase())) return true;
+  if (digitsQuery.length > 0 && aluno.cpf?.includes(digitsQuery)) return true;
+  return false;
+}
+
+function buildResponsavelCandidate(resp: ResponsavelSearchRow) {
+  return {
+    id: resp.id,
+    name: resp.nome,
+    type: 'responsavel' as const,
+    cpf: resp.cpf ? maskCpf(resp.cpf) : undefined,
+    cpfMasked: resp.cpf ? maskCpf(resp.cpf) : null,
+    isMinor: false,
+    hasResponsible: false,
+    responsibleId: null,
+    responsibleName: null,
+    payerResolved: {
+      type: 'responsavel' as const,
+      id: resp.id,
+      name: resp.nome,
+      hasAsaasCustomerId: !!resp.asaasCustomerId,
+    },
+    financialStatus: resp.asaasCustomerId ? ('OK' as const) : ('INCOMPLETE' as const),
+  };
+}
+
 /**
  * Contrato de retorno:
- * - Para alunos: retorna payerResolved indicando quem efetivamente pagará
- * - Para responsáveis: payerResolved = o próprio responsável
- * - Se aluno é menor: pagador resolvido = responsável financeiro vinculado
+ * - Alunos menores não aparecem: o responsável financeiro é quem tem customer no Asaas.
+ * - Alunos maiores de idade aparecem como pagador (type aluno).
+ * - Responsáveis financeiros aparecem como pagador (type responsavel).
  */
 export async function GET(request: NextRequest) {
   const user = await resolveAuth();
@@ -86,6 +124,7 @@ export async function GET(request: NextRequest) {
             select: {
               id: true,
               nome: true,
+              cpf: true,
               asaasCustomerId: true,
             },
           },
@@ -116,90 +155,62 @@ export async function GET(request: NextRequest) {
   });
 
   const results: Array<Record<string, unknown>> = [];
-  const resolvedResponsibleIds = new Set<string>();
+  const responsavelById = new Map<string, ReturnType<typeof buildResponsavelCandidate>>();
 
-  // Processar alunos com resolução de pagador
+  const upsertResponsavel = (resp: ResponsavelSearchRow) => {
+    responsavelById.set(resp.id, buildResponsavelCandidate(resp));
+  };
+
+  // Processar alunos: menores e matches indiretos (via responsável) retornam o responsável financeiro.
   for (const aluno of alunos) {
     const menor = isMenorDeIdade(aluno.dataNasc);
     const respFinanceiro = aluno.responsaveis[0]?.responsavel ?? null;
+    const matchedDirectly = alunoMatchesQueryDirectly(aluno, query, digitsQuery);
 
-    if (menor) {
-      // Aluno menor: pagador = responsável financeiro
+    if (menor || !matchedDirectly) {
       if (respFinanceiro) {
-        resolvedResponsibleIds.add(respFinanceiro.id);
-        results.push({
-          id: aluno.id,
-          name: aluno.nome,
-          type: 'aluno',
-          cpf: aluno.cpf ? maskCpf(aluno.cpf) : undefined,
-          cpfMasked: aluno.cpf ? maskCpf(aluno.cpf) : null,
-          isMinor: true,
-          hasResponsible: true,
-          responsibleId: respFinanceiro.id,
-          responsibleName: respFinanceiro.nome,
-          payerResolved: {
-            type: 'responsavel',
-            id: respFinanceiro.id,
-            name: respFinanceiro.nome,
-            hasAsaasCustomerId: !!respFinanceiro.asaasCustomerId,
-          },
-          financialStatus: respFinanceiro.asaasCustomerId ? 'OK' : 'INCOMPLETE',
-        });
+        upsertResponsavel(respFinanceiro);
       }
-      // Se menor sem responsável: não incluir (invariante: cadastro exige responsável)
-    } else {
-      // Aluno maior: pagador = próprio aluno
-      results.push({
-        id: aluno.id,
-        name: aluno.nome,
-        type: 'aluno',
-        cpf: aluno.cpf ? maskCpf(aluno.cpf) : undefined,
-        cpfMasked: aluno.cpf ? maskCpf(aluno.cpf) : null,
-        isMinor: false,
-        hasResponsible: !!respFinanceiro,
-        responsibleId: respFinanceiro?.id ?? null,
-        responsibleName: respFinanceiro?.nome ?? null,
-        payerResolved: {
-          type: 'aluno',
-          id: aluno.id,
-          name: aluno.nome,
-          hasAsaasCustomerId: !!aluno.asaasCustomerId,
-        },
-        financialStatus: aluno.asaasCustomerId ? 'OK' : 'INCOMPLETE',
-      });
-    }
-  }
-
-  // Responsáveis: pagador = o próprio responsável
-  for (const resp of responsaveis) {
-    if (resolvedResponsibleIds.has(resp.id)) {
       continue;
     }
 
+    // Aluno maior de idade encontrado pelo próprio nome/CPF.
     results.push({
-      id: resp.id,
-      name: resp.nome,
-      type: 'responsavel',
-      cpf: resp.cpf ? maskCpf(resp.cpf) : undefined,
-      cpfMasked: resp.cpf ? maskCpf(resp.cpf) : null,
+      id: aluno.id,
+      name: aluno.nome,
+      type: 'aluno',
+      cpf: aluno.cpf ? maskCpf(aluno.cpf) : undefined,
+      cpfMasked: aluno.cpf ? maskCpf(aluno.cpf) : null,
       isMinor: false,
-      hasResponsible: false,
-      responsibleId: null,
-      responsibleName: null,
+      hasResponsible: !!respFinanceiro,
+      responsibleId: respFinanceiro?.id ?? null,
+      responsibleName: respFinanceiro?.nome ?? null,
       payerResolved: {
-        type: 'responsavel',
-        id: resp.id,
-        name: resp.nome,
-        hasAsaasCustomerId: !!resp.asaasCustomerId,
+        type: 'aluno',
+        id: aluno.id,
+        name: aluno.nome,
+        hasAsaasCustomerId: !!aluno.asaasCustomerId,
       },
-      financialStatus: resp.asaasCustomerId ? 'OK' : 'INCOMPLETE',
+      financialStatus: aluno.asaasCustomerId ? 'OK' : 'INCOMPLETE',
     });
   }
+
+  for (const resp of responsaveis) {
+    upsertResponsavel(resp);
+  }
+
+  for (const responsavel of responsavelById.values()) {
+    if (!results.some((item) => item.type === 'responsavel' && item.id === responsavel.id)) {
+      results.push(responsavel);
+    }
+  }
+
+  const limitedResults = results.slice(0, 20);
 
   return NextResponse.json(
     financePayerSearchResultDTOSchema.parse(
       mapFinancePayerSearchResultToDTO({
-        results: results.map((result) => mapFinancePayerCandidateToDTO(result)),
+        results: limitedResults.map((result) => mapFinancePayerCandidateToDTO(result)),
       }),
     ),
   );

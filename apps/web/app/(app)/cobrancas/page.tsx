@@ -37,6 +37,7 @@ const CreateChargeModal = dynamic(
 );
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -195,7 +196,12 @@ export default function CobrancasTodasPage() {
 
       setCobrancas(normalized);
     },
-    { deps: [page, pageSize, searchQuery, statusView, tipoFilter] },
+    {
+      deps: [page, pageSize, searchQuery, statusView, tipoFilter],
+      liveRefresh: { localRefresh: true, financeiro: true, cobrancaQueries: true },
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
   );
 
   useEffect(() => {
@@ -222,6 +228,13 @@ export default function CobrancasTodasPage() {
     if (sortOrder === 'DESC') items.reverse();
     return items;
   }, [cobrancas, sortOrder]);
+
+  useVisibleChargeConvergence({
+    enabled: statusView === 'open',
+    items: orderedCobrancas,
+    refresh,
+    maxItems: pageSize,
+  });
 
   const handlePrint = (cobranca: Cobranca) => {
     if (!cobranca?.id) return;

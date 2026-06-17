@@ -114,6 +114,22 @@ function resolveProviderStatus(input: EligibilityInput): string | null {
   return normalize(input.asaasPayment?.status) ?? normalize(input.charge?.asaasStatus);
 }
 
+export function isChargePaymentFullyRefunded(input: {
+  chargeStatus?: string | null;
+  cobrancaStatus?: string | null;
+  providerStatus?: string | null;
+}): boolean {
+  const chargeStatus = normalize(input.chargeStatus);
+  const cobrancaStatus = normalize(input.cobrancaStatus);
+  const providerStatus = normalize(input.providerStatus);
+
+  return (
+    chargeStatus === 'REFUNDED' ||
+    cobrancaStatus === 'ESTORNADO' ||
+    (providerStatus != null && REFUNDED_PROVIDER_STATUSES.has(providerStatus))
+  );
+}
+
 export function evaluateChargeInvoiceEligibility(input: EligibilityInput): ChargeInvoiceEligibility {
   const invoiceStatus = normalize(input.invoice?.status);
   const chargeStatus = normalize(input.charge?.status);
@@ -164,6 +180,49 @@ export function evaluateChargeInvoiceEligibility(input: EligibilityInput): Charg
     });
   }
 
+  if (cobrancaStatus === 'ESTORNADO_PARCIAL') {
+    return eligibility({
+      reason: 'PAYMENT_PARTIALLY_REFUNDED',
+      severity: 'warning',
+      message: 'Cobrança com estorno parcial exige revisão fiscal antes de emitir NFS-e.',
+    });
+  }
+
+  const paymentRefunded =
+    isChargePaymentFullyRefunded({
+      chargeStatus,
+      cobrancaStatus,
+      providerStatus,
+    }) && cobrancaStatus !== 'ESTORNADO_PARCIAL';
+
+  if (paymentRefunded) {
+    const cancelableInvoice =
+      invoiceStatus != null && CANCELABLE_INVOICE_STATUSES.has(invoiceStatus);
+    return eligibility({
+      shouldAutoCancel: cancelableInvoice,
+      canCancel: cancelableInvoice,
+      reason: 'PAYMENT_REFUNDED',
+      severity: 'danger',
+      message: cancelableInvoice
+        ? 'Cobrança estornada. A NFS-e será cancelada automaticamente.'
+        : 'Cobrança estornada não permite emissão de nota fiscal.',
+    });
+  }
+
+  if (providerStatus && CHARGEBACK_PROVIDER_STATUSES.has(providerStatus)) {
+    const cancelableInvoice =
+      invoiceStatus != null && CANCELABLE_INVOICE_STATUSES.has(invoiceStatus);
+    return eligibility({
+      shouldAutoCancel: cancelableInvoice,
+      canCancel: cancelableInvoice,
+      reason: 'PAYMENT_CHARGEBACK',
+      severity: 'danger',
+      message: cancelableInvoice
+        ? 'Cobrança em chargeback. A NFS-e será cancelada automaticamente.'
+        : 'Cobrança em chargeback não permite emissão de nota fiscal.',
+    });
+  }
+
   if (invoiceStatus && ACTIVE_INVOICE_STATUSES.has(invoiceStatus)) {
     return eligibility({
       canCancel: CANCELABLE_INVOICE_STATUSES.has(invoiceStatus),
@@ -181,32 +240,6 @@ export function evaluateChargeInvoiceEligibility(input: EligibilityInput): Charg
       reason: providerStatus === 'DELETED' || input.asaasPayment?.deleted ? 'PAYMENT_DELETED' : 'PAYMENT_CANCELED',
       severity: 'warning',
       message: 'Cobrança cancelada não permite emissão de nota fiscal.',
-    });
-  }
-
-  if (cobrancaStatus === 'ESTORNADO_PARCIAL') {
-    return eligibility({
-      reason: 'PAYMENT_PARTIALLY_REFUNDED',
-      severity: 'warning',
-      message: 'Cobrança com estorno parcial exige revisão fiscal antes de emitir NFS-e.',
-    });
-  }
-
-  if (cobrancaStatus === 'ESTORNADO' || chargeStatus === 'REFUNDED' || (providerStatus && REFUNDED_PROVIDER_STATUSES.has(providerStatus))) {
-    return eligibility({
-      shouldAutoCancel: Boolean(invoiceStatus && CANCELABLE_INVOICE_STATUSES.has(invoiceStatus)),
-      reason: 'PAYMENT_REFUNDED',
-      severity: 'danger',
-      message: 'Cobrança estornada não permite emissão de nota fiscal.',
-    });
-  }
-
-  if (providerStatus && CHARGEBACK_PROVIDER_STATUSES.has(providerStatus)) {
-    return eligibility({
-      shouldAutoCancel: Boolean(invoiceStatus && CANCELABLE_INVOICE_STATUSES.has(invoiceStatus)),
-      reason: 'PAYMENT_CHARGEBACK',
-      severity: 'danger',
-      message: 'Cobrança em chargeback não permite emissão de nota fiscal.',
     });
   }
 

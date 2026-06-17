@@ -53,7 +53,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       const w = window as unknown as { __alusaHealthCalled?: boolean };
       if (!w.__alusaHealthCalled) {
         w.__alusaHealthCalled = true;
-        fetch('/api/health', { cache: 'no-store' }).catch(() => {});
+        fetch('/api/health?lite=1', { cache: 'no-store' }).catch(() => {});
       }
     }
   }, []);

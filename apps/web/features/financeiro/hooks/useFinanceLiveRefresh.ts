@@ -13,6 +13,8 @@ export type UseFinanceLiveRefreshOptions = UseLiveRefreshOptions & {
   realtime?: boolean | FinanceRealtimeSyncScope;
   /** Modo detalhe: filtra eventos por cobrança. */
   cobrancaId?: string;
+  /** Intervalo do poll de eventos financeiros. */
+  realtimePollIntervalMs?: number;
 };
 
 /**
@@ -22,7 +24,7 @@ export function useFinanceLiveRefresh(
   refresh: (_reason: LiveRefreshReason) => void | Promise<void>,
   options: UseFinanceLiveRefreshOptions = {},
 ) {
-  const { realtime = true, cobrancaId, enabled, ...liveOptions } = options;
+  const { realtime = true, cobrancaId, enabled, realtimePollIntervalMs, ...liveOptions } = options;
   const liveEnabled = enabled ?? true;
 
   useLiveRefresh(refresh, { ...liveOptions, enabled: liveEnabled });
@@ -55,6 +57,7 @@ export function useFinanceLiveRefresh(
   useFinanceRealtimeSync({
     enabled: liveEnabled && scopeForSync !== false,
     cobrancaId,
+    pollIntervalMs: realtimePollIntervalMs,
     scope: scopeForSync === false ? undefined : scopeForSync,
   });
 }

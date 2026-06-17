@@ -76,4 +76,21 @@ describe('evaluateChargeInvoiceEligibility', () => {
     expect(result.canCancel).toBe(true);
     expect(result.reason).toBe('ALREADY_HAS_ACTIVE_INVOICE');
   });
+
+  it('prioriza cancelamento automatico quando cobranca estornada e nota emitida', () => {
+    const result = evaluateChargeInvoiceEligibility({
+      charge: {
+        status: 'REFUNDED',
+        asaasStatus: 'REFUNDED',
+        asaasPaymentId: 'pay_123',
+        value: 165,
+      },
+      invoice: { status: 'AUTHORIZED', hasProviderInvoice: true },
+    });
+
+    expect(result.canEmit).toBe(false);
+    expect(result.shouldAutoCancel).toBe(true);
+    expect(result.canCancel).toBe(true);
+    expect(result.reason).toBe('PAYMENT_REFUNDED');
+  });
 });

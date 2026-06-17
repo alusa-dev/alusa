@@ -378,10 +378,30 @@ async function buildOperationalChargesCollection(
   }
 
   // =================================================================
-  // 3. Executar queries em paralelo
+  // 3. Cobranças acadêmicas primeiro (escopo das charges vinculadas)
+  // =================================================================
+  const academicResultRaw = await _db.cobranca.findMany({
+    where: academicWhere,
+    orderBy: { vencimento: 'asc' },
+    include: {
+      matricula: {
+        select: {
+          id: true,
+          aluno: { select: { id: true, nome: true } },
+          responsavelFinanceiro: { select: { nome: true } },
+          billingMode: true,
+          matriculaFamiliarId: true,
+        },
+      },
+    },
+  });
+
+  const academicCobrancaIds = academicResultRaw.map((cobranca) => cobranca.id);
+
+  // =================================================================
+  // 4. Demais fontes em paralelo (charges vinculadas só das acadêmicas abertas)
   // =================================================================
   const [
-    academicResultRaw,
     standaloneResult,
     linkedCharges,
     standaloneSubscriptions,
@@ -389,21 +409,6 @@ async function buildOperationalChargesCollection(
     eventTicketSales,
     eventMapOrders,
   ] = await Promise.all([
-    _db.cobranca.findMany({
-      where: academicWhere,
-      orderBy: { vencimento: 'asc' },
-      include: {
-        matricula: {
-          select: {
-            id: true,
-            aluno: { select: { id: true, nome: true } },
-            responsavelFinanceiro: { select: { nome: true } },
-            billingMode: true,
-            matriculaFamiliarId: true,
-          },
-        },
-      },
-    }),
     _db.charge.findMany({
       where: standaloneWhere,
       orderBy: { dueDate: 'asc' },
@@ -421,20 +426,21 @@ async function buildOperationalChargesCollection(
         },
       },
     }),
-    // Charges acadêmicas vinculadas a mensalidades/parcelamentos
-    _db.charge.findMany({
-      where: {
-        contaId,
-        cobrancaId: { not: null },
-        OR: [
-          { externalReference: { startsWith: 'installmentPlan:' } },
-          { externalReference: { startsWith: 'alusa:installment:' } },
-          { externalReference: { startsWith: 'subscription:' } },
-          { externalReference: { startsWith: 'alusa:subscription:' } },
-        ],
-      },
-      select: { cobrancaId: true, externalReference: true },
-    }),
+    academicCobrancaIds.length
+      ? _db.charge.findMany({
+          where: {
+            contaId,
+            cobrancaId: { in: academicCobrancaIds },
+            OR: [
+              { externalReference: { startsWith: 'installmentPlan:' } },
+              { externalReference: { startsWith: 'alusa:installment:' } },
+              { externalReference: { startsWith: 'subscription:' } },
+              { externalReference: { startsWith: 'alusa:subscription:' } },
+            ],
+          },
+          select: { cobrancaId: true, externalReference: true },
+        })
+      : Promise.resolve([]),
     _db.standaloneSubscription.findMany({
       where: standaloneSubscriptionWhere,
       orderBy: { nextDueDate: 'asc' },

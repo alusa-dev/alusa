@@ -39,7 +39,9 @@ Princípios obrigatórios:
 ```
 apps/web/
   app/(app)/admin/configuracoes/notafiscal/page.tsx     # Shell da tela
+  app/(app)/financeiro/nota-fiscal/**                   # Consulta por aluno/responsável
   app/api/configuracoes/notafiscal/**                   # APIs de configuração
+  app/api/financeiro/nota-fiscal/**                     # APIs do índice financeiro
   app/api/cobrancas/[id]/nota-fiscal/**                 # APIs de emissão/sync/cancel
   app/api/jobs/reconcile-fiscal-settings/route.ts       # Cron config fiscal
   app/api/jobs/reconcile-stale-invoices/route.ts        # Cron notas stale
@@ -235,7 +237,18 @@ Todas exigem sessão autenticada + role (`ADMIN` / `FINANCEIRO`) e `contaId` val
 | `/cancelar` | POST | Cancelar |
 | `/sincronizar` | POST | Sync status com emissor |
 
-### 5.3 Jobs (cron)
+### 5.3 Consulta financeira (`/api/financeiro/nota-fiscal`)
+
+| Rota | Método | Caso de uso |
+| --- | --- | --- |
+| `/summary` | GET | Índice por aluno, responsável ou Outros |
+| `/aluno/[alunoId]` | GET | Detalhe + KPIs + lista de notas do aluno |
+| `/responsavel/[responsavelId]` | GET | Detalhe + KPIs + lista (coluna Aluno quando aplicável) |
+| `/outros` | GET | Notas sem vínculo de matrícula/responsável |
+
+Telas: `/financeiro/nota-fiscal` (índice), drill-down em `/aluno/[id]`, `/responsavel/[id]` e `/outros`.
+
+### 5.4 Jobs (cron)
 
 | Rota | Função |
 | --- | --- |

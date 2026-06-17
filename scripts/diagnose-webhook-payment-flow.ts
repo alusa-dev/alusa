@@ -12,6 +12,36 @@ function deriveToken(financeProfileId: string, secret: string) {
   return createHmac('sha256', secret).update(`financeProfile:${financeProfileId}`).digest('base64url');
 }
 
+function buildOperationalWarnings(params: {
+  webhookBaseUrl: string | null;
+  runtime: ReturnType<typeof inspectWebhookProcessingRuntimeStatus>;
+  remoteWebhooks: unknown;
+}) {
+  const warnings: string[] = [];
+  const webhookBaseUrl = params.webhookBaseUrl ?? '';
+
+  if (!webhookBaseUrl) {
+    warnings.push('ASAAS_WEBHOOK_PUBLIC_BASE_URL não configurada: webhooks reais do Asaas não chegam em localhost.');
+  } else if (!webhookBaseUrl.startsWith('https://')) {
+    warnings.push('ASAAS_WEBHOOK_PUBLIC_BASE_URL deve ser HTTPS público; o Asaas não segue redirects e pode pausar a fila.');
+  } else if (webhookBaseUrl.includes('localhost') || webhookBaseUrl.includes('127.0.0.1')) {
+    warnings.push('URL de webhook aponta para localhost; use ngrok/Cloudflare Tunnel para testes reais.');
+  }
+
+  if (params.runtime.mode === 'SYNC' && process.env.NODE_ENV !== 'production') {
+    warnings.push('Dev em modo SYNC: sem túnel público, dependa do fallback sync-asaas/polling para convergir pagamentos.');
+  }
+
+  const interrupted = Array.isArray((params.remoteWebhooks as { data?: unknown[] } | null)?.data)
+    ? (params.remoteWebhooks as { data: Array<Record<string, unknown>> }).data.filter((webhook) => webhook.interrupted)
+    : [];
+  if (interrupted.length > 0) {
+    warnings.push(`Há ${interrupted.length} webhook(s) remoto(s) interrompido(s); reative/remova backoff no Asaas após corrigir a URL.`);
+  }
+
+  return warnings;
+}
+
 async function main() {
   const secret = process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET?.trim();
   const runtime = inspectWebhookProcessingRuntimeStatus();
@@ -105,6 +135,11 @@ async function main() {
     : null;
 
   const webhookUrl = `${(process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL || '').replace(/\/$/, '')}/api/webhooks/asaas`;
+  const operationalWarnings = buildOperationalWarnings({
+    webhookBaseUrl: process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL || null,
+    runtime,
+    remoteWebhooks,
+  });
 
   console.log(
     JSON.stringify(
@@ -117,6 +152,7 @@ async function main() {
           FIN_WEBHOOK_INLINE_DRAIN: process.env.FIN_WEBHOOK_INLINE_DRAIN || '(default on in dev)',
           webhookProcessing: runtime,
           expectedWebhookUrl: webhookUrl,
+          operationalWarnings,
         },
         account: {
           conta: account.financeProfile.conta.nome,

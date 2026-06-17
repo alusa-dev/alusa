@@ -811,6 +811,31 @@ export type {
   InvoiceListItem,
   ListInvoicesOutput,
 } from './use-cases/list-invoices';
+export { listFiscalInvoicePersonIndex } from './use-cases/list-fiscal-invoice-person-index';
+export type {
+  ListFiscalInvoicePersonIndexInput,
+  ListFiscalInvoicePersonIndexOutput,
+  FiscalInvoicePersonIndexItem,
+  FiscalInvoicePersonType,
+  FiscalReadinessSnapshot,
+} from './use-cases/list-fiscal-invoice-person-index';
+export { getFiscalInvoicePersonDetail } from './use-cases/get-fiscal-invoice-person-detail';
+export type {
+  GetFiscalInvoicePersonDetailInput,
+  GetFiscalInvoicePersonDetailOutput,
+  GetFiscalInvoicePersonDetailError,
+  FiscalInvoicePersonDetailType,
+  FiscalInvoicePersonSummary,
+  FiscalInvoiceListItem,
+} from './use-cases/get-fiscal-invoice-person-detail';
+export {
+  FISCAL_INVOICE_STATUS_LABELS,
+  FISCAL_INVOICE_STATUS_BADGE_VARIANT,
+  resolveFiscalInvoiceStatusLabel,
+  resolveFiscalInvoiceBadgeVariant,
+  computeFiscalInvoiceKpis,
+  type FiscalInvoiceKpis,
+} from './fiscal/fiscal-invoice-display';
 
 // Fiscal invoice settings & charge operations
 export {
@@ -893,6 +918,8 @@ export type {
   HandleChargeInvoicePaymentEventInput,
   HandleChargeInvoicePaymentEventOutput,
 } from './use-cases/handle-charge-invoice-payment-event';
+export { ensureChargeInvoiceAutoEmission } from './use-cases/ensure-charge-invoice-auto-emission';
+export { ensureChargeInvoiceAutoCancel } from './use-cases/ensure-charge-invoice-auto-cancel';
 export { syncSubscriptionFiscalSettings } from './use-cases/sync-subscription-fiscal-settings';
 export type {
   SyncSubscriptionFiscalSettingsInput,

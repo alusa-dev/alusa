@@ -270,6 +270,12 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
         iconSolid: <BanknotesSolid className="h-5 w-5" />,
       },
       {
+        label: 'Nota Fiscal',
+        href: '/financeiro/nota-fiscal',
+        icon: <DocumentText className="h-5 w-5" />,
+        iconSolid: <DocumentTextSolid className="h-5 w-5" />,
+      },
+      {
         label: 'Relatórios',
         href: '/financeiro/relatorios',
         icon: <ChartBarIcon className="h-5 w-5" />,

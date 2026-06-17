@@ -6,14 +6,17 @@ import {
   AsaasHttpError,
   getMunicipalOptions as asaasGetMunicipalOptions,
 } from '@alusa/asaas';
+import { syncInvoiceFromProvider } from './sync-invoice-from-provider';
 import type { InvoiceStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
+import { FinanceBlockedError } from '../foundation/asaas-operational-guard';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
+import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 
 export type CancelChargeInvoiceInput = {
@@ -57,6 +60,34 @@ function extractAsaasErrorMessage(error: AsaasHttpError): string {
 
 const CANCELABLE_STATUSES = new Set<InvoiceStatus>(['SCHEDULED', 'SYNCHRONIZED', 'AUTHORIZED']);
 
+const INVOICE_CANCEL_ALREADY_REQUESTED_STATUSES = new Set<InvoiceStatus>([
+  'PROCESSING_CANCELLATION',
+  'CANCELED',
+]);
+
+function isAsaasInvoiceAlreadyCancelingError(error: AsaasHttpError): boolean {
+  const message = extractAsaasErrorMessage(error).toLowerCase();
+  return (
+    message.includes('processando cancelamento') ||
+    message.includes('processing cancellation') ||
+    message.includes('processing_cancellation')
+  );
+}
+
+function toCancelOutput(invoice: {
+  id: string;
+  asaasInvoiceId: string | null;
+  status: InvoiceStatus;
+  statusUpdatedAt: Date;
+}): CancelChargeInvoiceOutput {
+  return {
+    invoiceId: invoice.id,
+    asaasInvoiceId: invoice.asaasInvoiceId ?? '',
+    status: invoice.status,
+    statusUpdatedAt: invoice.statusUpdatedAt.toISOString(),
+  };
+}
+
 async function resolveInvoice(input: CancelChargeInvoiceInput) {
   const prisma = getFiscalPrisma();
   if (input.invoiceId) {
@@ -93,9 +124,28 @@ export async function cancelChargeInvoice(
     const kyc = await requireKycApproved(input.contaId);
     if (!kyc.success) return err('KYC_NAO_APROVADO');
 
-    const invoice = await resolveInvoice(input);
+    let invoice = await resolveInvoice(input);
     if (!invoice) return err('INVOICE_NAO_ENCONTRADA');
     if (!invoice.asaasInvoiceId) return err('INVOICE_SEM_ID_ASAAS');
+    const asaasInvoiceId = invoice.asaasInvoiceId;
+
+    await syncInvoiceFromProvider({
+      contaId: input.contaId,
+      invoiceId: invoice.id,
+    }).catch((error: unknown) => {
+      console.warn('[finance][cancelChargeInvoice] pre-cancel sync failed', {
+        contaId: input.contaId,
+        invoiceId: invoice?.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+    invoice = (await resolveInvoice(input)) ?? invoice;
+
+    if (INVOICE_CANCEL_ALREADY_REQUESTED_STATUSES.has(invoice.status)) {
+      return ok(toCancelOutput(invoice));
+    }
+
     if (!CANCELABLE_STATUSES.has(invoice.status)) return err('INVOICE_NAO_CANCELAVEL');
 
     const credentials = await loadAsaasCredentials(input.contaId);
@@ -113,11 +163,19 @@ export async function cancelChargeInvoice(
       });
     }
 
-    await ensureWebhookConfigOperational(input.contaId);
+    await ensureWebhookConfigOperational(input.contaId).catch((error: unknown) => {
+      if (input.actor.type !== 'SYSTEM' || !(error instanceof FinanceBlockedError)) {
+        throw error;
+      }
+      console.warn('[finance][cancelChargeInvoice] webhook guard bypassed for system cancel', {
+        contaId: input.contaId,
+        code: error.code,
+      });
+    });
 
     const asaasInvoice = await asaasCancelInvoice({
       apiKey: credentials.apiKey,
-      id: invoice.asaasInvoiceId,
+      id: asaasInvoiceId,
       idempotencyKey: `invoice-cancel:${invoice.id}`,
     });
 
@@ -156,13 +214,48 @@ export async function cancelChargeInvoice(
       },
     });
 
+    try {
+      await publishFinanceEvent({
+        contaId: input.contaId,
+        type: 'fiscal.invoice.updated',
+        entityId: updated.id,
+        revision: Date.now(),
+      });
+    } catch (error) {
+      console.warn('[finance][cancelChargeInvoice][realtime-publish-failed]', {
+        contaId: input.contaId,
+        invoiceId: updated.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     return ok({
       invoiceId: updated.id,
-      asaasInvoiceId: updated.asaasInvoiceId ?? invoice.asaasInvoiceId,
+      asaasInvoiceId: updated.asaasInvoiceId ?? asaasInvoiceId,
       status: updated.status,
       statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
     });
   } catch (error) {
+    if (error instanceof AsaasHttpError && isAsaasInvoiceAlreadyCancelingError(error)) {
+      const invoice = await resolveInvoice(input);
+      if (invoice) {
+        await syncInvoiceFromProvider({
+          contaId: input.contaId,
+          invoiceId: invoice.id,
+        }).catch(() => undefined);
+
+        const refreshed = await resolveInvoice(input);
+        if (refreshed && INVOICE_CANCEL_ALREADY_REQUESTED_STATUSES.has(refreshed.status)) {
+          console.info('[finance][cancelChargeInvoice] cancel already in progress (idempotent)', {
+            contaId: input.contaId,
+            invoiceId: refreshed.id,
+            status: refreshed.status,
+          });
+          return ok(toCancelOutput(refreshed));
+        }
+      }
+    }
+
     console.error('[finance][cancelChargeInvoice]', error);
     if (error instanceof AsaasHttpError) {
       return err({

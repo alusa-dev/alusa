@@ -89,6 +89,20 @@ export type GetFiscalInvoiceSettingsError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'ERRO_INTERNO';
 
+export type FiscalRemoteSyncMode = 'always' | 'if_stale' | 'never';
+
+const FISCAL_REMOTE_SYNC_TTL_MS = 15 * 60 * 1000;
+
+function shouldSyncRemoteFiscalSettings(
+  settings: { asaasFiscalSyncedAt: Date | null } | null,
+  mode: FiscalRemoteSyncMode,
+): boolean {
+  if (mode === 'never') return false;
+  if (mode === 'always') return true;
+  if (!settings?.asaasFiscalSyncedAt) return true;
+  return Date.now() - settings.asaasFiscalSyncedAt.getTime() > FISCAL_REMOTE_SYNC_TTL_MS;
+}
+
 function decimalToNumber(value: unknown): number {
   if (value == null) return 0;
   return Number(value);
@@ -222,9 +236,12 @@ async function upsertRemoteFiscalInfoCache(input: {
 
 export async function getFiscalInvoiceSettings(input: {
   contaId: string;
+  /** `if_stale` (padrão): evita bater no Asaas a cada leitura de tela. */
+  remoteSync?: FiscalRemoteSyncMode;
 }): Promise<Result<FiscalInvoiceSettingsOutput, GetFiscalInvoiceSettingsError>> {
   try {
     const prisma = getFiscalPrisma();
+    const remoteSync = input.remoteSync ?? 'if_stale';
     let [settings, services, invoicesEnabled, kyc] = await Promise.all([
       prisma.contaFiscalSettings.findUnique({ where: { contaId: input.contaId } }),
       prisma.fiscalService.findMany({
@@ -237,7 +254,7 @@ export async function getFiscalInvoiceSettings(input: {
 
     let municipalOptions = null;
     const credentials = await loadAsaasCredentials(input.contaId);
-    if (credentials) {
+    if (credentials && shouldSyncRemoteFiscalSettings(settings, remoteSync)) {
       try {
         const [options, remote] = await Promise.all([
           asaasGetMunicipalOptions({ apiKey: credentials.apiKey }),
@@ -263,13 +280,26 @@ export async function getFiscalInvoiceSettings(input: {
       }
     }
 
-    const readiness = computeFiscalReadiness({
-      settings,
-      services,
-      municipalOptions,
-      kycApproved: kyc.success,
-      invoicesEnabled,
-    });
+    const readiness = municipalOptions
+      ? computeFiscalReadiness({
+          settings,
+          services,
+          municipalOptions,
+          kycApproved: kyc.success,
+          invoicesEnabled,
+        })
+      : {
+          status: settings?.readinessStatus ?? 'NOT_READY',
+          ready: settings?.readinessStatus === 'READY',
+          issues:
+            (Array.isArray(settings?.readinessIssues)
+              ? (settings.readinessIssues as Array<{
+                  code: string;
+                  message: string;
+                  blocking: boolean;
+                }>)
+              : []) ?? [],
+        };
 
     return ok({
       configured: Boolean(settings),

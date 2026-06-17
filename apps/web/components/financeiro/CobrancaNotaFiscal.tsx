@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileCode2, FileText, Loader2, ReceiptText, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Badge, type BadgeVariant } from '@/components/ui/badge';
+import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -18,12 +18,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { InfoCallout, InfoCalloutItem, InfoCalloutLink } from '@/components/ui/info-callout';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
+import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
 import {
   FISCAL_WIZARD_FIELD_CLASS,
   FiscalFieldLabel,
   fiscalInputClass,
 } from '@/features/configuracoes/notafiscal/FiscalWizardFields';
-import { cn } from '@/lib/utils';
+import {
+  FISCAL_INVOICE_STATUS_BADGE_VARIANT,
+  resolveFiscalInvoiceStatusLabel,
+} from '@alusa/finance/fiscal-invoice-display-client';
 
 type InvoiceData = {
   id: string;
@@ -65,25 +69,7 @@ type EmitFormState = {
   effectiveDate: string;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  SCHEDULED: 'Agendada',
-  SYNCHRONIZED: 'Enviada à prefeitura',
-  AUTHORIZED: 'Emitida',
-  PROCESSING_CANCELLATION: 'Cancelamento em processamento',
-  CANCELED: 'Cancelada',
-  CANCELLATION_DENIED: 'Cancelamento negado',
-  ERROR: 'Erro na emissão',
-};
-
-const STATUS_BADGE_VARIANT: Record<string, BadgeVariant> = {
-  SCHEDULED: 'info',
-  SYNCHRONIZED: 'info',
-  AUTHORIZED: 'success',
-  PROCESSING_CANCELLATION: 'warning',
-  CANCELED: 'neutral',
-  CANCELLATION_DENIED: 'warning',
-  ERROR: 'destructive',
-};
+import { cn } from '@/lib/utils';
 
 const EMPTY_FORM: EmitFormState = {
   serviceDescription: '',
@@ -120,7 +106,17 @@ const LOAD_ERROR_MESSAGES: Record<string, string> = {
 
 const TERMINAL_INVOICE_STATUSES = new Set(['AUTHORIZED', 'ERROR', 'CANCELED', 'CANCELLATION_DENIED']);
 const POLL_INTERVAL_MS = 4000;
+const PAYMENT_POLL_INTERVAL_MS = 5000;
 const POLL_MAX_MS = 5 * 60 * 1000;
+const PROVIDER_SYNC_THROTTLE_MS = 8_000;
+const PAYMENT_SYNC_THROTTLE_MS = 12_000;
+
+const PAYMENT_AWAITING_REASONS = new Set([
+  'PAYMENT_NOT_CONFIRMED',
+  'PAYMENT_PROCESSING',
+  'CHARGE_NOT_SYNCED',
+  'PAYMENT_STATUS_UNKNOWN',
+]);
 
 const fieldLabelClass = 'text-xs font-medium text-slate-600';
 const readOnlyFieldClass =
@@ -136,6 +132,12 @@ type ChargeInvoicePreview = {
   municipalServiceName: string;
   municipalServiceCode: string | null;
 };
+
+function shouldPollForPaymentConfirmation(state: ChargeInvoiceState | null): boolean {
+  if (!state || state.invoice) return false;
+  if (!state.readiness.ready) return false;
+  return PAYMENT_AWAITING_REASONS.has(state.eligibility.reason);
+}
 
 function isInvoiceAwaitingSync(
   invoice: InvoiceData | null | undefined,
@@ -191,8 +193,11 @@ function InvoiceStatusBadge({
   status: string;
   awaitingSync?: boolean;
 }) {
-  const label = STATUS_LABELS[status] ?? status;
-  const variant = STATUS_BADGE_VARIANT[status] ?? 'neutral';
+  const label = resolveFiscalInvoiceStatusLabel(status);
+  const variant =
+    FISCAL_INVOICE_STATUS_BADGE_VARIANT[
+      status as keyof typeof FISCAL_INVOICE_STATUS_BADGE_VARIANT
+    ] ?? 'neutral';
 
   if (awaitingSync && (status === 'SCHEDULED' || status === 'SYNCHRONIZED' || status === 'PROCESSING_CANCELLATION')) {
     return (
@@ -221,12 +226,25 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
   const [form, setForm] = useState<EmitFormState>(EMPTY_FORM);
   const pollStartedAtRef = useRef<number | null>(null);
   const successToastShownRef = useRef(false);
+  const loadInflightRef = useRef<Promise<ChargeInvoiceState | null> | null>(null);
+  const providerSyncInflightRef = useRef<Promise<ChargeInvoiceState | null> | null>(null);
+  const paymentSyncInflightRef = useRef<Promise<ChargeInvoiceState | null> | null>(null);
+  const stateRef = useRef<ChargeInvoiceState | null>(null);
+  const lastProviderSyncAtRef = useRef(0);
+  const lastPaymentSyncAtRef = useRef(0);
 
   const preview = state?.preview;
   const eligibility = state?.eligibility;
   const minEffectiveDate = preview?.minEffectiveDate;
+  const awaitingPaymentConfirmation = shouldPollForPaymentConfirmation(state);
+  const invoiceCancelInProgress =
+    state?.invoice?.status === 'PROCESSING_CANCELLATION' ||
+    state?.invoice?.status === 'CANCELED';
+  const awaitingInvoiceCancel =
+    Boolean(eligibility?.shouldAutoCancel) && !invoiceCancelInProgress;
   const awaitingSync =
     syncing || Boolean(state?.syncPending) || isInvoiceAwaitingSync(state?.invoice, minEffectiveDate);
+  const shouldActivePoll = awaitingPaymentConfirmation || awaitingInvoiceCancel || awaitingSync;
 
   const formError = useMemo(() => {
     if (!preview) return null;
@@ -240,56 +258,151 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
     return null;
   }, [form, preview]);
 
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
   const load = useCallback(async (options?: { silent?: boolean }) => {
-    if (!options?.silent) {
-      setLoading(true);
+    if (loadInflightRef.current) {
+      return loadInflightRef.current;
     }
-    setLoadError(null);
-    try {
-      const res = await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/nota-fiscal`, {
-        cache: 'no-store',
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        const code = typeof json.error === 'string' ? json.error : '';
-        setLoadError(LOAD_ERROR_MESSAGES[code] ?? json.message ?? 'Não foi possível carregar a nota fiscal.');
-        setState(null);
+
+    const run = (async () => {
+      if (!options?.silent) {
+        setLoading(true);
+      }
+      setLoadError(null);
+      try {
+        const res = await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/nota-fiscal`, {
+          cache: 'no-store',
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          const code = typeof json.error === 'string' ? json.error : '';
+          setLoadError(LOAD_ERROR_MESSAGES[code] ?? json.message ?? 'Não foi possível carregar a nota fiscal.');
+          setState(null);
+          return null;
+        }
+        setState(json.data);
+        if (json.data.preview) {
+          setForm(previewToForm(json.data.preview));
+        }
+        return json.data as ChargeInvoiceState;
+      } catch (e) {
+        console.error(e);
+        if (!options?.silent) {
+          setLoadError('Não foi possível carregar a nota fiscal.');
+          setState(null);
+        }
         return null;
+      } finally {
+        if (!options?.silent) {
+          setLoading(false);
+        }
       }
-      setState(json.data);
-      if (json.data.preview) {
-        setForm(previewToForm(json.data.preview));
-      }
-      return json.data as ChargeInvoiceState;
-    } catch (e) {
-      console.error(e);
-      if (!options?.silent) {
-        setLoadError('Não foi possível carregar a nota fiscal.');
-        setState(null);
-      }
-      return null;
+    })();
+
+    loadInflightRef.current = run;
+    try {
+      return await run;
     } finally {
-      if (!options?.silent) {
-        setLoading(false);
+      if (loadInflightRef.current === run) {
+        loadInflightRef.current = null;
       }
     }
   }, [cobrancaId]);
 
-  const syncFromProvider = useCallback(async () => {
+  const syncFromProvider = useCallback(async (options?: { force?: boolean }) => {
+    if (providerSyncInflightRef.current) {
+      return providerSyncInflightRef.current;
+    }
+
+    const now = Date.now();
+    if (!options?.force && now - lastProviderSyncAtRef.current < PROVIDER_SYNC_THROTTLE_MS) {
+      return load({ silent: true });
+    }
+
+    const run = (async () => {
+      lastProviderSyncAtRef.current = Date.now();
+      const res = await fetch(
+        `/api/cobrancas/${encodeURIComponent(cobrancaId)}/nota-fiscal/sincronizar`,
+        { method: 'POST' },
+      );
+      if (!res.ok) return null;
+      return load({ silent: true });
+    })();
+
+    providerSyncInflightRef.current = run;
+    try {
+      return await run;
+    } finally {
+      if (providerSyncInflightRef.current === run) {
+        providerSyncInflightRef.current = null;
+      }
+    }
+  }, [cobrancaId, load]);
+
+  const syncPaymentAndReload = useCallback(async () => {
+    if (paymentSyncInflightRef.current) {
+      return paymentSyncInflightRef.current;
+    }
+
+    const now = Date.now();
+    if (now - lastPaymentSyncAtRef.current < PAYMENT_SYNC_THROTTLE_MS) {
+      return load({ silent: true });
+    }
+
+    const run = (async () => {
+      try {
+        lastPaymentSyncAtRef.current = Date.now();
+        await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/sync-asaas`, {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        });
+      } catch (error) {
+        console.error('[CobrancaNotaFiscal] sync-asaas failed', error);
+      }
+      return load({ silent: true });
+    })();
+
+    paymentSyncInflightRef.current = run;
+    try {
+      return await run;
+    } finally {
+      if (paymentSyncInflightRef.current === run) {
+        paymentSyncInflightRef.current = null;
+      }
+    }
+  }, [cobrancaId, load]);
+
+  const requestAutoCancel = useCallback(async () => {
     const res = await fetch(
-      `/api/cobrancas/${encodeURIComponent(cobrancaId)}/nota-fiscal/sincronizar`,
+      `/api/cobrancas/${encodeURIComponent(cobrancaId)}/nota-fiscal/cancelar`,
       { method: 'POST' },
     );
-    if (!res.ok) return null;
+
+    if (res.ok) {
+      return syncFromProvider({ force: true });
+    }
+
     return load({ silent: true });
-  }, [cobrancaId, load]);
+  }, [cobrancaId, load, syncFromProvider]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  useFinanceLiveRefresh(() => {
+    void load({ silent: true });
+  }, {
+    cobrancaId,
+    intervalMs: shouldActivePoll ? null : 30_000,
+    minIntervalMs: 15_000,
+    realtime: false,
+  });
+
   useEffect(() => {
-    if (!awaitingSync) {
+    if (!shouldActivePoll) {
       pollStartedAtRef.current = null;
       return;
     }
@@ -299,79 +412,114 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
     }
 
     const tick = async () => {
-      const next = await syncFromProvider();
-      const invoice = next?.invoice;
-      if (!invoice) return;
-
-      if (invoice.status === 'AUTHORIZED' && !successToastShownRef.current) {
-        successToastShownRef.current = true;
-        toast.custom((t) => (
-          <CustomToast
-            variant="success"
-            title="Nota fiscal emitida"
-            description={
-              invoice.number
-                ? `NFS-e nº ${invoice.number} disponível para download.`
-                : 'A NFS-e foi autorizada pela prefeitura.'
-            }
-            onClose={() => toast.dismiss(t)}
-          />
-        ));
-      }
-
-      if (invoice.status === 'ERROR' && !successToastShownRef.current) {
-        successToastShownRef.current = true;
-        toast.custom((t) => (
-          <CustomToast
-            variant="error"
-            title="Erro na emissão"
-            description={invoice.errorMessage ?? 'Verifique os dados fiscais e tente novamente.'}
-            onClose={() => toast.dismiss(t)}
-          />
-        ));
-      }
-
-      if (invoice.status === 'CANCELED' && !successToastShownRef.current) {
-        successToastShownRef.current = true;
-        toast.custom((t) => (
-          <CustomToast
-            variant="success"
-            title="Nota fiscal cancelada"
-            description="A NFS-e foi cancelada com sucesso."
-            onClose={() => toast.dismiss(t)}
-          />
-        ));
-      }
-
-      if (invoice.status === 'CANCELLATION_DENIED' && !successToastShownRef.current) {
-        successToastShownRef.current = true;
-        toast.custom((t) => (
-          <CustomToast
-            variant="error"
-            title="Cancelamento negado"
-            description={invoice.statusDescription ?? 'A prefeitura não autorizou o cancelamento da NFS-e.'}
-            onClose={() => toast.dismiss(t)}
-          />
-        ));
-      }
-
-      const stillAwaiting =
-        Boolean(next.syncPending) || isInvoiceAwaitingSync(invoice, next.preview?.minEffectiveDate ?? minEffectiveDate);
       const timedOut =
         pollStartedAtRef.current != null && Date.now() - pollStartedAtRef.current > POLL_MAX_MS;
+      if (timedOut) {
+        setSyncing(false);
+        return;
+      }
 
-      if (!stillAwaiting || timedOut) {
+      let next: ChargeInvoiceState | null = null;
+
+      if (awaitingInvoiceCancel) {
+        next = await requestAutoCancel();
+      } else if (awaitingPaymentConfirmation) {
+        next = await syncPaymentAndReload();
+      } else if (awaitingSync) {
+        next = await syncFromProvider();
+      }
+
+      const currentState = next ?? stateRef.current;
+      const invoice = currentState?.invoice ?? null;
+
+      if (invoice) {
+        if (invoice.status === 'AUTHORIZED' && !successToastShownRef.current) {
+          successToastShownRef.current = true;
+          toast.custom((t) => (
+            <CustomToast
+              variant="success"
+              title="Nota fiscal emitida"
+              description={
+                invoice.number
+                  ? `NFS-e nº ${invoice.number} disponível para download.`
+                  : 'A NFS-e foi autorizada pela prefeitura.'
+              }
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+        }
+
+        if (invoice.status === 'ERROR' && !successToastShownRef.current) {
+          successToastShownRef.current = true;
+          toast.custom((t) => (
+            <CustomToast
+              variant="error"
+              title="Erro na emissão"
+              description={invoice.errorMessage ?? 'Verifique os dados fiscais e tente novamente.'}
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+        }
+
+        if (invoice.status === 'CANCELED' && !successToastShownRef.current) {
+          successToastShownRef.current = true;
+          toast.custom((t) => (
+            <CustomToast
+              variant="success"
+              title="Nota fiscal cancelada"
+              description="A NFS-e foi cancelada com sucesso."
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+        }
+
+        if (invoice.status === 'CANCELLATION_DENIED' && !successToastShownRef.current) {
+          successToastShownRef.current = true;
+          toast.custom((t) => (
+            <CustomToast
+              variant="error"
+              title="Cancelamento negado"
+              description={invoice.statusDescription ?? 'A prefeitura não autorizou o cancelamento da NFS-e.'}
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+        }
+      }
+
+      const stillAwaitingPayment = shouldPollForPaymentConfirmation(currentState);
+      const stillAwaitingCancel =
+        Boolean(currentState?.eligibility?.shouldAutoCancel) &&
+        currentState?.invoice?.status !== 'PROCESSING_CANCELLATION' &&
+        currentState?.invoice?.status !== 'CANCELED';
+      const stillAwaitingSync =
+        Boolean(currentState?.syncPending) ||
+        (invoice
+          ? isInvoiceAwaitingSync(invoice, currentState?.preview?.minEffectiveDate ?? minEffectiveDate)
+          : false);
+
+      if (!stillAwaitingPayment && !stillAwaitingCancel && !stillAwaitingSync) {
         setSyncing(false);
       }
     };
 
     void tick();
+    const intervalMs =
+      awaitingPaymentConfirmation || awaitingInvoiceCancel ? PAYMENT_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
     const interval = window.setInterval(() => {
       void tick();
-    }, POLL_INTERVAL_MS);
+    }, intervalMs);
 
     return () => window.clearInterval(interval);
-  }, [awaitingSync, minEffectiveDate, syncFromProvider]);
+  }, [
+    awaitingInvoiceCancel,
+    awaitingPaymentConfirmation,
+    awaitingSync,
+    minEffectiveDate,
+    shouldActivePoll,
+    requestAutoCancel,
+    syncFromProvider,
+    syncPaymentAndReload,
+  ]);
 
   async function handleEmit() {
     if (formError) return;
@@ -517,7 +665,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
   );
 
   return (
-    <section className={sectionClass} data-testid="cobranca-nota-fiscal">
+    <section className={sectionClass} data-testid="cobranca-nota-fiscal" id="nota-fiscal">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <span className="text-sm font-semibold text-slate-700">Nota Fiscal</span>
@@ -579,11 +727,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
             <Button size="sm" className="mt-4" onClick={() => setEmitOpen(true)} disabled={!preview}>
               Emitir nota fiscal
             </Button>
-          ) : (
-            <Button size="sm" className="mt-4" variant="outline" onClick={() => void load({ silent: true })}>
-              Revalidar status
-            </Button>
-          )}
+          ) : null}
         </div>
       ) : null}
 
@@ -648,7 +792,18 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
             </InfoCallout>
           ) : null}
 
-          {eligibility?.message && invoice.status !== 'ERROR' ? (
+          {awaitingInvoiceCancel ? (
+            <InfoCallout variant="info" size="sm">
+              <InfoCalloutItem label="Cancelamento automático">
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-accent" aria-hidden />
+                  Cobrança estornada. Cancelando a NFS-e automaticamente…
+                </span>
+              </InfoCalloutItem>
+            </InfoCallout>
+          ) : null}
+
+          {eligibility?.message && invoice.status !== 'ERROR' && !awaitingInvoiceCancel ? (
             <InfoCallout
               variant={eligibility.severity === 'danger' || eligibility.severity === 'warning' ? 'warning' : 'info'}
               size="sm"
@@ -703,7 +858,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
                 Tentar novamente
               </Button>
             ) : null}
-            {eligibility?.canCancel && !cancellationUnsupported ? (
+            {eligibility?.canCancel && !cancellationUnsupported && !awaitingInvoiceCancel ? (
               <Button
                 size="sm"
                 variant="outline"

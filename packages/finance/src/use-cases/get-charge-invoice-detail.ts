@@ -62,15 +62,16 @@ export async function getChargeInvoiceDetail(input: {
     const resolved = await resolveChargeFromRouteRef(input.contaId, input.routeRef);
     if (!resolved) return err('CHARGE_NAO_ENCONTRADO');
 
-    const [invoice, fiscalSettingsResult, settings, defaultService, chargeContext] = await Promise.all([
+    const [invoice, fiscalSettingsResult, defaultService, chargeContext] = await Promise.all([
       prisma.invoice.findFirst({
         where: { chargeId: resolved.chargeId, contaId: input.contaId },
       }),
-      getFiscalInvoiceSettings({ contaId: input.contaId }),
-      prisma.contaFiscalSettings.findUnique({ where: { contaId: input.contaId } }),
+      getFiscalInvoiceSettings({ contaId: input.contaId, remoteSync: 'if_stale' }),
       prisma.fiscalService.findFirst({ where: { contaId: input.contaId, isDefault: true } }),
       resolveChargeInvoiceContext(resolved.chargeId, input.contaId),
     ]);
+
+    const settings = fiscalSettingsResult.success ? fiscalSettingsResult.data.settings : null;
 
     const readiness = fiscalSettingsResult.success
       ? fiscalSettingsResult.data.readiness
@@ -116,9 +117,19 @@ export async function getChargeInvoiceDetail(input: {
     let preview: ChargeInvoiceDetailOutput['preview'];
     if (chargeContext && defaultService) {
       const texts = buildChargeInvoiceTexts({
-        settings,
+        settings: settings
+          ? {
+              defaultDescriptionTemplate: settings.defaultDescriptionTemplate,
+              defaultObservations: settings.defaultObservations,
+              defaultDeductions: null,
+            }
+          : null,
         fiscalService: defaultService,
         context: chargeContext.context,
+        overrides:
+          settings?.defaultDeductions != null
+            ? { deductions: settings.defaultDeductions }
+            : undefined,
       });
       preview = {
         serviceDescription: texts.serviceDescription,

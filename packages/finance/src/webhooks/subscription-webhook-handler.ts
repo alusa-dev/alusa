@@ -4,6 +4,7 @@ import type { StatusMatricula, SubscriptionStatus } from '@prisma/client';
 import { auditLogService } from '../foundation/audit-log.service';
 import { parseExternalReference } from '../core';
 import { isTerminalStatus, canTransition } from '@alusa/domain';
+import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 
 /**
  * Verifica se uma atualização de status de matrícula deve ser aplicada,
@@ -432,6 +433,21 @@ export async function handleSubscriptionWebhook(
           matriculaId: subscription.matriculaId,
           currentStatus: subscription.status,
         },
+      });
+    }
+
+    try {
+      await publishFinanceEvent({
+        contaId,
+        type: 'subscription.updated',
+        entityId: subscription.id,
+        revision: Date.now(),
+      });
+    } catch (publishError) {
+      console.warn('[finance][handleSubscriptionWebhook][realtime-publish-failed]', {
+        contaId,
+        subscriptionId: subscription.id,
+        error: publishError instanceof Error ? publishError.message : String(publishError),
       });
     }
 

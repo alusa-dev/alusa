@@ -1,4 +1,5 @@
-const TERMINAL_COBRANCA_STATUSES = new Set(['PAGO', 'CANCELADO', 'ESTORNADO']);
+const TERMINAL_COBRANCA_STATUSES = new Set(['PAGO', 'CANCELADO', 'ESTORNADO', 'ESTORNADO_PARCIAL']);
+const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
 const DETAIL_REMOTE_RECONCILE_WINDOW_MS = 5 * 60_000;
 
 export function toNullableNumber(value: unknown): number | null {
@@ -80,6 +81,32 @@ function getAcademicBillingType(cobranca: Record<string, unknown>): string | nul
   return mapFormaPagamentoToBillingType(cobranca.formaPagamento as string | null | undefined);
 }
 
+function getFreshnessAnchor(record: Record<string, unknown>): Date | null {
+  const candidates = [
+    record.lastAsaasFetchAt,
+    record.statusUpdatedAt,
+    record.updatedAt,
+    record.createdAt,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate instanceof Date && !Number.isNaN(candidate.getTime())) {
+      return candidate;
+    }
+    if (candidate) {
+      const parsed = new Date(String(candidate));
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function isWithinReconcileWindow(anchor: Date | null, now: Date): boolean {
+  if (!anchor) return false;
+  return now.getTime() - anchor.getTime() < DETAIL_REMOTE_RECONCILE_WINDOW_MS;
+}
+
 export function hasAcademicAsaasSnapshot(cobranca: Record<string, unknown>): boolean {
   return (
     cobranca.asaasStatus != null ||
@@ -90,6 +117,16 @@ export function hasAcademicAsaasSnapshot(cobranca: Record<string, unknown>): boo
     cobranca.asaasCreditDate != null ||
     cobranca.asaasEstimatedCreditDate != null ||
     cobranca.lastAsaasFetchAt != null
+  );
+}
+
+export function hasStandaloneAsaasSnapshot(charge: Record<string, unknown>): boolean {
+  return (
+    charge.asaasStatus != null ||
+    charge.asaasNetValue != null ||
+    charge.asaasOriginalValue != null ||
+    charge.lastAsaasFetchAt != null ||
+    hasOfficialAccessLink(charge.invoiceUrl)
   );
 }
 
@@ -155,10 +192,24 @@ export function shouldFetchAcademicAsaasDetail(params: {
   forceRefresh: boolean;
   isAsaasActive: boolean;
   cobranca: Record<string, unknown>;
+  now?: Date;
 }): boolean {
   if (!params.isAsaasActive) return false;
   if (typeof params.cobranca.asaasPaymentId !== 'string' || !params.cobranca.asaasPaymentId) return false;
   if (params.forceRefresh) return true;
+
+  const now = params.now ?? new Date();
+  const hasSnapshot = hasAcademicAsaasSnapshot(params.cobranca);
+  const fresh = isWithinReconcileWindow(getFreshnessAnchor(params.cobranca), now);
+
+  if (hasSnapshot && fresh) return false;
+
+  const localStatus = String(params.cobranca.status ?? '');
+  if (!TERMINAL_COBRANCA_STATUSES.has(localStatus)) {
+    // Cobrança em aberto: GET read-only usa snapshot local; sync/webhook convergem depois.
+    if (hasSnapshot) return false;
+    return true;
+  }
 
   const localAsaasData = buildAcademicAsaasData(params.cobranca);
   const missingOfficialAccessLink = !localAsaasData?.invoiceUrl;
@@ -168,8 +219,7 @@ export function shouldFetchAcademicAsaasDetail(params: {
     return true;
   }
 
-  if (hasAcademicAsaasSnapshot(params.cobranca)) return false;
-  return !TERMINAL_COBRANCA_STATUSES.has(String(params.cobranca.status ?? ''));
+  return !hasSnapshot;
 }
 
 export function shouldFetchStandaloneAsaasDetail(params: {
@@ -182,31 +232,25 @@ export function shouldFetchStandaloneAsaasDetail(params: {
   if (typeof params.charge.asaasPaymentId !== 'string' || !params.charge.asaasPaymentId) return false;
   if (params.forceRefresh) return true;
 
-  const dueDate =
-    params.charge.dueDate instanceof Date
-      ? params.charge.dueDate
-      : params.charge.dueDate
-        ? new Date(String(params.charge.dueDate))
-        : null;
-  if (!dueDate) return true;
+  const now = params.now ?? new Date();
+  const hasSnapshot = hasStandaloneAsaasSnapshot(params.charge);
+  const fresh = isWithinReconcileWindow(getFreshnessAnchor(params.charge), now);
+
+  if (hasSnapshot && fresh) return false;
 
   const localStatus = String(params.charge.status ?? '');
-  if (localStatus === 'CREATED' || localStatus === 'PAID') return true;
-  if (
-    (localStatus === 'OPEN' || localStatus === 'OVERDUE') &&
-    !hasOfficialAccessLink(params.charge.invoiceUrl)
-  ) {
+  if (!TERMINAL_CHARGE_STATUSES.has(localStatus)) {
+    if (hasSnapshot) return false;
     return true;
   }
 
-  const freshnessAnchor =
-    (params.charge.updatedAt as Date | null | undefined) ??
-    (params.charge.statusUpdatedAt as Date | null | undefined) ??
-    (params.charge.createdAt as Date | null | undefined) ??
-    null;
+  const localAsaasData = buildStandaloneAsaasData(params.charge);
+  const missingOfficialAccessLink = !localAsaasData?.invoiceUrl;
+  const missingBillingType = !localAsaasData?.billingType;
 
-  if (!freshnessAnchor) return true;
+  if (missingOfficialAccessLink || missingBillingType) {
+    return true;
+  }
 
-  const now = params.now ?? new Date();
-  return now.getTime() - freshnessAnchor.getTime() < DETAIL_REMOTE_RECONCILE_WINDOW_MS;
+  return !hasSnapshot;
 }

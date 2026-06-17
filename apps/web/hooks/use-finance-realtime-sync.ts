@@ -92,10 +92,17 @@ export function useFinanceRealtimeSync(options: UseFinanceRealtimeSyncOptions = 
 
   const handleEvents = useCallback(
     async (events: FinanceRealtimeClientEvent[]) => {
-      const cobrancaEvents = events.filter((event) => event.type === 'cobranca.updated');
-      if (cobrancaEvents.length === 0) return;
+      const relevantEvents = events.filter(
+        (event) =>
+          event.type === 'cobranca.updated' ||
+          event.type === 'finance.command.updated' ||
+          event.type === 'fiscal.invoice.updated' ||
+          event.type === 'subscription.updated' ||
+          event.type === 'installment.updated',
+      );
+      if (relevantEvents.length === 0) return;
 
-      const entityIds = [...new Set(cobrancaEvents.map((event) => event.entityId).filter(Boolean))];
+      const entityIds = [...new Set(relevantEvents.map((event) => event.entityId).filter(Boolean))];
       const current = scopeRef.current;
 
       await invalidateFinanceQueries(queryClient, {

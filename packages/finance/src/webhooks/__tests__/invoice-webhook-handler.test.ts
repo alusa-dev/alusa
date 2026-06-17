@@ -1,19 +1,25 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('@alusa/database', () => ({
-  prisma: {
-    invoice: {
-      findFirst: vi.fn(),
-      update: vi.fn(),
-      upsert: vi.fn(),
-    },
-    charge: {
-      findFirst: vi.fn(),
-    },
-    contaFiscalSettings: {},
-    fiscalService: {},
-    invoiceAuditEvent: { create: vi.fn() },
+const prismaMock = vi.hoisted(() => ({
+  invoice: {
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    upsert: vi.fn(),
   },
+  charge: {
+    findFirst: vi.fn(),
+  },
+  contaFiscalSettings: {},
+  fiscalService: {},
+  invoiceAuditEvent: { create: vi.fn() },
+}));
+
+vi.mock('@alusa/database', () => ({
+  prisma: prismaMock,
+}));
+
+vi.mock('../../fiscal/fiscal-prisma', () => ({
+  getFiscalPrisma: () => prismaMock,
 }));
 
 import { prisma } from '@alusa/database';

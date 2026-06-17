@@ -41,7 +41,9 @@ import type {
   TipoLancamento,
   OrigemLancamento,
   StatusFinanceiro,
+  StatusCobranca,
 } from '@prisma/client';
+import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 
 export type PaymentWebhookPayload = {
   event: string;
@@ -355,6 +357,40 @@ function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): Liq
   });
 }
 
+async function publishPaymentRealtimeUpdate(params: {
+  contaId: string;
+  entityId: string;
+  payload: PaymentWebhookPayload;
+  dueDate?: Date | null;
+}): Promise<void> {
+  const p = params.payload.payment;
+  const dueDate =
+    params.dueDate ??
+    (typeof p.dueDate === 'string' ? new Date(`${p.dueDate}T12:00:00.000Z`) : null);
+
+  try {
+    await publishFinanceEvent({
+      contaId: params.contaId,
+      type: 'cobranca.updated',
+      entityId: params.entityId,
+      asaasPaymentId: p.id,
+      status: mapAsaasPaymentStatusToCobranca(
+        typeof p.status === 'string' ? p.status : 'PENDING',
+        { dueDate },
+      ) as StatusCobranca,
+      liquidacaoStatus: computeLiquidacaoStatusFromPayload(params.payload),
+      asaasStatus: typeof p.status === 'string' ? p.status : null,
+      revision: Date.now(),
+    });
+  } catch (error) {
+    console.warn('[payment-webhook] Falha ao publicar evento realtime', {
+      entityId: params.entityId,
+      asaasPaymentId: p.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function buildChargeAsaasSnapshotUpdate(payload: PaymentWebhookPayload): Record<string, unknown> {
   const p = payload.payment;
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
@@ -478,6 +514,37 @@ function buildSubscriptionChargeExternalReference(
 }
 
 /**
+ * Side effect fiscal idempotente — emissão/cancelamento de NFS-e conforme evento de pagamento.
+ */
+async function applyChargeInvoicePaymentSideEffect(params: {
+  contaId: string;
+  chargeId: string;
+  asaasPaymentId: string;
+  event: string;
+  providerStatus?: string | null;
+}) {
+  try {
+    await handleChargeInvoicePaymentEvent({
+      contaId: params.contaId,
+      chargeId: params.chargeId,
+      asaasPaymentId: params.asaasPaymentId,
+      event: params.event,
+      providerStatus: params.providerStatus,
+    });
+  } catch (invoiceSideEffectError) {
+    console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {
+      chargeId: params.chargeId,
+      contaId: params.contaId,
+      event: params.event,
+      error:
+        invoiceSideEffectError instanceof Error
+          ? invoiceSideEffectError.message
+          : String(invoiceSideEffectError),
+    });
+  }
+}
+
+/**
  * Processa webhook para cobranças standalone (sem matrícula)
  * Atualiza apenas a entidade Charge
  */
@@ -524,6 +591,13 @@ async function handleStandaloneChargeWebhook(
       },
     });
     await refreshReadModel({ chargeId: charge.id });
+    await applyChargeInvoicePaymentSideEffect({
+      contaId,
+      chargeId: charge.id,
+      asaasPaymentId: p.id,
+      event: payload.event,
+      providerStatus: p.status,
+    });
     await auditLogService.record({
       contaId,
       action: 'finance.webhook.standalone_charge_skipped',
@@ -601,24 +675,13 @@ async function handleStandaloneChargeWebhook(
     }
   }
 
-  try {
-    await handleChargeInvoicePaymentEvent({
-      contaId,
-      chargeId: charge.id,
-      asaasPaymentId: p.id,
-      event: payload.event,
-      providerStatus: p.status,
-    });
-  } catch (invoiceSideEffectError) {
-    console.error('[handleStandaloneChargeWebhook] Falha ao aplicar side effect fiscal:', {
-      chargeId: charge.id,
-      contaId,
-      error:
-        invoiceSideEffectError instanceof Error
-          ? invoiceSideEffectError.message
-          : String(invoiceSideEffectError),
-    });
-  }
+  await applyChargeInvoicePaymentSideEffect({
+    contaId,
+    chargeId: charge.id,
+    asaasPaymentId: p.id,
+    event: payload.event,
+    providerStatus: p.status,
+  });
 
   await auditLogService.record({
     contaId,
@@ -638,6 +701,13 @@ async function handleStandaloneChargeWebhook(
     chargeId: charge.id,
     status: nextStatusCharge,
     asaasPaymentId: p.id,
+  });
+
+  await publishPaymentRealtimeUpdate({
+    contaId,
+    entityId: charge.id,
+    payload,
+    dueDate: dueDateUpdate ?? null,
   });
 
   try {
@@ -1170,6 +1240,13 @@ async function handlePaymentWebhookCore(
             },
           });
 
+          await publishPaymentRealtimeUpdate({
+            contaId,
+            entityId: standaloneSubscriptionCharge.id,
+            payload,
+            dueDate: vencimento,
+          });
+
           return { success: true };
         }
 
@@ -1264,6 +1341,13 @@ async function handlePaymentWebhookCore(
                 asaasSubscriptionId: subscriptionId,
                 externalReference: externalRef,
               },
+            });
+
+            await publishPaymentRealtimeUpdate({
+              contaId,
+              entityId: standaloneSubscriptionCharge.id,
+              payload,
+              dueDate: vencimento,
             });
 
             return { success: true };
@@ -1574,6 +1658,13 @@ async function handlePaymentWebhookCore(
             },
           });
 
+          await publishPaymentRealtimeUpdate({
+            contaId,
+            entityId: standaloneInstallmentCharge.id,
+            payload,
+            dueDate: vencimento,
+          });
+
           return { success: true };
         }
 
@@ -1677,6 +1768,13 @@ async function handlePaymentWebhookCore(
           externalReference: paymentExternalReference,
           createdPlaceholderCharge: true,
         },
+      });
+
+      await publishPaymentRealtimeUpdate({
+        contaId,
+        entityId: placeholderCharge.id,
+        payload,
+        dueDate: placeholderDueDate,
       });
 
       return { success: true };

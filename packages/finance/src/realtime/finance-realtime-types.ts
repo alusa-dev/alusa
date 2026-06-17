@@ -1,7 +1,12 @@
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import type { PaymentCommandJobType, PaymentCommandOperationalStatus } from '../use-cases/payment-command-ledger';
 
-export type FinanceRealtimeEventType = 'cobranca.updated' | 'finance.command.updated';
+export type FinanceRealtimeEventType =
+  | 'cobranca.updated'
+  | 'finance.command.updated'
+  | 'fiscal.invoice.updated'
+  | 'subscription.updated'
+  | 'installment.updated';
 
 export type FinanceRealtimeEvent = {
   contaId: string;

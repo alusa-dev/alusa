@@ -28,6 +28,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -131,7 +132,12 @@ export default function CobrancasAvulsasPage() {
       const payload = await res.json().catch(() => null);
       setCobrancas((payload && payload.data) || payload || []);
     },
-    { deps: [statusView] },
+    {
+      deps: [statusView],
+      liveRefresh: { localRefresh: true, financeiro: true, cobrancaQueries: true },
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
   );
 
   const handleStatusViewChange = useCallback(
@@ -162,6 +168,18 @@ export default function CobrancasAvulsasPage() {
     if (sortOrder === 'DESC') items.reverse();
     return items;
   }, [cobrancas, searchQuery, sortOrder]);
+
+  const visibleCobrancas = useMemo(
+    () => orderedCobrancas.slice((page - 1) * pageSize, page * pageSize),
+    [orderedCobrancas, page, pageSize],
+  );
+
+  useVisibleChargeConvergence({
+    enabled: statusView === 'open',
+    items: visibleCobrancas,
+    refresh,
+    maxItems: pageSize,
+  });
 
   useEffect(() => {
     setPage(1);

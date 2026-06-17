@@ -447,7 +447,20 @@ describe('handlePaymentWebhook', () => {
       previousStatus: 'PAID',
       nextStatus: 'OVERDUE',
     });
-    expect(prisma.charge.update).not.toHaveBeenCalled();
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_paid' },
+        data: expect.objectContaining({
+          asaasStatus: 'OVERDUE',
+          statusUpdatedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(prisma.charge.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'OVERDUE' }),
+      }),
+    );
   });
 
   it('deve marcar cobrança como ESTORNADO_PARCIAL e registrar auditoria sensível em estorno parcial', async () => {

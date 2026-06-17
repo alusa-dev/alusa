@@ -4,6 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
 
 // Helper para formatar tipo de cobrança
 function formatarTipo(tipo: string): string {
@@ -74,8 +75,20 @@ export default function ChargesTable() {
       setRows(json.data);
       setTotal(json.total);
     },
-    { deps: [page, pageSize, debounced, statusFilters, tipoFilters] },
+    {
+      deps: [page, pageSize, debounced, statusFilters, tipoFilters],
+      liveRefresh: { localRefresh: true, financeiro: true, cobrancaQueries: true },
+      intervalMs: 45_000,
+      minIntervalMs: 10_000,
+    },
   );
+
+  useVisibleChargeConvergence({
+    enabled: statusFilters.length === 0 || statusFilters.some((status) => status !== 'PAGO'),
+    items: rows,
+    refresh,
+    maxItems: Math.min(pageSize, 10),
+  });
 
   useEffect(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, AlertCircle } from '@/components/icons/icons';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -111,7 +112,7 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
   const [cobranca, setCobranca] = useState<CobrancaDetalhes | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { isInitialLoading } = useFinanceListLoad(
+  const { isInitialLoading, refresh } = useFinanceListLoad(
     async ({ signal }) => {
       const response = await fetch(`/api/portal/financeiro/${cobrancaId}`, {
         cache: 'no-store',
@@ -135,6 +136,26 @@ export function CobrancaDetalhesFeature({ cobrancaId }: { cobrancaId: string }) 
       minIntervalMs: 5_000,
     },
   );
+
+  const portalSyncEndpoint = useCallback(
+    (id: string) => `/api/portal/financeiro/${id}`,
+    [],
+  );
+
+  useVisibleChargeConvergence({
+    enabled: Boolean(cobranca),
+    items: cobranca
+      ? [{
+          id: cobranca.id,
+          status: cobranca.status,
+          asaasPaymentId: cobranca.asaasPaymentId,
+        }]
+      : [],
+    refresh,
+    maxItems: 1,
+    throttleMs: 10_000,
+    syncEndpoint: portalSyncEndpoint,
+  });
 
   if (isInitialLoading) {
     return (

@@ -60,8 +60,16 @@ if (mode === 'test') {
   if (!isTestLike(databaseUrl)) {
     fail(`DATABASE_URL de teste precisa apontar para um banco *_test. Atual: ${databaseUrl.databaseName || databaseUrl.value}`);
   }
-} else if (!isLocalConnection(databaseUrl) && process.env.ALLOW_REMOTE_DEV_DB !== 'true') {
-  fail('DATABASE_URL de desenvolvimento precisa apontar para localhost/127.0.0.1. Use ALLOW_REMOTE_DEV_DB=true apenas para um banco remoto nao produtivo.');
+} else {
+  if (isTestLike(databaseUrl)) {
+    fail(
+      `DATABASE_URL de desenvolvimento aponta para banco de teste (${databaseUrl.databaseName}). ` +
+        'Isso costuma acontecer após rodar testes no mesmo terminal. Reinicie o shell ou use pnpm dev (com override de .env.local).',
+    );
+  }
+  if (!isLocalConnection(databaseUrl) && process.env.ALLOW_REMOTE_DEV_DB !== 'true') {
+    fail('DATABASE_URL de desenvolvimento precisa apontar para localhost/127.0.0.1. Use ALLOW_REMOTE_DEV_DB=true apenas para um banco remoto nao produtivo.');
+  }
 }
 
 console.log(`[db-env] OK (${mode}): ${databaseUrl.databaseName || databaseUrl.value}`);

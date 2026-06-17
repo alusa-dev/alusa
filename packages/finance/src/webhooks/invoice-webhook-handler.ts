@@ -7,6 +7,7 @@ import {
   mapAsaasInvoiceStatusToInternal,
   mapInvoiceWebhookEventToStatus,
 } from '../mappers/invoice-status.mapper';
+import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 
 export type InvoiceWebhookPayload = {
   event: string;
@@ -36,6 +37,27 @@ export type InvoiceWebhookResult = {
   skipped?: boolean;
   reason?: string;
 };
+
+async function publishInvoiceRealtimeUpdate(params: {
+  contaId: string;
+  invoiceId: string;
+  revision?: number;
+}) {
+  try {
+    await publishFinanceEvent({
+      contaId: params.contaId,
+      type: 'fiscal.invoice.updated',
+      entityId: params.invoiceId,
+      revision: params.revision ?? Date.now(),
+    });
+  } catch (error) {
+    console.warn('[finance][handleInvoiceWebhook][realtime-publish-failed]', {
+      contaId: params.contaId,
+      invoiceId: params.invoiceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 export async function handleInvoiceWebhook(
   contaId: string,
@@ -152,6 +174,8 @@ export async function handleInvoiceWebhook(
       correlationId: payload.id,
     });
 
+    await publishInvoiceRealtimeUpdate({ contaId, invoiceId: invoice.id });
+
     return {
       handled: true,
       invoiceId: invoice.id,
@@ -222,6 +246,8 @@ export async function handleInvoiceWebhook(
       correlationId: payload.id,
     });
   }
+
+  await publishInvoiceRealtimeUpdate({ contaId, invoiceId: invoice.id });
 
   return {
     handled: true,

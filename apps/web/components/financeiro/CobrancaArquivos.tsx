@@ -16,6 +16,16 @@ interface ArquivoCobranca {
   createdAt: string;
 }
 
+const ARQUIVOS_LOAD_CACHE_TTL_MS = 10_000;
+const arquivosLoadCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    data?: ArquivoCobranca[];
+    promise?: Promise<ArquivoCobranca[]>;
+  }
+>();
+
 interface CobrancaArquivosProps {
   cobrancaId: string;
   sectionClassName?: string;
@@ -30,16 +40,39 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
 
   // Carregar arquivos ao montar o componente
   const loadArquivos = useCallback(async () => {
-    setLoading(true);
+    const cached = arquivosLoadCache.get(cobrancaId);
+    if (cached?.data && cached.expiresAt > Date.now()) {
+      setArquivos(cached.data);
+      return;
+    }
+
+    setLoading(!cached?.promise);
     try {
-      const res = await fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos`);
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Erro ao carregar arquivos');
-      }
-      const data = await res.json();
-      setArquivos(data.arquivos || []);
+      const promise =
+        cached?.promise ??
+        fetch(`/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos`)
+          .then(async (res) => {
+            if (!res.ok) {
+              const data = await res.json();
+              throw new Error(data.error || 'Erro ao carregar arquivos');
+            }
+            const data = await res.json();
+            return (data.arquivos || []) as ArquivoCobranca[];
+          });
+
+      arquivosLoadCache.set(cobrancaId, {
+        expiresAt: Date.now() + ARQUIVOS_LOAD_CACHE_TTL_MS,
+        promise,
+      });
+
+      const arquivos = await promise;
+      arquivosLoadCache.set(cobrancaId, {
+        expiresAt: Date.now() + ARQUIVOS_LOAD_CACHE_TTL_MS,
+        data: arquivos,
+      });
+      setArquivos(arquivos);
     } catch (error) {
+      arquivosLoadCache.delete(cobrancaId);
       console.error('Error loading arquivos:', error);
       toast.custom((t) => (
         <CustomToast
@@ -80,6 +113,7 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
 
       const data = await res.json();
       setArquivos((prev) => [data.arquivo, ...prev]);
+      arquivosLoadCache.delete(cobrancaId);
 
       toast.custom((t) => (
         <CustomToast
@@ -118,8 +152,9 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
       const res = await fetch(
         `/api/cobrancas/${encodeURIComponent(cobrancaId)}/arquivos?arquivoId=${encodeURIComponent(arquivoId)}`,
         {
-        method: 'DELETE',
-      });
+          method: 'DELETE',
+        },
+      );
 
       if (!res.ok) {
         const data = await res.json();
@@ -127,6 +162,7 @@ export function CobrancaArquivos({ cobrancaId, sectionClassName }: CobrancaArqui
       }
 
       setArquivos((prev) => prev.filter((a) => a.id !== arquivoId));
+      arquivosLoadCache.delete(cobrancaId);
 
       toast.custom((t) => (
         <CustomToast

@@ -10,6 +10,8 @@ import {
 } from '@/features/configuracoes/notafiscal/dtos';
 import {
   emitChargeInvoice,
+  ensureChargeInvoiceAutoCancel,
+  ensureChargeInvoiceAutoEmission,
   getChargeInvoiceDetail,
 } from '@alusa/finance';
 
@@ -53,6 +55,19 @@ export async function GET(_req: NextRequest, context: RouteContext) {
 
     const resolved = await resolveChargeFromRouteRef(user.contaId, routeRef);
     if (!resolved) return json(404, { error: 'CHARGE_NAO_ENCONTRADA' });
+
+    try {
+      await ensureChargeInvoiceAutoEmission({
+        contaId: user.contaId,
+        chargeId: resolved.chargeId,
+      });
+      await ensureChargeInvoiceAutoCancel({
+        contaId: user.contaId,
+        chargeId: resolved.chargeId,
+      });
+    } catch (autoReconcileError) {
+      console.error('[Cobranca NotaFiscal][GET][auto-reconcile]', autoReconcileError);
+    }
 
     const result = await getChargeInvoiceDetail({ contaId: user.contaId, routeRef });
     if (!result.success) {
