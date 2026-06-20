@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { responsavelSchema } from '@/lib/validations/aluno-responsavel.schema';
+import { responsavelEnderecoInputSchema } from '@alusa/lib/client';
 
 export const listResponsaveisQueryDTOSchema = z.object({
   q: z.string().trim().max(120).optional(),
@@ -29,7 +30,21 @@ export const listResponsaveisResultDTOSchema = z.object({
 
 export type ListResponsaveisResultDTO = z.infer<typeof listResponsaveisResultDTOSchema>;
 
-export const createResponsavelInputDTOSchema = responsavelSchema.omit({ id: true });
+export const createResponsavelInputDTOSchema = responsavelSchema
+  .omit({ id: true })
+  .extend({
+    endereco: responsavelEnderecoInputSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    const financeiro = data.financeiro ?? true;
+    if (financeiro && !data.endereco) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endereco'],
+        message: 'Endereço completo é obrigatório para responsável financeiro.',
+      });
+    }
+  });
 
 export type CreateResponsavelInputDTO = z.infer<typeof createResponsavelInputDTOSchema>;
 
@@ -41,17 +56,7 @@ export const updateResponsavelInputDTOSchema = responsavelSchema
   .omit({ id: true })
   .partial()
   .extend({
-    endereco: z
-      .object({
-        cep: z.string().optional(),
-        logradouro: z.string().optional(),
-        numero: z.string().optional(),
-        complemento: z.string().optional(),
-        bairro: z.string().optional(),
-        cidade: z.string().optional(),
-        uf: z.string().optional(),
-      })
-      .optional(),
+    endereco: responsavelEnderecoInputSchema.partial().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'Informe ao menos um campo para atualizar.',

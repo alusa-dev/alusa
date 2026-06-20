@@ -207,6 +207,29 @@ export const chargeInvoiceResponseSchema = z.object({
     })
     .optional(),
   syncPending: z.boolean().optional(),
+  autoEmission: z
+    .object({
+      enabled: z.boolean(),
+      path: z.enum(['ALUSA', 'ASAAS_SUBSCRIPTION', 'MANUAL']),
+      state: z.enum([
+        'PENDING_PAYMENT',
+        'SCHEDULED',
+        'PROCESSING',
+        'EMITTED',
+        'FAILED',
+        'MANUAL_REQUIRED',
+      ]),
+      message: z.string(),
+    })
+    .optional(),
+  payerReadiness: z
+    .object({
+      ready: z.boolean(),
+      issues: z.array(fiscalReadinessIssueSchema),
+      responsavelId: z.string().optional(),
+      responsavelNome: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const scheduleChargeInvoiceInputSchema = z.object({

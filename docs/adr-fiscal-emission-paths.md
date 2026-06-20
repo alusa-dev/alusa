@@ -17,16 +17,20 @@ Using both paths for the same billing can duplicate invoices.
 
 ## Decision
 
-Alusa uses two mutually exclusive automation paths:
+Alusa uses two mutually exclusive automation paths. The decision is made per charge type and payment
+link, not per enrollment as a whole:
 
 | Billing source | Fiscal mode | Emission path |
 | --- | --- | --- |
-| Standalone charge, installment, event/order charge | `ON_PAYMENT` | Alusa handles payment webhook and calls `emitChargeInvoice`. |
-| Academic `Subscription` with Asaas invoice settings configured | `ON_PAYMENT` | Asaas emits through `/v3/subscriptions/{id}/invoiceSettings`; Alusa only mirrors `INVOICE_*` webhooks. |
-| `StandaloneSubscription` with Asaas invoice settings configured | `ON_PAYMENT` | Asaas emits through `/v3/subscriptions/{id}/invoiceSettings`; Alusa only mirrors `INVOICE_*` webhooks. |
+| Enrollment fee, standalone charge, extra charge, installment, event/order charge | `ON_PAYMENT` | Alusa handles payment webhook and calls `emitChargeInvoice`. |
+| Academic monthly/recurring charge with Asaas invoice settings configured | `ON_PAYMENT` | Asaas emits through `/v3/subscriptions/{id}/invoiceSettings`; Alusa only mirrors `INVOICE_*` webhooks. |
+| `StandaloneSubscription` charge linked to the configured Asaas subscription | `ON_PAYMENT` | Asaas emits through `/v3/subscriptions/{id}/invoiceSettings`; Alusa only mirrors `INVOICE_*` webhooks. |
 | Any source | `MANUAL` | Alusa shows manual action in charge detail when eligibility allows. |
 
-Before auto-emitting from a payment webhook, Alusa must check whether the charge belongs to a subscription with native invoice settings enabled. If so, it skips local emission with reason `SUBSCRIPTION_NATIVE_EMISSION`.
+Before auto-emitting from a payment webhook, Alusa must resolve the emission path using the charge type,
+configured subscription and, when present, `payment.subscription`. Enrollment fees must remain local even
+when the enrollment also has a configured academic subscription. Native emission skips local emission with
+reason `SUBSCRIPTION_NATIVE_EMISSION`.
 
 ## Consequences
 

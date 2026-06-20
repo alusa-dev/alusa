@@ -3,7 +3,7 @@
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 
-import { ArrowLeft, ReceiptText, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Clock3, ReceiptText, XCircle } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,8 +36,16 @@ function mapCancelTransferErrorMessage(message: string) {
   }
 }
 
-function canCancelTransfer(status: TransferDetailResultDTO['status']) {
-  return status === 'REQUESTED' || status === 'PENDING' || status === 'BLOCKED';
+function canCancelTransfer(data: TransferDetailResultDTO) {
+  if (data.status === 'DONE' || data.status === 'FAILED' || data.status === 'CANCELED') {
+    return false;
+  }
+
+  if (data.status === 'BLOCKED' && data.authorized === false) {
+    return false;
+  }
+
+  return data.canCancel;
 }
 
 async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
@@ -71,8 +79,12 @@ function mapTransferStatus(status: TransferDetailResultDTO['status']) {
   }
 }
 
-function formatTransferOperation(operation: TransferDetailResultDTO['operation']) {
-  return operation === 'PIX' ? 'Pix' : 'TED';
+function formatTransferOperation(data: TransferDetailResultDTO) {
+  if (data.operation === 'PIX' && data.requestedDestinationType === 'BANK_ACCOUNT') {
+    return 'Pix (via conta bancária)';
+  }
+
+  return data.operation === 'PIX' ? 'Pix' : 'TED';
 }
 
 function formatCurrencyString(value: string | null) {
@@ -89,6 +101,21 @@ function formatMaybeDate(value: string | null) {
   const datePart = normalized.slice(0, 10);
 
   return /^\d{4}-\d{2}-\d{2}$/.test(datePart) ? formatDate(datePart) : '—';
+}
+
+function formatMaybeDateTime(value: string | null) {
+  if (!value) return 'Pendente';
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return formatMaybeDate(value);
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
 }
 
 function formatAccountType(value: string | null) {
@@ -113,6 +140,41 @@ function DetailField({ label, value, span }: DetailFieldValue) {
       </div>
     </div>
   );
+}
+
+function mapTimelineItemClasses(status: TransferDetailResultDTO['timeline'][number]['status']) {
+  switch (status) {
+    case 'DONE':
+      return {
+        marker: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+        text: 'text-emerald-700',
+        icon: CheckCircle2,
+      };
+    case 'FAILED':
+    case 'CANCELED':
+      return {
+        marker: 'border-rose-200 bg-rose-50 text-rose-700',
+        text: 'text-rose-700',
+        icon: XCircle,
+      };
+    case 'CURRENT':
+      return {
+        marker: 'border-amber-200 bg-amber-50 text-amber-700',
+        text: 'text-amber-700',
+        icon: Clock3,
+      };
+    case 'PENDING':
+    default:
+      return {
+        marker: 'border-gray-200 bg-gray-50 text-gray-500',
+        text: 'text-gray-500',
+        icon: Clock3,
+      };
+  }
+}
+
+function mapOperationalAlertVariant(alert: TransferDetailResultDTO['operationalAlerts'][number]) {
+  return alert.severity === 'info' ? 'info' : 'warning';
 }
 
 function buildRecipientFields(data: TransferDetailResultDTO) {
@@ -140,7 +202,7 @@ function buildRecipientFields(data: TransferDetailResultDTO) {
 
 function buildTransferInfoFields(data: TransferDetailResultDTO) {
   const items = [
-    { label: 'Operação', value: formatTransferOperation(data.operation) },
+    { label: 'Operação', value: formatTransferOperation(data) },
     { label: 'Valor solicitado', value: formatCurrencyString(data.amount) },
     { label: 'Taxa', value: formatCurrencyString(data.feeAmount) },
     { label: 'Valor líquido', value: formatCurrencyString(data.netAmount) },
@@ -178,7 +240,9 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
   const status = useMemo(() => (data ? mapTransferStatus(data.status) : null), [data]);
   const transferInfoFields = useMemo(() => (data ? buildTransferInfoFields(data) : []), [data]);
   const recipientFields = useMemo(() => (data ? buildRecipientFields(data) : []), [data]);
-  const allowCancel = Boolean(data && canCancelTransfer(data.status));
+  const operationalAlerts = data?.operationalAlerts ?? [];
+  const timeline = data?.timeline ?? [];
+  const allowCancel = Boolean(data && canCancelTransfer(data));
   const isTransferFinal =
     data?.status === 'DONE' || data?.status === 'FAILED' || data?.status === 'CANCELED';
 
@@ -290,16 +354,26 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
                 Cancelar transferência
               </Button>
             ) : (
-              <Button
-                asChild
-                disabled={!data.transactionReceiptUrl}
-                className="h-10 px-4 bg-brand-accent text-white hover:bg-brand-accent/90 disabled:bg-brand-accent/40"
-              >
-                <a href={data.transactionReceiptUrl ?? '#'} target="_blank" rel="noreferrer noopener">
+              data.transactionReceiptUrl ? (
+                <Button
+                  asChild
+                  className="h-10 px-4 bg-brand-accent text-white hover:bg-brand-accent/90"
+                >
+                  <a href={data.transactionReceiptUrl} target="_blank" rel="noreferrer noopener">
+                    <ReceiptText className="mr-2 h-4 w-4" />
+                    Ver comprovante
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  disabled
+                  className="h-10 px-4 bg-brand-accent/40 text-white"
+                >
                   <ReceiptText className="mr-2 h-4 w-4" />
-                  Ver comprovante
-                </a>
-              </Button>
+                  Comprovante indisponível
+                </Button>
+              )
             )}
           </div>
         </div>
@@ -310,6 +384,24 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
           <p className="font-semibold">Motivo da falha</p>
           <p className="mt-1">{data.failReason}</p>
         </InfoCallout>
+      ) : null}
+
+      {operationalAlerts.length > 0 ? (
+        <div className="mb-5 space-y-3">
+          {operationalAlerts.map((alert) => (
+            <InfoCallout
+              key={alert.code}
+              variant={mapOperationalAlertVariant(alert)}
+              size="md"
+              showIcon={false}
+            >
+              <p className="font-semibold">
+                {alert.severity === 'error' ? 'Ação necessária' : 'Atenção operacional'}
+              </p>
+              <p className="mt-1">{alert.message}</p>
+            </InfoCallout>
+          ))}
+        </div>
       ) : null}
 
       <div className="space-y-6">
@@ -336,6 +428,39 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
           </div>
         </section>
 
+        {timeline.length > 0 ? (
+          <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="px-6 py-5 border-b border-gray-100">
+              <h2 className="text-xl font-semibold text-gray-900">Acompanhamento operacional</h2>
+              <p className="mt-1 text-sm text-gray-600">Eventos locais, retorno oficial e reconciliações do saque.</p>
+            </div>
+
+            <div className="px-6 py-6">
+              <div className="space-y-4">
+                {timeline.map((item) => {
+                  const classes = mapTimelineItemClasses(item.status);
+                  const Icon = classes.icon;
+
+                  return (
+                    <div key={item.key} className="flex gap-3">
+                      <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${classes.marker}`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+                          <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                          <p className={`text-xs font-medium ${classes.text}`}>{formatMaybeDateTime(item.at)}</p>
+                        </div>
+                        {item.detail ? <p className="mt-1 text-sm text-gray-600">{item.detail}</p> : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         <section className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="px-6 py-5 border-b border-gray-100">
             <h2 className="text-xl font-semibold text-gray-900">Informações do destinatário</h2>
@@ -356,7 +481,7 @@ export function ContaTransferDetailPage({ transferId }: { transferId: string }) 
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
         title="Cancelar transferência?"
-        description="Fluxo afetado: matrícula - plano - cobrança - pagamento. O cancelamento só é permitido enquanto a transferência ainda não chegou a estado terminal, preservando auditoria e reprocessamento seguro."
+        description="A transferência será cancelada na Alusa e no Asaas, quando aplicável. Se ela ainda não tiver sido executada, o saldo não será debitado."
         confirmText="Cancelar transferência"
         cancelText="Voltar"
         variant="destructive"

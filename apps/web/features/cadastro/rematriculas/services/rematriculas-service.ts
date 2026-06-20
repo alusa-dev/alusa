@@ -1,4 +1,6 @@
 import type { MatriculaStatus } from '@/features/cadastro/matriculas/services/matriculas-service';
+import { formatRematriculaFamiliarValidationMessage } from '@/lib/api/rematricula-familiar-input';
+import type { ZodIssue } from 'zod';
 import {
   createRematriculaResultDTOSchema,
   listRematriculasResultDTOSchema,
@@ -31,6 +33,252 @@ export interface ListRematriculasResponse {
   ate: string;
   total: number;
   itens: RematriculaElegivelItem[];
+  campaigns: RematriculaCampaignSummary[];
+  participants: RematriculaParticipantSummary[];
+  processes: RematriculaProcessSummary[];
+}
+
+export interface RematriculaCampaignSummary {
+  id: string;
+  targetPeriodId: string;
+  nome: string;
+  descricao: string | null;
+  campaignStartsAt: string;
+  campaignEndsAt: string | null;
+  rules: Record<string, unknown> | null;
+  audienceDefinition: Record<string, unknown> | null;
+  status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'CLOSED' | 'ARCHIVED';
+  version: number;
+  metrics: { participantes: number; processos: number };
+}
+
+export interface RematriculaParticipantSummary {
+  id: string;
+  campanhaId: string;
+  matriculaOrigemId: string;
+  alunoId: string;
+  responsavelId: string | null;
+  status: string;
+  eligibilityReason: string | null;
+  currentContractEndsAt: string | null;
+  includedAt: string;
+  snapshot: unknown;
+}
+
+export interface RematriculaPendingSummary {
+  id: string;
+  type: string;
+  severity: string;
+  status: string;
+  code: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface RematriculaExceptionSummary {
+  id: string;
+  permission: string;
+  rule: string;
+  impact: string;
+  justification: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface RematriculaCommunicationSummary {
+  id: string;
+  channel: string;
+  audience: string;
+  status: string;
+  subject: string | null;
+  scheduledAt: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
+export interface RematriculaProcessSummary {
+  id: string;
+  campanhaId: string | null;
+  campanha: { id: string; nome: string; status: string } | null;
+  origin: 'CAMPAIGN' | 'STANDALONE';
+  targetPeriodId: string;
+  holderType: 'STUDENT' | 'RESPONSIBLE';
+  holderId: string;
+  status:
+    | 'DRAFT'
+    | 'PREVIEWED'
+    | 'PARTIALLY_CONFIRMED'
+    | 'CONFIRMED'
+    | 'WAITING_FOR_START'
+    | 'REQUIRES_ATTENTION'
+    | 'EFFECTIVE'
+    | 'CANCELLED'
+    | 'COMPLETED';
+  effectiveAt: string;
+  firstDueDate: string | null;
+  confirmedAt: string | null;
+  renewCount: number;
+  pendingCount: number;
+  nonRenewalCount: number;
+  monthlyTotal: number;
+  enrollmentFeeTotal: number;
+  version: number;
+  itens: Array<{
+    id: string;
+    decision: string;
+    status: string;
+    matriculaOrigemId: string;
+    matriculaFuturaId: string | null;
+    targetType: string | null;
+    targetClassId: string | null;
+    targetComboId: string | null;
+    targetPlanId: string | null;
+    aluno: { id: string; nome: string; foto?: string | null } | null;
+    turmaAtual?: { id: string; nome: string } | null;
+    planoAtual?: { id: string; nome: string } | null;
+    comboAtual?: { id: string; nome: string } | null;
+  }>;
+  reservas: Array<{ id: string; status: string; targetClassId: string | null; effectiveAt: string }>;
+  contratos: Array<{ id: string; status: string; contractModelId: string | null; validFrom: string | null; validUntil: string | null }>;
+  financeiros: Array<{ id: string; status: string; monthlyTotal: number; enrollmentFeeTotal: number; provisionAt: string | null; asaasSubscriptionId: string | null; asaasPaymentId: string | null }>;
+  pendencias: RematriculaPendingSummary[];
+  excecoes: RematriculaExceptionSummary[];
+  comunicacoes: RematriculaCommunicationSummary[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+function normalizeCampaign(raw: unknown): RematriculaCampaignSummary {
+  const record = (raw as Record<string, unknown>) || {};
+  const metrics = (record.metrics as Record<string, unknown>) || {};
+  return {
+    id: String(record.id ?? ''),
+    targetPeriodId: String(record.targetPeriodId ?? ''),
+    nome: String(record.nome ?? ''),
+    descricao: record.descricao == null ? null : String(record.descricao),
+    campaignStartsAt: parseDate(record.campaignStartsAt) ?? new Date().toISOString(),
+    campaignEndsAt: parseDate(record.campaignEndsAt),
+    rules:
+      record.rules && typeof record.rules === 'object'
+        ? (record.rules as Record<string, unknown>)
+        : null,
+    audienceDefinition:
+      record.audienceDefinition && typeof record.audienceDefinition === 'object'
+        ? (record.audienceDefinition as Record<string, unknown>)
+        : null,
+    status: String(record.status ?? 'DRAFT') as RematriculaCampaignSummary['status'],
+    version: parseNumber(record.version, 1),
+    metrics: {
+      participantes: parseNumber(metrics.participantes, 0),
+      processos: parseNumber(metrics.processos, 0),
+    },
+  };
+}
+
+function normalizeParticipant(raw: unknown): RematriculaParticipantSummary {
+  const record = (raw as Record<string, unknown>) || {};
+  return {
+    id: String(record.id ?? ''),
+    campanhaId: String(record.campanhaId ?? ''),
+    matriculaOrigemId: String(record.matriculaOrigemId ?? ''),
+    alunoId: String(record.alunoId ?? ''),
+    responsavelId: record.responsavelId == null ? null : String(record.responsavelId),
+    status: String(record.status ?? ''),
+    eligibilityReason: record.eligibilityReason == null ? null : String(record.eligibilityReason),
+    currentContractEndsAt: parseDate(record.currentContractEndsAt),
+    includedAt: parseDate(record.includedAt) ?? new Date().toISOString(),
+    snapshot: record.snapshot ?? null,
+  };
+}
+
+function normalizeProcess(raw: unknown): RematriculaProcessSummary {
+  const record = (raw as Record<string, unknown>) || {};
+  const campanha = (record.campanha as Record<string, unknown> | null) ?? null;
+  return {
+    id: String(record.id ?? ''),
+    campanhaId: record.campanhaId == null ? null : String(record.campanhaId),
+    campanha: campanha
+      ? {
+          id: String(campanha.id ?? ''),
+          nome: String(campanha.nome ?? ''),
+          status: String(campanha.status ?? ''),
+        }
+      : null,
+    origin: String(record.origin ?? 'STANDALONE') as RematriculaProcessSummary['origin'],
+    targetPeriodId: String(record.targetPeriodId ?? ''),
+    holderType: String(record.holderType ?? 'STUDENT') as RematriculaProcessSummary['holderType'],
+    holderId: String(record.holderId ?? ''),
+    status: String(record.status ?? 'DRAFT') as RematriculaProcessSummary['status'],
+    effectiveAt: parseDate(record.effectiveAt) ?? new Date().toISOString(),
+    firstDueDate: parseDate(record.firstDueDate),
+    confirmedAt: parseDate(record.confirmedAt),
+    renewCount: parseNumber(record.renewCount, 0),
+    pendingCount: parseNumber(record.pendingCount, 0),
+    nonRenewalCount: parseNumber(record.nonRenewalCount, 0),
+    monthlyTotal: parseNumber(record.monthlyTotal, 0),
+    enrollmentFeeTotal: parseNumber(record.enrollmentFeeTotal, 0),
+    version: parseNumber(record.version, 1),
+    itens: Array.isArray(record.itens)
+      ? record.itens.map((item) => {
+          const itemRecord = (item as Record<string, unknown>) || {};
+          return {
+            id: String(itemRecord.id ?? ''),
+            decision: String(itemRecord.decision ?? ''),
+            status: String(itemRecord.status ?? ''),
+            matriculaOrigemId: String(itemRecord.matriculaOrigemId ?? ''),
+            matriculaFuturaId: itemRecord.matriculaFuturaId == null ? null : String(itemRecord.matriculaFuturaId),
+            targetType: itemRecord.targetType == null ? null : String(itemRecord.targetType),
+            targetClassId: itemRecord.targetClassId == null ? null : String(itemRecord.targetClassId),
+            targetComboId: itemRecord.targetComboId == null ? null : String(itemRecord.targetComboId),
+            targetPlanId: itemRecord.targetPlanId == null ? null : String(itemRecord.targetPlanId),
+            aluno: itemRecord.aluno && typeof itemRecord.aluno === 'object'
+              ? {
+                  id: String((itemRecord.aluno as Record<string, unknown>).id ?? ''),
+                  nome: String((itemRecord.aluno as Record<string, unknown>).nome ?? ''),
+                  foto: ((itemRecord.aluno as Record<string, unknown>).foto as string | null) ?? null,
+                }
+              : null,
+            turmaAtual:
+              itemRecord.turmaAtual && typeof itemRecord.turmaAtual === 'object'
+                ? {
+                    id: String((itemRecord.turmaAtual as Record<string, unknown>).id ?? ''),
+                    nome: String((itemRecord.turmaAtual as Record<string, unknown>).nome ?? ''),
+                  }
+                : null,
+            planoAtual:
+              itemRecord.planoAtual && typeof itemRecord.planoAtual === 'object'
+                ? {
+                    id: String((itemRecord.planoAtual as Record<string, unknown>).id ?? ''),
+                    nome: String((itemRecord.planoAtual as Record<string, unknown>).nome ?? ''),
+                  }
+                : null,
+            comboAtual:
+              itemRecord.comboAtual && typeof itemRecord.comboAtual === 'object'
+                ? {
+                    id: String((itemRecord.comboAtual as Record<string, unknown>).id ?? ''),
+                    nome: String((itemRecord.comboAtual as Record<string, unknown>).nome ?? ''),
+                  }
+                : null,
+          };
+        })
+      : [],
+    reservas: Array.isArray(record.reservas) ? (record.reservas as RematriculaProcessSummary['reservas']) : [],
+    contratos: Array.isArray(record.contratos) ? (record.contratos as RematriculaProcessSummary['contratos']) : [],
+    financeiros: Array.isArray(record.financeiros) ? (record.financeiros as RematriculaProcessSummary['financeiros']) : [],
+    pendencias: Array.isArray(record.pendencias)
+      ? (record.pendencias as RematriculaPendingSummary[])
+      : [],
+    excecoes: Array.isArray(record.excecoes)
+      ? (record.excecoes as RematriculaExceptionSummary[])
+      : [],
+    comunicacoes: Array.isArray(record.comunicacoes)
+      ? (record.comunicacoes as RematriculaCommunicationSummary[])
+      : [],
+    createdAt: parseDate(record.createdAt) ?? new Date().toISOString(),
+    updatedAt: parseDate(record.updatedAt) ?? new Date().toISOString(),
+  };
 }
 
 function parseNumber(value: unknown, fallback = 0) {
@@ -248,11 +496,22 @@ export async function listRematriculasElegiveisRequest(
   return {
     ...parsed.data,
     itens: parsed.data.itens.map((item) => normalizeItem(item)),
+    campaigns: Array.isArray((json as Record<string, unknown>)?.campaigns)
+      ? ((json as Record<string, unknown>).campaigns as unknown[]).map(normalizeCampaign)
+      : [],
+    participants: Array.isArray((json as Record<string, unknown>)?.participants)
+      ? ((json as Record<string, unknown>).participants as unknown[]).map(normalizeParticipant)
+      : [],
+    processes: Array.isArray((json as Record<string, unknown>)?.processes)
+      ? ((json as Record<string, unknown>).processes as unknown[]).map(normalizeProcess)
+      : [],
   };
 }
 
 export interface CreateRematriculaInput {
   contaId: string;
+  campaignId?: string | null;
+  targetPeriodId?: string;
   matriculaId: string;
   dataInicio: string;
   dataFimContrato: string;
@@ -317,13 +576,13 @@ export async function createRematriculaRequest(
   if (!response.ok) {
     throw new Error(
       (json as { error?: { message?: string } } | null)?.error?.message ||
-        'Não foi possível concluir a rematrícula.',
+        'Não foi possível confirmar o próximo ciclo.',
     );
   }
 
   const parsed = createRematriculaResultDTOSchema.safeParse(json);
   if (!parsed.success) {
-    throw new Error('Resposta inválida ao concluir a rematrícula.');
+    throw new Error('Resposta inválida ao confirmar o próximo ciclo.');
   }
 
   const payload = parsed.data;
@@ -340,16 +599,27 @@ export async function createRematriculaRequest(
 }
 
 export type RematriculaFamiliarModoTurmas = 'TURMAS' | 'COMBO';
+export type RematriculaFamiliarDecision =
+  | 'REMATRICULAR_AGORA'
+  | 'NAO_CONTINUARA'
+  | 'DECIDIR_DEPOIS'
+  | 'TRANSFERIR_MODALIDADE'
+  | 'ALTERAR_PAGADOR'
+  | 'REMATRICULAR_SEPARADAMENTE';
 
 export interface RematriculaFamiliarItemInput {
   matriculaId: string;
+  decision: RematriculaFamiliarDecision;
   turmaId?: string | null;
   /** Em modo COMBO, combo por aluno (alternativa ao combo global). */
   comboId?: string | null;
+  decisionReason?: string | null;
 }
 
 export interface CreateRematriculaFamiliarInput {
   contaId: string;
+  campaignId?: string | null;
+  targetPeriodId?: string;
   responsavelId: string;
   /**
    * Define qual produto financeiro vai consolidar a cobrança familiar:
@@ -378,40 +648,150 @@ export interface CreateRematriculaFamiliarInput {
   overrideReason?: string;
   notificationChannels?: Array<'EMAIL' | 'SMS' | 'WHATSAPP'>;
   notificationChannelsConfigured?: boolean;
+  contratoModeloId?: string | null;
+  previewId?: string | null;
+  previewHash?: string | null;
   uiRequestId?: string;
 }
 
 export interface CreateRematriculaFamiliarResponse {
   familyId: string;
+  transitionId?: string;
   status: string;
+  step?: string | null;
+  academicStatus?: string | null;
+  sourceBillingStatus?: string | null;
+  targetBillingStatus?: string | null;
+  contractStatus?: string | null;
+  previewHash?: string | null;
+  warnings?: string[];
   results: Array<{
     matriculaId: string;
     alunoId: string;
     alunoNome: string;
-    status: 'success' | 'error';
+    decision?: RematriculaFamiliarDecision;
+    status: 'success' | 'pending' | 'error';
     novaMatriculaId?: string | null;
     errorMessage?: string | null;
   }>;
 }
 
+export interface RematriculaFamiliarPreviewResponse {
+  previewId: string;
+  previewHash: string;
+  blocks: Array<{ sourceEnrollmentId: string; code: string; message: string }>;
+  warnings: string[];
+  sourceBillingAction: string;
+  financialGroups: Array<{
+    compatibilityKey: string;
+    totalAmount: number;
+    items: Array<{ sourceEnrollmentId: string; alunoNome: string; amount: number }>;
+  }>;
+}
+
+export async function previewRematriculaFamiliarRequest(
+  input: CreateRematriculaFamiliarInput,
+): Promise<RematriculaFamiliarPreviewResponse> {
+  const requestBody = buildRematriculaFamiliarRequestBody(input);
+
+  const response = await fetch('/api/rematriculas/familiar/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      parseRematriculaFamiliarApiError(
+        json,
+        'Não foi possível gerar o preview da rematrícula familiar.',
+      ),
+    );
+  }
+
+  const payload = json as Partial<RematriculaFamiliarPreviewResponse>;
+  return {
+    previewId: String(payload.previewId ?? ''),
+    previewHash: String(payload.previewHash ?? ''),
+    blocks: Array.isArray(payload.blocks) ? payload.blocks : [],
+    warnings: Array.isArray(payload.warnings) ? payload.warnings.map(String) : [],
+    sourceBillingAction: String(payload.sourceBillingAction ?? ''),
+    financialGroups: Array.isArray(payload.financialGroups) ? payload.financialGroups : [],
+  };
+}
+
+function normalizeOptionalId(value?: string | null) {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'null') return null;
+  return trimmed;
+}
+
+function parseRematriculaFamiliarApiError(json: unknown, fallback: string) {
+  const payload = json as {
+    error?: { code?: string; message?: string; details?: ZodIssue[] };
+  } | null;
+  if (!payload?.error) return fallback;
+
+  const { code, message, details } = payload.error;
+  if (code === 'PAYLOAD_INVALIDO' && Array.isArray(details)) {
+    return formatRematriculaFamiliarValidationMessage(details);
+  }
+
+  return message ?? fallback;
+}
+
+function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInput) {
+  const isCombo = input.modoTurmas === 'COMBO';
+  const planoId = !isCombo ? normalizeOptionalId(input.planoId) : null;
+  const comboIdGlobal = isCombo ? normalizeOptionalId(input.comboId) : null;
+
+  const body: Record<string, unknown> = {
+    contaId: input.contaId,
+    campaignId: normalizeOptionalId(input.campaignId),
+    targetPeriodId: input.targetPeriodId,
+    responsavelId: input.responsavelId,
+    itens: input.itens.map((item) => ({
+      matriculaId: item.matriculaId,
+      decision: item.decision ?? 'DECIDIR_DEPOIS',
+      decisionReason: normalizeOptionalId(item.decisionReason),
+      turmaId: normalizeOptionalId(item.turmaId),
+      planoId: !isCombo ? planoId : null,
+      comboId: isCombo ? normalizeOptionalId(item.comboId) ?? comboIdGlobal : null,
+    })),
+    dataInicio: input.dataInicio,
+    dataFimContrato: input.dataFimContrato,
+    formaPagamento: input.formaPagamento,
+    formaPagamentoTaxa: input.formaPagamentoTaxa,
+    vencimentoDia: input.vencimentoDia,
+    taxaMatricula: input.taxaIsenta ? 0 : (input.taxaMatricula ?? 0),
+    taxaIsenta: input.taxaIsenta ?? false,
+    descontos: input.descontos ?? [],
+    notificationChannels: input.notificationChannels ?? [],
+    notificationChannelsConfigured: input.notificationChannelsConfigured ?? false,
+    contratoModeloId: normalizeOptionalId(input.contratoModeloId),
+    uiRequestId: input.uiRequestId ?? `${input.responsavelId}:${Date.now()}`,
+  };
+
+  if (input.taxaJustificativa?.trim()) {
+    body.taxaJustificativa = input.taxaJustificativa.trim();
+  }
+  if (input.multaPercentual != null) body.multaPercentual = input.multaPercentual;
+  if (input.jurosMensal != null) body.jurosMensal = input.jurosMensal;
+  if (input.descontoAntecipado != null) body.descontoAntecipado = input.descontoAntecipado;
+  if (input.prazoDesconto != null) body.prazoDesconto = input.prazoDesconto;
+  if (input.overrideReason?.trim()) body.overrideReason = input.overrideReason.trim();
+  if (input.previewId) body.previewId = input.previewId;
+  if (input.previewHash) body.previewHash = input.previewHash;
+
+  return body;
+}
+
 export async function createRematriculaFamiliarRequest(
   input: CreateRematriculaFamiliarInput,
 ): Promise<CreateRematriculaFamiliarResponse> {
-  const isCombo = input.modoTurmas === 'COMBO';
-  const planoId = !isCombo ? input.planoId ?? null : null;
-  const comboIdGlobal = isCombo ? input.comboId ?? null : null;
-
-  const requestBody = {
-    ...input,
-    planoId,
-    comboId: comboIdGlobal,
-    itens: input.itens.map((item) => ({
-      matriculaId: item.matriculaId,
-      turmaId: item.turmaId ?? null,
-      planoId: !isCombo ? planoId : null,
-      comboId: isCombo ? item.comboId ?? comboIdGlobal : null,
-    })),
-  };
+  const requestBody = buildRematriculaFamiliarRequestBody(input);
 
   const response = await fetch('/api/rematriculas/familiar', {
     method: 'POST',
@@ -423,24 +803,211 @@ export async function createRematriculaFamiliarRequest(
 
   if (!response.ok) {
     throw new Error(
-      (json as { error?: { message?: string } } | null)?.error?.message ||
-        'Não foi possível concluir a rematrícula familiar.',
+      parseRematriculaFamiliarApiError(json, 'Não foi possível confirmar o próximo ciclo familiar.'),
     );
   }
 
   const payload = json as Partial<CreateRematriculaFamiliarResponse>;
   return {
     familyId: String(payload.familyId ?? ''),
+    transitionId: payload.transitionId ? String(payload.transitionId) : undefined,
     status: String(payload.status ?? ''),
+    step: payload.step ? String(payload.step) : null,
+    academicStatus: payload.academicStatus ? String(payload.academicStatus) : null,
+    sourceBillingStatus: payload.sourceBillingStatus ? String(payload.sourceBillingStatus) : null,
+    targetBillingStatus: payload.targetBillingStatus ? String(payload.targetBillingStatus) : null,
+    contractStatus: payload.contractStatus ? String(payload.contractStatus) : null,
+    previewHash: payload.previewHash ? String(payload.previewHash) : null,
+    warnings: Array.isArray(payload.warnings) ? payload.warnings.map(String) : [],
     results: Array.isArray(payload.results)
       ? payload.results.map((result) => ({
           matriculaId: String(result.matriculaId ?? ''),
           alunoId: String(result.alunoId ?? ''),
           alunoNome: String(result.alunoNome ?? ''),
-          status: result.status === 'success' ? 'success' : 'error',
+          decision: result.decision,
+          status:
+            result.status === 'error' ? 'error' : result.status === 'pending' ? 'pending' : 'success',
           novaMatriculaId: result.novaMatriculaId ? String(result.novaMatriculaId) : null,
           errorMessage: result.errorMessage ? String(result.errorMessage) : null,
         }))
       : [],
   };
+}
+
+export interface CreateRematriculaCampaignInput {
+  nome: string;
+  descricao?: string | null;
+  targetPeriodId: string;
+  campaignStartsAt: string;
+  campaignEndsAt?: string | null;
+  rules?: Record<string, unknown> | null;
+  audienceDefinition?: Record<string, unknown> | null;
+}
+
+export async function createRematriculaCampaignRequest(
+  input: CreateRematriculaCampaignInput,
+): Promise<RematriculaCampaignSummary> {
+  const response = await fetch('/api/rematriculas/campanhas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível criar a campanha.',
+    );
+  }
+  return normalizeCampaign((json as { campaign?: unknown })?.campaign);
+}
+
+export async function updateRematriculaCampaignRequest(
+  campaignId: string,
+  input: Partial<CreateRematriculaCampaignInput> & {
+    status?: RematriculaCampaignSummary['status'];
+  },
+): Promise<RematriculaCampaignSummary> {
+  const response = await fetch(`/api/rematriculas/campanhas/${campaignId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível atualizar a campanha.',
+    );
+  }
+  return normalizeCampaign((json as { campaign?: unknown })?.campaign);
+}
+
+export async function activateRematriculaCampaignRequest(
+  campaignId: string,
+): Promise<{ campaign: RematriculaCampaignSummary; createdParticipants: number }> {
+  const response = await fetch(`/api/rematriculas/campanhas/${campaignId}/activate`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível ativar a campanha.',
+    );
+  }
+  return {
+    campaign: normalizeCampaign((json as { campaign?: unknown })?.campaign),
+    createdParticipants: parseNumber((json as { createdParticipants?: unknown })?.createdParticipants, 0),
+  };
+}
+
+export async function cancelRematriculaProcessRequest(processId: string, reason: string) {
+  const response = await fetch(`/api/rematriculas/${processId}/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível cancelar o próximo ciclo.',
+    );
+  }
+  return json;
+}
+
+export async function editRematriculaFutureLinkRequest(
+  processId: string,
+  input: {
+    targetClassId?: string | null;
+    targetComboId?: string | null;
+    targetPlanId?: string | null;
+    reason: string;
+  },
+) {
+  const response = await fetch(`/api/rematriculas/${processId}/future-link`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível editar o próximo ciclo.',
+    );
+  }
+  return json;
+}
+
+export async function resolveRematriculaPendingRequest(
+  pendingId: string,
+  input: { resolution: string; status?: 'RESOLVED' | 'DISMISSED' },
+) {
+  const response = await fetch(`/api/rematriculas/pendencias/${pendingId}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível resolver a pendência.',
+    );
+  }
+  return json;
+}
+
+export async function grantRematriculaExceptionRequest(
+  processId: string,
+  input: {
+    itemId?: string | null;
+    permission: string;
+    rule: string;
+    impact: string;
+    justification: string;
+  },
+) {
+  const response = await fetch(`/api/rematriculas/processos/${processId}/exceptions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível conceder a exceção.',
+    );
+  }
+  return json;
+}
+
+export async function createRematriculaCommunicationRequest(
+  processId: string,
+  input: {
+    channel: 'EMAIL' | 'WHATSAPP' | 'SMS' | 'PORTAL';
+    audience: string;
+    subject?: string | null;
+    message: string;
+    scheduledAt?: string | null;
+  },
+) {
+  const response = await fetch(`/api/rematriculas/processos/${processId}/communications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível registrar a comunicação.',
+    );
+  }
+  return json;
 }

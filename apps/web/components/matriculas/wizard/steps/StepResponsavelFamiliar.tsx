@@ -13,6 +13,13 @@ import { maskCPF, maskPhone, unmask } from '@/lib/utils/masks';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import {
+  emptyResponsavelEnderecoValue,
+  enderecoValueToPayload,
+  ResponsavelEnderecoFields,
+  type ResponsavelEnderecoValue,
+} from '@/components/cadastro/responsaveis/ResponsavelEnderecoFields';
+import { evaluatePayerAddressFiscalReadiness } from '@alusa/lib/client';
 import type { WizardContextValue } from '../types';
 
 interface ResponsavelOption {
@@ -44,6 +51,7 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
   const [open, setOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [endereco, setEndereco] = useState<ResponsavelEnderecoValue>(emptyResponsavelEnderecoValue);
   const debounceRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -114,6 +122,19 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
   };
 
   const onSubmitNovoResponsavel = async (data: NovoResponsavelFormData) => {
+    const addressReadiness = evaluatePayerAddressFiscalReadiness(enderecoValueToPayload(endereco));
+    if (!addressReadiness.ready) {
+      toast.custom((t) => (
+        <CustomToast
+          variant="error"
+          title="Endereço incompleto"
+          description={addressReadiness.issues[0]?.message ?? 'Informe o endereço completo do responsável.'}
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
+      return;
+    }
+
     setSubmitting(true);
     try {
       const res = await fetch('/api/responsaveis', {
@@ -124,6 +145,8 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
           cpf: data.cpf ? unmask(data.cpf) : undefined,
           email: data.email || undefined,
           telefone: data.telefone ? unmask(data.telefone) : undefined,
+          financeiro: true,
+          endereco: enderecoValueToPayload(endereco),
         }),
       });
 
@@ -137,6 +160,7 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
       setQuery(resp.nome);
       setShowForm(false);
       resetForm();
+      setEndereco(emptyResponsavelEnderecoValue);
     } catch (e) {
       const message = (e as Error).message || 'Erro ao cadastrar responsável';
       toast.custom((t) => (
@@ -323,6 +347,19 @@ export function StepResponsavelFamiliar({ ctx }: StepResponsavelFamiliarProps) {
             <label className="text-xs font-medium text-slate-600">E-mail</label>
             <Input {...register('email')} type="email" placeholder="email@exemplo.com" />
             {errors.email && <p className="text-[11px] text-red-600">{errors.email.message}</p>}
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="mb-3 text-xs font-medium text-slate-700">Endereço para cobranças *</p>
+            <ResponsavelEnderecoFields
+              value={endereco}
+              onChange={setEndereco}
+              onLookupError={(message) =>
+                toast.custom((t) => (
+                  <CustomToast variant="error" title="CEP" description={message} onClose={() => toast.dismiss(t)} />
+                ))
+              }
+            />
           </div>
 
           <div className="flex gap-2">

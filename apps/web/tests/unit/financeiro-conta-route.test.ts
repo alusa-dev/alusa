@@ -113,6 +113,12 @@ describe('GET /api/financeiro/conta', () => {
           pixTransferEnabled: true,
           bankTransferEnabled: true,
         },
+        fees: null,
+        transferContext: {
+          tenantDocumentType: null,
+          tenantDocumentLastDigits: null,
+          tenantDocumentNormalized: null,
+        },
       },
     } as never);
 

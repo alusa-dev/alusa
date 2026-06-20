@@ -30,6 +30,12 @@ import { table } from '@/components/layout/TableStyles';
 
 import { useResponsaveis } from './hooks/use-responsaveis';
 import { createResponsavel, type ResponsavelListItem } from './services/responsaveis-service';
+import {
+  emptyResponsavelEnderecoValue,
+  enderecoValueToPayload,
+  ResponsavelEnderecoFields,
+  type ResponsavelEnderecoValue,
+} from '@/components/cadastro/responsaveis/ResponsavelEnderecoFields';
 
 const PAGE_SIZE = 6;
 
@@ -41,6 +47,7 @@ type ResponsavelFormState = {
   email: string;
   telefone: string;
   financeiro: boolean;
+  endereco: ResponsavelEnderecoValue;
 };
 
 const initialFormState: ResponsavelFormState = {
@@ -49,6 +56,7 @@ const initialFormState: ResponsavelFormState = {
   email: '',
   telefone: '',
   financeiro: true,
+  endereco: emptyResponsavelEnderecoValue,
 };
 
 export function ResponsaveisFeature() {
@@ -112,7 +120,10 @@ export function ResponsaveisFeature() {
   async function handleCreate() {
     setCreating(true);
     try {
-      const responsavel = await createResponsavel(form);
+      const responsavel = await createResponsavel({
+        ...form,
+        endereco: form.financeiro ? enderecoValueToPayload(form.endereco) : undefined,
+      });
       pushToast({
         title: 'Responsável cadastrado',
         description: 'O cadastro já está disponível para vínculos familiares.',
@@ -278,10 +289,23 @@ export function ResponsaveisFeature() {
                       Marcar como responsável financeiro
                     </span>
                     <span className="mt-0.5 block text-xs text-slate-500">
-                      Este será o padrão para cobranças familiares e futuras rematrículas.
+                      Endereço completo é obrigatório para cobranças e emissão de NFS-e.
                     </span>
                   </span>
                 </label>
+
+                {form.financeiro ? (
+                  <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:shadow-none">
+                    <p className="mb-3 text-sm font-medium text-slate-800">Endereço para cobranças</p>
+                    <ResponsavelEnderecoFields
+                      value={form.endereco}
+                      onChange={(endereco) => setForm((current) => ({ ...current, endereco }))}
+                      onLookupError={(message) =>
+                        pushToast({ title: 'CEP', description: message, variant: 'error' })
+                      }
+                    />
+                  </div>
+                ) : null}
               </div>
             </div>
 

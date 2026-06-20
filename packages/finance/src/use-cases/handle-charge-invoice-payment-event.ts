@@ -5,6 +5,10 @@ import {
   isInvoicePaymentPaidEvent,
   isInvoicePaymentSensitiveEvent,
 } from '../fiscal/charge-invoice-eligibility';
+import {
+  resolveChargeInvoiceEmissionPath,
+  type ChargeInvoiceEmissionPath,
+} from '../fiscal/charge-invoice-emission-path';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { cancelChargeInvoice } from './cancel-charge-invoice';
 import { emitChargeInvoice } from './emit-charge-invoice';
@@ -15,6 +19,7 @@ export type HandleChargeInvoicePaymentEventInput = {
   asaasPaymentId: string;
   event: string;
   providerStatus?: string | null;
+  asaasPaymentSubscription?: string | null;
 };
 
 export type HandleChargeInvoicePaymentEventOutput = {
@@ -36,33 +41,65 @@ async function resolveChargeId(input: HandleChargeInvoicePaymentEventInput): Pro
   return charge?.id ?? null;
 }
 
-async function hasNativeSubscriptionInvoiceSettings(contaId: string, chargeId: string): Promise<boolean> {
+async function resolveEmissionPath(input: {
+  contaId: string;
+  chargeId: string;
+  asaasPaymentSubscription?: string | null;
+}): Promise<{
+  path: ChargeInvoiceEmissionPath;
+  cobrancaTipo: string | null;
+  subscriptionId: string | null;
+  standaloneSubscriptionId: string | null;
+}> {
   const prisma = getFiscalPrisma();
   const charge = await prisma.charge.findFirst({
-    where: { id: chargeId, contaId },
+    where: { id: input.chargeId, contaId: input.contaId },
     select: {
+      standaloneSubscriptionId: true,
       standaloneSubscription: {
-        select: { asaasInvoiceSettingsConfigured: true },
+        select: {
+          asaasSubscriptionId: true,
+          asaasInvoiceSettingsConfigured: true,
+        },
       },
       cobranca: {
         select: {
           matriculaId: true,
+          tipo: true,
         },
       },
     },
   });
 
-  if (charge?.standaloneSubscription?.asaasInvoiceSettingsConfigured) return true;
-
-  if (charge?.cobranca?.matriculaId) {
-    const subscription = await prisma.subscription.findFirst({
-      where: { contaId, matriculaId: charge.cobranca.matriculaId },
-      select: { asaasInvoiceSettingsConfigured: true },
-    });
-    return Boolean(subscription?.asaasInvoiceSettingsConfigured);
+  if (!charge) {
+    return {
+      path: 'ALUSA_LOCAL',
+      cobrancaTipo: null,
+      subscriptionId: null,
+      standaloneSubscriptionId: null,
+    };
   }
 
-  return false;
+  const subscription = charge.cobranca?.matriculaId
+    ? await prisma.subscription.findFirst({
+        where: { contaId: input.contaId, matriculaId: charge.cobranca.matriculaId },
+        select: {
+          asaasSubscriptionId: true,
+          asaasInvoiceSettingsConfigured: true,
+        },
+      })
+    : null;
+
+  return {
+    path: resolveChargeInvoiceEmissionPath({
+      charge,
+      subscription,
+      asaasPayment: { subscription: input.asaasPaymentSubscription ?? null },
+    }),
+    cobrancaTipo: charge.cobranca?.tipo ?? null,
+    subscriptionId: subscription?.asaasSubscriptionId ?? null,
+    standaloneSubscriptionId: charge.standaloneSubscription?.asaasSubscriptionId ?? null,
+  };
 }
 
 export async function handleChargeInvoicePaymentEvent(
@@ -164,7 +201,30 @@ export async function handleChargeInvoicePaymentEvent(
     return { handled: true, action: 'SKIPPED', invoiceId: invoice.id, reason: 'INVOICE_ALREADY_EXISTS' };
   }
 
-  if (await hasNativeSubscriptionInvoiceSettings(input.contaId, chargeId)) {
+  const emissionPath = await resolveEmissionPath({
+    contaId: input.contaId,
+    chargeId,
+    asaasPaymentSubscription: input.asaasPaymentSubscription,
+  });
+
+  if (emissionPath.path === 'ASAAS_SUBSCRIPTION_NATIVE') {
+    await auditLogService.record({
+      contaId: input.contaId,
+      actor: { type: 'SYSTEM' },
+      action: 'finance.invoice.auto_emit_skipped',
+      entity: { type: 'Charge', id: chargeId },
+      metadata: {
+        event: input.event,
+        providerStatus: input.providerStatus ?? null,
+        asaasPaymentId: input.asaasPaymentId,
+        asaasPaymentSubscription: input.asaasPaymentSubscription ?? null,
+        emissionPath: emissionPath.path,
+        cobrancaTipo: emissionPath.cobrancaTipo,
+        subscriptionId: emissionPath.subscriptionId,
+        standaloneSubscriptionId: emissionPath.standaloneSubscriptionId,
+        reason: 'SUBSCRIPTION_NATIVE_EMISSION',
+      },
+    });
     return {
       handled: true,
       action: 'SKIPPED',
@@ -185,15 +245,35 @@ export async function handleChargeInvoicePaymentEvent(
       actor: { type: 'SYSTEM' },
       action: 'finance.invoice.auto_emit_failed',
       entity: { type: 'Charge', id: chargeId },
-      metadata: {
-        event: input.event,
-        providerStatus: input.providerStatus ?? null,
-        asaasPaymentId: input.asaasPaymentId,
-        error: emitted.error,
-      },
-    });
+    metadata: {
+      event: input.event,
+      providerStatus: input.providerStatus ?? null,
+      asaasPaymentId: input.asaasPaymentId,
+      asaasPaymentSubscription: input.asaasPaymentSubscription ?? null,
+      emissionPath: emissionPath.path,
+      cobrancaTipo: emissionPath.cobrancaTipo,
+      error: emitted.error,
+    },
+  });
     return { handled: true, action: 'REVIEW_REQUIRED', reason: 'AUTO_EMIT_FAILED' };
   }
+
+  await auditLogService.record({
+    contaId: input.contaId,
+    actor: { type: 'SYSTEM' },
+    action: 'finance.invoice.auto_emit_scheduled',
+    entity: { type: 'Charge', id: chargeId },
+    metadata: {
+      event: input.event,
+      providerStatus: input.providerStatus ?? null,
+      asaasPaymentId: input.asaasPaymentId,
+      asaasPaymentSubscription: input.asaasPaymentSubscription ?? null,
+      emissionPath: emissionPath.path,
+      cobrancaTipo: emissionPath.cobrancaTipo,
+      invoiceId: emitted.data.invoice?.id ?? null,
+      reason: 'AUTO_EMIT',
+    },
+  });
 
   return { handled: true, action: 'AUTO_EMIT', invoiceId: emitted.data.invoice?.id };
 }

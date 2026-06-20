@@ -3,6 +3,14 @@ import { alunoCreateSchema, formatZodErrors } from '@alusa/lib';
 
 describe('Aluno Schema Validation', () => {
   const contaId = 'conta-test';
+  const responsavelEnderecoCompleto = {
+    cep: '01001000',
+    logradouro: 'Praça da Sé',
+    numero: '123',
+    bairro: 'Sé',
+    cidade: 'São Paulo',
+    uf: 'SP',
+  };
 
   describe('Menor de idade (< 18 anos)', () => {
     it('valida aluno menor SEM CPF quando responsável está completo', () => {
@@ -16,6 +24,7 @@ describe('Aluno Schema Validation', () => {
           cpf: '52998224725',
           email: 'resp@example.com',
           telefone: '11999999999',
+          endereco: responsavelEnderecoCompleto,
         },
       };
 
@@ -90,6 +99,28 @@ describe('Aluno Schema Validation', () => {
 
       const result = alunoCreateSchema.safeParse(data);
       expect(result.success).toBe(false);
+    });
+
+    it('rejeita aluno menor com responsável financeiro SEM endereço', () => {
+      const data = {
+        contaId,
+        nome: 'Aluno Menor',
+        dataNasc: new Date('2015-05-15'),
+        responsavel: {
+          nome: 'Responsável Sem Endereco',
+          cpf: '52998224725',
+          email: 'resp@example.com',
+          telefone: '11999999999',
+        },
+      };
+
+      const result = alunoCreateSchema.safeParse(data);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        const errors = formatZodErrors(result.error.issues);
+        const enderecoError = errors.find((e) => e.field.includes('responsavel') && e.field.includes('endereco'));
+        expect(enderecoError).toBeDefined();
+      }
     });
 
     it('rejeita aluno menor com responsável SEM telefone', () => {

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveChargeDisplayStatus } from '../asaas-display-status';
+import { resolveChargeDisplayStatus } from '../../mappers/asaas-display-status';
+import { resolveMonotonicAsaasPaymentStatus } from '../../mappers/asaas-snapshot-monotonicity';
 
-describe('resolvePaymentDriftIssueType (snapshot semantics)', () => {
+describe('payment snapshot drift semantics', () => {
   it('treats missing persisted asaasStatus as stale snapshot display fallback', () => {
     expect(
       resolveChargeDisplayStatus({
@@ -14,7 +15,7 @@ describe('resolvePaymentDriftIssueType (snapshot semantics)', () => {
     ).toBe('Confirmada');
   });
 
-  it('prefers remote asaas status over local PAGO for display', () => {
+  it('prefers remote asaas status over local PAGO when snapshot is consistent', () => {
     expect(
       resolveChargeDisplayStatus({
         localStatus: 'PAGO',
@@ -23,5 +24,15 @@ describe('resolvePaymentDriftIssueType (snapshot semantics)', () => {
         hasAsaasLink: true,
       }),
     ).toMatchObject({ label: 'Recebida', source: 'asaas' });
+  });
+
+  it('blocks webhook snapshot regression from CONFIRMED to PENDING on paid charge', () => {
+    expect(
+      resolveMonotonicAsaasPaymentStatus({
+        currentAsaasStatus: 'CONFIRMED',
+        incoming: 'PENDING',
+        localChargeStatus: 'PAID',
+      }),
+    ).toBe('CONFIRMED');
   });
 });

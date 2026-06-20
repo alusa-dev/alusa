@@ -44,6 +44,24 @@ type TransferWebhookPayload = {
   } | null;
 };
 
+const INVOICE_FEE_CHARGE_NAME = 'Emissão NFS-e';
+
+function resolveChargeName(
+  entry: LedgerEntry,
+  linkedCharge: ChargeSnapshot | InvoiceSnapshot | undefined,
+  transfer: TransferSnapshot | undefined,
+): string | undefined {
+  if (entry.metadata?.rawCategory === 'INVOICE_FEE') {
+    return INVOICE_FEE_CHARGE_NAME;
+  }
+
+  return (
+    linkedCharge?.description
+    ?? entry.chargeName
+    ?? resolveTransferReference(transfer)
+  );
+}
+
 /**
  * Enriquece entries do ledger com dados locais (chargeName, customerName, metadata).
  * Estritamente read-only. Nunca altera a semântica financeira oficial.
@@ -66,7 +84,11 @@ export async function enrichLedgerEntries(
     .filter((id): id is string => Boolean(id));
 
   if (paymentIds.length === 0 && invoiceIds.length === 0 && transferIds.length === 0) {
-    return entries;
+    return entries.map((entry) =>
+      entry.metadata?.rawCategory === 'INVOICE_FEE'
+        ? { ...entry, chargeName: INVOICE_FEE_CHARGE_NAME }
+        : entry,
+    );
   }
 
   const [chargeMap, invoiceMap, transferMap] = await Promise.all([
@@ -81,14 +103,13 @@ export async function enrichLedgerEntries(
     const transfer = entry.transferId ? transferMap.get(entry.transferId) : undefined;
     const linkedCharge = charge ?? invoice;
 
-    if (!linkedCharge && !transfer) return entry;
+    const isInvoiceFee = entry.metadata?.rawCategory === 'INVOICE_FEE';
+
+    if (!linkedCharge && !transfer && !isInvoiceFee) return entry;
 
     return {
       ...entry,
-      chargeName:
-        linkedCharge?.description
-        ?? entry.chargeName
-        ?? resolveTransferReference(transfer),
+      chargeName: resolveChargeName(entry, linkedCharge, transfer),
       customerName:
         linkedCharge?.payerName
         ?? entry.customerName

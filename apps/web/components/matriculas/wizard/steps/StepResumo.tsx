@@ -54,8 +54,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
       : calcularLiquido(planoValorBase);
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
-  const totalTaxas =
-    (state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0)) * state.alunosFamiliares.length;
+  const totalTaxas = state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0);
 
   const formaPagamentoLabel = (forma: string | undefined) => {
     if (!forma) return '—';
@@ -139,7 +138,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
         {/* Totais */}
         <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-1.5 text-sm">
           <div className="flex justify-between">
-            <span className="text-slate-600">Taxa de matrícula (total)</span>
+            <span className="text-slate-600">Taxa de matrícula familiar</span>
             <span className="font-medium">{formatter.format(totalTaxas)}</span>
           </div>
           {beneficioDescricao && (

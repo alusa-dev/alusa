@@ -21,6 +21,7 @@ export function ModelosContratoFeature() {
   const router = useRouter();
   const { modelos, loading, remove } = useModelos();
   const [deleteTarget, setDeleteTarget] = useState<ContratoModelo | null>(null);
+  const handleImportContract = () => router.push('/contratos/modelos/importar');
 
   const columns: DataTableColumn<ContratoModelo>[] = useMemo(
     () => [
@@ -102,7 +103,7 @@ export function ModelosContratoFeature() {
       actions={
         <Button
           className="w-full lg:w-auto"
-          onClick={() => router.push('/contratos/modelos/importar')}
+          onClick={handleImportContract}
         >
           <PlusIcon className="h-4 w-4 mr-2" />
           Importar Contrato
@@ -115,7 +116,13 @@ export function ModelosContratoFeature() {
           columns={columns}
           rowKey={(m) => m.id}
           loading={loading}
-          emptyMessage="Nenhum modelo de contrato encontrado."
+          emptyMessage={
+            <div className="flex min-h-[180px] items-center justify-center px-6 py-12 text-center">
+              <p className="text-sm font-medium text-slate-500">
+                Não há modelos de contrato cadastrados.
+              </p>
+            </div>
+          }
           onRowClick={(m) => router.push(`/contratos/modelos/${m.id}`)}
         />
       </div>

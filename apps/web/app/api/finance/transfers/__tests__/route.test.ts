@@ -70,6 +70,7 @@ describe('GET /api/finance/transfers', () => {
           netValue: 10,
           status: 'PENDING',
           operation: 'PIX',
+          requestedDestinationType: 'PIX_KEY',
           recipientName: 'Elaine Costa',
           cpfCnpjMasked: null,
           bankName: 'Pix',

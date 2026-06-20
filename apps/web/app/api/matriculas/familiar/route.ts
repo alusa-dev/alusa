@@ -27,6 +27,8 @@ import {
   processFamilyBillingOutboxEvent,
   type FamilyBillingPayload,
 } from '@/src/server/family-billing/processor';
+import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { evaluateResponsavelPayerFiscalReadiness } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -404,6 +406,25 @@ export async function POST(request: Request) {
       }
     }
 
+    if (willCreateSubscriptionPlanned || willCreateEnrollmentFeePlanned) {
+      const gate = await guardFinancialAccountOr412(contaId);
+      if (!gate.ok) return gate.response;
+
+      const payerReadiness = await evaluateResponsavelPayerFiscalReadiness({
+        contaId,
+        responsavelId: responsavel.id,
+      });
+      if (!payerReadiness.ready) {
+        return jsonError(
+          422,
+          'RESPONSAVEL_ENDERECO_INCOMPLETO',
+          payerReadiness.issues[0]?.message ??
+            'Complete o endereço do responsável financeiro antes de gerar cobranças.',
+          { responsavelId: responsavel.id },
+        );
+      }
+    }
+
     // 3) Criar MatriculaFamiliar de forma atômica via unique (contaId, uiRequestId).
     //    Em caso de corrida, o segundo POST cai aqui e reaproveita o registro.
     let family;
@@ -418,7 +439,7 @@ export async function POST(request: Request) {
           valorMensalidadeTotal: pricing.totalMensalidade,
           valorTaxaMatriculaTotal: body.taxaIsenta
             ? 0
-            : Number((body.taxaMatricula * body.alunos.length).toFixed(2)),
+            : Number(body.taxaMatricula.toFixed(2)),
           formaPagamento: formaPagamento,
           ciclo: pricing.cycle,
           diaVencimento: body.vencimentoDia,
@@ -577,7 +598,7 @@ export async function POST(request: Request) {
       descontoIds: body.descontoIds,
     });
     const enrollmentFeeTotal = willCreateEnrollmentFeePlanned
-      ? Number((body.taxaMatricula * successCount).toFixed(2))
+      ? Number(body.taxaMatricula.toFixed(2))
       : 0;
     const subscriptionValue = body.criarCobranca ? financialPricing.totalMensalidade : 0;
 

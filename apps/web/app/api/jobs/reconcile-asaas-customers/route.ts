@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
-import { reconcileAsaasCustomerSnapshots } from '@alusa/finance';
+import {
+  reconcileAsaasCustomerSnapshots,
+  reconcileResponsavelCustomerAddresses,
+} from '@alusa/finance';
 
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 
@@ -24,13 +27,27 @@ async function run(req: Request) {
     });
     if (!tenantScope.ok) return tenantScope.response;
 
-    const result = await reconcileAsaasCustomerSnapshots({
-      contaId: tenantScope.contaId,
-      limit: clampPositiveInt(url.searchParams.get('limit'), 50, 200),
-      maxAccounts: clampPositiveInt(url.searchParams.get('maxAccounts'), 20, 100),
-    });
+    const limit = clampPositiveInt(url.searchParams.get('limit'), 50, 200);
+    const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 20, 100);
 
-    return NextResponse.json({ success: result.failed === 0, result });
+    const [snapshots, addresses] = await Promise.all([
+      reconcileAsaasCustomerSnapshots({
+        contaId: tenantScope.contaId,
+        limit,
+        maxAccounts,
+      }),
+      reconcileResponsavelCustomerAddresses({
+        contaId: tenantScope.contaId,
+        limit,
+        maxAccounts,
+      }),
+    ]);
+
+    return NextResponse.json({
+      success: snapshots.failed === 0 && addresses.failed === 0,
+      snapshots,
+      addresses,
+    });
   } catch (error) {
     console.error('[Job Reconcile Asaas Customers] Erro:', error);
     return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));

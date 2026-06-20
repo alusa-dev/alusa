@@ -6,7 +6,9 @@ import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { isCancellableAsaasTransfer, resolveTransferOperationFromAsaas } from './transfers/asaas-transfer-payload';
 import { mapAsaasTransferStatus } from './transfers/transfer-status';
+import { resolveOfficialFeeValue, resolveOfficialNetValue } from './transfers/transfer-metadata';
 
 export type CancelTransferInput = {
   contaId: string;
@@ -29,17 +31,6 @@ export type CancelTransferError =
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'ERRO_AO_CANCELAR_TRANSFER'
   | 'ERRO_INTERNO';
-
-// Verifica se a transferência pode ser cancelada com base nos dados do GET Asaas.
-// Prioridade: campo `canBeCancelled` (mais confiável) > checagem de status.
-// BANK_PROCESSING e BLOCKED (authorized:false) geralmente não são canceláveis.
-function isCancellableAsaasTransfer(transfer: { status?: string; canBeCancelled?: boolean }): boolean {
-  if (typeof transfer.canBeCancelled === 'boolean') {
-    return transfer.canBeCancelled;
-  }
-  // Fallback: apenas PENDING é seguro para cancelar quando canBeCancelled não vem
-  return transfer.status === 'PENDING';
-}
 
 export async function cancelTransfer(
   input: CancelTransferInput,
@@ -116,8 +107,9 @@ export async function cancelTransfer(
           transactionReceiptUrl: currentRemote.transactionReceiptUrl ?? null,
           effectiveDate: currentRemote.effectiveDate ?? null,
           endToEndIdentifier: currentRemote.endToEndIdentifier ?? null,
-          feeValue: currentRemote.transferFee ?? null,
-          netValue: currentRemote.netValue ?? null,
+          feeValue: resolveOfficialFeeValue(currentRemote, null, currentRemote.value),
+          netValue: resolveOfficialNetValue(currentRemote, null, currentRemote.value),
+          resolvedOperation: resolveTransferOperationFromAsaas(currentRemote.operationType),
         },
         select: {
           id: true,
@@ -203,8 +195,9 @@ export async function cancelTransfer(
         transactionReceiptUrl: confirmedRemote.transactionReceiptUrl ?? null,
         effectiveDate: confirmedRemote.effectiveDate ?? null,
         endToEndIdentifier: confirmedRemote.endToEndIdentifier ?? null,
-        feeValue: confirmedRemote.transferFee ?? null,
-        netValue: confirmedRemote.netValue ?? null,
+        feeValue: resolveOfficialFeeValue(confirmedRemote, null, confirmedRemote.value),
+        netValue: resolveOfficialNetValue(confirmedRemote, null, confirmedRemote.value),
+        resolvedOperation: resolveTransferOperationFromAsaas(confirmedRemote.operationType),
       },
       select: {
         id: true,

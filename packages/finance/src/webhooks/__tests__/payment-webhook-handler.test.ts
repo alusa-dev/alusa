@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { handlePaymentWebhook } from '../payment-webhook-handler';
 
-const { mockUpdateFinanceStatusFromPayment } = vi.hoisted(() => ({
+const { mockUpdateFinanceStatusFromPayment, mockResolvePaymentToLocalEntity, mockEnsureAcademicChargeForCobranca } = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
+  mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
+  mockEnsureAcademicChargeForCobranca: vi.fn(async () => ({ id: 'charge_academic_mock', cobrancaId: 'c_mock' })),
 }));
 
 vi.mock('../../foundation/payment-resolution-policy', () => {
@@ -12,12 +14,20 @@ vi.mock('../../foundation/payment-resolution-policy', () => {
   };
 });
 
+vi.mock('../payment-resolver', () => ({
+  resolvePaymentToLocalEntity: mockResolvePaymentToLocalEntity,
+}));
+
 vi.mock('../../foundation/audit-log.service', () => ({
   auditLogService: { record: vi.fn(async () => {}) },
 }));
 
 vi.mock('../../guards/finance-status-guard', () => ({
   updateFinanceStatusFromPayment: mockUpdateFinanceStatusFromPayment,
+}));
+
+vi.mock('../../fiscal/ensure-academic-charge-for-cobranca', () => ({
+  ensureAcademicChargeForCobranca: mockEnsureAcademicChargeForCobranca,
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -32,6 +42,7 @@ vi.mock('@alusa/database', () => ({
     },
     charge: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
       upsert: vi.fn(),
     },
@@ -81,6 +92,8 @@ describe('handlePaymentWebhook', () => {
     const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
     const { prisma } = await import('@alusa/database');
     vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(false);
+    mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'not_found', reason: 'test_default' });
+    mockEnsureAcademicChargeForCobranca.mockResolvedValue({ id: 'charge_academic_mock', cobrancaId: 'c_mock' });
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -161,6 +174,91 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.lancamento.findFirst).not.toHaveBeenCalled();
     expect(prisma.lancamento.create).not.toHaveBeenCalled();
     expect(prisma.logIntegracao.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('não trata Charge acadêmica resolvida deterministicamente como standalone', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
+
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({
+      type: 'charge',
+      chargeId: 'charge_academic_1',
+      cobrancaId: 'c_academic_1',
+    });
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'charge_academic_1',
+      cobrancaId: 'c_academic_1',
+      status: 'OPEN',
+      asaasPaymentId: 'pay_academic_1',
+    } as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'c_academic_1',
+      matriculaId: 'm_academic_1',
+      status: 'A_VENCER',
+      asaasPaymentId: 'pay_academic_1',
+      tipo: 'MENSALIDADE',
+      formaPagamento: 'CARTAO_CREDITO',
+    } as never);
+    vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.charge.update).mockResolvedValue({} as never);
+    vi.mocked(prisma.pagamento.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.pagamento.create).mockResolvedValueOnce({ id: 'pg_academic_1' } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: 'pay_academic_1',
+        status: 'CONFIRMED',
+        value: 140,
+        netValue: 136.73,
+        originalValue: 150,
+        subscription: 'sub_asaas_1',
+        dueDate: '2026-07-05',
+        paymentDate: '2026-06-18',
+        creditDate: '2026-07-20',
+        billingType: 'CREDIT_CARD',
+        externalReference: 'alusa:subscription:m_academic_1:cycle_1',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.charge.findUnique).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'c_academic_1' },
+        data: expect.objectContaining({
+          status: 'PAGO',
+          asaasStatus: 'CONFIRMED',
+          dataPagamento: expect.any(Date),
+          pagoEm: expect.any(Date),
+        }),
+      }),
+    );
+    const paymentUpdate = vi.mocked(prisma.cobranca.update).mock.calls.find(
+      ([call]) => call?.where?.id === 'c_academic_1' && call?.data?.status === 'PAGO',
+    )?.[0];
+    expect(paymentUpdate?.data?.dataPagamento).toEqual(new Date('2026-06-18'));
+    expect(paymentUpdate?.data?.asaasCreditDate).toEqual(new Date('2026-07-20'));
+    expect(prisma.pagamento.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          cobrancaId: 'c_academic_1',
+          asaasPaymentId: 'pay_academic_1',
+          valorPago: 140,
+        }),
+      }),
+    );
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'charge_academic_1' },
+        data: expect.objectContaining({
+          status: 'PAID',
+          asaasStatus: 'CONFIRMED',
+        }),
+      }),
+    );
   });
 
   it('deve vincular taxa pela externalReference legada mesmo sem charge local previa', async () => {
@@ -288,17 +386,15 @@ describe('handlePaymentWebhook', () => {
         }),
       }),
     );
-    expect(prisma.charge.upsert).toHaveBeenCalledWith(
+    expect(mockEnsureAcademicChargeForCobranca).toHaveBeenCalledWith(
       expect.objectContaining({
-        update: expect.objectContaining({
+        contaId: 'conta-1',
+        cobrancaId: 'c_mensalidade_1',
+        asaasPaymentId: 'pay_sub_1',
+        payment: expect.objectContaining({
+          id: 'pay_sub_1',
           billingType: 'CREDIT_CARD',
           invoiceUrl: 'https://asaas.test/i/pay_sub_1',
-          value: 75,
-        }),
-        create: expect.objectContaining({
-          billingType: 'CREDIT_CARD',
-          invoiceUrl: 'https://asaas.test/i/pay_sub_1',
-          asaasPaymentId: 'pay_sub_1',
         }),
       }),
     );
@@ -459,6 +555,68 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.charge.update).not.toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ status: 'OVERDUE' }),
+      }),
+    );
+  });
+
+  it('preserva asaasStatus pago quando PAYMENT_UPDATED tenta regredir snapshot em charge PAID', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_paid',
+      cobrancaId: null,
+      status: 'PAID',
+      asaasPaymentId: 'pay_paid',
+      asaasStatus: 'CONFIRMED',
+    } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_UPDATED',
+      payment: {
+        id: 'pay_paid',
+        status: 'PENDING',
+        value: 150,
+        netValue: 143.5,
+      },
+    });
+
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_paid' },
+        data: expect.objectContaining({
+          asaasStatus: 'CONFIRMED',
+        }),
+      }),
+    );
+  });
+
+  it('preserva asaasStatus CONFIRMED ao bloquear regressão por PAYMENT_OVERDUE', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_paid',
+      cobrancaId: null,
+      status: 'PAID',
+      asaasPaymentId: 'pay_paid',
+      asaasStatus: 'CONFIRMED',
+    } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_OVERDUE',
+      payment: {
+        id: 'pay_paid',
+        status: 'OVERDUE',
+        value: 150,
+        netValue: 150,
+      },
+    });
+
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_paid' },
+        data: expect.objectContaining({
+          asaasStatus: 'CONFIRMED',
+        }),
       }),
     );
   });

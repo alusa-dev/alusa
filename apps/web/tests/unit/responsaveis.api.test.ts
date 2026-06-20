@@ -25,6 +25,19 @@ vi.mock('@/lib/prisma', () => ({
   prisma: prismaMock,
 }));
 
+vi.mock('@alusa/finance', () => ({
+  syncResponsavelAsaasCustomer: vi.fn().mockResolvedValue({ ok: true, customerId: 'cus_test', reused: false }),
+}));
+
+const validResponsavelEndereco = {
+  cep: '01001000',
+  logradouro: 'Praça da Sé',
+  numero: '123',
+  bairro: 'Sé',
+  cidade: 'São Paulo',
+  uf: 'SP',
+};
+
 const { getServerSession } = await import('next-auth');
 const { GET, POST } = await import('@/app/api/responsaveis/route');
 
@@ -128,6 +141,7 @@ describe('/api/responsaveis', () => {
           email: 'maria@example.com',
           telefone: '(92) 99999-9999',
           financeiro: true,
+          endereco: validResponsavelEndereco,
         }),
       }),
     );
@@ -145,6 +159,7 @@ describe('/api/responsaveis', () => {
       phoneMasked: '(**) *****-9999',
       financeiro: true,
       alunosCount: 0,
+      asaasSync: { status: 'OK' },
     });
     expect(prismaMock.responsavel.create).toHaveBeenCalledWith(
       expect.objectContaining({

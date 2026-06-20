@@ -49,7 +49,7 @@ export default function MatriculaWizardDialog({
       <Dialog open={open} onOpenChange={handleDialogOpenChange}>
         <DialogContent
           fullScreenMobile
-          className="max-w-5xl w-full gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:rounded-2xl md:transition-all md:duration-300"
+          className="flex max-w-5xl w-full max-h-[min(90dvh,calc(100dvh-3rem))] flex-col gap-0 overflow-hidden bg-slate-50 p-0 min-h-0 max-md:h-[100dvh] max-md:max-h-[100dvh] md:rounded-2xl md:transition-all md:duration-300"
           data-testid="matricula-wizard"
         >
           <DialogTitle className="sr-only">Cadastrar matrícula</DialogTitle>

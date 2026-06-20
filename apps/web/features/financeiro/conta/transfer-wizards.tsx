@@ -26,7 +26,14 @@ import {
 import { pushToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { formatCpfCnpjBR, formatPhoneBR } from '@/lib/formatters';
-import type { GetAccountOverviewOutput } from '@alusa/finance';
+import type { GetTransferFeesOutput } from '@alusa/finance/client';
+import {
+  estimateTransferDebitAmount,
+  estimateTransferFee,
+  isValidPixPhoneKey,
+  normalizeWithdrawDestinationForAsaas,
+  requiresOwnerBirthDate,
+} from '@alusa/finance/client';
 
 import { formatCurrency } from '../extrato/utils/extrato-formatters';
 import { formatDate } from '../extrato/utils/extrato-formatters';
@@ -131,6 +138,10 @@ function mapTransferErrorMessage(message: string) {
       return 'A conta ainda está em validação e não pode transferir neste momento.';
     case 'SALDO_INSUFICIENTE':
       return 'Saldo insuficiente para concluir a transferência.';
+    case 'SALDO_INSUFICIENTE_PARA_TAXA':
+      return 'Saldo insuficiente para cobrir o valor e a taxa estimada da transferência.';
+    case 'OWNER_BIRTH_DATE_OBRIGATORIO':
+      return 'Informe a data de nascimento do titular quando o favorecido for pessoa física de outro CPF.';
     case 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS':
       return 'A conta financeira ainda não está configurada para movimentação.';
     case 'CREDENCIAIS_ASAAS_INVALIDAS':
@@ -243,10 +254,7 @@ function isValidEmail(value: string) {
 }
 
 function isValidPhone(value: string) {
-  const normalized = value.trim();
-  const digits = normalizeDigits(value);
-  if (normalized.startsWith('+')) return digits.length >= 12 && digits.length <= 13;
-  return digits.length >= 10 && digits.length <= 13 && !isValidCpf(digits) && !isValidCnpj(digits);
+  return isValidPixPhoneKey(value);
 }
 
 function isValidEvp(value: string) {
@@ -334,7 +342,7 @@ function formatPixKeyType(type: PixKeyType) {
     case 'PHONE':
       return 'Telefone';
     case 'EVP':
-      return 'Aleatoria';
+      return 'Chave aleatória (Pix)';
   }
 }
 
@@ -388,15 +396,25 @@ function getRecipientSecondaryLine(recipient: TransferRecipient) {
   return recipient.detail;
 }
 
-function buildTransferValidation(form: TransferFormState, maxAmount: number, pixKeyType: PixKeyType | null) {
+function buildTransferValidation(
+  form: TransferFormState,
+  maxAmount: number,
+  pixKeyType: PixKeyType | null,
+  transferContext: TransferWizardContext | null,
+  fees: GetTransferFeesOutput | null,
+) {
   const errors: string[] = [];
   const amountIsValid = isValidDecimalAmount(form.amount);
   const amountValue = parseAmountNumber(form.amount);
+  const estimatedOperation = form.type === 'PIX' ? 'PIX' : 'TED';
+  const estimatedDebit = amountValue != null ? estimateTransferDebitAmount(amountValue, fees, estimatedOperation) : null;
 
   if (!amountIsValid) {
     errors.push('Informe um valor valido.');
   } else if ((amountValue ?? 0) > maxAmount) {
     errors.push('O valor informado excede o saldo disponível.');
+  } else if (estimatedDebit != null && estimatedDebit > maxAmount) {
+    errors.push('O saldo disponível não cobre o valor somado à taxa estimada.');
   }
 
   if (form.type === 'PIX') {
@@ -404,8 +422,12 @@ function buildTransferValidation(form: TransferFormState, maxAmount: number, pix
       errors.push('Informe a chave Pix do destinatário.');
     } else if (!pixKeyType) {
       errors.push('Não foi possível reconhecer a chave Pix informada.');
-    } else if (!isPixKeyValid(form.pixAddressKey, pixKeyType)) {
-      errors.push(`A chave Pix não corresponde ao tipo ${formatPixKeyType(pixKeyType)}.`);
+    } else if (pixKeyType === 'PHONE' ? !isValidPixPhoneKey(form.pixAddressKey) : !isPixKeyValid(form.pixAddressKey, pixKeyType)) {
+      errors.push(
+        pixKeyType === 'PHONE'
+          ? 'Informe o telefone Pix com DDD, 11 dígitos, sem +55.'
+          : `A chave Pix não corresponde ao tipo ${formatPixKeyType(pixKeyType)}.`,
+      );
     }
   }
 
@@ -416,6 +438,12 @@ function buildTransferValidation(form: TransferFormState, maxAmount: number, pix
     if (!form.agency.trim()) errors.push('Informe a agencia.');
     if (!form.account.trim()) errors.push('Informe a conta.');
     if (!form.accountDigit.trim()) errors.push('Informe o digito da conta.');
+    if (
+      requiresOwnerBirthDate(transferContext?.tenantDocumentNormalized, form.cpfCnpj) &&
+      !form.ownerBirthDate.trim()
+    ) {
+      errors.push('Informe a data de nascimento do titular favorecido.');
+    }
   }
 
   return {
@@ -442,18 +470,24 @@ async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promis
 }
 
 
+export type TransferWizardContext = {
+  tenantDocumentType: 'CPF' | 'CNPJ' | null;
+  tenantDocumentLastDigits: string | null;
+  tenantDocumentNormalized: string | null;
+};
+
 function buildTransferPayload(form: TransferFormState, pixKeyType: PixKeyType) {
   if (form.type === 'PIX') {
     return {
       amount: toApiAmountString(form.amount),
       description: form.description || undefined,
       scheduleDate: form.scheduleDate || undefined,
-      destination: {
+      destination: normalizeWithdrawDestinationForAsaas({
         type: 'PIX' as const,
         pixAddressKey: form.pixAddressKey.trim(),
         pixAddressKeyType: pixKeyType,
         saveRecipient: false,
-      },
+      }),
     };
   }
 
@@ -461,7 +495,7 @@ function buildTransferPayload(form: TransferFormState, pixKeyType: PixKeyType) {
     amount: toApiAmountString(form.amount),
     description: form.description || undefined,
     scheduleDate: form.scheduleDate || undefined,
-    destination: {
+    destination: normalizeWithdrawDestinationForAsaas({
       type: 'BANK_ACCOUNT' as const,
       bank: { code: form.bankCode.trim() },
       accountName: form.accountName || undefined,
@@ -470,10 +504,10 @@ function buildTransferPayload(form: TransferFormState, pixKeyType: PixKeyType) {
       cpfCnpj: form.cpfCnpj.trim(),
       agency: form.agency.trim(),
       account: form.account.trim(),
-      accountDigit: form.accountDigit.trim() || undefined,
+      accountDigit: form.accountDigit.trim(),
       bankAccountType: form.bankAccountType || undefined,
       ispb: form.ispb || undefined,
-    },
+    }),
   };
 }
 
@@ -778,6 +812,8 @@ export function TransferWizardDialog({
   canPix,
   canTed,
   maxAmount,
+  fees,
+  transferContext,
   onSuccess,
   onRecipientsChange,
 }: {
@@ -788,6 +824,8 @@ export function TransferWizardDialog({
   canPix: boolean;
   canTed: boolean;
   maxAmount: number;
+  fees: GetTransferFeesOutput | null;
+  transferContext: TransferWizardContext | null;
   onSuccess: () => Promise<void>;
   onRecipientsChange: () => Promise<void>;
 }) {
@@ -804,6 +842,7 @@ export function TransferWizardDialog({
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [currentPasswordError, setCurrentPasswordError] = useState<string | null>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState(() => makeIdempotencyKey());
 
   useEffect(() => {
     if (!open) {
@@ -814,6 +853,7 @@ export function TransferWizardDialog({
       setPasswordDialogOpen(false);
       setCurrentPassword('');
       setCurrentPasswordError(null);
+      setIdempotencyKey(makeIdempotencyKey());
       setForm({ ...TRANSFER_INITIAL_STATE, type: getWizardDefaultType(canPix, canTed) });
       return;
     }
@@ -840,12 +880,24 @@ export function TransferWizardDialog({
     return destination?.type === 'PIX' ? destination : null;
   }, [selectedPixRecipient]);
   const resolvedPixKey = selectedPixDestination?.pixAddressKey ?? form.pixAddressKey;
+  const manualPixKeyDigits = normalizeDigits(form.pixAddressKey);
+  const isAmbiguousManualPixKey =
+    !selectedPixDestination && manualPixKeyDigits.length === 11 && !form.pixAddressKey.includes('@');
   const detectedPixKeyType = useMemo(() => detectPixKeyType(form.pixAddressKey), [form.pixAddressKey]);
   const effectivePixKeyType =
-    selectedPixDestination?.pixAddressKeyType ?? detectedPixKeyType ?? (form.pixAddressKeyType ?? null);
+    selectedPixDestination?.pixAddressKeyType
+    ?? (isAmbiguousManualPixKey ? form.pixAddressKeyType : detectedPixKeyType)
+    ?? (form.pixAddressKeyType ?? null);
   const validation = useMemo(
-    () => buildTransferValidation({ ...form, pixAddressKey: resolvedPixKey }, maxAmount, effectivePixKeyType),
-    [effectivePixKeyType, form, maxAmount, resolvedPixKey],
+    () =>
+      buildTransferValidation(
+        { ...form, pixAddressKey: resolvedPixKey },
+        maxAmount,
+        effectivePixKeyType,
+        transferContext,
+        fees,
+      ),
+    [effectivePixKeyType, fees, form, maxAmount, resolvedPixKey, transferContext],
   );
   const filteredRecipients = useMemo(() => {
     const query = recipientSearch.trim().toLowerCase();
@@ -862,6 +914,22 @@ export function TransferWizardDialog({
       });
   }, [form.type, recipientSearch, recipients]);
   const amountNumber = parseAmountNumber(form.amount);
+  const estimatedOperation = form.type === 'PIX' ? 'PIX' : 'TED';
+  const estimatedFee = estimateTransferFee(fees, estimatedOperation);
+  const estimatedDebit =
+    amountNumber != null ? estimateTransferDebitAmount(amountNumber, fees, estimatedOperation) : null;
+  const estimatedFeeConfig = estimatedOperation === 'PIX' ? fees?.pix : fees?.ted;
+  const feeMayUseMonthlyFreeQuota = Boolean(
+    fees?.monthlyTransfersWithoutFee &&
+      fees.monthlyTransfersWithoutFee > 0 &&
+      estimatedFeeConfig?.consideredInMonthlyTransfersWithoutFee,
+  );
+  const requiresBirthDate = useMemo(
+    () =>
+      form.type === 'BANK_ACCOUNT' &&
+      requiresOwnerBirthDate(transferContext?.tenantDocumentNormalized, form.cpfCnpj),
+    [form.cpfCnpj, form.type, transferContext?.tenantDocumentNormalized],
+  );
   const isNewPixKey = useMemo(
     () =>
       form.type === 'PIX' &&
@@ -878,21 +946,27 @@ export function TransferWizardDialog({
 
     if (step === 2) {
       if (form.type === 'PIX') {
-        return Boolean(resolvedPixKey.trim()) && isPixKeyValid(resolvedPixKey, effectivePixKeyType);
+        if (!resolvedPixKey.trim() || !effectivePixKeyType) return false;
+        return effectivePixKeyType === 'PHONE'
+          ? isValidPixPhoneKey(resolvedPixKey)
+          : isPixKeyValid(resolvedPixKey, effectivePixKeyType);
       }
 
       return Boolean(
-            form.bankCode.trim() &&
-              form.ownerName.trim() &&
-              isValidCpfCnpj(form.cpfCnpj) &&
-              form.agency.trim() &&
-              form.account.trim() &&
-              form.accountDigit.trim(),
-          );
+        form.bankCode.trim() &&
+          form.ownerName.trim() &&
+          isValidCpfCnpj(form.cpfCnpj) &&
+          form.agency.trim() &&
+          form.account.trim() &&
+          form.accountDigit.trim() &&
+          (!requiresBirthDate || form.ownerBirthDate.trim()),
+      );
     }
 
     if (step === 3) {
-      return isValidDecimalAmount(form.amount) && (parseAmountNumber(form.amount) ?? 0) <= maxAmount;
+      const amount = parseAmountNumber(form.amount) ?? 0;
+      const debit = estimateTransferDebitAmount(amount, fees, estimatedOperation);
+      return isValidDecimalAmount(form.amount) && debit <= maxAmount;
     }
 
     if (step === 4) {
@@ -900,7 +974,7 @@ export function TransferWizardDialog({
     }
 
     return validation.valid && !submitting;
-  }, [canPix, canTed, effectivePixKeyType, form, maxAmount, step, submitting, validation.valid]);
+  }, [canPix, canTed, effectivePixKeyType, estimatedOperation, fees, form, maxAmount, requiresBirthDate, resolvedPixKey, step, submitting, validation.valid]);
 
   const nextLabel = useMemo(() => {
     if (step !== 5) return 'Próxima etapa';
@@ -1030,6 +1104,8 @@ export function TransferWizardDialog({
   }
 
   async function handleSubmit(password: string) {
+    if (submitting) return;
+
     setSubmitting(true);
     try {
       const payload =
@@ -1041,7 +1117,7 @@ export function TransferWizardDialog({
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'Idempotency-Key': makeIdempotencyKey(),
+          'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify(
           form.type === 'PIX'
@@ -1068,6 +1144,7 @@ export function TransferWizardDialog({
 
       resetPasswordDialog();
       onOpenChange(false);
+      setIdempotencyKey(makeIdempotencyKey());
       await onSuccess();
     } catch (error) {
       const message = sanitizeErrorMessage(error);
@@ -1076,6 +1153,7 @@ export function TransferWizardDialog({
         return;
       }
 
+      resetPasswordDialog();
       pushToast({
         title: 'Não foi possível solicitar a transferência',
         description: mapTransferErrorMessage(message),
@@ -1087,6 +1165,8 @@ export function TransferWizardDialog({
   }
 
   async function handlePasswordConfirm() {
+    if (submitting) return;
+
     if (!currentPassword.trim()) {
       setCurrentPasswordError('Informe sua senha para confirmar a transferência.');
       return;
@@ -1146,8 +1226,8 @@ export function TransferWizardDialog({
             <ChoiceCard
               selected={form.type === 'BANK_ACCOUNT'}
               disabled={!canTed}
-              title="TED bancária"
-              description="Use quando precisar informar banco, agencia e conta do favorecido."
+              title="Transferência bancária"
+              description="Informe banco, agência e conta. O Asaas pode liquidar via Pix ou TED conforme a instituição."
               onClick={() => handleTypeChange('BANK_ACCOUNT')}
             />
           </div>
@@ -1187,8 +1267,30 @@ export function TransferWizardDialog({
                   ) : null}
                   {detectedPixKeyType && isPixKeyValid(form.pixAddressKey, detectedPixKeyType) ? (
                     <p className="text-xs text-slate-500">
-                      Chave reconhecida como <span className="font-medium text-slate-700">{detectedPixKeyType}</span>. Confira com o destinatário.
+                      Chave reconhecida como <span className="font-medium text-slate-700">{formatPixKeyType(detectedPixKeyType)}</span>. Confira com o destinatário.
                     </p>
+                  ) : null}
+                  {isAmbiguousManualPixKey ? (
+                    <div className="space-y-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <Label className="text-xs font-medium text-amber-900">Tipo da chave</Label>
+                      <Select
+                        value={form.pixAddressKeyType === 'PHONE' ? 'PHONE' : 'CPF'}
+                        onValueChange={(value) =>
+                          setForm((current) => ({ ...current, pixAddressKeyType: value as PixKeyType }))
+                        }
+                      >
+                        <SelectTrigger className="h-9 border-amber-200 bg-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="CPF">CPF</SelectItem>
+                          <SelectItem value="PHONE">Telefone</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-amber-800">
+                        Onze dígitos podem representar CPF ou telefone Pix. Escolha como o Asaas deve validar a chave.
+                      </p>
+                    </div>
                   ) : null}
                 </div>
 
@@ -1312,6 +1414,19 @@ export function TransferWizardDialog({
                     placeholder="Somente numeros ou documento formatado"
                   />
                 </div>
+                {requiresBirthDate ? (
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>Data de nascimento do titular</Label>
+                    <Input
+                      type="date"
+                      value={form.ownerBirthDate}
+                      onChange={(event) => setForm((current) => ({ ...current, ownerBirthDate: event.target.value }))}
+                    />
+                    <p className="text-xs text-slate-500">
+                      Obrigatório pelo Asaas quando o favorecido é pessoa física com CPF diferente da conta financeira.
+                    </p>
+                  </div>
+                ) : null}
                 <div className="space-y-2">
                   <Label>Agencia</Label>
                   <Input
@@ -1394,6 +1509,9 @@ export function TransferWizardDialog({
             <p className="mt-4 text-center text-sm text-slate-500">
               Saldo disponível {formatCurrency(maxAmount)}
             </p>
+            <p className="mt-2 text-center text-xs text-slate-400">
+              Digite os centavos ou use vírgula. Exemplo: 10,00.
+            </p>
           </div>
         </WizardSection>
       ) : null}
@@ -1435,7 +1553,7 @@ export function TransferWizardDialog({
                 <p className="mt-2 text-sm font-semibold text-slate-900">
                   {form.type === 'PIX'
                     ? (effectivePixKeyType ? `Chave Pix (${formatPixKeyType(effectivePixKeyType)})` : 'Chave Pix')
-                    : `${form.ownerName || 'TED bancária'}`}
+                    : `${form.ownerName || 'Transferência bancária'}`}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-slate-500">
                   {form.type === 'PIX'
@@ -1451,7 +1569,7 @@ export function TransferWizardDialog({
                 ) : null}
               </div>
               <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-                {form.type === 'PIX' ? 'Pix' : 'TED'}
+                {form.type === 'PIX' ? 'Pix' : 'Bancária'}
               </span>
             </div>
 
@@ -1460,6 +1578,25 @@ export function TransferWizardDialog({
                 label="Valor enviado"
                 value={amountNumber != null ? formatCurrency(amountNumber) : '—'}
               />
+              {estimatedFee > 0 ? (
+                <SummaryRow
+                  label={feeMayUseMonthlyFreeQuota ? 'Taxa máxima informada' : 'Taxa estimada'}
+                  value={formatCurrency(estimatedFee)}
+                />
+              ) : null}
+              {estimatedDebit != null ? (
+                <SummaryRow
+                  label={feeMayUseMonthlyFreeQuota ? 'Total máximo estimado' : 'Total debitado (estimado)'}
+                  value={formatCurrency(estimatedDebit)}
+                />
+              ) : null}
+              {estimatedFee > 0 ? (
+                <p className="pt-2 text-xs leading-relaxed text-slate-500">
+                  {feeMayUseMonthlyFreeQuota
+                    ? 'O Asaas informa essa tarifa como referência da conta, mas a transferência pode usar a cota mensal sem taxa. Depois do processamento, a Alusa usa a taxa e o valor líquido oficiais retornados pelo Asaas.'
+                    : 'A taxa é uma estimativa antes do envio. Depois do processamento, a Alusa usa a taxa e o valor líquido oficiais retornados pelo Asaas.'}
+                </p>
+              ) : null}
               {form.scheduleDate ? (
                 <SummaryRow label="Agendamento" value={formatDateForDisplay(form.scheduleDate)} />
               ) : null}

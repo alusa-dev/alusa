@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   listRematriculasElegiveisRequest,
   type ListRematriculasParams,
+  type RematriculaCampaignSummary,
   type RematriculaElegivelItem,
+  type RematriculaParticipantSummary,
+  type RematriculaProcessSummary,
   type StatusContrato,
 } from '../services/rematriculas-service';
 
@@ -21,6 +24,9 @@ interface UseRematriculasState {
   total: number;
   referencia: string | null;
   ate: string | null;
+  campaigns: RematriculaCampaignSummary[];
+  participants: RematriculaParticipantSummary[];
+  processes: RematriculaProcessSummary[];
 }
 
 const INITIAL_STATE: UseRematriculasState = {
@@ -30,6 +36,9 @@ const INITIAL_STATE: UseRematriculasState = {
   total: 0,
   referencia: null,
   ate: null,
+  campaigns: [],
+  participants: [],
+  processes: [],
 };
 
 export function useRematriculas(options: UseRematriculasOptions) {
@@ -69,6 +78,9 @@ export function useRematriculas(options: UseRematriculasOptions) {
           total: result.total,
           referencia: result.referencia,
           ate: result.ate,
+          campaigns: result.campaigns,
+          participants: result.participants,
+          processes: result.processes,
         });
       } catch (error) {
         if ((error as { name?: string }).name === 'AbortError') return;
@@ -79,6 +91,9 @@ export function useRematriculas(options: UseRematriculasOptions) {
           total: 0,
           referencia: null,
           ate: null,
+          campaigns: [],
+          participants: [],
+          processes: [],
         });
       }
     },

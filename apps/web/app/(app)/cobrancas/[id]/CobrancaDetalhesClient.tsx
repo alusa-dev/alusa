@@ -41,12 +41,12 @@ import { CobrancaArquivos } from '@/components/financeiro/CobrancaArquivos';
 import { CobrancaNotaFiscal } from '@/components/financeiro/CobrancaNotaFiscal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { getChargeTipoLabel } from '@/lib/finance/charge-tipo-label';
 import {
   FORMA_PAGAMENTO_LABELS,
-  TIPO_COBRANCA_LABELS,
-  validateDate,
   dateToISO,
   isoToDate,
+  validateDate,
 } from '@/lib/finance/asaas-sync';
 import {
   formatDecimalFromNumber,
@@ -1096,9 +1096,8 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     }).format(new Date(date));
   };
 
-  const getTipoLabel = (tipo: string) => {
-    return TIPO_COBRANCA_LABELS[tipo] || tipo;
-  };
+  const getTipoLabel = (tipo: string) =>
+    getChargeTipoLabel(tipo, cobranca?.descricao);
 
   // Nota: validação de data removida (não utilizada) para evitar erro de lint/ts
 

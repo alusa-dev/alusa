@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -25,11 +24,15 @@ import type {
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
   createRematriculaFamiliarRequest,
+  previewRematriculaFamiliarRequest,
   type CreateRematriculaFamiliarInput,
+  type RematriculaFamiliarDecision,
   type RematriculaFamiliarModoTurmas,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
+import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import { toast, CustomToast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
+import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
 import {
   Tooltip,
   TooltipContent,
@@ -52,6 +55,11 @@ const formaPagamentoOptions: Array<{
 
 const controlClass =
   'flex h-11 min-h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 md:h-10 md:min-h-0';
+const pairedFieldGridClass =
+  'grid grid-cols-[minmax(0,1fr)_minmax(180px,220px)] items-start gap-x-4 gap-y-1';
+const pairedFieldLabelRowClass = 'flex h-5 items-center gap-1.5';
+const pairedFieldControlClass =
+  'flex h-10 min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
 const sectionClass = 'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
 const labelClass = 'text-xs font-medium text-slate-600';
 
@@ -69,14 +77,17 @@ type TitularRematricula = {
 };
 
 type ItemConfig = {
-  selected: boolean;
+  decision: RematriculaFamiliarDecision | null;
   turmaId: string | null;
   comboId: string | null;
+  decisionReason?: string | null;
 };
 
 interface RematriculaFamiliarDialogProps {
   open: boolean;
   contaId?: string;
+  campaignId?: string | null;
+  targetPeriodId?: string;
   titular: TitularRematricula | null;
   itens: RematriculaElegivelItem[];
   onOpenChange: (_open: boolean) => void;
@@ -157,6 +168,8 @@ const periodicidadeLabels: Record<string, string> = {
 export function RematriculaFamiliarDialog({
   open,
   contaId,
+  campaignId,
+  targetPeriodId,
   titular,
   itens,
   onOpenChange,
@@ -180,6 +193,7 @@ export function RematriculaFamiliarDialog({
   const [prazoDesconto, setPrazoDesconto] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
   const [configs, setConfigs] = useState<Record<string, ItemConfig>>({});
+  const [contratoModeloId, setContratoModeloId] = useState<string | null>(null);
   const [notificationChannels, setNotificationChannels] = useState<CustomerNotificationChannel[]>(
     [],
   );
@@ -194,6 +208,9 @@ export function RematriculaFamiliarDialog({
   const { items: combosDisponiveis, loading: combosLoading } = useCombos({
     contaId: contaId ?? null,
     status: 'ATIVO',
+  });
+  const { modelos: contratoModelos, loading: contratoModelosLoading } = useModelos({
+    activeOnly: true,
   });
 
   const turmasAtivas = useMemo(
@@ -273,14 +290,18 @@ export function RematriculaFamiliarDialog({
         itens.map((item) => [
           item.id,
           {
-            selected:
-              item.podeRenovar && item.financeiro.rematriculaActionStatus !== 'BLOQUEADA',
+            decision:
+              item.podeRenovar && item.financeiro.rematriculaActionStatus !== 'BLOQUEADA'
+                ? 'DECIDIR_DEPOIS'
+                : 'NAO_CONTINUARA',
             turmaId: item.turma?.id ?? null,
             comboId: item.combo?.id ?? null,
+            decisionReason: null,
           },
         ]),
       ),
     );
+    setContratoModeloId(null);
 
     // Inicializa modo a partir do estado atual: se algum tem combo, o padrão é COMBO.
     const firstCombo = itens.find((item) => item.combo?.id)?.combo?.id ?? null;
@@ -295,8 +316,13 @@ export function RematriculaFamiliarDialog({
   }, [itens, open]);
 
   const selectedItems = useMemo(
-    () => selectableItems.filter((item) => configs[item.id]?.selected),
+    () => selectableItems.filter((item) => configs[item.id]?.decision === 'REMATRICULAR_AGORA'),
     [configs, selectableItems],
+  );
+
+  const decidedItems = useMemo(
+    () => itens.filter((item) => Boolean(configs[item.id]?.decision)),
+    [configs, itens],
   );
 
   const needsOverride = selectedItems.some(
@@ -370,18 +396,21 @@ export function RematriculaFamiliarDialog({
     !titular ||
     submitting ||
     selectedItems.length === 0 ||
+    decidedItems.length !== itens.length ||
     !dataInicio ||
     !dataFimContrato ||
     !produtoOk ||
+    !contratoModeloId ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim());
 
   function updateConfig(id: string, patch: Partial<ItemConfig>) {
     setConfigs((current) => ({
       ...current,
       [id]: {
-        selected: current[id]?.selected ?? false,
+        decision: current[id]?.decision ?? null,
         turmaId: current[id]?.turmaId ?? null,
         comboId: current[id]?.comboId ?? null,
+        decisionReason: current[id]?.decisionReason ?? null,
         ...patch,
       },
     }));
@@ -410,15 +439,20 @@ export function RematriculaFamiliarDialog({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!contaId || !titular || titular.tipo !== 'RESPONSAVEL' || disabled) return;
+    const uiRequestId = `${titular.id}:${Date.now()}`;
 
     const payload: CreateRematriculaFamiliarInput = {
       contaId,
+      campaignId,
+      targetPeriodId,
       responsavelId: titular.id,
       modoTurmas,
       planoId: modoTurmas === 'TURMAS' ? planoIdGlobal : null,
       comboId: null,
-      itens: selectedItems.map((item) => ({
+      itens: itens.map((item) => ({
         matriculaId: item.id,
+        decision: configs[item.id]?.decision ?? 'DECIDIR_DEPOIS',
+        decisionReason: configs[item.id]?.decisionReason ?? null,
         turmaId:
           modoTurmas === 'COMBO'
             ? null
@@ -434,39 +468,51 @@ export function RematriculaFamiliarDialog({
       descontos: descontosHerdados.map((desconto) => ({ id: desconto.id })),
       notificationChannels: notificationChannelsTouched ? notificationChannels : [],
       notificationChannelsConfigured: notificationChannelsTouched,
-      uiRequestId: `${titular.id}:${Date.now()}`,
+      contratoModeloId,
+      uiRequestId,
     };
 
     const taxa = parseDecimal(taxaMatricula);
-    if (taxaIsenta) {
-      payload.taxaMatricula = 0;
-    } else if (typeof taxa === 'number') {
-      payload.taxaMatricula = Math.max(0, Number(taxa.toFixed(2)));
-    }
+    payload.taxaMatricula = taxaIsenta
+      ? 0
+      : typeof taxa === 'number'
+        ? Math.max(0, Number(taxa.toFixed(2)))
+        : 0;
     if (taxaJustificativa.trim()) payload.taxaJustificativa = taxaJustificativa.trim();
 
     const multa = parseDecimal(multaPercentual);
-    if (typeof multa === 'number') payload.multaPercentual = Math.min(10, Math.max(0, multa));
+    payload.multaPercentual = typeof multa === 'number' ? Math.min(10, Math.max(0, multa)) : 0;
     const juros = parseDecimal(jurosMensal);
-    if (typeof juros === 'number') payload.jurosMensal = Math.min(5, Math.max(0, juros));
+    payload.jurosMensal = typeof juros === 'number' ? Math.min(5, Math.max(0, juros)) : 0;
     const desconto = parseDecimal(descontoAntecipado);
-    if (typeof desconto === 'number') payload.descontoAntecipado = Math.min(100, Math.max(0, desconto));
+    payload.descontoAntecipado =
+      typeof desconto === 'number' ? Math.min(100, Math.max(0, desconto)) : 0;
     const prazo = parseDecimal(prazoDesconto);
-    if (typeof prazo === 'number') payload.prazoDesconto = Math.min(30, Math.max(0, Math.trunc(prazo)));
+    payload.prazoDesconto =
+      typeof prazo === 'number' ? Math.min(30, Math.max(0, Math.trunc(prazo))) : 0;
     if (needsOverride && overrideReason.trim()) payload.overrideReason = overrideReason.trim();
 
     try {
       setSubmitting(true);
-      const result = await createRematriculaFamiliarRequest(payload);
+      const preview = await previewRematriculaFamiliarRequest(payload);
+      if (preview.blocks.length > 0) {
+        throw new Error(preview.blocks[0]?.message ?? 'O preview possui bloqueios.');
+      }
+      const result = await createRematriculaFamiliarRequest({
+        ...payload,
+        previewId: preview.previewId,
+        previewHash: preview.previewHash,
+      });
       const errors = result.results.filter((item) => item.status === 'error');
+      const pendingOrCreated = result.results.filter((item) => item.novaMatriculaId);
       toast.custom((t) => (
         <CustomToast
           variant={errors.length ? 'warning' : 'success'}
-          title={errors.length ? 'Rematrícula familiar parcial' : 'Rematrícula familiar criada'}
+          title={errors.length ? 'Próximo ciclo exige atenção' : 'Rematrícula familiar confirmada'}
           description={
             errors.length
-              ? `${result.results.length - errors.length} aluno(s) rematriculado(s). ${errors.length} item(ns) exigem atenção.`
-              : `${result.results.length} aluno(s) rematriculado(s) com cobrança familiar consolidada.`
+              ? `${result.results.length - errors.length} decisão(ões) preparada(s). ${errors.length} item(ns) exigem atenção.`
+              : `${pendingOrCreated.length} próximo(s) vínculo(s) preparado(s). A matrícula atual permanece intacta até a data de início.`
           }
           onClose={() => toast.dismiss(t)}
         />
@@ -474,11 +520,13 @@ export function RematriculaFamiliarDialog({
       onCreated?.();
       onOpenChange(false);
     } catch (error) {
+      const message =
+        (error as Error).message || 'Não foi possível confirmar o próximo ciclo familiar.';
       toast.custom((t) => (
         <CustomToast
           variant="error"
-          title="Erro na rematrícula familiar"
-          description={(error as Error).message || 'Não foi possível concluir a rematrícula familiar.'}
+          title="Não foi possível confirmar o próximo ciclo"
+          description={message}
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -496,7 +544,7 @@ export function RematriculaFamiliarDialog({
       <DialogContent
         fullScreenMobile
         data-testid="rematricula-familiar-dialog"
-        className="w-[calc(100vw-2rem)] max-w-[1040px] gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-h-[calc(100dvh-4rem)] md:rounded-2xl"
+        className="flex w-[calc(100vw-2rem)] max-w-[1040px] min-h-0 flex-col gap-0 overflow-hidden bg-slate-50 p-0 max-md:h-[100dvh] max-md:max-h-[100dvh] md:max-h-[calc(100dvh-4rem)] md:rounded-2xl"
       >
         <form
           onSubmit={handleSubmit}
@@ -513,7 +561,14 @@ export function RematriculaFamiliarDialog({
             </DialogDescription>
           </div>
 
-          <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 md:px-8 md:py-6">
+          <div
+            className="flex-1 space-y-6 overflow-y-auto scroll-smooth px-4 py-6 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent max-md:min-h-0 md:px-8 md:py-6"
+            style={{
+              scrollbarWidth: 'thin',
+              scrollbarGutter: 'stable',
+              scrollbarColor: '#d1d5db transparent',
+            }}
+          >
             {/* Seção 1 — Titular */}
             <div className={sectionClass}>
               <div className="flex items-center gap-3">
@@ -530,10 +585,15 @@ export function RematriculaFamiliarDialog({
                   </div>
                 </div>
                 <Badge variant="info" className="ml-auto text-[10px] font-bold uppercase tracking-widest">
-                  {selectedItems.length} selecionado(s)
+                  {selectedItems.length} para rematricular
                 </Badge>
               </div>
             </div>
+
+            <InfoCallout variant="info" size="sm" showIcon>
+              A confirmação prepara matrículas, contratos e cobranças locais. A situação financeira
+              muda para concluída apenas após as confirmações automáticas.
+            </InfoCallout>
 
             {/* Seção 2 — Alunos: switch incluir + modo Turma|Combo + turma por aluno */}
             <div className={sectionClass}>
@@ -571,9 +631,10 @@ export function RematriculaFamiliarDialog({
                 {itens.map((item) => {
                   const blocked = !item.podeRenovar || item.financeiro.rematriculaActionStatus === 'BLOQUEADA';
                   const config = configs[item.id];
-                  const turmaSelectDisabled = blocked || !config?.selected || turmasLoading;
+                  const willReenroll = config?.decision === 'REMATRICULAR_AGORA';
+                  const turmaSelectDisabled = blocked || !willReenroll || turmasLoading;
                   const comboSelectDisabled =
-                    blocked || !config?.selected || combosLoading || modoTurmas !== 'COMBO';
+                    blocked || !willReenroll || combosLoading || modoTurmas !== 'COMBO';
                   const comboEscolhido =
                     config?.comboId != null
                       ? combosDisponiveis.find((c) => c.id === config.comboId)
@@ -586,88 +647,102 @@ export function RematriculaFamiliarDialog({
                     >
                       <div className="flex items-start gap-3">
                         <div className="min-w-0 flex-1 space-y-3">
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                <span className="font-medium text-slate-900">{item.aluno.nome}</span>
-                                <span className="text-[11px] leading-snug text-slate-400">
-                                  Contrato atual: {formatDate(item.dataInicio)} —{' '}
-                                  {formatDate(item.dataFimContrato)}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-                              <span
-                                className={`text-xs font-medium ${blocked ? 'text-slate-400' : 'text-slate-600'}`}
-                                id={`rematricula-toggle-${item.id}-label`}
-                              >
-                                Incluir na rematrícula
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="font-medium text-slate-900">{item.aluno.nome}</span>
+                              <span className="text-[11px] leading-snug text-slate-400">
+                                Contrato atual: {formatDate(item.dataInicio)} —{' '}
+                                {formatDate(item.dataFimContrato)}
                               </span>
-                              <Switch
-                                checked={Boolean(config?.selected)}
-                                disabled={blocked}
-                                onCheckedChange={(checked) => updateConfig(item.id, { selected: checked })}
-                                aria-labelledby={`rematricula-toggle-${item.id}-label`}
-                              />
                             </div>
                           </div>
 
-                          {blocked ? (
-                            <InfoCallout variant="warning" size="sm" showIcon={false}>
-                              {item.financeiro.actionMessage || 'Este aluno não está elegível para rematrícula.'}
-                            </InfoCallout>
-                          ) : null}
-
                           {modoTurmas === 'COMBO' ? (
-                            <div className="space-y-1.5">
-                              <label className={labelClass}>Combo do novo ciclo</label>
+                            <div className={pairedFieldGridClass}>
+                              <label className={`${labelClass} block h-5 leading-5`}>
+                                Combo do novo ciclo
+                              </label>
+                              <div className={pairedFieldLabelRowClass}>
+                                <label className={labelClass} htmlFor={`decision-${item.id}`}>
+                                  Decisão
+                                </label>
+                                <FieldHelpTooltip content="Escolha o destino operacional deste aluno; deixar fora da rematrícula não é mais uma decisão implícita." />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Select
+                                  value={config?.comboId ?? 'null'}
+                                  onValueChange={(value) =>
+                                    updateConfig(item.id, { comboId: value === 'null' ? null : value })
+                                  }
+                                  disabled={comboSelectDisabled}
+                                >
+                                  <SelectTrigger className={pairedFieldControlClass}>
+                                    <SelectValue placeholder="Selecione o combo" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="null">Selecione o combo</SelectItem>
+                                    {combosDisponiveis.map((combo) => (
+                                      <SelectItem key={combo.id} value={combo.id}>
+                                        {combo.nome}
+                                        <span className="ml-2 text-[10px] text-slate-500">
+                                          {currencyFormatter.format(combo.valor)} ·{' '}
+                                          {periodicidadeLabels[combo.periodicidade] ?? 'mensal'}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {!config?.comboId ? (
+                                  <p className="text-xs text-slate-500">
+                                    Selecione um combo para ver as turmas incluídas.
+                                  </p>
+                                ) : !comboEscolhido?.turmas?.length ? (
+                                  <p className="text-xs text-amber-800">
+                                    Este combo não possui turmas vinculadas no cadastro.
+                                  </p>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                    {comboEscolhido.turmas.map((turma) => (
+                                      <span
+                                        key={turma.id}
+                                        className="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-violet-100 text-violet-700"
+                                      >
+                                        {turma.nome}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                               <Select
-                                value={config?.comboId ?? 'null'}
+                                value={config?.decision ?? 'DECIDIR_DEPOIS'}
                                 onValueChange={(value) =>
-                                  updateConfig(item.id, { comboId: value === 'null' ? null : value })
+                                  updateConfig(item.id, {
+                                    decision: value as RematriculaFamiliarDecision,
+                                  })
                                 }
-                                disabled={comboSelectDisabled}
+                                disabled={blocked}
                               >
-                                <SelectTrigger className={controlClass}>
-                                  <SelectValue placeholder="Selecione o combo" />
+                                <SelectTrigger id={`decision-${item.id}`} className={pairedFieldControlClass}>
+                                  <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="null">Selecione o combo</SelectItem>
-                                  {combosDisponiveis.map((combo) => (
-                                    <SelectItem key={combo.id} value={combo.id}>
-                                      {combo.nome}
-                                      <span className="ml-2 text-[10px] text-slate-500">
-                                        {currencyFormatter.format(combo.valor)} ·{' '}
-                                        {periodicidadeLabels[combo.periodicidade] ?? 'mensal'}
-                                      </span>
-                                    </SelectItem>
-                                  ))}
+                                  <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
+                                  <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
+                                  <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
                                 </SelectContent>
                               </Select>
-                              {!config?.comboId ? (
-                                <p className="text-xs text-slate-500">
-                                  Selecione um combo para ver as turmas incluídas.
-                                </p>
-                              ) : !comboEscolhido?.turmas?.length ? (
-                                <p className="text-xs text-amber-800">
-                                  Este combo não possui turmas vinculadas no cadastro.
-                                </p>
-                              ) : (
-                                <div className="flex flex-wrap gap-1.5 pt-0.5">
-                                  {comboEscolhido.turmas.map((turma) => (
-                                    <span
-                                      key={turma.id}
-                                      className="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-violet-100 text-violet-700"
-                                    >
-                                      {turma.nome}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
                             </div>
                           ) : (
-                            <div className="space-y-1">
-                              <label className={labelClass}>Turma do novo ciclo</label>
+                            <div className={pairedFieldGridClass}>
+                              <label className={`${labelClass} block h-5 leading-5`}>
+                                Turma do novo ciclo
+                              </label>
+                              <div className={pairedFieldLabelRowClass}>
+                                <label className={labelClass} htmlFor={`decision-${item.id}`}>
+                                  Decisão
+                                </label>
+                                <FieldHelpTooltip content="Escolha o destino operacional deste aluno; deixar fora da rematrícula não é mais uma decisão implícita." />
+                              </div>
                               <Select
                                 value={config?.turmaId ?? 'null'}
                                 onValueChange={(value) =>
@@ -675,7 +750,7 @@ export function RematriculaFamiliarDialog({
                                 }
                                 disabled={turmaSelectDisabled}
                               >
-                                <SelectTrigger className={controlClass}>
+                                <SelectTrigger className={pairedFieldControlClass}>
                                   <SelectValue placeholder="Selecione a turma" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -690,8 +765,40 @@ export function RematriculaFamiliarDialog({
                                   })}
                                 </SelectContent>
                               </Select>
+                              <Select
+                                value={config?.decision ?? 'DECIDIR_DEPOIS'}
+                                onValueChange={(value) =>
+                                  updateConfig(item.id, {
+                                    decision: value as RematriculaFamiliarDecision,
+                                  })
+                                }
+                                disabled={blocked}
+                              >
+                                <SelectTrigger id={`decision-${item.id}`} className={pairedFieldControlClass}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
+                                  <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
+                                  <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
                           )}
+
+                          {blocked ? (
+                            <InfoCallout variant="warning" size="sm" showIcon={false}>
+                              {item.financeiro.actionMessage || 'Este aluno não está elegível para rematrícula.'}
+                            </InfoCallout>
+                          ) : null}
+
+                          {config?.decision === 'NAO_CONTINUARA' || config?.decision === 'DECIDIR_DEPOIS' ? (
+                            <InfoCallout variant="info" size="sm" showIcon={false}>
+                              {config.decision === 'NAO_CONTINUARA'
+                                ? 'Este aluno permanece no ciclo atual e não receberá cobrança do novo ciclo.'
+                                : 'Este aluno ficará como pendência operacional e não receberá cobrança nova agora.'}
+                            </InfoCallout>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -785,6 +892,47 @@ export function RematriculaFamiliarDialog({
               </div>
             </div>
 
+            <div className={sectionClass}>
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Contrato</span>
+                <p className="text-xs text-slate-500">
+                  Escolha o modelo que será preparado para cada contrato futuro.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <label className={labelClass}>Modelo de contrato *</label>
+                  <FieldHelpTooltip content="O contrato futuro será preparado para cada aluno renovado. Se não houver modelo ativo, cadastre um em Contratos > Modelos." />
+                </div>
+                <Select
+                  value={contratoModeloId ?? 'null'}
+                  onValueChange={(value) => setContratoModeloId(value === 'null' ? null : value)}
+                  disabled={contratoModelosLoading || contratoModelos.length === 0}
+                >
+                  <SelectTrigger className={controlClass}>
+                    <SelectValue
+                      placeholder={
+                        contratoModelosLoading ? 'Carregando modelos...' : 'Selecione o modelo'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="null">Selecione o modelo</SelectItem>
+                    {contratoModelos.map((modelo) => (
+                      <SelectItem key={modelo.id} value={modelo.id}>
+                        {modelo.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {contratoModelos.length === 0 && !contratoModelosLoading ? (
+                  <InfoCallout variant="warning" size="sm" showIcon={false}>
+                    Nenhum modelo ativo foi encontrado. Cadastre um modelo antes de confirmar a rematrícula.
+                  </InfoCallout>
+                ) : null}
+              </div>
+            </div>
+
             {/* Seção 5 — Taxa e regras financeiras */}
             <div className={sectionClass}>
               <span className="text-sm font-semibold text-slate-700">Taxa e regras financeiras</span>
@@ -866,7 +1014,7 @@ export function RematriculaFamiliarDialog({
             <div className={sectionClass}>
               <span className="text-sm font-semibold text-slate-700">Notificações</span>
               <p className="text-xs text-slate-600">
-                Canais para o responsável no Asaas (cobranças futuras). Toque para confirmar a
+                Canais para avisos de cobranças futuras ao responsável. Toque para confirmar a
                 sugestão da régua global.
               </p>
               <div className="flex flex-wrap gap-3 pt-2">
@@ -918,7 +1066,7 @@ export function RematriculaFamiliarDialog({
             ) : null}
 
             <p className="text-sm text-slate-600">
-              <strong className="text-slate-800">Resumo:</strong> {selectedItems.length} aluno(s) serão rematriculados
+              <strong className="text-slate-800">Resumo:</strong> {selectedItems.length} aluno(s) terão o próximo ciclo preparado
               {modoTurmas === 'COMBO' ? (
                 <>
                   {' '}
@@ -959,7 +1107,7 @@ export function RematriculaFamiliarDialog({
               disabled={disabled}
               className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[190px]"
             >
-              {submitting ? 'Processando...' : 'Confirmar rematrícula'}
+              {submitting ? 'Processando...' : 'Confirmar próximo ciclo'}
             </Button>
           </div>
         </form>

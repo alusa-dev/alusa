@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth-options';
 import type { Status } from '@prisma/client';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { createAluno, updateAluno, formatZodErrors, type AlunoCreateInput } from '@alusa/lib';
+import {
+  assertPayerAddressFiscalReady,
+  buildResponsavelEnderecoFromFlat,
+} from '@alusa/lib';
 import { AsaasCustomerEnsureError } from '@alusa/finance';
 import {
   createAlunoInputDTOSchema,
@@ -204,24 +208,24 @@ export async function POST(request: NextRequest) {
     // Normalizar responsavel (sem placeholders)
     let responsavel = raw.responsavel;
     if (responsavel) {
-      const respHasCep = Boolean(digits(responsavel.enderecoCep));
-      const respHasNumero = Boolean(String(responsavel.enderecoNumero || '').trim());
+      const nestedEndereco = buildResponsavelEnderecoFromFlat({
+        enderecoCep: responsavel.enderecoCep,
+        enderecoLogradouro: responsavel.enderecoLogradouro,
+        enderecoNumero: responsavel.enderecoNumero,
+        enderecoComplemento: responsavel.enderecoComplemento,
+        enderecoBairro: responsavel.enderecoBairro,
+        enderecoCidade: responsavel.enderecoCidade,
+        enderecoUf: responsavel.enderecoUf,
+      });
 
       responsavel = {
         ...responsavel,
         cpf: digits(responsavel.cpf),
         telefone: digits(responsavel.telefone),
-        endereco: (respHasCep && respHasNumero)
-          ? {
-              cep: String(digits(responsavel.enderecoCep)),
-              logradouro: responsavel.enderecoLogradouro?.trim() || undefined,
-              numero: String(responsavel.enderecoNumero).trim(),
-              complemento: responsavel.enderecoComplemento?.trim() || undefined,
-              bairro: responsavel.enderecoBairro?.trim() || undefined,
-              cidade: responsavel.enderecoCidade?.trim() || undefined,
-              uf: responsavel.enderecoUf ? String(responsavel.enderecoUf).slice(0, 2).toUpperCase() : undefined,
-            }
-          : undefined,
+        endereco:
+          nestedEndereco && (responsavel.financeiro ?? true)
+            ? assertPayerAddressFiscalReady(nestedEndereco)
+            : nestedEndereco ?? undefined,
       };
     }
 

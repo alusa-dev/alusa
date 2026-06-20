@@ -56,6 +56,8 @@ export default function ResponsavelFields() {
   const [loadingResponsaveis, setLoadingResponsaveis] = useState(false);
   const [responsaveis, setResponsaveis] = useState<ResponsavelListItem[]>([]);
   const [responsaveisError, setResponsaveisError] = useState<string | null>(null);
+  const [selectedResponsavelDetails, setSelectedResponsavelDetails] =
+    useState<ResponsavelListItem | null>(null);
   const lastCepRef = useRef<string>("");
   const listAbortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -148,6 +150,7 @@ export default function ResponsavelFields() {
       if (nextMode === "novo" && selectedId) {
         setValue("responsavelExistenteId", null, { shouldDirty: true, shouldValidate: true });
         setValue("responsavel", null, { shouldDirty: true, shouldValidate: true });
+        setSelectedResponsavelDetails(null);
         setQuery("");
       }
     },
@@ -162,13 +165,11 @@ export default function ResponsavelFields() {
         "responsavel",
         {
           nome: item.nome,
-          cpf: item.cpf,
-          email: item.email,
-          telefone: item.telefone,
           financeiro: item.financeiro,
         },
         { shouldDirty: true, shouldValidate: true },
       );
+      setSelectedResponsavelDetails(item);
       setQuery(item.nome);
       setOpen(false);
     },
@@ -178,6 +179,7 @@ export default function ResponsavelFields() {
   const clearResponsavelSelecionado = useCallback(() => {
     setValue("responsavelExistenteId", null, { shouldDirty: true, shouldValidate: true });
     setValue("responsavel", null, { shouldDirty: true, shouldValidate: true });
+    setSelectedResponsavelDetails(null);
     setQuery("");
     setOpen(false);
   }, [setValue]);
@@ -194,9 +196,9 @@ export default function ResponsavelFields() {
       ? {
           id: responsavelExistenteId,
           nome: responsavel?.nome || "Responsável selecionado",
-          cpf: responsavel?.cpf || "",
-          email: responsavel?.email || "",
-          telefone: responsavel?.telefone || "",
+          cpf: selectedResponsavelDetails?.cpf || "",
+          email: selectedResponsavelDetails?.email || "",
+          telefone: selectedResponsavelDetails?.telefone || "",
         }
       : null;
 
@@ -421,28 +423,33 @@ export default function ResponsavelFields() {
             {loading && <div className="mt-1 text-[10px] text-violet-600 animate-pulse">Buscando CEP...</div>}
           </div>
           <div className="md:col-span-2">
-            <FieldLabel htmlFor="resp-logradouro">Endereço</FieldLabel>
+            <FieldLabel htmlFor="resp-logradouro" required>Endereço</FieldLabel>
             <Input id="resp-logradouro" {...register("responsavel.enderecoLogradouro" as const)} placeholder="Rua/Av." disabled={loading} className={wizardFieldInputClass} />
+            <FieldError name="responsavel.enderecoLogradouro" />
           </div>
           <div>
-            <FieldLabel htmlFor="resp-numero">Número</FieldLabel>
-            <Input id="resp-numero" {...register("responsavel.enderecoNumero" as const)} placeholder="Nº" disabled={loading} className={wizardFieldInputClass} />
+            <FieldLabel htmlFor="resp-numero" required>Número</FieldLabel>
+            <Input id="resp-numero" data-testid="resp-numero" {...register("responsavel.enderecoNumero" as const)} placeholder="Nº" disabled={loading} className={wizardFieldInputClass} />
+            <FieldError name="responsavel.enderecoNumero" />
           </div>
           <div>
             <FieldLabel htmlFor="resp-complemento">Complemento</FieldLabel>
             <Input id="resp-complemento" {...register("responsavel.enderecoComplemento" as const)} placeholder="Apto, bloco" disabled={loading} className={wizardFieldInputClass} />
           </div>
           <div>
-            <FieldLabel htmlFor="resp-bairro">Bairro</FieldLabel>
+            <FieldLabel htmlFor="resp-bairro" required>Bairro</FieldLabel>
             <Input id="resp-bairro" {...register("responsavel.enderecoBairro" as const)} placeholder="Bairro" disabled={loading} className={wizardFieldInputClass} />
+            <FieldError name="responsavel.enderecoBairro" />
           </div>
           <div>
-            <FieldLabel htmlFor="resp-cidade">Cidade</FieldLabel>
+            <FieldLabel htmlFor="resp-cidade" required>Cidade</FieldLabel>
             <Input id="resp-cidade" {...register("responsavel.enderecoCidade" as const)} placeholder="Cidade" disabled={loading} className={wizardFieldInputClass} />
+            <FieldError name="responsavel.enderecoCidade" />
           </div>
           <div>
-            <FieldLabel htmlFor="resp-uf">UF</FieldLabel>
+            <FieldLabel htmlFor="resp-uf" required>UF</FieldLabel>
             <Input id="resp-uf" maxLength={2} {...register("responsavel.enderecoUf" as const)} placeholder="UF" disabled={loading} className={wizardFieldInputClass} />
+            <FieldError name="responsavel.enderecoUf" />
           </div>
           <div className="flex items-start gap-2 rounded-md border border-slate-200 p-3 alusa-dark:border-[color:var(--color-border-default)] md:col-span-2">
             <input type="checkbox" id="responsavelFinanceiro" className="mt-0.5 h-4 w-4" {...register("responsavel.financeiro" as const)} />

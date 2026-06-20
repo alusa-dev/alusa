@@ -45,6 +45,7 @@ import type {
   StatusCobranca,
 } from '@prisma/client';
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
+import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
 
 export type PaymentWebhookPayload = {
   event: string;
@@ -392,11 +393,23 @@ async function publishPaymentRealtimeUpdate(params: {
   }
 }
 
-function buildChargeAsaasSnapshotUpdate(payload: PaymentWebhookPayload): Record<string, unknown> {
+function buildChargeAsaasSnapshotUpdate(
+  payload: PaymentWebhookPayload,
+  context?: {
+    currentAsaasStatus?: string | null;
+    localChargeStatus?: ChargeStatus | string | null;
+    localCobrancaStatus?: StatusCobranca | string | null;
+  },
+): Record<string, unknown> {
   const p = payload.payment;
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
   return {
-    asaasStatus: p.status ?? null,
+    asaasStatus: resolveMonotonicAsaasPaymentStatus({
+      currentAsaasStatus: context?.currentAsaasStatus,
+      incoming: p.status ?? null,
+      localChargeStatus: context?.localChargeStatus,
+      localCobrancaStatus: context?.localCobrancaStatus,
+    }),
     asaasValue: p.value,
     asaasNetValue: p.netValue,
     asaasOriginalValue: p.originalValue ?? null,
@@ -412,11 +425,28 @@ function buildChargeAsaasSnapshotUpdate(payload: PaymentWebhookPayload): Record<
   };
 }
 
+function resolveCobrancaAsaasStatusFromPayload(
+  payload: PaymentWebhookPayload,
+  context: {
+    currentAsaasStatus?: string | null;
+    localCobrancaStatus: StatusCobranca | string;
+    localChargeStatus?: ChargeStatus | string | null;
+  },
+): string | null {
+  return resolveMonotonicAsaasPaymentStatus({
+    currentAsaasStatus: context.currentAsaasStatus,
+    incoming: payload.payment.status ?? null,
+    localChargeStatus: context.localChargeStatus,
+    localCobrancaStatus: context.localCobrancaStatus,
+  });
+}
+
 type CobrancaSelect = {
   id: true;
   matriculaId: true;
   status: true;
   asaasPaymentId: true;
+  asaasStatus: true;
   tipo: true;
   formaPagamento: true;
 };
@@ -426,6 +456,7 @@ const COBRANCA_SELECT: CobrancaSelect = {
   matriculaId: true,
   status: true,
   asaasPaymentId: true,
+  asaasStatus: true,
   tipo: true,
   formaPagamento: true,
 };
@@ -516,6 +547,7 @@ async function applyChargeInvoicePaymentSideEffect(params: {
   asaasPaymentId: string;
   event: string;
   providerStatus?: string | null;
+  asaasPaymentSubscription?: string | null;
 }) {
   try {
     await handleChargeInvoicePaymentEvent({
@@ -524,6 +556,7 @@ async function applyChargeInvoicePaymentSideEffect(params: {
       asaasPaymentId: params.asaasPaymentId,
       event: params.event,
       providerStatus: params.providerStatus,
+      asaasPaymentSubscription: params.asaasPaymentSubscription,
     });
   } catch (invoiceSideEffectError) {
     console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {
@@ -545,7 +578,7 @@ async function applyChargeInvoicePaymentSideEffect(params: {
 async function handleStandaloneChargeWebhook(
   contaId: string,
   payload: PaymentWebhookPayload,
-  charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null }
+  charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null; asaasStatus?: string | null }
 ): Promise<PaymentWebhookResult> {
   const p = payload.payment;
   const internalStatus = resolveInternalPaymentStatus({
@@ -580,7 +613,10 @@ async function handleStandaloneChargeWebhook(
       where: { id: charge.id },
       data: {
         statusUpdatedAt: new Date(),
-        ...buildChargeAsaasSnapshotUpdate(payload),
+        ...buildChargeAsaasSnapshotUpdate(payload, {
+          currentAsaasStatus: charge.asaasStatus,
+          localChargeStatus: charge.status,
+        }),
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: p.id }),
       },
     });
@@ -591,6 +627,7 @@ async function handleStandaloneChargeWebhook(
       asaasPaymentId: p.id,
       event: payload.event,
       providerStatus: p.status,
+      asaasPaymentSubscription: p.subscription,
     });
     await auditLogService.record({
       contaId,
@@ -623,7 +660,10 @@ async function handleStandaloneChargeWebhook(
     status: nextStatusCharge,
     statusUpdatedAt: new Date(),
     value: p.value,
-    ...buildChargeAsaasSnapshotUpdate(payload),
+    ...buildChargeAsaasSnapshotUpdate(payload, {
+      currentAsaasStatus: charge.asaasStatus,
+      localChargeStatus: charge.status,
+    }),
   };
 
   const dueDateUpdate = resolveChargeDueDateUpdate(p.dueDate);
@@ -675,6 +715,7 @@ async function handleStandaloneChargeWebhook(
     asaasPaymentId: p.id,
     event: payload.event,
     providerStatus: p.status,
+    asaasPaymentSubscription: p.subscription,
   });
 
   await auditLogService.record({
@@ -993,20 +1034,20 @@ async function handlePaymentWebhookCore(
           resolveResult,
         });
 
-        // Processar conforme o tipo resolvido
-        if (resolveResult.type === 'charge' && resolveResult.chargeId) {
+        // Processar como standalone somente quando a Charge não é espelho de Cobranca acadêmica.
+        if (resolveResult.type === 'charge' && resolveResult.chargeId && !resolveResult.cobrancaId) {
           const charge = await prisma.charge.findUnique({
             where: { id: resolveResult.chargeId },
-            select: { id: true, status: true, asaasPaymentId: true },
+            select: { id: true, status: true, asaasPaymentId: true, asaasStatus: true },
           });
           if (charge) {
             return handleStandaloneChargeWebhook(contaId, payload, charge);
           }
         }
 
-        // Para cobranca, subscription ou installmentPlan, 
-        // continuar com lógica v1 usando o cobrancaId resolvido
-        // (o código abaixo já trata esses casos)
+        // Para cobranca, subscription, installmentPlan ou Charge acadêmica,
+        // continuar com a lógica de Cobranca abaixo. Ela resolve pelo asaasPaymentId
+        // e atualiza Cobranca + Charge espelho de forma consistente.
       } else {
         // Log para auditoria de fallback
         console.warn('[payment-webhook] resolver determinístico não encontrou, usando fallback compatível:', {
@@ -1046,7 +1087,7 @@ async function handlePaymentWebhookCore(
         contaId,
         OR: chargeLookupOr,
       },
-      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true },
+      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true },
     });
 
     // Para cobranças standalone (sem cobrancaId), processar apenas o Charge
@@ -1076,6 +1117,7 @@ async function handlePaymentWebhookCore(
         matriculaId: true,
         status: true,
         asaasPaymentId: true,
+        asaasStatus: true,
         tipo: true,
         formaPagamento: true,
       },
@@ -1109,6 +1151,7 @@ async function handlePaymentWebhookCore(
             matriculaId: true,
             status: true,
             asaasPaymentId: true,
+            asaasStatus: true,
             tipo: true,
             formaPagamento: true,
           },
@@ -1194,8 +1237,9 @@ async function handlePaymentWebhookCore(
               description: standaloneSubRecord.description ?? 'Assinatura recorrente',
               customerId: standaloneSubRecord.customerId,
               standaloneSubscriptionId: standaloneSubRecord.id,
+              familyGroupId: standaloneSubRecord.familyGroupId,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-              ...buildChargeAsaasSnapshotUpdate(payload),
+              ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             create: {
               contaId,
@@ -1210,8 +1254,9 @@ async function handlePaymentWebhookCore(
               billingType: payload.payment.billingType ?? standaloneSubRecord.billingType,
               customerId: standaloneSubRecord.customerId,
               standaloneSubscriptionId: standaloneSubRecord.id,
+              familyGroupId: standaloneSubRecord.familyGroupId,
               invoiceUrl: payload.payment.invoiceUrl ?? null,
-              ...buildChargeAsaasSnapshotUpdate(payload),
+              ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             select: { id: true },
           });
@@ -1231,6 +1276,7 @@ async function handlePaymentWebhookCore(
               asaasSubscriptionId: subscriptionId,
               externalReference: externalRef,
               standaloneSubscriptionId: standaloneSubRecord.id,
+              familyGroupId: standaloneSubRecord.familyGroupId,
             },
           });
 
@@ -1300,7 +1346,7 @@ async function handlePaymentWebhookCore(
                 description,
                 customerId,
                 invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-                ...buildChargeAsaasSnapshotUpdate(payload),
+                ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
               },
               create: {
                 contaId,
@@ -1315,7 +1361,7 @@ async function handlePaymentWebhookCore(
                 billingType: payload.payment.billingType ?? billingTypeFromMetadata,
                 customerId,
                 invoiceUrl: payload.payment.invoiceUrl ?? null,
-                ...buildChargeAsaasSnapshotUpdate(payload),
+                ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
               },
               select: { id: true },
             });
@@ -1615,7 +1661,7 @@ async function handlePaymentWebhookCore(
               billingType: payload.payment.billingType ?? standalonePlan.billingType,
               dueDate: vencimento,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-              ...buildChargeAsaasSnapshotUpdate(payload),
+              ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             create: {
               contaId,
@@ -1631,7 +1677,7 @@ async function handlePaymentWebhookCore(
               customerId: standalonePlan.customer.id,
               invoiceUrl: payload.payment.invoiceUrl ?? null,
               standaloneInstallmentPlanId: standalonePlan.id,
-              ...buildChargeAsaasSnapshotUpdate(payload),
+              ...buildChargeAsaasSnapshotUpdate(payload, { localChargeStatus: chargeStatus }),
             },
             select: { id: true },
           });
@@ -1702,7 +1748,9 @@ async function handlePaymentWebhookCore(
           description: '[NEEDS_REVIEW] Payment sem vínculo local',
           value: payload.payment.value,
           invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
-          ...buildChargeAsaasSnapshotUpdate(payload),
+          ...buildChargeAsaasSnapshotUpdate(payload, {
+            localChargeStatus: mapAsaasToChargeStatus(normalizedStatus),
+          }),
         },
         create: {
           contaId,
@@ -1716,7 +1764,9 @@ async function handlePaymentWebhookCore(
           dueDate: placeholderDueDate,
           billingType: payload.payment.billingType ?? null,
           invoiceUrl: payload.payment.invoiceUrl ?? null,
-          ...buildChargeAsaasSnapshotUpdate(payload),
+          ...buildChargeAsaasSnapshotUpdate(payload, {
+            localChargeStatus: mapAsaasToChargeStatus(normalizedStatus),
+          }),
         },
         select: { id: true },
       });
@@ -1935,7 +1985,7 @@ async function handlePaymentWebhookCore(
         ? chargeFromExternalRef
         : await prisma.charge.findFirst({
             where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
           });
 
       if (riskCharge) {
@@ -1988,7 +2038,7 @@ async function handlePaymentWebhookCore(
           ? chargeFromExternalRef
           : await prisma.charge.findFirst({
               where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true },
+              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
             });
 
         if (restoredCharge && restoredCharge.status === 'CANCELED') {
@@ -2042,9 +2092,7 @@ async function handlePaymentWebhookCore(
     const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
     const feeValue = p.value - p.netValue;
     const isConfirmed = internalStatus === 'CONFIRMED' || internalStatus === 'RECEIVED_IN_CASH';
-    // Para pagamentos em dinheiro (RECEIVED_IN_CASH), creditDate é null.
-    // Usar paymentDate ou clientPaymentDate como fallback.
-    const paymentDateStr = p.creditDate ?? p.paymentDate ?? p.clientPaymentDate;
+    const paymentDateStr = p.paymentDate ?? p.clientPaymentDate ?? p.creditDate;
     const paymentDate = paymentDateStr ? new Date(paymentDateStr) : new Date();
     const cobrancaSensitiveUpdate = buildCobrancaSensitiveUpdate({
       event: payload.event,
@@ -2063,13 +2111,20 @@ async function handlePaymentWebhookCore(
           }
         : {};
 
+    const resolvedCobrancaAsaasStatus = resolveCobrancaAsaasStatusFromPayload(payload, {
+      currentAsaasStatus: cobranca.asaasStatus,
+      localCobrancaStatus: currentStatus,
+      localChargeStatus:
+        chargeFromExternalRef?.cobrancaId === cobranca.id ? chargeFromExternalRef.status : null,
+    });
+
     if (currentStatus !== nextStatusCobranca) {
       await prisma.cobranca.update({
         where: { id: cobranca.id },
         data: {
           status: nextStatusCobranca,
           // Campos asaas* (snapshot do Asaas - fonte da verdade)
-          asaasStatus: p.status,
+          asaasStatus: resolvedCobrancaAsaasStatus,
           asaasValue: p.value,
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
@@ -2090,7 +2145,7 @@ async function handlePaymentWebhookCore(
       await prisma.cobranca.update({
         where: { id: cobranca.id },
         data: {
-          asaasStatus: p.status,
+          asaasStatus: resolvedCobrancaAsaasStatus,
           asaasValue: p.value,
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
@@ -2138,7 +2193,7 @@ async function handlePaymentWebhookCore(
               contaId,
               OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }],
             },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
           });
 
     if (charge) {
@@ -2149,7 +2204,11 @@ async function handlePaymentWebhookCore(
         eventName: payload.event,
       });
       const baseChargeUpdate = {
-        ...buildChargeAsaasSnapshotUpdate(payload),
+        ...buildChargeAsaasSnapshotUpdate(payload, {
+          currentAsaasStatus: charge.asaasStatus,
+          localChargeStatus: charge.status,
+          localCobrancaStatus: cobranca.status,
+        }),
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: payload.payment.id }),
       };
 
@@ -2191,6 +2250,7 @@ async function handlePaymentWebhookCore(
         asaasPaymentId: p.id,
         event: payload.event,
         providerStatus: p.status,
+        asaasPaymentSubscription: p.subscription,
       });
     } catch (invoiceSideEffectError) {
       console.error('[payment-webhook] Falha ao aplicar side effect fiscal:', {

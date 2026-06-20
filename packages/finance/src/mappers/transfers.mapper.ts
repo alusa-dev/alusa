@@ -6,6 +6,7 @@ import type { ListTransfersQueryParsed } from '../dtos/transfers/list-transfers-
 import type { RequestWithdrawInput, RequestWithdrawOutput, WithdrawDestination } from '../use-cases/request-withdraw';
 import type { GetTransferDetailOutput } from '../use-cases/get-transfer-detail';
 import type { TransferListItem, ListTransfersOutput } from '../use-cases/list-transfers';
+import { normalizeWithdrawDestinationForAsaas } from '../use-cases/transfers/asaas-transfer-payload';
 
 /**
  * Formata número para string decimal com 2 casas
@@ -28,15 +29,15 @@ function parseDecimalString(value: string): number {
  */
 function mapDestinationDTOToInternal(dto: WithdrawDestinationDTO): WithdrawDestination {
   if (dto.type === 'PIX') {
-    return {
+    return normalizeWithdrawDestinationForAsaas({
       type: 'PIX',
       pixAddressKey: dto.pixAddressKey,
       pixAddressKeyType: dto.pixAddressKeyType,
       saveRecipient: dto.saveRecipient,
-    };
+    });
   }
 
-  return {
+  return normalizeWithdrawDestinationForAsaas({
     type: 'BANK_ACCOUNT',
     bank: { code: dto.bank.code },
     accountName: dto.accountName,
@@ -48,7 +49,7 @@ function mapDestinationDTOToInternal(dto: WithdrawDestinationDTO): WithdrawDesti
     accountDigit: dto.accountDigit,
     bankAccountType: dto.bankAccountType,
     ispb: dto.ispb,
-  };
+  });
 }
 
 /**
@@ -92,11 +93,13 @@ export function mapTransferToListItemDTO(item: TransferListItem): TransferListIt
   return {
     id: item.id,
     externalReference: item.externalReference,
+    asaasTransferId: item.asaasTransferId,
     amount: formatDecimal(item.value),
     feeAmount: item.feeValue === null ? null : formatDecimal(item.feeValue),
     netAmount: formatDecimal(item.netValue),
     status: item.status as TransferStatusDTO,
     operation: item.operation,
+    requestedDestinationType: item.requestedDestinationType,
     recipientName: item.recipientName,
     cpfCnpj: item.cpfCnpjMasked,
     bankName: item.bankName,
@@ -118,6 +121,7 @@ export function mapTransferDetailOutputToDTO(output: GetTransferDetailOutput): T
     netAmount: formatDecimal(output.netAmount),
     status: output.status as TransferStatusDTO,
     operation: output.operation,
+    requestedDestinationType: output.requestedDestinationType,
     description: output.description,
     scheduleDate: output.scheduleDate,
     transferDate: output.transferDate,
@@ -127,6 +131,11 @@ export function mapTransferDetailOutputToDTO(output: GetTransferDetailOutput): T
     endToEndIdentifier: output.endToEndIdentifier,
     failReason: output.failReason,
     authorized: output.authorized,
+    canCancel: output.canCancel,
+    lastWebhookAt: output.lastWebhookAt,
+    lastReconciledAt: output.lastReconciledAt,
+    timeline: output.timeline,
+    operationalAlerts: output.operationalAlerts,
     recipient: {
       name: output.recipient.name,
       cpfCnpj: output.recipient.cpfCnpj,

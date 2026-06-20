@@ -3,7 +3,7 @@ import type { InvoiceStatus } from '@prisma/client';
 import { isInvoiceProviderSyncPending } from '../mappers/invoice-status.mapper';
 
 export const FISCAL_INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
-  SCHEDULED: 'Agendada',
+  SCHEDULED: 'Aguardando pagamento',
   SYNCHRONIZED: 'Enviada à prefeitura',
   AUTHORIZED: 'Emitida',
   PROCESSING_CANCELLATION: 'Cancelamento em processamento',

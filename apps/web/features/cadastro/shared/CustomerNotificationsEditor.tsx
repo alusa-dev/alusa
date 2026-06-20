@@ -87,8 +87,8 @@ const sectionClass =
 export function CustomerNotificationsEditor({
   customerId,
   endpoint,
-  description = 'Configuração do customer no Asaas para cobranças atuais e próximas.',
-  emptyMessage = 'Nenhum customer Asaas vinculado para configurar notificações.',
+  description = 'Preferências de aviso de cobrança e pagamento do pagador financeiro.',
+  emptyMessage = 'Nenhum cadastro financeiro vinculado para configurar notificações.',
 }: CustomerNotificationsEditorProps) {
   const [preferences, setPreferences] = useState<CustomerNotificationPreference[]>([]);
   const [originalPreferences, setOriginalPreferences] = useState<CustomerNotificationPreference[]>([]);
@@ -211,7 +211,7 @@ export function CustomerNotificationsEditor({
           <span className="text-sm font-semibold text-slate-700">Configuração de notificações</span>
           <p className="text-xs text-slate-600">{description}</p>
           {customerId ? (
-            <p className="text-xs text-slate-500">Customer Asaas: {customerId}</p>
+            <p className="text-xs text-slate-500">ID do pagador: {customerId}</p>
           ) : null}
         </div>
         <div className="flex items-center gap-2">

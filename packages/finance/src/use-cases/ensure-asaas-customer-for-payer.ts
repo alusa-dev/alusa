@@ -67,6 +67,7 @@ type EnsureStep =
   | 'LIST_EXTERNAL_REFERENCE'
   | 'LIST_CPF'
   | 'UPDATE_EXISTING'
+  | 'UPDATE_EXISTING_BY_ID'
   | 'CREATE_CUSTOMER';
 
 function normalizeString(value?: string | null): string | undefined {
@@ -235,6 +236,51 @@ function deferGlobalNotificationPreferences(contaId: string, customerId: string)
   void applyGlobalNotificationPreferencesSafe(contaId, customerId);
 }
 
+async function pushExistingCustomerUpdate(params: {
+  apiKey: string;
+  customerId: string;
+  payload: CreateCustomerInput;
+  strictUpdate?: boolean;
+  step: EnsureStep;
+  logContext: {
+    contaId: string;
+    payerType: EnsureAsaasCustomerPayer['type'];
+    payerId?: string;
+  };
+}): Promise<EnsureAsaasCustomerResult | { ok: true }> {
+  try {
+    await updateCustomer({
+      apiKey: params.apiKey,
+      customerId: params.customerId,
+      data: params.payload,
+    });
+    return { ok: true };
+  } catch (updateError) {
+    if (updateError instanceof AsaasHttpError && updateError.status === 400) {
+      const description = extractAsaasErrorDescription(updateError.responseBody ?? updateError.response);
+      console.warn('[ensureAsaasCustomerForPayer] Atualização rejeitada pelo provedor', {
+        contaId: params.logContext.contaId,
+        payerType: params.logContext.payerType,
+        payerId: params.logContext.payerId,
+        cpfCnpj: maskCpfCnpj(digits(params.payload.cpfCnpj) ?? ''),
+        step: params.step,
+        message: updateError.message,
+        response: updateError.responseBody ?? updateError.response,
+      });
+      if (params.strictUpdate) {
+        return {
+          ok: false,
+          error: isPayerValidationError(description) ? 'PAYER_INVALID' : 'ASAAS_ERROR',
+          message: description ?? 'Falha ao atualizar customer no Asaas.',
+          status: 400,
+        };
+      }
+      return { ok: true };
+    }
+    throw updateError;
+  }
+}
+
 export async function loadAndValidateSubaccountKey(contaId: string): Promise<LoadKeyResult> {
   const profile = await prisma.financeProfile.findUnique({
     where: { contaId },
@@ -358,6 +404,7 @@ export async function ensureAsaasCustomerForPayer(
     payer: EnsureAsaasCustomerPayer;
     persist?: boolean;
     notificationSyncMode?: 'blocking' | 'deferred' | 'skip';
+    strictCustomerUpdate?: boolean;
   },
 ): Promise<EnsureAsaasCustomerResult> {
   let step: EnsureStep = 'GET_LOCAL_CUSTOMER';
@@ -427,6 +474,23 @@ export async function ensureAsaasCustomerForPayer(
         });
 
         if (localCustomer.id && !localCustomer.deleted) {
+          step = 'UPDATE_EXISTING_BY_ID';
+          const updateResult = await pushExistingCustomerUpdate({
+            apiKey,
+            customerId: localCustomer.id,
+            payload,
+            strictUpdate: input.strictCustomerUpdate,
+            step,
+            logContext: {
+              contaId: input.contaId,
+              payerType: input.payer.type,
+              payerId: input.payer.id,
+            },
+          });
+          if (!updateResult.ok) {
+            return updateResult;
+          }
+
           if (input.persist !== false) {
             await persistCustomerId(input.payer, localCustomer.id, externalReference);
           }
@@ -528,26 +592,23 @@ export async function ensureAsaasCustomerForPayer(
       }
 
       try {
-        await updateCustomer({
+        const updateResult = await pushExistingCustomerUpdate({
           apiKey,
           customerId: existingCustomer.id,
-          data: payload,
-        });
-      } catch (updateError) {
-        // Log warning mas não falhar (customer já existe)
-        if (updateError instanceof AsaasHttpError && updateError.status === 400) {
-          console.warn('[ensureAsaasCustomerForPayer] Atualização rejeitada pelo provedor', {
+          payload,
+          strictUpdate: input.strictCustomerUpdate,
+          step,
+          logContext: {
             contaId: input.contaId,
             payerType: input.payer.type,
             payerId: input.payer.id,
-            cpfCnpj: maskCpfCnpj(cpfCnpj),
-            step,
-            message: updateError.message,
-            response: updateError.responseBody ?? updateError.response,
-          });
-        } else {
-          throw updateError;
+          },
+        });
+        if (!updateResult.ok) {
+          return updateResult;
         }
+      } catch (updateError) {
+        throw updateError;
       }
 
       if (input.persist !== false) {

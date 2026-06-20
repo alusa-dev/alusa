@@ -5,10 +5,13 @@ import type { AsaasTransfer } from '@alusa/asaas';
 import {
   extractWebhookTransferMetadata,
   mergeTransferMetadata,
+  extractOfficialTransferMetadata,
   resolveOfficialFeeValue,
   resolveOfficialNetValue,
+  resolveRequestedTransferDestinationType,
   resolveTransferMetadata,
   type TransferWebhookMetadata,
+  type RequestedTransferDestinationType,
 } from './transfers/transfer-metadata';
 import { reconcileOpenTransfers } from './transfers/reconcile-open-transfers';
 
@@ -37,6 +40,7 @@ export type TransferListItem = {
   netValue: number;
   status: string;
   operation: 'PIX' | 'TED';
+  requestedDestinationType: RequestedTransferDestinationType | null;
   recipientName: string | null;
   cpfCnpjMasked: string | null;
   bankName: string | null;
@@ -107,6 +111,7 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
       status: true,
       statusUpdatedAt: true,
       createdAt: true,
+      resolvedOperation: true,
     },
   });
 
@@ -145,7 +150,7 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
 
   const filteredRows = rows.filter((item) => {
     const metadata = mergeTransferMetadata(
-      resolveTransferMetadata(item.destination, item.description ?? null),
+      resolveTransferMetadata(item.destination, item.description ?? null, item.resolvedOperation),
       item.asaasTransferId ? webhookPayloadByTransferId.get(item.asaasTransferId) ?? null : null,
     );
     const transferDate = item.statusUpdatedAt?.toISOString() ?? null;
@@ -206,11 +211,13 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
     total,
     items: items.map((item) => {
       const webhookMeta = item.asaasTransferId ? webhookPayloadByTransferId.get(item.asaasTransferId) ?? null : null;
-      const metadata = mergeTransferMetadata(
-        resolveTransferMetadata(item.destination, item.description ?? null),
-        webhookMeta,
-      );
       const officialTransfer = item.asaasTransferId ? officialTransfersById.get(item.asaasTransferId) ?? null : null;
+      const officialMetadata = extractOfficialTransferMetadata(officialTransfer);
+      const metadata = mergeTransferMetadata(
+        resolveTransferMetadata(item.destination, item.description ?? null, item.resolvedOperation),
+        webhookMeta,
+        officialMetadata,
+      );
       const persistedGrossValue = toNumberOrFallback(item.value, 0);
       const grossValue = toNumberOrFallback(officialTransfer?.value, persistedGrossValue);
       // Prefer persisted DB values; fall back to live GET / webhook resolution
@@ -232,6 +239,7 @@ export async function listTransfers(input: ListTransfersInput): Promise<ListTran
         netValue,
         status: item.status,
         operation: metadata.operation,
+        requestedDestinationType: resolveRequestedTransferDestinationType(item.destination),
         recipientName: metadata.recipientName,
         cpfCnpjMasked: metadata.cpfCnpjMasked,
         bankName: metadata.bankName,

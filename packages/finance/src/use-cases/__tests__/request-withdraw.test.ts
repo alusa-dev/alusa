@@ -9,6 +9,12 @@ vi.mock('@alusa/database', () => {
       asaasAccount: {
         findUnique: vi.fn(),
       },
+      conta: {
+        findUnique: vi.fn(),
+      },
+      financeProfile: {
+        findUnique: vi.fn(),
+      },
       transferRequest: {
         findUnique: vi.fn(),
         create: vi.fn(),
@@ -50,6 +56,10 @@ vi.mock('../../foundation/finance-profile.service', () => ({
   },
 }));
 
+vi.mock('../../foundation/kyc-guard', () => ({
+  requireKycSnapshotApproved: vi.fn(async () => ({ success: true, data: true })),
+}));
+
 vi.mock('../../foundation/audit-log.service', () => ({
   auditLogService: {
     record: vi.fn(async () => {}),
@@ -60,6 +70,14 @@ vi.mock('../get-balance', () => ({
   getBalance: vi.fn(),
 }));
 
+vi.mock('../get-transfer-fees', () => ({
+  getTransferFees: vi.fn(),
+}));
+
+vi.mock('../../foundation/asaas-operational-guard', () => ({
+  assertAsaasTenantOperational: vi.fn(async () => {}),
+}));
+
 vi.mock('../../webhooks/ensure-webhook-config-operational', () => ({
   ensureWebhookConfigOperational: vi.fn(async () => {}),
 }));
@@ -68,6 +86,24 @@ describe('requestWithdraw', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  async function mockOperationalDefaults() {
+    const { prisma } = await import('@alusa/database');
+    const { getBalance } = await import('../get-balance');
+    const { getTransferFees } = await import('../get-transfer-fees');
+
+    vi.mocked(prisma.conta.findUnique).mockResolvedValue({ cpfCnpj: '11144477735' } as never);
+    vi.mocked(prisma.financeProfile.findUnique).mockResolvedValue(null as never);
+    vi.mocked(getTransferFees).mockResolvedValue({
+      success: true,
+      data: {
+        monthlyTransfersWithoutFee: 0,
+        pix: { feeValue: 0, discountValue: null, expirationDate: null, consideredInMonthlyTransfersWithoutFee: false },
+        ted: { feeValue: 0, consideredInMonthlyTransfersWithoutFee: false },
+      },
+    } as never);
+    vi.mocked(getBalance).mockResolvedValue({ success: true, data: { balance: 100 } } as never);
+  }
 
   it('deve bloquear quando enableManualWithdraw está off', async () => {
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
@@ -86,13 +122,14 @@ describe('requestWithdraw', () => {
   });
 
   it('deve bloquear quando KYC não está aprovado', async () => {
-    const { prisma } = await import('@alusa/database');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
+    const { requireKycSnapshotApproved } = await import('../../foundation/kyc-guard');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'IN_PROGRESS' } as never);
+    vi.mocked(requireKycSnapshotApproved).mockResolvedValueOnce({
+      success: false,
+      error: { code: 'KYC_REQUIRED', reasons: ['Documentação pendente'] },
+    } as never);
 
     const res = await requestWithdraw({
       contaId: 't1',
@@ -107,14 +144,11 @@ describe('requestWithdraw', () => {
   });
 
   it('deve bloquear quando saldo é insuficiente', async () => {
-    const { prisma } = await import('@alusa/database');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
     const { getBalance } = await import('../get-balance');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
+    await mockOperationalDefaults();
     vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 5 } } as never);
 
     const res = await requestWithdraw({
@@ -132,13 +166,9 @@ describe('requestWithdraw', () => {
   it('deve ser idempotente quando já existe TransferRequest com asaasTransferId', async () => {
     const { prisma } = await import('@alusa/database');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
-    const { getBalance } = await import('../get-balance');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
-    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    await mockOperationalDefaults();
 
     vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce({
       id: 'tr1',
@@ -174,13 +204,9 @@ describe('requestWithdraw', () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { createPixTransfer, getTransfer } = await import('@alusa/asaas');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
-    const { getBalance } = await import('../get-balance');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
-    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    await mockOperationalDefaults();
 
     vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce(null as never);
 
@@ -198,10 +224,11 @@ describe('requestWithdraw', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x', contaId: 't1' } as never);
 
-    vi.mocked(createPixTransfer).mockResolvedValueOnce({ id: 'asaas_tr_1', status: 'PENDING' } as never);
+    vi.mocked(createPixTransfer).mockResolvedValueOnce({ id: 'asaas_tr_1', status: 'PENDING', operationType: 'PIX' } as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'asaas_tr_1',
       status: 'PENDING',
+      operationType: 'PIX',
       authorized: true,
       failReason: null,
       transactionReceiptUrl: null,
@@ -226,7 +253,11 @@ describe('requestWithdraw', () => {
       expect.objectContaining({
         apiKey: 'sandbox_x',
         idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
-        data: expect.objectContaining({ externalReference: 'transfer:tr1', value: 10 }),
+        data: expect.objectContaining({
+          externalReference: 'transfer:tr1',
+          value: 10,
+          pixAddressKey: 'x',
+        }),
       }),
     );
 
@@ -240,22 +271,74 @@ describe('requestWithdraw', () => {
       data: expect.objectContaining({
         asaasTransferId: 'asaas_tr_1',
         rawAsaasStatus: 'PENDING',
+        resolvedOperation: 'PIX',
         authorized: true,
       }),
     });
+  });
+
+  it('bloqueia TED de terceiro PF sem ownerBirthDate', async () => {
+    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+
+    vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
+    await mockOperationalDefaults();
+
+    const res = await requestWithdraw({
+      contaId: 't1',
+      value: 10,
+      destination: {
+        type: 'BANK_ACCOUNT',
+        bank: { code: '237' },
+        ownerName: 'Maria Silva',
+        cpfCnpj: '12345678909',
+        agency: '1263',
+        account: '9999991',
+        accountDigit: '1',
+      },
+      idempotencyKey: 'k-birth',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toBe('OWNER_BIRTH_DATE_OBRIGATORIO');
+  });
+
+  it('bloqueia quando saldo não cobre valor + taxa estimada', async () => {
+    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+    const { getBalance } = await import('../get-balance');
+    const { getTransferFees } = await import('../get-transfer-fees');
+
+    vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
+    await mockOperationalDefaults();
+    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    vi.mocked(getTransferFees).mockResolvedValueOnce({
+      success: true,
+      data: {
+        monthlyTransfersWithoutFee: 0,
+        pix: { feeValue: 2, discountValue: null, expirationDate: null, consideredInMonthlyTransfersWithoutFee: false },
+        ted: { feeValue: 5, consideredInMonthlyTransfersWithoutFee: false },
+      },
+    } as never);
+
+    const res = await requestWithdraw({
+      contaId: 't1',
+      value: 100,
+      destination: { type: 'PIX', pixAddressKey: 'x', pixAddressKeyType: 'EVP' },
+      idempotencyKey: 'k-fee',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(res.success).toBe(false);
+    if (!res.success) expect(res.error).toBe('SALDO_INSUFICIENTE_PARA_TAXA');
   });
 
   it('retorna PIX_KEY_NAO_ENCONTRADA quando o Asaas rejeita a chave Pix de destino', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { AsaasHttpError, createPixTransfer } = await import('@alusa/asaas');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
-    const { getBalance } = await import('../get-balance');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
-    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    await mockOperationalDefaults();
     vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce(null as never);
     vi.mocked(prisma.transferRequest.create).mockResolvedValueOnce({
       id: 'tr1',
@@ -289,13 +372,9 @@ describe('requestWithdraw', () => {
   it('bloqueia mesma idempotencyKey com payload divergente', async () => {
     const { prisma } = await import('@alusa/database');
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
-    const { getBalance } = await import('../get-balance');
 
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true);
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'APPROVED' } as never);
-    vi.mocked(getBalance).mockResolvedValueOnce({ success: true, data: { balance: 100 } } as never);
+    await mockOperationalDefaults();
 
     vi.mocked(prisma.transferRequest.findUnique).mockResolvedValueOnce({
       id: 'tr1',

@@ -8,6 +8,25 @@ import {
 describe('shouldFetchStandaloneAsaasDetail', () => {
   const now = new Date('2026-06-17T12:00:00.000Z');
 
+  it('busca remoto quando snapshot recente diverge do status local pago', () => {
+    expect(
+      shouldFetchStandaloneAsaasDetail({
+        forceRefresh: false,
+        isAsaasActive: true,
+        now,
+        charge: {
+          asaasPaymentId: 'pay_1',
+          status: 'PAID',
+          asaasStatus: 'PENDING',
+          asaasNetValue: 293.54,
+          lastAsaasFetchAt: new Date('2026-06-17T11:59:00.000Z'),
+          billingType: 'CREDIT_CARD',
+          invoiceUrl: 'https://pay.example',
+        },
+      }),
+    ).toBe(true);
+  });
+
   it('não busca remoto para cobrança OPEN com snapshot local recente', () => {
     expect(
       shouldFetchStandaloneAsaasDetail({

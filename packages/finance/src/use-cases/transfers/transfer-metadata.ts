@@ -14,6 +14,8 @@ export type TransferResolvedMetadata = {
   accountType: string | null;
 };
 
+export type RequestedTransferDestinationType = 'PIX_KEY' | 'BANK_ACCOUNT';
+
 export type TransferMetadataFragment = Partial<Omit<TransferResolvedMetadata, 'operation'>> & {
   operation?: 'PIX' | 'TED' | null;
 };
@@ -183,12 +185,16 @@ export function extractOfficialTransferMetadata(transfer: AsaasTransfer | null |
   };
 }
 
-export function resolveTransferMetadata(rawDestination: unknown, description: string | null): TransferResolvedMetadata {
+export function resolveTransferMetadata(
+  rawDestination: unknown,
+  description: string | null,
+  resolvedOperation?: string | null,
+): TransferResolvedMetadata {
   const destination = parseWithdrawDestination(rawDestination);
 
   if (!destination) {
     return {
-      operation: 'TED',
+      operation: resolvedOperation === 'PIX' ? 'PIX' : 'TED',
       recipientName: description,
       cpfCnpjMasked: null,
       bankName: null,
@@ -215,7 +221,7 @@ export function resolveTransferMetadata(rawDestination: unknown, description: st
   }
 
   return {
-    operation: 'TED',
+    operation: resolvedOperation === 'PIX' ? 'PIX' : resolvedOperation === 'TED' ? 'TED' : 'TED',
     recipientName: destination.ownerName,
     cpfCnpjMasked: maskCpfCnpj(destination.cpfCnpj),
     bankName: destination.bank.code ? `Banco ${destination.bank.code}` : null,
@@ -225,6 +231,14 @@ export function resolveTransferMetadata(rawDestination: unknown, description: st
     accountDigit: destination.accountDigit,
     accountType: destination.bankAccountType ?? null,
   };
+}
+
+export function resolveRequestedTransferDestinationType(
+  rawDestination: unknown,
+): RequestedTransferDestinationType | null {
+  const destination = parseWithdrawDestination(rawDestination);
+  if (!destination) return null;
+  return destination.type === 'PIX' ? 'PIX_KEY' : 'BANK_ACCOUNT';
 }
 
 export function mergeTransferMetadata(
@@ -253,13 +267,20 @@ export function resolveOfficialFeeValue(
   webhook: TransferWebhookMetadata | null,
   value: number,
 ): number | null {
-  if (typeof transfer?.transferFee === 'number') return transfer.transferFee;
-  if (typeof webhook?.feeValue === 'number') return webhook.feeValue;
   if (typeof transfer?.netValue === 'number') {
-    return Math.max(Number((transfer.value - transfer.netValue).toFixed(2)), 0);
+    const grossValue = typeof transfer.value === 'number' ? transfer.value : value;
+    const feeFromNetValue = Math.max(Number((grossValue - transfer.netValue).toFixed(2)), 0);
+    if (feeFromNetValue > 0) return feeFromNetValue;
+  }
+  if (typeof transfer?.transferFee === 'number') {
+    return transfer.transferFee;
   }
   if (typeof webhook?.netValue === 'number') {
-    return Math.max(Number((value - webhook.netValue).toFixed(2)), 0);
+    const feeFromWebhookNetValue = Math.max(Number((value - webhook.netValue).toFixed(2)), 0);
+    if (feeFromWebhookNetValue > 0) return feeFromWebhookNetValue;
+  }
+  if (typeof webhook?.feeValue === 'number') {
+    return webhook.feeValue;
   }
   return null;
 }

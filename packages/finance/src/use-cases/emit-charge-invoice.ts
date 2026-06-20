@@ -48,6 +48,12 @@ function fallbackPendingDetail(): EmitChargeInvoiceOutput {
     municipalOptions: { supportsCancellation: null },
     eligibility: evaluateChargeInvoiceEligibility({}),
     syncPending: true,
+    autoEmission: {
+      enabled: false,
+      path: 'MANUAL',
+      state: 'MANUAL_REQUIRED',
+      message: 'Aguardando atualização da nota fiscal.',
+    },
   };
 }
 

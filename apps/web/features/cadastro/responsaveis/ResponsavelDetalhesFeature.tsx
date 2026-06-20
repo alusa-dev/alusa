@@ -31,13 +31,13 @@ import { CustomerNotificationsEditor } from '@/features/cadastro/shared/Customer
 import { formatInitials, maskCpf } from '@alusa/lib/client';
 import { cn } from '@/lib/utils';
 
+import { deleteResponsavel, getResponsavel, updateResponsavel, type ResponsavelDetail, type ResponsavelOverview } from './services/responsaveis-service';
 import {
-  deleteResponsavel,
-  getResponsavel,
-  updateResponsavel,
-  type ResponsavelDetail,
-  type ResponsavelOverview,
-} from './services/responsaveis-service';
+  enderecoValueToPayload,
+  ResponsavelEnderecoFields,
+} from '@/components/cadastro/responsaveis/ResponsavelEnderecoFields';
+import { PayerAddressReadinessCallout } from '@/components/cadastro/responsaveis/PayerAddressReadinessCallout';
+import { evaluatePayerAddressFiscalReadiness } from '@alusa/lib/client';
 
 type AlunoVinculado = {
   id: string;
@@ -118,6 +118,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   const [alunos, setAlunos] = useState<AlunoVinculado[]>([]);
   const [overview, setOverview] = useState<ResponsavelOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editSection, setEditSection] = useState<EditSection>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -132,6 +133,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   const load = useCallback(async () => {
     const controller = new AbortController();
     setLoading(true);
+    setLoadError(null);
     setAlunos([]);
     setOverview(null);
 
@@ -162,9 +164,13 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
       }
     } catch (error) {
       if ((error as { name?: string }).name !== 'AbortError') {
+        const message = (error as Error).message || 'Não foi possível carregar o responsável.';
+        setLoadError(message);
+        setResponsavel(null);
+        setForm(null);
         pushToast({
           title: 'Não foi possível carregar o responsável',
-          description: (error as Error).message,
+          description: message,
           variant: 'error',
         });
       }
@@ -197,22 +203,36 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
         cpf: form.cpf,
         email: form.email,
         telefone: form.telefone,
-        endereco: {
-          cep: form.enderecoCep,
-          logradouro: form.enderecoLogradouro,
-          numero: form.enderecoNumero,
-          complemento: form.enderecoComplemento,
-          bairro: form.enderecoBairro,
-          cidade: form.enderecoCidade,
-          uf: form.enderecoUf,
-        },
+        endereco: enderecoValueToPayload({
+          enderecoCep: form.enderecoCep,
+          enderecoLogradouro: form.enderecoLogradouro,
+          enderecoNumero: form.enderecoNumero,
+          enderecoComplemento: form.enderecoComplemento,
+          enderecoBairro: form.enderecoBairro,
+          enderecoCidade: form.enderecoCidade,
+          enderecoUf: form.enderecoUf,
+        }),
       });
       setResponsavel(updated);
       setForm(buildFormState(updated));
       setEditSection(null);
+      const asaasSync = (updated as ResponsavelDetail & { asaasSync?: { status?: string; message?: string } })
+        .asaasSync;
+      let description: string | undefined;
+      let variant: 'success' | 'warning' = 'success';
+      if (asaasSync?.status === 'FAILED') {
+        description =
+          'Dados salvos, mas não foi possível sincronizar o cadastro financeiro. Tente novamente.';
+        variant = 'warning';
+      } else if (asaasSync?.status === 'OK') {
+        description = 'Cadastro financeiro sincronizado para cobranças e NFS-e.';
+      } else if (asaasSync?.message) {
+        description = asaasSync.message;
+      }
       pushToast({
         title: 'Responsável atualizado',
-        variant: 'success',
+        description,
+        variant,
       });
     } catch (error) {
       pushToast({
@@ -249,9 +269,40 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
   const recentCharges = useMemo(() => overview?.charges.slice(0, 4) ?? [], [overview]);
   const subscriptions = overview?.subscriptions ?? [];
   const installmentPlans = overview?.installmentPlans ?? [];
+  const payerReadiness = form
+    ? evaluatePayerAddressFiscalReadiness({
+        enderecoCep: form.enderecoCep,
+        enderecoLogradouro: form.enderecoLogradouro,
+        enderecoNumero: form.enderecoNumero,
+        enderecoComplemento: form.enderecoComplemento,
+        enderecoBairro: form.enderecoBairro,
+        enderecoCidade: form.enderecoCidade,
+        enderecoUf: form.enderecoUf,
+      })
+    : { ready: true, issues: [] };
 
   if (loading) {
     return <ResponsavelDetalhesSkeleton />;
+  }
+
+  if (loadError) {
+    return (
+      <div className="h-full min-w-0 overflow-y-auto">
+        <div className="w-full min-w-0 space-y-4 px-4 py-6">
+          <Button
+            variant="ghost"
+            className="h-9 px-2 text-slate-600"
+            onClick={() => router.push('/responsaveis')}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Voltar
+          </Button>
+          <div className="rounded-xl border bg-white p-8 text-center text-sm text-slate-600">
+            {loadError}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (!responsavel) {
@@ -307,7 +358,7 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                   <Field label="CPF" value={form.cpf} editing={editSection === 'responsavel'} onChange={(value) => updateField('cpf', value)} />
                   <Field label="E-mail" type="email" value={form.email} editing={editSection === 'responsavel'} onChange={(value) => updateField('email', value)} />
                   <Field label="Telefone" value={form.telefone} editing={editSection === 'responsavel'} onChange={(value) => updateField('telefone', value)} />
-                  <LockedField label="Customer Asaas" value={responsavel.asaasCustomerId || 'Não sincronizado'} />
+                  <LockedField label="ID do pagador" value={responsavel.asaasCustomerId || 'Não sincronizado'} />
                 </div>
               </EditableSection>
 
@@ -320,16 +371,56 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
                 onCancel={resetForm}
                 onSave={handleSave}
               >
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-                  <Field label="CEP" value={form.enderecoCep} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoCep', value)} />
-                  <Field label="Rua" value={form.enderecoLogradouro} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoLogradouro', value)} className="md:col-span-2" />
-                  <Field label="Número" value={form.enderecoNumero} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoNumero', value)} />
-                  <Field label="Complemento" value={form.enderecoComplemento} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoComplemento', value)} />
-                  <Field label="Bairro" value={form.enderecoBairro} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoBairro', value)} />
-                  <Field label="Cidade" value={form.enderecoCidade} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoCidade', value)} />
-                  <Field label="UF" value={form.enderecoUf} editing={editSection === 'complementares'} onChange={(value) => updateField('enderecoUf', value)} />
-                  <LockedField label="Atualizado em" value={formatDate(responsavel.updatedAt)} />
-                </div>
+                {!payerReadiness.ready && responsavel.financeiro ? (
+                  <PayerAddressReadinessCallout
+                    issues={payerReadiness.issues}
+                    context="responsavel-form"
+                    className="mb-4"
+                  />
+                ) : null}
+                {editSection === 'complementares' && form ? (
+                  <ResponsavelEnderecoFields
+                    value={{
+                      enderecoCep: form.enderecoCep,
+                      enderecoLogradouro: form.enderecoLogradouro,
+                      enderecoNumero: form.enderecoNumero,
+                      enderecoComplemento: form.enderecoComplemento,
+                      enderecoBairro: form.enderecoBairro,
+                      enderecoCidade: form.enderecoCidade,
+                      enderecoUf: form.enderecoUf,
+                    }}
+                    onChange={(endereco) => {
+                      setForm((current) =>
+                        current
+                          ? {
+                              ...current,
+                              enderecoCep: endereco.enderecoCep,
+                              enderecoLogradouro: endereco.enderecoLogradouro,
+                              enderecoNumero: endereco.enderecoNumero,
+                              enderecoComplemento: endereco.enderecoComplemento,
+                              enderecoBairro: endereco.enderecoBairro,
+                              enderecoCidade: endereco.enderecoCidade,
+                              enderecoUf: endereco.enderecoUf,
+                            }
+                          : current,
+                      );
+                    }}
+                    onLookupError={(message) =>
+                      pushToast({ title: 'CEP', description: message, variant: 'error' })
+                    }
+                  />
+                ) : (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                    <Field label="CEP" value={form.enderecoCep} editing={false} />
+                    <Field label="Rua" value={form.enderecoLogradouro} editing={false} className="md:col-span-2" />
+                    <Field label="Número" value={form.enderecoNumero} editing={false} />
+                    <Field label="Complemento" value={form.enderecoComplemento} editing={false} />
+                    <Field label="Bairro" value={form.enderecoBairro} editing={false} />
+                    <Field label="Cidade" value={form.enderecoCidade} editing={false} />
+                    <Field label="UF" value={form.enderecoUf} editing={false} />
+                    <LockedField label="Atualizado em" value={formatDate(responsavel.updatedAt)} />
+                  </div>
+                )}
               </EditableSection>
             </>
           ) : null}
@@ -338,8 +429,8 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             <CustomerNotificationsEditor
               customerId={responsavel.asaasCustomerId}
               endpoint={`/api/responsaveis/${responsavel.id}/notificacoes`}
-              description="Configuração do customer do responsável no Asaas. Essas preferências são usadas pelas cobranças dos alunos vinculados quando este responsável é o pagador."
-              emptyMessage="Este responsável ainda não possui customer Asaas sincronizado para configurar notificações."
+              description="Preferências de aviso de cobrança e pagamento do responsável financeiro. Aplicam-se às cobranças dos alunos vinculados quando ele é o pagador."
+              emptyMessage="Este responsável ainda não possui cadastro financeiro sincronizado para configurar notificações."
             />
           </div>
 

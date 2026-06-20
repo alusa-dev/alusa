@@ -85,6 +85,25 @@ describe('resolvePaymentToLocalEntity', () => {
         cobrancaId: undefined,
       });
     });
+
+    it('resolve Charge com cobrancaId como cobranca acadêmica', async () => {
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+        id: 'charge-academic-1',
+        cobrancaId: 'cobranca-1',
+      });
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-1',
+        asaasPaymentId: 'pay_academic_1',
+        externalReference: 'standalone:legacy-academic-ref',
+      });
+
+      expect(result).toEqual({
+        type: 'cobranca',
+        cobrancaId: 'cobranca-1',
+        chargeId: 'charge-academic-1',
+      });
+    });
   });
 
   describe('por asaasPaymentId', () => {
@@ -111,6 +130,25 @@ describe('resolvePaymentToLocalEntity', () => {
         type: 'cobranca',
         cobrancaId: 'cob-3',
         chargeId: 'charge-2',
+      });
+    });
+
+    it('resolve por asaasPaymentId como cobranca quando só a Charge espelho é encontrada', async () => {
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as any);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+        id: 'charge-academic-2',
+        cobrancaId: 'cobranca-2',
+      } as any);
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-1',
+        asaasPaymentId: 'pay_academic_2',
+      });
+
+      expect(result).toEqual({
+        type: 'cobranca',
+        cobrancaId: 'cobranca-2',
+        chargeId: 'charge-academic-2',
       });
     });
   });

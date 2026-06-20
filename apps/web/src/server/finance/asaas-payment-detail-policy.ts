@@ -1,3 +1,5 @@
+import { hasAsaasSnapshotDrift } from '@alusa/finance';
+
 const TERMINAL_COBRANCA_STATUSES = new Set(['PAGO', 'CANCELADO', 'ESTORNADO', 'ESTORNADO_PARCIAL']);
 const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
 const DETAIL_REMOTE_RECONCILE_WINDOW_MS = 5 * 60_000;
@@ -202,7 +204,20 @@ export function shouldFetchAcademicAsaasDetail(params: {
   const hasSnapshot = hasAcademicAsaasSnapshot(params.cobranca);
   const fresh = isWithinReconcileWindow(getFreshnessAnchor(params.cobranca), now);
 
-  if (hasSnapshot && fresh) return false;
+  if (hasSnapshot && fresh) {
+    const academicCharge = getAcademicChargeRecord(params.cobranca);
+    if (
+      hasAsaasSnapshotDrift({
+        asaasStatus:
+          typeof params.cobranca.asaasStatus === 'string' ? params.cobranca.asaasStatus : null,
+        localCobrancaStatus: String(params.cobranca.status ?? ''),
+        localChargeStatus: typeof academicCharge?.status === 'string' ? String(academicCharge.status) : null,
+      })
+    ) {
+      return true;
+    }
+    return false;
+  }
 
   const localStatus = String(params.cobranca.status ?? '');
   if (!TERMINAL_COBRANCA_STATUSES.has(localStatus)) {
@@ -236,7 +251,17 @@ export function shouldFetchStandaloneAsaasDetail(params: {
   const hasSnapshot = hasStandaloneAsaasSnapshot(params.charge);
   const fresh = isWithinReconcileWindow(getFreshnessAnchor(params.charge), now);
 
-  if (hasSnapshot && fresh) return false;
+  if (hasSnapshot && fresh) {
+    if (
+      hasAsaasSnapshotDrift({
+        asaasStatus: typeof params.charge.asaasStatus === 'string' ? params.charge.asaasStatus : null,
+        localChargeStatus: String(params.charge.status ?? ''),
+      })
+    ) {
+      return true;
+    }
+    return false;
+  }
 
   const localStatus = String(params.charge.status ?? '');
   if (!TERMINAL_CHARGE_STATUSES.has(localStatus)) {

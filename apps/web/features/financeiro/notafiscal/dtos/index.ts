@@ -112,7 +112,7 @@ export type NotaFiscalPessoaDetalheResultDTO = z.infer<typeof notaFiscalPessoaDe
 
 export const NOTA_FISCAL_STATUS_FILTER_OPTIONS = [
   { value: 'TODOS', label: 'Todos status' },
-  { value: 'SCHEDULED', label: 'Agendada' },
+  { value: 'SCHEDULED', label: 'Aguardando pagamento' },
   { value: 'SYNCHRONIZED', label: 'Enviada à prefeitura' },
   { value: 'AUTHORIZED', label: 'Emitida' },
   { value: 'PROCESSING_CANCELLATION', label: 'Cancelamento em processamento' },

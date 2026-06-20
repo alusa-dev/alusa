@@ -32,6 +32,7 @@ import {
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
 import { provisionIndividualEnrollmentBilling } from '@/src/server/matriculas/enrollment-billing.orchestrator';
+import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import type {
   MatriculaAsaasSubscriptionSyncDTO,
   MatriculaAsaasTaxaSyncDTO,
@@ -288,6 +289,11 @@ export async function POST(req: Request) {
           `A data de término do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de término ou o dia de vencimento.`,
         );
       }
+    }
+
+    if (willCreateSubscription || willCreateEnrollmentFee) {
+      const gate = await guardFinancialAccountOr412(auth.contaId);
+      if (!gate.ok) return gate.response;
     }
 
     const result = await criarMatricula(payload);

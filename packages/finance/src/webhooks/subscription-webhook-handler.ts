@@ -123,6 +123,114 @@ export async function handleSubscriptionWebhook(
       subscriptionId = externalReference.slice('subscription:'.length) || null;
     }
 
+    const standaloneSubscription = await prisma.standaloneSubscription.findFirst({
+      where: {
+        contaId,
+        OR: [
+          { asaasSubscriptionId: payload.subscription.id },
+          ...(externalReference ? [{ externalReference }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        asaasSubscriptionId: true,
+        externalReference: true,
+        familyGroupId: true,
+        familyTransitionId: true,
+      },
+    });
+
+    if (standaloneSubscription) {
+      const nextStatus = resolveNextStatus(payload);
+      const updates: {
+        status?: SubscriptionStatus;
+        statusUpdatedAt?: Date;
+        asaasSubscriptionId?: string;
+        remoteStatus?: string | null;
+        remoteStatusUpdatedAt?: Date;
+        closureConfirmedAt?: Date;
+      } = {
+        remoteStatus: payload.subscription.status ?? null,
+        remoteStatusUpdatedAt: new Date(),
+      };
+
+      if (!standaloneSubscription.asaasSubscriptionId) {
+        updates.asaasSubscriptionId = payload.subscription.id;
+      }
+      if (nextStatus && standaloneSubscription.status !== nextStatus) {
+        updates.status = nextStatus;
+        updates.statusUpdatedAt = new Date();
+      }
+      if (nextStatus === 'INACTIVE' || nextStatus === 'EXPIRED') {
+        updates.closureConfirmedAt = new Date();
+      }
+
+      await prisma.standaloneSubscription.update({
+        where: { id: standaloneSubscription.id },
+        data: updates,
+      });
+
+      if (standaloneSubscription.familyTransitionId) {
+        await prisma.rematriculaFamiliar.updateMany({
+          where: { id: standaloneSubscription.familyTransitionId, contaId },
+          data: {
+            sourceBillingStatus:
+              nextStatus === 'INACTIVE' || nextStatus === 'EXPIRED'
+                ? 'CONFIRMED'
+                : 'AWAITING_WEBHOOK',
+          },
+        });
+      }
+
+      if (standaloneSubscription.familyGroupId) {
+        await prisma.rematriculaFamiliar.updateMany({
+          where: {
+            id: standaloneSubscription.familyGroupId,
+            contaId,
+            standaloneSubscriptionId: standaloneSubscription.id,
+          },
+          data: {
+            targetBillingStatus:
+              nextStatus === 'ACTIVE' ? 'CONFIRMED' : nextStatus ?? 'AWAITING_WEBHOOK',
+          },
+        });
+      }
+
+      await auditLogService.record({
+        contaId,
+        action: 'finance.webhook.standalone_subscription_status_changed',
+        entity: { type: 'StandaloneSubscription', id: standaloneSubscription.id },
+        metadata: {
+          event: payload.event,
+          asaasSubscriptionId: payload.subscription.id,
+          externalReference: standaloneSubscription.externalReference,
+          familyGroupId: standaloneSubscription.familyGroupId,
+          familyTransitionId: standaloneSubscription.familyTransitionId,
+          previousStatus: standaloneSubscription.status,
+          nextStatus: nextStatus ?? standaloneSubscription.status,
+          routing: 'STANDALONE_FAMILY_AGREEMENT',
+        },
+      });
+
+      try {
+        await publishFinanceEvent({
+          contaId,
+          type: 'subscription.updated',
+          entityId: standaloneSubscription.id,
+          revision: Date.now(),
+        });
+      } catch (publishError) {
+        console.warn('[finance][handleSubscriptionWebhook][standalone-realtime-publish-failed]', {
+          contaId,
+          subscriptionId: standaloneSubscription.id,
+          error: publishError instanceof Error ? publishError.message : String(publishError),
+        });
+      }
+
+      return { success: true };
+    }
+
     const subscription = await prisma.subscription.findFirst({
       where: {
         contaId,

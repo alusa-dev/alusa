@@ -28,6 +28,26 @@ describe('reconcileOpenTransfers', () => {
     vi.clearAllMocks();
   });
 
+  function openTransfer(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'tr1',
+      asaasTransferId: 'a1',
+      externalReference: 'transfer:tr1',
+      status: 'PENDING',
+      authorized: true,
+      value: { toString: () => '100.00' },
+      rawAsaasStatus: 'PENDING',
+      failReason: null,
+      transactionReceiptUrl: null,
+      effectiveDate: null,
+      endToEndIdentifier: null,
+      feeValue: null,
+      netValue: null,
+      resolvedOperation: 'TED',
+      ...overrides,
+    };
+  }
+
   it('retorna reconciled=0 sem credenciais', async () => {
     const { loadAsaasCredentials } = await import('@alusa/database');
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce(null as never);
@@ -51,15 +71,20 @@ describe('reconcileOpenTransfers', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
     vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
-      { id: 'tr1', asaasTransferId: 'a1', externalReference: 'transfer:tr1', status: 'PENDING', authorized: false },
+      openTransfer({ authorized: false, rawAsaasStatus: 'PENDING' }),
     ] as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'a1',
       status: 'DONE',
       authorized: true,
+      value: 100,
+      netValue: 99,
+      transferFee: 1,
+      operationType: 'PIX',
       failReason: null,
       transactionReceiptUrl: 'https://r.ec/1',
       effectiveDate: '2026-03-26',
+      endToEndIdentifier: 'E2E123',
     } as never);
     vi.mocked(prisma.transferRequest.update).mockResolvedValueOnce({} as never);
     vi.mocked(prisma.pixTransferSession.updateMany).mockResolvedValueOnce({ count: 0 } as never);
@@ -74,6 +99,10 @@ describe('reconcileOpenTransfers', () => {
         authorized: true,
         transactionReceiptUrl: 'https://r.ec/1',
         effectiveDate: '2026-03-26',
+        endToEndIdentifier: 'E2E123',
+        feeValue: 1,
+        netValue: 99,
+        resolvedOperation: 'PIX',
       }),
     });
   });
@@ -84,7 +113,7 @@ describe('reconcileOpenTransfers', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
     vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
-      { id: 'tr1', asaasTransferId: 'a1', externalReference: 'transfer:tr1', status: 'PENDING', authorized: false },
+      openTransfer({ authorized: false }),
     ] as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'a1',
@@ -114,7 +143,7 @@ describe('reconcileOpenTransfers', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
     vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
-      { id: 'tr1', asaasTransferId: 'a1', externalReference: 'transfer:tr1', status: 'PENDING', authorized: true },
+      openTransfer(),
     ] as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'a1',
@@ -127,6 +156,44 @@ describe('reconcileOpenTransfers', () => {
     expect(prisma.transferRequest.update).not.toHaveBeenCalled();
   });
 
+  it('atualiza metadados oficiais mesmo quando status e authorized permanecem iguais', async () => {
+    const { loadAsaasCredentials, prisma } = await import('@alusa/database');
+    const { getTransfer } = await import('@alusa/asaas');
+
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
+    vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
+      openTransfer({ resolvedOperation: 'PIX' }),
+    ] as never);
+    vi.mocked(getTransfer).mockResolvedValueOnce({
+      id: 'a1',
+      status: 'PENDING',
+      authorized: true,
+      value: 100,
+      netValue: 98,
+      transferFee: 2,
+      operationType: 'PIX',
+      transactionReceiptUrl: 'https://r.ec/pending',
+      effectiveDate: null,
+      endToEndIdentifier: 'E2EPENDING',
+    } as never);
+    vi.mocked(prisma.transferRequest.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.pixTransferSession.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const res = await reconcileOpenTransfers({ contaId: 'c1' });
+
+    expect(res.reconciled).toBe(1);
+    expect(prisma.transferRequest.update).toHaveBeenCalledWith({
+      where: { id: 'tr1' },
+      data: expect.objectContaining({
+        rawAsaasStatus: 'PENDING',
+        feeValue: 2,
+        netValue: 98,
+        transactionReceiptUrl: 'https://r.ec/pending',
+        endToEndIdentifier: 'E2EPENDING',
+      }),
+    });
+  });
+
   it('bloqueia regressão de estado e registra warning', async () => {
     const { loadAsaasCredentials, prisma } = await import('@alusa/database');
     const { getTransfer } = await import('@alusa/asaas');
@@ -134,7 +201,7 @@ describe('reconcileOpenTransfers', () => {
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key' } as never);
     vi.mocked(prisma.transferRequest.findMany).mockResolvedValueOnce([
-      { id: 'tr1', asaasTransferId: 'a1', externalReference: 'transfer:tr1', status: 'PROCESSING', authorized: true },
+      openTransfer({ status: 'PROCESSING', rawAsaasStatus: 'BANK_PROCESSING' }),
     ] as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
       id: 'a1',

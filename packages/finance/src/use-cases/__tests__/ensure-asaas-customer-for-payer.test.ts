@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, afterAll, describe, expect, it, vi } from 'vites
 import { PrismaClient } from '@prisma/client';
 
 import { ensureAsaasCustomerForPayer } from '../ensure-asaas-customer-for-payer';
+import { AsaasHttpError } from '@alusa/asaas';
 import { encryptSecret } from '@alusa/database';
 
 const {
@@ -244,7 +245,7 @@ describe('ensureAsaasCustomerForPayer', () => {
     );
   });
 
-  it('reaproveita customer local por id com uma chamada direta ao Asaas', async () => {
+  it('reaproveita customer local por id e sincroniza dados cadastrais no Asaas', async () => {
     const aluno = await prisma.aluno.create({
       data: {
         contaId,
@@ -282,11 +283,65 @@ describe('ensureAsaasCustomerForPayer', () => {
     });
     expect(listCustomersMock).not.toHaveBeenCalled();
     expect(createCustomerMock).not.toHaveBeenCalled();
-    expect(updateCustomerMock).not.toHaveBeenCalled();
+    expect(updateCustomerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: 'cust_local',
+        data: expect.objectContaining({
+          externalReference: `alusa_${contaId}_aluno_${aluno.id}`,
+        }),
+      }),
+    );
     expect(applyNotificationPreferencesMock).toHaveBeenCalledWith(contaId, 'cust_local');
 
     const updated = await prisma.aluno.findUnique({ where: { id: aluno.id } });
     expect(updated?.asaasCustomerExternalReference).toBe(`alusa_${contaId}_aluno_${aluno.id}`);
+  });
+
+  it('falha em strictCustomerUpdate quando Asaas rejeita atualização do customer local', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Local Strict',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '15350946056',
+        email: 'aluno-strict@example.com',
+        telefone: '11999999999',
+        enderecoCep: '69553315',
+        enderecoLogradouro: 'Rua Nova II',
+        enderecoNumero: '196',
+        enderecoBairro: 'São João',
+        asaasCustomerId: 'cust_local_strict',
+      },
+    });
+
+    updateCustomerMock.mockRejectedValueOnce(
+      new AsaasHttpError('Invalid postal code', 400, undefined, {
+        errors: [{ description: 'CEP do cliente é inválido.' }],
+      }),
+    );
+
+    const result = await ensureAsaasCustomerForPayer({
+      contaId,
+      payer: {
+        type: 'ALUNO',
+        id: aluno.id,
+        name: aluno.nome,
+        cpfCnpj: aluno.cpf!,
+        email: aluno.email,
+        phone: aluno.telefone,
+        postalCode: aluno.enderecoCep,
+        address: aluno.enderecoLogradouro,
+        addressNumber: aluno.enderecoNumero,
+        province: aluno.enderecoBairro,
+        asaasCustomerId: aluno.asaasCustomerId,
+      },
+      strictCustomerUpdate: true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain('CEP');
+    }
   });
 
   it('cria customer quando não existe e persiste o ID', async () => {

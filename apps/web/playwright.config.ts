@@ -55,7 +55,14 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'pnpm dev',
+    command:
+      'node -e "require(\'fs\').rmSync(\'.next\', { recursive: true, force: true })" && ' +
+      'pnpm -C ../.. prisma:generate && ' +
+      'pnpm -C ../.. --filter @alusa/ui build && ' +
+      'pnpm -C ../.. --filter @alusa/database build && ' +
+      'pnpm -C ../.. --filter @alusa/lib build && ' +
+      'pnpm -C ../.. --filter @alusa/finance build && ' +
+      'cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p ${PORT}',
     url: baseURL,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,

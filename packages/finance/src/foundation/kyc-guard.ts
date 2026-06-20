@@ -1,10 +1,8 @@
-import { prisma } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 
 import { financeProfileService } from './finance-profile.service';
 import { isPendingDocumentsBlockBypassedForTesting } from './kyc-test-bypass';
-import { reconcileAsaasAccount } from '../use-cases/asaas-account/reconcile-asaas-account';
 import { getKycSnapshot } from '../use-cases/kyc/get-kyc-snapshot';
 import type { KycSnapshot } from '../dtos/kyc/kyc-snapshot.dto';
 
@@ -12,42 +10,15 @@ export type RequireKycApprovedError = 'KYC_NAO_APROVADO' | 'ERRO_INTERNO';
 
 /**
  * Guard legado — verifica status via AsaasAccount.status.
- * Mantido para compatibilidade; preferir requireKycSnapshotApproved.
+ * Mantido para compatibilidade, mas delega para o snapshot canônico.
  */
 export async function requireKycApproved(contaId: string): Promise<Result<true, RequireKycApprovedError>> {
-  try {
-    if (isPendingDocumentsBlockBypassedForTesting()) {
-      return ok(true);
-    }
-
-    const financeProfile = await financeProfileService.getOrCreateByTenant(contaId);
-
-    if (financeProfile.isOnboardingCompleted) return ok(true);
-
-    const asaasAccount = await prisma.asaasAccount.findUnique({
-      where: { financeProfileId: financeProfile.id },
-      select: { status: true },
-    });
-
-    if (!asaasAccount || asaasAccount.status !== 'APPROVED') {
-      try {
-        await reconcileAsaasAccount({ contaId, reason: 'requireKycApproved' });
-        const refreshed = await prisma.financeProfile.findUnique({
-          where: { id: financeProfile.id },
-          select: { isOnboardingCompleted: true },
-        });
-        if (refreshed?.isOnboardingCompleted) return ok(true);
-      } catch {
-        // best-effort
-      }
-
-      return err('KYC_NAO_APROVADO');
-    }
-
-    return ok(true);
-  } catch {
+  const result = await requireKycSnapshotApproved(contaId);
+  if (result.success) return ok(true);
+  if (result.error.code === 'ERRO_INTERNO') {
     return err('ERRO_INTERNO');
   }
+  return err('KYC_NAO_APROVADO');
 }
 
 // ── Guard baseado em KycSnapshot (novo) ──────────────────────────────────

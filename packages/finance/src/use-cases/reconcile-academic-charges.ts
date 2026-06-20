@@ -123,10 +123,10 @@ export async function reconcileAcademicChargesWithAsaas(params: {
       });
       const nextStatus = statusDecision.nextStatus;
       const paymentDate =
-        parseAsaasDateTime(payment.creditDate) ??
         parseAsaasDateTime(payment.paymentDate) ??
         parseAsaasDateTime(payment.clientPaymentDate) ??
-        parseAsaasDateTime(payment.confirmedDate);
+        parseAsaasDateTime(payment.confirmedDate) ??
+        parseAsaasDateTime(payment.creditDate);
       const liquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
         asaasStatus: payment.status,
         creditDate: payment.creditDate,

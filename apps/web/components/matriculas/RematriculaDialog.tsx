@@ -22,10 +22,11 @@ import {
   createRematriculaRequest,
   type CreateRematriculaInput,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
-import { createContrato, getContratos } from '@/features/contratos/services/contratos-service';
+import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
+import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
 
 const HERDAR_FORMA_VALUE = 'HERDAR';
 
@@ -59,6 +60,8 @@ const formaPagamentoOptions: Array<{
 interface RematriculaDialogProps {
   open: boolean;
   contaId?: string;
+  campaignId?: string | null;
+  targetPeriodId?: string;
   item: RematriculaElegivelItem | null;
   onOpenChange: (_open: boolean) => void;
   onCreated?: () => void;
@@ -142,6 +145,8 @@ const labelClass = 'text-xs font-medium text-slate-600';
 export function RematriculaDialog({
   open,
   contaId,
+  campaignId,
+  targetPeriodId,
   item,
   onOpenChange,
   onCreated,
@@ -160,6 +165,7 @@ export function RematriculaDialog({
   // Dados do contrato
   const [dataInicio, setDataInicio] = useState('');
   const [dataFimContrato, setDataFimContrato] = useState('');
+  const [contratoModeloId, setContratoModeloId] = useState<string | null>(null);
   const [vencimentoDia, setVencimentoDia] = useState<number | ''>('');
 
   // Seleção de plano e turma
@@ -188,6 +194,9 @@ export function RematriculaDialog({
   // Buscar turmas e planos disponíveis
   const { items: turmasDisponiveis, loading: turmasLoading } = useTurmas({ contaId });
   const { items: planosDisponiveis, loading: planosLoading } = usePlanos({ contaId });
+  const { modelos: contratoModelos, loading: contratoModelosLoading } = useModelos({
+    activeOnly: true,
+  });
 
   // Turmas ativas disponíveis
   const turmasFiltradas = useMemo(() => {
@@ -213,6 +222,7 @@ export function RematriculaDialog({
     const firstValidStartDate = getFirstValidStartDate(item.dataFimContrato);
     setDataInicio(formatDateInput(firstValidStartDate));
     setDataFimContrato(formatDateInput(parseDateOnly(item.dataFimContrato)));
+    setContratoModeloId(null);
 
     setPlanoId(item.plano?.id ?? null);
     setTurmaId(item.turma?.id ?? null);
@@ -260,7 +270,7 @@ export function RematriculaDialog({
     if (!dataFimContrato) {
       return {
         valido: false,
-        erro: 'A data de término do contrato é obrigatória para concluir a rematrícula',
+        erro: 'A data de término do contrato futuro é obrigatória para confirmar o próximo ciclo',
       };
     }
 
@@ -288,6 +298,7 @@ export function RematriculaDialog({
     !validacaoDatas.valido ||
     !planoId ||
     !dataFimContrato ||
+    !contratoModeloId ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim());
 
   const descontosHerdados = useMemo(() => item?.financeiro.descontos ?? [], [item]);
@@ -313,6 +324,8 @@ export function RematriculaDialog({
 
     const payload: CreateRematriculaInput = {
       contaId,
+      campaignId,
+      targetPeriodId,
       matriculaId: item.id,
       dataInicio: dataInicio ? new Date(dataInicio).toISOString() : new Date().toISOString(),
       dataFimContrato: dataFimContrato
@@ -381,45 +394,12 @@ export function RematriculaDialog({
 
     try {
       setSubmitting(true);
-      const rematriculaResult = await createRematriculaRequest(payload);
-      const novaMatriculaId = rematriculaResult.novaMatricula.id;
-      if (novaMatriculaId) {
-        try {
-          const contratosNova = await getContratos(novaMatriculaId);
-          if (contratosNova.length === 0) {
-            const contratosOrigem = await getContratos(item.id);
-            const modeloId = contratosOrigem.find((c) => c.modeloId)?.modeloId;
-            if (modeloId) {
-              await createContrato({ matriculaId: novaMatriculaId, modeloId });
-            } else {
-              toast.custom((t) => (
-                <CustomToast
-                  variant="warning"
-                  title="Rematrícula criada"
-                  description="A rematrícula foi concluída, mas o novo contrato precisa ser gerado manualmente."
-                  onClose={() => toast.dismiss(t)}
-                />
-              ));
-            }
-          }
-        } catch (error) {
-          toast.custom((t) => (
-            <CustomToast
-              variant="warning"
-              title="Rematrícula criada"
-              description={sanitizeMessage(
-                (error as Error).message || 'Falha ao gerar o contrato automaticamente.',
-              )}
-              onClose={() => toast.dismiss(t)}
-            />
-          ));
-        }
-      }
+      await createRematriculaRequest(payload);
       toast.custom((t) => (
         <CustomToast
           variant="success"
-          title="Rematrícula criada"
-          description="A nova matrícula foi criada com sucesso. Os dados acadêmicos e de cobrança serão atualizados automaticamente."
+          title="Rematrícula confirmada"
+          description="O próximo ciclo foi preparado. A matrícula atual permanece intacta até a data de início."
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -429,9 +409,9 @@ export function RematriculaDialog({
       toast.custom((t) => (
         <CustomToast
           variant="error"
-          title="Erro ao rematricular"
+          title="Erro ao confirmar próximo ciclo"
           description={sanitizeMessage(
-            (error as Error).message || 'Não foi possível concluir a rematrícula.',
+            (error as Error).message || 'Não foi possível confirmar o próximo ciclo.',
           )}
           onClose={() => toast.dismiss(t)}
         />
@@ -446,7 +426,7 @@ export function RematriculaDialog({
       <DialogContent
         fullScreenMobile
         data-testid="rematricula-dialog"
-        className="w-[calc(100vw-2rem)] max-w-[920px] gap-0 overflow-hidden bg-slate-50 p-0 max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:flex-col max-md:min-h-0 md:max-h-[calc(100dvh-4rem)] md:rounded-2xl"
+        className="flex w-[calc(100vw-2rem)] max-w-[920px] min-h-0 flex-col gap-0 overflow-hidden bg-slate-50 p-0 max-md:h-[100dvh] max-md:max-h-[100dvh] md:max-h-[calc(100dvh-4rem)] md:rounded-2xl"
       >
         {item && (
           <form
@@ -457,15 +437,22 @@ export function RematriculaDialog({
             <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
               <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
               <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
-                Rematricular aluno
+                Preparar próximo ciclo
               </DialogTitle>
               <DialogDescription className="mt-2 text-sm text-slate-600">
-                Configure o novo período e as condições de pagamento para a rematrícula.
+                Configure o vínculo futuro, a reserva e as condições financeiras agendadas.
               </DialogDescription>
             </div>
 
             {/* Content */}
-            <div className="flex-1 space-y-6 overflow-y-auto px-4 py-6 max-md:min-h-0 md:px-8 md:py-6">
+            <div
+              className="flex-1 space-y-6 overflow-y-auto scroll-smooth px-4 py-6 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent max-md:min-h-0 md:px-8 md:py-6"
+              style={{
+                scrollbarWidth: 'thin',
+                scrollbarGutter: 'stable',
+                scrollbarColor: '#d1d5db transparent',
+              }}
+            >
               {/* Dados do Aluno (Read-only) */}
               <div className={sectionClass}>
                 <span className="text-sm font-semibold text-slate-700">Dados do aluno</span>
@@ -667,6 +654,47 @@ export function RematriculaDialog({
                     </p>
                   </div>
                 )}
+              </div>
+
+              <div className={sectionClass}>
+                <div>
+                  <span className="text-sm font-semibold text-slate-700">Contrato</span>
+                  <p className="text-xs text-slate-500">
+                    Selecione o modelo que será preparado para o contrato futuro.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <label className={labelClass}>Modelo de contrato *</label>
+                    <FieldHelpTooltip content="O contrato futuro será preparado junto com o próximo ciclo. Se não houver modelo ativo, cadastre um em Contratos > Modelos." />
+                  </div>
+                  <Select
+                    value={contratoModeloId ?? 'null'}
+                    onValueChange={(value) => setContratoModeloId(value === 'null' ? null : value)}
+                    disabled={contratoModelosLoading || contratoModelos.length === 0}
+                  >
+                    <SelectTrigger className={fieldTriggerClass}>
+                      <SelectValue
+                        placeholder={
+                          contratoModelosLoading ? 'Carregando modelos...' : 'Selecione o modelo'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="null">Selecione o modelo</SelectItem>
+                      {contratoModelos.map((modelo) => (
+                        <SelectItem key={modelo.id} value={modelo.id}>
+                          {modelo.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {contratoModelos.length === 0 && !contratoModelosLoading ? (
+                    <InfoCallout variant="warning" size="sm" showIcon={false}>
+                      Nenhum modelo ativo foi encontrado. Cadastre um modelo antes de confirmar a rematrícula.
+                    </InfoCallout>
+                  ) : null}
+                </div>
               </div>
 
               {/* Condições de Pagamento */}

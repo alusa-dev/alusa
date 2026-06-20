@@ -177,8 +177,13 @@ Ordem de decisão:
 2. Evento não é pagamento confirmado → `SKIPPED`
 3. `emissionMode !== ON_PAYMENT` → `SKIPPED`
 4. Nota já existe (exceto `ERROR`) → `SKIPPED`
-5. Assinatura com `asaasInvoiceSettingsConfigured` → `SKIPPED` (`SUBSCRIPTION_NATIVE_EMISSION`) — **evita dupla emissão**
-6. Caso contrário → `emitChargeInvoice` (sistema)
+5. Resolve caminho por tipo/vínculo do pagamento:
+   - `TAXA_MATRICULA`, `AVULSA`, `EXTRA`, `PARCELADA` → Alusa local, mesmo que a matrícula tenha assinatura configurada
+   - `MENSALIDADE`/`RECORRENTE` com assinatura acadêmica configurada → Asaas nativo
+   - `StandaloneSubscription` configurada e pagamento vinculado à assinatura → Asaas nativo
+   - se `payment.subscription` vier no webhook, o caminho nativo só é usado quando bater com a assinatura esperada
+6. Caminho nativo → `SKIPPED` (`SUBSCRIPTION_NATIVE_EMISSION`) — **evita dupla emissão**
+7. Caminho local → `emitChargeInvoice` (sistema)
 
 ### 4.6 Assinaturas (`syncSubscriptionFiscalSettings`)
 

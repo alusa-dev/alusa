@@ -9,6 +9,13 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         update: vi.fn(),
       },
+      standaloneSubscription: {
+        findFirst: vi.fn(),
+        update: vi.fn(),
+      },
+      rematriculaFamiliar: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
       matricula: {
         findUnique: vi.fn(),
         update: vi.fn(),
@@ -22,6 +29,10 @@ vi.mock('@alusa/database', () => {
 
 vi.mock('../../foundation/audit-log.service', () => ({
   auditLogService: { record: vi.fn(async () => {}) },
+}));
+
+vi.mock('../../realtime/finance-realtime-publisher', () => ({
+  publishFinanceEvent: vi.fn(async () => {}),
 }));
 
 describe('handleSubscriptionWebhook', () => {
@@ -39,6 +50,50 @@ describe('handleSubscriptionWebhook', () => {
     });
 
     expect(res).toEqual({ success: true });
+  });
+
+  it('roteia StandaloneSubscription familiar sem atualizar matrícula individual', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { auditLogService } = await import('../../foundation/audit-log.service');
+
+    vi.mocked(prisma.standaloneSubscription.findFirst).mockResolvedValueOnce({
+      id: 'standalone_1',
+      status: 'REQUESTED',
+      asaasSubscriptionId: null,
+      externalReference: 'standalone-subscription:family',
+      familyGroupId: 'remat_fam_1',
+      familyTransitionId: null,
+    } as never);
+    vi.mocked(prisma.standaloneSubscription.update).mockResolvedValueOnce({} as never);
+
+    const res = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: {
+        id: 'asaas_sub_family',
+        status: 'ACTIVE',
+        externalReference: 'standalone-subscription:family',
+      },
+    });
+
+    expect(res.success).toBe(true);
+    expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+    expect(prisma.matricula.update).not.toHaveBeenCalled();
+    expect(prisma.rematriculaFamiliar.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'remat_fam_1',
+          contaId: 't1',
+          standaloneSubscriptionId: 'standalone_1',
+        }),
+        data: { targetBillingStatus: 'CONFIRMED' },
+      }),
+    );
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'finance.webhook.standalone_subscription_status_changed',
+        entity: { type: 'StandaloneSubscription', id: 'standalone_1' },
+      }),
+    );
   });
 
   it('deve atualizar status e setar asaasSubscriptionId quando necessário', async () => {

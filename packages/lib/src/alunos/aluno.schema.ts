@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import {
+  evaluatePayerAddressFiscalReadiness,
+  responsavelEnderecoInputSchema,
+} from '../responsaveis/payer-address';
 
 // ============================================================================
 // VALIDADORES E PREPROCESSORS
@@ -262,6 +266,31 @@ const alunoRefined = alunoBaseSchema.superRefine((data, ctx) => {
           path: ['responsavel', campo],
           message: `${campo.charAt(0).toUpperCase() + campo.slice(1)} do responsável é obrigatório para menor de idade`,
         });
+      }
+    }
+
+    const financeiro = data.responsavel.financeiro ?? true;
+    if (financeiro) {
+      const addressReadiness = evaluatePayerAddressFiscalReadiness(data.responsavel.endereco ?? null);
+      if (!addressReadiness.ready) {
+        for (const issue of addressReadiness.issues) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['responsavel', 'endereco'],
+            message: issue.message,
+          });
+        }
+      } else if (data.responsavel.endereco) {
+        const parsedEndereco = responsavelEnderecoInputSchema.safeParse(data.responsavel.endereco);
+        if (!parsedEndereco.success) {
+          for (const issue of parsedEndereco.error.issues) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['responsavel', 'endereco', ...(issue.path as Array<string | number>)],
+              message: issue.message,
+            });
+          }
+        }
       }
     }
   }

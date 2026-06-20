@@ -13,7 +13,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { encode } from 'next-auth/jwt';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -35,8 +35,10 @@ interface SeedResult {
   responsavelId: string;
   planoId: string;
   turmaId: string;
+  contratoModeloNome: string;
   matriculaMaiorId: string;
   matriculaMenorId: string;
+  password: string;
 }
 
 async function seedRematriculaData(): Promise<SeedResult> {
@@ -50,18 +52,30 @@ async function seedRematriculaData(): Promise<SeedResult> {
   });
 
   // Criar usuário admin
+  const password = 'RematriculaE2E#2026';
+  const senhaHash = await bcrypt.hash(password, 10);
   const user = await prisma.usuario.create({
     data: {
       contaId: conta.id,
       nome: 'Admin Rematrícula',
       email: `admin-rematricula-${Date.now()}@e2e.test`,
-      senhaHash: 'hash_nao_usado_no_e2e',
+      senhaHash,
       role: 'ADMIN',
       status: 'ATIVO',
+      emailVerifiedAt: new Date(),
     },
   });
 
   await prisma.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+  await prisma.usuarioConta.create({
+    data: {
+      usuarioId: user.id,
+      contaId: conta.id,
+      role: 'ADMIN',
+      status: 'ATIVO',
+      lastAccessedAt: new Date(),
+    },
+  });
 
   // Criar modalidade
   const modalidade = await prisma.modalidade.create({
@@ -91,6 +105,18 @@ async function seedRematriculaData(): Promise<SeedResult> {
       nome: 'Plano Mensal E2E',
       valor: 150,
       periodicidade: 'MENSAL',
+      status: 'ATIVO',
+    },
+  });
+
+  const contratoModeloNome = `Modelo Rematrícula E2E ${Date.now()}`;
+  await prisma.contratoModelo.create({
+    data: {
+      contaId: conta.id,
+      nome: contratoModeloNome,
+      arquivoPdfUrl: 'https://example.com/rematricula-e2e.pdf',
+      hashSha256: `sha256-rematricula-${Date.now()}`,
+      versao: 1,
       status: 'ATIVO',
     },
   });
@@ -157,6 +183,7 @@ async function seedRematriculaData(): Promise<SeedResult> {
   // Vincular responsável ao aluno menor
   await prisma.alunoResponsavel.create({
     data: {
+      contaId: conta.id,
       alunoId: alunoMenor.id,
       responsavelId: responsavel.id,
       tipoVinculo: 'RESPONSAVEL_FINANCEIRO',
@@ -175,6 +202,7 @@ async function seedRematriculaData(): Promise<SeedResult> {
   const matriculaMaior = await prisma.matricula.create({
     data: {
       id: randomUUID(),
+      contaId: conta.id,
       alunoId: alunoMaior.id,
       planoId: plano.id,
       turmaId: turma.id,
@@ -195,6 +223,7 @@ async function seedRematriculaData(): Promise<SeedResult> {
   const matriculaMenor = await prisma.matricula.create({
     data: {
       id: randomUUID(),
+      contaId: conta.id,
       alunoId: alunoMenor.id,
       planoId: plano.id,
       turmaId: turma.id,
@@ -219,55 +248,68 @@ async function seedRematriculaData(): Promise<SeedResult> {
     responsavelId: responsavel.id,
     planoId: plano.id,
     turmaId: turma.id,
+    contratoModeloNome,
     matriculaMaiorId: matriculaMaior.id,
     matriculaMenorId: matriculaMenor.id,
+    password,
   };
 }
 
-async function authenticateUser(page: Page, userId: string, email: string, contaId: string) {
-  const secret = process.env.NEXTAUTH_SECRET;
-  if (!secret) throw new Error('NEXTAUTH_SECRET ausente no ambiente de teste');
+async function authenticateUser(page: Page, email: string, password: string) {
+  await page.goto('/auth/login');
+  await page.getByTestId('email').fill(email);
+  await page.getByTestId('password').fill(password);
+  await page.getByTestId('login-button').click();
 
-  const token = await encode({
-    secret,
-    token: {
-      id: userId,
-      email,
-      name: 'Admin Rematrícula',
-      role: 'ADMIN',
-      contaId,
-    },
-  });
+  await expect
+    .poll(async () => {
+      const response = await page.request.get('/api/auth/session');
+      const session = await response.json();
+      return session?.user?.contaId ?? null;
+    }, { timeout: 15_000 })
+    .toBeTruthy();
+}
 
-  await page.context().addCookies([
-    {
-      name: 'next-auth.session-token',
-      value: token,
-      domain: 'localhost',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
+async function expectAlunoVisible(page: Page, nome: string) {
+  await expect(page.getByText(nome).first()).toBeVisible({ timeout: 15_000 });
+}
 
-  await page.goto('/api/auth/session');
+async function expectAlunoHidden(page: Page, nome: string) {
+  await expect(page.getByText(nome)).toHaveCount(0);
+}
+
+async function openTodosOsProcessos(page: Page) {
+  await page.getByRole('button', { name: 'Todos os processos' }).click();
 }
 
 async function cleanupData(contaId: string, responsavelId: string) {
   try {
     // Limpar na ordem correta (respeitando foreign keys)
+    await prisma.rematriculaComunicacao.deleteMany({ where: { contaId } });
+    await prisma.rematriculaExcecao.deleteMany({ where: { contaId } });
+    await prisma.rematriculaPendencia.deleteMany({ where: { contaId } });
+    await prisma.rematriculaOutbox.deleteMany({ where: { contaId } });
+    await prisma.acordoFinanceiroFuturo.deleteMany({ where: { contaId } });
+    await prisma.contratoFuturo.deleteMany({ where: { contaId } });
+    await prisma.reservaVagaFutura.deleteMany({ where: { contaId } });
+    await prisma.rematriculaItem.deleteMany({ where: { contaId } });
+    await prisma.rematriculaProcesso.deleteMany({ where: { contaId } });
+    await prisma.rematriculaParticipante.deleteMany({ where: { contaId } });
+    await prisma.rematriculaCampanha.deleteMany({ where: { contaId } });
     await prisma.rematriculaOperacao.deleteMany({ where: { contaId } });
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId } } } });
+    await prisma.contrato.deleteMany({ where: { contaId } });
     await prisma.matricula.deleteMany({ where: { aluno: { contaId } } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
+    await prisma.contratoModelo.deleteMany({ where: { contaId } });
     await prisma.aluno.deleteMany({ where: { contaId } });
     await prisma.responsavel.deleteMany({ where: { id: responsavelId } });
     await prisma.turma.deleteMany({ where: { contaId } });
     await prisma.plano.deleteMany({ where: { contaId } });
     await prisma.sala.deleteMany({ where: { contaId } });
     await prisma.modalidade.deleteMany({ where: { contaId } });
+    await prisma.usuarioConta.deleteMany({ where: { contaId } });
     await prisma.usuario.deleteMany({ where: { contaId } });
     await prisma.conta.deleteMany({ where: { id: contaId } });
   } catch (error) {
@@ -286,53 +328,58 @@ test.describe('Fluxo de Rematrícula', () => {
   });
 
   test.afterAll(async () => {
-    await cleanupData(seedData.contaId, seedData.responsavelId);
+    if (seedData) {
+      await cleanupData(seedData.contaId, seedData.responsavelId);
+    }
     await prisma.$disconnect();
   });
 
   test('deve exibir lista de matrículas elegíveis para rematrícula', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
+    await openTodosOsProcessos(page);
 
     // Aguardar carregamento da tabela
     await expect(page.getByRole('heading', { name: /gestão de rematrículas/i })).toBeVisible();
 
     // Deve mostrar pelo menos 2 alunos (João Adulto e Maria Criança)
-    await expect(page.getByText('João Adulto')).toBeVisible();
-    await expect(page.getByText('Maria Criança')).toBeVisible();
+    await expectAlunoVisible(page, 'João Adulto');
+    await expectAlunoVisible(page, 'Maria Criança');
 
-    // Deve ter botões de Rematricular
-    const botoes = page.getByRole('button', { name: 'Rematricular' });
+    // Deve ter ações de início do processo, sem chamar vínculo futuro de ativo.
+    const botoes = page.getByRole('button', { name: 'Iniciar' });
     await expect(botoes).toHaveCount(2);
   });
 
   test('deve abrir dialog de rematrícula ao clicar no botão', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
+    await openTodosOsProcessos(page);
 
     // Aguardar carregamento
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await expectAlunoVisible(page, 'João Adulto');
 
-    // Clicar no primeiro botão Rematricular
-    await page.getByRole('button', { name: 'Rematricular' }).first().click();
+    const linhaJoao = page.locator('tr', { hasText: 'João Adulto' });
+    await linhaJoao.getByRole('button', { name: 'Iniciar' }).click();
 
     // Verificar que o dialog abriu
     await expect(page.getByRole('dialog')).toBeVisible();
 
-    // Verificar campos do dialog - label real é "Data de início *"
+    // Verificar campos do dialog individual - label real é "Data de início *"
     await expect(page.getByText('Data de início *')).toBeVisible();
   });
 
   test('deve validar data de término anterior à data de início', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await openTodosOsProcessos(page);
+    await expectAlunoVisible(page, 'João Adulto');
 
-    // Abrir dialog
-    await page.getByRole('button', { name: 'Rematricular' }).first().click();
+    const linhaJoao = page.locator('tr', { hasText: 'João Adulto' });
+    await linhaJoao.getByRole('button', { name: 'Iniciar' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // Preencher data de início
@@ -357,14 +404,15 @@ test.describe('Fluxo de Rematrícula', () => {
   });
 
   test('deve realizar rematrícula com sucesso para aluno maior', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await openTodosOsProcessos(page);
+    await expectAlunoVisible(page, 'João Adulto');
 
     // Abrir dialog para João Adulto (maior de idade)
     const linhaJoao = page.locator('tr', { hasText: 'João Adulto' });
-    await linhaJoao.getByRole('button', { name: 'Rematricular' }).click();
+    await linhaJoao.getByRole('button', { name: 'Iniciar' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // Preencher dados do novo contrato
@@ -382,6 +430,9 @@ test.describe('Fluxo de Rematrícula', () => {
 
     // Verificar que plano está selecionado (usar first() para evitar múltiplos elementos)
     await expect(page.getByText('Plano Mensal E2E').first()).toBeVisible();
+
+    await page.getByRole('combobox').filter({ hasText: 'Selecione o modelo' }).click();
+    await page.getByRole('option', { name: seedData.contratoModeloNome }).click();
 
     // Confirmar rematrícula - botão é "Salvar"
     const botaoSalvar = page.getByRole('button', { name: /salvar/i });
@@ -409,52 +460,51 @@ test.describe('Fluxo de Rematrícula', () => {
   });
 
   test('deve usar filtros da tabela corretamente', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await openTodosOsProcessos(page);
+    await expectAlunoVisible(page, 'João Adulto');
 
     // Testar filtro de busca
     const inputBusca = page.getByPlaceholder(/buscar/i);
     await inputBusca.fill('Maria');
     
     // Deve mostrar apenas Maria Criança
-    await expect(page.getByText('Maria Criança')).toBeVisible();
-    await expect(page.getByText('João Adulto')).not.toBeVisible();
+    await expectAlunoVisible(page, 'Maria Criança');
+    await expectAlunoHidden(page, 'João Adulto');
 
     // Limpar busca
     await inputBusca.clear();
 
     // Ambos devem aparecer novamente
-    await expect(page.getByText('João Adulto')).toBeVisible();
-    await expect(page.getByText('Maria Criança')).toBeVisible();
+    await expectAlunoVisible(page, 'João Adulto');
+    await expectAlunoVisible(page, 'Maria Criança');
   });
 
   test('deve exibir quick filters corretamente', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
 
-    // Verificar tabs de filtro rápido - usar getByText para ToggleGroupItem
-    await expect(page.getByText('Todos')).toBeVisible();
-    await expect(page.getByText('Prontos para renovar')).toBeVisible();
-    await expect(page.getByText('Aguardando vencimento')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Campanhas' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Todos os processos' })).toBeVisible();
 
-    // Clicar em "Prontos para renovar"
-    await page.getByText('Prontos para renovar').click();
+    await openTodosOsProcessos(page);
 
     // Deve ainda mostrar os alunos (ambos estão prontos para renovar)
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await expectAlunoVisible(page, 'João Adulto');
   });
 
   test('deve fechar dialog ao cancelar', async ({ page }) => {
-    await authenticateUser(page, seedData.userId, userEmail, seedData.contaId);
+    await authenticateUser(page, userEmail, seedData.password);
     
     await page.goto('/rematriculas');
-    await expect(page.getByText('João Adulto')).toBeVisible();
+    await openTodosOsProcessos(page);
+    await expectAlunoVisible(page, 'João Adulto');
 
     // Abrir dialog
-    await page.getByRole('button', { name: 'Rematricular' }).first().click();
+    await page.getByRole('button', { name: 'Iniciar' }).first().click();
     await expect(page.getByRole('dialog')).toBeVisible();
 
     // Fechar dialog (clicar fora ou no X)

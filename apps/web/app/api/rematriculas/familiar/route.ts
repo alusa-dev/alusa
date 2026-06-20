@@ -1,131 +1,20 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import {
-  BillingMode,
-  FamilyBillingStatus,
-  FormaPagamento,
-  PeriodicidadePlano,
-} from '@prisma/client';
+import { ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
+import {
+  formatRematriculaFamiliarValidationMessage,
+  parseRematriculaFamiliarDate,
+  rematriculaFamiliarCommitInputSchema,
+} from '@/lib/api/rematricula-familiar-input';
+import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { prisma } from '@/prisma/client';
-import { validarElegibilidadeRematricula } from '@alusa/domain';
 import {
-  rematricularAluno,
-  createAsaasPaymentsProvider,
-  type RematricularAlunoError,
-} from '@alusa/finance';
-import { calcularPrecoMatricula } from '@/src/server/matriculas/matricula.service';
-import {
-  buildFinancialSnapshot,
-  evaluateRematriculaDecision,
-  getContaFinancialPolicy,
-  serializeFinancialSnapshot,
-  serializePolicySnapshot,
-} from '@/src/server/matriculas/rematricula-financial-policy.service';
-import {
-  formatIsoDate,
-  mapPeriodicidadeToCycle,
-  resolveChargeableFirstDueDate,
-  resolveEnrollmentFeeDueDate,
-} from '@/src/server/matriculas/recurring-billing';
-import {
-  isSupportedAsaasBillingType,
-  resolveWizardPaymentSelection,
-} from '@/src/server/matriculas/payment-selection';
-import {
-  enqueueFamilyBillingOutbox,
-  parseFamilyBillingPayload,
-  processFamilyBillingOutboxEvent,
-} from '@/src/server/family-billing/processor';
+  confirmRenewalProcess,
+  previewRenewalProcess,
+} from '@/src/server/matriculas/renewal-process.service';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
-
-const rematriculaItemSchema = z.object({
-  matriculaId: z.string().min(1),
-  turmaId: z.string().min(1).optional().nullable(),
-  planoId: z.string().min(1).optional().nullable(),
-  comboId: z.string().min(1).optional().nullable(),
-});
-
-const descontoSchema = z.object({
-  id: z.string().min(1),
-  cumulativo: z.boolean().optional().default(false),
-});
-
-const createRematriculaFamiliarInputSchema = z
-  .object({
-    contaId: z.string().min(1).optional(),
-    responsavelId: z.string().min(1),
-    /**
-     * Quando informado, força que todos os itens usem o mesmo produto financeiro
-     * (plano global em `TURMAS` ou combo global em `COMBO`). Para retro-
-     * compatibilidade aceita ausente: cada item pode trazer plano/combo próprios.
-     */
-    modoTurmas: z.enum(['TURMAS', 'COMBO']).optional(),
-    /** Plano global obrigatório quando `modoTurmas === 'TURMAS'`. */
-    planoId: z.string().min(1).optional().nullable(),
-    /** Combo global obrigatório quando `modoTurmas === 'COMBO'`. */
-    comboId: z.string().min(1).optional().nullable(),
-    itens: z.array(rematriculaItemSchema).min(1),
-    dataInicio: z.string().min(1),
-    dataFimContrato: z.string().min(1),
-    formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']),
-    formaPagamentoTaxa: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']).optional(),
-    vencimentoDia: z.number().int().min(1).max(28),
-    taxaMatricula: z.number().nonnegative().optional().default(0),
-    taxaIsenta: z.boolean().optional().default(false),
-    taxaJustificativa: z.string().trim().max(500).optional(),
-    descontos: z.array(descontoSchema).optional().default([]),
-    multaPercentual: z.number().nonnegative().optional(),
-    jurosMensal: z.number().nonnegative().optional(),
-    descontoAntecipado: z.number().nonnegative().optional(),
-    prazoDesconto: z.number().int().nonnegative().optional(),
-    overrideReason: z.string().trim().max(500).optional(),
-    notificationChannels: z
-      .array(z.enum(['EMAIL', 'SMS', 'WHATSAPP']))
-      .optional()
-      .default([]),
-    notificationChannelsConfigured: z.boolean().optional().default(false),
-    uiRequestId: z.string().trim().min(1).max(120).optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (!value.modoTurmas) return;
-    if (value.modoTurmas === 'TURMAS') {
-      if (!value.planoId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['planoId'],
-          message: 'Plano global é obrigatório quando modoTurmas é TURMAS.',
-        });
-      }
-      if (value.comboId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['comboId'],
-          message: 'Combo não pode ser informado quando modoTurmas é TURMAS.',
-        });
-      }
-    } else if (value.modoTurmas === 'COMBO') {
-      if (value.planoId) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['planoId'],
-          message: 'Plano não pode ser informado quando modoTurmas é COMBO.',
-        });
-      }
-      const hasGlobalCombo = Boolean(value.comboId);
-      const eachItemHasCombo = value.itens.every((item) => Boolean(item.comboId));
-      if (!hasGlobalCombo && !eachItemHasCombo) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['comboId'],
-          message:
-            'Informe um combo global ou selecione um combo para cada aluno quando modoTurmas é COMBO.',
-        });
-      }
-    }
-  });
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -135,191 +24,55 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 }
 
 function parseDate(value: string) {
-  const normalized = value.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
-    return new Date(`${normalized}T12:00:00.000Z`);
-  }
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) throw new Error('Data inválida.');
-  return date;
+  return parseRematriculaFamiliarDate(value);
 }
 
-async function loadRematriculaDecision(params: {
-  contaId: string;
+function sanitizeMessage(message: string) {
+  return message
+    .replace(/Asaas/gi, 'serviço financeiro')
+    .replace(/webhooks?/gi, 'confirmações automáticas')
+    .replace(/provedor/gi, 'serviço financeiro');
+}
+
+function mapDecision(item: {
+  decision: string;
   matriculaId: string;
-  currentUserRole?: string | null;
+  turmaId?: string | null;
+  planoId?: string | null;
+  comboId?: string | null;
 }) {
-  const [policy, matricula] = await Promise.all([
-    getContaFinancialPolicy(params.contaId),
-    prisma.matricula.findFirst({
-      where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
-      select: {
-        id: true,
-        status: true,
-        dataFimContrato: true,
-        integrationStatus: true,
-        statusFinanceiro: true,
-        cobrancas: {
-          where: {
-            status: {
-              in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
-            },
-          },
-          select: { status: true },
-        },
-      },
-    }),
-  ]);
-
-  if (!matricula) return null;
-
-  const diasRestantes = Math.ceil(
-    (matricula.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
-  );
-  const academicEligible = validarElegibilidadeRematricula({
-    status: matricula.status,
-    contratoExpirado: diasRestantes < 0,
-  }).success;
-
-  const financialSnapshot = buildFinancialSnapshot({
-    cobrancas: matricula.cobrancas,
-    statusFinanceiro: matricula.statusFinanceiro,
-    integrationStatus: matricula.integrationStatus,
-    debtScope: policy.debtScope,
-  });
-
-  const decision = evaluateRematriculaDecision({
-    academicEligible,
-    financialSnapshot,
-    policy,
-    currentUserRole: params.currentUserRole,
-  });
-
-  return { policy, financialSnapshot, decision };
-}
-
-async function resolveDescontos(contaId: string, descontoIds: string[]) {
-  if (descontoIds.length === 0) return [];
-  const records = await prisma.desconto.findMany({
-    where: {
-      contaId,
-      id: { in: descontoIds },
-      status: 'ATIVO',
-    },
-    select: {
-      id: true,
-      nome: true,
-      tipo: true,
-      valor: true,
-      escopo: true,
-    },
-  });
-
-  return records.map((record) => ({
-    id: record.id,
-    nome: record.nome,
-    tipo: record.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
-    valor: Number(record.valor),
-    escopo: record.escopo,
-  }));
-}
-
-async function resolveFamilyPricing(params: {
-  contaId: string;
-  itens: Array<{ matriculaId: string; planoId?: string | null; comboId?: string | null }>;
-  descontos: Array<{ id: string }>;
-}) {
-  const sourceMatriculas = await prisma.matricula.findMany({
-    where: {
-      aluno: { contaId: params.contaId },
-      id: { in: params.itens.map((item) => item.matriculaId) },
-    },
-    select: {
-      id: true,
-      planoId: true,
-      comboId: true,
-      plano: { select: { id: true, nome: true, valor: true, periodicidade: true } },
-      combo: { select: { id: true, nome: true, valor: true, periodicidade: true } },
-    },
-  });
-
-  if (sourceMatriculas.length !== params.itens.length) {
-    throw new Error('Uma ou mais matrículas selecionadas não foram encontradas.');
-  }
-
-  const sourceById = new Map(sourceMatriculas.map((item) => [item.id, item]));
-  const descontos = await resolveDescontos(
-    params.contaId,
-    params.descontos.map((desconto) => desconto.id),
-  );
-
-  let total = 0;
-  const periodicidades = new Set<PeriodicidadePlano>();
-
-  for (const item of params.itens) {
-    const source = sourceById.get(item.matriculaId);
-    if (!source) continue;
-
-    const hasExplicitPlan = Boolean(item.planoId);
-    const hasExplicitCombo = Boolean(item.comboId);
-    const plano = hasExplicitPlan
-      ? await prisma.plano.findFirst({
-          where: { id: item.planoId!, contaId: params.contaId },
-          select: { id: true, nome: true, valor: true, periodicidade: true },
-        })
-      : source.plano;
-    const combo = hasExplicitCombo
-      ? await prisma.combo.findFirst({
-          where: { id: item.comboId!, contaId: params.contaId },
-          select: { id: true, nome: true, valor: true, periodicidade: true },
-        })
-      : hasExplicitPlan
-        ? null
-        : source.combo;
-
-    const periodicidade = combo?.periodicidade ?? plano?.periodicidade;
-    const valorBase = Number(combo?.valor ?? plano?.valor ?? 0);
-    if (!periodicidade || valorBase <= 0) {
-      throw new Error(
-        'Não foi possível calcular a recorrência de uma das rematrículas familiares.',
-      );
+  if (item.decision === 'REMATRICULAR_AGORA') {
+    if (item.comboId) {
+      return {
+        decision: 'RENEW' as const,
+        sourceEnrollmentId: item.matriculaId,
+        target: { type: 'COMBO' as const, targetId: item.comboId, planId: item.planoId ?? item.comboId },
+      };
     }
-
-    periodicidades.add(periodicidade);
-    const calculo = calcularPrecoMatricula({
-      planoValor: valorBase,
-      taxaMatricula: 0,
-      descontos,
-    });
-    total += calculo.planoLiquido;
-  }
-
-  if (periodicidades.size !== 1) {
-    throw new Error('As rematrículas familiares precisam compartilhar a mesma periodicidade.');
+    return {
+      decision: 'RENEW' as const,
+      sourceEnrollmentId: item.matriculaId,
+      target: { type: 'CLASS' as const, targetId: item.turmaId ?? '', planId: item.planoId ?? '' },
+    };
   }
 
   return {
-    totalMensalidade: Number(total.toFixed(2)),
-    cycle: mapPeriodicidadeToCycle(Array.from(periodicidades)[0]!),
+    decision: item.decision === 'DECIDIR_DEPOIS' ? ('DECIDE_LATER' as const) : ('DO_NOT_CONTINUE' as const),
+    sourceEnrollmentId: item.matriculaId,
+    target: null,
   };
 }
 
 export async function POST(request: Request) {
   const user = await getSessionUser();
-  if (!user) {
-    return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
-  }
+  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   if (!allowedRoles.has(String(user.role).toUpperCase())) {
-    return jsonError(
-      403,
-      'PERMISSAO_NEGADA',
-      'Usuário não tem permissão para rematrícula familiar.',
-    );
+    return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematrícula familiar.');
   }
 
   try {
     const raw = await request.json().catch(() => null);
-    const body = createRematriculaFamiliarInputSchema.parse(raw);
+    const body = rematriculaFamiliarCommitInputSchema.parse(raw);
     const contaId = body.contaId?.trim() || user.contaId;
 
     if (contaId !== user.contaId) {
@@ -328,425 +81,139 @@ export async function POST(request: Request) {
 
     const responsavel = await prisma.responsavel.findFirst({
       where: { id: body.responsavelId, contaId },
-      select: { id: true, nome: true },
+      select: { id: true },
     });
-
     if (!responsavel) {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado.');
     }
 
-    if (body.uiRequestId) {
-      const existing = await prisma.rematriculaFamiliar.findFirst({
-        where: { contaId, uiRequestId: body.uiRequestId },
-        include: {
-          items: {
-            orderBy: { orderIndex: 'asc' },
-            include: {
-              matriculaOrigem: {
-                select: { id: true, aluno: { select: { id: true, nome: true } } },
-              },
-              novaMatricula: { select: { id: true } },
-            },
-          },
-        },
+    if (body.contratoModeloId) {
+      const modelo = await prisma.contratoModelo.findFirst({
+        where: { id: body.contratoModeloId, contaId, status: 'ATIVO' },
+        select: { id: true },
       });
-
-      if (existing) {
-        return NextResponse.json(
-          {
-            familyId: existing.id,
-            status: existing.status,
-            results: existing.items.map((item) => ({
-              matriculaId: item.matriculaOrigem.id,
-              alunoId: item.matriculaOrigem.aluno.id,
-              alunoNome: item.matriculaOrigem.aluno.nome,
-              status: item.novaMatriculaId ? 'success' : 'error',
-              novaMatriculaId: item.novaMatricula?.id ?? null,
-              errorMessage: item.erro ?? null,
-            })),
-          },
-          { status: 200, headers: { 'cache-control': 'no-store' } },
-        );
+      if (!modelo) {
+        return jsonError(422, 'CONTRATO_MODELO_INVALIDO', 'Modelo de contrato não encontrado.');
       }
     }
+
+    const gate = await guardFinancialAccountOr412(contaId);
+    if (!gate.ok) return gate.response;
 
     const dataInicio = parseDate(body.dataInicio);
     const dataFimContrato = parseDate(body.dataFimContrato);
-    const paymentSelection = resolveWizardPaymentSelection({
-      formaPagamento: body.formaPagamento,
-      formaPagamentoTaxa: body.formaPagamentoTaxa,
-    });
-    const formaPagamento = paymentSelection.formaPagamento ?? FormaPagamento.BOLETO;
-    const formaPagamentoTaxa = paymentSelection.formaPagamentoTaxa ?? formaPagamento;
-
-    // Quando `modoTurmas` é informado, normalizamos cada item para usar o produto
-    // global (plano OU combo) — garantindo que a precificação e o `rematricularAluno`
-    // recebam exatamente o mesmo produto financeiro para todo o lote familiar.
-    const normalizedItens = body.itens.map((item) => {
-      if (!body.modoTurmas) return item;
-      if (body.modoTurmas === 'TURMAS') {
-        return { ...item, planoId: body.planoId ?? null, comboId: null };
+    const targetPeriodId = body.targetPeriodId ?? String(dataInicio.getUTCFullYear());
+    const campaignId = body.campaignId ?? null;
+    if (campaignId) {
+      const campaign = await prisma.rematriculaCampanha.findFirst({
+        where: { id: campaignId, contaId, targetPeriodId },
+        select: { id: true },
+      });
+      if (!campaign) {
+        return jsonError(404, 'CAMPANHA_NAO_ENCONTRADA', 'Campanha não encontrada para este período.');
       }
-      return {
-        ...item,
-        planoId: null,
-        comboId: item.comboId ?? body.comboId ?? null,
-        turmaId: item.turmaId ?? null,
-      };
-    });
-
-    const plannedPricing = await resolveFamilyPricing({
+    }
+    const renewalInput = {
       contaId,
-      itens: normalizedItens,
-      descontos: body.descontos,
-    });
-    const plannedEnrollmentFeeValue =
-      !body.taxaIsenta && body.taxaMatricula > 0
-        ? Number((body.taxaMatricula * body.itens.length).toFixed(2))
-        : 0;
-    const billingType = paymentSelection.billingType;
-    const enrollmentFeeBillingType = paymentSelection.billingTypeTaxa;
-
-    if (plannedPricing.totalMensalidade > 0 && !isSupportedAsaasBillingType(billingType)) {
-      return jsonError(
-        422,
-        'FORMA_PAGAMENTO_INVALIDA',
-        'Forma de pagamento não suporta cobrança familiar.',
-      );
-    }
-
-    if (plannedEnrollmentFeeValue > 0 && !isSupportedAsaasBillingType(enrollmentFeeBillingType)) {
-      return jsonError(
-        422,
-        'FORMA_PAGAMENTO_TAXA_INVALIDA',
-        'Forma de pagamento da taxa de rematrícula não suporta cobrança familiar.',
-      );
-    }
-
-    if (plannedPricing.totalMensalidade > 0) {
-      const previewNextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
-      const previewNextDueDateIso = formatIsoDate(previewNextDueDate);
-      const dataFimContratoIso = formatIsoDate(dataFimContrato);
-      if (previewNextDueDateIso > dataFimContratoIso) {
-        return jsonError(
-          422,
-          'DATA_FIM_INVALIDA',
-          `A data de término do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de término ou o dia de vencimento.`,
-        );
-      }
-    }
-
-    const family = await prisma.rematriculaFamiliar.create({
-      data: {
-        contaId,
-        responsavelId: responsavel.id,
-        billingMode: BillingMode.SHARED_PLAN,
-        status: FamilyBillingStatus.PENDENTE,
-        totalAlunos: 0,
-        valorMensalidadeTotal: 0,
-        valorTaxaMatriculaTotal: 0,
-        formaPagamento,
-        ciclo: null,
-        diaVencimento: body.vencimentoDia,
-        dataInicio,
-        dataFimContrato,
-        actorId: user.id,
-        uiRequestId: body.uiRequestId,
+      actorId: user.id,
+      origin: campaignId ? ('CAMPAIGN' as const) : ('STANDALONE' as const),
+      campaignId,
+      targetPeriodId,
+      targetPeriodStartsAt: dataInicio,
+      holderType: 'RESPONSIBLE' as const,
+      holderId: body.responsavelId,
+      items: body.itens.map(mapDecision),
+      effectiveAt: dataInicio,
+      targetContractEndsAt: dataFimContrato,
+      contractModelId: body.contratoModeloId,
+      financialTerms: {
+        paymentMethod: body.formaPagamento,
+        enrollmentFeePaymentMethod: body.formaPagamentoTaxa ?? body.formaPagamento,
+        dueDay: body.vencimentoDia,
+        enrollmentFeeAmount: body.taxaMatricula,
+        enrollmentFeeExempt: body.taxaIsenta,
+        feeChargeMoment: 'CHARGE_ON_START' as const,
+        feeUnit: body.taxaMatricula > 0 ? ('PER_STUDENT' as const) : ('NO_FEE' as const),
+        feePurpose: 'ADMINISTRATIVE_FEE' as const,
       },
-    });
-
-    const results: Array<{
-      matriculaId: string;
-      alunoId: string;
-      alunoNome: string;
-      status: 'success' | 'error';
-      novaMatriculaId?: string;
-      errorMessage?: string;
-    }> = [];
-
-    const matriculas = await prisma.matricula.findMany({
-      where: {
-        id: { in: body.itens.map((item) => item.matriculaId) },
-        aluno: { contaId },
-      },
-      select: {
-        id: true,
-        aluno: { select: { id: true, nome: true } },
-      },
-    });
-
-    const matriculaById = new Map(matriculas.map((item) => [item.id, item]));
-
-    for (const [index, item] of normalizedItens.entries()) {
-      const source = matriculaById.get(item.matriculaId);
-      if (!source) continue;
-
-      const decisionContext = await loadRematriculaDecision({
-        contaId,
-        matriculaId: item.matriculaId,
-        currentUserRole: user.role,
-      });
-
-      if (!decisionContext) {
-        results.push({
-          matriculaId: item.matriculaId,
-          alunoId: source.aluno.id,
-          alunoNome: source.aluno.nome,
-          status: 'error',
-          errorMessage: 'Matrícula não encontrada.',
-        });
-        continue;
-      }
-
-      const overrideReason = body.overrideReason?.trim();
-      const policySnapshot = serializePolicySnapshot(decisionContext.policy);
-      const financialSnapshot = serializeFinancialSnapshot(decisionContext.financialSnapshot);
-
-      if (decisionContext.decision.actionStatus === 'BLOQUEADA') {
-        results.push({
-          matriculaId: item.matriculaId,
-          alunoId: source.aluno.id,
-          alunoNome: source.aluno.nome,
-          status: 'error',
-          errorMessage: decisionContext.decision.message,
-        });
-        continue;
-      }
-
-      if (
-        decisionContext.decision.actionStatus === 'REQUER_OVERRIDE' &&
-        (!decisionContext.decision.canCurrentUserOverride ||
-          (decisionContext.decision.requiresOverrideReason && !overrideReason))
-      ) {
-        results.push({
-          matriculaId: item.matriculaId,
-          alunoId: source.aluno.id,
-          alunoNome: source.aluno.nome,
-          status: 'error',
-          errorMessage: decisionContext.decision.message,
-        });
-        continue;
-      }
-
-      const formaPagamentoMap: Record<string, 'BOLETO' | 'PIX' | 'CARTAO_CREDITO'> = {
-        BOLETO: 'BOLETO',
-        PIX: 'PIX',
-        CARTAO_CREDITO: 'CARTAO_CREDITO',
-      };
-
-      const result = await rematricularAluno(
-        {
-          contaId,
-          matriculaId: item.matriculaId,
-          createdById: user.id,
-          dataInicio,
-          dataFimContrato,
-          planoId: item.planoId ?? null,
-          turmaId: item.turmaId ?? null,
-          comboId: item.comboId ?? null,
-          responsavelFinanceiroId: responsavel.id,
-          formaPagamento: formaPagamentoMap[formaPagamento],
-          vencimentoDia: body.vencimentoDia,
-          billingMode: 'SHARED_PLAN',
-          valorMensalidadeOverride: undefined,
-          taxaMatricula: body.taxaMatricula,
-          taxaIsenta: body.taxaIsenta,
-          taxaJustificativa: body.taxaJustificativa,
-          formaPagamentoTaxa: formaPagamentoMap[formaPagamentoTaxa],
-          criarCobranca: false,
-          descontos: body.descontos.map((desconto) => ({
-            id: desconto.id,
-            cumulativo: desconto.cumulativo === true,
-          })),
-          multaPercentual: body.multaPercentual,
-          jurosMensal: body.jurosMensal,
-          descontoAntecipado: body.descontoAntecipado,
-          prazoDesconto: body.prazoDesconto,
-          overrideReason: overrideReason || undefined,
-          policyContext: {
-            actionStatus: decisionContext.decision.actionStatus,
-            blockReason: decisionContext.decision.blockReason,
-            policySnapshot,
-            financialSnapshot,
-            overrideUsed: decisionContext.decision.actionStatus === 'REQUER_OVERRIDE',
-            overrideApprovedById:
-              decisionContext.decision.actionStatus === 'REQUER_OVERRIDE' ? user.id : undefined,
-          },
-        },
-        {
-          prisma,
-          paymentsProvider: createAsaasPaymentsProvider(),
-        },
-      );
-
-      if (!result.success) {
-        const mapped = mapRematriculaError(result.error);
-        await prisma.rematriculaFamiliarItem.create({
-          data: {
-            rematriculaFamiliarId: family.id,
-            matriculaOrigemId: item.matriculaId,
-            orderIndex: index,
-            status: 'ERRO',
-            erro: mapped,
-          },
-        });
-        results.push({
-          matriculaId: item.matriculaId,
-          alunoId: source.aluno.id,
-          alunoNome: source.aluno.nome,
-          status: 'error',
-          errorMessage: mapped,
-        });
-        continue;
-      }
-
-      await prisma.rematriculaFamiliarItem.create({
-        data: {
-          rematriculaFamiliarId: family.id,
-          matriculaOrigemId: item.matriculaId,
-          novaMatriculaId: result.data.matriculaIdNova,
-          orderIndex: index,
-          status: 'SUCESSO',
-        },
-      });
-      results.push({
-        matriculaId: item.matriculaId,
-        alunoId: source.aluno.id,
-        alunoNome: source.aluno.nome,
-        status: 'success',
-        novaMatriculaId: result.data.matriculaIdNova,
-      });
-    }
-
-    const successCount = results.filter((result) => result.status === 'success').length;
-    if (successCount < 1) {
-      await prisma.rematriculaFamiliar.update({
-        where: { id: family.id },
-        data: {
-          status: FamilyBillingStatus.FALHO,
-          ultimoErro: 'O lote de rematrícula familiar terminou sem alunos válidos.',
-        },
-      });
-
-      return NextResponse.json(
-        {
-          familyId: family.id,
-          status: FamilyBillingStatus.FALHO,
-          results,
-        },
-        { status: 409, headers: { 'cache-control': 'no-store' } },
-      );
-    }
-
-    const successMatriculaIds = new Set(
-      results.filter((result) => result.status === 'success').map((result) => result.matriculaId),
-    );
-    const successfulItens = normalizedItens.filter((item) =>
-      successMatriculaIds.has(item.matriculaId),
-    );
-    const pricing = await resolveFamilyPricing({
-      contaId,
-      itens: successfulItens,
-      descontos: body.descontos,
-    });
-    const enrollmentFeeValue =
-      !body.taxaIsenta && body.taxaMatricula > 0
-        ? Number((body.taxaMatricula * successCount).toFixed(2))
-        : 0;
-
-    let financialStatus: FamilyBillingStatus = results.some((result) => result.status === 'error')
-      ? FamilyBillingStatus.PARCIAL
-      : FamilyBillingStatus.PROCESSANDO;
-
-    const billingAdjustments = {
-      discount:
-        body.descontoAntecipado && body.descontoAntecipado > 0
-          ? {
-              value: body.descontoAntecipado,
-              type: 'PERCENTAGE' as const,
-              dueDateLimitDays: body.prazoDesconto ?? 0,
-            }
-          : null,
-      interest: body.jurosMensal && body.jurosMensal > 0 ? { value: body.jurosMensal } : null,
-      fine:
-        body.multaPercentual && body.multaPercentual > 0
-          ? { value: body.multaPercentual, type: 'PERCENTAGE' as const }
-          : null,
     };
-
-    await prisma.rematriculaFamiliar.update({
-      where: { id: family.id },
-      data: {
-        status: financialStatus,
-        totalAlunos: successCount,
-        valorMensalidadeTotal: pricing.totalMensalidade,
-        valorTaxaMatriculaTotal: enrollmentFeeValue,
-        ciclo: pricing.cycle,
-      },
-    });
-
-    const event = await enqueueFamilyBillingOutbox({
-      contaId,
-      aggregateType: 'REMATRICULA_FAMILIAR',
-      aggregateId: family.id,
-      rematriculaFamiliarId: family.id,
-      payload: parseFamilyBillingPayload({
-        aggregateType: 'REMATRICULA_FAMILIAR',
-        aggregateId: family.id,
-        contaId,
-        responsavelId: responsavel.id,
-        responsavelNome: responsavel.nome,
-        totalAlunos: successCount,
-        monthlyValue: pricing.totalMensalidade,
-        enrollmentFeeValue,
-        billingType,
-        enrollmentFeeBillingType,
-        cycle: pricing.cycle,
-        nextDueDate: formatIsoDate(resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia)),
-        endDate: formatIsoDate(dataFimContrato),
-        enrollmentFeeDueDate: formatIsoDate(resolveEnrollmentFeeDueDate(dataInicio)),
-        description: `Rematrícula familiar · ${responsavel.nome} · ${successCount} alunos`,
-        actorId: user.id,
-        uiRequestId: body.uiRequestId ?? null,
-        notificationChannels: body.notificationChannels,
-        notificationChannelsConfigured: body.notificationChannelsConfigured,
-        discount: billingAdjustments.discount,
-        interest: billingAdjustments.interest,
-        fine: billingAdjustments.fine,
-      }),
-    });
-
-    try {
-      await processFamilyBillingOutboxEvent(event.id);
-      const refreshed = await prisma.rematriculaFamiliar.findUnique({
-        where: { id: family.id },
-        select: { status: true },
+    const preview = await previewRenewalProcess(renewalInput, { prisma });
+    if (preview.blockers.length > 0) {
+      return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
+        blockers: preview.blockers,
+        warnings: preview.warnings,
       });
-      financialStatus = refreshed?.status ?? FamilyBillingStatus.PROCESSANDO;
-    } catch (error) {
-      console.error('[POST /api/rematriculas/familiar] Falha ao processar outbox inline', {
-        familyId: family.id,
-        eventId: event.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      financialStatus = FamilyBillingStatus.FALHO;
     }
+
+    if (body.previewHash && body.previewHash !== preview.previewHash) {
+      return jsonError(
+        409,
+        'TRANSICAO_DESATUALIZADA',
+        'O estado da composição mudou. Gere um novo preview antes de confirmar.',
+      );
+    }
+
+    const result = await confirmRenewalProcess(
+      {
+        ...renewalInput,
+        previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
+        idempotencyKey: body.uiRequestId,
+      },
+      { prisma },
+    );
+
+    const confirmedItems = await prisma.rematriculaItem.findMany({
+      where: { contaId, processoId: result.processId },
+      include: {
+        matriculaOrigem: { select: { alunoId: true, aluno: { select: { nome: true } } } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
 
     return NextResponse.json(
       {
-        familyId: family.id,
-        status: financialStatus,
-        results,
+        familyId: result.processId,
+        transitionId: result.processId,
+        status: result.status,
+        step: preview.renewCount > 0 ? 'FUTURE_CYCLE_PREPARED' : 'DECISIONS_SAVED',
+        academicStatus: preview.renewCount > 0 ? 'SCHEDULED' : 'NO_TARGET_ENROLLMENT',
+        sourceBillingStatus: 'CURRENT_UNCHANGED',
+        targetBillingStatus: preview.renewCount > 0 ? 'SCHEDULED' : 'NOT_APPLICABLE',
+        contractStatus: body.contratoModeloId ? 'WAITING_SIGNATURE' : 'NOT_SELECTED',
+        previewHash: preview.previewHash,
+        warnings: preview.warnings,
+        results: confirmedItems.map((item) => ({
+          matriculaId: item.matriculaOrigemId,
+          alunoId: item.matriculaOrigem.alunoId,
+          alunoNome: item.matriculaOrigem.aluno.nome,
+          decision:
+            item.decision === 'RENEW'
+              ? 'REMATRICULAR_AGORA'
+              : item.decision === 'DECIDE_LATER'
+                ? 'DECIDIR_DEPOIS'
+                : 'NAO_CONTINUARA',
+          status: item.decision === 'RENEW' ? 'pending' : 'success',
+          novaMatriculaId: item.matriculaFuturaId,
+        })),
       },
-      { status: 201, headers: { 'cache-control': 'no-store' } },
+      { status: 202, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (error instanceof ZodError) {
       return jsonError(
         400,
         'PAYLOAD_INVALIDO',
-        error.issues[0]?.message ?? 'Payload inválido.',
+        formatRematriculaFamiliarValidationMessage(error.issues),
         error.issues,
+      );
+    }
+
+    if (error instanceof Error && error.message === 'TRANSICAO_DESATUALIZADA') {
+      return jsonError(
+        409,
+        'TRANSICAO_DESATUALIZADA',
+        'O estado da composição mudou. Gere um novo preview antes de confirmar.',
       );
     }
 
@@ -754,29 +221,7 @@ export async function POST(request: Request) {
     return jsonError(
       500,
       'ERRO_REMATRICULA_FAMILIAR',
-      error instanceof Error ? error.message : 'Erro ao criar rematrícula familiar.',
+      sanitizeMessage(error instanceof Error ? error.message : 'Erro ao criar rematrícula familiar.'),
     );
   }
-}
-
-function mapRematriculaError(error: RematricularAlunoError) {
-  const messages: Record<string, string> = {
-    MATRICULA_NAO_ENCONTRADA: 'Matrícula não encontrada.',
-    MATRICULA_PERTENCE_OUTRA_CONTA: 'Matrícula não pertence a esta conta.',
-    STATUS_INVALIDO: 'Status da matrícula não permite rematrícula.',
-    TURMA_SEM_VAGAS: 'Turma não possui vagas disponíveis.',
-    COMBO_SEM_VAGAS: 'Combo atingiu limite de vagas.',
-    CONFLITO_HORARIO: 'Conflito de horário detectado.',
-    DATA_INICIO_INVALIDA: 'Data de início inválida.',
-    DATA_FIM_ANTES_INICIO: 'Data fim deve ser posterior à data início.',
-    RESPONSAVEL_OBRIGATORIO_MENOR: 'Aluno menor de idade requer responsável financeiro.',
-    PLANO_NAO_ENCONTRADO: 'Plano não encontrado.',
-    TURMA_NAO_ENCONTRADA: 'Turma não encontrada.',
-    COMBO_NAO_ENCONTRADO: 'Combo não encontrado.',
-    OPERACAO_EM_ANDAMENTO: 'Já existe uma rematrícula em andamento.',
-    FORMA_PAGAMENTO_INVALIDA: 'Forma de pagamento da rematrícula é inválida.',
-    FORMA_PAGAMENTO_TAXA_INVALIDA: 'Forma de pagamento da taxa de rematrícula é inválida.',
-    ERRO_PROVEDOR: 'Erro ao processar pagamento.',
-  };
-  return messages[error.code] ?? ('message' in error ? error.message : 'Erro desconhecido.');
 }

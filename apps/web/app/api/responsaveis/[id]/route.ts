@@ -4,6 +4,7 @@ import { ChargeStatus, type Prisma } from '@prisma/client';
 
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
+import { syncResponsavelAsaasCustomer } from '@alusa/finance';
 import {
   responsavelDetailDTOSchema,
   updateResponsavelInputDTOSchema,
@@ -228,6 +229,26 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       select: responsavelDetailSelect,
     });
 
+    const touchedAddress =
+      validation.data.endereco != null ||
+      ['enderecoCep', 'enderecoLogradouro', 'enderecoNumero', 'enderecoBairro', 'enderecoCidade', 'enderecoUf'].some(
+        (field) => field in data,
+      );
+    const touchedContact = ['nome', 'cpf', 'email', 'telefone'].some((field) => field in data);
+
+    let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
+    if ((touchedAddress || touchedContact) && responsavel.financeiro) {
+      const synced = await syncResponsavelAsaasCustomer({
+        contaId,
+        responsavelId: responsavel.id,
+        requireFiscalAddress: touchedAddress,
+        notificationSyncMode: 'deferred',
+      });
+      asaasSync = synced.ok
+        ? { status: 'OK', message: synced.warnings?.[0] }
+        : { status: 'FAILED', message: synced.message };
+    }
+
     const dto = await buildResponsavelDetailDTO(responsavel, contaId);
     if (!dto) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
@@ -249,7 +270,7 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
       },
     });
 
-    return NextResponse.json(dto);
+    return NextResponse.json({ ...dto, asaasSync });
   } catch (error) {
     console.error('[PATCH /api/responsaveis/[id]]', error);
     return NextResponse.json({ error: 'Erro ao atualizar responsável' }, { status: 500 });

@@ -188,11 +188,13 @@ describe('listTransfersResultDTOSchema', () => {
       {
         id: 'tr-1',
         externalReference: 'asaas_tr_1',
+        asaasTransferId: 'asaas_tr_1',
         amount: '100.00',
         feeAmount: null,
         netAmount: '100.00',
         status: 'DONE',
         operation: 'TED',
+        requestedDestinationType: 'BANK_ACCOUNT',
         recipientName: 'Elaine Costa',
         cpfCnpj: '***.197.862-**',
         bankName: 'Banco 260',

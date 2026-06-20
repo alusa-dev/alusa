@@ -8,20 +8,26 @@ import { createNotification } from '@alusa/lib';
 import { auditLogService } from '../foundation/audit-log.service';
 import type { WithdrawDestination } from '../use-cases/request-withdraw';
 import { mergePixRecipientMetadata, parseWithdrawDestination } from '../use-cases/transfers/recipient-utils';
+import { resolveTransferOperationFromAsaas } from '../use-cases/transfers/asaas-transfer-payload';
 import {
   isAllowedTransition,
   mapTransferStatusToPixTransferSessionStatus,
   resolveTransferStatus,
 } from '../use-cases/transfers/transfer-status';
+import { resolveOfficialFeeValue, resolveOfficialNetValue } from '../use-cases/transfers/transfer-metadata';
 
 export type TransferWebhookPayload = {
   event: string;
   transfer: {
     id: string;
     status?: string | null;
+    value?: number | null;
+    netValue?: number | null;
+    transferFee?: number | null;
     externalReference?: string | null;
     effectiveDate?: string | null;
     confirmedDate?: string | null;
+    endToEndIdentifier?: string | null;
     failReason?: string | null;
     description?: string | null;
     authorized?: boolean | null;
@@ -371,6 +377,7 @@ export async function handleTransferWebhook(
       endToEndIdentifier?: string | null;
       feeValue?: number | null;
       netValue?: number | null;
+      resolvedOperation?: string | null;
     } = {};
 
     if (!transferRequest.asaasTransferId) {
@@ -397,19 +404,32 @@ export async function handleTransferWebhook(
     const effectiveDateValue = officialTransfer?.effectiveDate ?? payload.transfer.effectiveDate;
     updates.effectiveDate = effectiveDateValue?.trim() || null;
 
-    const endToEndValue = officialTransfer?.endToEndIdentifier ?? null;
+    const endToEndValue = officialTransfer?.endToEndIdentifier ?? payload.transfer.endToEndIdentifier ?? null;
     if (endToEndValue !== undefined) {
       updates.endToEndIdentifier = endToEndValue;
     }
 
-    const transferFee = officialTransfer?.transferFee;
-    if (transferFee !== undefined) {
-      updates.feeValue = transferFee;
+    if (officialTransfer) {
+      updates.feeValue = resolveOfficialFeeValue(officialTransfer, null, officialTransfer.value);
+    } else if (typeof payload.transfer.netValue === 'number' && typeof payload.transfer.value === 'number') {
+      const feeFromNetValue = Math.max(Number((payload.transfer.value - payload.transfer.netValue).toFixed(2)), 0);
+      updates.feeValue = feeFromNetValue > 0 ? feeFromNetValue : (payload.transfer.transferFee ?? null);
+    } else if (payload.transfer.transferFee !== undefined) {
+      updates.feeValue = payload.transfer.transferFee;
     }
 
-    const net = officialTransfer?.netValue;
-    if (net !== undefined) {
-      updates.netValue = net;
+    if (officialTransfer) {
+      updates.netValue = resolveOfficialNetValue(officialTransfer, null, officialTransfer.value);
+    } else {
+      const net = payload.transfer.netValue;
+      if (net !== undefined) {
+        updates.netValue = net;
+      }
+    }
+
+    const operationType = officialTransfer?.operationType ?? payload.transfer.operationType;
+    if (operationType) {
+      updates.resolvedOperation = resolveTransferOperationFromAsaas(operationType);
     }
 
     if (pixDestination && nextPixDestination?.type === 'PIX' && didPixDestinationChange(pixDestination, nextPixDestination)) {

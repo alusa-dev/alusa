@@ -15,6 +15,10 @@ import {
   type EnsureAsaasCustomerPayer,
 } from './asaas-finance-bridge';
 import { AsaasCustomerEnsureError } from '../errors/asaas-customer-ensure-error';
+import {
+  evaluatePayerAddressFiscalReadiness,
+  payerAddressFromRecord,
+} from '../responsaveis/payer-address';
 import { executeAlunoArchivePolicy, type AlunoArchiveResult } from './policies';
 
 const prisma: PrismaClient = shared as unknown as PrismaClient;
@@ -270,6 +274,26 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     );
   }
 
+  if (
+    responsavelObrigatorio &&
+    !normalizedData.responsavelExistenteId &&
+    normalizedData.responsavel
+  ) {
+    const financeiro = normalizedData.responsavel.financeiro ?? true;
+    if (financeiro) {
+      const addressReadiness = evaluatePayerAddressFiscalReadiness(
+        normalizedData.responsavel.endereco ?? null,
+      );
+      if (!addressReadiness.ready) {
+        throw new AsaasCustomerEnsureError(
+          'PAYER_ADDRESS_INCOMPLETE',
+          addressReadiness.issues[0]?.message ??
+            'Endereço do responsável financeiro incompleto para emissão de NFS-e.',
+        );
+      }
+    }
+  }
+
   const creation = await prisma.$transaction(async (tx) => {
     // 1. Verificar se a conta existe
     const conta = await tx.conta.findUnique({ where: { id: normalizedData.contaId } });
@@ -306,11 +330,34 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
           id: normalizedData.responsavelExistenteId,
           contaId: normalizedData.contaId,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          financeiro: true,
+          enderecoCep: true,
+          enderecoLogradouro: true,
+          enderecoNumero: true,
+          enderecoComplemento: true,
+          enderecoBairro: true,
+          enderecoCidade: true,
+          enderecoUf: true,
+        },
       });
 
       if (!existingById) {
         throw new Error('Responsável selecionado não encontrado nesta conta');
+      }
+
+      if (existingById.financeiro !== false) {
+        const addressReadiness = evaluatePayerAddressFiscalReadiness(
+          payerAddressFromRecord(existingById),
+        );
+        if (!addressReadiness.ready) {
+          throw new AsaasCustomerEnsureError(
+            'PAYER_ADDRESS_INCOMPLETE',
+            addressReadiness.issues[0]?.message ??
+              'Endereço do responsável financeiro incompleto para emissão de NFS-e.',
+          );
+        }
       }
 
       responsavelId = existingById.id;

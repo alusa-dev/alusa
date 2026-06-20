@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
+import { syncResponsavelAsaasCustomer } from '@alusa/finance';
 import {
   createResponsavelInputDTOSchema,
   createResponsavelResultDTOSchema,
@@ -153,7 +154,20 @@ export async function POST(req: NextRequest) {
       }),
     );
 
-    return NextResponse.json(dto, { status: 201 });
+    let asaasSync: { status: 'OK' | 'FAILED' | 'SKIPPED'; message?: string } = { status: 'SKIPPED' };
+    if (data.financeiro ?? true) {
+      const synced = await syncResponsavelAsaasCustomer({
+        contaId,
+        responsavelId: responsavel.id,
+        requireFiscalAddress: true,
+        notificationSyncMode: 'deferred',
+      });
+      asaasSync = synced.ok
+        ? { status: 'OK' }
+        : { status: 'FAILED', message: synced.message };
+    }
+
+    return NextResponse.json({ ...dto, asaasSync }, { status: 201 });
   } catch (error) {
     console.error('[API /api/responsaveis POST]', error);
     return NextResponse.json({ error: 'Erro ao criar responsável' }, { status: 500 });

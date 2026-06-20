@@ -8,6 +8,7 @@ type StandaloneSubscriptionProjection = {
   description: string | null;
   billingType: string;
   customerId: string;
+  familyGroupId: string | null;
 };
 
 type StandaloneSubscriptionClient = {
@@ -84,6 +85,7 @@ export async function findStandaloneSubscription(
         description: true,
         billingType: true,
         customerId: true,
+        familyGroupId: true,
       },
     });
   }
@@ -103,7 +105,8 @@ export async function findStandaloneSubscription(
       status,
       description,
       "billingType",
-      "customerId"
+      "customerId",
+      "familyGroupId"
     FROM "StandaloneSubscription"
     WHERE "contaId" = ${params.contaId}
       AND (${rawConditions})
@@ -146,6 +149,7 @@ export async function createStandaloneSubscriptionRecord(
         description: true,
         billingType: true,
         customerId: true,
+        familyGroupId: true,
       },
     });
   }
@@ -167,6 +171,7 @@ export async function createStandaloneSubscriptionRecord(
       "nextDueDate",
       "endDate",
       description,
+      "familyGroupId",
       "createdAt",
       "updatedAt"
     ) VALUES (
@@ -184,6 +189,7 @@ export async function createStandaloneSubscriptionRecord(
       ${params.nextDueDate},
       ${params.endDate},
       ${params.description ?? null},
+      NULL,
       ${now},
       ${now}
     )
@@ -194,7 +200,8 @@ export async function createStandaloneSubscriptionRecord(
       status,
       description,
       "billingType",
-      "customerId"
+      "customerId",
+      "familyGroupId"
   `);
 
   if (!rows[0]) {

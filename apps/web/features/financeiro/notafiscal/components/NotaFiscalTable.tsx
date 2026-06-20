@@ -40,11 +40,10 @@ const formatCurrency = (value: number) =>
 
 const formatDate = (value: string | null) => {
   if (!value) return '—';
-  try {
-    return new Intl.DateTimeFormat('pt-BR').format(new Date(value));
-  } catch {
-    return '—';
-  }
+  const [dateOnly] = value.split('T');
+  const [year, month, day] = dateOnly?.split('-') ?? [];
+  if (!year || !month || !day) return '—';
+  return `${day}/${month}/${year}`;
 };
 
 function NotaFiscalRowActions({

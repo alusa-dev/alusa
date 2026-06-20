@@ -173,6 +173,8 @@ export type ListRematriculasResultDTO = z.infer<typeof listRematriculasResultDTO
 
 export const createRematriculaInputDTOSchema = z.object({
   contaId: z.string().trim().optional(),
+  campaignId: z.string().trim().nullable().optional(),
+  targetPeriodId: z.string().trim().min(1).optional(),
   matriculaId: z.string().trim().min(1),
   dataInicio: z.union([z.string(), z.date()]).optional(),
   dataFimContrato: z.union([z.string(), z.date()]),

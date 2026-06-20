@@ -112,7 +112,7 @@ export const alunoSchema = alunoBaseSchema.superRefine((data, ctx) => {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['responsavel'], message: 'Responsável obrigatório para menor de idade' });
   }
   if (age < 18 && data.responsavelModo !== 'existente' && data.responsavel) {
-    const requiredFields = ['nome', 'cpf', 'email', 'telefone', 'enderecoCep'] as const;
+    const requiredFields = ['nome', 'cpf', 'email', 'telefone', 'enderecoCep', 'enderecoNumero', 'enderecoLogradouro', 'enderecoBairro', 'enderecoCidade', 'enderecoUf'] as const;
     for (const field of requiredFields) {
       if (!data.responsavel[field]) {
         ctx.addIssue({
@@ -121,7 +121,9 @@ export const alunoSchema = alunoBaseSchema.superRefine((data, ctx) => {
           message:
             field === 'enderecoCep'
               ? 'CEP do responsável obrigatório'
-              : `${field.charAt(0).toUpperCase() + field.slice(1)} do responsável obrigatório`,
+              : field === 'enderecoNumero'
+                ? 'Número do endereço do responsável obrigatório'
+                : `${field.replace('endereco', '').replace(/^./, (c) => c.toUpperCase()) || field} do responsável obrigatório`,
         });
       }
     }

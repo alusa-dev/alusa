@@ -87,7 +87,7 @@ describe('POST /api/users/first-register', () => {
     expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
   });
 
-  it('bloqueia cadastro quando o e-mail já existe no Asaas', async () => {
+  it('bloqueia cadastro quando o e-mail já existe no cadastro financeiro', async () => {
     checkFirstUserRegistrationAvailabilityMock.mockResolvedValueOnce({
       available: false,
       reason: 'ASAAS_EMAIL_IN_USE',
@@ -116,6 +116,10 @@ describe('POST /api/users/first-register', () => {
 
     expect(response.status).toBe(409);
     expect(body.code).toBe('ASAAS_EMAIL_IN_USE');
+    expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
+      email: 'finance@example.com',
+      financeIntegrationMode: 'WHITELABEL_BAAS',
+    });
     expect(createFirstUserMock).not.toHaveBeenCalled();
     expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
   });
@@ -179,6 +183,10 @@ describe('POST /api/users/first-register', () => {
     const response = await POST(req);
 
     expect(response.status).toBe(201);
+    expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
+      email: 'piloto@example.com',
+      financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+    });
     expect(createFirstUserMock).toHaveBeenCalledWith(
       expect.objectContaining({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' }),
     );

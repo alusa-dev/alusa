@@ -27,6 +27,7 @@ import {
   recordUnknownInvoiceStatusIssue,
 } from '../fiscal/provider-invoice-snapshot';
 import { computeFiscalReadiness } from '../fiscal/fiscal-readiness';
+import { evaluateChargePayerFiscalReadiness, syncResponsavelAsaasCustomer } from '../fiscal/payer-fiscal-readiness';
 import {
   isInvoiceEffectiveDateValid,
   resolveInvoiceEffectiveDate,
@@ -561,6 +562,30 @@ export async function scheduleChargeInvoice(
     const chargeContext = await resolveChargeInvoiceContext(input.chargeId, input.contaId);
     if (!chargeContext) return err('CHARGE_NAO_ENCONTRADO');
     if (!chargeContext.charge.asaasPaymentId) return err('CHARGE_SEM_PAGAMENTO_ASAAS');
+
+    const payerReadiness = await evaluateChargePayerFiscalReadiness({
+      contaId: input.contaId,
+      chargeId: input.chargeId,
+    });
+    if (payerReadiness.responsavelId) {
+      const synced = await syncResponsavelAsaasCustomer({
+        contaId: input.contaId,
+        responsavelId: payerReadiness.responsavelId,
+        requireFiscalAddress: true,
+        notificationSyncMode: 'skip',
+      });
+      if (!synced.ok) {
+        return err({
+          kind: 'VALIDATION',
+          message: synced.message,
+        });
+      }
+    } else if (!payerReadiness.ready && payerReadiness.issues.length > 0) {
+      return err({
+        kind: 'VALIDATION',
+        message: payerReadiness.issues[0]?.message ?? 'Endereço do pagador incompleto para emissão de NFS-e.',
+      });
+    }
 
     const { serviceDescription, observations, deductions } = buildChargeInvoiceTexts({
       settings,

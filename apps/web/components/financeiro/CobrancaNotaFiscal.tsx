@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { InfoCallout, InfoCalloutItem, InfoCalloutLink } from '@/components/ui/info-callout';
+import { PayerAddressReadinessCallout } from '@/components/cadastro/responsaveis/PayerAddressReadinessCallout';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { useFinanceLiveRefresh } from '@/features/financeiro/hooks/useFinanceLiveRefresh';
@@ -60,6 +61,24 @@ type ChargeInvoiceState = {
   };
   preview?: ChargeInvoicePreview;
   syncPending?: boolean;
+  autoEmission?: {
+    enabled: boolean;
+    path: 'ALUSA' | 'ASAAS_SUBSCRIPTION' | 'MANUAL';
+    state:
+      | 'PENDING_PAYMENT'
+      | 'SCHEDULED'
+      | 'PROCESSING'
+      | 'EMITTED'
+      | 'FAILED'
+      | 'MANUAL_REQUIRED';
+    message: string;
+  };
+  payerReadiness?: {
+    ready: boolean;
+    issues: Array<{ code: string; message: string }>;
+    responsavelId?: string;
+    responsavelNome?: string;
+  };
 };
 
 type EmitFormState = {
@@ -80,6 +99,11 @@ const EMPTY_FORM: EmitFormState = {
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
+function isAsaasCustomerAddressError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  return /endere[cç]o.*cliente|cep.*cliente|postal|address/i.test(message);
 }
 
 function previewToForm(preview: ChargeInvoicePreview): EmitFormState {
@@ -118,6 +142,25 @@ const PAYMENT_AWAITING_REASONS = new Set([
   'PAYMENT_STATUS_UNKNOWN',
 ]);
 
+const PAYMENT_CONFIRMED_REASONS = new Set([
+  'READY',
+  'READY_AFTER_OVERDUE_PAYMENT',
+  'ALREADY_HAS_ACTIVE_INVOICE',
+  'INVOICE_CAN_RETRY',
+]);
+
+function isInvoicePaymentConfirmed(eligibility?: ChargeInvoiceState['eligibility']): boolean {
+  if (!eligibility) return false;
+  return PAYMENT_CONFIRMED_REASONS.has(eligibility.reason);
+}
+
+function resolveChargeInvoiceStatusLabel(status: string, paymentConfirmed?: boolean): string {
+  if (paymentConfirmed && status === 'SCHEDULED') {
+    return 'Emissão agendada';
+  }
+  return resolveFiscalInvoiceStatusLabel(status);
+}
+
 const fieldLabelClass = 'text-xs font-medium text-slate-600';
 const readOnlyFieldClass =
   'w-full px-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-700 cursor-not-allowed rounded-md';
@@ -137,6 +180,12 @@ function shouldPollForPaymentConfirmation(state: ChargeInvoiceState | null): boo
   if (!state || state.invoice) return false;
   if (!state.readiness.ready) return false;
   return PAYMENT_AWAITING_REASONS.has(state.eligibility.reason);
+}
+
+function shouldPollForAutoEmission(state: ChargeInvoiceState | null): boolean {
+  if (!state || state.invoice) return false;
+  if (!state.autoEmission?.enabled) return false;
+  return state.autoEmission.state === 'PROCESSING' || state.autoEmission.state === 'SCHEDULED';
 }
 
 function isInvoiceAwaitingSync(
@@ -189,11 +238,13 @@ function formatDisplayServiceDescription(
 function InvoiceStatusBadge({
   status,
   awaitingSync,
+  paymentConfirmed,
 }: {
   status: string;
   awaitingSync?: boolean;
+  paymentConfirmed?: boolean;
 }) {
-  const label = resolveFiscalInvoiceStatusLabel(status);
+  const label = resolveChargeInvoiceStatusLabel(status, paymentConfirmed);
   const variant =
     FISCAL_INVOICE_STATUS_BADGE_VARIANT[
       status as keyof typeof FISCAL_INVOICE_STATUS_BADGE_VARIANT
@@ -237,6 +288,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
   const eligibility = state?.eligibility;
   const minEffectiveDate = preview?.minEffectiveDate;
   const awaitingPaymentConfirmation = shouldPollForPaymentConfirmation(state);
+  const awaitingAutoEmission = shouldPollForAutoEmission(state);
   const invoiceCancelInProgress =
     state?.invoice?.status === 'PROCESSING_CANCELLATION' ||
     state?.invoice?.status === 'CANCELED';
@@ -244,7 +296,8 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
     Boolean(eligibility?.shouldAutoCancel) && !invoiceCancelInProgress;
   const awaitingSync =
     syncing || Boolean(state?.syncPending) || isInvoiceAwaitingSync(state?.invoice, minEffectiveDate);
-  const shouldActivePoll = awaitingPaymentConfirmation || awaitingInvoiceCancel || awaitingSync;
+  const shouldActivePoll =
+    awaitingPaymentConfirmation || awaitingAutoEmission || awaitingInvoiceCancel || awaitingSync;
 
   const formError = useMemo(() => {
     if (!preview) return null;
@@ -288,8 +341,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
           setForm(previewToForm(json.data.preview));
         }
         return json.data as ChargeInvoiceState;
-      } catch (e) {
-        console.error(e);
+      } catch {
         if (!options?.silent) {
           setLoadError('Não foi possível carregar a nota fiscal.');
           setState(null);
@@ -359,8 +411,8 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
           method: 'POST',
           headers: { Accept: 'application/json' },
         });
-      } catch (error) {
-        console.error('[CobrancaNotaFiscal] sync-asaas failed', error);
+      } catch {
+        // Sincronização oportunista: falhas transitórias são refletidas pelo próximo carregamento.
       }
       return load({ silent: true });
     })();
@@ -423,7 +475,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
 
       if (awaitingInvoiceCancel) {
         next = await requestAutoCancel();
-      } else if (awaitingPaymentConfirmation) {
+      } else if (awaitingPaymentConfirmation || awaitingAutoEmission) {
         next = await syncPaymentAndReload();
       } else if (awaitingSync) {
         next = await syncFromProvider();
@@ -487,6 +539,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
       }
 
       const stillAwaitingPayment = shouldPollForPaymentConfirmation(currentState);
+      const stillAwaitingAutoEmission = shouldPollForAutoEmission(currentState);
       const stillAwaitingCancel =
         Boolean(currentState?.eligibility?.shouldAutoCancel) &&
         currentState?.invoice?.status !== 'PROCESSING_CANCELLATION' &&
@@ -497,14 +550,16 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
           ? isInvoiceAwaitingSync(invoice, currentState?.preview?.minEffectiveDate ?? minEffectiveDate)
           : false);
 
-      if (!stillAwaitingPayment && !stillAwaitingCancel && !stillAwaitingSync) {
+      if (!stillAwaitingPayment && !stillAwaitingAutoEmission && !stillAwaitingCancel && !stillAwaitingSync) {
         setSyncing(false);
       }
     };
 
     void tick();
     const intervalMs =
-      awaitingPaymentConfirmation || awaitingInvoiceCancel ? PAYMENT_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+      awaitingPaymentConfirmation || awaitingAutoEmission || awaitingInvoiceCancel
+        ? PAYMENT_POLL_INTERVAL_MS
+        : POLL_INTERVAL_MS;
     const interval = window.setInterval(() => {
       void tick();
     }, intervalMs);
@@ -512,6 +567,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
     return () => window.clearInterval(interval);
   }, [
     awaitingInvoiceCancel,
+    awaitingAutoEmission,
     awaitingPaymentConfirmation,
     awaitingSync,
     minEffectiveDate,
@@ -657,6 +713,35 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
   );
 
   const invoice = state?.invoice;
+  const autoEmission = state?.autoEmission;
+  const payerReadiness = state?.payerReadiness;
+  const paymentConfirmed = isInvoicePaymentConfirmed(eligibility);
+  const payerAddressBlocked = Boolean(payerReadiness && !payerReadiness.ready);
+  const invoiceAddressError = Boolean(
+    invoice?.status === 'ERROR' && isAsaasCustomerAddressError(invoice.errorMessage),
+  );
+  const addressCalloutIssues = useMemo(() => {
+    if (!payerReadiness) return [];
+    if (payerReadiness.issues.length > 0) return payerReadiness.issues;
+    if (invoiceAddressError) {
+      return [
+        {
+          code: 'ASAAS_CUSTOMER_ADDRESS',
+          message: 'Informe o endereço completo e um CEP válido do responsável financeiro.',
+        },
+      ];
+    }
+    return [];
+  }, [payerReadiness, invoiceAddressError]);
+  const showAddressCallout =
+    !loading && !loadError && addressCalloutIssues.length > 0 && (payerAddressBlocked || invoiceAddressError);
+  const isManualEmissionFlow = !autoEmission?.enabled || autoEmission.path === 'MANUAL';
+  const isAutomaticWaiting =
+    autoEmission?.enabled &&
+    !invoice &&
+    (autoEmission.state === 'PENDING_PAYMENT' ||
+      autoEmission.state === 'SCHEDULED' ||
+      autoEmission.state === 'PROCESSING');
   const configPending = state && !state.readiness.ready;
   const cancellationUnsupported = state?.municipalOptions.supportsCancellation === false;
   const displayDescription = formatDisplayServiceDescription(
@@ -674,7 +759,11 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
           </p>
         </div>
         {invoice ? (
-          <InvoiceStatusBadge status={invoice.status} awaitingSync={awaitingSync} />
+          <InvoiceStatusBadge
+            status={invoice.status}
+            awaitingSync={awaitingSync}
+            paymentConfirmed={paymentConfirmed}
+          />
         ) : null}
       </div>
 
@@ -691,6 +780,14 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
             {loadError}
           </InfoCalloutItem>
         </InfoCallout>
+      ) : null}
+
+      {!loading && !loadError && showAddressCallout ? (
+        <PayerAddressReadinessCallout
+          issues={addressCalloutIssues}
+          context="charge-action"
+          responsavelId={payerReadiness?.responsavelId}
+        />
       ) : null}
 
       {!loading && !loadError && configPending ? (
@@ -716,14 +813,26 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
       {!loading && !loadError && !configPending && !invoice ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-6 py-8 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-100">
-            <ReceiptText className="h-6 w-6 text-slate-400" aria-hidden />
+            {isAutomaticWaiting ? (
+              <Loader2 className="h-6 w-6 animate-spin text-brand-accent" aria-hidden />
+            ) : (
+              <ReceiptText className="h-6 w-6 text-slate-400" aria-hidden />
+            )}
           </div>
-          <p className="text-sm font-medium text-slate-900">Nenhuma nota fiscal emitida</p>
+          <p className="text-sm font-medium text-slate-900">
+            {isAutomaticWaiting ? 'Emissão automática ativa' : 'Nenhuma nota fiscal emitida'}
+          </p>
           <p className="mt-1 max-w-sm text-xs text-slate-600">
-            {eligibility?.message ??
+            {autoEmission?.message ??
+              eligibility?.message ??
               'Emita a NFS-e desta cobrança quando o pagamento estiver confirmado e a configuração fiscal estiver completa.'}
           </p>
-          {eligibility?.canEmit ? (
+          {autoEmission?.enabled && autoEmission.path === 'ASAAS_SUBSCRIPTION' ? (
+            <Badge variant="info" size="sm" className="mt-4">
+              Emissão via assinatura
+            </Badge>
+          ) : null}
+          {eligibility?.canEmit && isManualEmissionFlow ? (
             <Button size="sm" className="mt-4" onClick={() => setEmitOpen(true)} disabled={!preview}>
               Emitir nota fiscal
             </Button>
@@ -784,7 +893,7 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
             </InfoCallout>
           ) : null}
 
-          {invoice.status === 'ERROR' && invoice.errorMessage ? (
+          {invoice.status === 'ERROR' && invoice.errorMessage && !invoiceAddressError ? (
             <InfoCallout variant="warning" size="sm">
               <InfoCalloutItem label="Erro na emissão" labelTone="warning">
                 {invoice.errorMessage}
@@ -803,7 +912,10 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
             </InfoCallout>
           ) : null}
 
-          {eligibility?.message && invoice.status !== 'ERROR' && !awaitingInvoiceCancel ? (
+          {eligibility?.message &&
+          invoice.status !== 'ERROR' &&
+          !awaitingInvoiceCancel &&
+          eligibility.reason !== 'ALREADY_HAS_ACTIVE_INVOICE' ? (
             <InfoCallout
               variant={eligibility.severity === 'danger' || eligibility.severity === 'warning' ? 'warning' : 'info'}
               size="sm"
@@ -822,8 +934,9 @@ export function CobrancaNotaFiscal({ cobrancaId, sectionClassName }: CobrancaNot
           minEffectiveDate &&
           invoice.effectiveDate > minEffectiveDate ? (
             <p className="text-xs text-slate-600">
-              Emissão agendada para {formatDateBr(invoice.effectiveDate)}. A nota será emitida na data
-              informada.
+              {paymentConfirmed
+                ? `Emissão automática prevista para ${formatDateBr(invoice.effectiveDate)}.`
+                : `Aguardando confirmação do pagamento. Emissão prevista para ${formatDateBr(invoice.effectiveDate)}.`}
             </p>
           ) : null}
 

@@ -1,6 +1,8 @@
 import { ExternalAsaasOnboardingStatus, FinanceIntegrationMode, Role, type Usuario } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { asaasListSubaccounts } from '@alusa/finance';
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
+import { asaasGetMyAccount, asaasListSubaccounts } from '@alusa/finance';
 import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/lib/cpf-cnpj';
 import {
   isAtLeastAgeYears,
@@ -54,6 +56,48 @@ export type FirstUserRegistrationAvailability =
   | { available: false; reason: 'ASAAS_EMAIL_IN_USE' }
   | { available: false; reason: 'ASAAS_UNAVAILABLE' };
 
+function normalizeEmail(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function parseEnvFileValue(filePath: string, key: string): string | null {
+  if (!existsSync(filePath)) return null;
+
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escapedKey}=(.*)$`, 'm');
+  const match = readFileSync(filePath, 'utf8').match(pattern);
+  if (!match) return null;
+
+  let value = match[1]?.trim() ?? '';
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+
+  return value.replace(/^\\(?=\$aact_)/, '').trim() || null;
+}
+
+function getMasterApiKeyForFirstRegister(): string | null {
+  const fromEnv = process.env.ASAAS_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  if (process.env.NODE_ENV !== 'development') return null;
+
+  const cwd = process.cwd();
+  const candidateFiles = [
+    resolve(cwd, '.env.local'),
+    resolve(cwd, '../../.env.local'),
+  ];
+
+  for (const filePath of candidateFiles) {
+    const value = parseEnvFileValue(filePath, 'ASAAS_API_KEY');
+    if (value) return value;
+  }
+
+  return null;
+}
+
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
 }
@@ -74,10 +118,12 @@ async function findUserByEmail(email: string) {
   });
 }
 
-export async function checkFirstUserRegistrationAvailability(
-  email: string,
-): Promise<FirstUserRegistrationAvailability> {
-  const normalizedEmail = email.trim();
+export async function checkFirstUserRegistrationAvailability(input: {
+  email: string;
+  financeIntegrationMode?: FinanceIntegrationMode;
+}): Promise<FirstUserRegistrationAvailability> {
+  const financeIntegrationMode = input.financeIntegrationMode ?? FinanceIntegrationMode.WHITELABEL_BAAS;
+  const normalizedEmail = input.email.trim();
 
   const existingEmail = await findUserByEmail(normalizedEmail);
   if (existingEmail) {
@@ -93,12 +139,21 @@ export async function checkFirstUserRegistrationAvailability(
     return { available: false, reason: 'LOCAL_ACTIVE' };
   }
 
-  const masterApiKey = process.env.ASAAS_API_KEY?.trim();
+  if (financeIntegrationMode === FinanceIntegrationMode.EXTERNAL_ASAAS_ACCOUNT) {
+    return { available: true };
+  }
+
+  const masterApiKey = getMasterApiKeyForFirstRegister();
   if (!masterApiKey) {
     return { available: false, reason: 'ASAAS_UNAVAILABLE' };
   }
 
   try {
+    const masterAccount = await asaasGetMyAccount({ apiKey: masterApiKey });
+    if (normalizeEmail(masterAccount.email) === normalizeEmail(normalizedEmail)) {
+      return { available: false, reason: 'ASAAS_EMAIL_IN_USE' };
+    }
+
     const response = await asaasListSubaccounts({
       apiKey: masterApiKey,
       email: normalizedEmail,

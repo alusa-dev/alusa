@@ -91,6 +91,11 @@ export function buildStepFieldMap(isMinor: boolean) {
           "responsavel.email",
           "responsavel.telefone",
           "responsavel.enderecoCep",
+          "responsavel.enderecoNumero",
+          "responsavel.enderecoLogradouro",
+          "responsavel.enderecoBairro",
+          "responsavel.enderecoCidade",
+          "responsavel.enderecoUf",
         ]
       : [],
     confirmar: [],

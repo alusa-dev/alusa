@@ -12,6 +12,8 @@ export const transferListItemDTOSchema = z.object({
   id: z.string(),
   /** Referência externa (para conciliação) */
   externalReference: z.string(),
+  /** ID oficial no Asaas quando a transferência foi aceita pelo provedor */
+  asaasTransferId: z.string().nullable(),
   /** Valor em string decimal, ex: "150.00" */
   amount: z.string(),
   /** Taxa oficial da transferência em string decimal */
@@ -22,6 +24,8 @@ export const transferListItemDTOSchema = z.object({
   status: transferStatusSchema,
   /** Operação exibida na tabela */
   operation: z.enum(['PIX', 'TED']),
+  /** Origem informada pelo operador antes da modalidade final resolvida pelo Asaas */
+  requestedDestinationType: z.enum(['PIX_KEY', 'BANK_ACCOUNT']).nullable(),
   /** Nome do destinatário */
   recipientName: z.string().nullable(),
   /** CPF/CNPJ mascarado */

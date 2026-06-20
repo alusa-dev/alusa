@@ -64,6 +64,7 @@ export {
   createCustomer as asaasCreateCustomer,
   getCustomer as asaasGetCustomer,
   listCustomers as asaasListCustomers,
+  getMyAccount as asaasGetMyAccount,
   getMyAccountCommercialInfo as asaasGetMyAccountCommercialInfo,
   getMyAccountStatus as asaasGetMyAccountStatus,
   listSubaccounts as asaasListSubaccounts,
@@ -133,6 +134,12 @@ export {
   isAsaasPaymentStatus,
   resolveChargeDisplayStatus,
 } from './mappers/charge-status';
+export {
+  hasAsaasSnapshotDrift,
+  isLocalPaymentSettled,
+  isStaleAsaasStatusForSettledLocal,
+  resolveMonotonicAsaasPaymentStatus,
+} from './mappers/asaas-snapshot-monotonicity';
 export type {
   AsaasPaymentStatus as AsaasDisplayPaymentStatus,
   BadgeStatusType,
@@ -555,6 +562,22 @@ export type {
   ReconcileAsaasCustomerSnapshotsResult,
 } from './services/asaas-customer-snapshot.service';
 export {
+  evaluateChargePayerFiscalReadiness,
+  evaluateResponsavelPayerFiscalReadiness,
+  isAsaasCustomerAddressError,
+  syncResponsavelAsaasCustomer,
+  syncResponsavelAsaasCustomerResult,
+} from './fiscal/payer-fiscal-readiness';
+export type {
+  PayerFiscalReadinessResult,
+  SyncResponsavelAsaasCustomerResult,
+} from './fiscal/payer-fiscal-readiness';
+export { reconcileResponsavelCustomerAddresses } from './use-cases/reconcile-responsavel-customer-addresses';
+export type {
+  ReconcileResponsavelCustomerAddressesInput,
+  ReconcileResponsavelCustomerAddressesResult,
+} from './use-cases/reconcile-responsavel-customer-addresses';
+export {
   rebuildFinanceBillingReadModels,
   refreshFinanceBillingRemoteSnapshots,
 } from './read-model/billing-read-model.service';
@@ -759,6 +782,17 @@ export type {
   RequestWithdrawError,
   WithdrawDestination,
 } from './use-cases/request-withdraw';
+
+export {
+  estimateTransferDebitAmount,
+  estimateTransferFee,
+  isValidPixPhoneKey,
+  normalizePixKeyForAsaas,
+  normalizeWithdrawDestinationForAsaas,
+  requiresOwnerBirthDate,
+  resolveTenantTransferContext,
+} from './use-cases/transfers/asaas-transfer-payload';
+export type { PixKeyType } from './use-cases/transfers/asaas-transfer-payload';
 
 export { listTransfers } from './use-cases/list-transfers';
 export { reconcileOpenTransfers } from './use-cases/transfers/reconcile-open-transfers';
@@ -1263,6 +1297,8 @@ export { getKycViewModel, getKycViewModelFresh } from './use-cases/kyc/get-kyc-v
 export { getAccountVerificationStatus } from './use-cases/kyc/get-account-verification-status';
 export type { GetAccountVerificationStatusResult } from './use-cases/kyc/get-account-verification-status';
 export type { SubaccountProvisioningHint } from './use-cases/kyc/subaccount-provisioning-hint';
+export { requireKycApproved, requireKycSnapshotApproved } from './foundation/kyc-guard';
+export type { RequireKycApprovedError, RequireKycSnapshotApprovedError } from './foundation/kyc-guard';
 export type {
   KycViewModel,
   KycGateStatus,
@@ -1658,6 +1694,17 @@ export type {
   RetryRematriculaError,
   RetryRematriculaResult,
 } from './use-cases/rematricularAluno';
+export {
+  commitFamilyReenrollmentTransition,
+  persistFamilyReenrollmentPreview,
+} from './use-cases/family-reenrollment-transition';
+export type {
+  CommitFamilyReenrollmentInput,
+  FamilyReenrollmentCommitResult,
+  FamilyReenrollmentStudentDecisionInput,
+  FamilyReenrollmentTransitionInput,
+  PersistFamilyReenrollmentPreviewInput,
+} from './use-cases/family-reenrollment-transition';
 
 // Troca de Pagador (PR4)
 export { changePayer, retryPayerChange } from './use-cases/changePayer';

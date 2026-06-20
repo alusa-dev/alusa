@@ -387,6 +387,159 @@ enum RematriculaBlockReason {
   OUTRO
 }
 
+enum RematriculaCampanhaStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  CLOSED
+  ARCHIVED
+}
+
+enum RematriculaProcessoOrigem {
+  CAMPAIGN
+  STANDALONE
+}
+
+enum RematriculaHolderType {
+  STUDENT
+  RESPONSIBLE
+}
+
+enum RematriculaProcessoStatus {
+  DRAFT
+  PREVIEWED
+  PARTIALLY_CONFIRMED
+  CONFIRMED
+  WAITING_FOR_START
+  REQUIRES_ATTENTION
+  EFFECTIVE
+  CANCELLED
+  COMPLETED
+}
+
+enum RematriculaItemDecision {
+  PENDING
+  RENEW
+  DECIDE_LATER
+  DO_NOT_CONTINUE
+  CANCELLED
+}
+
+enum RematriculaItemStatus {
+  PENDING
+  RENEWED
+  DECIDE_LATER
+  DO_NOT_CONTINUE
+  CANCELLED
+}
+
+enum RematriculaReservaStatus {
+  NOT_RESERVED
+  RESERVED
+  WAITLISTED
+  EXPIRED
+  CANCELLED
+  CONVERTED
+}
+
+enum RematriculaMatriculaFuturaStatus {
+  PREPARED
+  SCHEDULED
+  ACTIVE
+  CANCELLED
+  CLOSED
+}
+
+enum RematriculaContratoFuturoStatus {
+  DRAFT
+  WAITING_SIGNATURE
+  SIGNED_SCHEDULED
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum RematriculaFinanceiroFuturoStatus {
+  NOT_PREPARED
+  SCHEDULED
+  READY_TO_PROVISION
+  PROVISIONING
+  ACTIVE
+  FAILED
+  CANCELLED
+}
+
+enum RematriculaTaxaMomento {
+  CHARGE_ON_CONFIRMATION
+  CHARGE_ON_START
+  EXEMPT
+}
+
+enum RematriculaTaxaUnidade {
+  NO_FEE
+  PER_STUDENT
+  PER_FAMILY
+}
+
+enum RematriculaTaxaFinalidade {
+  ADMINISTRATIVE_FEE
+  SEAT_RESERVATION
+  ADVANCE_FIRST_TUITION
+}
+
+enum RematriculaOutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum RematriculaPendenciaTipo {
+  ACTIVATION_BLOCKED
+  FINANCIAL_PROVISION_FAILED
+  CONTRACT_SIGNATURE_PENDING
+  CAPACITY_UNAVAILABLE
+  INTEGRITY_VIOLATION
+  WEBHOOK_UNCORRELATED
+  MANUAL_REVIEW
+}
+
+enum RematriculaPendenciaStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+enum RematriculaPendenciaSeveridade {
+  INFO
+  WARNING
+  BLOCKER
+  CRITICAL
+}
+
+enum RematriculaExcecaoStatus {
+  GRANTED
+  REVOKED
+  EXPIRED
+}
+
+enum RematriculaComunicacaoCanal {
+  EMAIL
+  WHATSAPP
+  SMS
+  PORTAL
+}
+
+enum RematriculaComunicacaoStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  FAILED
+  CANCELLED
+}
+
 enum StatusTaxaMatricula {
   PENDENTE
   PAGO
@@ -513,6 +666,7 @@ enum FinanceReconciliationIssueType {
   INVOICE_UNKNOWN_STATUS
   INVOICE_RECOVERY_REQUIRED
   INVOICE_PROVIDER_LINK_MISSING
+  PAID_CHARGE_WITHOUT_INVOICE
   INVOICE_CANCEL_REVIEW
   TRANSFER_STATUS_DRIFT
   WEBHOOK_LAG
@@ -938,6 +1092,18 @@ model Conta {
   matriculaOperacoes                MatriculaOperacao[]
   matriculasFamiliares              MatriculaFamiliar[]
   rematriculasFamiliares            RematriculaFamiliar[]
+  rematriculaCampanhas              RematriculaCampanha[]
+  rematriculaParticipantes          RematriculaParticipante[]
+  rematriculaProcessos              RematriculaProcesso[]
+  rematriculaItens                  RematriculaItem[]
+  reservasVagaFutura                ReservaVagaFutura[]
+  contratosFuturos                  ContratoFuturo[]
+  acordosFinanceirosFuturos         AcordoFinanceiroFuturo[]
+  rematriculaAuditLogs              RematriculaAuditLog[]
+  rematriculaOutboxEvents           RematriculaOutbox[]
+  rematriculaPendencias             RematriculaPendencia[]
+  rematriculaExcecoes               RematriculaExcecao[]
+  rematriculaComunicacoes           RematriculaComunicacao[]
   familyBillingOutboxEvents         FamilyBillingOutbox[]
   calendarEvents                    CalendarEvent[]
   aulasExperimentais                AulaExperimental[]
@@ -1674,6 +1840,9 @@ model Matricula {
   rematriculasDerivadas          Matricula[]               @relation("RematriculaHistorico")
   rematriculaOperacoesOrigem     RematriculaOperacao[]     @relation("RematriculaOrigem")
   rematriculaOperacoesNova       RematriculaOperacao[]     @relation("RematriculaNova")
+  rematriculaParticipantesOrigem RematriculaParticipante[] @relation("RematriculaParticipanteOrigem")
+  rematriculaItensOrigem         RematriculaItem[]         @relation("RematriculaItemOrigem")
+  rematriculaItensFuturos        RematriculaItem[]         @relation("RematriculaItemFutura")
   payerChangeOperacoes           PayerChangeOperacao[]
   attendanceRecords              AttendanceRecord[]
   makeupClasses                  MakeupClass[]
@@ -1762,8 +1931,22 @@ model RematriculaFamiliar {
   id                           String              @id @default(cuid())
   contaId                      String
   responsavelId                String
+  sourceFamilyEnrollmentId     String?
+  sourceFinancialAgreementId   String?
   billingMode                  BillingMode         @default(SHARED_PLAN)
   status                       FamilyBillingStatus @default(PENDENTE)
+  step                         String?
+  effectiveAt                  DateTime?
+  previewSnapshot              Json?
+  previewHash                  String?
+  sourceVersion                String?
+  sourceBillingStatus          String?
+  targetBillingStatus          String?
+  contractStatus               String?
+  correlationId                String?
+  failureCode                  String?
+  failureMessage               String?
+  committedAt                  DateTime?
   totalAlunos                  Int                 @default(0)
   valorMensalidadeTotal        Decimal             @default(0) @db.Decimal(12, 2)
   valorTaxaMatriculaTotal      Decimal             @default(0) @db.Decimal(12, 2)
@@ -1786,23 +1969,37 @@ model RematriculaFamiliar {
   outboxEvents FamilyBillingOutbox[]
 
   @@unique([contaId, uiRequestId], name: "uq_rematricula_familiar_conta_request")
+  @@unique([contaId, correlationId], name: "uq_rematricula_familiar_conta_correlation")
   @@index([contaId], name: "idx_rematricula_familiar_conta")
   @@index([contaId, status, createdAt], name: "idx_rematricula_familiar_conta_status_created")
+  @@index([contaId, step, updatedAt], name: "idx_rematricula_familiar_conta_step_updated")
+  @@index([contaId, previewHash], name: "idx_rematricula_familiar_conta_preview_hash")
+  @@index([contaId, sourceFamilyEnrollmentId], name: "idx_rematricula_familiar_conta_source_family")
+  @@index([contaId, sourceFinancialAgreementId], name: "idx_rematricula_familiar_conta_source_agreement")
   @@index([contaId, responsavelId], name: "idx_rematricula_familiar_conta_responsavel")
   @@index([responsavelId], name: "idx_rematricula_familiar_responsavel")
   @@index([status], name: "idx_rematricula_familiar_status")
 }
 
 model RematriculaFamiliarItem {
-  id                    String   @id @default(cuid())
-  rematriculaFamiliarId String
-  matriculaOrigemId     String
-  novaMatriculaId       String?
-  orderIndex            Int      @default(0)
-  status                String   @default("PENDENTE")
-  erro                  String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                         String    @id @default(cuid())
+  rematriculaFamiliarId      String
+  matriculaOrigemId          String
+  novaMatriculaId            String?
+  decision                   String    @default("REMATRICULAR_AGORA")
+  targetFinancialAgreementId String?
+  targetAllocationId         String?
+  academicStatus             String?
+  contractStatus             String?
+  amount                     Decimal?  @db.Decimal(12, 2)
+  validFrom                  DateTime?
+  validUntil                 DateTime?
+  orderIndex                 Int       @default(0)
+  status                     String    @default("PENDENTE")
+  erro                       String?
+  decisionReason             String?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
   rematriculaFamiliar RematriculaFamiliar @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
   matriculaOrigem     Matricula           @relation("RematriculaFamiliarItemOrigem", fields: [matriculaOrigemId], references: [id], onDelete: Cascade)
@@ -1811,6 +2008,408 @@ model RematriculaFamiliarItem {
   @@unique([rematriculaFamiliarId, matriculaOrigemId], name: "uq_rematricula_familiar_item")
   @@index([matriculaOrigemId], name: "idx_rematricula_familiar_item_origem")
   @@index([novaMatriculaId], name: "idx_rematricula_familiar_item_nova")
+  @@index([targetFinancialAgreementId], name: "idx_rematricula_familiar_item_target_agreement")
+  @@index([targetAllocationId], name: "idx_rematricula_familiar_item_target_allocation")
+  @@index([decision], name: "idx_rematricula_familiar_item_decision")
+}
+
+model RematriculaCampanha {
+  id                 String                    @id @default(cuid())
+  contaId            String
+  targetPeriodId     String
+  nome               String
+  descricao          String?
+  campaignStartsAt   DateTime
+  campaignEndsAt     DateTime?
+  rules              Json?
+  audienceDefinition Json?
+  status             RematriculaCampanhaStatus @default(DRAFT)
+  version            Int                       @default(1)
+  createdById        String?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  conta         Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  participantes RematriculaParticipante[]
+  processos     RematriculaProcesso[]
+  auditLogs     RematriculaAuditLog[]
+  pendencias    RematriculaPendencia[]
+  excecoes      RematriculaExcecao[]
+  comunicacoes  RematriculaComunicacao[]
+
+  @@index([contaId, status, createdAt], name: "idx_rematricula_campanha_conta_status_created")
+  @@index([contaId, targetPeriodId, status], name: "idx_rematricula_campanha_conta_period_status")
+}
+
+model RematriculaParticipante {
+  id                    String    @id @default(cuid())
+  contaId               String
+  campanhaId            String
+  matriculaOrigemId     String
+  alunoId               String
+  responsavelId         String?
+  currentClassId        String?
+  currentContractId     String?
+  currentContractEndsAt DateTime?
+  eligibilitySnapshot   Json?
+  eligibilityReason     String?
+  status                String    @default("ELIGIBLE")
+  includedAt            DateTime  @default(now())
+  includedById          String?
+  excludedAt            DateTime?
+  exclusionReason       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  conta           Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  campanha        RematriculaCampanha      @relation(fields: [campanhaId], references: [id], onDelete: Cascade)
+  matriculaOrigem Matricula                @relation("RematriculaParticipanteOrigem", fields: [matriculaOrigemId], references: [id], onDelete: Restrict)
+  comunicacoes    RematriculaComunicacao[]
+
+  @@unique([campanhaId, matriculaOrigemId], name: "uq_rematricula_participante_campanha_origem")
+  @@index([contaId, campanhaId, status], name: "idx_rematricula_participante_conta_campanha_status")
+  @@index([contaId, matriculaOrigemId], name: "idx_rematricula_participante_conta_origem")
+}
+
+model RematriculaProcesso {
+  id                    String                    @id @default(cuid())
+  contaId               String
+  campanhaId            String?
+  origin                RematriculaProcessoOrigem @default(STANDALONE)
+  targetPeriodId        String
+  holderType            RematriculaHolderType
+  holderId              String
+  status                RematriculaProcessoStatus @default(DRAFT)
+  sourceVersion         String?
+  previewHash           String?
+  previewSnapshot       Json?
+  currentContractEndsAt DateTime?
+  effectiveAt           DateTime
+  firstDueDate          DateTime?
+  editableUntil         DateTime?
+  confirmedAt           DateTime?
+  idempotencyKey        String?
+  externalReference     String?
+  version               Int                       @default(1)
+  renewCount            Int                       @default(0)
+  pendingCount          Int                       @default(0)
+  nonRenewalCount       Int                       @default(0)
+  monthlyTotal          Decimal                   @default(0) @db.Decimal(12, 2)
+  enrollmentFeeTotal    Decimal                   @default(0) @db.Decimal(12, 2)
+  createdById           String?
+  updatedById           String?
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  conta        Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  campanha     RematriculaCampanha?     @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  itens        RematriculaItem[]
+  reservas     ReservaVagaFutura[]
+  contratos    ContratoFuturo[]
+  financeiros  AcordoFinanceiroFuturo[]
+  auditLogs    RematriculaAuditLog[]
+  outbox       RematriculaOutbox[]
+  pendencias   RematriculaPendencia[]
+  excecoes     RematriculaExcecao[]
+  comunicacoes RematriculaComunicacao[]
+
+  @@unique([contaId, idempotencyKey], name: "uq_rematricula_processo_conta_idempotency")
+  @@unique([contaId, externalReference], name: "uq_rematricula_processo_conta_external_ref")
+  @@index([contaId, status, createdAt], name: "idx_rematricula_processo_conta_status_created")
+  @@index([contaId, targetPeriodId, status], name: "idx_rematricula_processo_conta_period_status")
+  @@index([contaId, campanhaId], name: "idx_rematricula_processo_conta_campanha")
+  @@index([contaId, holderType, holderId], name: "idx_rematricula_processo_conta_holder")
+  @@index([contaId, effectiveAt, status], name: "idx_rematricula_processo_conta_effective_status")
+}
+
+model RematriculaItem {
+  id                     String                            @id @default(cuid())
+  contaId                String
+  processoId             String
+  matriculaOrigemId      String
+  matriculaFuturaId      String?
+  targetPeriodId         String
+  decision               RematriculaItemDecision           @default(PENDING)
+  status                 RematriculaItemStatus             @default(PENDING)
+  futureEnrollmentStatus RematriculaMatriculaFuturaStatus?
+  targetType             String?
+  targetClassId          String?
+  targetComboId          String?
+  targetPlanId           String?
+  effectiveAt            DateTime?
+  sourceSnapshot         Json?
+  targetSnapshot         Json?
+  decisionReason         String?
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+
+  conta           Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo        RematriculaProcesso    @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  matriculaOrigem Matricula              @relation("RematriculaItemOrigem", fields: [matriculaOrigemId], references: [id], onDelete: Restrict)
+  matriculaFutura Matricula?             @relation("RematriculaItemFutura", fields: [matriculaFuturaId], references: [id], onDelete: SetNull)
+  reservas        ReservaVagaFutura[]
+  contratos       ContratoFuturo[]
+  pendencias      RematriculaPendencia[]
+  excecoes        RematriculaExcecao[]
+
+  @@unique([processoId, matriculaOrigemId], name: "uq_rematricula_item_processo_origem")
+  @@unique([contaId, matriculaOrigemId, targetPeriodId], name: "uq_rematricula_item_conta_origem_period")
+  @@index([contaId, decision], name: "idx_rematricula_item_conta_decision")
+  @@index([contaId, matriculaOrigemId], name: "idx_rematricula_item_conta_origem")
+  @@index([matriculaFuturaId], name: "idx_rematricula_item_futura")
+}
+
+model ReservaVagaFutura {
+  id                String                    @id @default(cuid())
+  contaId           String
+  processoId        String
+  itemId            String?
+  alunoId           String
+  matriculaOrigemId String
+  matriculaFuturaId String?
+  targetClassId     String?
+  targetPeriodId    String
+  effectiveAt       DateTime
+  priority          Int                       @default(0)
+  origin            RematriculaProcessoOrigem @default(STANDALONE)
+  status            RematriculaReservaStatus  @default(RESERVED)
+  expiresAt         DateTime?
+  confirmedAt       DateTime?
+  convertedAt       DateTime?
+  cancelledAt       DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  conta    Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  item     RematriculaItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, targetClassId, targetPeriodId, status], name: "idx_reserva_futura_conta_turma_period_status")
+  @@index([contaId, processoId], name: "idx_reserva_futura_conta_processo")
+  @@index([contaId, matriculaOrigemId, targetPeriodId], name: "idx_reserva_futura_conta_origem_period")
+}
+
+model ContratoFuturo {
+  id                String                          @id @default(cuid())
+  contaId           String
+  processoId        String
+  itemId            String?
+  matriculaFuturaId String?
+  contractModelId   String?
+  status            RematriculaContratoFuturoStatus @default(DRAFT)
+  version           Int                             @default(1)
+  validFrom         DateTime?
+  validUntil        DateTime?
+  signedAt          DateTime?
+  snapshot          Json?
+  createdAt         DateTime                        @default(now())
+  updatedAt         DateTime                        @updatedAt
+
+  conta    Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  item     RematriculaItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, status, createdAt], name: "idx_contrato_futuro_conta_status_created")
+  @@index([contaId, processoId], name: "idx_contrato_futuro_conta_processo")
+}
+
+model AcordoFinanceiroFuturo {
+  id                  String                            @id @default(cuid())
+  contaId             String
+  processoId          String
+  matriculaFuturaId   String?
+  responsavelId       String?
+  status              RematriculaFinanceiroFuturoStatus @default(SCHEDULED)
+  monthlyTotal        Decimal                           @default(0) @db.Decimal(12, 2)
+  enrollmentFeeTotal  Decimal                           @default(0) @db.Decimal(12, 2)
+  firstDueDate        DateTime?
+  effectiveAt         DateTime
+  provisionAt         DateTime?
+  externalReference   String
+  feeChargeMoment     RematriculaTaxaMomento            @default(CHARGE_ON_START)
+  feeUnit             RematriculaTaxaUnidade            @default(NO_FEE)
+  feePurpose          RematriculaTaxaFinalidade         @default(ADMINISTRATIVE_FEE)
+  asaasSubscriptionId String?
+  asaasPaymentId      String?
+  failureCode         String?
+  failureMessage      String?
+  snapshot            Json?
+  createdAt           DateTime                          @default(now())
+  updatedAt           DateTime                          @updatedAt
+
+  conta    Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, externalReference], name: "uq_acordo_financeiro_futuro_conta_external")
+  @@index([contaId, status, provisionAt], name: "idx_acordo_financeiro_futuro_conta_status_provision")
+  @@index([contaId, processoId], name: "idx_acordo_financeiro_futuro_conta_processo")
+}
+
+model RematriculaAuditLog {
+  id          String   @id @default(cuid())
+  contaId     String
+  processoId  String?
+  campanhaId  String?
+  actorId     String?
+  action      String
+  entityType  String?
+  entityId    String?
+  reason      String?
+  beforeState Json?
+  afterState  Json?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  conta    Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  campanha RematriculaCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, processoId, createdAt], name: "idx_rematricula_audit_conta_processo_created")
+  @@index([contaId, action, createdAt], name: "idx_rematricula_audit_conta_action_created")
+}
+
+model RematriculaOutbox {
+  id          String                  @id @default(cuid())
+  contaId     String
+  processoId  String?
+  eventType   String
+  payload     Json
+  status      RematriculaOutboxStatus @default(PENDING)
+  attempts    Int                     @default(0)
+  availableAt DateTime                @default(now())
+  lockedAt    DateTime?
+  processedAt DateTime?
+  lastError   String?
+  dedupeKey   String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  conta    Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, dedupeKey], name: "uq_rematricula_outbox_conta_dedupe")
+  @@index([contaId, status, availableAt], name: "idx_rematricula_outbox_conta_status_available")
+  @@index([contaId, processoId], name: "idx_rematricula_outbox_conta_processo")
+}
+
+model RematriculaPendencia {
+  id           String                         @id @default(cuid())
+  contaId      String
+  processoId   String?
+  campanhaId   String?
+  itemId       String?
+  type         RematriculaPendenciaTipo
+  severity     RematriculaPendenciaSeveridade @default(BLOCKER)
+  status       RematriculaPendenciaStatus     @default(OPEN)
+  code         String
+  title        String
+  message      String
+  rule         String?
+  impact       String?
+  resolution   String?
+  metadata     Json?
+  createdById  String?
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime                       @default(now())
+  updatedAt    DateTime                       @updatedAt
+
+  conta    Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  campanha RematriculaCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  item     RematriculaItem?     @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, status, createdAt], name: "idx_rematricula_pendencia_conta_status_created")
+  @@index([contaId, processoId, status], name: "idx_rematricula_pendencia_conta_processo_status")
+  @@index([contaId, campanhaId, status], name: "idx_rematricula_pendencia_conta_campanha_status")
+  @@index([contaId, type, status], name: "idx_rematricula_pendencia_conta_type_status")
+}
+
+model RematriculaExcecao {
+  id            String                   @id @default(cuid())
+  contaId       String
+  processoId    String?
+  campanhaId    String?
+  itemId        String?
+  permission    String
+  rule          String
+  impact        String
+  justification String
+  status        RematriculaExcecaoStatus @default(GRANTED)
+  actorId       String
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  revokedById   String?
+  metadata      Json?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  conta    Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  campanha RematriculaCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  item     RematriculaItem?     @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, status, createdAt], name: "idx_rematricula_excecao_conta_status_created")
+  @@index([contaId, processoId, status], name: "idx_rematricula_excecao_conta_processo_status")
+  @@index([contaId, permission, status], name: "idx_rematricula_excecao_conta_permission_status")
+}
+
+model RematriculaComunicacao {
+  id             String                       @id @default(cuid())
+  contaId        String
+  processoId     String?
+  campanhaId     String?
+  participanteId String?
+  channel        RematriculaComunicacaoCanal
+  audience       String
+  status         RematriculaComunicacaoStatus @default(DRAFT)
+  subject        String?
+  message        String
+  payload        Json?
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  failureMessage String?
+  createdById    String?
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+
+  conta        Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo     RematriculaProcesso?     @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  campanha     RematriculaCampanha?     @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  participante RematriculaParticipante? @relation(fields: [participanteId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, status, scheduledAt], name: "idx_rematricula_comunicacao_conta_status_scheduled")
+  @@index([contaId, processoId, status], name: "idx_rematricula_comunicacao_conta_processo_status")
+  @@index([contaId, campanhaId, status], name: "idx_rematricula_comunicacao_conta_campanha_status")
+}
+
+model FamilyFinancialAllocation {
+  id                        String    @id @default(cuid())
+  contaId                   String
+  alunoId                   String
+  matriculaId               String?
+  sourceMatriculaId         String?
+  rematriculaFamiliarId     String?
+  rematriculaFamiliarItemId String?
+  standaloneSubscriptionId  String?
+  familyGroupId             String?
+  chargeKind                String    @default("MENSALIDADE")
+  status                    String    @default("PENDING")
+  amount                    Decimal   @db.Decimal(12, 2)
+  baseAmount                Decimal?  @db.Decimal(12, 2)
+  discountAmount            Decimal?  @db.Decimal(12, 2)
+  competenceStart           DateTime
+  competenceEnd             DateTime?
+  sourceAgreementId         String?
+  metadata                  Json?
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  @@unique([contaId, matriculaId, chargeKind, competenceStart, standaloneSubscriptionId], name: "uq_family_fin_alloc_identity")
+  @@index([contaId, alunoId, chargeKind, competenceStart, competenceEnd], name: "idx_family_fin_alloc_conta_aluno_period")
+  @@index([contaId, rematriculaFamiliarId], name: "idx_family_fin_alloc_conta_rematricula")
+  @@index([contaId, standaloneSubscriptionId], name: "idx_family_fin_alloc_conta_subscription")
+  @@index([contaId, familyGroupId], name: "idx_family_fin_alloc_conta_family_group")
 }
 
 model FamilyBillingOutbox {
@@ -4509,13 +5108,21 @@ model StandaloneSubscription {
   fiscalInvoiceSettingsSyncedAt  DateTime?
   fiscalInvoiceSettingsError     String?
 
-  cycle         String
-  billingType   String
-  value         Decimal   @db.Decimal(12, 2)
-  nextDueDate   DateTime
-  endDate       DateTime?
-  description   String?
-  familyGroupId String?
+  cycle                 String
+  billingType           String
+  value                 Decimal   @db.Decimal(12, 2)
+  nextDueDate           DateTime
+  endDate               DateTime?
+  description           String?
+  familyGroupId         String?
+  validFrom             DateTime?
+  validUntil            DateTime?
+  version               Int       @default(1)
+  closureScheduledAt    DateTime?
+  closureConfirmedAt    DateTime?
+  familyTransitionId    String?
+  remoteStatus          String?
+  remoteStatusUpdatedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4529,6 +5136,8 @@ model StandaloneSubscription {
   @@index([status])
   @@index([contaId, asaasInvoiceSettingsConfigured], name: "idx_standalone_subscription_conta_invoice_settings")
   @@index([contaId, status, nextDueDate], name: "idx_standalone_subscription_conta_status_due")
+  @@index([contaId, familyTransitionId], name: "idx_standalone_subscription_conta_transition")
+  @@index([contaId, validFrom, validUntil], name: "idx_standalone_subscription_conta_validity")
   @@index([asaasSubscriptionId])
   @@index([customerId])
   @@index([familyGroupId])
@@ -4826,6 +5435,7 @@ model TransferRequest {
   endToEndIdentifier    String? // E2E único no Bacen (PIX)
   feeValue              Decimal? @db.Decimal(12, 2) // Taxa cobrada pelo Asaas (transferFee)
   netValue              Decimal? @db.Decimal(12, 2) // Valor líquido (value - transferFee)
+  resolvedOperation     String? // PIX | TED — modalidade confirmada pelo Asaas
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

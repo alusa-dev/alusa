@@ -10,7 +10,10 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
       },
       webhookAsaas: {
-        findFirst: vi.fn(),
+        findMany: vi.fn(),
+      },
+      auditLog: {
+        findMany: vi.fn(),
       },
     },
   };
@@ -34,6 +37,9 @@ describe('getTransferDetail', () => {
       externalReference: 'transfer:tr_1',
       asaasTransferId: 'asaas_tr_1',
       value: { toString: () => '100.00' },
+      feeValue: null,
+      netValue: null,
+      endToEndIdentifier: null,
       destination: {
         type: 'PIX',
         pixAddressKey: 'jose@pix.com',
@@ -44,6 +50,11 @@ describe('getTransferDetail', () => {
       status: 'PENDING',
       statusUpdatedAt: new Date('2026-04-09T18:00:00.000Z'),
       createdAt: new Date('2026-04-09T17:30:00.000Z'),
+      resolvedOperation: null,
+      transactionReceiptUrl: null,
+      failReason: null,
+      authorized: null,
+      effectiveDate: null,
       pixTransferSession: {
         recipientName: 'Jose Silva',
         recipientDocumentMasked: '***.944.444-**',
@@ -52,21 +63,34 @@ describe('getTransferDetail', () => {
       },
     } as never);
 
-    vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValueOnce({
-      payload: {
-        transfer: {
-          netValue: 98,
-          transferFee: 2,
-          operationType: 'PIX',
-          bankAccount: {
-            ownerName: 'Jose Silva',
-            cpfCnpj: '12345678901',
-            bank: { name: 'Banco Virtual - BACEN', code: '999' },
-            pixAddressKey: 'jose@pix.com',
+    vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValueOnce([
+      {
+        evento: 'TRANSFER_DONE',
+        status: 'PROCESSADO',
+        recebidoEm: new Date('2026-04-10T11:00:00.000Z'),
+        processadoEm: new Date('2026-04-10T11:00:05.000Z'),
+        ultimoErro: null,
+        payload: {
+          transfer: {
+            netValue: 98,
+            transferFee: 2,
+            operationType: 'PIX',
+            bankAccount: {
+              ownerName: 'Jose Silva',
+              cpfCnpj: '12345678901',
+              bank: { name: 'Banco Virtual - BACEN', code: '999' },
+              pixAddressKey: 'jose@pix.com',
+            },
           },
         },
       },
-    } as never);
+    ] as never);
+
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValueOnce([
+      { action: 'finance.transfer.requested', createdAt: new Date('2026-04-09T17:30:00.000Z') },
+      { action: 'finance.transfer.created', createdAt: new Date('2026-04-09T17:31:00.000Z') },
+      { action: 'finance.transfer.reconciled_from_asaas', createdAt: new Date('2026-04-10T11:05:00.000Z') },
+    ] as never);
 
     vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'asaas_key' } as never);
     vi.mocked(getTransfer).mockResolvedValueOnce({
@@ -111,6 +135,9 @@ describe('getTransferDetail', () => {
       transactionReceiptUrl: 'https://receipt.test/asaas_tr_1',
       endToEndIdentifier: 'E2E123',
       authorized: true,
+      canCancel: false,
+      lastWebhookAt: '2026-04-10T11:00:00.000Z',
+      lastReconciledAt: '2026-04-10T11:05:00.000Z',
       recipient: {
         name: 'Jose Silva Oficial',
         cpfCnpj: '***.654.321-**',
@@ -118,6 +145,14 @@ describe('getTransferDetail', () => {
         pixKey: 'jo•••@pix.com',
       },
     });
+    expect(result.timeline.map((item) => item.key)).toEqual([
+      'requested',
+      'provider-created',
+      'webhook',
+      'reconciled',
+      'current-status',
+    ]);
+    expect(result.operationalAlerts).toEqual([]);
   });
 
   it('deve falhar quando a transferência não pertence à conta', async () => {

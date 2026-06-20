@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
-import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { getKycSummary } from '@alusa/finance';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
@@ -23,10 +23,8 @@ export async function GET() {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
-    const gate = await guardFinancialAccountOr412(user.contaId);
-    if (!gate.ok) return gate.response;
-
-    return json(200, { data: gate.summary });
+    const summary = await getKycSummary(user.contaId);
+    return json(200, { data: summary });
   } catch (error) {
     console.error('[Finance KYC Summary][GET]', error);
     return json(500, { error: 'ERRO_INTERNO' });

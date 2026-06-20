@@ -130,10 +130,16 @@ export async function resolvePaymentToLocalEntity(
             select: { id: true, cobrancaId: true },
           });
           if (charge) {
+            if (charge.cobrancaId) {
+              return {
+                type: 'cobranca',
+                cobrancaId: charge.cobrancaId,
+                chargeId: charge.id,
+              };
+            }
             return {
               type: 'charge',
               chargeId: charge.id,
-              cobrancaId: charge.cobrancaId ?? undefined,
             };
           }
           break;
@@ -173,10 +179,16 @@ export async function resolvePaymentToLocalEntity(
             select: { id: true, cobrancaId: true },
           });
           if (charge) {
+            if (charge.cobrancaId) {
+              return {
+                type: 'cobranca',
+                cobrancaId: charge.cobrancaId,
+                chargeId: charge.id,
+              };
+            }
             return {
               type: 'charge',
               chargeId: charge.id,
-              cobrancaId: charge.cobrancaId ?? undefined,
             };
           }
           break;
@@ -195,10 +207,16 @@ export async function resolvePaymentToLocalEntity(
       select: { id: true, cobrancaId: true },
     });
     if (chargeByRef) {
+      if (chargeByRef.cobrancaId) {
+        return {
+          type: 'cobranca',
+          cobrancaId: chargeByRef.cobrancaId,
+          chargeId: chargeByRef.id,
+        };
+      }
       return {
         type: 'charge',
         chargeId: chargeByRef.id,
-        cobrancaId: chargeByRef.cobrancaId ?? undefined,
       };
     }
   }
@@ -232,10 +250,16 @@ export async function resolvePaymentToLocalEntity(
   });
 
   if (chargeByPaymentId) {
+    if (chargeByPaymentId.cobrancaId) {
+      return {
+        type: 'cobranca',
+        cobrancaId: chargeByPaymentId.cobrancaId,
+        chargeId: chargeByPaymentId.id,
+      };
+    }
     return {
       type: 'charge',
       chargeId: chargeByPaymentId.id,
-      cobrancaId: chargeByPaymentId.cobrancaId ?? undefined,
     };
   }
 

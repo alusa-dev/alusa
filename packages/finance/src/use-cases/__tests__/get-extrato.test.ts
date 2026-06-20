@@ -259,7 +259,7 @@ describe('getExtrato', () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.transactions[0].chargeName).toBe('Mensalidade Fevereiro');
+      expect(result.data.transactions[0].chargeName).toBe('Emissão NFS-e');
       expect(result.data.transactions[0].customerName).toBe('Responsável Financeiro');
       expect(result.data.transactions[0].metadata?.invoiceRecordId).toBe('inv_local_1');
       expect(result.data.transactions[0].metadata?.chargeId).toBe('cob_1');

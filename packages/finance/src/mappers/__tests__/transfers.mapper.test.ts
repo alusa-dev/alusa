@@ -3,11 +3,13 @@ import {
   mapRequestWithdrawDTOToInput,
   mapRequestWithdrawOutputToDTO,
   mapTransferToListItemDTO,
+  mapTransferDetailOutputToDTO,
   mapListTransfersOutputToDTO,
   mapListTransfersQueryToInput,
 } from '../transfers.mapper';
 import type { RequestWithdrawDTO } from '../../dtos/transfers/request-withdraw.dto';
 import type { RequestWithdrawOutput } from '../../use-cases/request-withdraw';
+import type { GetTransferDetailOutput } from '../../use-cases/get-transfer-detail';
 import type { TransferListItem, ListTransfersOutput } from '../../use-cases/list-transfers';
 import type { ListTransfersQueryParsed } from '../../dtos/transfers/list-transfers-query.dto';
 
@@ -108,11 +110,13 @@ describe('mapTransferToListItemDTO', () => {
     const item: TransferListItem = {
       id: 'tr-1',
       externalReference: 'asaas_1',
+      asaasTransferId: 'asaas_tr_1',
       value: 100.5,
       feeValue: 0,
       netValue: 100.5,
       status: 'DONE',
       operation: 'TED',
+      requestedDestinationType: 'BANK_ACCOUNT',
       recipientName: 'Joao da Silva',
       cpfCnpjMasked: '***.456.789-**',
       bankName: 'Banco 341',
@@ -140,11 +144,13 @@ describe('mapTransferToListItemDTO', () => {
     const item: TransferListItem = {
       id: 'tr-2',
       externalReference: 'asaas_2',
+      asaasTransferId: 'asaas_tr_2',
       value: 200,
       feeValue: 0,
       netValue: 200,
       status: 'PENDING',
       operation: 'PIX',
+      requestedDestinationType: 'PIX_KEY',
       recipientName: 'Maria Souza',
       cpfCnpjMasked: null,
       bankName: 'Pix',
@@ -160,6 +166,67 @@ describe('mapTransferToListItemDTO', () => {
   });
 });
 
+describe('mapTransferDetailOutputToDTO', () => {
+  it('deve preservar timeline e alertas operacionais no DTO', () => {
+    const output: GetTransferDetailOutput = {
+      id: 'tr-1',
+      externalReference: 'transfer:tr-1',
+      asaasTransferId: 'asaas-tr-1',
+      amount: 100,
+      feeAmount: 2,
+      netAmount: 98,
+      status: 'PENDING',
+      operation: 'PIX',
+      requestedDestinationType: 'PIX_KEY',
+      description: null,
+      scheduleDate: null,
+      transferDate: null,
+      createdAt: '2026-04-09T17:30:00.000Z',
+      statusUpdatedAt: '2026-04-09T17:31:00.000Z',
+      transactionReceiptUrl: null,
+      endToEndIdentifier: null,
+      failReason: null,
+      authorized: true,
+      canCancel: true,
+      lastWebhookAt: null,
+      lastReconciledAt: '2026-04-09T17:40:00.000Z',
+      timeline: [
+        {
+          key: 'requested',
+          label: 'Solicitação criada',
+          at: '2026-04-09T17:30:00.000Z',
+          status: 'DONE',
+          detail: 'Pedido registrado.',
+        },
+      ],
+      operationalAlerts: [
+        {
+          severity: 'warning',
+          code: 'WEBHOOK_NAO_RECEBIDO',
+          message: 'Ainda não há evento do provedor.',
+        },
+      ],
+      recipient: {
+        name: 'Joao',
+        cpfCnpj: '***.123.456-**',
+        bankName: 'Pix',
+        pixKey: 'jo•••@pix.com',
+        agency: null,
+        account: null,
+        accountDigit: null,
+        accountType: null,
+      },
+    };
+
+    const result = mapTransferDetailOutputToDTO(output);
+
+    expect(result.amount).toBe('100.00');
+    expect(result.feeAmount).toBe('2.00');
+    expect(result.timeline).toEqual(output.timeline);
+    expect(result.operationalAlerts).toEqual(output.operationalAlerts);
+  });
+});
+
 describe('mapListTransfersOutputToDTO', () => {
   it('deve mapear output de listagem para DTO com paginação', () => {
     const output: ListTransfersOutput = {
@@ -167,11 +234,13 @@ describe('mapListTransfersOutputToDTO', () => {
         {
           id: 'tr-1',
           externalReference: 'asaas_1',
+          asaasTransferId: 'asaas_tr_1',
           value: 100,
           feeValue: 0,
           netValue: 100,
           status: 'DONE',
           operation: 'TED',
+          requestedDestinationType: 'BANK_ACCOUNT',
           recipientName: 'Joao da Silva',
           cpfCnpjMasked: '***.456.789-**',
           bankName: 'Banco 341',

@@ -387,6 +387,15 @@ describe('Aluno Service', () => {
   // ============================================================================
 
   describe('Regras de menor de idade', () => {
+    const responsavelEndereco = {
+      cep: '01001000',
+      logradouro: 'Rua A',
+      numero: '10',
+      bairro: 'Centro',
+      cidade: 'São Paulo',
+      uf: 'SP',
+    };
+
     it('cria aluno menor SEM CPF quando responsável está completo', async () => {
       const aluno = await createAluno({
         contaId,
@@ -399,6 +408,7 @@ describe('Aluno Service', () => {
           email: 'resp.valido@example.com',
           telefone: '11999999999',
           financeiro: true,
+          endereco: responsavelEndereco,
         },
       });
 
@@ -423,6 +433,12 @@ describe('Aluno Service', () => {
           email: 'resp.existente@example.com',
           telefone: '11999999999',
           financeiro: true,
+          enderecoCep: responsavelEndereco.cep,
+          enderecoLogradouro: responsavelEndereco.logradouro,
+          enderecoNumero: responsavelEndereco.numero,
+          enderecoBairro: responsavelEndereco.bairro,
+          enderecoCidade: responsavelEndereco.cidade,
+          enderecoUf: responsavelEndereco.uf,
         },
       });
 
@@ -447,6 +463,35 @@ describe('Aluno Service', () => {
       expect(totalResponsaveis).toBe(1);
     });
 
+    it('rejeita aluno menor quando responsável existente não tem endereço fiscal', async () => {
+      const responsavelIncompleto = await prisma.responsavel.create({
+        data: {
+          contaId,
+          nome: 'Responsável Sem Endereco',
+          cpf: '11144477735',
+          email: 'resp.incompleto@example.com',
+          telefone: '11999999999',
+          financeiro: true,
+        },
+      });
+
+      await expect(
+        createAluno({
+          contaId,
+          nome: 'Menor Endereco Incompleto',
+          dataNasc: new Date('2015-05-15'),
+          responsavelExistenteId: responsavelIncompleto.id,
+        }),
+      ).rejects.toMatchObject({
+        name: 'AsaasCustomerEnsureError',
+      });
+
+      const count = await prisma.aluno.count({
+        where: { contaId, nome: 'Menor Endereco Incompleto' },
+      });
+      expect(count).toBe(0);
+    });
+
     it('cria aluno menor COM CPF quando responsável está completo', async () => {
       const aluno = await createAluno({
         contaId,
@@ -459,6 +504,7 @@ describe('Aluno Service', () => {
           email: 'resp.comcpf@example.com',
           telefone: '11999999999',
           financeiro: true,
+          endereco: responsavelEndereco,
         },
       });
 
@@ -466,22 +512,23 @@ describe('Aluno Service', () => {
       expect(aluno.cpf).toBe('52998224725');
     });
 
-    it('cria aluno menor sem endereço (endereço opcional)', async () => {
-      const aluno = await createAluno({
-        contaId,
-        nome: 'Menor Sem Endereco',
-        dataNasc: new Date('2015-05-15'), // < 18 anos
-        // Sem endereço
-        responsavel: {
-          nome: 'Responsável Sem End',
-          cpf: '11144477735',
-          email: 'resp.semend@example.com',
-          telefone: '11999999999',
-          financeiro: true,
-        },
+    it('rejeita aluno menor com responsável financeiro sem endereço', async () => {
+      await expect(
+        createAluno({
+          contaId,
+          nome: 'Menor Sem Endereco',
+          dataNasc: new Date('2015-05-15'), // < 18 anos
+          responsavel: {
+            nome: 'Responsável Sem End',
+            cpf: '11144477735',
+            email: 'resp.semend@example.com',
+            telefone: '11999999999',
+            financeiro: true,
+          },
+        }),
+      ).rejects.toMatchObject({
+        name: 'AsaasCustomerEnsureError',
       });
-
-      expect(aluno.nome).toBe('Menor Sem Endereco');
     });
   });
 

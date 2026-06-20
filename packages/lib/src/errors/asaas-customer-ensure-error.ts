@@ -4,6 +4,7 @@ export type EnsureAsaasCustomerError =
   | 'INVALID_KEY'
   | 'TEMPORARY_ERROR'
   | 'PAYER_INVALID'
+  | 'PAYER_ADDRESS_INCOMPLETE'
   | 'ASAAS_ERROR';
 
 export class AsaasCustomerEnsureError extends Error {

@@ -2,11 +2,12 @@ import { prisma } from '@alusa/database';
 import type { Prisma, PrismaClient } from '@prisma/client';
 
 type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
-import type { UnifiedChargeItem } from '../dtos/unified-billing';
+import type { UnifiedChargeItem, OperationalExposureReason } from '../dtos/unified-billing';
 import {
   normalizeCobrancaStatus,
   normalizeChargeStatus,
   getEndOfCurrentMonth,
+  getOperationalRecentSince,
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
@@ -202,9 +203,109 @@ function shouldExposeInOperationalQueue(params: {
   return false;
 }
 
-function compareOperationalItems(a: Pick<UnifiedChargeItem, 'status' | 'dueDate'>, b: Pick<UnifiedChargeItem, 'status' | 'dueDate'>): number {
+type OperationalItemMeta = UnifiedChargeItem & {
+  _planId: string | null;
+  _subscriptionKey: string | null;
+};
+
+const OPEN_STATUSES_FOR_RECENT_PIN: UnifiedChargeItem['status'][] = [
+  'PENDING',
+  'OVERDUE',
+  'PROCESSING',
+];
+
+function isRecentlyCreatedCharge(createdAtIso: string, now: Date, recentSince: Date): boolean {
+  const createdAt = new Date(createdAtIso).getTime();
+  if (Number.isNaN(createdAt)) return false;
+  return createdAt >= recentSince.getTime() && createdAt <= now.getTime();
+}
+
+function isDueAfterCurrentMonth(dueDate: Date | null, endOfMonth: Date): boolean {
+  if (!dueDate) return false;
+  return dueDate > endOfMonth;
+}
+
+function mergeRecordsById<T extends { id: string }>(primary: T[], supplemental: T[]): T[] {
+  const seen = new Set(primary.map((item) => item.id));
+  const merged = [...primary];
+  for (const item of supplemental) {
+    if (seen.has(item.id)) continue;
+    merged.push(item);
+    seen.add(item.id);
+  }
+  return merged;
+}
+
+function applyRecentlyCreatedPins(params: {
+  allItems: OperationalItemMeta[];
+  selectedIds: Set<string>;
+  exposureReasonById: Map<string, OperationalExposureReason>;
+  now: Date;
+  endOfMonth: Date;
+  recentSince: Date;
+}): void {
+  const { allItems, selectedIds, exposureReasonById, now, endOfMonth, recentSince } = params;
+
+  const candidates = allItems.filter((item) => {
+    if (selectedIds.has(item.id)) return false;
+    if (!OPEN_STATUSES_FOR_RECENT_PIN.includes(item.status)) return false;
+    if (!isRecentlyCreatedCharge(item.createdAt, now, recentSince)) return false;
+    const dueDate = item.dueDate ? new Date(item.dueDate) : null;
+    return isDueAfterCurrentMonth(dueDate, endOfMonth);
+  });
+
+  const subscriptionGroups = new Map<string, OperationalItemMeta[]>();
+  for (const item of candidates) {
+    if (!item._subscriptionKey) continue;
+    const bucket = subscriptionGroups.get(item._subscriptionKey) ?? [];
+    bucket.push(item);
+    subscriptionGroups.set(item._subscriptionKey, bucket);
+  }
+
+  for (const [, groupItems] of subscriptionGroups) {
+    groupItems.sort((a, b) => compareOperationalItems(a, b));
+    const nextOpen = groupItems[0];
+    if (!nextOpen) continue;
+    selectedIds.add(nextOpen.id);
+    exposureReasonById.set(nextOpen.id, 'RECENTLY_CREATED');
+  }
+
+  const installmentGroups = new Map<string, OperationalItemMeta[]>();
+  for (const item of candidates) {
+    if (!item._planId || item._subscriptionKey) continue;
+    const bucket = installmentGroups.get(item._planId) ?? [];
+    bucket.push(item);
+    installmentGroups.set(item._planId, bucket);
+  }
+
+  for (const [, groupItems] of installmentGroups) {
+    groupItems.sort((a, b) => compareOperationalItems(a, b));
+    const firstOpen = groupItems[0];
+    if (!firstOpen) continue;
+    selectedIds.add(firstOpen.id);
+    exposureReasonById.set(firstOpen.id, 'RECENTLY_CREATED');
+  }
+
+  for (const item of candidates) {
+    if (item._planId || item._subscriptionKey) continue;
+    if (selectedIds.has(item.id)) continue;
+    selectedIds.add(item.id);
+    exposureReasonById.set(item.id, 'RECENTLY_CREATED');
+  }
+}
+
+function compareOperationalItems(
+  a: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
+  b: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
+): number {
   if (a.status === 'OVERDUE' && b.status !== 'OVERDUE') return -1;
   if (b.status === 'OVERDUE' && a.status !== 'OVERDUE') return 1;
+
+  const aCreated = new Date(a.createdAt).getTime();
+  const bCreated = new Date(b.createdAt).getTime();
+  if (!Number.isNaN(aCreated) && !Number.isNaN(bCreated) && aCreated !== bCreated) {
+    return bCreated - aCreated;
+  }
 
   const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
   const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
@@ -225,6 +326,8 @@ function compareOperationalItems(a: Pick<UnifiedChargeItem, 'status' | 'dueDate'
  * - Avulsas recentes continuam entrando, sem despejar histórico futuro
  * - Parcelamentos: expor somente parcelas vencidas e a competência vigente
  *   (nunca despejar parcelas futuras)
+ * - Pin temporário (72h): cobranças recém-geradas com vencimento futuro
+ *   (avulsa, taxa, 1ª parcela, próxima assinatura) — badge RECENTLY_CREATED
  * - Ao quitar/pagar/cancelar: sai da lista
  */
 async function buildOperationalChargesCollection(
@@ -235,6 +338,10 @@ async function buildOperationalChargesCollection(
   const { contaId, search, tipoFilter } = input;
   const now = input.now ?? new Date();
   const endOfMonth = getEndOfCurrentMonth(now);
+  const recentSince = getOperationalRecentSince(now);
+
+  const openAcademicStatuses = ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] as const;
+  const openStandaloneStatuses = ['CREATED', 'OPEN', 'OVERDUE', 'PENDING_SYNC'] as const;
 
   // =================================================================
   // 1. Cobranças acadêmicas operacionais
@@ -242,7 +349,7 @@ async function buildOperationalChargesCollection(
   const academicWhere: Record<string, unknown> = {
     AND: [
       { contaId },
-      { status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] } },
+      { status: { in: [...openAcademicStatuses] } },
       {
         OR: [
           { vencimento: { lte: endOfMonth } },
@@ -251,8 +358,18 @@ async function buildOperationalChargesCollection(
     ],
   };
 
+  const academicRecentWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: { in: [...openAcademicStatuses] } },
+      { vencimento: { gt: endOfMonth } },
+      { createdAt: { gte: recentSince } },
+    ],
+  };
+
   if (tipoFilter?.length) {
     (academicWhere.AND as unknown[]).push({ tipo: { in: tipoFilter } });
+    (academicRecentWhere.AND as unknown[]).push({ tipo: { in: tipoFilter } });
   }
 
   if (search) {
@@ -263,6 +380,7 @@ async function buildOperationalChargesCollection(
       ],
     };
     (academicWhere.AND as unknown[]).push(searchCondition);
+    (academicRecentWhere.AND as unknown[]).push(searchCondition);
   }
 
   // =================================================================
@@ -272,7 +390,7 @@ async function buildOperationalChargesCollection(
     AND: [
       { contaId },
       { cobrancaId: null },
-      { status: { in: ['CREATED', 'OPEN', 'OVERDUE', 'PENDING_SYNC'] } },
+      { status: { in: [...openStandaloneStatuses] } },
       {
         NOT: [
           { externalReference: { contains: ':needs-review:' } },
@@ -288,8 +406,30 @@ async function buildOperationalChargesCollection(
     ],
   };
 
+  const standaloneRecentWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { cobrancaId: null },
+      { status: { in: [...openStandaloneStatuses] } },
+      {
+        NOT: [
+          { externalReference: { contains: ':needs-review:' } },
+          { payerName: 'NEEDS_REVIEW' },
+        ],
+      },
+      { dueDate: { gt: endOfMonth } },
+      { createdAt: { gte: recentSince } },
+    ],
+  };
+
   if (search) {
     (standaloneWhere.AND as unknown[]).push({
+      OR: [
+        { payerName: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+      ],
+    });
+    (standaloneRecentWhere.AND as unknown[]).push({
       OR: [
         { payerName: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
@@ -305,8 +445,23 @@ async function buildOperationalChargesCollection(
     ],
   };
 
+  const standaloneSubscriptionRecentWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: { in: ['REQUESTED', 'ACTIVE'] } },
+      { nextDueDate: { gt: endOfMonth } },
+      { createdAt: { gte: recentSince } },
+    ],
+  };
+
   if (search) {
     (standaloneSubscriptionWhere.AND as unknown[]).push({
+      OR: [
+        { description: { contains: search, mode: 'insensitive' } },
+        { customer: { is: { payerId: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+    (standaloneSubscriptionRecentWhere.AND as unknown[]).push({
       OR: [
         { description: { contains: search, mode: 'insensitive' } },
         { customer: { is: { payerId: { contains: search, mode: 'insensitive' } } } },
@@ -329,8 +484,26 @@ async function buildOperationalChargesCollection(
     ],
   };
 
+  const eventFinancialEntryRecentWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { type: 'REVENUE' },
+      { status: { in: ['EXPECTED', 'PENDING'] } },
+      { NOT: { originType: 'TICKET_SALE' } },
+      { dueDate: { gt: endOfMonth } },
+      { createdAt: { gte: recentSince } },
+    ],
+  };
+
   if (search) {
     (eventFinancialEntryWhere.AND as unknown[]).push({
+      OR: [
+        { description: { contains: search, mode: 'insensitive' } },
+        { category: { contains: search, mode: 'insensitive' } },
+        { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
+    (eventFinancialEntryRecentWhere.AND as unknown[]).push({
       OR: [
         { description: { contains: search, mode: 'insensitive' } },
         { category: { contains: search, mode: 'insensitive' } },
@@ -368,6 +541,15 @@ async function buildOperationalChargesCollection(
     ],
   };
 
+  const eventMapOrderRecentWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { status: 'PAYMENT_PENDING' },
+      { expiresAt: { gt: endOfMonth } },
+      { createdAt: { gte: recentSince } },
+    ],
+  };
+
   if (search) {
     (eventMapOrderWhere.AND as unknown[]).push({
       OR: [
@@ -375,56 +557,98 @@ async function buildOperationalChargesCollection(
         { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
       ],
     });
+    (eventMapOrderRecentWhere.AND as unknown[]).push({
+      OR: [
+        { buyerName: { contains: search, mode: 'insensitive' } },
+        { event: { is: { name: { contains: search, mode: 'insensitive' } } } },
+      ],
+    });
   }
 
-  // =================================================================
-  // 3. Cobranças acadêmicas primeiro (escopo das charges vinculadas)
-  // =================================================================
-  const academicResultRaw = await _db.cobranca.findMany({
-    where: academicWhere,
-    orderBy: { vencimento: 'asc' },
-    include: {
-      matricula: {
-        select: {
-          id: true,
-          aluno: { select: { id: true, nome: true } },
-          responsavelFinanceiro: { select: { nome: true } },
-          billingMode: true,
-          matriculaFamiliarId: true,
-        },
+  const academicInclude = {
+    matricula: {
+      select: {
+        id: true,
+        aluno: { select: { id: true, nome: true } },
+        responsavelFinanceiro: { select: { nome: true } },
+        billingMode: true,
+        matriculaFamiliarId: true,
       },
     },
-  });
+  } as const;
 
-  const academicCobrancaIds = academicResultRaw.map((cobranca) => cobranca.id);
+  const standaloneChargeSelect = {
+    id: true, contaId: true, externalReference: true, status: true,
+    asaasPaymentId: true, asaasStatus: true, liquidacaoStatus: true,
+    createdAt: true, payerName: true,
+    description: true, value: true, dueDate: true, billingType: true,
+    standaloneInstallmentPlanId: true, standaloneSubscriptionId: true, familyGroupId: true, invoiceUrl: true,
+    customer: {
+      select: {
+        payerType: true,
+        payerId: true,
+      },
+    },
+  } as const;
+
+  const standaloneSubscriptionSelect = {
+    id: true,
+    status: true,
+    customerId: true,
+    asaasSubscriptionId: true,
+    cycle: true,
+    billingType: true,
+    value: true,
+    nextDueDate: true,
+    description: true,
+    familyGroupId: true,
+    createdAt: true,
+    customer: { select: { payerType: true, payerId: true } },
+  } as const;
+
+  // =================================================================
+  // 3. Cobranças acadêmicas (operacionais + recém-geradas futuras)
+  // =================================================================
+  const [academicResultMain, academicResultRecent] = await Promise.all([
+    _db.cobranca.findMany({
+      where: academicWhere,
+      orderBy: { vencimento: 'asc' },
+      include: academicInclude,
+    }),
+    _db.cobranca.findMany({
+      where: academicRecentWhere,
+      orderBy: { vencimento: 'asc' },
+      include: academicInclude,
+    }),
+  ]);
+
+  const academicResult = mergeRecordsById(academicResultMain, academicResultRecent);
+  const academicCobrancaIds = academicResult.map((cobranca) => cobranca.id);
 
   // =================================================================
   // 4. Demais fontes em paralelo (charges vinculadas só das acadêmicas abertas)
   // =================================================================
   const [
-    standaloneResult,
+    standaloneResultMain,
+    standaloneResultRecent,
     linkedCharges,
-    standaloneSubscriptions,
-    eventFinancialEntries,
+    standaloneSubscriptionsMain,
+    standaloneSubscriptionsRecent,
+    eventFinancialEntriesMain,
+    eventFinancialEntriesRecent,
     eventTicketSales,
-    eventMapOrders,
+    eventMapOrdersMain,
+    eventMapOrdersRecent,
   ] = await Promise.all([
     _db.charge.findMany({
       where: standaloneWhere,
       orderBy: { dueDate: 'asc' },
-      select: {
-        id: true, contaId: true, externalReference: true, status: true,
-        asaasPaymentId: true, asaasStatus: true, liquidacaoStatus: true,
-        createdAt: true, payerName: true,
-        description: true, value: true, dueDate: true, billingType: true,
-        standaloneInstallmentPlanId: true, standaloneSubscriptionId: true, familyGroupId: true, invoiceUrl: true,
-        customer: {
-          select: {
-            payerType: true,
-            payerId: true,
-          },
-        },
-      },
+      select: standaloneChargeSelect,
+    }),
+    _db.charge.findMany({
+      where: standaloneRecentWhere,
+      orderBy: { dueDate: 'asc' },
+      select: standaloneChargeSelect,
     }),
     academicCobrancaIds.length
       ? _db.charge.findMany({
@@ -444,23 +668,32 @@ async function buildOperationalChargesCollection(
     _db.standaloneSubscription.findMany({
       where: standaloneSubscriptionWhere,
       orderBy: { nextDueDate: 'asc' },
-      select: {
-        id: true,
-        status: true,
-        customerId: true,
-        asaasSubscriptionId: true,
-        cycle: true,
-        billingType: true,
-        value: true,
-        nextDueDate: true,
-        description: true,
-        familyGroupId: true,
-        createdAt: true,
-        customer: { select: { payerType: true, payerId: true } },
-      },
+      select: standaloneSubscriptionSelect,
+    }),
+    _db.standaloneSubscription.findMany({
+      where: standaloneSubscriptionRecentWhere,
+      orderBy: { nextDueDate: 'asc' },
+      select: standaloneSubscriptionSelect,
     }),
     _db.eventFinancialEntry.findMany({
       where: eventFinancialEntryWhere,
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        eventId: true,
+        category: true,
+        description: true,
+        expectedAmount: true,
+        dueDate: true,
+        status: true,
+        paymentMethod: true,
+        asaasPaymentId: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
+    _db.eventFinancialEntry.findMany({
+      where: eventFinancialEntryRecentWhere,
       orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
       select: {
         id: true,
@@ -513,9 +746,36 @@ async function buildOperationalChargesCollection(
         event: { select: { name: true } },
       },
     }),
+    _db.eventMapOrder.findMany({
+      where: eventMapOrderRecentWhere,
+      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        eventId: true,
+        buyerName: true,
+        totalAmount: true,
+        status: true,
+        paymentMethod: true,
+        paymentProvider: true,
+        asaasPaymentId: true,
+        invoiceUrl: true,
+        expiresAt: true,
+        createdAt: true,
+        event: { select: { name: true } },
+      },
+    }),
   ]);
 
-  const academicResult = academicResultRaw;
+  const standaloneResult = mergeRecordsById(standaloneResultMain, standaloneResultRecent);
+  const standaloneSubscriptions = mergeRecordsById(
+    standaloneSubscriptionsMain,
+    standaloneSubscriptionsRecent,
+  );
+  const eventFinancialEntries = mergeRecordsById(
+    eventFinancialEntriesMain,
+    eventFinancialEntriesRecent,
+  );
+  const eventMapOrders = mergeRecordsById(eventMapOrdersMain, eventMapOrdersRecent);
 
   // Mapa cobrancaId → installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
@@ -855,11 +1115,17 @@ async function buildOperationalChargesCollection(
     ...eventItems,
   ];
   const selectedIds = new Set<string>();
+  const exposureReasonById = new Map<string, OperationalExposureReason>();
+
+  const markOperational = (id: string) => {
+    selectedIds.add(id);
+    exposureReasonById.set(id, 'OPERATIONAL');
+  };
 
   const allOverdue = allItemsWithMeta.filter((item) => item.status === 'OVERDUE');
-  for (const item of allOverdue) selectedIds.add(item.id);
+  for (const item of allOverdue) markOperational(item.id);
 
-  const subscriptionGroups = new Map<string, (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[]>();
+  const subscriptionGroups = new Map<string, OperationalItemMeta[]>();
   for (const item of allItemsWithMeta) {
     if (!item._subscriptionKey || !['PENDING', 'PROCESSING'].includes(item.status)) continue;
     const itemDueDate = item.dueDate ? new Date(item.dueDate) : null;
@@ -872,7 +1138,7 @@ async function buildOperationalChargesCollection(
   for (const [, groupItems] of subscriptionGroups) {
     groupItems.sort(compareOperationalItems);
     const nextOpen = groupItems[0];
-    if (nextOpen) selectedIds.add(nextOpen.id);
+    if (nextOpen) markOperational(nextOpen.id);
   }
 
   for (const item of allItemsWithMeta) {
@@ -882,7 +1148,7 @@ async function buildOperationalChargesCollection(
 
     if (item._planId) {
       if (['PENDING', 'PROCESSING'].includes(item.status) && (!itemDueDate || itemDueDate <= endOfMonth)) {
-        selectedIds.add(item.id);
+        markOperational(item.id);
       }
       continue;
     }
@@ -895,18 +1161,30 @@ async function buildOperationalChargesCollection(
       isInstallment: false,
       now,
     })) {
-      selectedIds.add(item.id);
+      markOperational(item.id);
     }
   }
+
+  applyRecentlyCreatedPins({
+    allItems: allItemsWithMeta,
+    selectedIds,
+    exposureReasonById,
+    now,
+    endOfMonth,
+    recentSince,
+  });
 
   const allItems: UnifiedChargeItem[] = allItemsWithMeta
     .filter((item) => selectedIds.has(item.id))
     .map((item) => {
       const { _planId, _subscriptionKey, ...clean } = item;
-      return clean;
+      return {
+        ...clean,
+        exposureReason: exposureReasonById.get(item.id) ?? 'OPERATIONAL',
+      };
     });
 
-  // Ordenar: overdue primeiro (urgência), depois por vencimento ASC
+  // Ordenar: overdue primeiro, depois por criação DESC (mais recentes no topo)
   allItems.sort(compareOperationalItems);
 
   return allItems;

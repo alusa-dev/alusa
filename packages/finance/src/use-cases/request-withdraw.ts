@@ -9,10 +9,19 @@ import { buildSafeAsaasIdempotencyKey } from '../core/idempotency.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { featureFlagsService } from '../foundation/feature-flags.service';
-import { financeProfileService } from '../foundation/finance-profile.service';
-import { isPendingDocumentsBlockBypassedForTesting } from '../foundation/kyc-test-bypass';
+import { requireKycSnapshotApproved } from '../foundation/kyc-guard';
 import { getBalance } from './get-balance';
+import { getTransferFees } from './get-transfer-fees';
+import {
+  buildBankTransferAsaasPayload,
+  buildPixTransferAsaasPayload,
+  estimateTransferDebitAmount,
+  normalizeWithdrawDestinationForAsaas,
+  requiresOwnerBirthDate,
+  resolveTransferOperationFromAsaas,
+} from './transfers/asaas-transfer-payload';
 import { mapAsaasTransferStatus } from './transfers/transfer-status';
+import { resolveOfficialFeeValue, resolveOfficialNetValue } from './transfers/transfer-metadata';
 import {
   areTransferRequestIntentsEquivalent,
   buildTransferRequestIntentFromInput,
@@ -65,6 +74,8 @@ export type RequestWithdrawError =
   | 'FEATURE_DISABLED'
   | 'KYC_NAO_APROVADO'
   | 'SALDO_INSUFICIENTE'
+  | 'SALDO_INSUFICIENTE_PARA_TAXA'
+  | 'OWNER_BIRTH_DATE_OBRIGATORIO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'CREDENCIAIS_ASAAS_INVALIDAS'
   | 'PIX_KEY_NAO_ENCONTRADA'
@@ -119,10 +130,29 @@ function resolveBankAccountLabel(destination: Extract<WithdrawDestination, { typ
   return 'Conta bancaria';
 }
 
+async function resolveTenantCpfCnpj(contaId: string): Promise<string | null> {
+  const [conta, profile] = await Promise.all([
+    prisma.conta.findUnique({
+      where: { id: contaId },
+      select: { cpfCnpj: true },
+    }),
+    prisma.financeProfile.findUnique({
+      where: { contaId },
+      select: { draftCpfCnpj: true },
+    }),
+  ]);
+
+  return profile?.draftCpfCnpj ?? conta?.cpfCnpj ?? null;
+}
+
 export async function requestWithdraw(
   input: RequestWithdrawInput
 ): Promise<Result<RequestWithdrawOutput, RequestWithdrawError>> {
+  const normalizedDestination = normalizeWithdrawDestinationForAsaas(input.destination);
+  let transferRequestForFailure: { id: string; externalReference: string } | null = null;
+
   try {
+
     await featureFlagsService.ensureTransferFeaturesForApprovedAccount({
       contaId: input.contaId,
       actor: input.actor,
@@ -132,40 +162,59 @@ export async function requestWithdraw(
     const manualEnabled = await featureFlagsService.isEnabled(input.contaId, 'enableManualWithdraw');
     if (!manualEnabled) return err('FEATURE_DISABLED');
 
-    if (input.destination.type === 'PIX') {
+    if (normalizedDestination.type === 'PIX') {
       const pixEnabled = await featureFlagsService.isEnabled(input.contaId, 'enablePixTransfer');
       if (!pixEnabled) return err('FEATURE_DISABLED');
     }
 
-    if (input.destination.type === 'BANK_ACCOUNT') {
+    if (normalizedDestination.type === 'BANK_ACCOUNT') {
       const bankEnabled = await featureFlagsService.isEnabled(input.contaId, 'enableBankTransfer');
       if (!bankEnabled) return err('FEATURE_DISABLED');
+
+      const tenantCpfCnpj = await resolveTenantCpfCnpj(input.contaId);
+      if (
+        requiresOwnerBirthDate(tenantCpfCnpj, normalizedDestination.cpfCnpj) &&
+        !normalizedDestination.ownerBirthDate
+      ) {
+        return err('OWNER_BIRTH_DATE_OBRIGATORIO');
+      }
     }
 
-    const financeProfile = await financeProfileService.getOrCreateByTenant(input.contaId);
-    const asaasAccount = await prisma.asaasAccount.findUnique({
-      where: { financeProfileId: financeProfile.id },
-      select: { status: true },
-    });
-
-    if (!asaasAccount) return err('KYC_NAO_APROVADO');
-    if (asaasAccount.status !== 'APPROVED' && !isPendingDocumentsBlockBypassedForTesting()) {
+    const kyc = await requireKycSnapshotApproved(input.contaId);
+    if (!kyc.success) {
       return err('KYC_NAO_APROVADO');
     }
 
-    const balanceResult = await getBalance({ contaId: input.contaId });
+    const [balanceResult, transferFeesResult] = await Promise.all([
+      getBalance({ contaId: input.contaId }),
+      getTransferFees({ contaId: input.contaId }),
+    ]);
+
     if (!balanceResult.success) {
       if (balanceResult.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
       return err('ERRO_INTERNO');
     }
 
-    if (input.value <= 0 || input.value > balanceResult.data.balance) return err('SALDO_INSUFICIENTE');
+    const estimatedOperation =
+      normalizedDestination.type === 'PIX' ? 'PIX' : 'TED';
+    const estimatedDebit = estimateTransferDebitAmount(
+      input.value,
+      transferFeesResult.success ? transferFeesResult.data : null,
+      estimatedOperation,
+    );
+
+    if (input.value <= 0 || estimatedDebit > balanceResult.data.balance) {
+      if (input.value > 0 && input.value <= balanceResult.data.balance && estimatedDebit > balanceResult.data.balance) {
+        return err('SALDO_INSUFICIENTE_PARA_TAXA');
+      }
+      return err('SALDO_INSUFICIENTE');
+    }
 
     const incomingIntent = buildTransferRequestIntentFromInput({
       value: input.value,
       description: input.description,
       scheduleDate: input.scheduleDate,
-      destination: input.destination,
+      destination: normalizedDestination,
     });
 
     const existing = await prisma.transferRequest.findUnique({
@@ -206,6 +255,19 @@ export async function requestWithdraw(
       });
     }
 
+    if (existing?.status === 'REQUESTED') {
+      return err('TRANSFERENCIA_DUPLICADA');
+    }
+
+    try {
+      await assertAsaasTenantOperational(input.contaId);
+    } catch {
+      return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    }
+
+    const credentials = await loadAsaasCredentials(input.contaId);
+    if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+
     const scheduleDate = toDateOrNull(input.scheduleDate);
 
     const created = existing
@@ -218,7 +280,7 @@ export async function requestWithdraw(
           data: {
             contaId: input.contaId,
             value: input.value,
-            destination: input.destination as unknown as object,
+            destination: normalizedDestination as unknown as object,
             description: input.description,
             scheduleDate: scheduleDate ?? undefined,
             idempotencyKey: input.idempotencyKey,
@@ -238,14 +300,10 @@ export async function requestWithdraw(
             select: { id: true, externalReference: true, asaasTransferId: true },
           });
 
-    try {
-      await assertAsaasTenantOperational(input.contaId);
-    } catch {
-      return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
-    }
-
-    const credentials = await loadAsaasCredentials(input.contaId);
-    if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    transferRequestForFailure = {
+      id: transferRequest.id,
+      externalReference: transferRequest.externalReference,
+    };
 
     await auditLogService.record({
       contaId: input.contaId,
@@ -255,7 +313,7 @@ export async function requestWithdraw(
       metadata: {
         value: input.value,
         externalReference: transferRequest.externalReference,
-        destinationType: input.destination.type,
+        destinationType: normalizedDestination.type,
         scheduleDate: input.scheduleDate,
       },
     });
@@ -263,41 +321,29 @@ export async function requestWithdraw(
     const asaasIdempotencyKey = buildSafeAsaasIdempotencyKey(input.idempotencyKey);
 
     const asaasTransfer =
-      input.destination.type === 'PIX'
+      normalizedDestination.type === 'PIX'
         ? await createPixTransfer({
             apiKey: credentials.apiKey,
             idempotencyKey: asaasIdempotencyKey,
-            data: {
+            data: buildPixTransferAsaasPayload({
               value: input.value,
-              pixAddressKey: input.destination.pixAddressKey,
-              pixAddressKeyType: input.destination.pixAddressKeyType,
+              destination: normalizedDestination,
               description: input.description,
               scheduleDate: input.scheduleDate,
               externalReference: transferRequest.externalReference,
-            },
+            }),
           })
         : await createBankTransfer({
             apiKey: credentials.apiKey,
             idempotencyKey: asaasIdempotencyKey,
-            data: {
+            data: buildBankTransferAsaasPayload({
               value: input.value,
-              bankAccount: {
-                bank: input.destination.bank,
-                accountName: resolveBankAccountLabel(input.destination),
-                ownerName: input.destination.ownerName,
-                ownerBirthDate: input.destination.ownerBirthDate,
-                cpfCnpj: input.destination.cpfCnpj,
-                agency: input.destination.agency,
-                account: input.destination.account,
-                accountDigit: input.destination.accountDigit,
-                bankAccountType: input.destination.bankAccountType,
-                ispb: input.destination.ispb,
-              },
-              operationType: 'TED',
+              destination: normalizedDestination,
               description: input.description,
               scheduleDate: input.scheduleDate,
               externalReference: transferRequest.externalReference,
-            },
+              accountNameLabel: resolveBankAccountLabel(normalizedDestination),
+            }),
           });
 
     const mappedStatus = mapAsaasTransferStatus(asaasTransfer.status);
@@ -329,6 +375,10 @@ export async function requestWithdraw(
       });
     }
 
+    const resolvedOperation = resolveTransferOperationFromAsaas(confirmedTransfer.operationType);
+    const feeValue = resolveOfficialFeeValue(confirmedTransfer, null, input.value);
+    const netValue = resolveOfficialNetValue(confirmedTransfer, null, input.value);
+
     await prisma.transferRequest.update({
       where: { id: transferRequest.id },
       data: {
@@ -336,13 +386,14 @@ export async function requestWithdraw(
         status: nextStatus,
         statusUpdatedAt: new Date(),
         rawAsaasStatus: confirmedTransfer.status,
+        resolvedOperation,
         authorized: confirmedTransfer.authorized ?? null,
         failReason: confirmedTransfer.failReason ?? null,
         transactionReceiptUrl: confirmedTransfer.transactionReceiptUrl ?? null,
         effectiveDate: confirmedTransfer.effectiveDate ?? null,
         endToEndIdentifier: confirmedTransfer.endToEndIdentifier ?? null,
-        feeValue: confirmedTransfer.transferFee ?? null,
-        netValue: confirmedTransfer.netValue ?? null,
+        feeValue,
+        netValue,
       },
     });
 
@@ -354,6 +405,7 @@ export async function requestWithdraw(
       metadata: {
         asaasTransferId: confirmedTransfer.id,
         status: confirmedTransfer.status,
+        resolvedOperation,
         confirmedViaGet: confirmedTransfer !== asaasTransfer,
         externalReference: transferRequest.externalReference,
       },
@@ -367,6 +419,38 @@ export async function requestWithdraw(
     });
   } catch (error) {
     console.error('[finance][requestWithdraw]', error);
-    return err(mapWithdrawCreationError(error, input.destination));
+    const mappedError = mapWithdrawCreationError(error, normalizedDestination);
+    if (transferRequestForFailure) {
+      try {
+        await prisma.transferRequest.update({
+          where: { id: transferRequestForFailure.id },
+          data: {
+            status: 'FAILED',
+            statusUpdatedAt: new Date(),
+            failReason: mappedError,
+            asaasTransferId: null,
+          },
+        });
+      } catch (updateError) {
+        console.error('[finance][requestWithdraw][mark-failed]', updateError);
+      }
+
+      try {
+        await auditLogService.record({
+          contaId: input.contaId,
+          actor: input.actor,
+          action: 'finance.transfer.request_failed',
+          entity: { type: 'TransferRequest', id: transferRequestForFailure.id },
+          metadata: {
+            externalReference: transferRequestForFailure.externalReference,
+            error: mappedError,
+            destinationType: normalizedDestination.type,
+          },
+        });
+      } catch (auditError) {
+        console.error('[finance][requestWithdraw][audit-failed]', auditError);
+      }
+    }
+    return err(mappedError);
   }
 }

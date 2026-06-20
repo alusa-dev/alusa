@@ -1,6 +1,7 @@
 import { prisma } from '@/prisma/client';
 import {
   createStandaloneCharge,
+  updateSubscription,
   type CreateStandaloneChargeInput,
 } from '@alusa/finance';
 import { FamilyBillingOutboxStatus, FamilyBillingStatus, type Prisma } from '@prisma/client';
@@ -159,6 +160,14 @@ function ensurePositiveMoney(value: number) {
   return Number.isFinite(value) && value > 0 ? Number(value.toFixed(2)) : 0;
 }
 
+function isFutureDateOnly(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const [year, month, day] = value.split('-').map(Number);
+  return Date.UTC(year, month - 1, day) > todayUtc;
+}
+
 async function updateGroupMetadata(params: {
   contaId: string;
   familyGroupId: string;
@@ -223,24 +232,29 @@ async function persistAggregateSuccess(params: {
   subscriptionId?: string | null;
   enrollmentChargeId?: string | null;
 }) {
-  const data = {
-    status: FamilyBillingStatus.ATIVO,
-    standaloneSubscriptionId: params.subscriptionId ?? null,
-    standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null,
-    ultimoErro: null,
-  };
-
   if (params.payload.aggregateType === 'MATRICULA_FAMILIAR') {
     await prisma.matriculaFamiliar.update({
       where: { id: params.payload.aggregateId },
-      data,
+      data: {
+        status: FamilyBillingStatus.ATIVO,
+        standaloneSubscriptionId: params.subscriptionId ?? null,
+        standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null,
+        ultimoErro: null,
+      },
     });
     return;
   }
 
   await prisma.rematriculaFamiliar.update({
     where: { id: params.payload.aggregateId },
-    data,
+    data: {
+      status: FamilyBillingStatus.PROCESSANDO,
+      step: 'AGUARDANDO_CONFIRMACAO_DESTINO',
+      targetBillingStatus: 'AWAITING_WEBHOOK',
+      standaloneSubscriptionId: params.subscriptionId ?? null,
+      standaloneEnrollmentChargeId: params.enrollmentChargeId ?? null,
+      ultimoErro: null,
+    },
   });
 }
 
@@ -367,6 +381,30 @@ export async function executeFamilyBilling(
     standaloneChargeId: standaloneEnrollmentChargeId,
   });
 
+  if (standaloneSubscriptionId && payload.aggregateType === 'REMATRICULA_FAMILIAR') {
+    await prisma.familyFinancialAllocation.updateMany({
+      where: {
+        contaId: payload.contaId,
+        rematriculaFamiliarId: payload.aggregateId,
+        status: 'PENDING',
+      },
+      data: {
+        standaloneSubscriptionId,
+        status: 'AWAITING_WEBHOOK',
+      },
+    });
+
+    await prisma.rematriculaFamiliarItem.updateMany({
+      where: {
+        rematriculaFamiliarId: payload.aggregateId,
+        decision: 'REMATRICULAR_AGORA',
+      },
+      data: {
+        targetFinancialAgreementId: standaloneSubscriptionId,
+      },
+    });
+  }
+
   await persistAggregateSuccess({
     payload,
     subscriptionId: standaloneSubscriptionId,
@@ -473,10 +511,75 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     return { processed: false, reason: 'CLAIMED_BY_OTHER_WORKER' as const };
   }
 
-  const payload = parseFamilyBillingPayload(event.payload);
+  let parsedFamilyPayload: FamilyBillingPayload | null = null;
 
   try {
-    await executeFamilyBilling(payload);
+    if (event.eventType === 'REQUEST_SOURCE_SUBSCRIPTION_CLOSURE') {
+      const raw = event.payload;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Payload de encerramento familiar inválido.');
+      }
+      const payload = raw as Record<string, unknown>;
+      const contaId = String(payload.contaId ?? '');
+      const aggregateId = String(payload.aggregateId ?? '');
+      const sourceFinancialAgreementId = String(payload.sourceFinancialAgreementId ?? '');
+      const sourceAsaasSubscriptionId =
+        typeof payload.sourceAsaasSubscriptionId === 'string'
+          ? payload.sourceAsaasSubscriptionId
+          : null;
+      const effectiveDate = String(payload.effectiveDate ?? '');
+
+      if (!contaId || !aggregateId || !sourceFinancialAgreementId) {
+        throw new Error('Payload de encerramento familiar sem identificadores obrigatórios.');
+      }
+
+      await prisma.rematriculaFamiliar.updateMany({
+        where: { id: aggregateId, contaId },
+        data: {
+          step: 'ENCERRAMENTO_ORIGEM_SOLICITADO',
+          sourceBillingStatus: sourceAsaasSubscriptionId ? 'CLOSURE_REQUESTED' : 'REVIEW_MANUAL',
+        },
+      });
+
+      if (sourceAsaasSubscriptionId) {
+        const subscriptionUpdate: Parameters<typeof updateSubscription>[1] = {
+          endDate: effectiveDate,
+        };
+        if (!isFutureDateOnly(effectiveDate)) {
+          subscriptionUpdate.status = 'INACTIVE';
+        }
+
+        await updateSubscription(
+          sourceAsaasSubscriptionId,
+          subscriptionUpdate,
+          { contaId },
+        );
+      }
+
+      await prisma.standaloneSubscription.updateMany({
+        where: { id: sourceFinancialAgreementId, contaId },
+        data: {
+          closureScheduledAt: new Date(),
+          validUntil: effectiveDate ? new Date(`${effectiveDate}T12:00:00.000Z`) : undefined,
+          familyTransitionId: aggregateId,
+        },
+      });
+
+      await prisma.familyBillingOutbox.update({
+        where: { id: eventId },
+        data: {
+          status: FamilyBillingOutboxStatus.PROCESSED,
+          processedAt: new Date(),
+          lockedAt: null,
+          lastError: null,
+        },
+      });
+
+      return { processed: true as const };
+    }
+
+    parsedFamilyPayload = parseFamilyBillingPayload(event.payload);
+    await executeFamilyBilling(parsedFamilyPayload);
 
     await prisma.familyBillingOutbox.update({
       where: { id: eventId },
@@ -491,7 +594,18 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     return { processed: true as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await persistAggregateFailure(payload, message);
+    if (parsedFamilyPayload) {
+      await persistAggregateFailure(parsedFamilyPayload, message);
+    } else if (event.aggregateType === 'REMATRICULA_FAMILIAR') {
+      await prisma.rematriculaFamiliar.updateMany({
+        where: { id: event.aggregateId, contaId: event.contaId },
+        data: {
+          status: FamilyBillingStatus.FALHO,
+          ultimoErro: message.slice(0, 2000),
+          failureMessage: message.slice(0, 2000),
+        },
+      });
+    }
     await prisma.familyBillingOutbox.update({
       where: { id: eventId },
       data: {

@@ -30,6 +30,8 @@ import {
 } from './expected-webhook-config.server';
 import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
 import { buildWebhookAuthTokenRotationData } from '../../webhooks/asaas-webhook-auth';
+import { refreshKycReadModel } from '../kyc/refresh-kyc-read-model';
+import { reconcileAsaasAccount } from './reconcile-asaas-account';
 import {
   deriveLegacyAliasedSubaccountEmail,
   matchesSubaccountEmail,
@@ -1510,10 +1512,41 @@ async function createAsaasAccountInternal(params: {
       await syncAsaasOperationalStatus(params.contaId);
     }
 
+    try {
+      await reconcileAsaasAccount({
+        contaId: params.contaId,
+        actor: params.actor,
+        reason: 'post-create-subaccount',
+      });
+    } catch (reconcileError) {
+      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reconciliar status apos criacao', {
+        contaId: params.contaId,
+        financeProfileId: financeProfile.id,
+        asaasAccountId: created.asaasAccountId,
+        error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
+      });
+    }
+
+    try {
+      await refreshKycReadModel(params.contaId);
+    } catch (refreshError) {
+      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao atualizar read model KYC apos criacao', {
+        contaId: params.contaId,
+        financeProfileId: financeProfile.id,
+        asaasAccountId: created.asaasAccountId,
+        error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+      });
+    }
+
+    const latest = await prisma.asaasAccount.findUnique({
+      where: { financeProfileId: financeProfile.id },
+      select: { status: true },
+    });
+
     return {
       financeProfileId: financeProfile.id,
       asaasAccountId: created.asaasAccountId,
-      status: created.status,
+      status: latest?.status ?? created.status,
       created: true,
     };
   } catch (error) {

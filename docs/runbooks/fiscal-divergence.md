@@ -10,6 +10,7 @@ Este runbook cobre divergências entre a configuração/emissão fiscal local da
 - Tela `Configurações > Nota fiscal` mostra divergência ou erro em `lastSyncError`.
 - Webhook `INVOICE_*` chegou para uma cobrança sem `Invoice` local.
 - Cobrança de assinatura recebeu pagamento, mas não há nota local após o webhook do Asaas.
+- Taxa de matrícula paga em matrícula com assinatura configurada está sem nota local.
 
 ## Reconciliação de configuração fiscal
 
@@ -43,6 +44,12 @@ curl -X POST "https://<host>/api/jobs/reconcile-fiscal-settings?maxAccounts=20" 
 - Assinaturas com `emissionMode = ON_PAYMENT` e `asaasInvoiceSettingsConfigured = true` devem ser emitidas pelo Asaas.
 - O webhook de pagamento da Alusa deve retornar skip `SUBSCRIPTION_NATIVE_EMISSION`, sem chamar `emitChargeInvoice`.
 - Se `fiscalInvoiceSettingsError` estiver preenchido na assinatura, revalidar configuração fiscal e reenviar `invoiceSettings`.
+
+## Taxa, avulsas e parcelas
+
+- Taxa de matrícula, cobrança avulsa/extra e parcela paga são emitidas pela Alusa, mesmo quando a matrícula possui mensalidade com `invoiceSettings` nativo.
+- Se uma taxa paga estiver sem nota, verificar o caminho de emissão antes de assumir erro de configuração fiscal da assinatura.
+- O cron `reconcile-stale-invoices` registra `PAID_CHARGE_WITHOUT_INVOICE` quando encontra cobrança paga sem nota e não consegue recuperar a emissão/espelho automaticamente.
 
 ## Quando escalar
 

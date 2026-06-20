@@ -42,7 +42,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const availability = await checkFirstUserRegistrationAvailability(parsed.data.email);
+  const availability = await checkFirstUserRegistrationAvailability({
+    email: parsed.data.email,
+    financeIntegrationMode,
+  });
   if (!availability.available) {
     if (availability.reason === 'LOCAL_DEACTIVATED') {
       return NextResponse.json(

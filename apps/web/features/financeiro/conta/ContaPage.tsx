@@ -36,11 +36,13 @@ type TransfersResponse = {
   items: Array<{
     id: string;
     externalReference: string;
+    asaasTransferId: string | null;
     amount: string;
     feeAmount: string | null;
     netAmount: string;
     status: TransferStatus;
     operation: 'PIX' | 'TED';
+    requestedDestinationType: 'PIX_KEY' | 'BANK_ACCOUNT' | null;
     recipientName: string | null;
     cpfCnpj: string | null;
     bankName: string | null;
@@ -73,7 +75,11 @@ function sanitizeErrorMessage(error: unknown) {
   return 'Não foi possível concluir a operação.';
 }
 
-function mapTransferStatus(status: TransferStatus) {
+function mapTransferStatus(status: TransferStatus, asaasTransferId?: string | null) {
+  if (status === 'FAILED' && !asaasTransferId) {
+    return { label: 'Falha na validação', variant: 'destructive' as const };
+  }
+
   switch (status) {
     case 'DONE':
       return { label: 'Concluída', variant: 'success' as const };
@@ -94,7 +100,9 @@ function mapTransferStatus(status: TransferStatus) {
 }
 
 /** Rótulos completos nos badges da lista mobile (evita "Ok", "Canc.", etc.). */
-function mapTransferStatusMobileBadge(status: TransferStatus) {
+function mapTransferStatusMobileBadge(status: TransferStatus, asaasTransferId?: string | null) {
+  if (status === 'FAILED' && !asaasTransferId) return 'Falha na validação';
+
   switch (status) {
     case 'DONE':
       return 'Confirmado';
@@ -173,8 +181,15 @@ function compactPersonName(value: string | null | undefined) {
   return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
-function formatTransferOperation(operation: 'PIX' | 'TED') {
-  return operation === 'PIX' ? 'Pix' : 'Ted';
+function formatTransferOperation(
+  operation: 'PIX' | 'TED',
+  requestedDestinationType?: 'PIX_KEY' | 'BANK_ACCOUNT' | null,
+) {
+  if (operation === 'PIX' && requestedDestinationType === 'BANK_ACCOUNT') {
+    return 'Pix (via conta bancária)';
+  }
+
+  return operation === 'PIX' ? 'Pix' : 'TED';
 }
 
 function sanitizeFileName(value: string) {
@@ -243,13 +258,13 @@ async function exportTransfersPdf(data: TransfersResponse) {
       formatTableDate(item.createdAt),
       formatTableDate(item.scheduleDate),
       formatTableDate(item.transferDate),
-      formatTransferOperation(item.operation),
+      formatTransferOperation(item.operation, item.requestedDestinationType),
       compactPersonName(item.recipientName ?? item.description),
       item.cpfCnpj ?? '—',
       item.bankName ?? '—',
       formatOfficialFee(item.feeAmount),
       formatCurrency(Number(item.amount)),
-      mapTransferStatus(item.status).label,
+      mapTransferStatus(item.status, item.asaasTransferId).label,
     ]),
     styles: {
       fontSize: 8,
@@ -530,10 +545,10 @@ function TransferTableSection({
               </tr>
             ) : data?.items.length ? (
               data.items.map((item) => {
-                const status = mapTransferStatus(item.status);
+                const status = mapTransferStatus(item.status, item.asaasTransferId);
                 const displayName = compactPersonName(item.recipientName ?? item.description);
                 const maskedDoc = transferDocumentForList(item.cpfCnpj);
-                const ariaStatus = mapTransferStatusMobileBadge(item.status);
+                const ariaStatus = mapTransferStatusMobileBadge(item.status, item.asaasTransferId);
                 return (
                   <tr
                     key={item.id}
@@ -565,7 +580,7 @@ function TransferTableSection({
                             </li>
                           ) : null}
                           <li className="text-[12px] font-medium leading-snug text-slate-800 alusa-dark:text-[color:var(--color-text-secondary)]">
-                            {formatTransferOperation(item.operation)}
+                            {formatTransferOperation(item.operation, item.requestedDestinationType)}
                           </li>
                           <li
                             className="text-[12px] leading-snug text-slate-700 alusa-dark:text-[color:var(--color-text-secondary)]"
@@ -594,14 +609,14 @@ function TransferTableSection({
                             size="default"
                             className="max-w-[10.5rem] whitespace-normal text-right text-xs leading-snug"
                           >
-                            {mapTransferStatusMobileBadge(item.status)}
+                            {mapTransferStatusMobileBadge(item.status, item.asaasTransferId)}
                           </Badge>
                         </div>
                       </div>
                     </td>
                     <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTableDate(item.scheduleDate)}</td>
                     <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTableDate(item.transferDate)}</td>
-                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTransferOperation(item.operation)}</td>
+                    <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{formatTransferOperation(item.operation, item.requestedDestinationType)}</td>
                     <td className="hidden px-6 py-4 text-sm font-medium text-slate-900 lg:table-cell alusa-dark:text-[color:var(--color-text-primary)]">{compactPersonName(item.recipientName ?? item.description)}</td>
                     <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{item.cpfCnpj ?? '—'}</td>
                     <td className="hidden px-6 py-4 text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">{item.bankName ?? '—'}</td>
@@ -907,6 +922,8 @@ export function ContaPage() {
         canPix={canPixTransfer}
         canTed={canTedTransfer}
         maxAmount={availableBalance}
+        fees={overview.fees}
+        transferContext={overview.transferContext}
         onSuccess={refreshCurrentView}
         onRecipientsChange={loadOverviewAndRecipients}
       />

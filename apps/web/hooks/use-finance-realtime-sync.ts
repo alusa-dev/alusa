@@ -83,7 +83,7 @@ export function useFinanceRealtimeSync(options: UseFinanceRealtimeSyncOptions = 
     enabled = true,
     cobrancaId,
     scope = {},
-    pollIntervalMs = 3_000,
+    pollIntervalMs = 15_000,
   } = options;
 
   const queryClient = useQueryClient();

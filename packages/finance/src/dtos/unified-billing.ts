@@ -26,6 +26,16 @@ export const TERMINAL_STATUSES: readonly UnifiedChargeStatus[] = [
 
 export type OperationalStatus = 'PENDING' | 'OVERDUE';
 
+/** Por que o item aparece na fila operacional de "/cobrancas" (view=open). */
+export type OperationalExposureReason = 'OPERATIONAL' | 'RECENTLY_CREATED';
+
+/** Janela em horas para pin de cobranças recém-geradas com vencimento futuro. */
+export const OPERATIONAL_RECENT_WINDOW_HOURS = 72;
+
+export function getOperationalRecentSince(now: Date = new Date()): Date {
+  return new Date(now.getTime() - OPERATIONAL_RECENT_WINDOW_HOURS * 60 * 60 * 1000);
+}
+
 export function isOperationalStatus(s: UnifiedChargeStatus): s is OperationalStatus {
   return (OPERATIONAL_STATUSES as readonly string[]).includes(s);
 }
@@ -117,6 +127,11 @@ export type UnifiedChargeItem = {
   installmentCount: number | null;
   /** Parcelas já pagas do grupo. */
   installmentsPaid: number | null;
+  /**
+   * Motivo de exposição na fila operacional.
+   * RECENTLY_CREATED = pin temporário para cobrança gerada há pouco com vencimento futuro.
+   */
+  exposureReason?: OperationalExposureReason;
 };
 
 // ---------------------------------------------------------------------------

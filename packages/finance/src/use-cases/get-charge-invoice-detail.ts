@@ -2,10 +2,12 @@ import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 
 import { buildChargeInvoiceTexts, resolveChargeInvoiceContext } from '../fiscal/charge-invoice-context';
+import { resolveChargeInvoiceEmissionPath } from '../fiscal/charge-invoice-emission-path';
 import {
   evaluateChargeInvoiceEligibility,
   type ChargeInvoiceEligibility,
 } from '../fiscal/charge-invoice-eligibility';
+import { evaluateChargePayerFiscalReadiness, mapPayerFiscalReadinessForApi } from '../fiscal/payer-fiscal-readiness';
 import { ensureAcademicChargeForCobranca } from '../fiscal/ensure-academic-charge-for-cobranca';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { todayInBrazil } from '../fiscal/invoice-effective-date';
@@ -40,6 +42,18 @@ export type ChargeInvoiceDetailOutput = {
   eligibility: ChargeInvoiceEligibility;
   /** A nota ainda pode mudar no Asaas/prefeitura — UI deve manter sincronização assíncrona. */
   syncPending: boolean;
+  autoEmission: {
+    enabled: boolean;
+    path: 'ALUSA' | 'ASAAS_SUBSCRIPTION' | 'MANUAL';
+    state:
+      | 'PENDING_PAYMENT'
+      | 'SCHEDULED'
+      | 'PROCESSING'
+      | 'EMITTED'
+      | 'FAILED'
+      | 'MANUAL_REQUIRED';
+    message: string;
+  };
   preview?: {
     serviceDescription: string;
     observations: string;
@@ -49,6 +63,12 @@ export type ChargeInvoiceDetailOutput = {
     value: number;
     municipalServiceName: string;
     municipalServiceCode: string | null;
+  };
+  payerReadiness?: {
+    ready: boolean;
+    issues: Array<{ code: string; message: string; blocking: boolean }>;
+    responsavelId?: string;
+    responsavelNome?: string;
   };
 };
 
@@ -103,7 +123,141 @@ function buildDetailWithoutCharge(input: {
       invoice: null,
     }),
     syncPending: false,
+    autoEmission: {
+      enabled: false,
+      path: 'MANUAL',
+      state: 'MANUAL_REQUIRED',
+      message: 'A emissão manual ficará disponível quando a cobrança estiver sincronizada.',
+    },
     preview: undefined,
+  };
+}
+
+async function resolveAutoEmissionPath(input: {
+  contaId: string;
+  chargeId: string;
+}): Promise<'ALUSA' | 'ASAAS_SUBSCRIPTION'> {
+  const prisma = getFiscalPrisma();
+  const charge = await prisma.charge.findFirst({
+    where: { id: input.chargeId, contaId: input.contaId },
+    select: {
+      standaloneSubscriptionId: true,
+      standaloneSubscription: {
+        select: {
+          asaasSubscriptionId: true,
+          asaasInvoiceSettingsConfigured: true,
+        },
+      },
+      cobranca: {
+        select: {
+          tipo: true,
+          matriculaId: true,
+        },
+      },
+    },
+  });
+
+  if (!charge) return 'ALUSA';
+
+  const subscription = charge.cobranca?.matriculaId
+    ? await prisma.subscription.findFirst({
+        where: { contaId: input.contaId, matriculaId: charge.cobranca.matriculaId },
+        select: {
+          asaasSubscriptionId: true,
+          asaasInvoiceSettingsConfigured: true,
+        },
+      })
+    : null;
+
+  const path = resolveChargeInvoiceEmissionPath({ charge, subscription });
+  return path === 'ASAAS_SUBSCRIPTION_NATIVE' ? 'ASAAS_SUBSCRIPTION' : 'ALUSA';
+}
+
+function buildAutoEmission(input: {
+  enabled: boolean;
+  path: 'ALUSA' | 'ASAAS_SUBSCRIPTION' | 'MANUAL';
+  invoice: { status: string } | null;
+  readinessReady: boolean;
+  eligibility: ChargeInvoiceEligibility;
+  syncPending: boolean;
+}): ChargeInvoiceDetailOutput['autoEmission'] {
+  if (!input.enabled || input.path === 'MANUAL') {
+    return {
+      enabled: false,
+      path: 'MANUAL',
+      state: 'MANUAL_REQUIRED',
+      message: 'Emissão manual pela tela da cobrança.',
+    };
+  }
+
+  if (!input.readinessReady) {
+    return {
+      enabled: true,
+      path: input.path,
+      state: 'MANUAL_REQUIRED',
+      message: 'Automação aguardando a configuração fiscal ficar pronta.',
+    };
+  }
+
+  if (input.invoice) {
+    if (input.invoice.status === 'ERROR' || input.invoice.status === 'CANCELLATION_DENIED') {
+      return {
+        enabled: true,
+        path: input.path,
+        state: 'FAILED',
+        message: 'A emissão automática falhou. Revise os dados e tente novamente.',
+      };
+    }
+    if (input.invoice.status === 'AUTHORIZED') {
+      return {
+        enabled: true,
+        path: input.path,
+        state: 'EMITTED',
+        message: 'Nota fiscal emitida automaticamente.',
+      };
+    }
+    return {
+      enabled: true,
+      path: input.path,
+      state: input.syncPending ? 'PROCESSING' : 'SCHEDULED',
+      message:
+        input.path === 'ASAAS_SUBSCRIPTION'
+          ? 'Nota fiscal em emissão automática conforme a assinatura.'
+          : 'Nota fiscal em emissão automática pela Alusa.',
+    };
+  }
+
+  if (input.eligibility.canEmit) {
+    return {
+      enabled: true,
+      path: input.path,
+      state: input.path === 'ALUSA' ? 'PROCESSING' : 'SCHEDULED',
+      message:
+        input.path === 'ASAAS_SUBSCRIPTION'
+          ? 'Nota será emitida automaticamente conforme a assinatura recorrente.'
+          : 'Emitindo automaticamente após confirmação do pagamento.',
+    };
+  }
+
+  if (
+    input.eligibility.reason === 'PAYMENT_NOT_CONFIRMED' ||
+    input.eligibility.reason === 'PAYMENT_PROCESSING' ||
+    input.eligibility.reason === 'CHARGE_NOT_SYNCED' ||
+    input.eligibility.reason === 'PAYMENT_STATUS_UNKNOWN'
+  ) {
+    return {
+      enabled: true,
+      path: input.path,
+      state: 'PENDING_PAYMENT',
+      message: 'Nota será emitida automaticamente ao confirmar pagamento.',
+    };
+  }
+
+  return {
+    enabled: true,
+    path: input.path,
+    state: 'MANUAL_REQUIRED',
+    message: input.eligibility.message,
   };
 }
 
@@ -180,6 +334,12 @@ export async function getChargeInvoiceDetail(input: {
     const settings = fiscalSettingsResult.success ? fiscalSettingsResult.data.settings : null;
     const readiness = mapReadinessFromSettings(fiscalSettingsResult);
     const supportsCancellation = mapSupportsCancellation(fiscalSettingsResult);
+    const payerReadiness = chargeContext
+      ? await evaluateChargePayerFiscalReadiness({
+          contaId: input.contaId,
+          chargeId: resolvedCharge.chargeId,
+        })
+      : { ready: true, issues: [] as Array<{ code: string; message: string }> };
 
     const eligibility = evaluateChargeInvoiceEligibility({
       charge: chargeContext
@@ -210,6 +370,19 @@ export async function getChargeInvoiceDetail(input: {
 
     const minEffectiveDate = todayInBrazil();
     const effectiveDate = invoice?.effectiveDate?.toISOString().slice(0, 10) ?? null;
+    const syncPending = isInvoiceProviderSyncPending({
+      status: invoice?.status,
+      hasProviderInvoice: Boolean(invoice?.asaasInvoiceId),
+      effectiveDate,
+      minEffectiveDate,
+    });
+    const autoEmissionPath =
+      settings?.emissionMode === 'ON_PAYMENT'
+        ? await resolveAutoEmissionPath({
+            contaId: input.contaId,
+            chargeId: resolvedCharge.chargeId,
+          })
+        : 'MANUAL';
 
     let preview: ChargeInvoiceDetailOutput['preview'];
     if (chargeContext && defaultService) {
@@ -266,13 +439,19 @@ export async function getChargeInvoiceDetail(input: {
         supportsCancellation,
       },
       eligibility,
-      syncPending: isInvoiceProviderSyncPending({
-        status: invoice?.status,
-        hasProviderInvoice: Boolean(invoice?.asaasInvoiceId),
-        effectiveDate,
-        minEffectiveDate,
+      syncPending,
+      autoEmission: buildAutoEmission({
+        enabled: settings?.emissionMode === 'ON_PAYMENT',
+        path: autoEmissionPath,
+        invoice: invoice ? { status: invoice.status } : null,
+        readinessReady: readiness.ready,
+        eligibility,
+        syncPending,
       }),
       preview,
+      payerReadiness: chargeContext
+        ? mapPayerFiscalReadinessForApi(payerReadiness)
+        : undefined,
     });
   } catch (error) {
     console.error('[finance][getChargeInvoiceDetail]', error);

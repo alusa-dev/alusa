@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { ContaPage } from '@/features/financeiro/conta/ContaPage';
 
@@ -17,6 +18,25 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/components/ui/toast', () => ({
   pushToast: vi.fn(),
 }));
+
+vi.mock('@/components/shared/AsaasSeal', () => ({
+  AsaasSeal: () => <div data-testid="asaas-seal" />,
+}));
+
+vi.mock('@/hooks/use-finance-realtime-sync', () => ({
+  useFinanceRealtimeSync: vi.fn(),
+}));
+
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 describe('ContaPage', () => {
   const originalFetch = global.fetch;
@@ -94,6 +114,7 @@ describe('ContaPage', () => {
                 netAmount: '50.00',
                 status: 'PENDING',
                 operation: 'PIX',
+                requestedDestinationType: 'PIX_KEY',
                 recipientName: 'Fornecedor ABC Comercial',
                 cpfCnpj: '***.197.862-**',
                 bankName: 'Pix',
@@ -112,16 +133,16 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     expect(await screen.findByText('Saldo disponível')).toBeInTheDocument();
     expect(await screen.findByText('Saídas e transferências')).toBeInTheDocument();
     expect(await screen.findByText('Solicitação')).toBeInTheDocument();
     expect(await screen.findByText('Taxa')).toBeInTheDocument();
     expect(screen.queryByText('Valor Líquido')).not.toBeInTheDocument();
-    expect(await screen.findByText('Fornecedor Comercial')).toBeInTheDocument();
-    expect(await screen.findByText('***.197.862-**')).toBeInTheDocument();
-    expect(screen.getByText('Pendente')).toBeInTheDocument();
+    expect((await screen.findAllByText('Fornecedor Comercial')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('***.197.862-**')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Pendente')).length).toBeGreaterThan(0);
     expect(screen.getByText('R$ 2,00')).toBeInTheDocument();
     expect(screen.getByText('R$ 50,00')).toBeInTheDocument();
   });
@@ -170,6 +191,7 @@ describe('ContaPage', () => {
                 netAmount: '48.00',
                 status: 'DONE',
                 operation: 'PIX',
+                requestedDestinationType: 'PIX_KEY',
                 recipientName: 'Fornecedor ABC',
                 cpfCnpj: '***.197.862-**',
                 bankName: 'Pix',
@@ -188,9 +210,9 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
-    fireEvent.click(await screen.findByLabelText('Abrir detalhes da transferência transfer:tr_1'));
+    fireEvent.click(await screen.findByLabelText(/Abrir detalhes da transferência transfer:tr_1/));
 
     expect(pushMock).toHaveBeenCalledWith('/financeiro/conta/transferencias/tr_1');
   });
@@ -202,7 +224,7 @@ describe('ContaPage', () => {
       json: async () => ({ error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' }),
     } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     expect(await screen.findByText('Não foi possível carregar a conta')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Tentar novamente' })).toBeInTheDocument();
@@ -252,7 +274,7 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -369,7 +391,7 @@ describe('ContaPage', () => {
         json: async () => ({ data: { items: [] } }),
       } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -449,7 +471,7 @@ describe('ContaPage', () => {
         }),
       } as Response);
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));
@@ -535,7 +557,7 @@ describe('ContaPage', () => {
       throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
     }) as typeof fetch;
 
-    render(<ContaPage />);
+    renderWithQueryClient(<ContaPage />);
 
     await screen.findByText('Saldo disponível');
     fireEvent.click(screen.getByRole('button', { name: /transferir/i }));

@@ -4,7 +4,9 @@ import { err, ok } from '@alusa/shared';
 
 import { featureFlagsService } from '../foundation/feature-flags.service';
 import { getBalance } from './get-balance';
+import { getTransferFees, type GetTransferFeesOutput } from './get-transfer-fees';
 import { getKycSummary, type GetKycSummaryResult } from './kyc/get-kyc-summary';
+import { resolveTenantTransferContext } from './transfers/asaas-transfer-payload';
 
 export interface GetAccountBalanceSummaryInput {
   contaId: string;
@@ -27,6 +29,12 @@ export interface GetAccountBalanceSummaryOutput {
     pixTransferEnabled: boolean;
     bankTransferEnabled: boolean;
   };
+  fees: GetTransferFeesOutput | null;
+  transferContext: {
+    tenantDocumentType: 'CPF' | 'CNPJ' | null;
+    tenantDocumentLastDigits: string | null;
+    tenantDocumentNormalized: string | null;
+  };
 }
 
 export type GetAccountBalanceSummaryError =
@@ -46,11 +54,14 @@ export async function getAccountBalanceSummary(
 
   const [
     balanceResult,
+    transferFeesResult,
     kycSummary,
     kycApproved,
     transferFlags,
+    tenantDocument,
   ] = await Promise.all([
     withSummaryPerf('getBalance', () => getBalance({ contaId: input.contaId }), { contaId: input.contaId }),
+    withSummaryPerf('getTransferFees', () => getTransferFees({ contaId: input.contaId }), { contaId: input.contaId }),
     input.kycSummary
       ? Promise.resolve(input.kycSummary)
       : withSummaryPerf('getKycSummary', () => getKycSummary(input.contaId), { contaId: input.contaId }),
@@ -60,6 +71,7 @@ export async function getAccountBalanceSummary(
     withSummaryPerf('getTransferFeatureFlags', () => featureFlagsService.getTransferFeatureFlags(input.contaId), {
       contaId: input.contaId,
     }),
+    withSummaryPerf('resolveTenantDocument', () => resolveTenantDocument(input.contaId), { contaId: input.contaId }),
   ]);
 
   if (!balanceResult.success) {
@@ -86,7 +98,24 @@ export async function getAccountBalanceSummary(
       pixTransferEnabled: transferFlags.pixTransferEnabled,
       bankTransferEnabled: transferFlags.bankTransferEnabled,
     },
+    fees: transferFeesResult.success ? transferFeesResult.data : null,
+    transferContext: resolveTenantTransferContext(tenantDocument),
   });
+}
+
+async function resolveTenantDocument(contaId: string): Promise<string | null> {
+  const [conta, profile] = await Promise.all([
+    prisma.conta.findUnique({
+      where: { id: contaId },
+      select: { cpfCnpj: true },
+    }),
+    prisma.financeProfile.findUnique({
+      where: { contaId },
+      select: { draftCpfCnpj: true },
+    }),
+  ]);
+
+  return profile?.draftCpfCnpj ?? conta?.cpfCnpj ?? null;
 }
 
 async function resolveKycApprovalFromLocalState(contaId: string): Promise<boolean> {

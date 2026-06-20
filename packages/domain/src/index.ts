@@ -38,6 +38,41 @@ export type {
   ValidarElegibilidadeResult,
 } from './rules/rematricula-rules.js';
 
+export {
+  buildRenewalPreview,
+  buildRenewalSourceVersion,
+  calculateRenewalEffectiveAt,
+  canTransitionRenewalProcess,
+} from './rules/renewal-process.js';
+
+export type {
+  BuildRenewalPreviewInput,
+  RenewalDecision,
+  RenewalHolderType,
+  RenewalItemInput,
+  RenewalOrigin,
+  RenewalPreview,
+  RenewalPreviewBlocker,
+  RenewalProcessStatus,
+  RenewalSourceEnrollment,
+  RenewalTargetType,
+} from './rules/renewal-process.js';
+
+export {
+  buildFamilyReenrollmentTransitionPlan,
+  hashFamilyReenrollmentPreview,
+} from './rules/family-reenrollment-transition.js';
+
+export type {
+  FamilyReenrollmentDecision,
+  FamilyReenrollmentFinancialGroup,
+  FamilyReenrollmentPaymentMethod,
+  FamilyReenrollmentSourceBillingInput,
+  FamilyReenrollmentStudentInput,
+  FamilyReenrollmentTransitionPlan,
+  FamilyReenrollmentTransitionPlanInput,
+} from './rules/family-reenrollment-transition.js';
+
 // Máquina de estados de matrícula
 export {
   isTerminalStatus,

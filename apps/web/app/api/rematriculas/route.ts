@@ -1,15 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { type RematriculaElegivelItem } from '@/src/server/matriculas/rematricula.service';
 import {
-  listarRematriculasElegiveis,
-  type RematriculaElegivelItem,
-} from '@/src/server/matriculas/rematricula.service';
-import {
-  rematricularAluno,
-  createAsaasPaymentsProvider,
-  type RematricularAlunoError,
-} from '@alusa/finance';
+  confirmRenewalProcess,
+  previewRenewalProcess,
+} from '@/src/server/matriculas/renewal-process.service';
+import { listRenewalManagement } from '@/src/server/matriculas/renewal-management.service';
+import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { prisma } from '@/src/prisma';
 import { FormaPagamento, StatusContrato } from '@prisma/client';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
@@ -33,7 +31,6 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
-import { createEnrollmentRenewedNotification } from '@alusa/lib';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -198,6 +195,29 @@ function toRematriculaPaymentMethod(
   return undefined;
 }
 
+function dateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildLegacyRenewalIdempotencyKey(input: {
+  contaId: string;
+  matriculaId: string;
+  targetPeriodId: string;
+  effectiveAt: Date;
+  planId?: string | null;
+  targetId?: string | null;
+}) {
+  return [
+    'renewal',
+    input.contaId,
+    input.matriculaId,
+    input.targetPeriodId,
+    dateKey(input.effectiveAt),
+    input.planId ?? 'plan-source',
+    input.targetId ?? 'target-source',
+  ].join(':');
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -234,14 +254,18 @@ export async function GET(req: Request) {
         ? (statusContratoParam as StatusContrato)
         : undefined;
 
-    const result = await listarRematriculasElegiveis({
+    const management = await listRenewalManagement({
       contaId: auth.contaId,
       diasAntecedencia: Number.isFinite(dias) ? dias : 60,
       referencia: referenciaParam ? toDate(referenciaParam) : undefined,
       statusContrato: statusContratoValue,
       search: url.searchParams.get('q') ?? url.searchParams.get('search') ?? undefined,
       currentUserRole: auth.user.role,
-    });
+      campaignId: url.searchParams.get('campaignId') ?? undefined,
+      targetPeriodId: url.searchParams.get('targetPeriodId') ?? undefined,
+      processStatus: url.searchParams.get('processStatus') ?? undefined,
+    }, { prisma });
+    const result = management.eligible;
 
     const itens = result.itens.map((item: RematriculaElegivelItem) => ({
       id: item.id,
@@ -262,13 +286,20 @@ export async function GET(req: Request) {
       financeiro: item.financeiro,
     }));
 
-    return NextResponse.json(
-      mapListRematriculasResultToDTO({
+    const legacyPayload = mapListRematriculasResultToDTO({
         referencia: result.referencia.toISOString(),
         ate: result.ate.toISOString(),
         total: result.total,
         itens,
-      }),
+      });
+
+    return NextResponse.json(
+      {
+        ...legacyPayload,
+        campaigns: management.campaigns,
+        participants: management.participants,
+        processes: management.processes,
+      },
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
@@ -353,6 +384,9 @@ export async function POST(req: Request) {
       );
     }
 
+    const gate = await guardFinancialAccountOr412(auth.contaId);
+    if (!gate.ok) return gate.response;
+
     const rematriculaDecision = await loadRematriculaDecision({
       contaId: auth.contaId,
       matriculaId,
@@ -423,97 +457,139 @@ export async function POST(req: Request) {
 
     const formaPagamento = toRematriculaPaymentMethod(paymentSelection.formaPagamento);
     const formaPagamentoTaxa = toRematriculaPaymentMethod(paymentSelection.formaPagamentoTaxa);
-
-    const result = await rematricularAluno(
-      {
-        contaId: auth.contaId,
-        matriculaId,
-        createdById: auth.user.id,
-        dataInicio: dataInicioValue,
-        dataFimContrato: dataFimContratoValue,
-        planoId: body.planoId ?? null,
-        turmaId: body.turmaId ?? null,
-        comboId: body.comboId ?? null,
-        responsavelFinanceiroId: body.responsavelFinanceiroId ?? null,
-        formaPagamento,
-        vencimentoDia: parseInteger(body.vencimentoDia),
-        billingMode: normalizeRematriculaBillingMode(body.billingMode),
-        valorMensalidadeOverride: parseNumber(body.valorMensalidadeOverride),
-        taxaMatricula: parseNumber(body.taxaMatricula),
-        taxaIsenta: body.taxaIsenta === true || body.taxaIsenta === 'true',
-        taxaJustificativa:
-          typeof body.taxaJustificativa === 'string' ? body.taxaJustificativa.trim() : undefined,
-        formaPagamentoTaxa,
-        descontos: Array.isArray(body.descontos)
-          ? body.descontos
-              .map((desconto) => ({
-                id: typeof desconto?.id === 'string' ? desconto.id : '',
-                cumulativo: desconto?.cumulativo === true,
-              }))
-              .filter((desconto) => desconto.id)
-          : undefined,
-        multaPercentual: parseNumber(body.multaPercentual),
-        jurosMensal: parseNumber(body.jurosMensal),
-        descontoAntecipado: parseNumber(body.descontoAntecipado),
-        prazoDesconto: parseInteger(body.prazoDesconto),
-        overrideReason: overrideReason || undefined,
-        policyContext: {
-          actionStatus: rematriculaDecision.decision.actionStatus,
-          blockReason: rematriculaDecision.decision.blockReason,
-          policySnapshot,
-          financialSnapshot,
-          overrideUsed: rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE',
-          overrideApprovedById:
-            rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE'
-              ? auth.user.id
-              : undefined,
-        },
-      },
-      {
-        prisma,
-        paymentsProvider: createAsaasPaymentsProvider(),
-      },
-    );
-
-    if (!result.success) {
-      return mapRematriculaErrorToResponse(result.error);
-    }
-
-    const alunoRematricula = await prisma.matricula.findFirst({
+    const origem = await prisma.matricula.findFirst({
       where: { id: matriculaId, aluno: { contaId: auth.contaId } },
-      select: { aluno: { select: { nome: true } } },
-    });
-
-    void createEnrollmentRenewedNotification({
-      contaId: auth.contaId,
-      matriculaId: result.data.matriculaIdNova,
-      matriculaOrigemId: matriculaId,
-      alunoNome: alunoRematricula?.aluno.nome ?? 'Aluno',
-      actorUserId: auth.user?.id ?? null,
-    });
-
-    // Resposta neutra (sem referências ao provedor de pagamentos)
-    const novaMatricula = await prisma.matricula.findFirst({
-      where: { id: result.data.matriculaIdNova, aluno: { contaId: auth.contaId } },
       select: {
         id: true,
-        planoId: true,
+        alunoId: true,
+        responsavelFinanceiroId: true,
         turmaId: true,
-        status: true,
-        statusContrato: true,
+        planoId: true,
+        comboId: true,
         dataInicio: true,
         dataFimContrato: true,
-        asaasSubscriptionId: true,
-        vencimentoDia: true,
-        responsavelFinanceiro: {
-          select: {
-            id: true,
-            nome: true,
-            cpf: true,
-          },
-        },
       },
     });
+
+    if (!origem) {
+      return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
+    }
+
+    const targetPeriodId = body.targetPeriodId ?? String(dataInicioValue.getUTCFullYear());
+    const campaignId = body.campaignId?.trim() || null;
+    if (campaignId) {
+      const campaign = await prisma.rematriculaCampanha.findFirst({
+        where: { id: campaignId, contaId: auth.contaId, targetPeriodId },
+        select: { id: true },
+      });
+      if (!campaign) {
+        return jsonError(404, 'CAMPANHA_NAO_ENCONTRADA', 'Campanha não encontrada para este período.');
+      }
+    }
+    const targetComboId = body.comboId ?? null;
+    const targetClassId = targetComboId ? null : body.turmaId ?? origem.turmaId;
+    const targetPlanId = body.planoId ?? origem.planoId;
+
+    if (!targetPlanId) {
+      return jsonError(422, 'PLANO_DESTINO_OBRIGATORIO', 'Selecione o plano do próximo ciclo.');
+    }
+
+    if (!targetComboId && !targetClassId) {
+      return jsonError(422, 'DESTINO_OBRIGATORIO', 'Selecione a turma ou combo do próximo ciclo.');
+    }
+
+    const holderId = body.responsavelFinanceiroId ?? origem.responsavelFinanceiroId ?? origem.alunoId;
+    const holderType = body.responsavelFinanceiroId ?? origem.responsavelFinanceiroId ? 'RESPONSIBLE' : 'STUDENT';
+    const renewalInput = {
+      contaId: auth.contaId,
+      actorId: auth.user.id,
+      origin: campaignId ? ('CAMPAIGN' as const) : ('STANDALONE' as const),
+      campaignId,
+      targetPeriodId,
+      targetPeriodStartsAt: dataInicioValue,
+      holderType: holderType as 'RESPONSIBLE' | 'STUDENT',
+      holderId,
+      items: [
+        {
+          decision: 'RENEW' as const,
+          sourceEnrollmentId: matriculaId,
+          target: targetComboId
+            ? { type: 'COMBO' as const, targetId: targetComboId, planId: targetPlanId }
+            : { type: 'CLASS' as const, targetId: targetClassId!, planId: targetPlanId },
+        },
+      ],
+      effectiveAt: dataInicioValue,
+      firstDueDate: undefined,
+      targetContractEndsAt: dataFimContratoValue,
+      financialTerms: {
+        paymentMethod: formaPagamento,
+        enrollmentFeePaymentMethod: formaPagamentoTaxa,
+        dueDay: parseInteger(body.vencimentoDia),
+        enrollmentFeeAmount: parseNumber(body.taxaMatricula),
+        enrollmentFeeExempt: body.taxaIsenta === true || body.taxaIsenta === 'true',
+        feeChargeMoment: 'CHARGE_ON_START' as const,
+        feeUnit: 'PER_STUDENT' as const,
+        feePurpose: 'ADMINISTRATIVE_FEE' as const,
+      },
+    };
+
+    const preview = await previewRenewalProcess(renewalInput, { prisma });
+    if (preview.blockers.length > 0) {
+      return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
+        blockers: preview.blockers,
+        warnings: preview.warnings,
+      });
+    }
+
+    const confirmation = await confirmRenewalProcess(
+      {
+        ...renewalInput,
+        previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
+        idempotencyKey: buildLegacyRenewalIdempotencyKey({
+          contaId: auth.contaId,
+          matriculaId,
+          targetPeriodId,
+          effectiveAt: dataInicioValue,
+          planId: targetPlanId,
+          targetId: targetComboId ?? targetClassId,
+        }),
+      },
+      { prisma },
+    );
+
+    const itemConfirmado = await prisma.rematriculaItem.findFirst({
+      where: {
+        contaId: auth.contaId,
+        processoId: confirmation.processId,
+        matriculaOrigemId: matriculaId,
+      },
+      select: { matriculaFuturaId: true },
+    });
+
+    const novaMatricula = itemConfirmado?.matriculaFuturaId
+      ? await prisma.matricula.findFirst({
+          where: { id: itemConfirmado.matriculaFuturaId, aluno: { contaId: auth.contaId } },
+          select: {
+            id: true,
+            planoId: true,
+            turmaId: true,
+            status: true,
+            statusContrato: true,
+            dataInicio: true,
+            dataFimContrato: true,
+            asaasSubscriptionId: true,
+            vencimentoDia: true,
+            responsavelFinanceiro: {
+              select: {
+                id: true,
+                nome: true,
+                cpf: true,
+              },
+            },
+          },
+        })
+      : null;
 
     const matriculaAnterior = await prisma.matricula.findFirst({
       where: { id: matriculaId, aluno: { contaId: auth.contaId } },
@@ -525,26 +601,22 @@ export async function POST(req: Request) {
       },
     });
 
-    const primeiroVencimento = (() => {
-      if (!novaMatricula?.vencimentoDia) return dataInicioValue.toISOString();
-      const base = new Date(dataInicioValue);
-      base.setMonth(base.getMonth() + 1);
-      base.setDate(Math.min(28, novaMatricula.vencimentoDia));
-      return base.toISOString();
-    })();
+    const primeiroVencimento = preview.firstDueDate
+      ? new Date(`${preview.firstDueDate}T00:00:00.000Z`).toISOString()
+      : dataInicioValue.toISOString();
 
     return NextResponse.json(
       createRematriculaResultDTOSchema.parse(
         mapCreateRematriculaResultToDTO({
-          operationId: result.data.operationId,
-          status: result.data.status,
-          matriculaId: result.data.matriculaIdNova,
-          message: result.data.uiMessage,
+          operationId: confirmation.processId,
+          status: 'PENDING',
+          matriculaId: novaMatricula?.id ?? matriculaId,
+          message: 'Rematrícula confirmada. O próximo ciclo foi preparado e aguardará a data de início.',
           novaMatricula: {
-            id: novaMatricula?.id ?? result.data.matriculaIdNova,
-            planoId: novaMatricula?.planoId ?? body.planoId ?? '',
-            turmaId: novaMatricula?.turmaId ?? body.turmaId ?? null,
-            status: novaMatricula?.status ?? 'ATIVA',
+            id: novaMatricula?.id ?? matriculaId,
+            planoId: novaMatricula?.planoId ?? targetPlanId,
+            turmaId: novaMatricula?.turmaId ?? targetClassId,
+            status: novaMatricula?.status ?? 'AGUARDANDO_CONFIRMACAO',
             statusContrato: novaMatricula?.statusContrato ?? 'AGUARDANDO_ASSINATURA',
             dataInicio: novaMatricula?.dataInicio?.toISOString() ?? dataInicioValue.toISOString(),
             dataFimContrato:
@@ -582,43 +654,4 @@ export async function POST(req: Request) {
     }
     return jsonError(500, 'ERRO_CRIAR_REMATRICULA', (error as Error).message);
   }
-}
-
-function mapRematriculaErrorToResponse(error: RematricularAlunoError) {
-  const errorMap: Record<string, { status: number; message: string }> = {
-    MATRICULA_NAO_ENCONTRADA: { status: 404, message: 'Matrícula não encontrada.' },
-    MATRICULA_PERTENCE_OUTRA_CONTA: {
-      status: 403,
-      message: 'Matrícula não pertence a esta conta.',
-    },
-    STATUS_INVALIDO: { status: 422, message: 'Status da matrícula não permite rematrícula.' },
-    TURMA_SEM_VAGAS: { status: 422, message: 'Turma não possui vagas disponíveis.' },
-    COMBO_SEM_VAGAS: { status: 422, message: 'Combo atingiu limite de vagas.' },
-    CONFLITO_HORARIO: { status: 422, message: 'Conflito de horário detectado.' },
-    DATA_INICIO_INVALIDA: { status: 422, message: 'Data de início inválida.' },
-    DATA_FIM_ANTES_INICIO: { status: 422, message: 'Data fim deve ser posterior à data início.' },
-    RESPONSAVEL_OBRIGATORIO_MENOR: {
-      status: 422,
-      message: 'Aluno menor de idade requer responsável financeiro.',
-    },
-    PLANO_NAO_ENCONTRADO: { status: 404, message: 'Plano não encontrado.' },
-    TURMA_NAO_ENCONTRADA: { status: 404, message: 'Turma não encontrada.' },
-    COMBO_NAO_ENCONTRADO: { status: 404, message: 'Combo não encontrado.' },
-    OPERACAO_EM_ANDAMENTO: { status: 409, message: 'Já existe uma rematrícula em andamento.' },
-    FORMA_PAGAMENTO_INVALIDA: {
-      status: 422,
-      message: 'Forma de pagamento da rematrícula é inválida.',
-    },
-    FORMA_PAGAMENTO_TAXA_INVALIDA: {
-      status: 422,
-      message: 'Forma de pagamento da taxa de rematrícula é inválida.',
-    },
-    ERRO_PROVEDOR: { status: 502, message: 'Erro ao processar pagamento.' },
-  };
-
-  const mapped = errorMap[error.code] ?? { status: 500, message: 'Erro desconhecido.' };
-  const details =
-    'message' in error ? error.message : 'details' in error ? error.details : undefined;
-
-  return jsonError(mapped.status, error.code, mapped.message, details);
 }

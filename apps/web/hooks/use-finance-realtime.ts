@@ -65,7 +65,7 @@ function recordRealtimeFetch() {
 }
 
 function getActivePollIntervalMs() {
-  let minInterval = 3_000;
+  let minInterval = 30_000;
   for (const subscriber of sharedSubscribers.values()) {
     if (!subscriber.enabled) continue;
     minInterval = Math.min(minInterval, subscriber.pollIntervalMs);
@@ -257,7 +257,7 @@ export function useFinanceRealtime(options: UseFinanceRealtimeOptions = {}) {
   const {
     enabled = true,
     cobrancaId,
-    pollIntervalMs = 3_000,
+    pollIntervalMs = 15_000,
     onEvent,
     onEvents,
   } = options;

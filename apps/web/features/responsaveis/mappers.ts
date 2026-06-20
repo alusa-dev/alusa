@@ -5,6 +5,12 @@ import type {
   ResponsavelSummaryDTO,
   UpdateResponsavelInputDTO,
 } from './dtos';
+import {
+  assertPayerAddressFiscalReady,
+  mapNormalizedAddressToResponsavelColumns,
+  normalizePayerAddressInput,
+  trimOrUndefined,
+} from '@alusa/lib';
 import { maskCpf, maskEmail, maskPhone } from '@alusa/shared';
 
 type ResponsavelSummaryRecord = {
@@ -64,13 +70,31 @@ export function mapListResponsaveisQueryToFilters(
 }
 
 export function mapCreateResponsavelDTOToData(dto: CreateResponsavelInputDTO, contaId: string) {
-  return {
+  const financeiro = dto.financeiro ?? true;
+  const base = {
     contaId,
     nome: dto.nome,
     cpf: onlyDigits(dto.cpf),
     email: dto.email || `temp_${Date.now()}@responsavel.local`,
     telefone: dto.telefone ? onlyDigits(dto.telefone) : '',
-    financeiro: dto.financeiro ?? true,
+    financeiro,
+  };
+
+  if (!dto.endereco) {
+    return base;
+  }
+
+  const normalized = financeiro
+    ? assertPayerAddressFiscalReady(dto.endereco)
+    : normalizePayerAddressInput(dto.endereco);
+
+  if (!normalized) {
+    return base;
+  }
+
+  return {
+    ...base,
+    ...mapNormalizedAddressToResponsavelColumns(normalized),
   };
 }
 
@@ -83,13 +107,31 @@ export function mapUpdateResponsavelDTOToData(dto: UpdateResponsavelInputDTO) {
   if (typeof dto.telefone === 'string') data.telefone = onlyDigits(dto.telefone);
   if (typeof dto.financeiro === 'boolean') data.financeiro = dto.financeiro;
   if (dto.endereco && typeof dto.endereco === 'object') {
-    if (typeof dto.endereco.cep === 'string') data.enderecoCep = dto.endereco.cep.trim();
-    if (typeof dto.endereco.logradouro === 'string') data.enderecoLogradouro = dto.endereco.logradouro.trim();
-    if (typeof dto.endereco.numero === 'string') data.enderecoNumero = dto.endereco.numero.trim();
-    if (typeof dto.endereco.complemento === 'string') data.enderecoComplemento = dto.endereco.complemento.trim();
-    if (typeof dto.endereco.bairro === 'string') data.enderecoBairro = dto.endereco.bairro.trim();
-    if (typeof dto.endereco.cidade === 'string') data.enderecoCidade = dto.endereco.cidade.trim();
-    if (typeof dto.endereco.uf === 'string') data.enderecoUf = dto.endereco.uf.trim().toUpperCase();
+    const normalized = normalizePayerAddressInput({
+      cep: trimOrUndefined(dto.endereco.cep),
+      logradouro: trimOrUndefined(dto.endereco.logradouro),
+      numero: trimOrUndefined(dto.endereco.numero),
+      complemento: trimOrUndefined(dto.endereco.complemento),
+      bairro: trimOrUndefined(dto.endereco.bairro),
+      cidade: trimOrUndefined(dto.endereco.cidade),
+      uf: trimOrUndefined(dto.endereco.uf),
+    });
+
+    if (normalized) {
+      Object.assign(data, mapNormalizedAddressToResponsavelColumns(normalized));
+    } else {
+      if (typeof dto.endereco.cep === 'string') data.enderecoCep = dto.endereco.cep.trim() || null;
+      if (typeof dto.endereco.logradouro === 'string') {
+        data.enderecoLogradouro = dto.endereco.logradouro.trim() || null;
+      }
+      if (typeof dto.endereco.numero === 'string') data.enderecoNumero = dto.endereco.numero.trim() || null;
+      if (typeof dto.endereco.complemento === 'string') {
+        data.enderecoComplemento = dto.endereco.complemento.trim() || null;
+      }
+      if (typeof dto.endereco.bairro === 'string') data.enderecoBairro = dto.endereco.bairro.trim() || null;
+      if (typeof dto.endereco.cidade === 'string') data.enderecoCidade = dto.endereco.cidade.trim() || null;
+      if (typeof dto.endereco.uf === 'string') data.enderecoUf = dto.endereco.uf.trim().toUpperCase() || null;
+    }
   }
 
   return data;

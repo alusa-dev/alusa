@@ -34,6 +34,7 @@ interface StepTaxaProps {
 
 export function StepTaxa({ ctx }: StepTaxaProps) {
   const { state, update } = ctx;
+  const isFamiliar = state.modoMatricula === 'FAMILIAR';
   const [isenta, setIsenta] = useState(Boolean(state.taxaIsenta));
   const [valorTexto, setValorTexto] = useState(() => {
     if (state.taxaIsenta) return '0,00';
@@ -99,7 +100,11 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
     <SectionCard>
       <StepHeader
         title="Taxa de matrícula"
-        hint="Configure a taxa de adesão. A matrícula poderá ser concluída independentemente do pagamento."
+        hint={
+          isFamiliar
+            ? 'Informe o valor total da taxa familiar. Será gerada uma única cobrança consolidada para o responsável.'
+            : 'Configure a taxa de adesão. A matrícula poderá ser concluída independentemente do pagamento.'
+        }
       />
 
       <div className="space-y-4">
@@ -141,7 +146,7 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
               {/* Valor */}
               <div className="space-y-2">
                 <label className="text-xs text-gray-600" htmlFor="taxa-valor">
-                  Valor da taxa (R$)
+                  {isFamiliar ? 'Valor total da taxa familiar (R$)' : 'Valor da taxa (R$)'}
                 </label>
                 <Input
                   id="taxa-valor"

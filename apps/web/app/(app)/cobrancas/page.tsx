@@ -38,6 +38,7 @@ const CreateChargeModal = dynamic(
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
+import { getChargeTipoLabel } from '@/lib/finance/charge-tipo-label';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -49,18 +50,8 @@ const formatDate = (dateStr?: string | null) => {
   return date.toLocaleDateString('pt-BR');
 };
 
-const getTipoLabel = (tipo: string) => {
-  const labels: Record<string, string> = {
-    MENSALIDADE: 'Mensalidade',
-    TAXA_MATRICULA: 'Taxa de Matrícula',
-    EXTRA: 'Extra',
-    AVULSA: 'Avulsa',
-    PARCELADA: 'Parcelamento',
-    RECORRENTE: 'Assinatura',
-    EVENTO: 'Eventos',
-  };
-  return labels[tipo] || tipo;
-};
+const getTipoLabel = (tipo: string, description?: string | null) =>
+  getChargeTipoLabel(tipo, description);
 
 type Cobranca = {
   id: string;
@@ -75,6 +66,7 @@ type Cobranca = {
   };
   valor: number;
   vencimento?: string;
+  createdAt?: string | null;
   payerName?: string;
   asaasPaymentId?: string | null;
   invoiceUrl?: string | null;
@@ -155,6 +147,7 @@ export default function CobrancasTodasPage() {
             displayStatus: item.displayStatus as Cobranca['displayStatus'],
             valor: (item.value as number) ?? 0,
             vencimento: item.dueDate as string | undefined,
+            createdAt: typeof item.createdAt === 'string' ? item.createdAt : null,
             payerName: item.payerName as string | undefined,
             asaasPaymentId: item.asaasPaymentId as string | null,
             invoiceUrl: item.invoiceUrl as string | null,
@@ -171,12 +164,15 @@ export default function CobrancasTodasPage() {
         }
         return {
           id: item.id as string,
-          description: (item.description as string | null | undefined) ?? null,
           tipo: item.tipo as string | undefined,
           status: item.status as string | undefined,
           displayStatus: item.displayStatus as Cobranca['displayStatus'],
           valor: (item.valor as number) ?? 0,
           vencimento: item.vencimento as string | undefined,
+          createdAt:
+            typeof (item as Record<string, unknown>).createdAt === 'string'
+              ? ((item as Record<string, unknown>).createdAt as string)
+              : null,
           payerName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
             ?? ((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno
               ? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
@@ -186,6 +182,10 @@ export default function CobrancasTodasPage() {
           matriculaId: item.matriculaId as string | null,
           eventId: item.eventId as string | null,
           formaPagamento: item.formaPagamento as string | null,
+          description:
+            (item as Record<string, unknown>).description as string | null | undefined ??
+            (item as Record<string, unknown>).descricao as string | null | undefined ??
+            null,
           isGroup: item.isGroup as boolean | undefined,
           groupType: item.groupType as 'INSTALLMENT' | 'SUBSCRIPTION' | null,
           groupId: item.installmentPlanId as string | null,
@@ -221,11 +221,16 @@ export default function CobrancasTodasPage() {
   const orderedCobrancas = useMemo(() => {
     const items = [...cobrancas];
     items.sort((a, b) => {
-      const ta = new Date(a.vencimento ?? '').getTime() || 0;
-      const tb = new Date(b.vencimento ?? '').getTime() || 0;
-      return ta - tb;
+      const aOverdue = a.status === 'OVERDUE' || a.status === 'ATRASADO';
+      const bOverdue = b.status === 'OVERDUE' || b.status === 'ATRASADO';
+      if (aOverdue && !bOverdue) return -1;
+      if (bOverdue && !aOverdue) return 1;
+
+      const ta = new Date(a.createdAt ?? a.vencimento ?? '').getTime() || 0;
+      const tb = new Date(b.createdAt ?? b.vencimento ?? '').getTime() || 0;
+      const cmp = tb - ta;
+      return sortOrder === 'DESC' ? cmp : -cmp;
     });
-    if (sortOrder === 'DESC') items.reverse();
     return items;
   }, [cobrancas, sortOrder]);
 
@@ -271,9 +276,9 @@ export default function CobrancasTodasPage() {
           hideStatusFilter
           sortOrder={sortOrder}
           onSortChange={setSortOrder}
-          sortMenuTitle="Ordenar por vencimento"
-          sortAscLabel="Mais antigo primeiro"
-          sortDescLabel="Mais recente primeiro"
+          sortMenuTitle="Ordenar por criação"
+          sortAscLabel="Mais antigas primeiro"
+          sortDescLabel="Mais recentes primeiro"
           extraLeft={
             <div className="grid min-w-0 w-full grid-cols-2 gap-2 lg:flex lg:w-auto lg:shrink-0 lg:gap-2">
               <Select value={tipoFilter} onValueChange={setTipoFilter}>
@@ -435,7 +440,7 @@ export default function CobrancasTodasPage() {
                               </div>
                               <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
                                 <span className="min-w-0 break-words text-gray-600">
-                                  {getTipoLabel(cobranca.tipo ?? '')}
+                                  {getTipoLabel(cobranca.tipo ?? '', cobranca.description)}
                                 </span>
                                 <span className="shrink-0 text-gray-300" aria-hidden>
                                   ·
@@ -501,7 +506,7 @@ export default function CobrancasTodasPage() {
                               )}
                             </div>
                             <div className="col-span-2 text-center text-[13px] text-gray-700">
-                              {getTipoLabel(cobranca.tipo ?? '')}
+                              {getTipoLabel(cobranca.tipo ?? '', cobranca.description)}
                             </div>
                             <div className="col-span-2 text-center">
                               <div

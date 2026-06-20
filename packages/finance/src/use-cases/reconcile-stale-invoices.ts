@@ -2,6 +2,7 @@ import { loadAsaasCredentials } from '@alusa/database';
 import { listAsaasInvoices } from '@alusa/asaas';
 import type { InvoiceOperationStatus, InvoiceStatus, Prisma } from '@prisma/client';
 
+import { resolveChargeInvoiceEmissionPath } from '../fiscal/charge-invoice-emission-path';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
 import { recordInvoiceAuditEvent } from '../fiscal/invoice-audit.service';
 import {
@@ -10,6 +11,8 @@ import {
 } from '../fiscal/provider-invoice-snapshot';
 import { mapAsaasInvoiceStatusToInternal } from '../mappers/invoice-status.mapper';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import { handleInvoiceWebhook } from '../webhooks/invoice-webhook-handler';
+import { emitChargeInvoice } from './emit-charge-invoice';
 import { syncInvoiceFromProvider } from './sync-invoice-from-provider';
 
 const DEFAULT_STALE_MINUTES = 60;
@@ -33,6 +36,25 @@ type ReconcileCandidate = {
   operationAttempts: number;
 };
 
+type PaidChargeWithoutInvoiceCandidate = {
+  id: string;
+  contaId: string;
+  asaasPaymentId: string | null;
+  asaasStatus: string | null;
+  status: string;
+  createdAt: Date;
+  standaloneSubscriptionId: string | null;
+  standaloneSubscription: {
+    asaasSubscriptionId: string | null;
+    asaasInvoiceSettingsConfigured: boolean;
+  } | null;
+  cobranca: {
+    tipo: string;
+    status: string;
+    matriculaId: string;
+  } | null;
+};
+
 export type ReconcileStaleInvoicesInput = {
   contaId?: string;
   limit?: number;
@@ -44,6 +66,9 @@ export type ReconcileStaleInvoicesOutput = {
   synced: number;
   failed: number;
   recovered: number;
+  paidChargesScanned: number;
+  paidChargesRecovered: number;
+  paidChargesFailed: number;
   invoices: Array<{
     id: string;
     contaId: string;
@@ -52,7 +77,23 @@ export type ReconcileStaleInvoicesOutput = {
     recovered?: boolean;
     error?: unknown;
   }>;
+  paidCharges: Array<{
+    id: string;
+    contaId: string;
+    success: boolean;
+    path?: 'ALUSA_LOCAL' | 'ASAAS_SUBSCRIPTION_NATIVE';
+    recovered?: boolean;
+    skipped?: boolean;
+    error?: unknown;
+  }>;
 };
+
+const PAID_PROVIDER_STATUSES = new Set([
+  'CONFIRMED',
+  'RECEIVED',
+  'RECEIVED_IN_CASH',
+  'DUNNING_RECEIVED',
+]);
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return fallback;
@@ -62,6 +103,17 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
 function nextBackoffDate(attempts: number): Date {
   const delayMs = Math.min(60 * 60 * 1000, 2 ** Math.max(0, attempts) * 60 * 1000);
   return new Date(Date.now() + delayMs);
+}
+
+function normalizeStatus(value: string | null | undefined): string | null {
+  return value?.trim().toUpperCase() || null;
+}
+
+function isPaidChargeCandidate(candidate: PaidChargeWithoutInvoiceCandidate): boolean {
+  if (candidate.status === 'PAID') return true;
+  if (candidate.cobranca?.status === 'PAGO') return true;
+  const providerStatus = normalizeStatus(candidate.asaasStatus);
+  return Boolean(providerStatus && PAID_PROVIDER_STATUSES.has(providerStatus));
 }
 
 async function recordProviderLinkMissing(input: {
@@ -219,6 +271,135 @@ async function reconcileCandidate(candidate: ReconcileCandidate) {
   return recoverMissingProviderInvoice(candidate);
 }
 
+async function resolveAcademicSubscription(input: {
+  contaId: string;
+  matriculaId?: string | null;
+}) {
+  if (!input.matriculaId) return null;
+  const prisma = getFiscalPrisma();
+  return prisma.subscription.findFirst({
+    where: { contaId: input.contaId, matriculaId: input.matriculaId },
+    select: {
+      asaasSubscriptionId: true,
+      asaasInvoiceSettingsConfigured: true,
+    },
+  });
+}
+
+async function recordPaidChargeWithoutInvoiceIssue(input: {
+  candidate: PaidChargeWithoutInvoiceCandidate;
+  path: 'ALUSA_LOCAL' | 'ASAAS_SUBSCRIPTION_NATIVE';
+  reason: string;
+}) {
+  await upsertFinanceReconciliationIssue({
+    contaId: input.candidate.contaId,
+    entityType: 'CHARGE',
+    entityId: input.candidate.id,
+    asaasId: input.candidate.asaasPaymentId,
+    issueType: 'PAID_CHARGE_WITHOUT_INVOICE',
+    severity: input.path === 'ASAAS_SUBSCRIPTION_NATIVE' ? 'MEDIUM' : 'HIGH',
+    localStatus: input.candidate.status,
+    remoteStatus: input.candidate.asaasStatus ?? null,
+    metadata: {
+      source: 'reconcileStaleInvoices',
+      reason: input.reason,
+      emissionPath: input.path,
+      cobrancaTipo: input.candidate.cobranca?.tipo ?? null,
+      asaasPaymentId: input.candidate.asaasPaymentId,
+    },
+  });
+}
+
+async function reconcilePaidChargeWithoutInvoice(candidate: PaidChargeWithoutInvoiceCandidate) {
+  if (!candidate.asaasPaymentId) {
+    return { success: false as const, error: 'CHARGE_SEM_ASAAS_PAYMENT_ID' };
+  }
+
+  const subscription = await resolveAcademicSubscription({
+    contaId: candidate.contaId,
+    matriculaId: candidate.cobranca?.matriculaId,
+  });
+  const path = resolveChargeInvoiceEmissionPath({
+    charge: candidate,
+    subscription,
+  });
+
+  if (path === 'ALUSA_LOCAL') {
+    const emitted = await emitChargeInvoice({
+      contaId: candidate.contaId,
+      chargeId: candidate.id,
+      actor: { type: 'SYSTEM' },
+    });
+
+    if (!emitted.success) {
+      await recordPaidChargeWithoutInvoiceIssue({
+        candidate,
+        path,
+        reason: typeof emitted.error === 'string' ? emitted.error : 'AUTO_EMIT_FAILED',
+      });
+      return { success: false as const, path, error: emitted.error };
+    }
+
+    return { success: true as const, path, recovered: true as const };
+  }
+
+  const credentials = await loadAsaasCredentials(candidate.contaId);
+  if (!credentials) {
+    await recordPaidChargeWithoutInvoiceIssue({
+      candidate,
+      path,
+      reason: 'Credenciais Asaas ausentes para consultar nota fiscal nativa.',
+    });
+    return { success: false as const, path, error: 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' };
+  }
+
+  const response = await listAsaasInvoices({
+    apiKey: credentials.apiKey,
+    payment: candidate.asaasPaymentId,
+    limit: 10,
+  });
+  const found =
+    response.data?.find((invoice) => invoice.payment === candidate.asaasPaymentId) ??
+    response.data?.[0] ??
+    null;
+
+  if (!found) {
+    await recordPaidChargeWithoutInvoiceIssue({
+      candidate,
+      path,
+      reason: 'Pagamento confirmado sem NFS-e encontrada no Asaas por payment.',
+    });
+    return { success: true as const, path, skipped: true as const, recovered: false as const };
+  }
+
+  const result = await handleInvoiceWebhook(candidate.contaId, {
+    event: 'INVOICE_CREATED',
+    invoice: {
+      id: found.id,
+      status: found.status,
+      statusDescription: found.statusDescription ?? null,
+      externalReference: found.externalReference ?? null,
+      pdfUrl: found.pdfUrl ?? null,
+      xmlUrl: found.xmlUrl ?? null,
+      number: found.number ?? null,
+      serviceDescription: found.serviceDescription ?? null,
+      observations: found.observations ?? null,
+      value: found.value,
+      deductions: found.deductions,
+      effectiveDate: found.effectiveDate ?? null,
+      payment: found.payment ?? candidate.asaasPaymentId,
+      taxes: found.taxes ? { ...found.taxes } : null,
+    },
+  });
+
+  return {
+    success: true as const,
+    path,
+    recovered: Boolean(result.invoiceId && !result.skipped),
+    skipped: Boolean(result.skipped),
+  };
+}
+
 export async function reconcileStaleInvoices(
   input: ReconcileStaleInvoicesInput = {},
 ): Promise<ReconcileStaleInvoicesOutput> {
@@ -281,10 +462,71 @@ export async function reconcileStaleInvoices(
     take: limit,
   });
 
+  const paidChargeCandidates = await prisma.charge.findMany({
+    where: {
+      contaId: input.contaId,
+      asaasPaymentId: { not: null },
+      conta: {
+        contaFiscalSettings: {
+          is: {
+            emissionMode: 'ON_PAYMENT',
+            readinessStatus: 'READY',
+          },
+        },
+      },
+      AND: [
+        {
+          OR: [
+            { status: 'PAID' },
+            { asaasStatus: { in: Array.from(PAID_PROVIDER_STATUSES) } },
+            { cobranca: { status: 'PAGO' } },
+          ],
+        },
+        {
+          OR: [
+            { invoice: { is: null } },
+            { invoice: { is: { status: 'ERROR' } } },
+          ],
+        },
+      ],
+    },
+    select: {
+      id: true,
+      contaId: true,
+      asaasPaymentId: true,
+      asaasStatus: true,
+      status: true,
+      createdAt: true,
+      standaloneSubscriptionId: true,
+      standaloneSubscription: {
+        select: {
+          asaasSubscriptionId: true,
+          asaasInvoiceSettingsConfigured: true,
+        },
+      },
+      cobranca: {
+        select: {
+          tipo: true,
+          status: true,
+          matriculaId: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+  });
+
   const results = await Promise.allSettled(
     candidates.map(async (candidate) => ({
       candidate,
       result: await reconcileCandidate(candidate),
+    })),
+  );
+
+  const paidChargeResults = await Promise.allSettled(
+    paidChargeCandidates.filter(isPaidChargeCandidate).map(async (candidate) => ({
+      candidate,
+      result: await reconcilePaidChargeWithoutInvoice(candidate),
     })),
   );
 
@@ -317,11 +559,47 @@ export async function reconcileStaleInvoices(
     };
   });
 
+  const filteredPaidChargeCandidates = paidChargeCandidates.filter(isPaidChargeCandidate);
+  const reconciledPaidCharges = paidChargeResults.map((item, index) => {
+    const candidate = filteredPaidChargeCandidates[index]!;
+    if (item.status === 'rejected') {
+      return {
+        id: candidate.id,
+        contaId: candidate.contaId,
+        success: false,
+        error: item.reason instanceof Error ? item.reason.message : item.reason,
+      };
+    }
+
+    if (!item.value.result.success) {
+      return {
+        id: candidate.id,
+        contaId: candidate.contaId,
+        success: false,
+        path: item.value.result.path,
+        error: item.value.result.error,
+      };
+    }
+
+    return {
+      id: candidate.id,
+      contaId: candidate.contaId,
+      success: true,
+      path: item.value.result.path,
+      recovered: item.value.result.recovered,
+      skipped: item.value.result.skipped,
+    };
+  });
+
   return {
     scanned: candidates.length,
     synced: reconciled.filter((item) => item.success).length,
     failed: reconciled.filter((item) => !item.success).length,
     recovered: reconciled.filter((item) => item.success && item.recovered).length,
+    paidChargesScanned: paidChargeCandidates.length,
+    paidChargesRecovered: reconciledPaidCharges.filter((item) => item.success && item.recovered).length,
+    paidChargesFailed: reconciledPaidCharges.filter((item) => !item.success).length,
     invoices: reconciled,
+    paidCharges: reconciledPaidCharges,
   };
 }

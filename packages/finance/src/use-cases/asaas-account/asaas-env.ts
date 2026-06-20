@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-error';
 
 export type WebhookBaseUrlSource = 'ASAAS_WEBHOOK_PUBLIC_BASE_URL' | 'NEXT_PUBLIC_APP_URL';
@@ -23,12 +25,50 @@ export function canonicalizePublicBaseUrl(value: string): string {
   }
 }
 
-export function getMasterAsaasApiKey(): string {
-  const apiKey = process.env.ASAAS_API_KEY;
-  if (!apiKey) {
-    throw new MissingAsaasApiKeyError();
+function readLocalEnvValue(filePath: string, key: string): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = readFileSync(filePath, 'utf8').match(new RegExp(`^${escapedKey}=(.*)$`, 'm'));
+    if (!match) return null;
+
+    let value = match[1]?.trim() ?? '';
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    return value.replace(/^\\(?=\$aact_)/, '').trim() || null;
+  } catch {
+    return null;
   }
-  return apiKey;
+}
+
+function isDevelopmentRuntime(): boolean {
+  return process.env.NODE_ENV === 'development';
+}
+
+export function getMasterAsaasApiKey(): string {
+  const apiKey = process.env.ASAAS_API_KEY?.trim();
+  if (apiKey) return apiKey;
+
+  if (isDevelopmentRuntime()) {
+    const cwd = process.cwd();
+    const candidateFiles = [
+      resolve(cwd, '.env.local'),
+      resolve(cwd, '../../.env.local'),
+    ];
+
+    for (const filePath of candidateFiles) {
+      const value = readLocalEnvValue(filePath, 'ASAAS_API_KEY');
+      if (value) return value;
+    }
+  }
+
+  throw new MissingAsaasApiKeyError();
 }
 
 function isTestRuntime(): boolean {

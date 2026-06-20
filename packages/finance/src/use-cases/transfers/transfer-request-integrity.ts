@@ -1,5 +1,10 @@
 import type { WithdrawDestination } from '../request-withdraw';
 
+import {
+  normalizeCpfCnpjForAsaas,
+  normalizeDigits,
+  normalizePixKeyForAsaas,
+} from './asaas-transfer-payload';
 import { parseWithdrawDestination } from './recipient-utils';
 
 type CanonicalTransferDestination =
@@ -59,10 +64,6 @@ type AuthorizationPayloadTransfer = {
   } | null;
 };
 
-function normalizeDigits(value: string | null | undefined): string {
-  return (value ?? '').replace(/\D+/g, '');
-}
-
 function normalizeText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed.replace(/\s+/g, ' ').toLowerCase() : null;
@@ -88,45 +89,12 @@ function normalizeMoney(value: number | string | { toString(): string }): string
   return Number.isFinite(asNumber) ? asNumber.toFixed(2) : '0.00';
 }
 
-function normalizePixKeyType(
-  value: WithdrawDestination extends infer T
-    ? T extends { type: 'PIX'; pixAddressKeyType: infer P }
-      ? P
-      : never
-    : never,
-) {
-  return value;
-}
-
-function normalizePixKey(
-  value: string,
-  type: WithdrawDestination extends infer T
-    ? T extends { type: 'PIX'; pixAddressKeyType: infer P }
-      ? P
-      : never
-    : never,
-): string {
-  const trimmed = value.trim();
-
-  switch (type) {
-    case 'CPF':
-    case 'CNPJ':
-    case 'PHONE':
-      return normalizeDigits(trimmed);
-    case 'EMAIL':
-      return trimmed.toLowerCase();
-    case 'EVP':
-    default:
-      return trimmed.toLowerCase();
-  }
-}
-
 function canonicalizeDestination(destination: WithdrawDestination): CanonicalTransferDestination {
   if (destination.type === 'PIX') {
     return {
       type: 'PIX',
-      pixAddressKeyType: normalizePixKeyType(destination.pixAddressKeyType),
-      pixAddressKey: normalizePixKey(destination.pixAddressKey, destination.pixAddressKeyType),
+      pixAddressKeyType: destination.pixAddressKeyType,
+      pixAddressKey: normalizePixKeyForAsaas(destination.pixAddressKey, destination.pixAddressKeyType),
     };
   }
 
@@ -136,7 +104,7 @@ function canonicalizeDestination(destination: WithdrawDestination): CanonicalTra
     accountName: normalizeOptionalText(destination.accountName),
     ownerName: normalizeText(destination.ownerName) ?? '',
     ownerBirthDate: normalizeDateOnly(destination.ownerBirthDate),
-    cpfCnpj: normalizeDigits(destination.cpfCnpj),
+    cpfCnpj: normalizeCpfCnpjForAsaas(destination.cpfCnpj),
     agency: normalizeDigits(destination.agency),
     account: normalizeDigits(destination.account),
     accountDigit: normalizeDigits(destination.accountDigit),
@@ -213,7 +181,7 @@ export function verifyTransferAuthorizationPayload(params: {
       return { matches: false, refuseReason: 'Chave Pix ausente' };
     }
 
-    const normalizedPayloadPixKey = normalizePixKey(
+    const normalizedPayloadPixKey = normalizePixKeyForAsaas(
       payloadPixKey,
       params.expectedIntent.destination.pixAddressKeyType,
     );

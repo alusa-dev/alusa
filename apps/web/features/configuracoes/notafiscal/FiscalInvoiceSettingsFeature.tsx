@@ -584,18 +584,34 @@ export function FiscalInvoiceSettingsFeature() {
       ) : null}
 
       {showEmpty ? (
-        <div className="mx-auto flex max-w-lg flex-col items-center py-16 text-center">
-          <h3 className="text-lg font-medium text-slate-900">
-            Configure a emissão de Notas Fiscais de Serviço
-          </h3>
-          <p className="mt-2 text-sm text-slate-600">
-            Emita notas fiscais vinculadas às cobranças da escola, com serviços e padrões definidos por
-            você.
-          </p>
-          <Button className="mt-6" onClick={startWizard}>
-            Iniciar configuração
-          </Button>
-        </div>
+        <section className={cn(FISCAL_WIZARD_PANEL_CLASS, 'px-5 py-12 md:px-8 md:py-14')}>
+          <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
+            <div className="w-full space-y-3">
+              <h3 className="text-base font-medium tracking-tight text-slate-900 md:text-lg">
+                Configure a emissão de Notas Fiscais de Serviço
+              </h3>
+              <InfoCallout
+                size="sm"
+                className="w-full bg-slate-100 text-left text-slate-600"
+              >
+                Defina o emissor fiscal, os dados da escola, os serviços prestados e as regras de emissão
+                para gerar NFS-e vinculadas às cobranças de mensalidades, matrículas e demais receitas.
+                Você também pode automatizar a emissão após a confirmação do pagamento.
+              </InfoCallout>
+              <InfoCallout
+                variant="info"
+                size="sm"
+                showIcon
+                className="w-full whitespace-nowrap text-left"
+              >
+                Precisa de ajuda? Consulte sua contabilidade sobre códigos de serviço municipal.
+              </InfoCallout>
+            </div>
+            <Button className="mt-8" onClick={startWizard}>
+              Iniciar configuração
+            </Button>
+          </div>
+        </section>
       ) : null}
 
       {data?.readiness.ready && !wizardOpen ? (
@@ -1140,7 +1156,7 @@ export function FiscalInvoiceSettingsFeature() {
                   </div>
                   <FiscalSelect
                     label="Modo de emissão"
-                    help="No modo automático, a Alusa agenda a NFS-e após a confirmação do pagamento da cobrança."
+                    help="No modo automático, taxa, avulsas e parcelas são emitidas pela Alusa; mensalidades e assinaturas usam a emissão nativa do Asaas."
                     value={form.emissionMode ?? 'MANUAL'}
                     options={[
                       { label: 'Manual: emitir pela tela da cobrança', value: 'MANUAL' },
@@ -1157,7 +1173,7 @@ export function FiscalInvoiceSettingsFeature() {
                     <>
                       <FiscalSelect
                         label="Período de emissão em assinaturas"
-                        help="Define em qual momento a Alusa emite a NFS-e automaticamente nas cobranças recorrentes de assinatura."
+                        help="Define quando o Asaas emite a NFS-e das mensalidades e assinaturas com configuração nativa."
                         value={form.invoiceEffectiveDatePeriod ?? 'ON_PAYMENT_CONFIRMATION'}
                         options={[
                           {
@@ -1241,9 +1257,9 @@ export function FiscalInvoiceSettingsFeature() {
                   ) : null}
                   <InfoCallout variant="info" size="sm">
                     <InfoCalloutItem label="Automação fiscal">
-                      Na Alusa, assinaturas podem emitir NFS-e automaticamente conforme as regras
-                      definidas nesta etapa. Cobranças avulsas e parcelas são emitidas após a
-                      confirmação do pagamento, com histórico e auditoria registrados no sistema.
+                      Mensalidades e assinaturas são emitidas pelo Asaas conforme o período
+                      configurado. Taxa de matrícula, cobranças avulsas e parcelas são emitidas
+                      pela Alusa quando o pagamento é confirmado.
                     </InfoCalloutItem>
                   </InfoCallout>
                 </div>
@@ -1376,10 +1392,10 @@ export function FiscalInvoiceSettingsFeature() {
         </div>
       ) : null}
 
-      {!wizardOpen && !data?.configured ? (
-        <p className="text-xs text-slate-500">
+      {!wizardOpen && !data?.configured && !showEmpty ? (
+        <InfoCallout variant="info" size="sm" showIcon className="w-fit max-w-full whitespace-nowrap">
           Precisa de ajuda? Consulte sua contabilidade sobre códigos de serviço municipal.
-        </p>
+        </InfoCallout>
       ) : null}
 
       <FiscalServiceFormDialog

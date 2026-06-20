@@ -23,8 +23,22 @@ vi.mock('@/src/prisma', () => ({
   prisma: {
     cobranca: {
       update: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
+}));
+
+vi.mock('@/lib/finance/financial-account-gate', () => ({
+  guardFinancialAccountOr412: vi.fn(async () => ({ ok: true, summary: {} })),
+}));
+
+vi.mock('@/src/server/matriculas/enrollment-billing.orchestrator', () => ({
+  provisionIndividualEnrollmentBilling: vi.fn(async () => ({
+    taxaSync: null,
+    subscriptionSync: null,
+    cobrancas: { taxa: null, mensalidade: null },
+    matriculaSnapshot: { asaasSubscriptionId: null },
+  })),
 }));
 
 vi.mock('@alusa/finance', () => ({
@@ -202,5 +216,46 @@ describe('POST /api/matriculas', () => {
       sms: false,
       whatsapp: false,
     });
+  });
+
+  it('bloqueia matrícula com cobrança antes de criar registro local quando a conta exige verificação', async () => {
+    const { getServerSession } = await import('next-auth');
+    const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
+    const { guardFinancialAccountOr412 } = await import('@/lib/finance/financial-account-gate');
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' },
+    } as never);
+    vi.mocked(guardFinancialAccountOr412).mockResolvedValueOnce({
+      ok: false,
+      response: Response.json(
+        {
+          code: 'KYC_REQUIRED',
+          financialAccount: { status: 'PENDING_ACTIVATION' },
+          redirectTo: '/conta/verificacao',
+        },
+        { status: 412 },
+      ) as never,
+    });
+
+    const response = await POST(
+      buildRequest({
+        contaId: 'conta-1',
+        alunoId: 'aluno-1',
+        responsavelFinanceiroId: 'resp-1',
+        planoId: 'plano-1',
+        turmaId: 'turma-1',
+        dataInicio: '2099-01-10',
+        dataFimContrato: '2099-12-10',
+        vencimentoDia: 10,
+        taxaMatricula: 120,
+        taxaIsenta: true,
+        criarCobranca: true,
+        formaPagamento: 'PIX',
+      }),
+    );
+
+    expect(response.status).toBe(412);
+    expect(criarMatricula).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,7 @@
 import type { ChargeStatus, LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 
+import { isStaleAsaasStatusForSettledLocal } from './asaas-snapshot-monotonicity';
+
 export type AsaasPaymentStatus =
   | 'PENDING'
   | 'RECEIVED'
@@ -228,7 +230,14 @@ export function getAsaasDisplayStatus(status: AsaasPaymentStatus): ChargeDisplay
 
 export function resolveChargeDisplayStatus(input: ResolveChargeDisplayStatusInput): ChargeDisplayStatus {
   const asaasStatus = normalize(input.asaasStatus);
-  if (isAsaasPaymentStatus(asaasStatus)) {
+  const asaasStatusIsStale = isStaleAsaasStatusForSettledLocal({
+    asaasStatus,
+    localChargeStatus: input.localStatus,
+    localCobrancaStatus: input.localStatus,
+    hasAsaasLink: input.hasAsaasLink,
+  });
+
+  if (isAsaasPaymentStatus(asaasStatus) && !asaasStatusIsStale) {
     return fromAsaasStatus(asaasStatus);
   }
 

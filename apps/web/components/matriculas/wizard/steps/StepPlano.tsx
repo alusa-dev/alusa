@@ -6,7 +6,16 @@ interface PlanoOption {
   id: string;
   nome: string;
   valor?: number;
+  periodicidade: 'SEMANAL' | 'QUINZENAL' | 'MENSAL' | 'TRIMESTRAL' | 'ANUAL';
 }
+
+const planoPeriodSuffix: Record<PlanoOption['periodicidade'], string> = {
+  SEMANAL: 'semana',
+  QUINZENAL: 'quinzena',
+  MENSAL: 'mês',
+  TRIMESTRAL: 'trimestre',
+  ANUAL: 'ano',
+};
 
 interface StepPlanoProps {
   ctx: WizardContextValue;
@@ -35,6 +44,7 @@ export function StepPlano({ ctx, contaId }: StepPlanoProps) {
               id: String(p.id ?? ''),
               nome: String(p.nome ?? 'Plano'),
               valor: typeof p.valor === 'number' ? p.valor : undefined,
+              periodicidade: isPlanoPeriodicidade(p.periodicidade) ? p.periodicidade : 'MENSAL',
             } as PlanoOption;
           }),
         );
@@ -85,7 +95,9 @@ export function StepPlano({ ctx, contaId }: StepPlanoProps) {
                   {p.valor != null && (
                     <p className="text-lg font-semibold text-violet-700">
                       {formatter.format(p.valor)}
-                      <span className="ml-1 text-sm font-medium text-gray-500">/ mês</span>
+                      <span className="ml-1 text-sm font-medium text-gray-500">
+                        / {planoPeriodSuffix[p.periodicidade]}
+                      </span>
                     </p>
                   )}
                 </div>
@@ -106,5 +118,15 @@ export function StepPlano({ ctx, contaId }: StepPlanoProps) {
         <div data-step-plano-can-continue={canContinue} />
       </div>
     </SectionCard>
+  );
+}
+
+function isPlanoPeriodicidade(value: unknown): value is PlanoOption['periodicidade'] {
+  return (
+    value === 'SEMANAL' ||
+    value === 'QUINZENAL' ||
+    value === 'MENSAL' ||
+    value === 'TRIMESTRAL' ||
+    value === 'ANUAL'
   );
 }

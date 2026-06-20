@@ -57,3 +57,13 @@ export {
   type PaymentHistoryUnmappedReason,
   type StandaloneChargeType,
 } from './payment-history';
+export {
+  estimateTransferDebitAmount,
+  estimateTransferFee,
+  isValidPixPhoneKey,
+  normalizeWithdrawDestinationForAsaas,
+  requiresOwnerBirthDate,
+  resolveTenantTransferContext,
+} from './use-cases/transfers/asaas-transfer-payload';
+export type { PixKeyType } from './use-cases/transfers/asaas-transfer-payload';
+export type { GetTransferFeesOutput } from './use-cases/get-transfer-fees';

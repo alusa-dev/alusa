@@ -134,7 +134,15 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
-      const tokenUserId = typeof (token as any).id === 'string' ? (token as any).id : null;
+      const tokenUserId =
+        typeof (token as any).id === 'string'
+          ? (token as any).id
+          : typeof (token as any).sub === 'string'
+            ? (token as any).sub
+            : null;
+      if (tokenUserId && !(token as any).id) {
+        (token as any).id = tokenUserId;
+      }
       const tokenContaId = typeof (token as any).contaId === 'string' ? (token as any).contaId : null;
 
       if (tokenUserId) {

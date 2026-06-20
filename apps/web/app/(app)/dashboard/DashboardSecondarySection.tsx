@@ -79,45 +79,105 @@ export default function DashboardSecondarySection({
 
         <div className="h-[260px]">
           <div
-            className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col rounded-2xl bg-white px-5 py-4 alusa-dark:bg-[color:var(--color-bg-card)]`}
+            className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
           >
-            <h2 className="mb-0.5 text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
-              Atalhos Administrativos
-            </h2>
-            <p className="mb-4 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
-              Acesse os módulos mais usados na operação
-            </p>
-
-            <div className="flex flex-1 flex-col justify-center space-y-2">
+            <div className="border-b border-gray-100 bg-gray-50/50 px-5 py-3 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+              <h2 className="text-sm font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                Atalhos Administrativos
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
+                Acesse os módulos mais usados na operação
+              </p>
+            </div>
+            <div className="flex flex-1 flex-col space-y-0.5 px-3 pb-5 pt-3">
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/alunos')}
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
-                <span>Alunos</span>
-                <span className="text-lg text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]">
-                  →
-                </span>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
+                    <svg className="h-4 w-4 text-[#383242] alusa-dark:text-[color:var(--color-brand-300)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+                      />
+                    </svg>
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+                    Alunos
+                  </span>
+                </div>
+                <svg
+                  className="h-4 w-4 text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </button>
+
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/matriculas')}
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
-                <span>Matrículas</span>
-                <span className="text-lg text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]">
-                  →
-                </span>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
+                    <svg className="h-4 w-4 text-[#383242] alusa-dark:text-[color:var(--color-brand-300)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+                    Matrículas
+                  </span>
+                </div>
+                <svg
+                  className="h-4 w-4 text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </button>
+
               <button
                 type="button"
-                className="group flex w-full items-center justify-between rounded-xl p-2.5 text-sm text-gray-600 transition-colors hover:bg-[#f4ecfd]/50 hover:text-[#383242] focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
                 onClick={() => router.push('/financeiro/relatorios')}
+                className="group flex w-full items-center justify-between rounded-xl p-2.5 transition-colors hover:bg-[#f4ecfd]/40 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30 focus-visible:ring-offset-0 alusa-dark:hover:bg-[color:var(--color-nav-hover-bg)]"
               >
-                <span>Relatórios financeiros</span>
-                <span className="text-lg text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]">
-                  →
-                </span>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#f4ecfd] alusa-dark:bg-[color:var(--color-brand-950)]">
+                    <svg className="h-4 w-4 text-[#383242] alusa-dark:text-[color:var(--color-brand-300)]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                      />
+                    </svg>
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+                    Relatórios financeiros
+                  </span>
+                </div>
+                <svg
+                  className="h-4 w-4 text-gray-400 transition-colors group-hover:text-[#383242] alusa-dark:text-[color:var(--color-text-muted)] alusa-dark:group-hover:text-[color:var(--color-brand-300)]"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </button>
             </div>
           </div>
