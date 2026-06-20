@@ -16,7 +16,7 @@ const prismaMock = vi.hoisted(() => ({
   installmentPlan: { findMany: vi.fn() },
   standaloneInstallmentPlan: { findMany: vi.fn() },
   transferRequest: { findMany: vi.fn() },
-  rematriculaOperacao: { findMany: vi.fn() },
+  rematriculaProcesso: { findMany: vi.fn() },
   webhookAsaas: { findMany: vi.fn(), count: vi.fn() },
 }));
 
@@ -81,7 +81,7 @@ describe('support search query', () => {
         value: 10,
       },
     ]);
-    prismaMock.rematriculaOperacao.findMany.mockResolvedValue([]);
+    prismaMock.rematriculaProcesso.findMany.mockResolvedValue([]);
     prismaMock.webhookAsaas.findMany.mockResolvedValue([
       {
         id: 'webhook-1',

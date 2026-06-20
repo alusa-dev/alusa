@@ -283,26 +283,25 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
         orderBy: { updatedAt: 'desc' },
       })),
       withPerfTimer('support.search', 'rematriculas', () =>
-      prisma.rematriculaOperacao.findMany({
+      prisma.rematriculaProcesso.findMany({
         where: {
           OR: [
             { id: q },
-            { correlationId: q },
             { idempotencyKey: q },
-            { oldSubscriptionId: q },
-            { newSubscriptionId: q },
-            { matriculaOrigemId: q },
-            { matriculaNovaId: q },
+            { externalReference: q },
+            { holderId: q },
+            { itens: { some: { OR: [{ matriculaOrigemId: q }, { matriculaFuturaId: q }] } } },
           ],
         },
         select: {
           id: true,
           contaId: true,
-          correlationId: true,
+          externalReference: true,
           status: true,
-          step: true,
-          matriculaOrigemId: true,
-          matriculaNovaId: true,
+          origin: true,
+          targetPeriodId: true,
+          holderType: true,
+          holderId: true,
         },
         take: SEARCH_LIMIT,
         orderBy: { updatedAt: 'desc' },
@@ -416,11 +415,11 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
     })),
     ...rematriculas.map((item) => ({
       type: 'Rematrícula' as const,
-      title: item.correlationId,
-      description: `${item.matriculaOrigemId}${item.matriculaNovaId ? ` → ${item.matriculaNovaId}` : ''}`,
+      title: item.externalReference ?? item.id,
+      description: `${item.origin} · período ${item.targetPeriodId} · ${item.holderType}:${item.holderId}`,
       href: `/developer/contas/${item.contaId}/timeline`,
       contaId: item.contaId,
-      meta: `${item.status} · ${item.step}`,
+      meta: item.status,
     })),
     ...webhooks.map((item) => ({
       type: 'Webhook' as const,

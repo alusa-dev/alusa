@@ -53,6 +53,8 @@ export type BuildRenewalPreviewInput = {
   requestedEffectiveAt?: Date | null;
   requestedFirstDueDate?: Date | null;
   enrollmentFeeAmount?: number | null;
+  dependencyVersion?: string | null;
+  dependencySnapshot?: Record<string, unknown> | null;
 };
 
 export type RenewalPreviewBlocker = {
@@ -272,6 +274,8 @@ export function buildRenewalPreview(input: BuildRenewalPreviewInput): RenewalPre
     holderType: input.holderType,
     holderId: input.holderId,
     sourceVersion,
+    dependencyVersion: input.dependencyVersion ?? null,
+    dependencySnapshot: input.dependencySnapshot ?? null,
     effectiveAt: isoDate(effectiveAt),
     firstDueDate,
     items: input.items.map((item) => ({

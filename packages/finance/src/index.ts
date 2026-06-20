@@ -1682,30 +1682,6 @@ export { AsaasPaymentsProviderAdapter } from './adapters/AsaasPaymentsProviderAd
 export type { AsaasAdapterDeps } from './adapters/AsaasPaymentsProviderAdapter';
 export { createAsaasPaymentsProvider } from './adapters/createAsaasPaymentsProvider';
 
-// Rematrícula
-export { rematricularAluno, retryRematricula } from './use-cases/rematricularAluno';
-export type {
-  RematricularAlunoInput,
-  RematricularAlunoOutput,
-  RematricularAlunoError,
-  RematricularAlunoResult,
-  RematricularAlunoDeps,
-  RetryRematriculaInput,
-  RetryRematriculaError,
-  RetryRematriculaResult,
-} from './use-cases/rematricularAluno';
-export {
-  commitFamilyReenrollmentTransition,
-  persistFamilyReenrollmentPreview,
-} from './use-cases/family-reenrollment-transition';
-export type {
-  CommitFamilyReenrollmentInput,
-  FamilyReenrollmentCommitResult,
-  FamilyReenrollmentStudentDecisionInput,
-  FamilyReenrollmentTransitionInput,
-  PersistFamilyReenrollmentPreviewInput,
-} from './use-cases/family-reenrollment-transition';
-
 // Troca de Pagador (PR4)
 export { changePayer, retryPayerChange } from './use-cases/changePayer';
 export type {

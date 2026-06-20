@@ -46,19 +46,11 @@ async function main() {
 
   const familiarWhere = contaId ? { contaId } : {};
 
-  const remOpWhere = contaId
-    ? { contaId }
-    : matriculaIds.length > 0
-      ? {
-          OR: [{ matriculaOrigemId: { in: matriculaIds } }, { matriculaNovaId: { in: matriculaIds } }],
-        }
-      : {};
-
   const payerOpWhere = contaId ? { contaId } : matriculaIds.length > 0 ? { matriculaId: { in: matriculaIds } } : {};
 
   const nFamiliar = await prisma.matriculaFamiliar.count({ where: familiarWhere });
   const nRemFamiliar = await prisma.rematriculaFamiliar.count({ where: familiarWhere });
-  const nRemOps = await prisma.rematriculaOperacao.count({ where: remOpWhere });
+  const nRemProcessos = await prisma.rematriculaProcesso.count({ where: familiarWhere });
   const nPayerOps = await prisma.payerChangeOperacao.count({ where: payerOpWhere });
 
   console.log(
@@ -68,7 +60,7 @@ async function main() {
         matriculas: matriculaIds.length,
         matriculaFamiliar: nFamiliar,
         rematriculaFamiliar: nRemFamiliar,
-        rematriculaOperacao: nRemOps,
+        rematriculaProcesso: nRemProcessos,
         payerChangeOperacao: nPayerOps,
         dryRun,
       },
@@ -84,7 +76,7 @@ async function main() {
 
   await prisma.$transaction(
     async (tx) => {
-      await tx.rematriculaOperacao.deleteMany({ where: remOpWhere });
+      await tx.rematriculaProcesso.deleteMany({ where: familiarWhere });
       await tx.payerChangeOperacao.deleteMany({ where: payerOpWhere });
 
       if (matriculaIds.length) {

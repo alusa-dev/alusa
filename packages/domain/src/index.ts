@@ -58,21 +58,6 @@ export type {
   RenewalTargetType,
 } from './rules/renewal-process.js';
 
-export {
-  buildFamilyReenrollmentTransitionPlan,
-  hashFamilyReenrollmentPreview,
-} from './rules/family-reenrollment-transition.js';
-
-export type {
-  FamilyReenrollmentDecision,
-  FamilyReenrollmentFinancialGroup,
-  FamilyReenrollmentPaymentMethod,
-  FamilyReenrollmentSourceBillingInput,
-  FamilyReenrollmentStudentInput,
-  FamilyReenrollmentTransitionPlan,
-  FamilyReenrollmentTransitionPlanInput,
-} from './rules/family-reenrollment-transition.js';
-
 // Máquina de estados de matrícula
 export {
   isTerminalStatus,

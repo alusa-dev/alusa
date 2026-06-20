@@ -4,6 +4,7 @@ import { z, ZodError } from 'zod';
 import { prisma } from '@/prisma/client';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { provisionFutureFinancialAgreements } from '@/src/server/matriculas/renewal-process.service';
+import { processRenewalOutbox } from '@/src/server/matriculas/renewal-outbox.service';
 
 const bodySchema = z.object({
   contaId: z.string().trim().min(1).optional(),
@@ -46,9 +47,22 @@ export async function POST(request: Request) {
       },
       { prisma },
     );
+    const outboxResults = await processRenewalOutbox(
+      {
+        contaId: scope.contaId,
+        now: parseDate(body.now),
+        limit: body.limit,
+      },
+      { prisma },
+    );
 
     return NextResponse.json(
-      { processed: results.length, results },
+      {
+        processed: results.length,
+        results,
+        outboxProcessed: outboxResults.length,
+        outboxResults,
+      },
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {

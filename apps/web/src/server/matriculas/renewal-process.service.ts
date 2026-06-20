@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
@@ -5,6 +6,7 @@ import {
   type RenewalOrigin,
   type RenewalHolderType,
 } from '@alusa/domain';
+import { buildSeatOccupancyWhereClause } from '@alusa/lib';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
 
@@ -94,6 +96,22 @@ function resolveFirstDueDate(effectiveAt: Date, dueDay?: number | null) {
   return due;
 }
 
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hashDependencySnapshot(snapshot: Record<string, unknown>) {
+  return createHash('sha256').update(stableStringify(snapshot)).digest('hex');
+}
+
 function mapDecisionToItemStatus(decision: RenewalItemInput['decision']) {
   if (decision === 'RENEW') return 'RENEWED';
   return decision;
@@ -119,7 +137,9 @@ async function loadSourceRows(prisma: PrismaLike, contaId: string, items: Renewa
 }
 
 async function resolveTargets(prisma: PrismaLike, contaId: string, items: RenewalItemInput[]) {
-  const renewItems = items.filter((item): item is Extract<RenewalItemInput, { decision: 'RENEW' }> => item.decision === 'RENEW');
+  const renewItems = items.filter(
+    (item): item is Extract<RenewalItemInput, { decision: 'RENEW' }> => item.decision === 'RENEW',
+  );
   const planIds = Array.from(
     new Set(
       renewItems
@@ -139,19 +159,19 @@ async function resolveTargets(prisma: PrismaLike, contaId: string, items: Renewa
     planIds.length
       ? prisma.plano.findMany({
           where: { contaId, id: { in: planIds }, status: 'ATIVO' },
-          select: { id: true, nome: true, valor: true, periodicidade: true },
+          select: { id: true, nome: true, valor: true, periodicidade: true, updatedAt: true },
         })
       : [],
     classIds.length
       ? prisma.turma.findMany({
           where: { contaId, id: { in: classIds }, status: 'ATIVO' },
-          select: { id: true, nome: true },
+          select: { id: true, nome: true, capacidade: true, updatedAt: true },
         })
       : [],
     comboIds.length
       ? prisma.combo.findMany({
           where: { contaId, id: { in: comboIds }, status: 'ATIVO' },
-          select: { id: true, nome: true, valor: true, periodicidade: true },
+          select: { id: true, nome: true, valor: true, periodicidade: true, vagasLimite: true, updatedAt: true },
         })
       : [],
   ]);
@@ -161,6 +181,229 @@ async function resolveTargets(prisma: PrismaLike, contaId: string, items: Renewa
     classesById: new Map(classes.map((turma) => [turma.id, turma])),
     combosById: new Map(combos.map((combo) => [combo.id, combo])),
   };
+}
+
+async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInput) {
+  if (input.origin !== 'CAMPAIGN' && !input.campaignId) return { snapshot: null, blockers: [] };
+  if (!input.campaignId) {
+    return {
+      snapshot: null,
+      blockers: [
+        {
+          sourceEnrollmentId: 'process',
+          code: 'CAMPAIGN_REQUIRED',
+          message: 'Rematrícula de campanha exige campanha vinculada.',
+        },
+      ],
+    };
+  }
+
+  const campaign = await prisma.rematriculaCampanha.findFirst({
+    where: { id: input.campaignId, contaId: input.contaId, targetPeriodId: input.targetPeriodId },
+    select: { id: true, status: true, version: true, updatedAt: true },
+  });
+
+  if (!campaign) {
+    return {
+      snapshot: null,
+      blockers: [
+        {
+          sourceEnrollmentId: 'process',
+          code: 'CAMPAIGN_NOT_FOUND',
+          message: 'Campanha não encontrada para este período.',
+        },
+      ],
+    };
+  }
+
+  if (campaign.status !== 'ACTIVE') {
+    return {
+      snapshot: campaign,
+      blockers: [
+        {
+          sourceEnrollmentId: 'process',
+          code: 'CAMPAIGN_NOT_ACTIVE',
+          message: 'A campanha precisa estar ativa para iniciar ou confirmar rematrículas.',
+        },
+      ],
+    };
+  }
+
+  const sourceIds = Array.from(new Set(input.items.map((item) => item.sourceEnrollmentId)));
+  const participants = sourceIds.length
+    ? await prisma.rematriculaParticipante.findMany({
+        where: {
+          contaId: input.contaId,
+          campanhaId: campaign.id,
+          matriculaOrigemId: { in: sourceIds },
+        },
+        select: { matriculaOrigemId: true, status: true, updatedAt: true },
+      })
+    : [];
+  const participantBySource = new Map(participants.map((participant) => [participant.matriculaOrigemId, participant]));
+  const blockers = sourceIds.flatMap((sourceEnrollmentId) => {
+    const participant = participantBySource.get(sourceEnrollmentId);
+    if (!participant) {
+      return [
+        {
+          sourceEnrollmentId,
+          code: 'CAMPAIGN_PARTICIPANT_REQUIRED',
+          message: 'O vínculo não faz parte do público elegível desta campanha.',
+        },
+      ];
+    }
+    if (participant.status !== 'ELIGIBLE') {
+      return [
+        {
+          sourceEnrollmentId,
+          code: 'CAMPAIGN_PARTICIPANT_NOT_ELIGIBLE',
+          message: 'O participante não está elegível nesta campanha.',
+        },
+      ];
+    }
+    return [];
+  });
+
+  return {
+    snapshot: {
+      id: campaign.id,
+      status: campaign.status,
+      version: campaign.version,
+      updatedAt: campaign.updatedAt.toISOString(),
+      participants: participants.map((participant) => ({
+        matriculaOrigemId: participant.matriculaOrigemId,
+        status: participant.status,
+        updatedAt: participant.updatedAt.toISOString(),
+      })),
+    },
+    blockers,
+  };
+}
+
+async function findDuplicateRenewalItems(
+  prisma: PrismaLike,
+  input: RenewalProcessInput,
+  excludeProcessId?: string | null,
+) {
+  const sourceIds = Array.from(new Set(input.items.map((item) => item.sourceEnrollmentId)));
+  if (sourceIds.length === 0) return [];
+
+  const duplicates = await prisma.rematriculaItem.findMany({
+    where: {
+      contaId: input.contaId,
+      matriculaOrigemId: { in: sourceIds },
+      targetPeriodId: input.targetPeriodId,
+      processo: {
+        status: { notIn: ['CANCELLED'] },
+        ...(excludeProcessId ? { id: { not: excludeProcessId } } : {}),
+      },
+    },
+    select: { matriculaOrigemId: true, processoId: true },
+  });
+
+  return duplicates.map((item) => ({
+    sourceEnrollmentId: item.matriculaOrigemId,
+    code: 'DUPLICATE_SOURCE_TARGET_PERIOD',
+    message: 'Já existe rematrícula ativa para este vínculo e período de destino.',
+  }));
+}
+
+async function validateRenewalCapacity(
+  prisma: PrismaLike,
+  input: RenewalProcessInput,
+  effectiveAt: Date,
+  targets: Awaited<ReturnType<typeof resolveTargets>>,
+) {
+  const renewItems = input.items.filter(
+    (item): item is Extract<RenewalItemInput, { decision: 'RENEW' }> => item.decision === 'RENEW',
+  );
+  const blockers: Array<{ sourceEnrollmentId: string; code: string; message: string }> = [];
+  const sourceIds = Array.from(new Set(renewItems.map((item) => item.sourceEnrollmentId)));
+
+  const classGroups = new Map<string, Array<Extract<RenewalItemInput, { decision: 'RENEW' }>>>();
+  const comboGroups = new Map<string, Array<Extract<RenewalItemInput, { decision: 'RENEW' }>>>();
+  for (const item of renewItems) {
+    if (item.target.type === 'CLASS') {
+      classGroups.set(item.target.targetId, [...(classGroups.get(item.target.targetId) ?? []), item]);
+    } else {
+      comboGroups.set(item.target.targetId, [...(comboGroups.get(item.target.targetId) ?? []), item]);
+    }
+  }
+
+  for (const [classId, items] of classGroups.entries()) {
+    const targetClass = targets.classesById.get(classId);
+    if (!targetClass) continue;
+
+    const [currentOccupancy, reservedOccupancy] = await Promise.all([
+      prisma.matricula.count({
+        where: {
+          contaId: input.contaId,
+          turmaId: classId,
+          dataFimContrato: { gte: effectiveAt },
+          ...buildSeatOccupancyWhereClause(),
+          id: { notIn: sourceIds },
+        },
+      }),
+      prisma.reservaVagaFutura.count({
+        where: {
+          contaId: input.contaId,
+          targetClassId: classId,
+          targetPeriodId: input.targetPeriodId,
+          status: { in: ['RESERVED', 'WAITLISTED'] },
+          matriculaOrigemId: { notIn: sourceIds },
+        },
+      }),
+    ]);
+
+    if (currentOccupancy + reservedOccupancy + items.length > targetClass.capacidade) {
+      blockers.push(
+        ...items.map((item) => ({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'TARGET_CLASS_FULL',
+          message: `Turma futura "${targetClass.nome}" não possui vagas disponíveis.`,
+        })),
+      );
+    }
+  }
+
+  for (const [comboId, items] of comboGroups.entries()) {
+    const targetCombo = targets.combosById.get(comboId);
+    if (!targetCombo?.vagasLimite) continue;
+
+    const [currentOccupancy, reservedOccupancy] = await Promise.all([
+      prisma.matricula.count({
+        where: {
+          contaId: input.contaId,
+          comboId,
+          dataFimContrato: { gte: effectiveAt },
+          ...buildSeatOccupancyWhereClause(),
+          id: { notIn: sourceIds },
+        },
+      }),
+      prisma.rematriculaItem.count({
+        where: {
+          contaId: input.contaId,
+          targetPeriodId: input.targetPeriodId,
+          targetComboId: comboId,
+          decision: 'RENEW',
+          matriculaOrigemId: { notIn: sourceIds },
+          processo: { status: { notIn: ['CANCELLED'] } },
+        },
+      }),
+    ]);
+
+    if (currentOccupancy + reservedOccupancy + items.length > targetCombo.vagasLimite) {
+      blockers.push(
+        ...items.map((item) => ({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'TARGET_COMBO_FULL',
+          message: `Combo futuro "${targetCombo.nome}" não possui vagas disponíveis.`,
+        })),
+      );
+    }
+  }
+
+  return blockers;
 }
 
 function sourceSnapshot(source: LoadedSource) {
@@ -188,7 +431,33 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
   const sourceRows = await loadSourceRows(deps.prisma, input.contaId, input.items);
   const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
   const targets = await resolveTargets(deps.prisma, input.contaId, input.items);
+  const campaign = await loadCampaignSnapshot(deps.prisma, input);
+  const duplicateBlockers = await findDuplicateRenewalItems(deps.prisma, input);
   const externalBlockers: Array<{ sourceEnrollmentId: string; code: string; message: string }> = [];
+
+  const dependencySnapshot = {
+    campaign: campaign.snapshot,
+    targets: {
+      plans: Array.from(targets.plansById.values()).map((plan) => ({
+        id: plan.id,
+        updatedAt: plan.updatedAt.toISOString(),
+        valor: toMoney(plan.valor),
+        periodicidade: plan.periodicidade,
+      })),
+      classes: Array.from(targets.classesById.values()).map((turma) => ({
+        id: turma.id,
+        updatedAt: turma.updatedAt.toISOString(),
+        capacidade: turma.capacidade,
+      })),
+      combos: Array.from(targets.combosById.values()).map((combo) => ({
+        id: combo.id,
+        updatedAt: combo.updatedAt.toISOString(),
+        valor: toMoney(combo.valor),
+        periodicidade: combo.periodicidade,
+        vagasLimite: combo.vagasLimite,
+      })),
+    },
+  };
 
   const sourceEnrollments = input.items
     .map((item) => {
@@ -255,15 +524,29 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
         input.effectiveAt ?? new Date(),
         input.financialTerms?.dueDay ?? sourceRows[0]?.vencimentoDia,
       ),
+    dependencySnapshot,
+    dependencyVersion: hashDependencySnapshot(dependencySnapshot),
     enrollmentFeeAmount:
       input.financialTerms?.enrollmentFeeExempt === true
         ? 0
         : input.financialTerms?.enrollmentFeeAmount ?? toMoney(sourceRows[0]?.taxaMatricula),
   });
 
+  const effectiveAt = new Date(`${preview.effectiveAt}T00:00:00.000Z`);
+  const capacityBlockers =
+    preview.blockers.length || externalBlockers.length
+      ? []
+      : await validateRenewalCapacity(deps.prisma, input, effectiveAt, targets);
+
   return {
     ...preview,
-    blockers: [...preview.blockers, ...externalBlockers],
+    blockers: [
+      ...preview.blockers,
+      ...externalBlockers,
+      ...campaign.blockers,
+      ...duplicateBlockers,
+      ...capacityBlockers,
+    ],
   };
 }
 
@@ -636,7 +919,7 @@ export async function activateDueRenewalProcesses(
     const result = await deps.prisma.$transaction(async (tx) => {
       const full = await tx.rematriculaProcesso.findFirst({
         where: { id: processo.id, contaId: input.contaId },
-        include: { itens: true, reservas: true },
+        include: { itens: true, reservas: true, financeiros: true },
       });
       if (!full) return { processId: processo.id, status: 'REQUIRES_ATTENTION' as const };
 
@@ -654,8 +937,10 @@ export async function activateDueRenewalProcesses(
           item.decision === 'RENEW' &&
           !full.reservas.some((reserva) => reserva.itemId === item.id && reserva.status === 'RESERVED'),
       );
+      const hasMissingFinancialAgreement = full.itens.some((item) => item.decision === 'RENEW') && full.financeiros.length === 0;
+      const failedFinancialAgreement = full.financeiros.find((financeiro) => financeiro.status === 'FAILED');
 
-      if (hasOverlap || hasMissingReservation) {
+      if (hasOverlap || hasMissingReservation || hasMissingFinancialAgreement || failedFinancialAgreement) {
         await tx.rematriculaProcesso.update({
           where: { id: full.id },
           data: { status: 'REQUIRES_ATTENTION' },
@@ -669,11 +954,17 @@ export async function activateDueRenewalProcesses(
             code: 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
             title: 'Ativação do próximo ciclo bloqueada',
             message:
-              'O job de ativação encontrou sobreposição de contrato atual ou reserva futura ausente.',
+              'O job de ativação encontrou sobreposição de contrato atual, reserva futura ausente ou financeiro futuro inconsistente.',
             rule: 'activate_future_cycle',
             impact:
               'A matrícula futura não foi ativada e nenhuma correção automática de turma/contrato foi aplicada.',
-            metadata: { hasOverlap, hasMissingReservation },
+            metadata: {
+              hasOverlap,
+              hasMissingReservation,
+              hasMissingFinancialAgreement,
+              failedFinancialAgreementId: failedFinancialAgreement?.id ?? null,
+              failedFinancialAgreementCode: failedFinancialAgreement?.failureCode ?? null,
+            },
           },
           { prisma: tx },
         );
@@ -682,7 +973,12 @@ export async function activateDueRenewalProcesses(
             contaId: input.contaId,
             processoId: full.id,
             action: 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
-            metadata: { hasOverlap, hasMissingReservation } as Prisma.InputJsonValue,
+            metadata: {
+              hasOverlap,
+              hasMissingReservation,
+              hasMissingFinancialAgreement,
+              failedFinancialAgreementId: failedFinancialAgreement?.id ?? null,
+            } as Prisma.InputJsonValue,
           },
         });
         return { processId: full.id, status: 'REQUIRES_ATTENTION' as const };
@@ -787,6 +1083,35 @@ export async function editRenewalFutureLink(
     if (targetClassId && !targetClass) throw new Error('TURMA_DESTINO_INVALIDA');
     if (targetComboId && !targetCombo) throw new Error('COMBO_DESTINO_INVALIDO');
     if (!targetComboId && targetPlanId && !targetPlan) throw new Error('PLANO_DESTINO_INVALIDO');
+
+    const capacityInput: RenewalProcessInput = {
+      contaId: input.contaId,
+      actorId: input.actorId,
+      origin: processo.origin,
+      campaignId: processo.campanhaId,
+      targetPeriodId: processo.targetPeriodId,
+      holderType: input.holderType ?? processo.holderType,
+      holderId: input.holderId ?? processo.holderId,
+      effectiveAt: input.effectiveAt ?? processo.effectiveAt,
+      firstDueDate: input.firstDueDate ?? processo.firstDueDate,
+      items: renewedItems.map((item) => ({
+        decision: 'RENEW' as const,
+        sourceEnrollmentId: item.matriculaOrigemId,
+        target: targetComboId
+          ? { type: 'COMBO' as const, targetId: targetComboId, planId: targetPlanId ?? targetComboId }
+          : { type: 'CLASS' as const, targetId: targetClassId!, planId: targetPlanId! },
+      })),
+    };
+    const capacityTargets = await resolveTargets(tx, input.contaId, capacityInput.items);
+    const capacityBlockers = await validateRenewalCapacity(
+      tx,
+      capacityInput,
+      input.effectiveAt ?? processo.effectiveAt,
+      capacityTargets,
+    );
+    if (capacityBlockers.length > 0) {
+      throw new Error(capacityBlockers[0]?.message ?? 'Destino futuro sem vagas disponíveis.');
+    }
 
     const beforeState = {
       processo: {

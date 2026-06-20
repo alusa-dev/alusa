@@ -214,7 +214,17 @@ async function authenticate(page: Page, ids: SeedIds) {
 
 async function cleanup(contaId: string, responsavelId: string) {
   try {
-    await prisma.rematriculaOperacao.deleteMany({ where: { contaId } });
+    await prisma.rematriculaComunicacao.deleteMany({ where: { contaId } });
+    await prisma.rematriculaExcecao.deleteMany({ where: { contaId } });
+    await prisma.rematriculaPendencia.deleteMany({ where: { contaId } });
+    await prisma.rematriculaOutbox.deleteMany({ where: { contaId } });
+    await prisma.acordoFinanceiroFuturo.deleteMany({ where: { contaId } });
+    await prisma.contratoFuturo.deleteMany({ where: { contaId } });
+    await prisma.reservaVagaFutura.deleteMany({ where: { contaId } });
+    await prisma.rematriculaItem.deleteMany({ where: { contaId } });
+    await prisma.rematriculaProcesso.deleteMany({ where: { contaId } });
+    await prisma.rematriculaParticipante.deleteMany({ where: { contaId } });
+    await prisma.rematriculaCampanha.deleteMany({ where: { contaId } });
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.matriculaTurma.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId } } } });
@@ -307,7 +317,15 @@ test.describe('Regras de Domínio — Matrícula', () => {
 
   // Limpar matrículas entre cada teste para evitar acúmulo de vagas/conflitos
   test.afterEach(async () => {
-    await prisma.rematriculaOperacao.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaComunicacao.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaExcecao.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaPendencia.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaOutbox.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.acordoFinanceiroFuturo.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.contratoFuturo.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.reservaVagaFutura.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaItem.deleteMany({ where: { contaId: ids.contaId } });
+    await prisma.rematriculaProcesso.deleteMany({ where: { contaId: ids.contaId } });
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
     await prisma.matriculaTurma.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId: ids.contaId } } } });

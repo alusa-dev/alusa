@@ -48,7 +48,7 @@ export async function runRenewalIntegrityCheck(
       itens: {
         include: {
           matriculaOrigem: { select: { id: true, dataFimContrato: true, status: true } },
-          matriculaFutura: { select: { id: true, status: true, dataInicio: true } },
+          matriculaFutura: { select: { id: true, status: true, dataInicio: true, turmaId: true, comboId: true } },
         },
       },
       reservas: true,
@@ -61,6 +61,8 @@ export async function runRenewalIntegrityCheck(
 
   const issues: IntegrityIssue[] = [];
   const activeItemKeys = new Map<string, string[]>();
+  const futureClassDemand = new Map<string, { capacity: number; itemIds: string[] }>();
+  const futureComboDemand = new Map<string, { limit: number; itemIds: string[] }>();
 
   for (const process of processes) {
     const renewedItems = process.itens.filter((item) => item.decision === 'RENEW');
@@ -151,6 +153,32 @@ export async function runRenewalIntegrityCheck(
           severity: 'BLOCKER',
         });
       }
+
+      if (item.targetClassId) {
+        const targetClass = await deps.prisma.turma.findFirst({
+          where: { id: item.targetClassId, contaId: input.contaId },
+          select: { id: true, capacidade: true },
+        });
+        if (targetClass) {
+          const key = `${process.targetPeriodId}:${targetClass.id}`;
+          const current = futureClassDemand.get(key) ?? { capacity: targetClass.capacidade, itemIds: [] };
+          current.itemIds.push(item.id);
+          futureClassDemand.set(key, current);
+        }
+      }
+
+      if (item.targetComboId) {
+        const targetCombo = await deps.prisma.combo.findFirst({
+          where: { id: item.targetComboId, contaId: input.contaId },
+          select: { id: true, vagasLimite: true },
+        });
+        if (targetCombo?.vagasLimite) {
+          const key = `${process.targetPeriodId}:${targetCombo.id}`;
+          const current = futureComboDemand.get(key) ?? { limit: targetCombo.vagasLimite, itemIds: [] };
+          current.itemIds.push(item.id);
+          futureComboDemand.set(key, current);
+        }
+      }
     }
 
     if (process.financeiros.length === 0) {
@@ -189,6 +217,17 @@ export async function runRenewalIntegrityCheck(
           metadata: { agreementId: financial.id },
         });
       }
+
+      if (process.status === 'EFFECTIVE' && !['ACTIVE'].includes(financial.status)) {
+        issues.push({
+          processId: process.id,
+          code: 'EFFECTIVE_WITHOUT_ACTIVE_FINANCE',
+          title: 'Rematrícula efetivada sem financeiro ativo',
+          message: 'O processo está efetivado, mas o acordo financeiro futuro ainda não está ativo.',
+          severity: 'BLOCKER',
+          metadata: { agreementId: financial.id, financialStatus: financial.status },
+        });
+      }
     }
   }
 
@@ -205,6 +244,32 @@ export async function runRenewalIntegrityCheck(
     }
   }
 
+  for (const [key, demand] of futureClassDemand.entries()) {
+    if (demand.itemIds.length > demand.capacity) {
+      const [targetPeriodId, targetClassId] = key.split(':');
+      issues.push({
+        code: 'FUTURE_CLASS_OVER_CAPACITY',
+        title: 'Reservas futuras acima da capacidade da turma',
+        message: 'A demanda futura confirmada excede a capacidade cadastrada da turma.',
+        severity: 'CRITICAL',
+        metadata: { targetPeriodId, targetClassId, capacity: demand.capacity, itemIds: demand.itemIds },
+      });
+    }
+  }
+
+  for (const [key, demand] of futureComboDemand.entries()) {
+    if (demand.itemIds.length > demand.limit) {
+      const [targetPeriodId, targetComboId] = key.split(':');
+      issues.push({
+        code: 'FUTURE_COMBO_OVER_CAPACITY',
+        title: 'Reservas futuras acima do limite do combo',
+        message: 'A demanda futura confirmada excede o limite de vagas cadastrado do combo.',
+        severity: 'CRITICAL',
+        metadata: { targetPeriodId, targetComboId, limit: demand.limit, itemIds: demand.itemIds },
+      });
+    }
+  }
+
   for (const issue of issues) {
     await registerIssue({ contaId: input.contaId, issue }, deps);
   }
@@ -215,4 +280,3 @@ export async function runRenewalIntegrityCheck(
     codes: Array.from(new Set(issues.map((issue) => issue.code))).sort(),
   };
 }
-

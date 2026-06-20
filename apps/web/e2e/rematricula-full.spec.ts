@@ -296,7 +296,6 @@ async function cleanupData(contaId: string, responsavelId: string) {
     await prisma.rematriculaProcesso.deleteMany({ where: { contaId } });
     await prisma.rematriculaParticipante.deleteMany({ where: { contaId } });
     await prisma.rematriculaCampanha.deleteMany({ where: { contaId } });
-    await prisma.rematriculaOperacao.deleteMany({ where: { contaId } });
     await prisma.matriculaLog.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.cobranca.deleteMany({ where: { matricula: { aluno: { contaId } } } });
     await prisma.contrato.deleteMany({ where: { contaId } });

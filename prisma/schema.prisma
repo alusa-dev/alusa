@@ -729,23 +729,6 @@ enum PayerChangeOperacaoStatus {
   ROLLED_BACK // Rollback executado
 }
 
-enum RematriculaOperacaoStatus {
-  PENDING // Operação criada, validações passaram
-  PENDING_FINANCE // Aguardando resposta do gateway
-  COMMITTED // Assinatura criada com sucesso, origem cancelada
-  DONE // Webhook confirmou pagamento (legado)
-  FAILED // Falha recuperável (permite retry)
-  CANCELLED // Cancelada manualmente
-}
-
-enum RematriculaOperacaoStep {
-  VALIDATED // Validações passaram
-  NEW_MATRICULA_CREATED // Nova matrícula criada (provisória)
-  SUBSCRIPTION_CREATED // Assinatura criada no gateway
-  ORIGIN_CANCELLED // Matrícula origem cancelada
-  COMPLETED // Fluxo completo
-}
-
 enum ChargeStatus {
   CREATED
   PENDING_SYNC
@@ -1087,7 +1070,6 @@ model Conta {
   contratos                         Contrato[]
   contratoEvidencias                ContractEvidence[]
   contratoDocumentos                ContratoDocumento[]
-  rematriculaOperacoes              RematriculaOperacao[]
   payerChangeOperacoes              PayerChangeOperacao[]
   matriculaOperacoes                MatriculaOperacao[]
   matriculasFamiliares              MatriculaFamiliar[]
@@ -1289,7 +1271,6 @@ model Usuario {
   matriculaLogs               MatriculaLog[]
   logsFinanceiros             LogFinanceiro[]
   lancamentosCriados          Lancamento[]
-  rematriculasOperacoes       RematriculaOperacao[]
   payerChangeOperacoes        PayerChangeOperacao[]
   matriculaOperacoes          MatriculaOperacao[]
   notifications               NotificationRecipient[]
@@ -1838,8 +1819,6 @@ model Matricula {
   operacoes                      MatriculaOperacao[]
   rematriculadaDe                Matricula?                @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
   rematriculasDerivadas          Matricula[]               @relation("RematriculaHistorico")
-  rematriculaOperacoesOrigem     RematriculaOperacao[]     @relation("RematriculaOrigem")
-  rematriculaOperacoesNova       RematriculaOperacao[]     @relation("RematriculaNova")
   rematriculaParticipantesOrigem RematriculaParticipante[] @relation("RematriculaParticipanteOrigem")
   rematriculaItensOrigem         RematriculaItem[]         @relation("RematriculaItemOrigem")
   rematriculaItensFuturos        RematriculaItem[]         @relation("RematriculaItemFutura")
@@ -5699,67 +5678,6 @@ model PendingInboxNotification {
 
   @@index([status, nextRetryAt])
   @@index([contaId, status, nextRetryAt])
-}
-
-// ==================== Rematrícula ====================
-
-model RematriculaOperacao {
-  id                String                    @id @default(cuid())
-  correlationId     String                    @unique
-  contaId           String
-  matriculaOrigemId String
-  matriculaNovaId   String?
-  status            RematriculaOperacaoStatus @default(PENDING)
-  step              RematriculaOperacaoStep   @default(VALIDATED)
-
-  // Idempotência: permite retry seguro
-  idempotencyKey String? @unique
-
-  // IDs externos (provedor de pagamentos)
-  oldSubscriptionId String?
-  newSubscriptionId String?
-  customerId        String?
-
-  // Snapshot operacional da decisão
-  policySnapshot       Json?
-  financialSnapshot    Json?
-  actionStatus         RematriculaActionStatus?
-  blockReason          RematriculaBlockReason?  @default(SEM_BLOQUEIO)
-  overrideUsed         Boolean                  @default(false)
-  overrideReason       String?
-  overrideApprovedById String?
-  evaluatedAt          DateTime?
-  blockedAt            DateTime?
-
-  // Pagador (auditoria)
-  payerType CustomerPayerType
-  payerId   String
-
-  // Erro (se houver)
-  errorCode    String?
-  errorMessage String?
-
-  // Retry tracking
-  retryCount  Int       @default(0)
-  lastRetryAt DateTime?
-
-  createdById String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  conta           Conta      @relation(fields: [contaId], references: [id])
-  matriculaOrigem Matricula  @relation("RematriculaOrigem", fields: [matriculaOrigemId], references: [id])
-  matriculaNova   Matricula? @relation("RematriculaNova", fields: [matriculaNovaId], references: [id])
-  createdBy       Usuario    @relation(fields: [createdById], references: [id])
-
-  @@index([contaId])
-  @@index([contaId, status], name: "idx_rematricula_operacao_conta_status")
-  @@index([contaId, createdAt], name: "idx_rematricula_operacao_conta_created")
-  @@index([contaId, matriculaOrigemId], name: "idx_rematricula_operacao_conta_matricula_origem")
-  @@index([contaId, correlationId], name: "idx_rematricula_operacao_conta_correlation")
-  @@index([matriculaOrigemId])
-  @@index([status])
-  @@index([idempotencyKey])
 }
 
 // ==================== Troca de Pagador (PR4) ====================
