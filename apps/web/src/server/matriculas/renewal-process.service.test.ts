@@ -79,7 +79,7 @@ const input = {
 };
 
 describe('renewal-process.service', () => {
-  it('bloqueia campanha sem participante elegivel', async () => {
+  it('permite campanha ativa sem participante previo para inclusao sob demanda', async () => {
     const prisma = basePrisma({
       rematriculaCampanha: {
         findFirst: vi.fn().mockResolvedValue({
@@ -96,10 +96,18 @@ describe('renewal-process.service', () => {
       { prisma: prisma as never },
     );
 
-    expect(preview.blockers).toEqual(
+    expect(preview.blockers).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'CAMPAIGN_PARTICIPANT_REQUIRED', sourceEnrollmentId: 'mat-1' }),
       ]),
+    );
+    const dependencySnapshot = preview.snapshot.dependencySnapshot as {
+      campaign?: { missingParticipants?: string[] };
+    };
+    expect(dependencySnapshot.campaign).toEqual(
+      expect.objectContaining({
+        missingParticipants: ['mat-1'],
+      }),
     );
   });
 

@@ -35,7 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CalendarDays, Edit3, Filter, MoreVertical, Search, Trash2 } from 'lucide-react';
+import { CalendarDays, Edit3, MoreVertical, Search, Trash2 } from 'lucide-react';
 import {
   cancelRematriculaProcessRequest,
   createRematriculaCommunicationRequest,
@@ -49,6 +49,7 @@ import {
 } from './services/rematriculas-service';
 
 type QuickFilter = 'CAMPANHAS' | 'TODOS';
+const DEFAULT_RENEWAL_LOOKAHEAD_DAYS = 365;
 
 type RematriculaTitularGroup = {
   id: string;
@@ -188,12 +189,22 @@ function getCampaignAccentClasses(index: number) {
   return accents[index % accents.length];
 }
 
-function getCampaignProgress(campaign: RematriculaCampaignSummary) {
-  const total = campaign.metrics.participantes;
-  const confirmed = campaign.metrics.processos;
-  if (total <= 0) return { confirmed, total, percentage: 0 };
+function getCampaignProgress(campaign: RematriculaCampaignSummary, processes: RematriculaProcessSummary[]) {
+  const campaignProcesses = processes.filter((process) => process.campanhaId === campaign.id);
+  const activeProcesses = campaignProcesses.filter((process) => process.status !== 'CANCELLED');
+  const confirmed = activeProcesses.filter((process) =>
+    ['CONFIRMED', 'WAITING_FOR_START', 'EFFECTIVE', 'COMPLETED'].includes(process.status),
+  ).length;
+  const waiting = activeProcesses.filter((process) => process.status === 'WAITING_FOR_START').length;
+  const attention = activeProcesses.filter((process) => process.status === 'REQUIRES_ATTENTION').length;
+  const effective = activeProcesses.filter((process) => process.status === 'EFFECTIVE').length;
+  const total = Math.max(campaign.metrics.participantes, activeProcesses.length);
+  if (total <= 0) return { confirmed, waiting, attention, effective, total, percentage: 0 };
   return {
     confirmed,
+    waiting,
+    attention,
+    effective,
     total,
     percentage: Math.min(100, Math.max(0, Math.round((confirmed / total) * 100))),
   };
@@ -262,7 +273,7 @@ export default function RematriculasFeature() {
   const contaId = user?.contaId ?? null;
 
   const [search, setSearch] = useState('');
-  const [diasAntecedencia, setDiasAntecedencia] = useState(60);
+  const [diasAntecedencia, setDiasAntecedencia] = useState(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
   const [statusContrato, setStatusContrato] = useState<StatusContrato | undefined>(undefined);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('CAMPANHAS');
   const [campaignStatusFilter, setCampaignStatusFilter] = useState<'TODOS' | RematriculaCampaignSummary['status']>('TODOS');
@@ -343,6 +354,7 @@ export default function RematriculasFeature() {
     setCampaignEditableUntil('');
     setCampaignFirstDueDateRule('AFTER_EFFECTIVE_AT');
     setCampaignAudienceType('ALL_ACTIVE_ENROLLMENTS');
+    setDiasAntecedencia(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
     setCampaignFamilyRule('ALLOW_PARTIAL');
     setCampaignFeePolicy('EXEMPT');
     setCampaignExceptionPolicy('ALLOW_WITH_JUSTIFICATION');
@@ -386,7 +398,7 @@ export default function RematriculasFeature() {
     setDiasAntecedencia(
       typeof audienceDefinition.diasAntecedencia === 'number'
         ? audienceDefinition.diasAntecedencia
-        : 60,
+        : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
     );
     setCampaignFamilyRule(rules.allowPartialFamilyRenewal === false ? 'REQUIRE_ALL' : 'ALLOW_PARTIAL');
     setCampaignFeePolicy(
@@ -787,7 +799,7 @@ export default function RematriculasFeature() {
       render: (campaign) => {
         const index = filteredCampaigns.findIndex((item) => item.id === campaign.id);
         const accent = getCampaignAccentClasses(index < 0 ? 0 : index);
-        const progress = getCampaignProgress(campaign);
+        const progress = getCampaignProgress(campaign, processes);
         return (
           <div className="flex min-w-0 items-center gap-3">
             <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}>
@@ -798,7 +810,7 @@ export default function RematriculasFeature() {
                 {campaign.nome}
               </div>
               <div className="mt-0.5 truncate text-[12px] leading-snug text-gray-500">
-                {campaign.metrics.participantes} elegíveis · {progress.confirmed} confirmadas · 0 requerem atenção
+                {progress.total} incluídos · {progress.waiting} aguardando início · {progress.attention} requerem atenção
               </div>
             </div>
           </div>
@@ -844,7 +856,7 @@ export default function RematriculasFeature() {
       render: (campaign) => {
         const index = filteredCampaigns.findIndex((item) => item.id === campaign.id);
         const accent = getCampaignAccentClasses(index < 0 ? 0 : index);
-        const progress = getCampaignProgress(campaign);
+        const progress = getCampaignProgress(campaign, processes);
         return (
           <div className="min-w-0">
             <div className="mb-1.5 text-[13px] font-medium leading-none text-gray-700">
@@ -1016,14 +1028,6 @@ export default function RematriculasFeature() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="col-span-2 h-10 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 lg:col-span-1"
-                  >
-                    <Filter className="mr-2 h-4 w-4" />
-                    Filtro
-                  </Button>
                 </div>
               </div>
 
@@ -1080,23 +1084,19 @@ export default function RematriculasFeature() {
                   <input
                     type="number"
                     min={15}
-                    max={180}
+                    max={365}
                     value={diasAntecedencia}
                     onChange={(event) => {
                       const parsed = Number(event.target.value);
-                      setDiasAntecedencia(Number.isFinite(parsed) ? Math.min(180, Math.max(15, parsed)) : 60);
+                      setDiasAntecedencia(
+                        Number.isFinite(parsed)
+                          ? Math.min(365, Math.max(15, parsed))
+                          : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
+                      );
                     }}
                     className="w-16 border-0 bg-transparent text-right outline-none"
                   />
                 </label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="col-span-2 h-10 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 lg:col-span-1"
-                >
-                  <Filter className="mr-2 h-4 w-4" />
-                  Filtro
-                </Button>
               </div>
             </div>
           ) : null}
@@ -1332,7 +1332,7 @@ export default function RematriculasFeature() {
                 {editingCampaign ? 'Editar campanha' : 'Criar campanha'}
               </DialogTitle>
               <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">
-                Defina o período, a janela, o público elegível e as regras iniciais.
+                Defina o período futuro, a janela operacional, os candidatos iniciais e as regras da campanha.
               </DialogDescription>
             </div>
 
@@ -1428,7 +1428,7 @@ export default function RematriculasFeature() {
               </div>
 
               <div className={modalSectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Público elegível</span>
+                <span className="text-sm font-semibold text-slate-700">Candidatos iniciais</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-1 md:col-span-2">
                     <label className={modalLabelClass}>Segmentação</label>
@@ -1449,11 +1449,15 @@ export default function RematriculasFeature() {
                     <Input
                       type="number"
                       min={15}
-                      max={180}
+                      max={365}
                       value={diasAntecedencia}
                       onChange={(event) => {
                         const parsed = Number(event.target.value);
-                        setDiasAntecedencia(Number.isFinite(parsed) ? Math.min(180, Math.max(15, parsed)) : 60);
+                        setDiasAntecedencia(
+                          Number.isFinite(parsed)
+                            ? Math.min(365, Math.max(15, parsed))
+                            : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
+                        );
                       }}
                       className={modalControlClass}
                     />

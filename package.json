@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "node": "20.x"
+    "node": ">=22.13.0 <23"
   },
   "workspaces": [
     "apps/*",
@@ -15,12 +15,15 @@
     "check:nul-bytes": "node scripts/check-nul-bytes.mjs",
     "lint": "pnpm -r exec eslint .",
     "typecheck": "pnpm -r run typecheck",
+    "typecheck:mobile": "pnpm --filter @alusa/mobile typecheck",
     "format": "prettier --write .",
     "build": "turbo run build",
     "build:web": "turbo run build --filter=@alusa/web",
     "build:clean": "pnpm --filter @alusa/web build:clean",
     "dev": "pnpm prisma:generate && pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm --filter @alusa/web dev:raw",
     "dev:web": "pnpm prisma:generate && pnpm --filter @alusa/ui build && pnpm --filter @alusa/database build && pnpm --filter @alusa/lib build && pnpm --filter @alusa/finance build && pnpm -F @alusa/web dev:raw",
+    "dev:mobile": "pnpm --filter @alusa/mobile dev",
+    "dev:mobile:ios": "pnpm --filter @alusa/mobile ios",
     "dev:clean": "pnpm --filter @alusa/web dev:clean",
     "dev:prisma": "pnpm dlx prisma studio",
     "test": "pnpm -r run test",
@@ -61,6 +64,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "pg": "^8.17.1",
+    "postcss": "^8.5.14",
     "prisma": "5.18.0",
     "tsx": "^4.21.0",
     "typescript": "^5.6.3",

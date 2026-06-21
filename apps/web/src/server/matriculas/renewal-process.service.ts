@@ -243,21 +243,12 @@ async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInp
   const participantBySource = new Map(participants.map((participant) => [participant.matriculaOrigemId, participant]));
   const blockers = sourceIds.flatMap((sourceEnrollmentId) => {
     const participant = participantBySource.get(sourceEnrollmentId);
-    if (!participant) {
+    if (participant && participant.status === 'EXCLUDED') {
       return [
         {
           sourceEnrollmentId,
-          code: 'CAMPAIGN_PARTICIPANT_REQUIRED',
-          message: 'O vínculo não faz parte do público elegível desta campanha.',
-        },
-      ];
-    }
-    if (participant.status !== 'ELIGIBLE') {
-      return [
-        {
-          sourceEnrollmentId,
-          code: 'CAMPAIGN_PARTICIPANT_NOT_ELIGIBLE',
-          message: 'O participante não está elegível nesta campanha.',
+          code: 'CAMPAIGN_PARTICIPANT_EXCLUDED',
+          message: 'O participante foi removido desta campanha.',
         },
       ];
     }
@@ -275,9 +266,137 @@ async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInp
         status: participant.status,
         updatedAt: participant.updatedAt.toISOString(),
       })),
+      missingParticipants: sourceIds.filter((sourceEnrollmentId) => !participantBySource.has(sourceEnrollmentId)),
     },
     blockers,
   };
+}
+
+async function ensureCampaignParticipants(
+  prisma: Prisma.TransactionClient,
+  input: ConfirmRenewalProcessInput,
+  sourceRows: LoadedSource[],
+) {
+  if (input.origin !== 'CAMPAIGN' || !input.campaignId) return [];
+
+  const sourceIds = sourceRows.map((source) => source.id);
+  const existing = sourceIds.length
+    ? await prisma.rematriculaParticipante.findMany({
+        where: {
+          contaId: input.contaId,
+          campanhaId: input.campaignId,
+          matriculaOrigemId: { in: sourceIds },
+        },
+        select: { matriculaOrigemId: true },
+      })
+    : [];
+  const existingIds = new Set(existing.map((participant) => participant.matriculaOrigemId));
+  const includedOnDemandIds: string[] = [];
+
+  for (const source of sourceRows) {
+    if (!existingIds.has(source.id)) {
+      includedOnDemandIds.push(source.id);
+    }
+
+    await prisma.rematriculaParticipante.upsert({
+      where: {
+        uq_rematricula_participante_campanha_origem: {
+          campanhaId: input.campaignId,
+          matriculaOrigemId: source.id,
+        },
+      },
+      update: {
+        status: 'ELIGIBLE',
+        alunoId: source.alunoId,
+        responsavelId: source.responsavelFinanceiroId,
+        currentClassId: source.turmaId,
+        currentContractEndsAt: source.dataFimContrato,
+        eligibilityReason: 'INCLUIDO_SOB_DEMANDA',
+        eligibilitySnapshot: {
+          source: sourceSnapshot(source),
+          aluno: source.aluno
+            ? {
+                id: source.aluno.id,
+                nome: source.aluno.nome,
+              }
+            : null,
+          responsavel: source.responsavelFinanceiro
+            ? {
+                id: source.responsavelFinanceiro.id,
+                nome: source.responsavelFinanceiro.nome,
+              }
+            : null,
+          turma: source.turma
+            ? {
+                id: source.turma.id,
+                nome: source.turma.nome,
+              }
+            : null,
+          plano: source.plano
+            ? {
+                id: source.plano.id,
+                nome: source.plano.nome,
+              }
+            : null,
+          combo: source.combo
+            ? {
+                id: source.combo.id,
+                nome: source.combo.nome,
+              }
+            : null,
+        } as Prisma.InputJsonValue,
+        excludedAt: null,
+        exclusionReason: null,
+      },
+      create: {
+        contaId: input.contaId,
+        campanhaId: input.campaignId,
+        matriculaOrigemId: source.id,
+        alunoId: source.alunoId,
+        responsavelId: source.responsavelFinanceiroId,
+        currentClassId: source.turmaId,
+        currentContractEndsAt: source.dataFimContrato,
+        eligibilityReason: 'INCLUIDO_SOB_DEMANDA',
+        status: 'ELIGIBLE',
+        includedById: input.actorId,
+        eligibilitySnapshot: {
+          source: sourceSnapshot(source),
+          aluno: source.aluno
+            ? {
+                id: source.aluno.id,
+                nome: source.aluno.nome,
+              }
+            : null,
+          responsavel: source.responsavelFinanceiro
+            ? {
+                id: source.responsavelFinanceiro.id,
+                nome: source.responsavelFinanceiro.nome,
+              }
+            : null,
+          turma: source.turma
+            ? {
+                id: source.turma.id,
+                nome: source.turma.nome,
+              }
+            : null,
+          plano: source.plano
+            ? {
+                id: source.plano.id,
+                nome: source.plano.nome,
+              }
+            : null,
+          combo: source.combo
+            ? {
+                id: source.combo.id,
+                nome: source.combo.nome,
+              }
+            : null,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  return includedOnDemandIds;
 }
 
 async function findDuplicateRenewalItems(
@@ -585,8 +704,15 @@ export async function confirmRenewalProcess(
     const effectiveAt = new Date(`${preview.effectiveAt}T00:00:00.000Z`);
     const firstDueDate = preview.firstDueDate ? new Date(`${preview.firstDueDate}T00:00:00.000Z`) : null;
     const targetContractEndsAt = input.targetContractEndsAt ?? addYears(effectiveAt, 1);
-    const processStatus = preview.renewCount > 0 ? 'CONFIRMED' : 'COMPLETED';
+    const processStatus =
+      preview.renewCount > 0
+        ? effectiveAt > new Date()
+          ? 'WAITING_FOR_START'
+          : 'CONFIRMED'
+        : 'COMPLETED';
     const externalReference = externalReferenceForProcess(input.contaId, input.idempotencyKey);
+
+    const includedOnDemandIds = await ensureCampaignParticipants(tx, input, sourceRows);
 
     const processo = await tx.rematriculaProcesso.create({
       data: {
@@ -796,6 +922,7 @@ export async function confirmRenewalProcess(
         metadata: {
           idempotencyKey: input.idempotencyKey,
           previewHash: preview.previewHash,
+          includedOnDemandEnrollmentIds: includedOnDemandIds,
         } as Prisma.InputJsonValue,
       },
     });

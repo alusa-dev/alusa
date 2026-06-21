@@ -337,7 +337,7 @@ export async function activateRenewalCampaign(
 
   const elegiveis = await listarRematriculasElegiveis({
     contaId: input.contaId,
-    diasAntecedencia: readDiasAntecedencia(campaign.rules),
+    diasAntecedencia: readDiasAntecedencia(campaign.audienceDefinition ?? campaign.rules),
     currentUserRole: 'ADMIN',
   });
 

@@ -7,7 +7,6 @@ type Item = { href: string; label: string };
 const items: Item[] = [
   { href: "/admin/configuracoes/usuarios", label: "Usuários e Convites" },
   { href: "/admin/configuracoes/integracoes", label: "Integrações" },
-  { href: "/admin/configuracoes/politicas", label: "Políticas" },
   { href: "/admin/configuracoes/notificacoes", label: "Notificações" },
   { href: "/admin/configuracoes/notafiscal", label: "Nota Fiscal" },
 ];

@@ -146,6 +146,7 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
       id: String(aluno.id ?? ''),
       nome: aluno.nome ? String(aluno.nome) : null,
       cpf: aluno.cpf ? String(aluno.cpf) : null,
+      foto: aluno.foto ? String(aluno.foto) : null,
     },
     plano: plano
       ? {

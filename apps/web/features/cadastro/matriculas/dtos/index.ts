@@ -280,6 +280,7 @@ export const matriculaAlunoResumoDTOSchema = z.object({
   id: z.string(),
   nome: nullableStringDTOSchema.default(null),
   cpf: nullableStringDTOSchema.default(null),
+  foto: nullableStringDTOSchema.default(null).optional(),
 });
 export type MatriculaAlunoResumoDTO = z.infer<typeof matriculaAlunoResumoDTOSchema>;
 

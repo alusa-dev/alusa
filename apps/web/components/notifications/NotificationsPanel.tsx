@@ -9,7 +9,7 @@ import { cn } from '@/lib/cn';
 export interface NotificationsPanelProps {
   open: boolean;
   onClose: () => void;
-  anchorRef?: React.RefObject<HTMLElement>;
+  anchorRef?: React.RefObject<HTMLElement | null>;
   notificationCount?: number;
   items?: Array<{
     id: string;

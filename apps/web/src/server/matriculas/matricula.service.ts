@@ -272,7 +272,7 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
       skip,
       take: pageSize,
       include: {
-        aluno: { select: { id: true, nome: true, cpf: true } },
+        aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
         plano: { select: { id: true, nome: true, valor: true, periodicidade: true } },
         turma: {
           select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },

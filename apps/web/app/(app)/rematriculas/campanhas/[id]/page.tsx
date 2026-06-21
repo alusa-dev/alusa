@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Command as CommandPrimitive } from 'cmdk';
 import * as Popover from '@radix-ui/react-popover';
-import { ArrowLeft, Filter, Plus, Search, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, Plus, Search, UserRound, UsersRound } from 'lucide-react';
 
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { cn } from '@/lib/utils';
@@ -139,9 +139,9 @@ export default function RematriculaCampanhaDetalhePage() {
   const [selectedMatricula, setSelectedMatricula] = useState<RematriculaElegivelItem | null>(null);
   const [selectedTitular, setSelectedTitular] = useState<RematriculaTitularGroup | null>(null);
 
-  const { items, loading, campaigns, participants, processes, reload } = useRematriculas({
+  const { items, loading, campaigns, processes, reload } = useRematriculas({
     contaId,
-    diasAntecedencia: 60,
+    diasAntecedencia: 365,
   });
 
   const campaign = useMemo(
@@ -149,18 +149,7 @@ export default function RematriculaCampanhaDetalhePage() {
     [campaignId, campaigns],
   );
 
-  const campaignParticipantIds = useMemo(() => {
-    return new Set(
-      participants
-        .filter((participant) => participant.campanhaId === campaignId)
-        .map((participant) => participant.matriculaOrigemId),
-    );
-  }, [campaignId, participants]);
-
-  const eligibleItems = useMemo(() => {
-    if (campaignParticipantIds.size === 0) return items;
-    return items.filter((item) => campaignParticipantIds.has(item.id));
-  }, [campaignParticipantIds, items]);
+  const eligibleItems = items;
 
   const titularGroups = useMemo(() => buildTitularGroups(eligibleItems), [eligibleItems]);
 
@@ -345,7 +334,7 @@ export default function RematriculaCampanhaDetalhePage() {
                 Detalhes da Campanha
               </h1>
               <p className="max-w-3xl text-[13px] text-gray-500">
-                Gerencie as rematrículas vinculadas à campanha {campaign.nome}.
+                Organize adesões, reservas futuras e processos vinculados à campanha {campaign.nome}.
               </p>
             </div>
           </div>
@@ -363,7 +352,7 @@ export default function RematriculaCampanhaDetalhePage() {
                 Rematricular
               </Button>
 
-              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_auto] lg:w-[700px]">
+              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(220px,1fr)_180px] lg:w-[580px]">
                 <label className="relative block">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <Input
@@ -391,14 +380,6 @@ export default function RematriculaCampanhaDetalhePage() {
                     <SelectItem value="CANCELLED">Cancelada</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50"
-                >
-                  <Filter className="mr-2 h-4 w-4" />
-                  Filtro
-                </Button>
               </div>
             </div>
           </div>
@@ -436,7 +417,7 @@ export default function RematriculaCampanhaDetalhePage() {
               Rematricular
             </DialogTitle>
             <DialogDescription className="mt-2 text-sm text-slate-600">
-              Busque por aluno ou responsável e selecione o vínculo para preparar o próximo ciclo.
+              Busque alunos ou responsáveis com matrícula ativa e selecione o vínculo para preparar o próximo ciclo.
             </DialogDescription>
           </div>
 

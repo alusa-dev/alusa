@@ -66,6 +66,7 @@ import { CustomToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { DocumentTextIcon } from '@heroicons/react/24/outline';
+import { PersonAvatar } from '@/components/shared/PersonAvatar';
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
@@ -518,18 +519,16 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           <button
             type="button"
             onClick={() => (window.location.href = `/matriculas/${m.id}`)}
-            className="-m-2 flex w-full flex-col rounded p-2 text-left leading-tight transition-colors hover:bg-gray-50"
+            className="-m-2 flex w-full items-center gap-3 rounded p-2 text-left leading-tight transition-colors hover:bg-gray-50"
           >
-            <span className="max-w-full truncate font-medium text-gray-900 lg:max-w-[220px]">
-              {m.aluno.nome || '—'}
-            </span>
-            <span className="mt-0.5 text-xs text-gray-500">
-              {m.aluno.cpf
-                ? `CPF: ${m.aluno.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}`
-                : 'Sem CPF'}
-            </span>
-            <span className="mt-1 line-clamp-2 text-[11px] text-gray-500 lg:hidden">
-              {m.combo?.nome || m.turma?.nome || '—'} · {m.plano?.nome ?? '—'}
+            <PersonAvatar name={m.aluno.nome || 'Aluno'} src={m.aluno.foto} size="md" />
+            <span className="min-w-0">
+              <span className="block max-w-full truncate font-medium text-gray-900 lg:max-w-[220px]">
+                {m.aluno.nome || '—'}
+              </span>
+              <span className="mt-1 line-clamp-2 text-[11px] text-gray-500 lg:hidden">
+                {m.combo?.nome || m.turma?.nome || '—'} · {m.plano?.nome ?? '—'}
+              </span>
             </span>
           </button>
         ),
@@ -557,14 +556,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
         render: (m) => (
-          <div className="flex flex-col leading-tight">
-            <span className="text-gray-800 text-sm font-medium truncate max-w-[180px]">
-              {m.plano?.nome ?? (m.combo ? `Combo: ${m.combo.nome}` : '—')}
-            </span>
-            {m.plano ? (
-              <span className="text-xs text-gray-500">{currency.format(m.plano.valor)}</span>
-            ) : null}
-          </div>
+          <span className="block max-w-[180px] truncate text-sm font-medium text-gray-800">
+            {m.plano?.nome ?? (m.combo ? `Combo: ${m.combo.nome}` : '—')}
+          </span>
         ),
       },
       // 4. Taxa de Matrícula (clicável)
@@ -625,14 +619,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         render: (m) => {
           const contrato = m.contratos?.[0];
           if (!contrato) {
-            return (
-              <Badge
-                variant="outline"
-                className="border-slate-200 bg-slate-50 text-slate-600 font-normal"
-              >
-                Aguardando geração automática
-              </Badge>
-            );
+            return <Badge status="PENDENTE" size="sm" />;
           }
           return (
             <div className="flex flex-col items-center gap-1">
