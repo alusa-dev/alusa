@@ -9,7 +9,7 @@ import {
 import { listRenewalManagement } from '@/src/server/matriculas/renewal-management.service';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { prisma } from '@/src/prisma';
-import { FormaPagamento, StatusContrato } from '@prisma/client';
+import { FormaPagamento, Prisma, StatusContrato } from '@prisma/client';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
 import {
   createRematriculaInputDTOSchema,
@@ -22,10 +22,8 @@ import {
 } from '@/features/cadastro/rematriculas/mappers';
 import {
   buildFinancialSnapshot,
-  evaluateRematriculaDecision,
-  getContaFinancialPolicy,
+  evaluateCanonicalRematriculaDecision,
   serializeFinancialSnapshot,
-  serializePolicySnapshot,
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
 import {
   isSupportedAsaasBillingType,
@@ -68,29 +66,25 @@ async function resolveAuthContext(explicit?: string | null) {
 async function loadRematriculaDecision(params: {
   contaId: string;
   matriculaId: string;
-  currentUserRole?: string | null;
 }) {
-  const [policy, matricula] = await Promise.all([
-    getContaFinancialPolicy(params.contaId),
-    prisma.matricula.findFirst({
-      where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
-      select: {
-        id: true,
-        status: true,
-        dataFimContrato: true,
-        integrationStatus: true,
-        statusFinanceiro: true,
-        cobrancas: {
-          where: {
-            status: {
-              in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
-            },
+  const matricula = await prisma.matricula.findFirst({
+    where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
+    select: {
+      id: true,
+      status: true,
+      dataFimContrato: true,
+      integrationStatus: true,
+      statusFinanceiro: true,
+      cobrancas: {
+        where: {
+          status: {
+            in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
           },
-          select: { status: true },
         },
+        select: { status: true },
       },
-    }),
-  ]);
+    },
+  });
 
   if (!matricula) {
     return null;
@@ -108,23 +102,21 @@ async function loadRematriculaDecision(params: {
     cobrancas: matricula.cobrancas,
     statusFinanceiro: matricula.statusFinanceiro,
     integrationStatus: matricula.integrationStatus,
-    debtScope: policy.debtScope,
+    debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
   });
 
-  const decision = evaluateRematriculaDecision({
+  const decision = evaluateCanonicalRematriculaDecision({
     academicEligible,
     financialSnapshot,
-    policy,
-    currentUserRole: params.currentUserRole,
   });
 
-  return { policy, financialSnapshot, decision, academicEligible };
+  return { financialSnapshot, decision, academicEligible };
 }
 
 async function auditBlockedAttempt(params: {
   matriculaId: string;
   actorId: string;
-  policySnapshot: ReturnType<typeof serializePolicySnapshot>;
+  policySnapshot: Prisma.JsonObject;
   financialSnapshot: ReturnType<typeof serializeFinancialSnapshot>;
   reason: string;
   decisionMessage: string;
@@ -242,6 +234,7 @@ export async function GET(req: Request) {
       diasAntecedencia: Number(url.searchParams.get('diasAntecedencia') ?? '60'),
       referencia: url.searchParams.get('referencia') ?? undefined,
       statusContrato: url.searchParams.get('statusContrato') ?? undefined,
+      targetPeriodId: url.searchParams.get('targetPeriodId') ?? undefined,
       q: url.searchParams.get('q') ?? undefined,
       search: url.searchParams.get('search') ?? undefined,
     });
@@ -259,10 +252,10 @@ export async function GET(req: Request) {
       diasAntecedencia: Number.isFinite(dias) ? dias : 60,
       referencia: referenciaParam ? toDate(referenciaParam) : undefined,
       statusContrato: statusContratoValue,
+      targetPeriodId: queryDTO.targetPeriodId,
       search: url.searchParams.get('q') ?? url.searchParams.get('search') ?? undefined,
       currentUserRole: auth.user.role,
       campaignId: url.searchParams.get('campaignId') ?? undefined,
-      targetPeriodId: url.searchParams.get('targetPeriodId') ?? undefined,
       processStatus: url.searchParams.get('processStatus') ?? undefined,
     }, { prisma });
     const result = management.eligible;
@@ -390,14 +383,18 @@ export async function POST(req: Request) {
     const rematriculaDecision = await loadRematriculaDecision({
       contaId: auth.contaId,
       matriculaId,
-      currentUserRole: auth.user.role,
     });
 
     if (!rematriculaDecision) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
     }
 
-    const policySnapshot = serializePolicySnapshot(rematriculaDecision.policy);
+    const policySnapshot = {
+      policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
+      version: 1,
+      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
+      financialPendingBehavior: 'RESERVA_VAGA_E_SEGURA_FINANCEIRO_FUTURO',
+    } satisfies Prisma.JsonObject;
     const financialSnapshot = serializeFinancialSnapshot(rematriculaDecision.financialSnapshot);
     const overrideReason =
       typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
@@ -509,6 +506,7 @@ export async function POST(req: Request) {
       targetPeriodStartsAt: dataInicioValue,
       holderType: holderType as 'RESPONSIBLE' | 'STUDENT',
       holderId,
+      contractModelId: body.contractModelId ?? null,
       items: [
         {
           decision: 'RENEW' as const,

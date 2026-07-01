@@ -52,6 +52,16 @@ vi.mock('@alusa/finance', () => {
       value: 100,
       dueDate: '2026-01-05',
     })),
+    normalizeAsaasPaymentSnapshotStatus: vi.fn((input: { status?: string | null; deleted?: boolean | null; billingType?: string | null }) => {
+      if (input.deleted === true) return 'DELETED';
+      if (
+        input.billingType === 'RECEIVED_IN_CASH' &&
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(String(input.status ?? '').toUpperCase())
+      ) {
+        return 'RECEIVED_IN_CASH';
+      }
+      return input.status ?? null;
+    }),
     updatePayment: vi.fn(async () => {
       throw new KycNotApprovedError('KYC_NAO_APROVADO');
     }),

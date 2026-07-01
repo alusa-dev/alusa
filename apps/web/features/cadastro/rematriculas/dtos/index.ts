@@ -41,7 +41,6 @@ export const rematriculaBlockReasonDTOSchema = z.enum([
   'COBRANCA_ATRASADA',
   'MULTIPLAS_COBRANCAS',
   'AGUARDANDO_RECONCILIACAO',
-  'POLITICA_DA_ESCOLA',
   'OUTRO',
 ]);
 
@@ -156,6 +155,7 @@ export const listRematriculasQueryDTOSchema = z.object({
   diasAntecedencia: z.number().int().positive().default(60),
   referencia: z.string().optional(),
   statusContrato: rematriculaStatusContratoDTOSchema.optional(),
+  targetPeriodId: z.string().trim().optional(),
   q: z.string().trim().optional(),
   search: z.string().trim().optional(),
 });
@@ -181,6 +181,7 @@ export const createRematriculaInputDTOSchema = z.object({
   planoId: z.string().trim().optional(),
   turmaId: z.string().trim().nullable().optional(),
   comboId: z.string().trim().nullable().optional(),
+  contractModelId: z.string().trim().nullable().optional(),
   responsavelFinanceiroId: z.string().trim().nullable().optional(),
   formaPagamento: rematriculaFormaPagamentoDTOSchema.optional(),
   formaPagamentoTaxa: rematriculaFormaPagamentoDTOSchema.optional(),

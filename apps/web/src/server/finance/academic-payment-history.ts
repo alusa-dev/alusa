@@ -10,20 +10,17 @@ import {
   shouldFetchAcademicAsaasDetail,
 } from './asaas-payment-detail-policy';
 
-const TERMINAL_LOCAL_COBRANCA_STATUSES = new Set(['PAGO', 'CANCELADO', 'ESTORNADO']);
-const TERMINAL_ASAAS_PAYMENT_STATUSES = new Set([
-  'RECEIVED',
-  'CONFIRMED',
-  'DUNNING_RECEIVED',
-  'RECEIVED_IN_CASH',
-  'REFUNDED',
-  'REFUND_IN_PROGRESS',
-  'REFUND_REQUESTED',
-  'CHARGEBACK_REQUESTED',
-  'CHARGEBACK_DISPUTE',
-  'AWAITING_CHARGEBACK_REVERSAL',
-  'DELETED',
-]);
+const COBRANCA_STATUS_PRECEDENCE: Record<string, number> = {
+  PENDENTE: 5,
+  A_VENCER: 10,
+  PROCESSANDO: 15,
+  ATRASADO: 30,
+  PAGO: 40,
+  CANCELAMENTO_PENDENTE: 80,
+  ESTORNADO_PARCIAL: 90,
+  ESTORNADO: 92,
+  CANCELADO: 95,
+};
 
 export const HISTORICAL_ASAAS_PAYMENT_STATUSES = [
   'RECEIVED',
@@ -102,22 +99,17 @@ export function resolveAcademicDisplayedStatus(params: {
   remotePaymentStatus?: string | null;
   dueDate: Date;
 }): string {
-  if (!params.remotePaymentStatus) {
+  const remoteStatus = params.remotePaymentStatus
+    ? mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, { dueDate: params.dueDate })
+    : null;
+
+  if (!remoteStatus) {
     return params.localCobrancaStatus;
   }
 
-  const remoteStatus = mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, {
-    dueDate: params.dueDate,
-  });
-
-  if (
-    TERMINAL_LOCAL_COBRANCA_STATUSES.has(params.localCobrancaStatus) &&
-    !TERMINAL_ASAAS_PAYMENT_STATUSES.has(params.remotePaymentStatus)
-  ) {
-    return params.localCobrancaStatus;
-  }
-
-  return remoteStatus;
+  const localRank = COBRANCA_STATUS_PRECEDENCE[params.localCobrancaStatus] ?? 0;
+  const remoteRank = COBRANCA_STATUS_PRECEDENCE[remoteStatus] ?? 0;
+  return remoteRank > localRank ? remoteStatus : params.localCobrancaStatus;
 }
 
 export function hasAcademicPaymentHistory(cobranca: AcademicChargeHistoryRecord): boolean {

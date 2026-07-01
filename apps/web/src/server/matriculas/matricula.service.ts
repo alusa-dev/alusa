@@ -24,6 +24,10 @@ import { resolveFirstDueDate } from '@/src/server/matriculas/recurring-billing';
 import {
   resolveInitialBillingProvisionStatus,
 } from '@/src/server/matriculas/billing-provision-status';
+import {
+  assertStudentCapacity,
+  countAdditionalActiveStudentsForEnrollment,
+} from '@/src/server/platform-billing/capacity';
 
 export class MatriculaConflictError extends Error {
   readonly code:
@@ -664,6 +668,20 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       statusInicial = StatusMatricula.PENDENTE_TAXA;
     } else {
       statusInicial = StatusMatricula.ATIVA;
+    }
+
+    if (statusInicial === StatusMatricula.ATIVA) {
+      const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
+        tx,
+        contaId: input.contaId,
+        alunoId: input.alunoId,
+      });
+      await assertStudentCapacity({
+        tx,
+        contaId: input.contaId,
+        additionalActiveStudents,
+        operation: 'matricula.create',
+      });
     }
 
     const descontosAplicaveis = await resolveDescontosMatricula(tx, {

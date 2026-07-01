@@ -28,6 +28,13 @@ export async function POST(
     raw && typeof raw === 'object' && typeof (raw as { reason?: unknown }).reason === 'string'
       ? (raw as { reason: string }).reason.trim()
       : null;
+  if (!reason) {
+    return jsonError(
+      422,
+      'MOTIVO_CANCELAMENTO_OBRIGATORIO',
+      'Informe o motivo do cancelamento do próximo ciclo.',
+    );
+  }
 
   try {
     const result = await cancelRenewalProcess(

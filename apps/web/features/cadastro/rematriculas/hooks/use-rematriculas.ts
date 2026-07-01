@@ -14,6 +14,7 @@ export interface UseRematriculasOptions {
   diasAntecedencia?: number;
   statusContrato?: StatusContrato;
   referencia?: string;
+  targetPeriodId?: string;
   search?: string;
 }
 
@@ -42,7 +43,7 @@ const INITIAL_STATE: UseRematriculasState = {
 };
 
 export function useRematriculas(options: UseRematriculasOptions) {
-  const { contaId, diasAntecedencia, statusContrato, referencia, search } = options;
+  const { contaId, diasAntecedencia, statusContrato, referencia, targetPeriodId, search } = options;
   const [state, setState] = useState<UseRematriculasState>(INITIAL_STATE);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -66,6 +67,7 @@ export function useRematriculas(options: UseRematriculasOptions) {
           diasAntecedencia,
           statusContrato,
           referencia,
+          targetPeriodId,
           search,
           signal: controller.signal,
           ...overrides,
@@ -97,7 +99,7 @@ export function useRematriculas(options: UseRematriculasOptions) {
         });
       }
     },
-    [contaId, diasAntecedencia, statusContrato, referencia, search],
+    [contaId, diasAntecedencia, statusContrato, referencia, targetPeriodId, search],
   );
 
   useEffect(() => {

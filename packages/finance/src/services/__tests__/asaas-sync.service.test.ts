@@ -8,6 +8,10 @@ vi.mock('@alusa/database', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    charge: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
+    },
   },
 }));
 
@@ -29,6 +33,10 @@ import { getPayment } from '../../use-cases/asaas-ops';
 const mockPrisma = prisma as unknown as {
   cobranca: {
     findUnique: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+  };
+  charge: {
+    findFirst: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
   };
 };

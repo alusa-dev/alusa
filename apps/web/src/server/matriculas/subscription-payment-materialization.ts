@@ -3,6 +3,7 @@ import {
   handlePaymentWebhook,
   listSubscriptionPayments,
   mapAsaasPaymentStatusToCobranca,
+  normalizeAsaasPaymentSnapshotStatus,
   recordAsaasReadIntent,
   type AsaasReadIntent,
 } from '@alusa/finance';
@@ -88,6 +89,22 @@ function selectBestSubscriptionPayment(
   return { payment: ordered[0], matchedBy: 'FIRST_AVAILABLE' as const };
 }
 
+function getEffectivePaymentStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}) {
+  return (
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ??
+    payment.status ??
+    'PENDING'
+  );
+}
+
 export async function syncInitialSubscriptionPaymentFromAsaas(input: {
   contaId: string;
   asaasSubscriptionId: string;
@@ -115,12 +132,13 @@ export async function syncInitialSubscriptionPaymentFromAsaas(input: {
       localCharge: null,
     };
   }
+  const effectivePaymentStatus = getEffectivePaymentStatus(payment);
 
   const webhookResult = await handlePaymentWebhook(input.contaId, {
     event: 'PAYMENT_CREATED',
     payment: {
       id: payment.id,
-      status: payment.status as never,
+      status: effectivePaymentStatus as never,
       value: Number(payment.value ?? 0),
       netValue: Number(payment.netValue ?? 0),
       originalValue:
@@ -153,7 +171,7 @@ export async function syncInitialSubscriptionPaymentFromAsaas(input: {
     matchedBy,
     payment: {
       id: payment.id,
-      status: payment.status,
+      status: effectivePaymentStatus,
       dueDate: payment.dueDate,
       value: Number(payment.value),
       netValue: Number(payment.netValue),
@@ -192,12 +210,13 @@ export async function materializeSubscriptionPaymentForCharge(
   });
 
   if (existingCharge && existingCharge.id !== input.cobranca.id) {
+    const effectivePaymentStatus = getEffectivePaymentStatus(payment);
     return {
       found: true,
       matchedBy,
       payment: {
         id: payment.id,
-        status: payment.status,
+        status: effectivePaymentStatus,
         dueDate: payment.dueDate,
         value: Number(payment.value),
         netValue: Number(payment.netValue),
@@ -208,12 +227,13 @@ export async function materializeSubscriptionPaymentForCharge(
       updated: false,
     };
   }
+  const effectivePaymentStatus = getEffectivePaymentStatus(payment);
 
   await input.prisma.cobranca.update({
     where: { id: input.cobranca.id },
     data: {
       asaasPaymentId: payment.id,
-      asaasStatus: payment.status,
+      asaasStatus: effectivePaymentStatus,
       asaasValue: Number(payment.value),
       asaasNetValue: Number(payment.netValue),
       asaasOriginalValue: payment.originalValue != null ? Number(payment.originalValue) : null,
@@ -222,7 +242,7 @@ export async function materializeSubscriptionPaymentForCharge(
           ? Number((payment.value - payment.netValue).toFixed(2))
           : null,
       lastAsaasFetchAt: new Date(),
-      status: mapAsaasPaymentStatusToCobranca(payment.status, {
+      status: mapAsaasPaymentStatusToCobranca(effectivePaymentStatus, {
         dueDate: input.cobranca.vencimento,
       }),
     },
@@ -233,7 +253,7 @@ export async function materializeSubscriptionPaymentForCharge(
     matchedBy,
     payment: {
       id: payment.id,
-      status: payment.status,
+      status: effectivePaymentStatus,
       dueDate: payment.dueDate,
       value: Number(payment.value),
       netValue: Number(payment.netValue),

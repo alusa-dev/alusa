@@ -6,14 +6,12 @@ import {
   KycNotApprovedError,
   undoCashPayment,
   isAsaasEnabled,
-  readPaymentStatusPreflight,
+  normalizeAsaasPaymentSnapshotStatus,
+  readPaymentFullPreflight,
   auditLogService,
   syncPaymentStateFromAsaas,
   evaluatePaymentActionPolicy,
-  expectedEventsForPaymentCommand,
-  failPaymentCommand,
-  markPaymentCommandSent,
-  registerPaymentCommand,
+  runAsaasPaymentCommand,
 } from '@alusa/finance';
 import { randomUUID } from 'crypto';
 import {
@@ -24,6 +22,7 @@ import { mapCobrancaActionResultToDTO } from '@/features/financeiro/cobrancas/ma
 import { resolveCobrancaPaymentLookup } from '@/src/server/finance/resolve-cobranca-payment-lookup';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
+const CASH_UNDO_ALREADY_APPLIED_STATUSES = new Set(['PENDING', 'OVERDUE']);
 
 function resolveAcademicPaymentOrigin(tipo?: string | null) {
   switch (tipo) {
@@ -37,6 +36,44 @@ function resolveAcademicPaymentOrigin(tipo?: string | null) {
       return 'STANDALONE';
     default:
       return 'ACADEMIC';
+  }
+}
+
+function getEffectiveAsaasStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}) {
+  return (
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ??
+    payment.status ??
+    'PENDING'
+  );
+}
+
+async function syncAlreadyUndoneCashPayment(params: {
+  contaId: string;
+  asaasPaymentId: string;
+  correlationId: string;
+  source: string;
+}) {
+  try {
+    await syncPaymentStateFromAsaas({
+      contaId: params.contaId,
+      asaasPaymentId: params.asaasPaymentId,
+      eventName: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
+    });
+  } catch (syncError) {
+    console.warn('[Undo Receive In Cash] Falha ao reconciliar recebimento já desfeito', {
+      correlationId: params.correlationId,
+      asaasPaymentId: params.asaasPaymentId,
+      source: params.source,
+      error: syncError instanceof Error ? syncError.message : String(syncError),
+    });
   }
 }
 
@@ -63,6 +100,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!user?.id || !user?.contaId) {
       return NextResponse.json({ error: 'Usuário não autenticado' }, { status: 401 });
     }
+    const userId = user.id;
+    const contaId = user.contaId;
 
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 });
@@ -71,7 +110,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     const { id } = cobrancaRouteParamsDTOSchema.parse(await params);
 
     const cobranca = await prisma.cobranca.findFirst({
-      where: { id, matricula: { aluno: { contaId: user.contaId } } },
+      where: { id, matricula: { aluno: { contaId } } },
       include: {
         matricula: {
           select: {
@@ -89,7 +128,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const charge = !cobranca
       ? await prisma.charge.findFirst({
-          where: { id, contaId: user.contaId },
+          where: { id, contaId },
           select: {
             id: true,
             status: true,
@@ -103,7 +142,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       : null;
 
     if (!cobranca && !charge) {
-      const paymentLookup = await resolveCobrancaPaymentLookup(prisma, user.contaId, id);
+      const paymentLookup = await resolveCobrancaPaymentLookup(prisma, contaId, id);
       if (!paymentLookup) {
         return NextResponse.json(
           { error: 'Cobrança não encontrada', correlationId },
@@ -126,16 +165,38 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         );
       }
 
-      const asaasPayment = await readPaymentStatusPreflight(asaasPaymentId, { contaId: user.contaId });
+      const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId });
+      const effectiveAsaasStatus = getEffectiveAsaasStatus(asaasPayment);
+      if (CASH_UNDO_ALREADY_APPLIED_STATUSES.has(effectiveAsaasStatus)) {
+        await syncAlreadyUndoneCashPayment({
+          contaId,
+          asaasPaymentId,
+          correlationId,
+          source: 'lookup',
+        });
+
+        return NextResponse.json(
+          cobrancaActionResultDTOSchema.parse(
+            mapCobrancaActionResultToDTO({
+              success: true,
+              message: 'Recebimento em dinheiro já estava desfeito no Asaas. Estado local reconciliado.',
+              pending: false,
+              correlationId,
+            }),
+          ),
+          { status: 200 },
+        );
+      }
+
       const policy = evaluatePaymentActionPolicy({
         entityType: 'COBRANCA',
         origin: 'EVENT',
         localStatus: paymentLookup.localStatus,
-        asaasStatus: asaasPayment.status,
-        billingType: paymentLookup.billingType,
+        asaasStatus: effectiveAsaasStatus,
+        billingType: asaasPayment.billingType ?? paymentLookup.billingType,
         hasAsaasPaymentId: true,
         hasInvoiceUrl: Boolean(paymentLookup.invoiceUrl),
-        wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+        wasReceivedInCash: effectiveAsaasStatus === 'RECEIVED_IN_CASH',
       });
 
       if (!policy.canUndoCashPayment) {
@@ -144,7 +205,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           {
             error: decision.reason ?? `Operação não permitida. Status atual no Asaas: ${asaasPayment.status}`,
             correlationId,
-            asaasStatus: asaasPayment.status,
+            asaasStatus: effectiveAsaasStatus,
             code: decision.code,
             ...(decision.hint ? { hint: decision.hint } : {}),
           },
@@ -152,49 +213,41 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         );
       }
 
-      const command = await registerPaymentCommand({
-        contaId: user.contaId,
+      const { commandJobId } = await runAsaasPaymentCommand({
+        contaId,
         type: 'PAYMENT_UNDO_CASH_COMMAND',
         entityType: 'CHARGE',
         entityId: id,
         asaasPaymentId,
-        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_UNDO_CASH_COMMAND'),
         correlationId,
-        actorId: user.id,
+        actorId: userId,
         metadata: {
           source: 'POST /api/cobrancas/[id]/undo-receive-in-cash',
           origin: 'EVENT',
           previousAsaasStatus: asaasPayment.status,
+          previousEffectiveAsaasStatus: effectiveAsaasStatus,
         },
+        providerStatus: effectiveAsaasStatus,
+        run: () => undoCashPayment(asaasPaymentId, { contaId }),
       });
 
       try {
-        await undoCashPayment(asaasPaymentId, { contaId: user.contaId });
-        await markPaymentCommandSent({
-          jobId: command.id,
-          providerStatus: asaasPayment.status,
-        });
-      } catch (commandError) {
-        await failPaymentCommand({ jobId: command.id, error: commandError });
-        throw commandError;
-      }
-
-      try {
         await syncPaymentStateFromAsaas({
-          contaId: user.contaId,
+          contaId,
           asaasPaymentId,
+          eventName: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
         });
       } catch (syncError) {
         console.warn('[UndoCash] Falha ao sincronizar estado pós-comando (event)', {
           correlationId,
-          commandJobId: command.id,
+          commandJobId,
           asaasPaymentId,
           error: syncError instanceof Error ? syncError.message : String(syncError),
         });
       }
 
       await auditLogService.record({
-        contaId: user.contaId,
+        contaId,
         action: 'finance.charge.undo_cash_requested',
         entity: { type: 'Charge', id },
         metadata: {
@@ -202,7 +255,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           asaasPaymentId,
           origin: 'EVENT',
           previousAsaasStatus: asaasPayment.status,
-          requestedBy: user.id,
+          previousEffectiveAsaasStatus: effectiveAsaasStatus,
+          requestedBy: userId,
           durationMs: Date.now() - startedAt,
         },
       });
@@ -236,7 +290,44 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Read-before-write: verificar estado atual no Asaas
-    const asaasPayment = await readPaymentStatusPreflight(asaasPaymentId, { contaId: user.contaId });
+    const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId });
+    const effectiveAsaasStatus = getEffectiveAsaasStatus(asaasPayment);
+    if (CASH_UNDO_ALREADY_APPLIED_STATUSES.has(effectiveAsaasStatus)) {
+      await syncAlreadyUndoneCashPayment({
+        contaId,
+        asaasPaymentId,
+        correlationId,
+        source: cobranca ? 'cobranca' : 'charge',
+      });
+
+      await auditLogService.record({
+        contaId,
+        action: 'finance.charge.undo_cash_payment_already_applied',
+        entity: { type: cobranca ? 'Cobranca' : 'Charge', id: cobranca?.id ?? charge!.id },
+        metadata: {
+          correlationId,
+          asaasPaymentId,
+          currentAsaasStatus: asaasPayment.status,
+          currentEffectiveAsaasStatus: effectiveAsaasStatus,
+          requestedBy: userId,
+          requestedByRole: user.role,
+          durationMs: Date.now() - startedAt,
+        },
+      });
+
+      return NextResponse.json(
+        cobrancaActionResultDTOSchema.parse(
+          mapCobrancaActionResultToDTO({
+            success: true,
+            message: 'Recebimento em dinheiro já estava desfeito no Asaas. Estado local reconciliado.',
+            pending: false,
+            correlationId,
+          }),
+        ),
+        { status: 200 },
+      );
+    }
+
     const policy = evaluatePaymentActionPolicy({
       entityType: cobranca ? 'COBRANCA' : 'CHARGE',
       origin: cobranca
@@ -247,11 +338,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             ? 'SUBSCRIPTION'
             : 'STANDALONE',
       localStatus: cobranca?.status ?? charge?.status ?? null,
-      asaasStatus: asaasPayment.status,
-      billingType: charge?.billingType ?? null,
+      asaasStatus: effectiveAsaasStatus,
+      billingType: asaasPayment.billingType ?? charge?.billingType ?? null,
       hasAsaasPaymentId: true,
       hasInvoiceUrl: Boolean(cobranca?.charge?.invoiceUrl || charge?.invoiceUrl),
-      wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+      wasReceivedInCash: effectiveAsaasStatus === 'RECEIVED_IN_CASH',
       isInstallmentPayment: cobranca?.tipo === 'PARCELADA' || Boolean(charge?.standaloneInstallmentPlanId),
       isSubscriptionPayment: cobranca?.tipo === 'RECORRENTE' || Boolean(charge?.standaloneSubscriptionId),
     });
@@ -262,7 +353,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         {
           error: decision.reason ?? `Operação não permitida. Status atual no Asaas: ${asaasPayment.status}`,
           correlationId,
-          asaasStatus: asaasPayment.status,
+          asaasStatus: effectiveAsaasStatus,
           code: decision.code,
           ...(decision.hint ? { hint: decision.hint } : {}),
         },
@@ -270,45 +361,35 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
-    const command = await registerPaymentCommand({
-      contaId: user.contaId,
+    const { commandJobId } = await runAsaasPaymentCommand({
+      contaId,
       type: 'PAYMENT_UNDO_CASH_COMMAND',
       entityType: cobranca ? 'COBRANCA' : 'CHARGE',
       entityId: cobranca?.id ?? charge!.id,
       asaasPaymentId,
-      expectedEvents: expectedEventsForPaymentCommand('PAYMENT_UNDO_CASH_COMMAND'),
       correlationId,
-      actorId: user.id,
+      actorId: userId,
       chargeId: charge?.id ?? null,
       cobrancaId: cobranca?.id ?? null,
       metadata: {
         source: 'POST /api/cobrancas/[id]/undo-receive-in-cash',
         previousAsaasStatus: asaasPayment.status,
+        previousEffectiveAsaasStatus: effectiveAsaasStatus,
       },
+      providerStatus: effectiveAsaasStatus,
+      run: () => undoCashPayment(asaasPaymentId, { contaId }),
     });
-
-    // Executar comando no Asaas
-    try {
-      await undoCashPayment(asaasPaymentId, { contaId: user.contaId });
-      await markPaymentCommandSent({
-        jobId: command.id,
-        providerStatus: asaasPayment.status,
-      });
-    } catch (commandError) {
-      await failPaymentCommand({ jobId: command.id, error: commandError });
-      throw commandError;
-    }
 
     try {
       await syncPaymentStateFromAsaas({
-        contaId: user.contaId,
+        contaId,
         asaasPaymentId,
         eventName: 'PAYMENT_RECEIVED_IN_CASH_UNDONE',
       });
     } catch (syncError) {
       console.warn('[Undo Receive In Cash] Falha ao sincronizar estado pós-comando', {
         correlationId,
-        commandJobId: command.id,
+        commandJobId,
         asaasPaymentId,
         error: syncError instanceof Error ? syncError.message : String(syncError),
       });
@@ -316,14 +397,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     // Registrar auditoria (status final virá via webhook)
     await auditLogService.record({
-      contaId: user.contaId,
+      contaId,
       action: 'finance.charge.undo_cash_payment_requested',
       entity: { type: cobranca ? 'Cobranca' : 'Charge', id: cobranca?.id ?? charge!.id },
       metadata: {
         correlationId,
         asaasPaymentId,
         previousAsaasStatus: asaasPayment.status,
-        requestedBy: user.id,
+        previousEffectiveAsaasStatus: effectiveAsaasStatus,
+        requestedBy: userId,
         requestedByRole: user.role,
         durationMs: Date.now() - startedAt,
       },
@@ -332,8 +414,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     // Registrar log financeiro
     await prisma.logFinanceiro.create({
       data: {
-        contaId: user.contaId,
-        usuarioId: user.id,
+        contaId,
+        usuarioId: userId,
         cobrancaId: cobranca?.id ?? null,
         acao: 'DESFAZER_RECEBIMENTO_DINHEIRO',
         detalhes: {
@@ -341,8 +423,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           entityType: cobranca ? 'COBRANCA' : 'CHARGE',
           asaasPaymentId,
           correlationId,
-          commandJobId: command.id,
+          commandJobId,
           previousAsaasStatus: asaasPayment.status,
+          previousEffectiveAsaasStatus: effectiveAsaasStatus,
         },
       },
     });

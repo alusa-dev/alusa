@@ -78,6 +78,56 @@ const input = {
   ],
 };
 
+function sourceEnrollment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'mat-1',
+    contaId: 'conta-1',
+    alunoId: 'aluno-1',
+    responsavelFinanceiroId: 'resp-1',
+    turmaId: 'turma-atual',
+    planoId: 'plano-atual',
+    comboId: null,
+    rematriculadaDeId: null,
+    dataInicio: new Date('2025-01-01T00:00:00.000Z'),
+    dataFimContrato: new Date('2026-01-31T00:00:00.000Z'),
+    status: 'ATIVA',
+    statusContrato: 'ASSINADO',
+    statusFinanceiro: 'REGULAR',
+    createdAt: new Date('2025-01-01T00:00:00.000Z'),
+    updatedAt: now,
+    taxaMatricula: 100,
+    taxaIsenta: false,
+    taxaJustificativa: null,
+    formaPagamento: 'BOLETO',
+    formaPagamentoTaxa: 'BOLETO',
+    vencimentoDia: 10,
+    jurosMensal: null,
+    multaPercentual: null,
+    descontoAntecipado: null,
+    prazoDesconto: null,
+    billingMode: 'INDIVIDUAL',
+    aluno: { id: 'aluno-1', nome: 'Aluno', contaId: 'conta-1' },
+    responsavelFinanceiro: { id: 'resp-1', nome: 'Resp', contaId: 'conta-1' },
+    plano: { id: 'plano-atual', nome: 'Atual', valor: 100, periodicidade: 'MENSAL', contaId: 'conta-1' },
+    combo: null,
+    turma: { id: 'turma-atual', nome: 'Atual', contaId: 'conta-1' },
+    ...overrides,
+  };
+}
+
+function chainEnrollment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'mat-1',
+    alunoId: 'aluno-1',
+    rematriculadaDeId: null,
+    status: 'ATIVA',
+    dataInicio: new Date('2025-01-01T00:00:00.000Z'),
+    dataFimContrato: new Date('2026-01-31T00:00:00.000Z'),
+    createdAt: new Date('2025-01-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
 describe('renewal-process.service', () => {
   it('permite campanha ativa sem participante previo para inclusao sob demanda', async () => {
     const prisma = basePrisma({
@@ -124,6 +174,35 @@ describe('renewal-process.service', () => {
     expect(preview.blockers).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: 'DUPLICATE_SOURCE_TARGET_PERIOD', sourceEnrollmentId: 'mat-1' }),
+      ]),
+    );
+  });
+
+  it('bloqueia origem antiga quando a cadeia ja possui matricula posterior', async () => {
+    const source = sourceEnrollment();
+    const chainRows = [
+      chainEnrollment(),
+      chainEnrollment({
+        id: 'mat-2',
+        rematriculadaDeId: 'mat-1',
+        status: 'AGUARDANDO_CONFIRMACAO',
+        dataInicio: new Date('2026-02-01T00:00:00.000Z'),
+        dataFimContrato: new Date('2027-01-31T00:00:00.000Z'),
+        createdAt: new Date('2026-01-10T00:00:00.000Z'),
+      }),
+    ];
+    const prisma = basePrisma({
+      matricula: {
+        ...basePrisma().matricula,
+        findMany: vi.fn().mockResolvedValueOnce([source]).mockResolvedValueOnce(chainRows).mockResolvedValueOnce(chainRows),
+      },
+    });
+
+    const preview = await previewRenewalProcess(input, { prisma: prisma as never });
+
+    expect(preview.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'OUTDATED_SOURCE_ENROLLMENT', sourceEnrollmentId: 'mat-1' }),
       ]),
     );
   });

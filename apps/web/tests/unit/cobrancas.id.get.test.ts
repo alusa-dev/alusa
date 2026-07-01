@@ -43,6 +43,16 @@ vi.mock('@alusa/finance', () => ({
     if (status === 'DELETED') return 'CANCELADO';
     return 'PENDENTE';
   }),
+  normalizeAsaasPaymentSnapshotStatus: vi.fn((input: { status?: string | null; deleted?: boolean | null; billingType?: string | null }) => {
+    if (input.deleted === true) return 'DELETED';
+    if (
+      input.billingType === 'RECEIVED_IN_CASH' &&
+      ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(String(input.status ?? '').toUpperCase())
+    ) {
+      return 'RECEIVED_IN_CASH';
+    }
+    return input.status ?? null;
+  }),
   reconcileAcademicChargesWithAsaas: vi.fn(async () => ({ items: new Map() })),
   resolveCobrancaDisplayStatus: vi.fn(({ status, asaasStatus }) => ({
     label: asaasStatus === 'RECEIVED_IN_CASH' ? 'Recebido em dinheiro' : status,
@@ -55,6 +65,15 @@ vi.mock('@alusa/finance', () => ({
         ? 'PENDENTE'
         : 'NAO_APLICAVEL',
   ),
+  resolveStandaloneChargeTipo: vi.fn((input: {
+    standaloneInstallmentPlanId?: string | null;
+    standaloneSubscriptionId?: string | null;
+    externalReference?: string | null;
+  }) => {
+    if (input.standaloneInstallmentPlanId || input.externalReference?.includes('installment')) return 'PARCELADA';
+    if (input.standaloneSubscriptionId || input.externalReference?.includes('subscription')) return 'RECORRENTE';
+    return 'AVULSA';
+  }),
   readPaymentFullPreflight: vi.fn(),
   updatePayment: vi.fn(),
   auditLogService: { record: vi.fn() },

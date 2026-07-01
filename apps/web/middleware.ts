@@ -110,6 +110,7 @@ const protectedPagePrefixes = [
   '/planos/',
   '/professores/',
   '/matriculas/',
+  '/rematriculas/',
   '/antecipacoes/',
   '/portal/',
   '/vendas/',
@@ -278,7 +279,13 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
 
 /** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
 export default async function middleware(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
+
   if (isTest) {
+    if (!pathname.startsWith('/api/') && (pathname === '/rematriculas' || pathname.startsWith('/rematriculas/'))) {
+      return handleProtectedPage(req);
+    }
+
     return NextResponse.next();
   }
 
@@ -288,8 +295,6 @@ export default async function middleware(req: NextRequest) {
     logMiddlewareRedirect(req.nextUrl.pathname, 'www_to_apex', 308);
     return NextResponse.redirect(apexUrl, 308);
   }
-
-  const pathname = req.nextUrl.pathname;
 
   if (pathname.startsWith('/api/')) {
     const apiResponse = handleApiRequest(req);
@@ -340,6 +345,7 @@ export const config = {
     '/planos/:path*',
     '/professores/:path*',
     '/matriculas/:path*',
+    '/rematriculas/:path*',
     '/antecipacoes/:path*',
     '/dashboard/:path*',
     '/portal/:path*',

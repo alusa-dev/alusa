@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFinancialSnapshot,
-  evaluateRematriculaDecision,
+  evaluateCanonicalRematriculaDecision,
 } from './rematricula-financial-policy.service';
 
 describe('rematricula-financial-policy.service', () => {
-  it('flexibiliza com alerta quando houver pendência relevante', () => {
+  it('na regra canonica libera a rematricula com aviso e segura o financeiro futuro quando houver pendencia', () => {
     const snapshot = buildFinancialSnapshot({
       cobrancas: [{ status: 'PENDENTE' }],
       statusFinanceiro: 'ADIMPLENTE',
@@ -13,38 +13,36 @@ describe('rematricula-financial-policy.service', () => {
       debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
     });
 
-    const decision = evaluateRematriculaDecision({
+    const decision = evaluateCanonicalRematriculaDecision({
       academicEligible: true,
       financialSnapshot: snapshot,
-      policy: { preset: 'FLEXIVEL', debtScope: 'QUALQUER_COBRANCA_EM_ABERTO', overrideRoles: [] },
-      currentUserRole: 'ADMIN',
     });
 
     expect(decision.actionStatus).toBe('LIBERADA_COM_AVISO');
+    expect(decision.eligibilityStatus).toBe('ELEGIVEL');
+    expect(decision.shouldBlockNewFinancialCycle).toBe(true);
     expect(decision.requiresOverrideReason).toBe(false);
   });
 
-  it('exige autorização quando a regra controlada encontra dívida relevante', () => {
+  it('na regra canonica bloqueia apenas quando a matricula nao for academicamente elegivel', () => {
     const snapshot = buildFinancialSnapshot({
-      cobrancas: [{ status: 'ATRASADO' }],
-      statusFinanceiro: 'INADIMPLENTE',
+      cobrancas: [],
+      statusFinanceiro: 'ADIMPLENTE',
       integrationStatus: 'SINCRONIZADO',
-      debtScope: 'APENAS_VENCIDAS',
+      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
     });
 
-    const decision = evaluateRematriculaDecision({
-      academicEligible: true,
+    const decision = evaluateCanonicalRematriculaDecision({
+      academicEligible: false,
       financialSnapshot: snapshot,
-      policy: { preset: 'CONTROLADA', debtScope: 'APENAS_VENCIDAS', overrideRoles: ['FINANCEIRO'] },
-      currentUserRole: 'FINANCEIRO',
     });
 
-    expect(decision.actionStatus).toBe('REQUER_OVERRIDE');
-    expect(decision.canCurrentUserOverride).toBe(true);
-    expect(decision.requiresOverrideReason).toBe(true);
+    expect(decision.actionStatus).toBe('BLOQUEADA');
+    expect(decision.eligibilityStatus).toBe('NAO_ELEGIVEL');
+    expect(decision.shouldBlockNewFinancialCycle).toBe(true);
   });
 
-  it('bloqueia na regra restritiva quando a situação financeira estiver inconclusiva', () => {
+  it('na regra canonica libera com aviso quando a situacao financeira estiver inconclusiva', () => {
     const snapshot = buildFinancialSnapshot({
       cobrancas: [{ status: 'PROCESSANDO' }],
       statusFinanceiro: 'PENDENTE_FINANCEIRO',
@@ -52,33 +50,30 @@ describe('rematricula-financial-policy.service', () => {
       debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
     });
 
-    const decision = evaluateRematriculaDecision({
+    const decision = evaluateCanonicalRematriculaDecision({
       academicEligible: true,
       financialSnapshot: snapshot,
-      policy: { preset: 'RESTRITIVA', debtScope: 'QUALQUER_COBRANCA_EM_ABERTO', overrideRoles: [] },
-      currentUserRole: 'ADMIN',
     });
 
-    expect(decision.actionStatus).toBe('BLOQUEADA');
+    expect(decision.actionStatus).toBe('LIBERADA_COM_AVISO');
     expect(decision.blockReason).toBe('AGUARDANDO_RECONCILIACAO');
+    expect(decision.shouldBlockNewFinancialCycle).toBe(true);
   });
 
-  it('ignora cobrança futura quando o escopo considera apenas vencidas', () => {
+  it('classifica cobrança futura como pendência quando o escopo canônico considera cobranças em aberto', () => {
     const snapshot = buildFinancialSnapshot({
       cobrancas: [{ status: 'A_VENCER' }],
       statusFinanceiro: 'ADIMPLENTE',
       integrationStatus: 'SINCRONIZADO',
-      debtScope: 'APENAS_VENCIDAS',
+      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
     });
 
-    const decision = evaluateRematriculaDecision({
+    const decision = evaluateCanonicalRematriculaDecision({
       academicEligible: true,
       financialSnapshot: snapshot,
-      policy: { preset: 'CONTROLADA', debtScope: 'APENAS_VENCIDAS', overrideRoles: ['ADMIN'] },
-      currentUserRole: 'ADMIN',
     });
 
-    expect(snapshot.financialStatus).toBe('REGULAR');
-    expect(decision.actionStatus).toBe('LIBERADA');
+    expect(snapshot.financialStatus).toBe('PENDENTE');
+    expect(decision.actionStatus).toBe('LIBERADA_COM_AVISO');
   });
 });

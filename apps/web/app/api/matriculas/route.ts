@@ -33,6 +33,7 @@ import {
 } from '@/src/server/matriculas/payment-selection';
 import { provisionIndividualEnrollmentBilling } from '@/src/server/matriculas/enrollment-billing.orchestrator';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
 import type {
   MatriculaAsaasSubscriptionSyncDTO,
   MatriculaAsaasTaxaSyncDTO,
@@ -437,6 +438,9 @@ export async function POST(req: Request) {
     console.error('Erro ao criar matrícula:', error);
     if (error instanceof MatriculaConflictError) {
       return jsonError(409, error.code, error.message);
+    }
+    if (isPlatformBillingCapacityError(error)) {
+      return jsonError(422, error.code, error.message, error.details);
     }
     if (
       error instanceof Prisma.PrismaClientValidationError ||

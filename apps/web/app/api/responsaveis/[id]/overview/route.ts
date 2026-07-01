@@ -5,8 +5,7 @@ import { prisma } from '@/prisma/client';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
 import {
   buildFinancialSnapshot,
-  evaluateRematriculaDecision,
-  getContaFinancialPolicy,
+  evaluateCanonicalRematriculaDecision,
 } from '@/src/server/matriculas/rematricula-financial-policy.service';
 import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
 
@@ -36,29 +35,25 @@ function mapEventChargeStatus(status: string) {
 async function loadRematriculaDecision(params: {
   contaId: string;
   matriculaId: string;
-  currentUserRole?: string | null;
 }) {
-  const [policy, matricula] = await Promise.all([
-    getContaFinancialPolicy(params.contaId),
-    prisma.matricula.findFirst({
-      where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
-      select: {
-        id: true,
-        status: true,
-        dataFimContrato: true,
-        integrationStatus: true,
-        statusFinanceiro: true,
-        cobrancas: {
-          where: {
-            status: {
-              in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
-            },
+  const matricula = await prisma.matricula.findFirst({
+    where: { id: params.matriculaId, aluno: { contaId: params.contaId } },
+    select: {
+      id: true,
+      status: true,
+      dataFimContrato: true,
+      integrationStatus: true,
+      statusFinanceiro: true,
+      cobrancas: {
+        where: {
+          status: {
+            in: ['A_VENCER', 'PENDENTE', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
           },
-          select: { status: true },
         },
+        select: { status: true },
       },
-    }),
-  ]);
+    },
+  });
 
   if (!matricula) return null;
 
@@ -74,14 +69,12 @@ async function loadRematriculaDecision(params: {
     cobrancas: matricula.cobrancas,
     statusFinanceiro: matricula.statusFinanceiro,
     integrationStatus: matricula.integrationStatus,
-    debtScope: policy.debtScope,
+    debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
   });
 
-  const decision = evaluateRematriculaDecision({
+  const decision = evaluateCanonicalRematriculaDecision({
     academicEligible,
     financialSnapshot,
-    policy,
-    currentUserRole: params.currentUserRole,
   });
 
   return { decision };
@@ -366,7 +359,6 @@ export async function GET(
         const decision = await loadRematriculaDecision({
           contaId: user.contaId,
           matriculaId: matricula.id,
-          currentUserRole: user.role,
         });
 
         rematriculaCandidates.push({

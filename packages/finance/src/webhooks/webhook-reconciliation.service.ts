@@ -23,6 +23,7 @@ import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -163,6 +164,22 @@ const PAYMENT_EVENT_BY_STATUS: Record<string, string> = {
   REFUND_IN_PROGRESS: 'PAYMENT_REFUND_IN_PROGRESS',
   DELETED: 'PAYMENT_DELETED',
 };
+
+function resolveRemotePaymentSnapshotStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}): string {
+  return (
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ??
+    payment.status ??
+    'PENDING'
+  );
+}
 
 type PaymentReconciliationCandidate = {
   entityId: string;
@@ -904,6 +921,7 @@ export function evaluateRetentionAlert(metrics: QueueMetricsResult): RetentionAl
 
 export interface MarkExhaustedOptions {
   contaId?: string;
+  ids?: string[];
   maxAttempts?: number;
   limit?: number;
 }
@@ -925,12 +943,15 @@ export async function markExhaustedWebhooks(
   options: MarkExhaustedOptions = {},
 ): Promise<MarkExhaustedResult> {
   const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
-  const limit = Math.min(500, Math.max(1, options.limit ?? 200));
+  const scopedIds = options.ids?.filter((id) => typeof id === 'string' && id.length > 0) ?? [];
+  const defaultLimit = scopedIds.length > 0 ? scopedIds.length : 200;
+  const limit = Math.min(500, Math.max(1, options.limit ?? defaultLimit));
 
   const where: Prisma.WebhookAsaasWhereInput = {
     status: 'ERRO',
     tentativas: { gte: maxAttempts },
     ...(options.contaId ? { contaId: options.contaId } : {}),
+    ...(scopedIds.length > 0 ? { id: { in: scopedIds } } : {}),
   };
 
   const candidates = await prisma.webhookAsaas.findMany({
@@ -951,6 +972,7 @@ export async function markExhaustedWebhooks(
     data: {
       status: 'EXAURIDO',
       ultimoErro: `Exhausted after ${maxAttempts} attempts. Marked as DLQ.`,
+      nextRetryAt: null,
     },
   });
 
@@ -1193,8 +1215,9 @@ export async function reconcileWithAsaas(
         apiKey: credentials.apiKey,
         paymentId: candidate.asaasPaymentId,
       });
-      const remoteLocalStatus = mapAsaasToChargeStatus(remote.status);
-      if (!hasPaymentReconciliationDrift(remote.status, candidate)) {
+      const remoteStatus = resolveRemotePaymentSnapshotStatus(remote);
+      const remoteLocalStatus = mapAsaasToChargeStatus(remoteStatus);
+      if (!hasPaymentReconciliationDrift(remoteStatus, candidate)) {
         continue;
       }
 
@@ -1205,24 +1228,24 @@ export async function reconcileWithAsaas(
           entityType: 'CHARGE',
           entityId: candidate.entityId,
           asaasId: candidate.asaasPaymentId,
-          issueType: resolvePaymentDriftIssueType(candidate, remote.status),
+          issueType: resolvePaymentDriftIssueType(candidate, remoteStatus),
           severity: 'HIGH',
           localStatus: candidate.localStatus,
           remoteStatus: remoteLocalStatus,
           metadata: {
-            asaasStatus: remote.status,
+            asaasStatus: remoteStatus,
             persistedAsaasStatus: candidate.persistedAsaasStatus,
             externalReference: candidate.externalReference ?? remote.externalReference ?? null,
             source: 'reconcileWithAsaas',
             candidateSource: candidate.source,
           },
         });
-        const event = PAYMENT_EVENT_BY_STATUS[remote.status] ?? 'PAYMENT_UPDATED';
+        const event = PAYMENT_EVENT_BY_STATUS[remoteStatus] ?? 'PAYMENT_UPDATED';
         await handlePaymentWebhook(options.contaId, {
           event,
           payment: {
             id: remote.id,
-            status: remote.status as never,
+            status: remoteStatus as never,
             value: Number(remote.value ?? 0),
             netValue: Number(remote.netValue ?? remote.value ?? 0),
             originalValue: typeof remote.originalValue === 'number' ? remote.originalValue : null,
@@ -1236,6 +1259,7 @@ export async function reconcileWithAsaas(
             creditDate: remote.creditDate ?? null,
             estimatedCreditDate: remote.estimatedCreditDate ?? null,
             billingType: remote.billingType ?? null,
+            deleted: remote.deleted ?? false,
           },
         });
         reconciledPayments += 1;
@@ -1540,6 +1564,7 @@ export async function reconcileBilateral(
         }
 
         // Buscar Charge local pelo asaasPaymentId
+        const paymentStatus = resolveRemotePaymentSnapshotStatus(payment);
         const localCharge = await prisma.charge.findFirst({
           where: {
             contaId: options.contaId,
@@ -1552,7 +1577,7 @@ export async function reconcileBilateral(
           // Não existe localmente — registrar drift
           driftItems.push({
             asaasPaymentId: payment.id,
-            asaasStatus: payment.status,
+            asaasStatus: paymentStatus,
             localChargeId: null,
             localStatus: null,
             driftType: 'MISSING_LOCAL',
@@ -1567,8 +1592,9 @@ export async function reconcileBilateral(
               issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
               severity: 'HIGH',
               localStatus: null,
-              remoteStatus: payment.status,
+              remoteStatus: paymentStatus,
               metadata: {
+                asaasStatus: paymentStatus,
                 externalReference: payment.externalReference ?? null,
                 source: 'reconcileBilateral',
               },
@@ -1578,11 +1604,11 @@ export async function reconcileBilateral(
         }
 
         // Comparar status
-        const expectedLocalStatus = mapAsaasToChargeStatus(payment.status);
+        const expectedLocalStatus = mapAsaasToChargeStatus(paymentStatus);
         if (expectedLocalStatus !== localCharge.status) {
           driftItems.push({
             asaasPaymentId: payment.id,
-            asaasStatus: payment.status,
+            asaasStatus: paymentStatus,
             localChargeId: localCharge.id,
             localStatus: localCharge.status,
             driftType: 'STATUS_MISMATCH',
@@ -1599,18 +1625,18 @@ export async function reconcileBilateral(
               localStatus: localCharge.status,
               remoteStatus: expectedLocalStatus,
               metadata: {
-                asaasStatus: payment.status,
+                asaasStatus: paymentStatus,
                 externalReference: payment.externalReference ?? null,
                 source: 'reconcileBilateral',
               },
             });
             try {
-              const event = PAYMENT_EVENT_BY_STATUS[payment.status] ?? 'PAYMENT_UPDATED';
+              const event = PAYMENT_EVENT_BY_STATUS[paymentStatus] ?? 'PAYMENT_UPDATED';
               await handlePaymentWebhook(options.contaId, {
                 event,
                 payment: {
                   id: payment.id,
-                  status: payment.status as never,
+                  status: paymentStatus as never,
                   value: Number(payment.value ?? 0),
                   netValue: Number(payment.netValue ?? payment.value ?? 0),
                   originalValue: typeof payment.originalValue === 'number' ? payment.originalValue : null,
@@ -1624,6 +1650,7 @@ export async function reconcileBilateral(
                   creditDate: payment.creditDate ?? null,
                   estimatedCreditDate: payment.estimatedCreditDate ?? null,
                   billingType: payment.billingType ?? null,
+                  deleted: payment.deleted ?? false,
                 },
               });
               reconciled += 1;

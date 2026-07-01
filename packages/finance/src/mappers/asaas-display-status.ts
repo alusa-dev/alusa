@@ -130,8 +130,8 @@ const ASAAS_DISPLAY_STATUS_MAP: Record<AsaasPaymentStatus, Omit<ChargeDisplaySta
     variant: 'success',
   },
   DELETED: {
-    label: 'Removida',
-    hint: 'Cobrança removida no Asaas.',
+    label: 'Cancelada',
+    hint: 'Cobrança cancelada no Asaas.',
     variant: 'neutral',
   },
   AWAITING_RISK_ANALYSIS: {
@@ -175,8 +175,78 @@ const LOCAL_DISPLAY_STATUS_MAP: Record<string, Omit<ChargeDisplayStatus, 'status
   PROCESSING: { label: 'Processando', hint: 'Pagamento em processamento.', variant: 'info' },
 };
 
+const LOCAL_STATUS_PRECEDENCE: Record<string, number> = {
+  PENDENTE: 5,
+  PENDING: 5,
+  CREATED: 5,
+  PENDING_SYNC: 7,
+  A_VENCER: 10,
+  OPEN: 10,
+  PROCESSANDO: 15,
+  PROCESSING: 15,
+  AWAITING_RISK_ANALYSIS: 15,
+  ATRASADO: 30,
+  OVERDUE: 30,
+  PAGO: 40,
+  PAID: 40,
+  CONFIRMED: 40,
+  RECEIVED: 45,
+  RECEIVED_IN_CASH: 45,
+  DUNNING_RECEIVED: 45,
+  CANCELAMENTO_PENDENTE: 80,
+  REFUND_REQUESTED: 82,
+  REFUND_IN_PROGRESS: 84,
+  CHARGEBACK_REQUESTED: 86,
+  CHARGEBACK_DISPUTE: 88,
+  AWAITING_CHARGEBACK_REVERSAL: 89,
+  ESTORNADO_PARCIAL: 90,
+  PARTIALLY_REFUNDED: 90,
+  ESTORNADO: 92,
+  REFUNDED: 92,
+  CANCELADO: 95,
+  CANCELED: 95,
+  CANCELLED: 95,
+  DELETED: 95,
+};
+
+const ASAAS_TO_LOCAL_DISPLAY_STATUS: Record<AsaasPaymentStatus, string> = {
+  PENDING: 'PENDENTE',
+  AWAITING_RISK_ANALYSIS: 'PROCESSANDO',
+  OVERDUE: 'ATRASADO',
+  DUNNING_REQUESTED: 'ATRASADO',
+  CONFIRMED: 'PAGO',
+  RECEIVED: 'PAGO',
+  RECEIVED_IN_CASH: 'PAGO',
+  DUNNING_RECEIVED: 'PAGO',
+  REFUND_REQUESTED: 'ESTORNADO',
+  REFUND_IN_PROGRESS: 'ESTORNADO',
+  REFUNDED: 'ESTORNADO',
+  CHARGEBACK_REQUESTED: 'ESTORNADO',
+  CHARGEBACK_DISPUTE: 'ESTORNADO',
+  AWAITING_CHARGEBACK_REVERSAL: 'ESTORNADO',
+  DELETED: 'CANCELADO',
+};
+
 function normalize(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+function getLocalStatusPrecedence(status: string): number {
+  return LOCAL_STATUS_PRECEDENCE[status] ?? 0;
+}
+
+function shouldPreferLocalStatusOverAsaas(localStatus: string, asaasStatus: AsaasPaymentStatus): boolean {
+  if (!localStatus) return false;
+
+  const mappedAsaasLocalStatus = ASAAS_TO_LOCAL_DISPLAY_STATUS[asaasStatus];
+  const localRank = getLocalStatusPrecedence(localStatus);
+  const asaasRank = getLocalStatusPrecedence(mappedAsaasLocalStatus);
+
+  if (localRank > asaasRank) return true;
+
+  // Quando os estados representam a mesma conclusão, preferimos o rótulo de domínio da Alusa.
+  // Ex.: Asaas DELETED vira "Cancelada", não "Removida".
+  return localRank === asaasRank && localRank >= 80;
 }
 
 function fromAsaasStatus(status: AsaasPaymentStatus): ChargeDisplayStatus {
@@ -230,6 +300,8 @@ export function getAsaasDisplayStatus(status: AsaasPaymentStatus): ChargeDisplay
 
 export function resolveChargeDisplayStatus(input: ResolveChargeDisplayStatusInput): ChargeDisplayStatus {
   const asaasStatus = normalize(input.asaasStatus);
+  const localStatus = normalize(input.localStatus);
+  const liquidacaoStatus = normalize(input.liquidacaoStatus);
   const asaasStatusIsStale = isStaleAsaasStatusForSettledLocal({
     asaasStatus,
     localChargeStatus: input.localStatus,
@@ -238,11 +310,11 @@ export function resolveChargeDisplayStatus(input: ResolveChargeDisplayStatusInpu
   });
 
   if (isAsaasPaymentStatus(asaasStatus) && !asaasStatusIsStale) {
+    if (shouldPreferLocalStatusOverAsaas(localStatus, asaasStatus)) {
+      return fromLocalStatus(localStatus);
+    }
     return fromAsaasStatus(asaasStatus);
   }
-
-  const localStatus = normalize(input.localStatus);
-  const liquidacaoStatus = normalize(input.liquidacaoStatus);
 
   if (input.hasAsaasLink && ['PAGO', 'PAID'].includes(localStatus)) {
     if (liquidacaoStatus === 'PENDENTE') {

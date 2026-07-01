@@ -11,7 +11,6 @@ export type CreateRenewalCampaignInput = {
   targetPeriodId: string;
   campaignStartsAt: Date;
   campaignEndsAt?: Date | null;
-  rules?: Record<string, unknown> | null;
   audienceDefinition?: Record<string, unknown> | null;
   status?: 'DRAFT' | 'SCHEDULED' | 'ACTIVE';
 };
@@ -19,7 +18,7 @@ export type CreateRenewalCampaignInput = {
 export type UpdateRenewalCampaignInput = Partial<
   Pick<
     CreateRenewalCampaignInput,
-    'nome' | 'descricao' | 'targetPeriodId' | 'campaignStartsAt' | 'campaignEndsAt' | 'rules' | 'audienceDefinition'
+    'nome' | 'descricao' | 'targetPeriodId' | 'campaignStartsAt' | 'campaignEndsAt' | 'audienceDefinition'
   >
 > & {
   contaId: string;
@@ -42,6 +41,18 @@ function readDiasAntecedencia(rules: unknown) {
   const value = (rules as { diasAntecedencia?: unknown }).diasAntecedencia;
   const parsed = Number(value ?? 180);
   return Number.isFinite(parsed) ? Math.min(365, Math.max(1, Math.trunc(parsed))) : 180;
+}
+
+function buildCanonicalCampaignRules(): Prisma.InputJsonObject {
+  return {
+    policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
+    version: 1,
+    campaignPurpose: 'ORGANIZATION_AND_METRICS',
+    currentCycleBehavior: 'PRESERVE_CURRENT_CONTRACT_AND_BILLING',
+    futureCycleBehavior: 'START_ON_EFFECTIVE_DATE',
+    financialPendingBehavior: 'RESERVE_SEAT_AND_HOLD_FUTURE_FINANCIAL_CYCLE',
+    exceptions: 'AUDITED_MANUAL_ACTION_ONLY',
+  };
 }
 
 function campaignDTO(campaign: {
@@ -112,17 +123,64 @@ function processDTO(processo: {
     targetComboId: string | null;
     targetPlanId: string | null;
     effectiveAt: Date | null;
+    targetSnapshot?: unknown;
     matriculaOrigem?: {
       id: string;
-      aluno?: { id: string; nome: string; foto?: string | null } | null;
+      dataInicio: Date;
+      dataFimContrato: Date;
+      status: string;
+      statusContrato: string;
+      taxaMatricula?: unknown;
+      taxaIsenta?: boolean;
+      taxaJustificativa?: string | null;
+      formaPagamento?: string | null;
+      formaPagamentoTaxa?: string | null;
+      vencimentoDia?: number | null;
+      jurosMensal?: unknown;
+      multaPercentual?: unknown;
+      descontoAntecipado?: unknown;
+      prazoDesconto?: number | null;
+      aluno?: { id: string; nome: string; cpf?: string | null; foto?: string | null } | null;
       turma?: { id: string; nome: string } | null;
       plano?: { id: string; nome: string } | null;
       combo?: { id: string; nome: string } | null;
     };
+    matriculaFutura?: {
+      id: string;
+      dataInicio: Date;
+      dataFimContrato: Date;
+      turmaId: string | null;
+      comboId: string | null;
+      planoId: string | null;
+      taxaMatricula?: unknown;
+      taxaIsenta?: boolean;
+      taxaJustificativa?: string | null;
+      formaPagamento?: string | null;
+      formaPagamentoTaxa?: string | null;
+      vencimentoDia?: number | null;
+      jurosMensal?: unknown;
+      multaPercentual?: unknown;
+      descontoAntecipado?: unknown;
+      prazoDesconto?: number | null;
+    } | null;
   }>;
   reservas?: Array<{ id: string; status: string; targetClassId: string | null; effectiveAt: Date }>;
   contratos?: Array<{ id: string; status: string; contractModelId: string | null; validFrom: Date | null; validUntil: Date | null }>;
-  financeiros?: Array<{ id: string; status: string; monthlyTotal: unknown; enrollmentFeeTotal: unknown; provisionAt: Date | null; asaasSubscriptionId: string | null; asaasPaymentId: string | null }>;
+  financeiros?: Array<{
+    id: string;
+    status: string;
+    monthlyTotal: unknown;
+    enrollmentFeeTotal: unknown;
+    firstDueDate: Date | null;
+    effectiveAt: Date;
+    provisionAt: Date | null;
+    feeChargeMoment: string;
+    feeUnit: string;
+    feePurpose: string;
+    asaasSubscriptionId: string | null;
+    asaasPaymentId: string | null;
+    snapshot?: unknown;
+  }>;
   pendencias?: Array<{
     id: string;
     type: string;
@@ -187,7 +245,47 @@ function processDTO(processo: {
         targetComboId: item.targetComboId,
         targetPlanId: item.targetPlanId,
         effectiveAt: toIso(item.effectiveAt),
+        targetSnapshot: item.targetSnapshot ?? null,
         aluno: item.matriculaOrigem?.aluno ?? null,
+        matriculaAtual: item.matriculaOrigem
+          ? {
+              id: item.matriculaOrigem.id,
+              dataInicio: item.matriculaOrigem.dataInicio.toISOString(),
+              dataFimContrato: item.matriculaOrigem.dataFimContrato.toISOString(),
+              status: item.matriculaOrigem.status,
+              statusContrato: item.matriculaOrigem.statusContrato,
+              taxaMatricula: toNumber(item.matriculaOrigem.taxaMatricula),
+              taxaIsenta: item.matriculaOrigem.taxaIsenta,
+              taxaJustificativa: item.matriculaOrigem.taxaJustificativa,
+              formaPagamento: item.matriculaOrigem.formaPagamento,
+              formaPagamentoTaxa: item.matriculaOrigem.formaPagamentoTaxa,
+              vencimentoDia: item.matriculaOrigem.vencimentoDia,
+              jurosMensal: toNumber(item.matriculaOrigem.jurosMensal),
+              multaPercentual: toNumber(item.matriculaOrigem.multaPercentual),
+              descontoAntecipado: toNumber(item.matriculaOrigem.descontoAntecipado),
+              prazoDesconto: item.matriculaOrigem.prazoDesconto,
+            }
+          : null,
+        matriculaFutura: item.matriculaFutura
+          ? {
+              id: item.matriculaFutura.id,
+              dataInicio: item.matriculaFutura.dataInicio.toISOString(),
+              dataFimContrato: item.matriculaFutura.dataFimContrato.toISOString(),
+              turmaId: item.matriculaFutura.turmaId,
+              comboId: item.matriculaFutura.comboId,
+              planoId: item.matriculaFutura.planoId,
+              taxaMatricula: toNumber(item.matriculaFutura.taxaMatricula),
+              taxaIsenta: item.matriculaFutura.taxaIsenta,
+              taxaJustificativa: item.matriculaFutura.taxaJustificativa,
+              formaPagamento: item.matriculaFutura.formaPagamento,
+              formaPagamentoTaxa: item.matriculaFutura.formaPagamentoTaxa,
+              vencimentoDia: item.matriculaFutura.vencimentoDia,
+              jurosMensal: toNumber(item.matriculaFutura.jurosMensal),
+              multaPercentual: toNumber(item.matriculaFutura.multaPercentual),
+              descontoAntecipado: toNumber(item.matriculaFutura.descontoAntecipado),
+              prazoDesconto: item.matriculaFutura.prazoDesconto,
+            }
+          : null,
         turmaAtual: item.matriculaOrigem?.turma ?? null,
         planoAtual: item.matriculaOrigem?.plano ?? null,
         comboAtual: item.matriculaOrigem?.combo ?? null,
@@ -213,9 +311,15 @@ function processDTO(processo: {
         status: financeiro.status,
         monthlyTotal: toNumber(financeiro.monthlyTotal),
         enrollmentFeeTotal: toNumber(financeiro.enrollmentFeeTotal),
+        firstDueDate: toIso(financeiro.firstDueDate),
+        effectiveAt: financeiro.effectiveAt.toISOString(),
         provisionAt: toIso(financeiro.provisionAt),
+        feeChargeMoment: financeiro.feeChargeMoment,
+        feeUnit: financeiro.feeUnit,
+        feePurpose: financeiro.feePurpose,
         asaasSubscriptionId: financeiro.asaasSubscriptionId,
         asaasPaymentId: financeiro.asaasPaymentId,
+        snapshot: financeiro.snapshot ?? null,
       })) ?? [],
     pendencias:
       processo.pendencias?.map((pendencia) => ({
@@ -262,7 +366,7 @@ export async function createRenewalCampaign(input: CreateRenewalCampaignInput, d
       targetPeriodId: input.targetPeriodId,
       campaignStartsAt: input.campaignStartsAt,
       campaignEndsAt: input.campaignEndsAt ?? null,
-      rules: (input.rules ?? {}) as Prisma.InputJsonValue,
+      rules: buildCanonicalCampaignRules(),
       audienceDefinition: (input.audienceDefinition ?? {}) as Prisma.InputJsonValue,
       status: input.status ?? 'DRAFT',
       createdById: input.actorId,
@@ -300,7 +404,7 @@ export async function updateRenewalCampaign(input: UpdateRenewalCampaignInput, d
         ...(input.targetPeriodId !== undefined ? { targetPeriodId: input.targetPeriodId } : {}),
         ...(input.campaignStartsAt !== undefined ? { campaignStartsAt: input.campaignStartsAt } : {}),
         ...(input.campaignEndsAt !== undefined ? { campaignEndsAt: input.campaignEndsAt } : {}),
-        ...(input.rules !== undefined ? { rules: (input.rules ?? {}) as Prisma.InputJsonValue } : {}),
+        rules: buildCanonicalCampaignRules(),
         ...(input.audienceDefinition !== undefined
           ? { audienceDefinition: (input.audienceDefinition ?? {}) as Prisma.InputJsonValue }
           : {}),
@@ -337,7 +441,7 @@ export async function activateRenewalCampaign(
 
   const elegiveis = await listarRematriculasElegiveis({
     contaId: input.contaId,
-    diasAntecedencia: readDiasAntecedencia(campaign.audienceDefinition ?? campaign.rules),
+    diasAntecedencia: readDiasAntecedencia(campaign.audienceDefinition),
     currentUserRole: 'ADMIN',
   });
 
@@ -454,10 +558,44 @@ export async function listRenewalManagement(
             matriculaOrigem: {
               select: {
                 id: true,
-                aluno: { select: { id: true, nome: true, foto: true } },
+                dataInicio: true,
+                dataFimContrato: true,
+                status: true,
+                statusContrato: true,
+                taxaMatricula: true,
+                taxaIsenta: true,
+                taxaJustificativa: true,
+                formaPagamento: true,
+                formaPagamentoTaxa: true,
+                vencimentoDia: true,
+                jurosMensal: true,
+                multaPercentual: true,
+                descontoAntecipado: true,
+                prazoDesconto: true,
+                aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
                 turma: { select: { id: true, nome: true } },
                 plano: { select: { id: true, nome: true } },
                 combo: { select: { id: true, nome: true } },
+              },
+            },
+            matriculaFutura: {
+              select: {
+                id: true,
+                dataInicio: true,
+                dataFimContrato: true,
+                turmaId: true,
+                comboId: true,
+                planoId: true,
+                taxaMatricula: true,
+                taxaIsenta: true,
+                taxaJustificativa: true,
+                formaPagamento: true,
+                formaPagamentoTaxa: true,
+                vencimentoDia: true,
+                jurosMensal: true,
+                multaPercentual: true,
+                descontoAntecipado: true,
+                prazoDesconto: true,
               },
             },
           },
@@ -478,9 +616,15 @@ export async function listRenewalManagement(
             status: true,
             monthlyTotal: true,
             enrollmentFeeTotal: true,
+            firstDueDate: true,
+            effectiveAt: true,
             provisionAt: true,
+            feeChargeMoment: true,
+            feeUnit: true,
+            feePurpose: true,
             asaasSubscriptionId: true,
             asaasPaymentId: true,
+            snapshot: true,
           },
         },
         pendencias: {
@@ -586,10 +730,40 @@ export async function getRenewalProcessDetail(
               dataFimContrato: true,
               status: true,
               statusContrato: true,
-              aluno: { select: { id: true, nome: true, foto: true } },
+              taxaMatricula: true,
+              taxaIsenta: true,
+              taxaJustificativa: true,
+              formaPagamento: true,
+              formaPagamentoTaxa: true,
+              vencimentoDia: true,
+              jurosMensal: true,
+              multaPercentual: true,
+              descontoAntecipado: true,
+              prazoDesconto: true,
+              aluno: { select: { id: true, nome: true, cpf: true, foto: true } },
               turma: { select: { id: true, nome: true } },
               plano: { select: { id: true, nome: true } },
               combo: { select: { id: true, nome: true } },
+            },
+          },
+          matriculaFutura: {
+            select: {
+              id: true,
+              dataInicio: true,
+              dataFimContrato: true,
+              turmaId: true,
+              comboId: true,
+              planoId: true,
+              taxaMatricula: true,
+              taxaIsenta: true,
+              taxaJustificativa: true,
+              formaPagamento: true,
+              formaPagamentoTaxa: true,
+              vencimentoDia: true,
+              jurosMensal: true,
+              multaPercentual: true,
+              descontoAntecipado: true,
+              prazoDesconto: true,
             },
           },
         },
@@ -604,9 +778,15 @@ export async function getRenewalProcessDetail(
           status: true,
           monthlyTotal: true,
           enrollmentFeeTotal: true,
+          firstDueDate: true,
+          effectiveAt: true,
           provisionAt: true,
+          feeChargeMoment: true,
+          feeUnit: true,
+          feePurpose: true,
           asaasSubscriptionId: true,
           asaasPaymentId: true,
+          snapshot: true,
         },
       },
       pendencias: {

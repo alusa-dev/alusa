@@ -11,11 +11,9 @@ const {
   previewRenewalProcessMock,
   confirmRenewalProcessMock,
   guardFinancialAccountOr412Mock,
-  getContaFinancialPolicyMock,
   buildFinancialSnapshotMock,
-  evaluateRematriculaDecisionMock,
+  evaluateCanonicalRematriculaDecisionMock,
   serializeFinancialSnapshotMock,
-  serializePolicySnapshotMock,
   prismaMock,
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
@@ -23,11 +21,9 @@ const {
   previewRenewalProcessMock: vi.fn(),
   confirmRenewalProcessMock: vi.fn(),
   guardFinancialAccountOr412Mock: vi.fn(),
-  getContaFinancialPolicyMock: vi.fn(),
   buildFinancialSnapshotMock: vi.fn(),
-  evaluateRematriculaDecisionMock: vi.fn(),
+  evaluateCanonicalRematriculaDecisionMock: vi.fn(),
   serializeFinancialSnapshotMock: vi.fn(),
-  serializePolicySnapshotMock: vi.fn(),
   prismaMock: {
     matricula: {
       findFirst: vi.fn(),
@@ -71,11 +67,9 @@ vi.mock('@alusa/domain', () => ({
 }));
 
 vi.mock('@/src/server/matriculas/rematricula-financial-policy.service', () => ({
-  getContaFinancialPolicy: getContaFinancialPolicyMock,
   buildFinancialSnapshot: buildFinancialSnapshotMock,
-  evaluateRematriculaDecision: evaluateRematriculaDecisionMock,
+  evaluateCanonicalRematriculaDecision: evaluateCanonicalRematriculaDecisionMock,
   serializeFinancialSnapshot: serializeFinancialSnapshotMock,
-  serializePolicySnapshot: serializePolicySnapshotMock,
 }));
 
 const { POST } = await import('../route');
@@ -106,17 +100,11 @@ describe('POST /api/rematriculas', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getServerSessionMock.mockResolvedValue(authenticatedSession());
-    getContaFinancialPolicyMock.mockResolvedValue({
-      preset: 'CONTROLADA',
-      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
-      overrideRoles: ['ADMIN'],
-    });
     buildFinancialSnapshotMock.mockReturnValue({
       pendingCharges: 1,
       overdueCharges: 1,
       financialStatus: 'COM_PENDENCIAS',
     });
-    serializePolicySnapshotMock.mockReturnValue({ snapshot: 'policy' });
     serializeFinancialSnapshotMock.mockReturnValue({ snapshot: 'financial' });
     guardFinancialAccountOr412Mock.mockResolvedValue({ ok: true });
     previewRenewalProcessMock.mockResolvedValue({
@@ -132,14 +120,14 @@ describe('POST /api/rematriculas', () => {
     });
   });
 
-  it('bloqueia a rematrícula quando a política exigir bloqueio e audita a tentativa', async () => {
+  it('bloqueia a rematrícula quando a decisão canônica indicar bloqueio e audita a tentativa', async () => {
     prismaMock.matricula.findFirst.mockResolvedValueOnce(makeDecisionMatricula());
-    evaluateRematriculaDecisionMock.mockReturnValue({
+    evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'BLOQUEADA',
-      blockReason: 'POSSUI_INADIMPLENCIA',
-      message: 'A política financeira bloqueia a rematrícula enquanto houver inadimplência.',
+      blockReason: 'OUTRO',
+      message: 'A matrícula não está elegível academicamente para rematrícula.',
       canCurrentUserOverride: false,
-      requiresOverrideReason: true,
+      requiresOverrideReason: false,
     });
 
     const response = await POST(
@@ -161,8 +149,10 @@ describe('POST /api/rematriculas', () => {
           actorId: 'user-1',
           action: 'REMATRICULA_TENTATIVA_BLOQUEADA',
           metadata: expect.objectContaining({
-            reason: 'POSSUI_INADIMPLENCIA',
-            policySnapshot: { snapshot: 'policy' },
+            reason: 'OUTRO',
+            policySnapshot: expect.objectContaining({
+              policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
+            }),
             financialSnapshot: { snapshot: 'financial' },
           }),
         }),
@@ -170,9 +160,9 @@ describe('POST /api/rematriculas', () => {
     );
   });
 
-  it('exige motivo de override quando a política permitir rematrícula apenas com autorização', async () => {
+  it('exige motivo de autorização quando a decisão indicar conferência administrativa', async () => {
     prismaMock.matricula.findFirst.mockResolvedValueOnce(makeDecisionMatricula());
-    evaluateRematriculaDecisionMock.mockReturnValue({
+    evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'REQUER_OVERRIDE',
       blockReason: 'NOVO_CICLO_BLOQUEADO',
       message:
@@ -239,7 +229,7 @@ describe('POST /api/rematriculas', () => {
     expect(prismaMock.matricula.findFirst).not.toHaveBeenCalled();
   });
 
-  it('propaga contexto de política e override para o caso autorizado', async () => {
+  it('propaga contexto financeiro e autorização para o caso autorizado', async () => {
     prismaMock.matricula.findFirst
       .mockResolvedValueOnce(makeDecisionMatricula())
       .mockResolvedValueOnce({
@@ -276,7 +266,7 @@ describe('POST /api/rematriculas', () => {
       });
     prismaMock.rematriculaItem.findFirst.mockResolvedValueOnce({ matriculaFuturaId: 'nova-1' });
 
-    evaluateRematriculaDecisionMock.mockReturnValue({
+    evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'REQUER_OVERRIDE',
       blockReason: 'NOVO_CICLO_BLOQUEADO',
       message: 'Override permitido para abrir o novo ciclo financeiro.',

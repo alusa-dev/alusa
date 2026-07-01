@@ -1,4 +1,5 @@
 import type { UnifiedChargeStatus } from './charge-list-item.dto';
+import { resolveChargeDisplayStatus, type ResolveChargeDisplayStatusInput } from '../mappers/asaas-display-status';
 
 // ---------------------------------------------------------------------------
 // Unified Billing DTOs — Fase 0
@@ -228,6 +229,82 @@ export function normalizeCobrancaStatus(s: StatusCobranca): UnifiedChargeStatus 
 
 export function normalizeChargeStatus(s: ChargeStatus): UnifiedChargeStatus {
   return CHARGE_TO_UNIFIED[s] ?? 'PENDING';
+}
+
+const DISPLAY_STATUS_TO_UNIFIED: Record<string, UnifiedChargeStatus> = {
+  A_VENCER: 'PENDING',
+  PENDENTE: 'PENDING',
+  PENDING: 'PENDING',
+  OPEN: 'PENDING',
+  CREATED: 'PENDING',
+  EXPECTED: 'PENDING',
+  PAYMENT_PENDING: 'PENDING',
+
+  PROCESSANDO: 'PROCESSING',
+  PROCESSING: 'PROCESSING',
+  PENDING_SYNC: 'PROCESSING',
+  AWAITING_RISK_ANALYSIS: 'PROCESSING',
+
+  ATRASADO: 'OVERDUE',
+  OVERDUE: 'OVERDUE',
+  DUNNING_REQUESTED: 'OVERDUE',
+
+  PAGO: 'PAID',
+  PAID: 'PAID',
+  CONFIRMED: 'PAID',
+  RECEIVED: 'PAID',
+  RECEIVED_IN_CASH: 'PAID',
+  DUNNING_RECEIVED: 'PAID',
+  MANUAL: 'PAID',
+  COMPLIMENTARY: 'PAID',
+
+  CANCELAMENTO_PENDENTE: 'CANCELED',
+  CANCELADO: 'CANCELED',
+  CANCELED: 'CANCELED',
+  CANCELLED: 'CANCELED',
+  DELETED: 'CANCELED',
+  EXPIRED: 'CANCELED',
+
+  ESTORNADO: 'REFUNDED',
+  ESTORNADO_PARCIAL: 'REFUNDED',
+  REFUNDED: 'REFUNDED',
+  PARTIALLY_REFUNDED: 'REFUNDED',
+  REFUND_REQUESTED: 'REFUNDED',
+  REFUND_IN_PROGRESS: 'REFUNDED',
+  CHARGEBACK_REQUESTED: 'REFUNDED',
+  CHARGEBACK_DISPUTE: 'REFUNDED',
+  AWAITING_CHARGEBACK_REVERSAL: 'REFUNDED',
+};
+
+export const ASAAS_PAID_UNIFIED_STATUSES = [
+  'CONFIRMED',
+  'RECEIVED',
+  'RECEIVED_IN_CASH',
+  'DUNNING_RECEIVED',
+] as const;
+
+export const ASAAS_NON_OPEN_UNIFIED_STATUSES = [
+  ...ASAAS_PAID_UNIFIED_STATUSES,
+  'REFUND_REQUESTED',
+  'REFUND_IN_PROGRESS',
+  'REFUNDED',
+  'CHARGEBACK_REQUESTED',
+  'CHARGEBACK_DISPUTE',
+  'AWAITING_CHARGEBACK_REVERSAL',
+  'DELETED',
+] as const;
+
+function normalizeStatusCode(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+export function normalizeUnifiedChargeStatus(status: string | null | undefined): UnifiedChargeStatus {
+  return DISPLAY_STATUS_TO_UNIFIED[normalizeStatusCode(status)] ?? 'PENDING';
+}
+
+export function resolveUnifiedChargeStatus(input: ResolveChargeDisplayStatusInput): UnifiedChargeStatus {
+  const displayStatus = resolveChargeDisplayStatus(input);
+  return normalizeUnifiedChargeStatus(displayStatus.status);
 }
 
 // ---------------------------------------------------------------------------

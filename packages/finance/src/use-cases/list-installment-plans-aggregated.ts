@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { InstallmentStatus } from '@prisma/client';
 import type { UnifiedInstallmentGroupItem } from '../dtos/unified-billing';
+import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
 
 // ---------------------------------------------------------------------------
@@ -54,11 +55,10 @@ type StatusParcelamento = 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO';
 
 const PAID_STATUSES = new Set(['PAGO', 'PAID']);
 
-function mapChargeStatusToCobranca(status: string): string {
+function mapUnifiedStatusToCobranca(status: string): string {
   switch (status) {
-    case 'CREATED':
-    case 'OPEN':
-      return 'PENDENTE';
+    case 'PROCESSING':
+      return 'PROCESSANDO';
     case 'PAID':
       return 'PAGO';
     case 'OVERDUE':
@@ -67,9 +67,19 @@ function mapChargeStatusToCobranca(status: string): string {
       return 'CANCELADO';
     case 'REFUNDED':
       return 'ESTORNADO';
+    case 'PENDING':
     default:
-      return status;
+      return 'PENDENTE';
   }
+}
+
+function resolveParcelaStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  hasAsaasLink?: boolean;
+}): string {
+  return mapUnifiedStatusToCobranca(resolveUnifiedChargeStatus(input));
 }
 
 function deriveStatus(
@@ -181,9 +191,19 @@ export async function listInstallmentPlansAggregated(
             ]),
           },
           select: {
+            asaasPaymentId: true,
+            asaasStatus: true,
+            liquidacaoStatus: true,
             externalReference: true,
             cobranca: {
-              select: { id: true, status: true, vencimento: true },
+              select: {
+                id: true,
+                status: true,
+                asaasPaymentId: true,
+                asaasStatus: true,
+                liquidacaoStatus: true,
+                vencimento: true,
+              },
             },
           },
         })
@@ -198,6 +218,9 @@ export async function listInstallmentPlansAggregated(
           },
           select: {
             standaloneInstallmentPlanId: true,
+            asaasPaymentId: true,
+            asaasStatus: true,
+            liquidacaoStatus: true,
             payerName: true,
             status: true,
             dueDate: true,
@@ -229,7 +252,15 @@ export async function listInstallmentPlansAggregated(
     );
     if (!ownerPlan) continue;
     const arr = cobrancasByPlanId.get(ownerPlan.id) ?? [];
-    arr.push({ status: charge.cobranca.status, vencimento: charge.cobranca.vencimento });
+    arr.push({
+      status: resolveParcelaStatus({
+        localStatus: charge.cobranca.status,
+        asaasStatus: charge.cobranca.asaasStatus ?? charge.asaasStatus ?? null,
+        liquidacaoStatus: charge.cobranca.liquidacaoStatus ?? charge.liquidacaoStatus ?? null,
+        hasAsaasLink: Boolean(charge.cobranca.asaasPaymentId ?? charge.asaasPaymentId),
+      }),
+      vencimento: charge.cobranca.vencimento,
+    });
     cobrancasByPlanId.set(ownerPlan.id, arr);
   }
 
@@ -302,7 +333,12 @@ export async function listInstallmentPlansAggregated(
     const arr = standaloneChargesByPlan.get(charge.standaloneInstallmentPlanId) ?? [];
     arr.push({
       payerName: charge.payerName,
-      status: mapChargeStatusToCobranca(charge.status),
+      status: resolveParcelaStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        hasAsaasLink: Boolean(charge.asaasPaymentId),
+      }),
       vencimento: charge.dueDate ?? new Date(),
     });
     standaloneChargesByPlan.set(charge.standaloneInstallmentPlanId, arr);

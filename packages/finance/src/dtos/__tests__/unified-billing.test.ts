@@ -8,6 +8,8 @@ import {
   getEndOfCurrentMonth,
   filterOperationalItems,
   getUnifiedStatusBadge,
+  normalizeUnifiedChargeStatus,
+  resolveUnifiedChargeStatus,
   OPERATIONAL_STATUSES,
   TERMINAL_STATUSES,
 } from '../unified-billing';
@@ -48,6 +50,44 @@ describe('normalizeChargeStatus', () => {
   ])('mapeia %s → %s', (input, expected) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect(normalizeChargeStatus(input as any)).toBe(expected);
+  });
+});
+
+describe('resolveUnifiedChargeStatus', () => {
+  it.each<[string, UnifiedChargeStatus]>([
+    ['CONFIRMED', 'PAID'],
+    ['RECEIVED', 'PAID'],
+    ['RECEIVED_IN_CASH', 'PAID'],
+    ['DUNNING_RECEIVED', 'PAID'],
+    ['DELETED', 'CANCELED'],
+    ['REFUND_IN_PROGRESS', 'REFUNDED'],
+    ['CHARGEBACK_DISPUTE', 'REFUNDED'],
+    ['AWAITING_RISK_ANALYSIS', 'PROCESSING'],
+  ])('mapeia snapshot Asaas %s → %s', (asaasStatus, expected) => {
+    expect(
+      resolveUnifiedChargeStatus({
+        localStatus: 'PENDENTE',
+        asaasStatus,
+        hasAsaasLink: true,
+      }),
+    ).toBe(expected);
+  });
+
+  it('mantém cobrança local paga como PAID mesmo quando snapshot Asaas aberto está obsoleto', () => {
+    expect(
+      resolveUnifiedChargeStatus({
+        localStatus: 'PAGO',
+        asaasStatus: 'PENDING',
+        liquidacaoStatus: 'DISPONIVEL',
+        hasAsaasLink: true,
+      }),
+    ).toBe('PAID');
+  });
+
+  it('normaliza status de exibição independentes do Asaas', () => {
+    expect(normalizeUnifiedChargeStatus('RECEIVED_IN_CASH')).toBe('PAID');
+    expect(normalizeUnifiedChargeStatus('CANCELADO')).toBe('CANCELED');
+    expect(normalizeUnifiedChargeStatus('ESTORNADO_PARCIAL')).toBe('REFUNDED');
   });
 });
 

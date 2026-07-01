@@ -1,6 +1,8 @@
 import { prisma } from '@alusa/database';
 import type { InstallmentStatus } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
+import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
+import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -35,6 +37,9 @@ export type ParcelaItemDTO = {
   valor: number;
   vencimento: string;
   status: string;
+  asaasStatus: string | null;
+  liquidacaoStatus: string | null;
+  displayStatus: ChargeDisplayStatus;
   dataPagamento: string | null;
   invoiceUrl: string | null;
 };
@@ -47,11 +52,10 @@ type StatusParcelamento = 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO';
 
 const PAID_STATUSES = new Set(['PAGO', 'PAID']);
 
-function mapChargeStatusToCobranca(status: string): string {
+function mapUnifiedStatusToCobranca(status: string): string {
   switch (status) {
-    case 'CREATED':
-    case 'OPEN':
-      return 'PENDENTE';
+    case 'PROCESSING':
+      return 'PROCESSANDO';
     case 'PAID':
       return 'PAGO';
     case 'OVERDUE':
@@ -60,9 +64,28 @@ function mapChargeStatusToCobranca(status: string): string {
       return 'CANCELADO';
     case 'REFUNDED':
       return 'ESTORNADO';
+    case 'PENDING':
     default:
-      return status;
+      return 'PENDENTE';
   }
+}
+
+function resolveParcelaStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  hasAsaasLink?: boolean;
+}): string {
+  return mapUnifiedStatusToCobranca(resolveUnifiedChargeStatus(input));
+}
+
+function buildParcelaDisplayStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  hasAsaasLink?: boolean;
+}) {
+  return resolveChargeDisplayStatus(input);
 }
 
 function deriveStatus(
@@ -106,7 +129,17 @@ function generateVirtualInstallments(
   installmentCount: number,
   firstDueDate: Date,
   valuePerInstallment: number,
-): Array<{ id: string; valor: number; vencimento: Date; status: string; dataPagamento: null; invoiceUrl: null }> {
+): Array<{
+  id: string;
+  valor: number;
+  vencimento: Date;
+  status: string;
+  asaasStatus: null;
+  liquidacaoStatus: null;
+  displayStatus: ChargeDisplayStatus;
+  dataPagamento: null;
+  invoiceUrl: null;
+}> {
   const now = new Date();
   return Array.from({ length: installmentCount }, (_, i) => {
     const vencimento = new Date(firstDueDate);
@@ -116,6 +149,9 @@ function generateVirtualInstallments(
       valor: Math.round(valuePerInstallment * 100) / 100,
       vencimento,
       status: vencimento < now ? 'PENDENTE' : 'A_VENCER',
+      asaasStatus: null,
+      liquidacaoStatus: null,
+      displayStatus: buildParcelaDisplayStatus({ localStatus: vencimento < now ? 'PENDENTE' : 'A_VENCER' }),
       dataPagamento: null,
       invoiceUrl: null,
     };
@@ -244,6 +280,8 @@ async function buildAcademicDetail(
           valor: true,
           vencimento: true,
           status: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
           dataPagamento: true,
           asaasPaymentId: true,
         },
@@ -256,22 +294,44 @@ async function buildAcademicDetail(
     valor: number;
     vencimento: Date;
     status: string;
+    asaasStatus: string | null;
+    liquidacaoStatus: string | null;
+    displayStatus: ChargeDisplayStatus;
     dataPagamento: Date | null;
     invoiceUrl: string | null;
   };
 
   const rawParcelas: ParcelaInfo[] = charges
     .filter((c) => c.cobranca)
-    .map((c) => ({
-      id: c.cobranca!.id,
-      valor: Number(c.cobranca!.valor),
-      vencimento: c.cobranca!.vencimento,
-      status: c.cobranca!.status,
-      dataPagamento: c.cobranca!.dataPagamento,
-      invoiceUrl: c.cobranca!.asaasPaymentId
-        ? `https://sandbox.asaas.com/i/${c.cobranca!.asaasPaymentId.replace('pay_', '')}`
-        : null,
-    }));
+    .map((c) => {
+      const asaasStatus = c.cobranca!.asaasStatus ?? c.asaasStatus ?? null;
+      const liquidacaoStatus = c.cobranca!.liquidacaoStatus ?? c.liquidacaoStatus ?? null;
+      const hasAsaasLink = Boolean(c.cobranca!.asaasPaymentId ?? c.asaasPaymentId);
+
+      return {
+        id: c.cobranca!.id,
+        valor: Number(c.cobranca!.valor),
+        vencimento: c.cobranca!.vencimento,
+        status: resolveParcelaStatus({
+          localStatus: c.cobranca!.status,
+          asaasStatus,
+          liquidacaoStatus,
+          hasAsaasLink,
+        }),
+        asaasStatus,
+        liquidacaoStatus,
+        displayStatus: buildParcelaDisplayStatus({
+          localStatus: c.cobranca!.status,
+          asaasStatus,
+          liquidacaoStatus,
+          hasAsaasLink,
+        }),
+        dataPagamento: c.cobranca!.dataPagamento,
+        invoiceUrl: c.cobranca!.asaasPaymentId
+          ? `https://sandbox.asaas.com/i/${c.cobranca!.asaasPaymentId.replace('pay_', '')}`
+          : null,
+      };
+    });
 
   // Deduplicar por asaasPaymentId (proteção contra duplicatas históricas)
   const seen = new Set<string>();
@@ -355,6 +415,9 @@ async function buildAcademicDetail(
       valor: p.valor,
       vencimento: p.vencimento.toISOString(),
       status: p.status,
+      asaasStatus: p.asaasStatus,
+      liquidacaoStatus: p.liquidacaoStatus,
+      displayStatus: p.displayStatus,
       dataPagamento: p.dataPagamento?.toISOString() ?? null,
       invoiceUrl: p.invoiceUrl,
     })),
@@ -393,6 +456,9 @@ async function buildStandaloneDetail(
       value: true,
       dueDate: true,
       status: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
+      asaasPaymentId: true,
       invoiceUrl: true,
     },
   });
@@ -402,6 +468,9 @@ async function buildStandaloneDetail(
     valor: number;
     vencimento: Date;
     status: string;
+    asaasStatus: string | null;
+    liquidacaoStatus: string | null;
+    displayStatus: ChargeDisplayStatus;
     dataPagamento: Date | null;
     invoiceUrl: string | null;
   };
@@ -411,7 +480,20 @@ async function buildStandaloneDetail(
       id: c.id,
       valor: c.value ? Number(c.value) : 0,
       vencimento: c.dueDate ?? plan.firstDueDate,
-      status: mapChargeStatusToCobranca(c.status),
+      status: resolveParcelaStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      displayStatus: buildParcelaDisplayStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       dataPagamento: null,
       invoiceUrl: c.invoiceUrl ?? null,
     }))
@@ -459,6 +541,9 @@ async function buildStandaloneDetail(
       valor: p.valor,
       vencimento: p.vencimento.toISOString(),
       status: p.status,
+      asaasStatus: p.asaasStatus,
+      liquidacaoStatus: p.liquidacaoStatus,
+      displayStatus: p.displayStatus,
       dataPagamento: p.dataPagamento?.toISOString() ?? null,
       invoiceUrl: p.invoiceUrl,
     })),

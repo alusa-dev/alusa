@@ -45,7 +45,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
     };
   }, []);
   return (
-    <SessionProvider>
+    <SessionProvider
+      basePath="/api/auth"
+      refetchOnWindowFocus={false}
+      refetchWhenOffline={false}
+    >
       <QueryProvider>
         <ThemeProvider>
           <KycEnforcementProvider>

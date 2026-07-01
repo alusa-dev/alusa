@@ -14,8 +14,23 @@ const futureLinkSchema = z.object({
   holderId: z.string().trim().nullable().optional(),
   effectiveAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   firstDueDate: z.string().datetime().or(z.string().date()).nullable().optional(),
+  targetContractEndsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   contractModelId: z.string().trim().nullable().optional(),
-  reason: z.string().trim().min(5),
+  paymentMethod: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']).nullable().optional(),
+  enrollmentFeePaymentMethod: z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']).nullable().optional(),
+  dueDay: z.number().int().min(1).max(28).nullable().optional(),
+  enrollmentFeeAmount: z.number().min(0).nullable().optional(),
+  enrollmentFeeExempt: z.boolean().nullable().optional(),
+  enrollmentFeeJustification: z.string().trim().nullable().optional(),
+  feeChargeMoment: z.enum(['CHARGE_ON_CONFIRMATION', 'CHARGE_ON_START', 'EXEMPT']).nullable().optional(),
+  feeUnit: z.enum(['NO_FEE', 'PER_STUDENT', 'PER_FAMILY']).nullable().optional(),
+  feePurpose: z.enum(['ADMINISTRATIVE_FEE', 'SEAT_RESERVATION', 'ADVANCE_FIRST_TUITION']).nullable().optional(),
+  monthlyAmount: z.number().min(0).nullable().optional(),
+  lateFeePercent: z.number().min(0).nullable().optional(),
+  interestMonthlyPercent: z.number().min(0).nullable().optional(),
+  earlyDiscountPercent: z.number().min(0).nullable().optional(),
+  earlyDiscountDays: z.number().int().min(0).nullable().optional(),
+  reason: z.string().trim().min(1),
 });
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
@@ -26,6 +41,7 @@ function jsonError(status: number, code: string, message: string, details?: unkn
 }
 
 function parseDate(value?: string | null) {
+  if (value === undefined) return undefined;
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error('DATA_INVALIDA');
@@ -54,7 +70,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
         holderId: body.holderId,
         effectiveAt: parseDate(body.effectiveAt),
         firstDueDate: parseDate(body.firstDueDate),
+        targetContractEndsAt: parseDate(body.targetContractEndsAt),
         contractModelId: body.contractModelId,
+        paymentMethod: body.paymentMethod,
+        enrollmentFeePaymentMethod: body.enrollmentFeePaymentMethod,
+        dueDay: body.dueDay,
+        enrollmentFeeAmount: body.enrollmentFeeAmount,
+        enrollmentFeeExempt: body.enrollmentFeeExempt,
+        enrollmentFeeJustification: body.enrollmentFeeJustification,
+        feeChargeMoment: body.feeChargeMoment,
+        feeUnit: body.feeUnit,
+        feePurpose: body.feePurpose,
+        monthlyAmount: body.monthlyAmount,
+        lateFeePercent: body.lateFeePercent,
+        interestMonthlyPercent: body.interestMonthlyPercent,
+        earlyDiscountPercent: body.earlyDiscountPercent,
+        earlyDiscountDays: body.earlyDiscountDays,
         reason: body.reason,
       },
       { prisma },
@@ -67,6 +98,16 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     if (error instanceof Error && error.message === 'REMATRICULA_NAO_ENCONTRADA') {
       return jsonError(404, 'REMATRICULA_NAO_ENCONTRADA', 'Processo não encontrado.');
+    }
+    if (error instanceof Error && error.message === 'REMATRICULA_NAO_EDITAVEL') {
+      return jsonError(409, 'REMATRICULA_NAO_EDITAVEL', 'Esta rematrícula não pode mais ser editada.');
+    }
+    if (error instanceof Error && error.message === 'REMATRICULA_NAO_EDITAVEL_APOS_INICIO') {
+      return jsonError(
+        409,
+        'REMATRICULA_NAO_EDITAVEL_APOS_INICIO',
+        'Esta rematrícula já chegou à data de início do próximo ciclo.',
+      );
     }
     if (error instanceof Error && error.message.endsWith('_OBRIGATORIO')) {
       return jsonError(422, error.message, 'Dados obrigatórios ausentes para editar o próximo ciclo.');

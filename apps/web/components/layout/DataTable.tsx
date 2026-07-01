@@ -25,6 +25,7 @@ export interface DataTableProps<T extends object> {
   loading?: boolean;
   skeletonRows?: number;
   emptyMessage?: React.ReactNode;
+  containerClassName?: string;
   tableClassName?: string;
   bodyClassName?: string;
   ariaLabel?: string;
@@ -52,6 +53,7 @@ export function DataTable<T extends object>({
       Nenhum registro encontrado
     </div>
   ),
+  containerClassName,
   tableClassName,
   bodyClassName,
   ariaLabel,
@@ -77,7 +79,7 @@ export function DataTable<T extends object>({
 
   return (
     <div className="w-full">
-      <div className="alusa-session-panel w-full overflow-hidden">
+      <div className={cn('alusa-session-panel w-full overflow-hidden', containerClassName)}>
         <div className="w-full overflow-x-auto">
           <table
             className={cn(
@@ -188,7 +190,7 @@ export function DataTable<T extends object>({
           </tbody>
           </table>
         </div>
-        {paginate && data.length > 0 && (
+        {paginate && data.length > pageSize && (
           <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
             <Pagination
               total={data.length}

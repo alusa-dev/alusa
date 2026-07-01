@@ -133,7 +133,7 @@ describe('syncPaymentStateFromAsaas', () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.paymentStatus).toBe('PENDING');
+      expect(result.paymentStatus).toBe('DELETED');
       expect(result.appliedEvent).toBe('PAYMENT_DELETED');
     }
 
@@ -143,7 +143,7 @@ describe('syncPaymentStateFromAsaas', () => {
         event: 'PAYMENT_DELETED',
         payment: expect.objectContaining({
           id: 'pay_deleted_1',
-          status: 'PENDING',
+          status: 'DELETED',
           deleted: true,
         }),
       })

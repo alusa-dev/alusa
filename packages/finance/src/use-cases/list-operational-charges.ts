@@ -4,10 +4,10 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
 import type { UnifiedChargeItem, OperationalExposureReason } from '../dtos/unified-billing';
 import {
-  normalizeCobrancaStatus,
-  normalizeChargeStatus,
   getEndOfCurrentMonth,
   getOperationalRecentSince,
+  resolveUnifiedChargeStatus,
+  ASAAS_NON_OPEN_UNIFIED_STATUSES,
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus, unifiedChargeStatusToLocal } from '../mappers/asaas-display-status';
@@ -352,6 +352,12 @@ async function buildOperationalChargesCollection(
       { status: { in: [...openAcademicStatuses] } },
       {
         OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
+      {
+        OR: [
           { vencimento: { lte: endOfMonth } },
         ],
       },
@@ -362,6 +368,12 @@ async function buildOperationalChargesCollection(
     AND: [
       { contaId },
       { status: { in: [...openAcademicStatuses] } },
+      {
+        OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
       { vencimento: { gt: endOfMonth } },
       { createdAt: { gte: recentSince } },
     ],
@@ -392,6 +404,12 @@ async function buildOperationalChargesCollection(
       { cobrancaId: null },
       { status: { in: [...openStandaloneStatuses] } },
       {
+        OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
+      {
         NOT: [
           { externalReference: { contains: ':needs-review:' } },
           { payerName: 'NEEDS_REVIEW' },
@@ -411,6 +429,12 @@ async function buildOperationalChargesCollection(
       { contaId },
       { cobrancaId: null },
       { status: { in: [...openStandaloneStatuses] } },
+      {
+        OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
       {
         NOT: [
           { externalReference: { contains: ':needs-review:' } },
@@ -870,7 +894,12 @@ async function buildOperationalChargesCollection(
       value: Number(c.valor),
       dueDate: c.vencimento?.toISOString() ?? null,
       billingType: mapBillingType(c.formaPagamento),
-      status: normalizeCobrancaStatus(c.status),
+      status: resolveUnifiedChargeStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       asaasStatus: c.asaasStatus,
       liquidacaoStatus: c.liquidacaoStatus,
       displayStatus: buildItemDisplayStatus({
@@ -923,7 +952,12 @@ async function buildOperationalChargesCollection(
       value: c.value != null ? Number(c.value) : 0,
       dueDate: c.dueDate?.toISOString() ?? null,
       billingType: c.billingType,
-      status: normalizeChargeStatus(c.status),
+      status: resolveUnifiedChargeStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       asaasStatus: c.asaasStatus,
       liquidacaoStatus: c.liquidacaoStatus,
       displayStatus: buildItemDisplayStatus({

@@ -9,8 +9,10 @@
  */
 
 import { prisma } from '@alusa/database';
-import type { SubscriptionStatus, StatusCobranca, ChargeStatus } from '@prisma/client';
+import type { SubscriptionStatus } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
+import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
+import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
 type StandaloneSubscriptionFindFirstArgs = {
   where: { id: string; contaId: string };
@@ -68,6 +70,9 @@ export interface SubscriptionChargeDTO {
   valor: number;
   vencimento: string;
   status: string;
+  asaasStatus: string | null;
+  liquidacaoStatus: string | null;
+  displayStatus: ChargeDisplayStatus;
   dataPagamento: string | null;
   asaasPaymentId: string | null;
   source: 'CHARGE' | 'COBRANCA';
@@ -141,7 +146,7 @@ const STATUS_LABELS: Record<SubscriptionStatus, string> = {
 };
 
 // Mapeamento de status para contagem de "pagas"
-const PAID_STATUSES: Set<StatusCobranca | ChargeStatus | string> = new Set([
+const PAID_STATUSES: Set<string> = new Set([
   'PAGO',
   'PAID',
 ]);
@@ -161,11 +166,10 @@ function calcularIdade(dataNasc: Date | null): number {
   return idade;
 }
 
-function normalizeChargeStatus(status: ChargeStatus): string {
+function mapUnifiedStatusToCobranca(status: string): string {
   switch (status) {
-    case 'CREATED':
-    case 'OPEN':
-      return 'PENDENTE';
+    case 'PROCESSING':
+      return 'PROCESSANDO';
     case 'PAID':
       return 'PAGO';
     case 'OVERDUE':
@@ -174,9 +178,19 @@ function normalizeChargeStatus(status: ChargeStatus): string {
       return 'CANCELADO';
     case 'REFUNDED':
       return 'ESTORNADO';
+    case 'PENDING':
     default:
-      return status;
+      return 'PENDENTE';
   }
+}
+
+function resolveChildChargeStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  hasAsaasLink?: boolean;
+}): string {
+  return mapUnifiedStatusToCobranca(resolveUnifiedChargeStatus(input));
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -267,6 +281,8 @@ export async function getSubscriptionWithCharges(
         select: {
           id: true,
           status: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
           value: true,
           dueDate: true,
           asaasPaymentId: true,
@@ -279,7 +295,20 @@ export async function getSubscriptionWithCharges(
           numero: charges.length - idx,
           valor: charge.value != null ? Number(charge.value) : 0,
           vencimento: charge.dueDate?.toISOString() ?? '',
-          status: normalizeChargeStatus(charge.status),
+          status: resolveChildChargeStatus({
+            localStatus: charge.status,
+            asaasStatus: charge.asaasStatus,
+            liquidacaoStatus: charge.liquidacaoStatus,
+            hasAsaasLink: Boolean(charge.asaasPaymentId),
+          }),
+          asaasStatus: charge.asaasStatus,
+          liquidacaoStatus: charge.liquidacaoStatus,
+          displayStatus: resolveChargeDisplayStatus({
+            localStatus: charge.status,
+            asaasStatus: charge.asaasStatus,
+            liquidacaoStatus: charge.liquidacaoStatus,
+            hasAsaasLink: Boolean(charge.asaasPaymentId),
+          }),
           dataPagamento: null,
           asaasPaymentId: charge.asaasPaymentId,
           source: 'CHARGE' as const,
@@ -406,6 +435,8 @@ export async function getSubscriptionWithCharges(
       select: {
         id: true,
         status: true,
+        asaasStatus: true,
+        liquidacaoStatus: true,
         value: true,
         dueDate: true,
         asaasPaymentId: true,
@@ -418,7 +449,20 @@ export async function getSubscriptionWithCharges(
         numero: charges.length - idx,
         valor: charge.value != null ? Number(charge.value) : 0,
         vencimento: charge.dueDate?.toISOString() ?? '',
-        status: normalizeChargeStatus(charge.status),
+        status: resolveChildChargeStatus({
+          localStatus: charge.status,
+          asaasStatus: charge.asaasStatus,
+          liquidacaoStatus: charge.liquidacaoStatus,
+          hasAsaasLink: Boolean(charge.asaasPaymentId),
+        }),
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        displayStatus: resolveChargeDisplayStatus({
+          localStatus: charge.status,
+          asaasStatus: charge.asaasStatus,
+          liquidacaoStatus: charge.liquidacaoStatus,
+          hasAsaasLink: Boolean(charge.asaasPaymentId),
+        }),
         dataPagamento: null,
         asaasPaymentId: charge.asaasPaymentId,
         source: 'CHARGE' as const,
@@ -541,6 +585,8 @@ export async function getSubscriptionWithCharges(
     select: {
       id: true,
       status: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
       value: true,
       dueDate: true,
       asaasPaymentId: true,
@@ -548,6 +594,8 @@ export async function getSubscriptionWithCharges(
         select: {
           id: true,
           status: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
           valor: true,
           vencimento: true,
           dataPagamento: true,
@@ -568,6 +616,8 @@ export async function getSubscriptionWithCharges(
     select: {
       id: true,
       status: true,
+      asaasStatus: true,
+      liquidacaoStatus: true,
       valor: true,
       vencimento: true,
       dataPagamento: true,
@@ -584,14 +634,30 @@ export async function getSubscriptionWithCharges(
     if (charge.cobranca) {
       const c = charge.cobranca;
       includedCobrancaIds.add(c.id);
+      const asaasStatus = c.asaasStatus ?? charge.asaasStatus ?? null;
+      const liquidacaoStatus = c.liquidacaoStatus ?? charge.liquidacaoStatus ?? null;
+      const asaasPaymentId = c.asaasPaymentId ?? charge.asaasPaymentId;
       return {
         id: c.id,
         numero: 0, // Será recalculado após merge
         valor: Number(c.valor),
         vencimento: c.vencimento.toISOString(),
-        status: c.status,
+        status: resolveChildChargeStatus({
+          localStatus: c.status,
+          asaasStatus,
+          liquidacaoStatus,
+          hasAsaasLink: Boolean(asaasPaymentId),
+        }),
+        asaasStatus,
+        liquidacaoStatus,
+        displayStatus: resolveChargeDisplayStatus({
+          localStatus: c.status,
+          asaasStatus,
+          liquidacaoStatus,
+          hasAsaasLink: Boolean(asaasPaymentId),
+        }),
         dataPagamento: c.dataPagamento?.toISOString() ?? null,
-        asaasPaymentId: c.asaasPaymentId ?? charge.asaasPaymentId,
+        asaasPaymentId,
         source: 'COBRANCA' as const,
       };
     }
@@ -602,7 +668,20 @@ export async function getSubscriptionWithCharges(
       numero: 0, // Será recalculado após merge
       valor: charge.value != null ? Number(charge.value) : 0,
       vencimento: charge.dueDate?.toISOString() ?? '',
-      status: normalizeChargeStatus(charge.status),
+      status: resolveChildChargeStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        hasAsaasLink: Boolean(charge.asaasPaymentId),
+      }),
+      asaasStatus: charge.asaasStatus,
+      liquidacaoStatus: charge.liquidacaoStatus,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus,
+        hasAsaasLink: Boolean(charge.asaasPaymentId),
+      }),
       dataPagamento: null,
       asaasPaymentId: charge.asaasPaymentId,
       source: 'CHARGE' as const,
@@ -617,7 +696,20 @@ export async function getSubscriptionWithCharges(
       numero: 0, // Será recalculado após merge
       valor: Number(c.valor),
       vencimento: c.vencimento.toISOString(),
-      status: c.status,
+      status: resolveChildChargeStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      displayStatus: resolveChargeDisplayStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       dataPagamento: c.dataPagamento?.toISOString() ?? null,
       asaasPaymentId: c.asaasPaymentId,
       source: 'COBRANCA' as const,

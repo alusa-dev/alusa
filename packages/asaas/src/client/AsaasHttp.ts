@@ -306,17 +306,82 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function intFromEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function resolveRequestTimeoutMs(method?: string): number {
+  const normalizedMethod = method?.toUpperCase() ?? 'GET';
+  const fallback = normalizedMethod === 'GET' ? 10_000 : 20_000;
+  const methodSpecific = intFromEnv(`ASAAS_HTTP_${normalizedMethod}_TIMEOUT_MS`, fallback);
+  return Math.min(60_000, Math.max(1_000, intFromEnv('ASAAS_HTTP_TIMEOUT_MS', methodSpecific)));
+}
+
+function withTimeoutSignal(init: RequestInit, timeoutMs: number): RequestInit {
+  if (
+    typeof AbortSignal === 'undefined' ||
+    typeof AbortSignal.timeout !== 'function'
+  ) {
+    return init;
+  }
+
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!init.signal) {
+    return { ...init, signal: timeoutSignal };
+  }
+
+  if (typeof AbortSignal.any === 'function') {
+    return { ...init, signal: AbortSignal.any([init.signal, timeoutSignal]) };
+  }
+
+  return init;
+}
+
+function isRetryableFetchFailure(error: unknown): boolean {
+  if (typeof DOMException !== 'undefined' && error instanceof DOMException) {
+    return error.name === 'AbortError' || error.name === 'TimeoutError';
+  }
+
+  if (error instanceof Error) {
+    const code = (error as Error & { code?: string }).code;
+    const message = error.message.toLowerCase();
+    return (
+      code === 'ETIMEDOUT' ||
+      code === 'ECONNRESET' ||
+      code === 'EAI_AGAIN' ||
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('fetch failed')
+    );
+  }
+
+  return false;
+}
+
 async function requestWithRetry(
   url: string,
   init: RequestInit,
 ): Promise<Response> {
   const maxAttempts = 3;
   const baseDelaysMs = [200, 500, 1000];
+  const timeoutMs = resolveRequestTimeoutMs(init.method);
 
   let lastResponse: Response | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await fetch(url, init);
+    let response: Response;
+    try {
+      response = await fetch(url, withTimeoutSignal(init, timeoutMs));
+    } catch (error) {
+      if (!isRetryableFetchFailure(error) || attempt === maxAttempts) {
+        throw error;
+      }
+
+      await sleep(jitter(baseDelaysMs[attempt - 1] ?? 1000));
+      continue;
+    }
     lastResponse = response;
 
     const status = response.status;

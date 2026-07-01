@@ -14,6 +14,7 @@ import { getPayment } from '../use-cases/asaas-ops';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { createHash } from 'crypto';
 import type { LiquidacaoStatus } from '@prisma/client';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -172,8 +173,14 @@ export async function shouldThrottleFetch(cobrancaId: string): Promise<{ throttl
 // ─────────────────────────────────────────────────────────────────────────────
 
 function computeSnapshotHash(payment: AsaasPayment): string {
+  const effectiveAsaasStatus =
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ?? payment.status;
   const relevantData = {
-    status: payment.status,
+    status: effectiveAsaasStatus,
     value: payment.value,
     netValue: payment.netValue,
     originalValue: payment.originalValue,
@@ -219,10 +226,16 @@ export async function fetchAsaasPaymentSnapshot(
   try {
     recordAsaasReadIntent('RECONCILIATION');
     const payment = await getPayment(asaasPaymentId, { contaId });
+    const effectiveAsaasStatus =
+      normalizeAsaasPaymentSnapshotStatus({
+        status: payment.status,
+        billingType: payment.billingType,
+        deleted: payment.deleted,
+      }) ?? payment.status;
 
     const snapshot: AsaasPaymentSnapshot = {
       asaasPaymentId: payment.id,
-      asaasStatus: payment.status,
+      asaasStatus: effectiveAsaasStatus as PaymentStatus,
       value: payment.value,
       netValue: payment.netValue,
       originalValue: payment.originalValue ?? null,

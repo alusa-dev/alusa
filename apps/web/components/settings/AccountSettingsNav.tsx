@@ -1,6 +1,4 @@
 'use client';
-// Necessário para transformar JSX em ambiente sem automatic runtime completo
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import React, { useMemo } from 'react';
 void React;
 
@@ -23,6 +21,7 @@ const KYC_ITEMS: Item[] = [
 ];
 
 const PAYMENT_ALLOWED_ROLES = new Set(['RESPONSAVEL', 'ALUNO']);
+const PLATFORM_BILLING_ALLOWED_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
 
 export default function AccountSettingsNav() {
   const pathname = usePathname();
@@ -41,6 +40,7 @@ export default function AccountSettingsNav() {
   const normalizedRole = role?.toUpperCase() ?? '';
   const isAdmin = normalizedRole === 'ADMIN';
   const canDeleteAccount = isAdmin;
+  const showPlatformBilling = PLATFORM_BILLING_ALLOWED_ROLES.has(normalizedRole);
 
   // Verifica se o fluxo financeiro foi iniciado
   const hasFinanceFlow = useMemo(() => {
@@ -82,9 +82,13 @@ export default function AccountSettingsNav() {
     return result;
   }, [financialCapabilities.canUseKyc, hasFinanceFlow, isAdmin, itemsWithDelete]);
 
+  const itemsWithPlatformBilling = showPlatformBilling
+    ? [...itemsWithKyc, { href: '/conta/plano-faturamento', label: 'Plano e faturamento' }]
+    : itemsWithKyc;
+
   const items = showPaymentSection
-    ? itemsWithKyc
-    : itemsWithKyc.filter((item) => item.href !== '/conta/assinaturas');
+    ? itemsWithPlatformBilling
+    : itemsWithPlatformBilling.filter((item) => item.href !== '/conta/assinaturas');
 
   return (
     <nav aria-label="Navegação Minha Conta" data-testid="account-card-nav">

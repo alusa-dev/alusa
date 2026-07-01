@@ -3,9 +3,13 @@ import { prisma } from '@/src/prisma';
 import { validarElegibilidadeRematricula } from '@alusa/domain';
 import {
   buildFinancialSnapshot,
-  evaluateRematriculaDecision,
-  getContaFinancialPolicy,
+  evaluateCanonicalRematriculaDecision,
 } from './rematricula-financial-policy.service';
+import {
+  compareEnrollmentRecency,
+  type EnrollmentChainRow,
+  resolveEnrollmentRootId,
+} from './rematricula-chain';
 
 function toNullableNumber(value: unknown): number | null {
   if (value == null) return null;
@@ -59,7 +63,6 @@ export type RematriculaElegivelItem = {
       | 'COBRANCA_ATRASADA'
       | 'MULTIPLAS_COBRANCAS'
       | 'AGUARDANDO_RECONCILIACAO'
-      | 'POLITICA_DA_ESCOLA'
       | 'OUTRO';
     actionMessage: string;
     canCurrentUserOverride: boolean;
@@ -85,6 +88,7 @@ export async function listarRematriculasElegiveis(input: {
   diasAntecedencia?: number;
   referencia?: Date;
   statusContrato?: StatusContrato;
+  targetPeriodId?: string;
   search?: string;
   currentUserRole?: string | null;
 }): Promise<{ referencia: Date; ate: Date; total: number; itens: RematriculaElegivelItem[] }> {
@@ -93,12 +97,10 @@ export async function listarRematriculasElegiveis(input: {
   const limite = new Date(referencia);
   limite.setDate(limite.getDate() + diasAntecedencia);
 
-  const policy = await getContaFinancialPolicy(input.contaId);
-
   const matriculas = await prisma.matricula.findMany({
     where: {
       aluno: { contaId: input.contaId },
-      status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
+      status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA, StatusMatricula.AGUARDANDO_CONFIRMACAO] },
       dataFimContrato: { lte: limite },
       ...(input.statusContrato ? { statusContrato: input.statusContrato } : {}),
       ...(input.search?.trim()
@@ -122,6 +124,8 @@ export async function listarRematriculasElegiveis(input: {
       statusContrato: true,
       dataInicio: true,
       dataFimContrato: true,
+      rematriculadaDeId: true,
+      createdAt: true,
       formaPagamentoTaxa: true,
       vencimentoDia: true,
       taxaMatricula: true,
@@ -167,10 +171,79 @@ export async function listarRematriculasElegiveis(input: {
     },
     orderBy: { dataFimContrato: 'asc' },
   });
+
+  const alunoIds = Array.from(new Set(matriculas.map((matricula) => matricula.aluno.id)));
+  const chainRows = alunoIds.length
+    ? await prisma.matricula.findMany({
+        where: {
+          contaId: input.contaId,
+          alunoId: { in: alunoIds },
+        },
+        select: {
+          id: true,
+          alunoId: true,
+          rematriculadaDeId: true,
+          status: true,
+          dataInicio: true,
+          dataFimContrato: true,
+          createdAt: true,
+        },
+      })
+    : [];
+
+  const chainById = new Map<string, EnrollmentChainRow>(chainRows.map((row) => [row.id, row]));
+  const activeRenewalItems =
+    input.targetPeriodId && chainRows.length
+      ? await prisma.rematriculaItem.findMany({
+          where: {
+            contaId: input.contaId,
+            targetPeriodId: input.targetPeriodId,
+            processo: {
+              status: { notIn: ['CANCELLED'] },
+            },
+          },
+          select: { matriculaOrigemId: true, matriculaFuturaId: true },
+        })
+      : [];
+
+  const blockedRootIds = new Set<string>();
+  for (const item of activeRenewalItems) {
+    const originRootId = resolveEnrollmentRootId(item.matriculaOrigemId, chainById);
+    if (chainById.has(originRootId)) blockedRootIds.add(originRootId);
+
+    if (item.matriculaFuturaId) {
+      const futureRootId = resolveEnrollmentRootId(item.matriculaFuturaId, chainById);
+      if (chainById.has(futureRootId)) blockedRootIds.add(futureRootId);
+    }
+  }
+
+  const latestByRootId = new Map<string, (typeof matriculas)[number]>();
+  for (const matricula of matriculas) {
+    const chainRow = chainById.get(matricula.id);
+    if (!chainRow) continue;
+
+    const rootId = resolveEnrollmentRootId(matricula.id, chainById);
+    if (blockedRootIds.has(rootId)) continue;
+
+    const current = latestByRootId.get(rootId);
+    if (!current) {
+      latestByRootId.set(rootId, matricula);
+      continue;
+    }
+
+    const currentChainRow = chainById.get(current.id);
+    if (currentChainRow && compareEnrollmentRecency(chainRow, currentChainRow) > 0) {
+      latestByRootId.set(rootId, matricula);
+    }
+  }
+
+  const matriculasElegiveis = Array.from(latestByRootId.values()).sort(
+    (a, b) => a.dataFimContrato.getTime() - b.dataFimContrato.getTime(),
+  );
   
   const payerKeys = Array.from(
     new Set(
-      matriculas.map((m) => {
+      matriculasElegiveis.map((m) => {
         const payerType = m.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
         const payerId = m.responsavelFinanceiroId ?? m.aluno.id;
         return `${payerType}:${payerId}`;
@@ -244,7 +317,7 @@ export async function listarRematriculasElegiveis(input: {
     standaloneStatusByCustomerId.set(charge.customerId, current);
   }
 
-  const itens = matriculas.map((m) => {
+  const itens = matriculasElegiveis.map((m) => {
     const diasRestantes = Math.ceil(
       (m.dataFimContrato.getTime() - referencia.getTime()) / (24 * 60 * 60 * 1000),
     );
@@ -265,13 +338,11 @@ export async function listarRematriculasElegiveis(input: {
       cobrancas: combinedChargeSnapshot,
       statusFinanceiro: m.statusFinanceiro,
       integrationStatus: m.integrationStatus,
-      debtScope: policy.debtScope,
+      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
     });
-    const decision = evaluateRematriculaDecision({
+    const decision = evaluateCanonicalRematriculaDecision({
       academicEligible: podeRenovar,
       financialSnapshot,
-      policy,
-      currentUserRole: input.currentUserRole,
     });
 
     return {

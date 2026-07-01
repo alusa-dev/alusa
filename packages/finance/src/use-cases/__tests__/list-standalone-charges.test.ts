@@ -35,6 +35,8 @@ function makeCharge(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ch_1',
     status: 'OPEN',
+    asaasStatus: null,
+    liquidacaoStatus: null,
     asaasPaymentId: 'pay_asaas_1',
     payerName: 'Maria Silva',
     description: 'Taxa extra',
@@ -58,6 +60,8 @@ function makeChargeReadModelItem(overrides: Partial<import('../list-standalone-c
     dueDate: '2025-06-20T00:00:00.000Z',
     billingType: 'PIX',
     status: 'PENDING' as const,
+    asaasStatus: null,
+    liquidacaoStatus: null,
     chargeType: 'ONE_TIME' as const,
     linkStatus: 'LINKED' as const,
     groupId: null,
@@ -162,14 +166,41 @@ describe('listStandaloneCharges', () => {
 
     const where = db.charge.findMany.mock.calls[0][0].where;
     expect(where.status).toEqual({ in: ['CREATED', 'OPEN', 'OVERDUE'] });
+    expect(where.AND).toEqual([
+      {
+        OR: [
+          { asaasStatus: null },
+          {
+            asaasStatus: {
+              notIn: [
+                'CONFIRMED',
+                'RECEIVED',
+                'RECEIVED_IN_CASH',
+                'DUNNING_RECEIVED',
+                'REFUND_REQUESTED',
+                'REFUND_IN_PROGRESS',
+                'REFUNDED',
+                'CHARGEBACK_REQUESTED',
+                'CHARGEBACK_DISPUTE',
+                'AWAITING_CHARGEBACK_REVERSAL',
+                'DELETED',
+              ],
+            },
+          },
+        ],
+      },
+    ]);
   });
 
-  it('statusView=paid filtra status PAID', async () => {
+  it('statusView=paid filtra status PAID local ou pago no Asaas', async () => {
     const db = createMockDb();
     await listStandaloneCharges({ contaId: 'ct_1', statusView: 'paid' }, db);
 
     const where = db.charge.findMany.mock.calls[0][0].where;
-    expect(where.status).toBe('PAID');
+    expect(where.OR).toEqual([
+      { status: 'PAID' },
+      { asaasStatus: { in: ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'] } },
+    ]);
   });
 
   it('statusView=all não filtra status', async () => {
@@ -185,9 +216,29 @@ describe('listStandaloneCharges', () => {
     await listStandaloneCharges({ contaId: 'ct_1', search: 'silva' }, db);
 
     const where = db.charge.findMany.mock.calls[0][0].where;
-    expect(where.OR).toBeDefined();
-    expect(where.OR).toHaveLength(2);
-    expect(where.OR[0].payerName.contains).toBe('silva');
+    expect(where.AND).toEqual(
+      expect.arrayContaining([
+        {
+          OR: [
+            { payerName: { contains: 'silva', mode: 'insensitive' } },
+            { description: { contains: 'silva', mode: 'insensitive' } },
+          ],
+        },
+      ]),
+    );
+  });
+
+  it('usa snapshot pago do Asaas para status efetivo mesmo se Charge local ainda estiver aberta', async () => {
+    const db = createMockDb();
+    db.charge.findMany.mockResolvedValue([
+      makeCharge({ status: 'OPEN', asaasStatus: 'RECEIVED_IN_CASH', liquidacaoStatus: 'DISPONIVEL' }),
+    ]);
+    db.charge.count.mockResolvedValue(1);
+
+    const result = await listStandaloneCharges({ contaId: 'ct_1', statusView: 'paid' }, db);
+
+    expect(result.items[0].status).toBe('PAID');
+    expect(result.items[0].displayStatus.label).toBe('Recebida em dinheiro');
   });
 
   it('paginação funciona corretamente', async () => {

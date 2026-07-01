@@ -51,6 +51,95 @@ enum SupportCasePriority {
   URGENT
 }
 
+enum PlatformBillingEnvironment {
+  TEST
+  LIVE
+}
+
+enum PlatformBillingPlanCode {
+  STARTER
+  PREMIUM
+  PRO
+  CUSTOM
+}
+
+enum PlatformBillingAccountStatus {
+  NOT_STARTED
+  CHECKOUT_PENDING
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  UNPAID
+  PAUSED
+  UNKNOWN
+}
+
+enum PlatformBillingAccessStatus {
+  PENDING
+  ACTIVE
+  GRACE_PERIOD
+  RESTRICTED
+  CANCELED
+}
+
+enum PlatformBillingPlanChangeType {
+  UPGRADE
+  DOWNGRADE
+  CANCEL_AT_PERIOD_END
+  UNDO_CANCEL
+  REACTIVATE
+  PAYMENT_RECOVERY
+}
+
+enum PlatformBillingPlanChangeStatus {
+  PENDING_PAYMENT
+  PENDING_EFFECTIVE_DATE
+  APPLIED
+  CANCELED
+  FAILED
+  SUPERSEDED
+}
+
+enum PlatformBillingIssueSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+enum PlatformBillingIssueStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+enum PlatformBillingCheckoutSessionStatus {
+  CREATED
+  COMPLETED
+  EXPIRED
+}
+
+enum PlatformBillingInvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+  UNKNOWN
+}
+
+enum PlatformBillingWebhookEventStatus {
+  PENDING
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  EXHAUSTED
+  IGNORED
+}
+
 // Formas de pagamento compatíveis com Asaas billingType
 // Referência: https://docs.asaas.com/reference/criar-nova-cobranca
 // Apenas 4 tipos suportados pelo Asaas em pagamentos básicos
@@ -990,6 +1079,12 @@ model Conta {
   consentRecords                    ConsentRecord[]
   financeReconciliationIssues       FinanceReconciliationIssue[]
   financeWebhookSideEffectOutbox    FinanceWebhookSideEffectOutbox[]
+  platformBillingAccounts           PlatformBillingAccount[]
+  platformBillingCheckoutSessions   PlatformBillingCheckoutSession[]
+  platformBillingInvoices           PlatformBillingInvoice[]
+  platformBillingAuditLogs          PlatformBillingAuditLog[]
+  platformBillingPlanChanges        PlatformBillingPlanChange[]
+  platformBillingIssues             PlatformBillingIssue[]
   logsFinanceiros                   LogFinanceiro[]
   logsIntegracao                    LogIntegracao[]
   asaasIntegrationJobs              AsaasIntegrationJob[]
@@ -1262,40 +1357,43 @@ model Usuario {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  colaborador                 Colaborador?
+  colaborador                     Colaborador?
   // Backrelation para vínculo opcional com Responsavel (1-1)
-  responsavel                 Responsavel?
+  responsavel                     Responsavel?
   // Backrelation para vínculo opcional com Aluno (1-1)
-  aluno                       Aluno?
-  checkoutLinksCriados        CheckoutLink[]
-  matriculaLogs               MatriculaLog[]
-  logsFinanceiros             LogFinanceiro[]
-  lancamentosCriados          Lancamento[]
-  payerChangeOperacoes        PayerChangeOperacao[]
-  matriculaOperacoes          MatriculaOperacao[]
-  notifications               NotificationRecipient[]
-  attendanceRecorded          AttendanceRecord[]       @relation("AttendanceRecordedBy")
-  makeupClassesCreated        MakeupClass[]            @relation("MakeupClassCreatedBy")
-  authActionTokens            AuthActionToken[]
-  legalAcceptances            LegalAcceptance[]
-  cookieConsents              CookieConsent[]
-  privacyRequests             PrivacyRequest[]
-  sensitiveAccessLogs         SensitiveAccessLog[]
-  consentRecords              ConsentRecord[]
-  salesOperated               Sale[]                   @relation("SalesOperated")
-  inventoryMovementsCreated   InventoryMovement[]      @relation("InventoryMovementActor")
-  restockOrdersCreated        RestockOrder[]           @relation("RestockOrderCreatedBy")
-  schoolEventsResponsible     SchoolEvent[]            @relation("SchoolEventResponsibleUser")
-  schoolEventsCreated         SchoolEvent[]            @relation("SchoolEventCreatedBy")
-  eventMapVersionsPublished   EventMapVersion[]        @relation("EventMapVersionPublishedBy")
-  eventTicketSalesCreated     EventTicketSale[]        @relation("EventTicketSaleCreatedBy")
-  eventMapReservationsCreated EventMapReservation[]    @relation("EventMapReservationCreatedBy")
-  eventAssignmentsDelivered   EventCostumeAssignment[] @relation("EventCostumeAssignmentDeliveredBy")
-  eventFinancialEntries       EventFinancialEntry[]    @relation("EventFinancialEntryCreatedBy")
-  eventReportsGenerated       EventReport[]            @relation("EventReportGeneratedBy")
-  eventAudits                 EventAudit[]             @relation("EventAuditActor")
-  acessosConta                UsuarioConta[]           @relation("UsuarioContaUsuario")
-  acessosConvidados           UsuarioConta[]           @relation("UsuarioContaInvitedBy")
+  aluno                           Aluno?
+  checkoutLinksCriados            CheckoutLink[]
+  matriculaLogs                   MatriculaLog[]
+  logsFinanceiros                 LogFinanceiro[]
+  lancamentosCriados              Lancamento[]
+  payerChangeOperacoes            PayerChangeOperacao[]
+  matriculaOperacoes              MatriculaOperacao[]
+  notifications                   NotificationRecipient[]
+  attendanceRecorded              AttendanceRecord[]               @relation("AttendanceRecordedBy")
+  makeupClassesCreated            MakeupClass[]                    @relation("MakeupClassCreatedBy")
+  authActionTokens                AuthActionToken[]
+  legalAcceptances                LegalAcceptance[]
+  cookieConsents                  CookieConsent[]
+  privacyRequests                 PrivacyRequest[]
+  sensitiveAccessLogs             SensitiveAccessLog[]
+  consentRecords                  ConsentRecord[]
+  salesOperated                   Sale[]                           @relation("SalesOperated")
+  inventoryMovementsCreated       InventoryMovement[]              @relation("InventoryMovementActor")
+  restockOrdersCreated            RestockOrder[]                   @relation("RestockOrderCreatedBy")
+  schoolEventsResponsible         SchoolEvent[]                    @relation("SchoolEventResponsibleUser")
+  schoolEventsCreated             SchoolEvent[]                    @relation("SchoolEventCreatedBy")
+  eventMapVersionsPublished       EventMapVersion[]                @relation("EventMapVersionPublishedBy")
+  eventTicketSalesCreated         EventTicketSale[]                @relation("EventTicketSaleCreatedBy")
+  eventMapReservationsCreated     EventMapReservation[]            @relation("EventMapReservationCreatedBy")
+  eventAssignmentsDelivered       EventCostumeAssignment[]         @relation("EventCostumeAssignmentDeliveredBy")
+  eventFinancialEntries           EventFinancialEntry[]            @relation("EventFinancialEntryCreatedBy")
+  eventReportsGenerated           EventReport[]                    @relation("EventReportGeneratedBy")
+  eventAudits                     EventAudit[]                     @relation("EventAuditActor")
+  platformBillingCheckoutSessions PlatformBillingCheckoutSession[] @relation("PlatformBillingCheckoutCreatedBy")
+  platformBillingAuditLogs        PlatformBillingAuditLog[]        @relation("PlatformBillingAuditActor")
+  platformBillingPlanChanges      PlatformBillingPlanChange[]      @relation("PlatformBillingPlanChangeCreatedBy")
+  acessosConta                    UsuarioConta[]                   @relation("UsuarioContaUsuario")
+  acessosConvidados               UsuarioConta[]                   @relation("UsuarioContaInvitedBy")
 
   @@index([contaId])
 }
@@ -2132,7 +2230,6 @@ model RematriculaItem {
   excecoes        RematriculaExcecao[]
 
   @@unique([processoId, matriculaOrigemId], name: "uq_rematricula_item_processo_origem")
-  @@unique([contaId, matriculaOrigemId, targetPeriodId], name: "uq_rematricula_item_conta_origem_period")
   @@index([contaId, decision], name: "idx_rematricula_item_conta_decision")
   @@index([contaId, matriculaOrigemId], name: "idx_rematricula_item_conta_origem")
   @@index([matriculaFuturaId], name: "idx_rematricula_item_futura")
@@ -3048,6 +3145,235 @@ model LogIntegracao {
   @@index([status], name: "idx_logintegracao_status")
   @@index([createdAt], name: "idx_logintegracao_createdat")
   @@index([asaasId], name: "idx_logintegracao_asaasid")
+}
+
+model PlatformBillingAccount {
+  id                   String                       @id @default(cuid())
+  contaId              String
+  environment          PlatformBillingEnvironment
+  status               PlatformBillingAccountStatus @default(NOT_STARTED)
+  planCode             PlatformBillingPlanCode?
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean                      @default(false)
+  trialEndsAt          DateTime?
+  accessStatus         PlatformBillingAccessStatus   @default(PENDING)
+  gracePeriodEndsAt    DateTime?
+  restrictedAt         DateTime?
+  canceledAt           DateTime?
+  lastPaymentFailedAt  DateTime?
+  pendingPlanCode      PlatformBillingPlanCode?
+  pendingChangeType    PlatformBillingPlanChangeType?
+  pendingChangeEffectiveAt DateTime?
+  lastStripeEventId    String?
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+
+  conta            Conta                            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  checkoutSessions PlatformBillingCheckoutSession[]
+  invoices         PlatformBillingInvoice[]
+  auditLogs        PlatformBillingAuditLog[]
+  planChanges      PlatformBillingPlanChange[]
+  issues           PlatformBillingIssue[]
+
+  @@unique([contaId, environment], name: "uq_platform_billing_account_conta_env")
+  @@unique([environment, stripeCustomerId], name: "uq_platform_billing_account_env_customer")
+  @@unique([environment, stripeSubscriptionId], name: "uq_platform_billing_account_env_subscription")
+  @@index([contaId, status], name: "idx_platform_billing_account_conta_status")
+  @@index([contaId, accessStatus], name: "idx_platform_billing_account_conta_access")
+  @@index([contaId, planCode], name: "idx_platform_billing_account_conta_plan")
+  @@index([environment, accessStatus], name: "idx_platform_billing_account_env_access")
+  @@index([pendingChangeEffectiveAt], name: "idx_platform_billing_account_pending_effective")
+}
+
+model PlatformBillingCheckoutSession {
+  id                      String                               @id @default(cuid())
+  contaId                 String
+  billingAccountId        String
+  environment             PlatformBillingEnvironment
+  planCode                PlatformBillingPlanCode
+  stripeCheckoutSessionId String
+  stripeCustomerId        String
+  stripePriceId           String
+  status                  PlatformBillingCheckoutSessionStatus @default(CREATED)
+  url                     String?
+  successUrl              String
+  cancelUrl               String
+  idempotencyKey          String
+  createdByUserId         String?
+  expiresAt               DateTime?
+  createdAt               DateTime                             @default(now())
+  updatedAt               DateTime                             @updatedAt
+
+  conta          Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  billingAccount PlatformBillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  createdBy      Usuario?               @relation("PlatformBillingCheckoutCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([environment, stripeCheckoutSessionId], name: "uq_platform_billing_checkout_env_session")
+  @@unique([contaId, environment, idempotencyKey], name: "uq_platform_billing_checkout_conta_env_idempotency")
+  @@index([contaId, status, createdAt], name: "idx_platform_billing_checkout_conta_status_created")
+  @@index([contaId, billingAccountId], name: "idx_platform_billing_checkout_conta_account")
+  @@index([createdByUserId], name: "idx_platform_billing_checkout_created_by")
+}
+
+model PlatformBillingInvoice {
+  id                   String                       @id @default(cuid())
+  contaId              String
+  billingAccountId     String?
+  environment          PlatformBillingEnvironment
+  stripeInvoiceId      String
+  stripeCustomerId     String
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  planCode             PlatformBillingPlanCode?
+  number               String?
+  status               PlatformBillingInvoiceStatus @default(UNKNOWN)
+  amountDue            Int                          @default(0)
+  amountPaid           Int                          @default(0)
+  currency             String                       @default("brl") @db.VarChar(3)
+  hostedInvoiceUrl     String?
+  invoicePdf           String?
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  dueDate              DateTime?
+  paidAt               DateTime?
+  raw                  Json?
+  lastStripeEventId    String?
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+
+  conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([environment, stripeInvoiceId], name: "uq_platform_billing_invoice_env_invoice")
+  @@index([contaId, status, createdAt], name: "idx_platform_billing_invoice_conta_status_created")
+  @@index([contaId, billingAccountId], name: "idx_platform_billing_invoice_conta_account")
+  @@index([contaId, paidAt], name: "idx_platform_billing_invoice_conta_paid")
+  @@index([stripeCustomerId], name: "idx_platform_billing_invoice_customer")
+  @@index([stripeSubscriptionId], name: "idx_platform_billing_invoice_subscription")
+}
+
+model PlatformBillingWebhookEvent {
+  id          String                            @id @default(cuid())
+  environment PlatformBillingEnvironment
+  eventId     String
+  eventType   String
+  contaId     String?
+  status      PlatformBillingWebhookEventStatus @default(PENDING)
+  attempts    Int                               @default(0)
+  payload     Json
+  lastError   String?
+  lastErrorCode String?
+  receivedAt  DateTime                          @default(now())
+  lockedAt    DateTime?
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime                         @default(now())
+  processingTimeoutAt DateTime?
+  processedAt DateTime?
+  exhaustedAt DateTime?
+  workerId    String?
+  correlationId String?
+  createdAt   DateTime                          @default(now())
+  updatedAt   DateTime                          @updatedAt
+
+  @@unique([environment, eventId], name: "uq_platform_billing_webhook_env_event")
+  @@index([status, nextAttemptAt], name: "idx_platform_billing_webhook_status_next")
+  @@index([status, receivedAt], name: "idx_platform_billing_webhook_status_received")
+  @@index([contaId, status, receivedAt], name: "idx_platform_billing_webhook_conta_status_received")
+  @@index([eventType, receivedAt], name: "idx_platform_billing_webhook_type_received")
+  @@index([processingTimeoutAt], name: "idx_platform_billing_webhook_processing_timeout")
+  @@index([correlationId], name: "idx_platform_billing_webhook_correlation")
+}
+
+model PlatformBillingAuditLog {
+  id               String   @id @default(cuid())
+  contaId          String
+  billingAccountId String?
+  actorUserId      String?
+  action           String
+  entityType       String?
+  entityId         String?
+  correlationId    String?
+  metadata         Json?
+  createdAt        DateTime @default(now())
+
+  conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
+  actor          Usuario?                @relation("PlatformBillingAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, createdAt], name: "idx_platform_billing_audit_conta_created")
+  @@index([contaId, action, createdAt], name: "idx_platform_billing_audit_conta_action")
+  @@index([contaId, entityType, entityId], name: "idx_platform_billing_audit_entity")
+  @@index([contaId, correlationId], name: "idx_platform_billing_audit_correlation")
+  @@index([billingAccountId], name: "idx_platform_billing_audit_account")
+  @@index([actorUserId], name: "idx_platform_billing_audit_actor")
+}
+
+model PlatformBillingPlanChange {
+  id                       String                          @id @default(cuid())
+  contaId                  String
+  billingAccountId         String
+  environment              PlatformBillingEnvironment
+  type                     PlatformBillingPlanChangeType
+  status                   PlatformBillingPlanChangeStatus
+  fromPlanCode             PlatformBillingPlanCode?
+  toPlanCode               PlatformBillingPlanCode?
+  stripeSubscriptionId     String?
+  stripePriceId            String?
+  stripePendingUpdateId    String?
+  effectiveAt              DateTime?
+  requestedAt              DateTime                        @default(now())
+  appliedAt                DateTime?
+  canceledAt               DateTime?
+  failedAt                 DateTime?
+  lastError                String?
+  idempotencyKey           String
+  createdByUserId          String?
+  correlationId            String?
+  metadata                 Json?
+  createdAt                DateTime                        @default(now())
+  updatedAt                DateTime                        @updatedAt
+
+  conta          Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  billingAccount PlatformBillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  createdBy      Usuario?               @relation("PlatformBillingPlanChangeCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([contaId, environment, idempotencyKey], name: "uq_platform_billing_plan_change_idempotency")
+  @@index([contaId, status, createdAt], name: "idx_platform_billing_plan_change_conta_status")
+  @@index([billingAccountId, status], name: "idx_platform_billing_plan_change_account_status")
+  @@index([environment, stripeSubscriptionId], name: "idx_platform_billing_plan_change_subscription")
+  @@index([effectiveAt, status], name: "idx_platform_billing_plan_change_effective_status")
+  @@index([createdByUserId], name: "idx_platform_billing_plan_change_created_by")
+}
+
+model PlatformBillingIssue {
+  id               String                       @id @default(cuid())
+  contaId          String
+  billingAccountId String?
+  environment      PlatformBillingEnvironment
+  severity         PlatformBillingIssueSeverity @default(WARNING)
+  status           PlatformBillingIssueStatus   @default(OPEN)
+  code             String
+  title            String
+  message          String
+  fingerprint      String
+  details          Json?
+  detectedAt       DateTime                     @default(now())
+  resolvedAt       DateTime?
+  ignoredAt        DateTime?
+  correlationId    String?
+  createdAt        DateTime                     @default(now())
+  updatedAt        DateTime                     @updatedAt
+
+  conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([environment, fingerprint], name: "uq_platform_billing_issue_env_fingerprint")
+  @@index([contaId, status, severity], name: "idx_platform_billing_issue_conta_status_severity")
+  @@index([billingAccountId, status], name: "idx_platform_billing_issue_account_status")
+  @@index([environment, status, detectedAt], name: "idx_platform_billing_issue_env_status_detected")
 }
 
 model AsaasIntegrationJob {

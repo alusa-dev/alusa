@@ -16,6 +16,10 @@ import {
   cancelLocalFutureEnrollmentCharges,
   markEnrollmentFinanceDivergence,
 } from './enrollment-finance-consistency.service';
+import {
+  assertStudentCapacity,
+  countAdditionalActiveStudentsForEnrollment,
+} from '@/src/server/platform-billing/capacity';
 
 // ============================================================================
 // ERRORS
@@ -273,6 +277,7 @@ async function reconcileMatriculaPendingSynchronization(input: {
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
     select: {
       id: true,
+      alunoId: true,
       status: true,
       pausaAtiva: true,
       dataInicioPausa: true,
@@ -402,6 +407,18 @@ async function reconcileMatriculaPendingSynchronization(input: {
   const latestReactivationOperation = pendingReactivationOperations[0] ?? null;
 
   await input.prisma.$transaction(async (tx) => {
+    const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
+      tx,
+      contaId: input.contaId,
+      alunoId: matricula.alunoId,
+    });
+    await assertStudentCapacity({
+      tx,
+      contaId: input.contaId,
+      additionalActiveStudents,
+      operation: 'matricula.pause.reconcile-reactivate',
+    });
+
     await tx.matricula.update({
       where: { id: matricula.id, version: matricula.version },
       data: {
@@ -502,6 +519,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
     select: {
       id: true,
+      alunoId: true,
       status: true,
       pausaAtiva: true,
       asaasSubscriptionId: true,
@@ -549,8 +567,8 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
   let integrationStatus: PausarMatriculaResult['integrationStatus'] = 'SINCRONIZADO' as PausarMatriculaResult['integrationStatus'];
   let warningCode: string | null = null;
   let cobrancasFuturasRemovidas = 0;
-  let deletedRemotePaymentIds: string[] = [];
-  let failedRemotePaymentIds: string[] = [];
+  const deletedRemotePaymentIds: string[] = [];
+  const failedRemotePaymentIds: string[] = [];
   let remoteDeletionUncertain = false;
   let localChargeAlignment = {
     scanned: 0,
@@ -788,6 +806,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
     select: {
       id: true,
+      alunoId: true,
       status: true,
       pausaAtiva: true,
       manterVaga: true,
@@ -880,7 +899,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
         if (updatedPaymentId) {
           warnings.push('A cobrança já gerada da assinatura teve o vencimento atualizado para a data informada.');
         }
-      } catch (error) {
+      } catch {
         integrationStatus = 'DIVERGENTE';
         warningCode = 'COBRANCA_PENDENTE_NAO_ATUALIZADA';
         warnings.push(
@@ -903,6 +922,18 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
 
   // Atualizar matrícula
   await input.prisma.$transaction(async (tx) => {
+    const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
+      tx,
+      contaId: input.contaId,
+      alunoId: matricula.alunoId,
+    });
+    await assertStudentCapacity({
+      tx,
+      contaId: input.contaId,
+      additionalActiveStudents,
+      operation: 'matricula.pause.reactivate',
+    });
+
     await tx.matricula.update({
       where: { id: matricula.id, version: matricula.version },
       data: {

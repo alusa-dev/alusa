@@ -6,6 +6,7 @@ import {
   requireKycSnapshotApproved,
   type GetKycSummaryResult,
 } from '@alusa/finance';
+import { prisma } from '@alusa/database';
 
 export type FinancialAccountStatus = 'PENDING_ACTIVATION' | 'UNAVAILABLE';
 export type FinancialAccountGateCode =
@@ -32,6 +33,74 @@ function json<T>(status: number, body: T) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
 
+function isLocalMockFinancialGateEnabled() {
+  return process.env.NODE_ENV !== 'production' && process.env.PAYMENTS_PROVIDER_MODE === 'mock';
+}
+
+async function getLocalMockApprovedSummary(contaId: string): Promise<GetKycSummaryResult | null> {
+  const conta = await prisma.conta.findUnique({
+    where: { id: contaId },
+    select: {
+      financeStatus: true,
+      financeProfile: {
+        select: {
+          id: true,
+          status: true,
+          isOnboardingCompleted: true,
+          onboardingCompletedAt: true,
+          lastAsaasSyncAt: true,
+          asaasAccount: {
+            select: {
+              status: true,
+              asaasAccountId: true,
+              apiKeyStatus: true,
+              operationalStatus: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const profile = conta?.financeProfile;
+  const account = profile?.asaasAccount;
+  const isApproved =
+    conta?.financeStatus === 'FINANCE_APPROVED' &&
+    profile?.status === 'APPROVED' &&
+    profile.isOnboardingCompleted &&
+    account?.status === 'APPROVED' &&
+    Boolean(account.asaasAccountId) &&
+    account.apiKeyStatus === 'CONNECTED' &&
+    account.operationalStatus === 'OPERATIONAL';
+
+  if (!conta || !profile || !account || !isApproved) return null;
+
+  return {
+    onboarding: {
+      financeProfileId: profile.id,
+      status: account.status,
+      hasSubaccount: true,
+      hasAsaasAccountRecord: true,
+      financeStatus: conta.financeStatus,
+      financeProfile: {
+        status: profile.status,
+        isOnboardingCompleted: profile.isOnboardingCompleted,
+        onboardingCompletedAt: profile.onboardingCompletedAt,
+        lastAsaasSyncAt: profile.lastAsaasSyncAt,
+      },
+    },
+    asaasConnection: { status: 'CONNECTED' },
+    myAccountStatus: {
+      general: 'APPROVED',
+      documentation: 'APPROVED',
+      bankAccountInfo: 'APPROVED',
+      commercialInfo: 'APPROVED',
+    },
+    documents: { data: [], rejectReasons: [] },
+    documentsRequired: false,
+  };
+}
+
 export async function guardFinancialAccountOr412(
   contaId: string,
   opts: { bypassCache?: boolean } = {},
@@ -40,6 +109,17 @@ export async function guardFinancialAccountOr412(
     const cached = approvedGateCache.get(contaId);
     if (cached && cached.expiresAt > Date.now()) {
       return { ok: true, summary: cached.summary };
+    }
+  }
+
+  if (!opts.bypassCache && isLocalMockFinancialGateEnabled()) {
+    const mockSummary = await getLocalMockApprovedSummary(contaId);
+    if (mockSummary) {
+      approvedGateCache.set(contaId, {
+        expiresAt: Date.now() + APPROVED_GATE_CACHE_TTL_MS,
+        summary: mockSummary,
+      });
+      return { ok: true, summary: mockSummary };
     }
   }
 

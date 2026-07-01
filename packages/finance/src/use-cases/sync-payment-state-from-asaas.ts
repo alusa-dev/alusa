@@ -1,9 +1,8 @@
-import type { PaymentStatus as AsaasRawPaymentStatus } from '@alusa/asaas';
 import { emitBillingNotificationCandidate } from '@alusa/lib';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { recordAsaasReadIntent, type AsaasReadIntent } from '../foundation/asaas-read-intent';
-import { handlePaymentWebhook } from '../webhooks/payment-webhook-handler';
 import { confirmPaymentCommandsByProviderEvent } from './payment-command-ledger';
+import { applyProviderPaymentSnapshot } from './apply-provider-payment-snapshot';
 
 export type SyncPaymentStateFromAsaasInput = {
   contaId: string;
@@ -27,31 +26,6 @@ export type SyncPaymentStateFromAsaasOutput =
       error: string;
     };
 
-const EVENT_BY_STATUS: Record<string, string> = {
-  CONFIRMED: 'PAYMENT_CONFIRMED',
-  RECEIVED: 'PAYMENT_RECEIVED',
-  RECEIVED_IN_CASH: 'PAYMENT_RECEIVED',
-  OVERDUE: 'PAYMENT_OVERDUE',
-  REFUNDED: 'PAYMENT_REFUNDED',
-  REFUND_REQUESTED: 'PAYMENT_REFUND_REQUESTED',
-  REFUND_IN_PROGRESS: 'PAYMENT_REFUND_IN_PROGRESS',
-  DELETED: 'PAYMENT_DELETED',
-  DUNNING_RECEIVED: 'PAYMENT_DUNNING_RECEIVED',
-  DUNNING_REQUESTED: 'PAYMENT_DUNNING_REQUESTED',
-  CHARGEBACK_REQUESTED: 'PAYMENT_CHARGEBACK_REQUESTED',
-  CHARGEBACK_DISPUTE: 'PAYMENT_CHARGEBACK_DISPUTE',
-  AWAITING_CHARGEBACK_REVERSAL: 'PAYMENT_AWAITING_CHARGEBACK_REVERSAL',
-  AWAITING_RISK_ANALYSIS: 'PAYMENT_AWAITING_RISK_ANALYSIS',
-  PENDING: 'PAYMENT_UPDATED',
-};
-
-function chooseSyntheticEvent(status: string, deleted?: boolean | null): string {
-  if (deleted) {
-    return 'PAYMENT_DELETED';
-  }
-  return EVENT_BY_STATUS[status] ?? 'PAYMENT_UPDATED';
-}
-
 /**
  * Força convergência local consultando o estado atual do pagamento no Asaas
  * e reaplicando o pipeline de webhook internamente (idempotente).
@@ -65,51 +39,29 @@ export async function syncPaymentStateFromAsaas(
 
   recordAsaasReadIntent(input.intent ?? 'RECONCILIATION');
   const payment = await getPayment(input.asaasPaymentId, { contaId: input.contaId });
-  const appliedEvent = input.eventName ?? chooseSyntheticEvent(payment.status, payment.deleted);
-
-  const webhookResult = await handlePaymentWebhook(input.contaId, {
-    event: appliedEvent,
-    payment: {
-      id: payment.id,
-      status: payment.status as AsaasRawPaymentStatus,
-      value: Number(payment.value ?? 0),
-      netValue: Number(payment.netValue ?? payment.value ?? 0),
-      originalValue: payment.originalValue ?? null,
-      externalReference: payment.externalReference ?? undefined,
-      description: payment.description ?? null,
-      subscription: payment.subscription ?? null,
-      installment: payment.installment ?? null,
-      installmentNumber: null,
-      dueDate: payment.dueDate ?? null,
-      paymentDate: payment.paymentDate ?? null,
-      clientPaymentDate: payment.clientPaymentDate ?? null,
-      creditDate: payment.creditDate ?? null,
-      estimatedCreditDate: payment.estimatedCreditDate ?? null,
-      billingType: payment.billingType ?? null,
-      invoiceUrl: payment.invoiceUrl ?? null,
-      bankSlipUrl: payment.bankSlipUrl ?? null,
-      transactionReceiptUrl: payment.transactionReceiptUrl ?? null,
-      deleted: payment.deleted ?? false,
-    },
+  const snapshotResult = await applyProviderPaymentSnapshot({
+    contaId: input.contaId,
+    payment,
+    eventName: input.eventName,
   });
 
-  if (!webhookResult.success) {
+  if (!snapshotResult.success) {
     return {
       success: false,
-      error: webhookResult.error ?? 'SYNC_FAILED',
+      error: snapshotResult.error,
     };
   }
 
   await confirmPaymentCommandsByProviderEvent({
     contaId: input.contaId,
     asaasPaymentId: payment.id,
-    eventName: appliedEvent,
-    providerStatus: payment.status,
+    eventName: snapshotResult.appliedEvent,
+    providerStatus: snapshotResult.paymentStatus,
   });
 
   void emitBillingNotificationCandidate(
     {
-      event: appliedEvent,
+      event: snapshotResult.appliedEvent,
       asaasPaymentId: payment.id,
     },
     'ASAAS_SYNC',
@@ -117,7 +69,7 @@ export async function syncPaymentStateFromAsaas(
     console.warn('[syncPaymentStateFromAsaas] Falha não crítica ao emitir inbox', {
       contaId: input.contaId,
       asaasPaymentId: payment.id,
-      appliedEvent,
+      appliedEvent: snapshotResult.appliedEvent,
       message: error instanceof Error ? error.message : String(error),
     });
   });
@@ -125,8 +77,8 @@ export async function syncPaymentStateFromAsaas(
   return {
     success: true,
     asaasPaymentId: payment.id,
-    paymentStatus: payment.status,
-    appliedEvent,
+    paymentStatus: snapshotResult.paymentStatus,
+    appliedEvent: snapshotResult.appliedEvent,
     invoiceUrl: payment.invoiceUrl ?? null,
     bankSlipUrl: payment.bankSlipUrl ?? null,
     transactionReceiptUrl: payment.transactionReceiptUrl ?? null,

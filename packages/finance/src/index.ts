@@ -140,6 +140,10 @@ export {
   isStaleAsaasStatusForSettledLocal,
   resolveMonotonicAsaasPaymentStatus,
 } from './mappers/asaas-snapshot-monotonicity';
+export {
+  normalizeAsaasPaymentSnapshotStatus,
+  type NormalizeAsaasPaymentSnapshotStatusInput,
+} from './mappers/asaas-payment-snapshot-status';
 export type {
   AsaasPaymentStatus as AsaasDisplayPaymentStatus,
   BadgeStatusType,
@@ -722,6 +726,17 @@ export type {
   SyncPaymentStateFromAsaasInput,
   SyncPaymentStateFromAsaasOutput,
 } from './use-cases/sync-payment-state-from-asaas';
+export { applyProviderPaymentSnapshot } from './use-cases/apply-provider-payment-snapshot';
+export type {
+  ApplyProviderPaymentSnapshotInput,
+  ApplyProviderPaymentSnapshotOutput,
+  ProviderPaymentSnapshot,
+} from './use-cases/apply-provider-payment-snapshot';
+export { runAsaasPaymentCommand } from './use-cases/run-asaas-payment-command';
+export type {
+  RunAsaasPaymentCommandInput,
+  RunAsaasPaymentCommandOutput,
+} from './use-cases/run-asaas-payment-command';
 export {
   expectedEventsForPaymentCommand,
   registerPaymentCommand,
@@ -1139,8 +1154,14 @@ export {
 export { processAsaasWebhookQueueWithInbox } from './webhooks/process-webhook-queue-with-inbox';
 export {
   drainFinanceWebhookSideEffectOutbox,
+  enqueueFinanceSideEffect,
   enqueueBillingNotificationSideEffects,
   processFinanceWebhookSideEffectOutboxEvent,
+} from './webhooks/finance-side-effect-outbox.service';
+export type {
+  EnqueueFinanceSideEffectParams,
+  FinanceSideEffectSourceType,
+  FinanceSideEffectType,
 } from './webhooks/finance-side-effect-outbox.service';
 export { runWebhookQueuePreflight } from './webhooks/webhook-queue-preflight.service';
 export type {

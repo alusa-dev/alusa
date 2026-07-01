@@ -55,6 +55,16 @@ vi.mock('@alusa/finance', () => ({
   }),
   isAsaasEnabled: vi.fn(() => true),
   readPaymentFullPreflight: vi.fn(async () => ({ id: 'pay_1', status: 'RECEIVED', value: 120 })),
+  normalizeAsaasPaymentSnapshotStatus: vi.fn((input: { status?: string | null; deleted?: boolean | null; billingType?: string | null }) => {
+    if (input.deleted === true) return 'DELETED';
+    if (
+      input.billingType === 'RECEIVED_IN_CASH' &&
+      ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(String(input.status ?? '').toUpperCase())
+    ) {
+      return 'RECEIVED_IN_CASH';
+    }
+    return input.status ?? null;
+  }),
   expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_REFUNDED']),
   registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
   markPaymentCommandSent: vi.fn(async () => undefined),

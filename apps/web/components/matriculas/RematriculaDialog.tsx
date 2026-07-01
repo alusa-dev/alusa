@@ -20,7 +20,9 @@ import type {
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import {
   createRematriculaRequest,
+  editRematriculaFutureLinkRequest,
   type CreateRematriculaInput,
+  type RematriculaProcessSummary,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
 import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import { toast } from '@/components/ui/toast';
@@ -62,9 +64,12 @@ interface RematriculaDialogProps {
   contaId?: string;
   campaignId?: string | null;
   targetPeriodId?: string;
+  mode?: 'CREATE' | 'EDIT_FUTURE';
   item: RematriculaElegivelItem | null;
+  process?: RematriculaProcessSummary | null;
   onOpenChange: (_open: boolean) => void;
   onCreated?: () => void;
+  onEdited?: () => void;
 }
 
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' });
@@ -98,6 +103,31 @@ function formatDateInput(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function numberFromSnapshot(snapshot: Record<string, unknown>, key: string): number | null {
+  const value = snapshot[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value.replace(',', '.'));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function stringFromSnapshot(snapshot: Record<string, unknown>, key: string): string | null {
+  const value = snapshot[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function booleanFromSnapshot(snapshot: Record<string, unknown>, key: string): boolean | null {
+  const value = snapshot[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function normalizePaymentMethodForApi(value: string): 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null {
+  if (value === 'BOLETO' || value === 'PIX' || value === 'CARTAO_CREDITO') return value;
+  return null;
 }
 
 function getFirstValidStartDate(contractEndDate: string | Date): Date {
@@ -147,9 +177,12 @@ export function RematriculaDialog({
   contaId,
   campaignId,
   targetPeriodId,
+  mode = 'CREATE',
   item,
+  process,
   onOpenChange,
   onCreated,
+  onEdited,
 }: RematriculaDialogProps) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -220,38 +253,103 @@ export function RematriculaDialog({
     if (!item) return;
 
     const firstValidStartDate = getFirstValidStartDate(item.dataFimContrato);
-    setDataInicio(formatDateInput(firstValidStartDate));
-    setDataFimContrato(formatDateInput(parseDateOnly(item.dataFimContrato)));
-    setContratoModeloId(null);
+    const futureItem = process?.itens.find((processItem) => processItem.decision === 'RENEW') ?? process?.itens[0];
+    const futureEnrollment = futureItem?.matriculaFutura;
+    const futureContract = process?.contratos[0];
+    const futureFinancial = process?.financeiros[0];
+    const financialSnapshot = futureFinancial?.snapshot ?? {};
 
-    setPlanoId(item.plano?.id ?? null);
-    setTurmaId(item.turma?.id ?? null);
+    setDataInicio(
+      mode === 'EDIT_FUTURE' && (futureEnrollment?.dataInicio || process?.effectiveAt)
+        ? formatDateInput(parseDateOnly(futureEnrollment?.dataInicio ?? process!.effectiveAt))
+        : formatDateInput(firstValidStartDate),
+    );
+    setDataFimContrato(
+      mode === 'EDIT_FUTURE' && (futureEnrollment?.dataFimContrato || futureContract?.validUntil)
+        ? formatDateInput(parseDateOnly(futureEnrollment?.dataFimContrato ?? futureContract!.validUntil!))
+        : formatDateInput(parseDateOnly(item.dataFimContrato)),
+    );
+    setContratoModeloId(mode === 'EDIT_FUTURE' ? futureContract?.contractModelId ?? null : null);
+
+    setPlanoId(
+      mode === 'EDIT_FUTURE'
+        ? futureEnrollment?.planoId ?? futureItem?.targetPlanId ?? item.plano?.id ?? null
+        : item.plano?.id ?? null,
+    );
+    setTurmaId(
+      mode === 'EDIT_FUTURE'
+        ? futureEnrollment?.turmaId ?? futureItem?.targetClassId ?? item.turma?.id ?? null
+        : item.turma?.id ?? null,
+    );
 
     const financeiro = item.financeiro;
-    setVencimentoDia(financeiro?.vencimentoDia ?? '');
-    setFormaPagamento(financeiro?.formaPagamento ?? HERDAR_FORMA_VALUE);
-    setFormaPagamentoTaxa(financeiro?.formaPagamentoTaxa ?? HERDAR_FORMA_VALUE);
-    setTaxaMatricula(financeiro?.taxaMatricula != null ? String(financeiro.taxaMatricula) : '');
-    setTaxaIsenta(Boolean(financeiro?.taxaIsenta));
-    setTaxaJustificativa(financeiro?.taxaJustificativa ?? '');
+    const snapshotDueDay = numberFromSnapshot(financialSnapshot, 'dueDay');
+    const snapshotEnrollmentFeeAmount =
+      numberFromSnapshot(financialSnapshot, 'enrollmentFeeAmount') ??
+      numberFromSnapshot(financialSnapshot, 'enrollmentFeeTotal');
+    const snapshotEnrollmentFeeExempt = booleanFromSnapshot(financialSnapshot, 'enrollmentFeeExempt');
+    setVencimentoDia(
+      mode === 'EDIT_FUTURE' && snapshotDueDay != null
+        ? snapshotDueDay
+        : financeiro?.vencimentoDia ?? '',
+    );
+    setFormaPagamento(
+      mode === 'EDIT_FUTURE' && stringFromSnapshot(financialSnapshot, 'paymentMethod')
+        ? stringFromSnapshot(financialSnapshot, 'paymentMethod')!
+        : financeiro?.formaPagamento ?? HERDAR_FORMA_VALUE,
+    );
+    setFormaPagamentoTaxa(
+      mode === 'EDIT_FUTURE' && stringFromSnapshot(financialSnapshot, 'enrollmentFeePaymentMethod')
+        ? stringFromSnapshot(financialSnapshot, 'enrollmentFeePaymentMethod')!
+        : financeiro?.formaPagamentoTaxa ?? HERDAR_FORMA_VALUE,
+    );
+    setTaxaMatricula(
+      mode === 'EDIT_FUTURE' && snapshotEnrollmentFeeAmount != null
+        ? String(snapshotEnrollmentFeeAmount)
+        : financeiro?.taxaMatricula != null
+          ? String(financeiro.taxaMatricula)
+          : '',
+    );
+    setTaxaIsenta(
+      mode === 'EDIT_FUTURE'
+        ? Boolean(snapshotEnrollmentFeeExempt ?? (futureFinancial?.enrollmentFeeTotal ?? financeiro?.taxaMatricula ?? 0) <= 0)
+        : Boolean(financeiro?.taxaIsenta),
+    );
+    setTaxaJustificativa(
+      mode === 'EDIT_FUTURE' && stringFromSnapshot(financialSnapshot, 'enrollmentFeeJustification')
+        ? stringFromSnapshot(financialSnapshot, 'enrollmentFeeJustification')!
+        : financeiro?.taxaJustificativa ?? '',
+    );
     setMultaPercentual(
-      financeiro?.multaPercentual != null ? String(financeiro.multaPercentual) : '',
+      mode === 'EDIT_FUTURE' && numberFromSnapshot(financialSnapshot, 'lateFeePercent') != null
+        ? String(numberFromSnapshot(financialSnapshot, 'lateFeePercent'))
+        : financeiro?.multaPercentual != null ? String(financeiro.multaPercentual) : '',
     );
-    setJurosMensal(financeiro?.jurosMensal != null ? String(financeiro.jurosMensal) : '');
+    setJurosMensal(
+      mode === 'EDIT_FUTURE' && numberFromSnapshot(financialSnapshot, 'interestMonthlyPercent') != null
+        ? String(numberFromSnapshot(financialSnapshot, 'interestMonthlyPercent'))
+        : financeiro?.jurosMensal != null ? String(financeiro.jurosMensal) : '',
+    );
     setDescontoAntecipado(
-      financeiro?.descontoAntecipado != null ? String(financeiro.descontoAntecipado) : '',
+      mode === 'EDIT_FUTURE' && numberFromSnapshot(financialSnapshot, 'earlyDiscountPercent') != null
+        ? String(numberFromSnapshot(financialSnapshot, 'earlyDiscountPercent'))
+        : financeiro?.descontoAntecipado != null ? String(financeiro.descontoAntecipado) : '',
     );
-    setPrazoDesconto(financeiro?.prazoDesconto != null ? String(financeiro.prazoDesconto) : '');
+    setPrazoDesconto(
+      mode === 'EDIT_FUTURE' && numberFromSnapshot(financialSnapshot, 'earlyDiscountDays') != null
+        ? String(numberFromSnapshot(financialSnapshot, 'earlyDiscountDays'))
+        : financeiro?.prazoDesconto != null ? String(financeiro.prazoDesconto) : '',
+    );
     setDiasTolerancia(financeiro?.diasTolerancia != null ? String(financeiro.diasTolerancia) : '');
     setOverrideReason('');
-  }, [item]);
+  }, [item, mode, process]);
 
   useEffect(() => {
     if (!item) return;
-    if (planoId && planoId !== item.plano?.id) {
+    if (mode === 'CREATE' && planoId && planoId !== item.plano?.id) {
       setTurmaId(null);
     }
-  }, [planoId, item]);
+  }, [planoId, item, mode]);
 
   const validacaoDatas = useMemo(() => {
     if (!item || !dataInicio) return { valido: true, erro: null };
@@ -292,13 +390,13 @@ export function RematriculaDialog({
   const disabled =
     !contaId ||
     !item ||
-    !item.podeRenovar ||
+    (mode === 'CREATE' && !item.podeRenovar) ||
     blockedByPolicy ||
     submitting ||
     !validacaoDatas.valido ||
     !planoId ||
     !dataFimContrato ||
-    !contratoModeloId ||
+    (mode === 'CREATE' && !contratoModeloId) ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim());
 
   const descontosHerdados = useMemo(() => item?.financeiro.descontos ?? [], [item]);
@@ -322,6 +420,69 @@ export function RematriculaDialog({
     event.preventDefault();
     if (!contaId || !item || !planoId) return;
 
+    if (mode === 'EDIT_FUTURE') {
+      if (!process) return;
+      const editReason =
+        overrideReason.trim().length >= 5
+          ? overrideReason.trim()
+          : 'Ajuste administrativo do próximo ciclo pela tela de rematrículas.';
+      try {
+        setSubmitting(true);
+        await editRematriculaFutureLinkRequest(process.id, {
+          targetClassId: turmaId || null,
+          targetPlanId: planoId,
+          holderType: process.holderType,
+          holderId: process.holderId,
+          effectiveAt: dataInicio ? new Date(dataInicio).toISOString() : null,
+          firstDueDate:
+            vencimentoDia && typeof vencimentoDia === 'number' && dataInicio
+              ? new Date(new Date(dataInicio).getFullYear(), new Date(dataInicio).getMonth(), vencimentoDia).toISOString()
+              : process.firstDueDate,
+          targetContractEndsAt: dataFimContrato ? new Date(dataFimContrato).toISOString() : null,
+          contractModelId: contratoModeloId,
+          paymentMethod: normalizePaymentMethodForApi(formaPagamento),
+          enrollmentFeePaymentMethod:
+            normalizePaymentMethodForApi(formaPagamentoTaxa),
+          dueDay: vencimentoDia && typeof vencimentoDia === 'number' ? vencimentoDia : null,
+          enrollmentFeeAmount: taxaIsenta ? 0 : parseDecimal(taxaMatricula) ?? null,
+          enrollmentFeeExempt: taxaIsenta,
+          enrollmentFeeJustification: taxaJustificativa.trim() || null,
+          feeChargeMoment: taxaIsenta ? 'EXEMPT' : 'CHARGE_ON_START',
+          feeUnit: taxaIsenta ? 'NO_FEE' : 'PER_STUDENT',
+          feePurpose: 'ADMINISTRATIVE_FEE',
+          lateFeePercent: parseDecimal(multaPercentual) ?? null,
+          interestMonthlyPercent: parseDecimal(jurosMensal) ?? null,
+          earlyDiscountPercent: parseDecimal(descontoAntecipado) ?? null,
+          earlyDiscountDays: parseIntegerString(prazoDesconto) ?? null,
+          reason: editReason,
+        });
+        toast.custom((t) => (
+          <CustomToast
+            variant="success"
+            title="Próximo ciclo atualizado"
+            description="As predefinições futuras foram atualizadas. A matrícula atual permanece preservada."
+            onClose={() => toast.dismiss(t)}
+          />
+        ));
+        onEdited?.();
+        onOpenChange(false);
+      } catch (error) {
+        toast.custom((t) => (
+          <CustomToast
+            variant="error"
+            title="Erro ao editar próximo ciclo"
+            description={sanitizeMessage(
+              (error as Error).message || 'Não foi possível editar o próximo ciclo.',
+            )}
+            onClose={() => toast.dismiss(t)}
+          />
+        ));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     const payload: CreateRematriculaInput = {
       contaId,
       campaignId,
@@ -333,6 +494,7 @@ export function RematriculaDialog({
         : new Date(item.dataFimContrato).toISOString(),
       planoId: planoId !== item.plano?.id ? planoId : undefined,
       turmaId: turmaId || undefined,
+      contractModelId: contratoModeloId,
       billingMode: 'INDIVIDUAL',
     };
 
@@ -437,10 +599,12 @@ export function RematriculaDialog({
             <div className="relative border-b border-slate-200 bg-slate-50 px-4 py-4 max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-8 md:py-6">
               <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
               <DialogTitle className="pr-2 text-xl font-semibold text-slate-900 md:pr-0">
-                Preparar próximo ciclo
+                {mode === 'EDIT_FUTURE' ? 'Editar próximo ciclo' : 'Preparar próximo ciclo'}
               </DialogTitle>
               <DialogDescription className="mt-2 text-sm text-slate-600">
-                Configure o vínculo futuro, a reserva e as condições financeiras agendadas.
+                {mode === 'EDIT_FUTURE'
+                  ? 'Revise os dados já preparados para o próximo ciclo. A matrícula e as cobranças do ciclo atual serão preservadas.'
+                  : 'Configure o vínculo futuro, a reserva e as condições financeiras agendadas.'}
               </DialogDescription>
             </div>
 
@@ -484,7 +648,27 @@ export function RematriculaDialog({
                 </div>
               </div>
 
-              {item.financeiro.rematriculaActionStatus === 'LIBERADA_COM_AVISO' ||
+              {mode === 'EDIT_FUTURE' ? (
+                <div className={sectionClass}>
+                  <span className="text-sm font-semibold text-slate-700">Edição</span>
+                  <InfoCallout variant="info" size="md" showIcon={false}>
+                    <p className="font-medium">Editando próximo ciclo</p>
+                    <p className="mt-1 text-xs opacity-90">
+                      Esta alteração atualiza somente artefatos futuros ainda reversíveis. Processos já efetivados ou cancelados permanecem bloqueados.
+                    </p>
+                  </InfoCallout>
+                  <div className="space-y-1">
+                    <label className={labelClass}>Justificativa da alteração</label>
+                    <textarea
+                      value={overrideReason}
+                      onChange={(event) => setOverrideReason(event.target.value)}
+                      rows={3}
+                      placeholder="Explique por que o próximo ciclo está sendo alterado."
+                      className={textAreaClass}
+                    />
+                  </div>
+                </div>
+              ) : item.financeiro.rematriculaActionStatus === 'LIBERADA_COM_AVISO' ||
               needsOverride ||
               blockedByPolicy ? (
                 <div className={sectionClass}>
@@ -492,7 +676,7 @@ export function RematriculaDialog({
                   <InfoCallout variant="warning" size="md" showIcon={false}>
                     <p className="font-medium">
                       {blockedByPolicy
-                        ? 'A política da escola bloqueia esta rematrícula.'
+                        ? 'Esta rematrícula possui bloqueio operacional.'
                         : needsOverride
                           ? 'Esta rematrícula exige autorização da gestão.'
                           : 'A rematrícula está liberada com aviso financeiro.'}
@@ -926,7 +1110,7 @@ export function RematriculaDialog({
                 disabled={disabled}
                 className="h-11 min-h-11 w-full min-w-0 bg-brand-accent text-white shadow-none hover:bg-brand-accent/90 md:h-10 md:min-h-0 md:w-auto md:min-w-[160px]"
               >
-                {submitting ? 'Salvando...' : 'Salvar'}
+                {submitting ? 'Salvando...' : mode === 'EDIT_FUTURE' ? 'Salvar alterações' : 'Salvar'}
               </Button>
             </div>
           </form>

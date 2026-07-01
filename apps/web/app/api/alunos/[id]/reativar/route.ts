@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-options';
 import { reativarAlunoCompleto } from '@alusa/lib';
 import { z } from 'zod';
+import {
+  assertStudentCapacity,
+  isPlatformBillingCapacityError,
+} from '@/src/server/platform-billing/capacity';
 
 const reativarSchema = z.object({
   reativarMatriculas: z.boolean().optional().default(false),
@@ -42,6 +46,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       reativarMatriculas: parsed.reativarMatriculas,
       matriculasIds: parsed.matriculasIds,
       actorId: session.user.id,
+      beforeReactivate: async (tx, { id, contaId }) => {
+        const activeEnrollment = await tx.matricula.findFirst({
+          where: {
+            contaId,
+            alunoId: id,
+            status: 'ATIVA',
+          },
+          select: { id: true },
+        });
+
+        await assertStudentCapacity({
+          tx,
+          contaId,
+          additionalActiveStudents: activeEnrollment ? 1 : 0,
+          operation: 'aluno.reactivate',
+        });
+      },
     });
 
     return NextResponse.json(result);
@@ -52,6 +73,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json(
         { error: 'Dados inválidos', details: error.errors },
         { status: 400 },
+      );
+    }
+
+    if (isPlatformBillingCapacityError(error)) {
+      return NextResponse.json(
+        {
+          error: error.code,
+          message: error.message,
+          details: error.details,
+        },
+        { status: 422 },
       );
     }
 

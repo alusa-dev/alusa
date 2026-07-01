@@ -153,8 +153,11 @@ export async function acquireGuardLock(params: {
 }
 
 /**
- * Lock de sessão (pg_advisory_lock) para serializar processamento de entidade
- * fora de uma transação longa — útil em handlers de webhook com múltiplas escritas.
+ * Serializa processamento de entidade usando advisory lock transacional.
+ *
+ * Importante: não usar pg_advisory_lock de sessão aqui. Com pooling do Prisma,
+ * lock e unlock podem cair em conexões diferentes, deixando locks presos e até
+ * gerando deadlocks entre webhooks concorrentes.
  */
 export async function withSessionAdvisoryLock<T>(params: {
   contaId: string;
@@ -169,16 +172,14 @@ export async function withSessionAdvisoryLock<T>(params: {
   });
   const lockKey = advisoryLockKey(compoundKey);
 
-  await prisma.$queryRaw`SELECT pg_advisory_lock(${lockKey})::text`;
-  try {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SET LOCAL lock_timeout = '5000ms'`;
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})::text`;
     return await params.fn();
-  } finally {
-    try {
-      await prisma.$queryRaw`SELECT pg_advisory_unlock(${lockKey})::text`;
-    } catch {
-      // fail-safe: lock pode já ter sido liberado
-    }
-  }
+  }, {
+    maxWait: 5000,
+    timeout: 30000,
+  });
 }
 
 export async function withIdempotencyGuard<T>(params: {

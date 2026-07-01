@@ -1,4 +1,5 @@
 import { prisma } from '@alusa/database';
+import type { PaymentStatus as AsaasPaymentStatus } from '@alusa/asaas';
 import type { Cobranca, StatusCobranca } from '@prisma/client';
 
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
@@ -12,6 +13,7 @@ import { updateFinanceStatusFromPayment } from '../guards/finance-status-guard';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { getPayment, isAsaasEnabled } from './asaas-ops';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 
 type ReconciledCobranca = Pick<
   Cobranca,
@@ -114,10 +116,16 @@ export async function reconcileAcademicChargesWithAsaas(params: {
     try {
       recordAsaasReadIntent('RECONCILIATION');
       const payment = await getPayment(cobranca.asaasPaymentId, { contaId: params.contaId });
+      const effectiveAsaasStatus =
+        normalizeAsaasPaymentSnapshotStatus({
+          status: payment.status,
+          billingType: payment.billingType,
+          deleted: payment.deleted,
+        }) ?? payment.status;
       const dueDate = parseAsaasDate(payment.dueDate) ?? cobranca.vencimento;
       const statusDecision = computeNextCobrancaStatus({
         currentStatus: cobranca.status,
-        asaasPaymentStatus: payment.status,
+        asaasPaymentStatus: effectiveAsaasStatus as AsaasPaymentStatus,
         billingType: payment.billingType,
         dueDate,
       });
@@ -128,7 +136,7 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         parseAsaasDateTime(payment.confirmedDate) ??
         parseAsaasDateTime(payment.creditDate);
       const liquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
-        asaasStatus: payment.status,
+        asaasStatus: effectiveAsaasStatus,
         creditDate: payment.creditDate,
         billingType: payment.billingType,
       });
@@ -142,7 +150,7 @@ export async function reconcileAcademicChargesWithAsaas(params: {
       const data = {
         status: nextStatus,
         vencimento: dueDate,
-        asaasStatus: payment.status,
+        asaasStatus: effectiveAsaasStatus,
         asaasValue: payment.value,
         asaasNetValue: payment.netValue,
         asaasOriginalValue: payment.originalValue ?? null,
@@ -159,7 +167,7 @@ export async function reconcileAcademicChargesWithAsaas(params: {
 
       const localChanged =
         cobranca.status !== nextStatus ||
-        cobranca.asaasStatus !== payment.status ||
+        cobranca.asaasStatus !== effectiveAsaasStatus ||
         cobranca.vencimento.getTime() !== dueDate.getTime() ||
         cobranca.liquidacaoStatus !== liquidacaoStatus ||
         (cobranca.liquidadoEm?.getTime() ?? null) !== (liquidadoEm?.getTime() ?? null);
@@ -170,7 +178,7 @@ export async function reconcileAcademicChargesWithAsaas(params: {
         tipo: cobranca.tipo,
         status: nextStatus,
         asaasPaymentId: cobranca.asaasPaymentId,
-        asaasStatus: payment.status,
+        asaasStatus: effectiveAsaasStatus,
         vencimento: dueDate,
         dataPagamento: nextStatus === 'PAGO' && paymentDate ? paymentDate : cobranca.dataPagamento,
         pagoEm: nextStatus === 'PAGO' && paymentDate ? paymentDate : cobranca.pagoEm,
@@ -222,25 +230,33 @@ export async function reconcileAcademicChargesWithAsaas(params: {
       if (cobranca.charge) {
         const effectiveChargeStatus = computeNextChargeStatus({
           currentStatus: cobranca.charge.status,
-          internalStatus: mapAsaasStatusToInternal(payment.status),
+          internalStatus: mapAsaasStatusToInternal(effectiveAsaasStatus),
         });
-        if (
+        const canUpdateChargeStatus =
           cobranca.charge.status !== effectiveChargeStatus &&
           canApplyChargeStatusTransition({
             current: cobranca.charge.status,
             next: effectiveChargeStatus,
             eventName: 'ASAAS_RECONCILIATION',
-          })
-        ) {
-          await prisma.charge.update({
-            where: { id: cobranca.charge.id },
-            data: {
-              status: effectiveChargeStatus,
-              statusUpdatedAt: new Date(),
-              asaasPaymentId: cobranca.charge.asaasPaymentId ?? cobranca.asaasPaymentId,
-            },
           });
-        }
+
+        await prisma.charge.update({
+          where: { id: cobranca.charge.id },
+          data: {
+            ...(canUpdateChargeStatus ? { status: effectiveChargeStatus, statusUpdatedAt: new Date() } : {}),
+            asaasPaymentId: cobranca.charge.asaasPaymentId ?? cobranca.asaasPaymentId,
+            asaasStatus: effectiveAsaasStatus,
+            asaasValue: payment.value,
+            asaasNetValue: payment.netValue,
+            asaasOriginalValue: payment.originalValue ?? null,
+            asaasFeeValue: feeValue,
+            asaasCreditDate: parseAsaasDateTime(payment.creditDate),
+            asaasEstimatedCreditDate: parseAsaasDateTime(payment.estimatedCreditDate),
+            lastAsaasFetchAt: new Date(),
+            liquidacaoStatus,
+            liquidadoEm,
+          },
+        });
 
         await chargeReadModelService.projectChargeReadModelByChargeId(cobranca.charge.id);
       }

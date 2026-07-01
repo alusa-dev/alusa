@@ -9,6 +9,13 @@ import {
 import { buildSeatOccupancyWhereClause } from '@alusa/lib';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
+import {
+  compareEnrollmentRecency,
+  type EnrollmentChainRow,
+  isClosedEnrollmentStatus,
+  resolveEnrollmentRootId,
+} from './rematricula-chain';
+import { assertStudentCapacity } from '@/src/server/platform-billing/capacity';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
@@ -57,7 +64,22 @@ export type EditRenewalFutureLinkInput = {
   holderType?: RenewalHolderType | null;
   effectiveAt?: Date | null;
   firstDueDate?: Date | null;
+  targetContractEndsAt?: Date | null;
   contractModelId?: string | null;
+  paymentMethod?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null;
+  enrollmentFeePaymentMethod?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null;
+  dueDay?: number | null;
+  enrollmentFeeAmount?: number | null;
+  enrollmentFeeExempt?: boolean | null;
+  enrollmentFeeJustification?: string | null;
+  feeChargeMoment?: 'CHARGE_ON_CONFIRMATION' | 'CHARGE_ON_START' | 'EXEMPT' | null;
+  feeUnit?: 'NO_FEE' | 'PER_STUDENT' | 'PER_FAMILY' | null;
+  feePurpose?: 'ADMINISTRATIVE_FEE' | 'SEAT_RESERVATION' | 'ADVANCE_FIRST_TUITION' | null;
+  monthlyAmount?: number | null;
+  lateFeePercent?: number | null;
+  interestMonthlyPercent?: number | null;
+  earlyDiscountPercent?: number | null;
+  earlyDiscountDays?: number | null;
   reason: string;
 };
 
@@ -76,6 +98,10 @@ function addYears(date: Date, years: number) {
   const next = toDateOnly(date);
   next.setUTCFullYear(next.getUTCFullYear() + years);
   return next;
+}
+
+function isSameOrAfterDate(left: Date, right: Date) {
+  return toDateOnly(left).getTime() >= toDateOnly(right).getTime();
 }
 
 function parsePeriodStart(targetPeriodId: string) {
@@ -115,6 +141,27 @@ function hashDependencySnapshot(snapshot: Record<string, unknown>) {
 function mapDecisionToItemStatus(decision: RenewalItemInput['decision']) {
   if (decision === 'RENEW') return 'RENEWED';
   return decision;
+}
+
+async function loadEnrollmentChainRows(prisma: PrismaLike, contaId: string, sourceRows: LoadedSource[]) {
+  const alunoIds = Array.from(new Set(sourceRows.map((source) => source.alunoId)));
+  if (alunoIds.length === 0) return [];
+
+  return prisma.matricula.findMany({
+    where: {
+      contaId,
+      alunoId: { in: alunoIds },
+    },
+    select: {
+      id: true,
+      alunoId: true,
+      rematriculadaDeId: true,
+      status: true,
+      dataInicio: true,
+      dataFimContrato: true,
+      createdAt: true,
+    },
+  });
 }
 
 async function loadSourceRows(prisma: PrismaLike, contaId: string, items: RenewalItemInput[]) {
@@ -402,29 +449,89 @@ async function ensureCampaignParticipants(
 async function findDuplicateRenewalItems(
   prisma: PrismaLike,
   input: RenewalProcessInput,
+  sourceRows: LoadedSource[],
   excludeProcessId?: string | null,
 ) {
   const sourceIds = Array.from(new Set(input.items.map((item) => item.sourceEnrollmentId)));
   if (sourceIds.length === 0) return [];
 
+  const chainRows = await loadEnrollmentChainRows(prisma, input.contaId, sourceRows);
+  const chainById = new Map<string, EnrollmentChainRow>(chainRows.map((row) => [row.id, row]));
+  const chainIds = chainRows.length ? chainRows.map((row) => row.id) : sourceIds;
+
   const duplicates = await prisma.rematriculaItem.findMany({
     where: {
       contaId: input.contaId,
-      matriculaOrigemId: { in: sourceIds },
       targetPeriodId: input.targetPeriodId,
+      OR: [{ matriculaOrigemId: { in: chainIds } }, { matriculaFuturaId: { in: chainIds } }],
       processo: {
         status: { notIn: ['CANCELLED'] },
         ...(excludeProcessId ? { id: { not: excludeProcessId } } : {}),
       },
     },
-    select: { matriculaOrigemId: true, processoId: true },
+    select: { matriculaOrigemId: true, matriculaFuturaId: true, processoId: true },
   });
 
-  return duplicates.map((item) => ({
-    sourceEnrollmentId: item.matriculaOrigemId,
+  if (!chainRows.length) {
+    return duplicates.map((item) => ({
+      sourceEnrollmentId: item.matriculaOrigemId,
+      code: 'DUPLICATE_SOURCE_TARGET_PERIOD',
+      message: 'Já existe rematrícula ativa para este vínculo e período de destino.',
+    }));
+  }
+
+  const duplicateRootIds = new Set<string>();
+  for (const item of duplicates) {
+    const originRootId = resolveEnrollmentRootId(item.matriculaOrigemId, chainById);
+    if (chainById.has(originRootId)) duplicateRootIds.add(originRootId);
+
+    if (item.matriculaFuturaId) {
+      const futureRootId = resolveEnrollmentRootId(item.matriculaFuturaId, chainById);
+      if (chainById.has(futureRootId)) duplicateRootIds.add(futureRootId);
+    }
+  }
+
+  return sourceRows.filter((source) => duplicateRootIds.has(resolveEnrollmentRootId(source.id, chainById))).map((source) => ({
+    sourceEnrollmentId: source.id,
     code: 'DUPLICATE_SOURCE_TARGET_PERIOD',
     message: 'Já existe rematrícula ativa para este vínculo e período de destino.',
   }));
+}
+
+async function findOutdatedSourceEnrollments(
+  prisma: PrismaLike,
+  contaId: string,
+  sourceRows: LoadedSource[],
+) {
+  const chainRows = await loadEnrollmentChainRows(prisma, contaId, sourceRows);
+  if (chainRows.length === 0) return [];
+
+  const chainById = new Map<string, EnrollmentChainRow>(chainRows.map((row) => [row.id, row]));
+  const latestByRootId = new Map<string, EnrollmentChainRow>();
+
+  for (const row of chainRows) {
+    if (isClosedEnrollmentStatus(row.status)) continue;
+
+    const rootId = resolveEnrollmentRootId(row.id, chainById);
+    const current = latestByRootId.get(rootId);
+    if (!current || compareEnrollmentRecency(row, current) > 0) {
+      latestByRootId.set(rootId, row);
+    }
+  }
+
+  return sourceRows.flatMap((source) => {
+    const rootId = resolveEnrollmentRootId(source.id, chainById);
+    const latest = latestByRootId.get(rootId);
+    if (!latest || latest.id === source.id) return [];
+
+    return [
+      {
+        sourceEnrollmentId: source.id,
+        code: 'OUTDATED_SOURCE_ENROLLMENT',
+        message: 'Esta matrícula já possui uma rematrícula posterior. Use o vínculo mais recente como origem.',
+      },
+    ];
+  });
 }
 
 async function validateRenewalCapacity(
@@ -551,7 +658,8 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
   const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
   const targets = await resolveTargets(deps.prisma, input.contaId, input.items);
   const campaign = await loadCampaignSnapshot(deps.prisma, input);
-  const duplicateBlockers = await findDuplicateRenewalItems(deps.prisma, input);
+  const duplicateBlockers = await findDuplicateRenewalItems(deps.prisma, input, sourceRows);
+  const outdatedSourceBlockers = await findOutdatedSourceEnrollments(deps.prisma, input.contaId, sourceRows);
   const externalBlockers: Array<{ sourceEnrollmentId: string; code: string; message: string }> = [];
 
   const dependencySnapshot = {
@@ -663,6 +771,7 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
       ...preview.blockers,
       ...externalBlockers,
       ...campaign.blockers,
+      ...outdatedSourceBlockers,
       ...duplicateBlockers,
       ...capacityBlockers,
     ],
@@ -673,11 +782,12 @@ export async function confirmRenewalProcess(
   input: ConfirmRenewalProcessInput,
   deps: { prisma: PrismaClient },
 ) {
+  let idempotencyKey = input.idempotencyKey;
   const existing = await deps.prisma.rematriculaProcesso.findFirst({
-    where: { contaId: input.contaId, idempotencyKey: input.idempotencyKey },
+    where: { contaId: input.contaId, idempotencyKey },
     include: { itens: true },
   });
-  if (existing) {
+  if (existing && existing.status !== 'CANCELLED') {
     return {
       processId: existing.id,
       status: existing.status,
@@ -687,6 +797,9 @@ export async function confirmRenewalProcess(
       nonRenewalCount: existing.nonRenewalCount,
       idempotent: true,
     };
+  }
+  if (existing?.status === 'CANCELLED') {
+    idempotencyKey = `${input.idempotencyKey}:after-cancel:${Date.now()}`;
   }
 
   return deps.prisma.$transaction(async (tx) => {
@@ -710,7 +823,7 @@ export async function confirmRenewalProcess(
           ? 'WAITING_FOR_START'
           : 'CONFIRMED'
         : 'COMPLETED';
-    const externalReference = externalReferenceForProcess(input.contaId, input.idempotencyKey);
+    const externalReference = externalReferenceForProcess(input.contaId, idempotencyKey);
 
     const includedOnDemandIds = await ensureCampaignParticipants(tx, input, sourceRows);
 
@@ -732,7 +845,7 @@ export async function confirmRenewalProcess(
         effectiveAt,
         firstDueDate,
         confirmedAt: new Date(),
-        idempotencyKey: input.idempotencyKey,
+        idempotencyKey,
         externalReference,
         renewCount: preview.renewCount,
         pendingCount: preview.pendingCount,
@@ -963,6 +1076,10 @@ export async function cancelRenewalProcess(
         data: { status: 'CANCELADA', statusFinanceiro: 'SUSPENSO', billingProvisionStatus: 'CANCELADO' },
       });
     }
+    await tx.rematriculaItem.updateMany({
+      where: { contaId: input.contaId, processoId: processo.id },
+      data: { status: 'CANCELLED', futureEnrollmentStatus: 'CANCELLED' },
+    });
 
     await tx.reservaVagaFutura.updateMany({
       where: { contaId: input.contaId, processoId: processo.id },
@@ -1111,6 +1228,17 @@ export async function activateDueRenewalProcesses(
         return { processId: full.id, status: 'REQUIRES_ATTENTION' as const };
       }
 
+      const additionalActiveStudents = await countAdditionalActiveStudentsForFutureEnrollments(tx, {
+        contaId: input.contaId,
+        futureIds,
+      });
+      await assertStudentCapacity({
+        tx,
+        contaId: input.contaId,
+        additionalActiveStudents,
+        operation: 'renewal.future-cycle.activate',
+      });
+
       await tx.matricula.updateMany({
         where: { contaId: input.contaId, id: { in: sourceIds } },
         data: { status: 'CANCELADA', statusContrato: 'EXPIRADO' },
@@ -1162,7 +1290,30 @@ export async function editRenewalFutureLink(
     const processo = await tx.rematriculaProcesso.findFirst({
       where: { id: input.processId, contaId: input.contaId },
       include: {
-        itens: true,
+        itens: {
+          include: {
+            matriculaFutura: {
+              select: {
+                id: true,
+                turmaId: true,
+                comboId: true,
+                planoId: true,
+                dataInicio: true,
+                dataFimContrato: true,
+                taxaMatricula: true,
+                taxaIsenta: true,
+                taxaJustificativa: true,
+                formaPagamento: true,
+                formaPagamentoTaxa: true,
+                vencimentoDia: true,
+                jurosMensal: true,
+                multaPercentual: true,
+                descontoAntecipado: true,
+                prazoDesconto: true,
+              },
+            },
+          },
+        },
         financeiros: true,
         contratos: true,
       },
@@ -1171,13 +1322,26 @@ export async function editRenewalFutureLink(
     if (['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(processo.status)) {
       throw new Error('REMATRICULA_NAO_EDITAVEL');
     }
+    if (isSameOrAfterDate(new Date(), processo.effectiveAt)) {
+      throw new Error('REMATRICULA_NAO_EDITAVEL_APOS_INICIO');
+    }
 
     const renewedItems = processo.itens.filter((item) => item.decision === 'RENEW');
     if (renewedItems.length === 0) throw new Error('SEM_ITENS_RENOVADOS');
 
-    const targetClassId = input.targetComboId ? null : input.targetClassId;
-    const targetComboId = input.targetComboId ?? null;
-    const targetPlanId = input.targetPlanId ?? renewedItems[0]?.targetPlanId ?? null;
+    const firstRenewedItem = renewedItems[0];
+    const firstFutureEnrollment = firstRenewedItem?.matriculaFutura;
+    const currentTargetComboId = firstFutureEnrollment?.comboId ?? firstRenewedItem?.targetComboId ?? null;
+    const currentTargetClassId = firstFutureEnrollment?.turmaId ?? firstRenewedItem?.targetClassId ?? null;
+    const currentTargetPlanId = firstFutureEnrollment?.planoId ?? firstRenewedItem?.targetPlanId ?? null;
+
+    const targetComboId = input.targetComboId !== undefined ? input.targetComboId : currentTargetComboId;
+    const targetClassId = targetComboId
+      ? null
+      : input.targetClassId !== undefined
+        ? input.targetClassId
+        : currentTargetClassId;
+    const targetPlanId = input.targetPlanId !== undefined ? input.targetPlanId : currentTargetPlanId;
 
     if (!targetComboId && !targetClassId) {
       throw new Error('DESTINO_OBRIGATORIO');
@@ -1246,6 +1410,8 @@ export async function editRenewalFutureLink(
         version: processo.version,
         effectiveAt: processo.effectiveAt.toISOString(),
         firstDueDate: processo.firstDueDate?.toISOString() ?? null,
+        monthlyTotal: Number(processo.monthlyTotal.toString()),
+        enrollmentFeeTotal: Number(processo.enrollmentFeeTotal.toString()),
         holderType: processo.holderType,
         holderId: processo.holderId,
       },
@@ -1256,29 +1422,111 @@ export async function editRenewalFutureLink(
         targetPlanId: item.targetPlanId,
         effectiveAt: item.effectiveAt?.toISOString() ?? null,
       })),
+      financeiros: processo.financeiros.map((financeiro) => ({
+        id: financeiro.id,
+        monthlyTotal: Number(financeiro.monthlyTotal.toString()),
+        enrollmentFeeTotal: Number(financeiro.enrollmentFeeTotal.toString()),
+        firstDueDate: financeiro.firstDueDate?.toISOString() ?? null,
+        effectiveAt: financeiro.effectiveAt.toISOString(),
+        feeChargeMoment: financeiro.feeChargeMoment,
+        feeUnit: financeiro.feeUnit,
+        feePurpose: financeiro.feePurpose,
+      })),
     };
 
-    const effectiveAt = input.effectiveAt ?? processo.effectiveAt;
-    const firstDueDate = input.firstDueDate ?? processo.firstDueDate;
-    const monthlyTotal = Number(
-      (targetCombo?.valor ?? targetPlan?.valor ?? processo.monthlyTotal ?? 0).toString(),
-    ) * renewedItems.length;
+    const firstFutureFinancial = processo.financeiros[0];
+    const firstFutureContract = processo.contratos[0];
+    const effectiveAt = input.effectiveAt ?? firstFutureEnrollment?.dataInicio ?? processo.effectiveAt;
+    const firstDueDate = input.firstDueDate ?? firstFutureFinancial?.firstDueDate ?? processo.firstDueDate;
+    const targetContractEndsAt =
+      input.targetContractEndsAt ??
+      firstFutureEnrollment?.dataFimContrato ??
+      firstFutureContract?.validUntil ??
+      addYears(effectiveAt, 1);
+    const unitMonthlyAmount =
+      input.monthlyAmount ??
+      Number((targetCombo?.valor ?? targetPlan?.valor ?? 0).toString());
+    const monthlyTotal = unitMonthlyAmount * renewedItems.length;
+    const enrollmentFeeAmount =
+      input.enrollmentFeeExempt === true
+        ? 0
+        : input.enrollmentFeeAmount ??
+          (firstFutureEnrollment?.taxaMatricula != null
+            ? toMoney(firstFutureEnrollment.taxaMatricula)
+            : undefined) ??
+          Number(processo.enrollmentFeeTotal.toString());
+    const currentFeeUnit = firstFutureFinancial?.feeUnit ?? 'PER_STUDENT';
+    const nextFeeUnit = input.feeUnit ?? currentFeeUnit;
+    const nextFeeChargeMoment =
+      input.feeChargeMoment ??
+      (firstFutureFinancial?.feeChargeMoment ?? (enrollmentFeeAmount > 0 ? 'CHARGE_ON_START' : 'EXEMPT'));
+    const enrollmentFeeTotal =
+      nextFeeUnit === 'PER_FAMILY'
+        ? enrollmentFeeAmount
+        : nextFeeUnit === 'NO_FEE' || nextFeeChargeMoment === 'EXEMPT'
+          ? 0
+          : enrollmentFeeAmount * renewedItems.length;
+    const enrollmentFeeExempt =
+      input.enrollmentFeeExempt ?? enrollmentFeeTotal <= 0;
+    const feeChargeMoment = enrollmentFeeExempt ? 'EXEMPT' : nextFeeChargeMoment;
+    const feeUnit = enrollmentFeeExempt ? 'NO_FEE' : nextFeeUnit;
+    const feePurpose = input.feePurpose ?? firstFutureFinancial?.feePurpose ?? 'ADMINISTRATIVE_FEE';
 
     const futureIds = renewedItems
       .map((item) => item.matriculaFuturaId)
       .filter((id): id is string => Boolean(id));
 
+    const futureEnrollmentUpdateData = {
+      turmaId: targetClassId,
+      comboId: targetComboId,
+      planoId: targetComboId ? null : targetPlanId,
+      dataInicio: effectiveAt,
+      dataFimContrato: targetContractEndsAt,
+      taxaMatricula: enrollmentFeeAmount,
+      taxaIsenta: enrollmentFeeExempt,
+      taxaStatus: enrollmentFeeExempt ? ('ISENTO' as const) : ('PENDENTE' as const),
+      taxaJustificativa:
+        input.enrollmentFeeJustification !== undefined
+          ? input.enrollmentFeeJustification
+          : firstFutureEnrollment?.taxaJustificativa,
+      formaPagamento:
+        input.paymentMethod !== undefined
+          ? input.paymentMethod
+          : firstFutureEnrollment?.formaPagamento ?? undefined,
+      formaPagamentoTaxa:
+        input.enrollmentFeePaymentMethod !== undefined
+          ? input.enrollmentFeePaymentMethod
+          : input.paymentMethod !== undefined
+            ? input.paymentMethod
+            : firstFutureEnrollment?.formaPagamentoTaxa ?? undefined,
+      vencimentoDia:
+        input.dueDay !== undefined
+          ? input.dueDay ?? undefined
+          : firstFutureEnrollment?.vencimentoDia ?? undefined,
+      jurosMensal:
+        input.interestMonthlyPercent !== undefined
+          ? input.interestMonthlyPercent
+          : firstFutureEnrollment?.jurosMensal,
+      multaPercentual:
+        input.lateFeePercent !== undefined
+          ? input.lateFeePercent
+          : firstFutureEnrollment?.multaPercentual,
+      descontoAntecipado:
+        input.earlyDiscountPercent !== undefined
+          ? input.earlyDiscountPercent
+          : firstFutureEnrollment?.descontoAntecipado,
+      prazoDesconto:
+        input.earlyDiscountDays !== undefined
+          ? input.earlyDiscountDays
+          : firstFutureEnrollment?.prazoDesconto,
+      ...(input.holderType === 'RESPONSIBLE' && input.holderId
+        ? { responsavelFinanceiroId: input.holderId }
+        : {}),
+    };
+
     await tx.matricula.updateMany({
       where: { contaId: input.contaId, id: { in: futureIds } },
-      data: {
-        turmaId: targetClassId,
-        comboId: targetComboId,
-        planoId: targetComboId ? null : targetPlanId,
-        dataInicio: effectiveAt,
-        ...(input.holderType === 'RESPONSIBLE' && input.holderId
-          ? { responsavelFinanceiroId: input.holderId }
-          : {}),
-      },
+      data: futureEnrollmentUpdateData,
     });
 
     await tx.rematriculaItem.updateMany({
@@ -1318,6 +1566,7 @@ export async function editRenewalFutureLink(
           contractModelId: input.contractModelId,
           status: input.contractModelId ? 'WAITING_SIGNATURE' : 'DRAFT',
           validFrom: effectiveAt,
+          validUntil: targetContractEndsAt,
           version: { increment: 1 },
         },
       });
@@ -1326,6 +1575,7 @@ export async function editRenewalFutureLink(
         where: { contaId: input.contaId, processoId: processo.id },
         data: {
           validFrom: effectiveAt,
+          validUntil: targetContractEndsAt,
           version: { increment: 1 },
         },
       });
@@ -1340,19 +1590,47 @@ export async function editRenewalFutureLink(
       data: {
         status: 'SCHEDULED',
         monthlyTotal,
+        enrollmentFeeTotal,
         firstDueDate,
         effectiveAt,
         provisionAt: new Date(effectiveAt.getTime() - 10 * 24 * 60 * 60 * 1000),
+        feeChargeMoment,
+        feeUnit,
+        feePurpose,
         failureCode: null,
         failureMessage: null,
         snapshot: {
           editedAt: new Date().toISOString(),
           editedById: input.actorId,
           monthlyTotal,
+          enrollmentFeeTotal,
           firstDueDate: firstDueDate?.toISOString() ?? null,
           targetClassId,
           targetComboId,
           targetPlanId,
+          targetContractEndsAt: targetContractEndsAt.toISOString(),
+          paymentMethod: futureEnrollmentUpdateData.formaPagamento ?? null,
+          enrollmentFeePaymentMethod: futureEnrollmentUpdateData.formaPagamentoTaxa ?? null,
+          dueDay: futureEnrollmentUpdateData.vencimentoDia ?? null,
+          enrollmentFeeAmount,
+          enrollmentFeeExempt,
+          enrollmentFeeJustification: futureEnrollmentUpdateData.taxaJustificativa ?? null,
+          lateFeePercent:
+            futureEnrollmentUpdateData.multaPercentual == null
+              ? null
+              : toMoney(futureEnrollmentUpdateData.multaPercentual),
+          interestMonthlyPercent:
+            futureEnrollmentUpdateData.jurosMensal == null
+              ? null
+              : toMoney(futureEnrollmentUpdateData.jurosMensal),
+          earlyDiscountPercent:
+            futureEnrollmentUpdateData.descontoAntecipado == null
+              ? null
+              : toMoney(futureEnrollmentUpdateData.descontoAntecipado),
+          earlyDiscountDays: futureEnrollmentUpdateData.prazoDesconto ?? null,
+          feeChargeMoment,
+          feeUnit,
+          feePurpose,
         } as Prisma.InputJsonValue,
       },
     });
@@ -1365,6 +1643,7 @@ export async function editRenewalFutureLink(
         effectiveAt,
         firstDueDate,
         monthlyTotal,
+        enrollmentFeeTotal,
         status: processo.status === 'REQUIRES_ATTENTION' ? 'CONFIRMED' : processo.status,
         version: { increment: 1 },
         updatedById: input.actorId,
@@ -1376,6 +1655,7 @@ export async function editRenewalFutureLink(
         effectiveAt: true,
         firstDueDate: true,
         monthlyTotal: true,
+        enrollmentFeeTotal: true,
       },
     });
 
@@ -1392,6 +1672,7 @@ export async function editRenewalFutureLink(
           effectiveAt: updated.effectiveAt.toISOString(),
           firstDueDate: updated.firstDueDate?.toISOString() ?? null,
           monthlyTotal: Number(updated.monthlyTotal.toString()),
+          enrollmentFeeTotal: Number(updated.enrollmentFeeTotal.toString()),
         } as Prisma.InputJsonValue,
       },
     });
@@ -1409,4 +1690,37 @@ export async function provisionFutureFinancialAgreements(
   deps: { prisma: PrismaClient },
 ) {
   return enqueueFutureFinancialProvisioning(input, deps);
+}
+
+async function countAdditionalActiveStudentsForFutureEnrollments(
+  tx: Prisma.TransactionClient,
+  input: { contaId: string; futureIds: string[] },
+): Promise<number> {
+  if (input.futureIds.length === 0) return 0;
+
+  const futures = await tx.matricula.findMany({
+    where: {
+      contaId: input.contaId,
+      id: { in: input.futureIds },
+      aluno: { status: 'ATIVO' },
+    },
+    distinct: ['alunoId'],
+    select: { alunoId: true },
+  });
+
+  let additional = 0;
+  for (const future of futures) {
+    const activeEnrollment = await tx.matricula.findFirst({
+      where: {
+        contaId: input.contaId,
+        alunoId: future.alunoId,
+        status: 'ATIVA',
+        id: { notIn: input.futureIds },
+      },
+      select: { id: true },
+    });
+    if (!activeEnrollment) additional += 1;
+  }
+
+  return additional;
 }

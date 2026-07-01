@@ -8,7 +8,7 @@ import {
 describe('resolveChargeDisplayStatus', () => {
   it('covers every official Asaas payment status used by Alusa display', () => {
     for (const status of ASAAS_PAYMENT_STATUS_VALUES) {
-      const result = resolveChargeDisplayStatus({ asaasStatus: status, localStatus: 'PAGO' });
+      const result = resolveChargeDisplayStatus({ asaasStatus: status });
       expect(result.source).toBe('asaas');
       expect(result.status).toBe(status);
       expect(result.label.length).toBeGreaterThan(0);
@@ -63,10 +63,10 @@ describe('resolveChargeDisplayStatus', () => {
     expect(resolveChargeDisplayStatus({ asaasStatus: 'CHARGEBACK_DISPUTE' }).label).toBe('Chargeback em disputa');
   });
 
-  it('maps DELETED to Removida', () => {
+  it('maps DELETED to Cancelada', () => {
     expect(resolveChargeDisplayStatus({ asaasStatus: 'DELETED' })).toMatchObject({
       status: 'DELETED',
-      label: 'Removida',
+      label: 'Cancelada',
       source: 'asaas',
       variant: 'neutral',
     });

@@ -20,13 +20,25 @@ vi.mock('@/lib/auth/session', () => ({
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
+    $transaction: vi.fn(async (callback: any) =>
+      callback({
+        cobranca: {
+          updateMany: vi.fn(),
+        },
+        charge: {
+          updateMany: vi.fn(),
+        },
+      }),
+    ),
     cobranca: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
     },
     charge: {
       findFirst: vi.fn(),
+      updateMany: vi.fn(),
     },
     logFinanceiro: {
       create: vi.fn(),
@@ -58,6 +70,16 @@ vi.mock('@alusa/finance', () => {
     buildStandaloneExternalReference: vi.fn(({ chargeId }: { chargeId: string }) => `alusa:standalone:${chargeId}`),
     isAsaasEnabled: vi.fn(() => true),
     readPaymentFullPreflight: vi.fn(async () => ({ id: 'pay_1', status: 'PENDING' })),
+    normalizeAsaasPaymentSnapshotStatus: vi.fn((input: { status?: string | null; deleted?: boolean | null; billingType?: string | null }) => {
+      if (input.deleted === true) return 'DELETED';
+      if (
+        input.billingType === 'RECEIVED_IN_CASH' &&
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH'].includes(String(input.status ?? '').toUpperCase())
+      ) {
+        return 'RECEIVED_IN_CASH';
+      }
+      return input.status ?? null;
+    }),
     expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_DELETED']),
     registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
     markPaymentCommandSent: vi.fn(async () => undefined),
@@ -192,6 +214,7 @@ describe('DELETE /api/cobrancas/[id]', () => {
     const json = await res.json();
     expect(json).toMatchObject({ success: true, pending: false });
     expect(deletePayment).toHaveBeenCalledWith('pay_overdue_1', { contaId: 'conta-1' });
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
 
   it('retorna 409 com código de domínio ao cancelar cobrança recebida em dinheiro no Asaas', async () => {

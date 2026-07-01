@@ -1,6 +1,7 @@
 import { prisma } from '@alusa/database';
 import type { InstallmentStatus, ChargeStatus, Prisma } from '@prisma/client';
 import { buildPaymentReferencePrefix } from '../core';
+import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BASIC LIST (existing)
@@ -140,6 +141,33 @@ function normalizeChargeStatus(status: ChargeStatus | string): string {
   }
 }
 
+function mapUnifiedStatusToCobranca(status: string): string {
+  switch (status) {
+    case 'PROCESSING':
+      return 'PROCESSANDO';
+    case 'PAID':
+      return 'PAGO';
+    case 'OVERDUE':
+      return 'ATRASADO';
+    case 'CANCELED':
+      return 'CANCELADO';
+    case 'REFUNDED':
+      return 'ESTORNADO';
+    case 'PENDING':
+    default:
+      return 'PENDENTE';
+  }
+}
+
+function resolveEffectiveChargeStatus(input: {
+  localStatus: string;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  hasAsaasLink?: boolean;
+}) {
+  return mapUnifiedStatusToCobranca(resolveUnifiedChargeStatus(input));
+}
+
 export interface ListInstallmentPlansFinanceInput {
   contaId: string;
   page?: number;
@@ -232,6 +260,8 @@ export async function listInstallmentPlansForFinance(
           dueDate: true,
           value: true,
           asaasPaymentId: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
         },
       });
 
@@ -243,6 +273,8 @@ export async function listInstallmentPlansForFinance(
         orderBy: { vencimento: 'asc' },
         select: {
           status: true,
+          asaasStatus: true,
+          liquidacaoStatus: true,
           vencimento: true,
           valor: true,
           asaasPaymentId: true,
@@ -257,7 +289,12 @@ export async function listInstallmentPlansForFinance(
       for (const cobranca of cobrancas) {
         if (!cobranca.asaasPaymentId) continue;
         mergedByPayment.set(cobranca.asaasPaymentId, {
-          status: cobranca.status,
+          status: resolveEffectiveChargeStatus({
+            localStatus: cobranca.status,
+            asaasStatus: cobranca.asaasStatus,
+            liquidacaoStatus: cobranca.liquidacaoStatus,
+            hasAsaasLink: true,
+          }),
           dueDate: cobranca.vencimento,
           value: cobranca.valor ? Number(cobranca.valor) : null,
         });
@@ -276,14 +313,24 @@ export async function listInstallmentPlansForFinance(
             });
           } else {
             mergedByPayment.set(charge.asaasPaymentId, {
-              status: normalizeChargeStatus(charge.status),
+              status: resolveEffectiveChargeStatus({
+                localStatus: charge.status,
+                asaasStatus: charge.asaasStatus,
+                liquidacaoStatus: charge.liquidacaoStatus,
+                hasAsaasLink: true,
+              }),
               dueDate: charge.dueDate,
               value: charge.value ? Number(charge.value) : null,
             });
           }
         } else {
           chargesSemPagamento.push({
-            status: normalizeChargeStatus(charge.status),
+            status: resolveEffectiveChargeStatus({
+              localStatus: charge.status,
+              asaasStatus: charge.asaasStatus,
+              liquidacaoStatus: charge.liquidacaoStatus,
+              hasAsaasLink: false,
+            }),
             dueDate: charge.dueDate,
             value: charge.value ? Number(charge.value) : null,
           });

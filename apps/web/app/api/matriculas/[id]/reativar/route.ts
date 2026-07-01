@@ -8,6 +8,7 @@ import {
   PausaBusinessError,
 } from '@/src/server/matriculas/matricula-pausa.service';
 import { notifyMatriculaAction } from '@alusa/lib';
+import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,6 +63,17 @@ export async function POST(
       return NextResponse.json(
         { error: error.code, message: error.message, details: error.details ?? null },
         { status: error.statusCode },
+      );
+    }
+
+    if (isPlatformBillingCapacityError(error)) {
+      return NextResponse.json(
+        {
+          error: error.code,
+          message: error.message,
+          details: error.details,
+        },
+        { status: 422 },
       );
     }
 

@@ -19,7 +19,11 @@ import {
   alertTokenRejected,
   alertQueueLagCritical,
 } from './webhook-observability.service';
-import { getWebhookQueueMetrics, evaluateRetentionAlert } from './webhook-reconciliation.service';
+import {
+  getWebhookQueueMetrics,
+  evaluateRetentionAlert,
+  markExhaustedWebhooks,
+} from './webhook-reconciliation.service';
 import {
   authenticateAsaasWebhookToken,
   hashWebhookPayload,
@@ -295,6 +299,7 @@ async function processAsaasWebhookForRecord(params: {
           clientPaymentDate: payload.payment.clientPaymentDate ?? null,
           creditDate: payload.payment.creditDate ?? null,
           estimatedCreditDate: payload.payment.estimatedCreditDate ?? null,
+          deleted: typeof payload.payment.deleted === 'boolean' ? payload.payment.deleted : null,
         },
       });
 
@@ -947,6 +952,7 @@ export async function processAsaasWebhookQueue(params?: {
   let processed = 0;
   let failed = 0;
   const skipped = 0;
+  const failedWebhookIds: string[] = [];
 
   for (const hook of hooks) {
     attempted += 1;
@@ -1001,11 +1007,31 @@ export async function processAsaasWebhookQueue(params?: {
       })
     );
 
-    if (result.ok) processed += 1;
-    else failed += 1;
+    if (result.ok) {
+      processed += 1;
+    } else {
+      failed += 1;
+      failedWebhookIds.push(hook.id);
+    }
 
     if (result.processedPayment) {
       processedPayments.push(result.processedPayment);
+    }
+  }
+
+  if (failed > 0) {
+    try {
+      await markExhaustedWebhooks({
+        contaId: params?.contaId,
+        ids: failedWebhookIds,
+        maxAttempts,
+        limit: Math.min(Math.max(failed, 1), 500),
+      });
+    } catch (dlqError) {
+      console.warn('[Asaas Webhook Queue] Falha ao materializar DLQ pós-processamento', redactWebhookLogObject({
+        workerId,
+        error: dlqError instanceof Error ? dlqError.message : String(dlqError),
+      }));
     }
   }
 
@@ -1124,6 +1150,12 @@ export async function handleAsaasWebhookEvent(params: HandleAsaasWebhookEventPar
 
     const maxAttempts = getMaxReprocessAttempts();
     if (existing && existing.tentativas >= maxAttempts) {
+      await markExhaustedWebhooks({
+        contaId,
+        ids: [existing.id],
+        maxAttempts,
+        limit: 1,
+      });
       return {
         success: true,
         status: 200,

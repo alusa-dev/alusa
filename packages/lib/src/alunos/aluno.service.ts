@@ -1145,6 +1145,10 @@ export interface ReativarAlunoCompletoInput {
   reativarMatriculas?: boolean;
   matriculasIds?: string[];
   actorId: string;
+  beforeReactivate?: (
+    tx: Prisma.TransactionClient,
+    input: { id: string; contaId: string },
+  ) => Promise<void>;
 }
 
 export async function inativarAluno({
@@ -1219,6 +1223,7 @@ export async function reativarAlunoCompleto({
   contaId,
   reativarMatriculas = false,
   matriculasIds,
+  beforeReactivate,
 }: ReativarAlunoCompletoInput) {
   return prisma.$transaction(async (tx) => {
     // 1. Verificar se aluno pertence à conta
@@ -1233,6 +1238,8 @@ export async function reativarAlunoCompleto({
     if (aluno.status === 'ATIVO') {
       throw new Error('Aluno já está ativo');
     }
+
+    await beforeReactivate?.(tx, { id, contaId });
 
     // 2. Reativar aluno
     const alunoAtualizado = await tx.aluno.update({

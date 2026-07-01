@@ -221,6 +221,14 @@ export function shouldFetchAcademicAsaasDetail(params: {
 
   const localStatus = String(params.cobranca.status ?? '');
   if (!TERMINAL_COBRANCA_STATUSES.has(localStatus)) {
+    const localAsaasData = buildAcademicAsaasData(params.cobranca);
+    const missingOfficialAccessLink = !localAsaasData?.invoiceUrl;
+    const missingBillingType = !localAsaasData?.billingType;
+
+    if (hasSnapshot && (missingOfficialAccessLink || missingBillingType)) {
+      return true;
+    }
+
     // Cobrança em aberto: GET read-only usa snapshot local; sync/webhook convergem depois.
     if (hasSnapshot) return false;
     return true;

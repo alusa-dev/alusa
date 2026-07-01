@@ -6,6 +6,7 @@ import {
   AsaasEnvError,
   KycNotApprovedError,
   isAsaasEnabled,
+  normalizeAsaasPaymentSnapshotStatus,
   readPaymentFullPreflight,
   updatePayment,
 } from '@alusa/finance';
@@ -23,6 +24,22 @@ const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
 const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
 const LOCAL_EDITABLE_COBRANCA_STATUSES = new Set(['PENDENTE', 'A_VENCER', 'ATRASADO']);
 const LOCAL_EDITABLE_CHARGE_STATUSES = new Set(['CREATED', 'OPEN', 'OVERDUE']);
+
+function getEffectiveAsaasStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}) {
+  return (
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ??
+    payment.status ??
+    'PENDING'
+  );
+}
 
 function mutationError(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json(
@@ -163,15 +180,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       let asaasData: Awaited<ReturnType<typeof updatePayment>>;
       try {
         const currentPayment = await readPaymentFullPreflight(standaloneCharge.asaasPaymentId, { contaId });
+        const effectivePaymentStatus = getEffectiveAsaasStatus(currentPayment);
 
-        if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
+        if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(effectivePaymentStatus)) {
           return mutationError(
-            ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status) ? 409 : 400,
-            ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status)
+            ASAAS_PAID_PAYMENT_STATUSES.has(effectivePaymentStatus) ? 409 : 400,
+            ASAAS_PAID_PAYMENT_STATUSES.has(effectivePaymentStatus)
               ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
               : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
-            `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
-            { asaasStatus: currentPayment.status },
+            `Não é possível editar cobrança com status ${effectivePaymentStatus} no Asaas`,
+            { asaasStatus: effectivePaymentStatus },
           );
         }
 
@@ -305,15 +323,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         );
       }
       const currentPayment = await readPaymentFullPreflight(academicCobranca.asaasPaymentId, { contaId });
+      const effectivePaymentStatus = getEffectiveAsaasStatus(currentPayment);
 
-      if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(currentPayment.status)) {
+      if (!ASAAS_EDITABLE_PAYMENT_STATUSES.has(effectivePaymentStatus)) {
         return mutationError(
-          ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status) ? 409 : 400,
-          ASAAS_PAID_PAYMENT_STATUSES.has(currentPayment.status)
+          ASAAS_PAID_PAYMENT_STATUSES.has(effectivePaymentStatus) ? 409 : 400,
+          ASAAS_PAID_PAYMENT_STATUSES.has(effectivePaymentStatus)
             ? 'EDIT_NOT_ALLOWED_FOR_PAID_CHARGE'
             : 'EDIT_NOT_ALLOWED_FOR_CHARGE_STATUS',
-          `Não é possível editar cobrança com status ${currentPayment.status} no Asaas`,
-          { asaasStatus: currentPayment.status },
+          `Não é possível editar cobrança com status ${effectivePaymentStatus} no Asaas`,
+          { asaasStatus: effectivePaymentStatus },
         );
       }
 

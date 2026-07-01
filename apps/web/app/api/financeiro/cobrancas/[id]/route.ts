@@ -25,7 +25,7 @@ function buildDeletedPaymentWebhookPayload(
     event: 'PAYMENT_DELETED',
     payment: {
       id: payment.id,
-      status: payment.status,
+      status: 'DELETED',
       value: Number(payment.value ?? 0),
       netValue: Number(payment.netValue ?? payment.value ?? 0),
       originalValue: payment.originalValue ?? null,
@@ -42,6 +42,49 @@ function buildDeletedPaymentWebhookPayload(
       deleted: payment.deleted ?? true,
     },
   } as const;
+}
+
+async function convergeLocalCanceledAcademicCharge(params: {
+  contaId: string;
+  cobrancaId: string;
+  asaasPaymentId?: string | null;
+  actorId: string;
+}) {
+  const now = new Date();
+  await prisma.$transaction(async (tx) => {
+    await tx.cobranca.updateMany({
+      where: {
+        id: params.cobrancaId,
+        contaId: params.contaId,
+        status: { notIn: ['CANCELADO', 'PAGO', 'ESTORNADO', 'ESTORNADO_PARCIAL'] },
+      },
+      data: {
+        status: 'CANCELADO',
+        asaasStatus: 'DELETED',
+        canceladoEm: now,
+        canceladoMotivo: 'Cancelada no Asaas',
+        canceladoPor: params.actorId,
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
+    });
+
+    await tx.charge.updateMany({
+      where: {
+        contaId: params.contaId,
+        OR: [
+          { cobrancaId: params.cobrancaId },
+          ...(params.asaasPaymentId ? [{ asaasPaymentId: params.asaasPaymentId }] : []),
+        ],
+        status: { notIn: ['CANCELED', 'PAID', 'REFUNDED'] },
+      },
+      data: {
+        status: 'CANCELED',
+        statusUpdatedAt: now,
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
+    });
+  });
 }
 
 /**
@@ -109,6 +152,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
           );
           localStateConverged = webhookResult.success;
         }
+        await convergeLocalCanceledAcademicCharge({
+          contaId: user.contaId,
+          cobrancaId: cobranca.id,
+          asaasPaymentId: cobranca.asaasPaymentId,
+          actorId: user.id,
+        });
+        localStateConverged = true;
       } catch (asaasError) {
         console.warn('[CANCEL Cobrança] Erro ao cancelar no Asaas:', asaasError);
         await syncPaymentStateFromAsaas({
@@ -121,15 +171,17 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       }
     }
 
-    await prisma.cobranca.update({
-      where: { id },
-      data: {
-        status: localStateConverged ? 'CANCELADO' : 'CANCELAMENTO_PENDENTE',
-        canceladoEm: new Date(),
-        canceladoMotivo: 'Cancelada via API financeiro',
-        canceladoPor: user.id,
-      },
-    });
+    if (!localStateConverged) {
+      await prisma.cobranca.update({
+        where: { id },
+        data: {
+          status: 'CANCELAMENTO_PENDENTE',
+          canceladoEm: new Date(),
+          canceladoMotivo: 'Cancelada via API financeiro',
+          canceladoPor: user.id,
+        },
+      });
+    }
 
     await prisma.logFinanceiro.create({
       data: {

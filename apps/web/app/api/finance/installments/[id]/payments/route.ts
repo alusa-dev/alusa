@@ -56,14 +56,26 @@ async function convergeAcademicInstallmentCancellation(params: {
         id: { in: linkedCharges.map((charge) => charge.id) },
         status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
       },
-      data: { status: 'CANCELED' },
+      data: {
+        status: 'CANCELED',
+        statusUpdatedAt: params.now,
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
     prisma.cobranca.updateMany({
       where: {
         id: { in: cobrancaIds },
         status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
       },
-      data: { status: 'CANCELADO' },
+      data: {
+        status: 'CANCELADO',
+        asaasStatus: 'DELETED',
+        canceladoEm: params.now,
+        canceladoMotivo: 'Parcelamento cancelado no Asaas',
+        canceladoPor: 'system',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
   ]);
 }
@@ -82,7 +94,12 @@ async function convergeStandaloneInstallmentCancellation(params: {
         standaloneInstallmentPlanId: params.planId,
         status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
       },
-      data: { status: 'CANCELED' },
+      data: {
+        status: 'CANCELED',
+        statusUpdatedAt: params.now,
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
   ]);
 }

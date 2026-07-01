@@ -308,7 +308,6 @@ export function isInvoicePaymentSensitiveEvent(event: string, providerStatus?: s
       normalizedEvent === 'PAYMENT_REFUNDED' ||
       normalizedEvent === 'PAYMENT_PARTIALLY_REFUNDED' ||
       normalizedEvent === 'PAYMENT_REFUND_IN_PROGRESS' ||
-      normalizedEvent === 'PAYMENT_RECEIVED_IN_CASH_UNDONE' ||
       (normalizedEvent != null && normalizedEvent.includes('CHARGEBACK')) ||
       (normalizedStatus != null &&
         (REFUNDED_PROVIDER_STATUSES.has(normalizedStatus) ||

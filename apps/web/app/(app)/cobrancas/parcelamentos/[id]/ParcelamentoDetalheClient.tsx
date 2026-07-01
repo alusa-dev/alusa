@@ -22,6 +22,7 @@ import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -66,6 +67,12 @@ type Parcela = {
   valor: number;
   vencimento: string;
   status: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   dataPagamento?: string | null;
   invoiceUrl?: string | null;
 };
@@ -318,7 +325,11 @@ export function ParcelamentoDetalheClient({ id }: { id: string }) {
 
                   {/* Status */}
                   <div className="col-span-2">
-                    <Badge status={cobrancaStatusMap[parcela.status] ?? 'PENDING'} size="sm" />
+                    {parcela.displayStatus ? (
+                      <ChargeDisplayStatusBadge displayStatus={parcela.displayStatus} size="sm" />
+                    ) : (
+                      <Badge status={cobrancaStatusMap[parcela.status] ?? 'PENDING'} size="sm" />
+                    )}
                   </div>
 
                   {/* Link para Detalhe da cobrança - ocultar para parcelas virtuais */}

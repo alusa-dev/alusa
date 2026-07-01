@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
-import { createCharge, getAsaasPaymentDetails, KycNotApprovedError, mapAsaasPaymentStatusToCobranca, syncPaymentStateFromAsaas } from '@alusa/finance';
+import {
+  createCharge,
+  getAsaasPaymentDetails,
+  KycNotApprovedError,
+  mapAsaasPaymentStatusToCobranca,
+  normalizeAsaasPaymentSnapshotStatus,
+  syncPaymentStateFromAsaas,
+} from '@alusa/finance';
 import { StatusCobranca } from '@prisma/client';
 import {
   matriculaReenviarCobrancaResultDTOSchema,
@@ -12,6 +19,18 @@ import { mapMatriculaReenviarCobrancaResultToDTO } from '@/features/cadastro/mat
 import { materializeSubscriptionPaymentForCharge } from '@/src/server/matriculas/subscription-payment-materialization';
 
 export const dynamic = 'force-dynamic';
+
+function getEffectivePaymentStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}) {
+  return normalizeAsaasPaymentSnapshotStatus({
+    status: payment.status,
+    billingType: payment.billingType,
+    deleted: payment.deleted,
+  }) ?? payment.status ?? null;
+}
 
 /**
  * POST /api/matriculas/[id]/reenviar-cobranca
@@ -204,7 +223,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
               success: true,
               message: 'Cobrança recorrente sincronizada com sucesso',
               asaasPaymentId: payment.id,
-              status: payment.status,
+              status: getEffectivePaymentStatus(payment),
               invoiceUrl: payment.invoiceUrl,
               bankSlipUrl: payment.bankSlipUrl,
               pixQrCodeUrl: pixQrCode?.encodedImage
@@ -268,7 +287,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
               success: true,
               message: 'Cobrança obtida do Asaas com sucesso',
               asaasPaymentId: payment.id,
-              status: payment.status,
+              status: getEffectivePaymentStatus(payment),
               invoiceUrl: payment.invoiceUrl,
               bankSlipUrl: payment.bankSlipUrl,
               pixQrCodeUrl: pixQrCode?.encodedImage

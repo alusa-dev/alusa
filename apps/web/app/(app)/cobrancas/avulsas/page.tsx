@@ -21,12 +21,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, ChevronLeft, ChevronRight } from '@/components/icons/icons';
 import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
-import { Badge, type BadgeVariant, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { CobrancaActionsMenu } from '@/components/financeiro/CobrancaActionsMenu';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { CreateChargeModal } from '@/components/financeiro/CreateChargeModal';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
+import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
 import { useVisibleChargeConvergence } from '@/features/financeiro/hooks/use-visible-charge-convergence';
 
@@ -47,33 +48,17 @@ const getTipoLabel = (tipo: string | undefined, origin: string | undefined) => {
   return labels[tipo ?? ''] || tipo || 'Avulsa';
 };
 
-function getChargeBadgePresentation(mapped: StatusType): { variant: BadgeVariant; label: string } {
-  if (['CONFIRMED', 'RECEIVED', 'PAGO', 'MANUAL', 'RECEIVED_IN_CASH', 'CONCLUIDO'].includes(mapped)) {
-    return { variant: 'success', label: 'Pago' };
-  }
-  if (mapped === 'FAILED') {
-    return { variant: 'destructive', label: 'Falha' };
-  }
-  if (['OVERDUE', 'ATRASADO'].includes(mapped)) {
-    return { variant: 'destructive', label: 'Atrasado' };
-  }
-  if (['CANCELED', 'CANCELADO', 'EXPIRADO', 'CANCELADA'].includes(mapped)) {
-    return { variant: 'neutral', label: 'Cancelado' };
-  }
-  if (['REFUNDED', 'ESTORNADO', 'REFUND_REQUESTED', 'ESTORNADO_PARCIAL'].includes(mapped)) {
-    return { variant: 'neutral', label: 'Estorno' };
-  }
-  if (mapped === 'PROCESSANDO') {
-    return { variant: 'info', label: 'Processando' };
-  }
-  return { variant: 'warning', label: 'Pendente' };
-}
-
 type Cobranca = {
   id: string;
   description?: string | null;
   tipo?: string;
   status?: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   liquidacaoStatus?: string;
   valor: number;
   vencimento?: string;
@@ -184,18 +169,6 @@ export default function CobrancasAvulsasPage() {
   useEffect(() => {
     setPage(1);
   }, [searchQuery, sortOrder, statusView]);
-
-  const statusMap: Record<string, StatusType> = {
-    PENDENTE: 'PENDENTE',
-    A_VENCER: 'A_VENCER',
-    PROCESSANDO: 'PROCESSANDO',
-    PAGO: 'PAGO',
-    ATRASADO: 'ATRASADO',
-    CANCELADO: 'CANCELADO',
-    CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
-    ESTORNADO: 'ESTORNADO',
-    ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
-  };
 
   const handlePrint = (cobranca: Cobranca) => {
     if (!cobranca?.id) return;
@@ -315,13 +288,16 @@ export default function CobrancasAvulsasPage() {
                 </div>
               ) : (
                 orderedCobrancas.slice((page - 1) * pageSize, page * pageSize).map((cobranca) => {
-                  const isOverdue = Boolean(cobranca.atrasado) || cobranca.status === 'ATRASADO';
-                  const baseStatus = cobranca.status ?? 'PENDENTE';
-                  const mapped =
-                    baseStatus === 'PAGO' && cobranca.liquidacaoStatus === 'DISPONIVEL'
-                      ? 'RECEIVED'
-                      : statusMap[baseStatus] ?? 'PENDING';
-                  const badge = getChargeBadgePresentation(mapped as StatusType);
+                  const displayStatus =
+                    cobranca.displayStatus ??
+                    buildChargeDisplayStatusDTO({
+                      localStatus: cobranca.status ?? 'PENDENTE',
+                      liquidacaoStatus: cobranca.liquidacaoStatus ?? null,
+                    });
+                  const isOverdue =
+                    Boolean(cobranca.atrasado) ||
+                    displayStatus.status === 'OVERDUE' ||
+                    displayStatus.status === 'ATRASADO';
 
                   const handleRowClick = () => router.push(`/cobrancas/${cobranca.id}`);
 
@@ -389,13 +365,11 @@ export default function CobrancasAvulsasPage() {
                               />
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
-                              <Badge
-                                variant={badge.variant}
+                              <ChargeDisplayStatusBadge
+                                displayStatus={displayStatus}
                                 size="sm"
                                 className="w-full max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
-                              >
-                                {badge.label}
-                              </Badge>
+                              />
                             </div>
                           </div>
                         </div>
@@ -419,9 +393,7 @@ export default function CobrancasAvulsasPage() {
                               </div>
                             </div>
                             <div className="col-span-2 flex justify-center">
-                              <Badge variant={badge.variant} size="sm">
-                                {badge.label}
-                              </Badge>
+                              <ChargeDisplayStatusBadge displayStatus={displayStatus} size="sm" />
                             </div>
                             <div
                               className="col-span-1 flex justify-center"

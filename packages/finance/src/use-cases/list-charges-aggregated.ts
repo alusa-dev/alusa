@@ -1,5 +1,10 @@
 import { prisma } from '@alusa/database';
 import type { ChargeListItemDTO, UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
+import {
+  ASAAS_NON_OPEN_UNIFIED_STATUSES,
+  ASAAS_PAID_UNIFIED_STATUSES,
+  resolveUnifiedChargeStatus,
+} from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 
@@ -51,48 +56,6 @@ export type ListChargesAggregatedOutput = {
   pageSize: number;
   totalPages: number;
 };
-
-// Mapeamento de StatusCobranca para UnifiedChargeStatus
-function mapCobrancaStatus(status: string): UnifiedChargeStatus {
-  switch (status) {
-    case 'A_VENCER':
-    case 'PENDENTE':
-      return 'PENDING';
-    case 'PROCESSANDO':
-      return 'PROCESSING';
-    case 'PAGO':
-      return 'PAID';
-    case 'ATRASADO':
-      return 'OVERDUE';
-    case 'CANCELAMENTO_PENDENTE':
-    case 'CANCELADO':
-      return 'CANCELED';
-    case 'ESTORNADO':
-    case 'ESTORNADO_PARCIAL':
-      return 'REFUNDED';
-    default:
-      return 'PENDING';
-  }
-}
-
-// Mapeamento de ChargeStatus para UnifiedChargeStatus
-function mapChargeStatus(status: string): UnifiedChargeStatus {
-  switch (status) {
-    case 'CREATED':
-    case 'OPEN':
-      return 'PENDING';
-    case 'PAID':
-      return 'PAID';
-    case 'OVERDUE':
-      return 'OVERDUE';
-    case 'CANCELED':
-      return 'CANCELED';
-    case 'REFUNDED':
-      return 'REFUNDED';
-    default:
-      return 'PENDING';
-  }
-}
 
 function mapEventFinancialEntryStatus(status: string): UnifiedChargeStatus {
   switch (status) {
@@ -146,6 +109,13 @@ function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'pa
   if (statusView === 'all') return true;
   if (statusView === 'paid') return status === 'PAID';
   return ['PENDING', 'PROCESSING', 'OVERDUE'].includes(status);
+}
+
+function addAndCondition(where: Record<string, unknown>, condition: Record<string, unknown>) {
+  where.AND = [
+    ...((Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []) as unknown[]),
+    condition,
+  ];
 }
 
 // Mapeamento de FormaPagamento para billing type
@@ -218,20 +188,28 @@ export async function listChargesAggregated(
   if (statusFilter?.length) {
     academicWhere.status = { in: statusFilter };
   } else if (statusView === 'open') {
-    academicWhere.OR = [
-      {
-        status: {
-          in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
+    addAndCondition(academicWhere, {
+      OR: [
+        {
+          status: {
+            in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'],
+          },
         },
-      },
-      {
-        status: 'PAGO',
-        NOT: { liquidacaoStatus: 'DISPONIVEL' },
-      },
-    ];
+      ],
+    });
+    addAndCondition(academicWhere, {
+      OR: [
+        { asaasStatus: null },
+        { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+      ],
+    });
   } else if (statusView === 'paid') {
-    academicWhere.status = 'PAGO';
-    academicWhere.liquidacaoStatus = 'DISPONIVEL';
+    addAndCondition(academicWhere, {
+      OR: [
+        { status: 'PAGO' },
+        { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
+      ],
+    });
   }
 
   if (tipoFilter?.length) {
@@ -243,13 +221,7 @@ export async function listChargesAggregated(
       { matricula: { aluno: { nome: { contains: search, mode: 'insensitive' } } } },
       { descricao: { contains: search, mode: 'insensitive' } },
     ];
-    if (academicWhere.OR) {
-      const existingOr = academicWhere.OR;
-      delete academicWhere.OR;
-      academicWhere.AND = [{ OR: existingOr }, { OR: searchOr }];
-    } else {
-      academicWhere.OR = searchOr;
-    }
+    addAndCondition(academicWhere, { OR: searchOr });
   }
 
   // ==================== Query 2: Cobranças Standalone ====================
@@ -279,8 +251,19 @@ export async function listChargesAggregated(
     }
   } else if (statusView === 'open') {
     standaloneWhere.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
+    addAndCondition(standaloneWhere, {
+      OR: [
+        { asaasStatus: null },
+        { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+      ],
+    });
   } else if (statusView === 'paid') {
-    standaloneWhere.status = 'PAID';
+    addAndCondition(standaloneWhere, {
+      OR: [
+        { status: 'PAID' },
+        { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
+      ],
+    });
   }
 
   // ==================== Executar queries em paralelo ====================
@@ -469,13 +452,11 @@ export async function listChargesAggregated(
 
   // Criar mapa de cobrancaId -> installmentPlanId
   const cobrancaToInstallmentPlan = new Map<string, string>();
-  const cobrancaToPaidStatus = new Map<string, string>();
   for (const charge of linkedCharges) {
     if (charge.cobrancaId) {
       const planId = extractInstallmentPlanId(charge.externalReference);
       if (planId) {
         cobrancaToInstallmentPlan.set(charge.cobrancaId, planId);
-        cobrancaToPaidStatus.set(charge.cobrancaId, charge.status);
       } else if (
         enableV2InstallmentGrouping &&
         charge.externalReference &&
@@ -500,7 +481,12 @@ export async function listChargesAggregated(
     value: Number(c.valor),
     dueDate: c.vencimento?.toISOString() ?? null,
     billingType: mapBillingType(c.formaPagamento),
-    status: mapCobrancaStatus(c.status),
+    status: resolveUnifiedChargeStatus({
+      localStatus: c.status,
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      hasAsaasLink: Boolean(c.asaasPaymentId),
+    }),
     asaasStatus: c.asaasStatus,
     liquidacaoStatus: c.liquidacaoStatus,
     displayStatus: resolveChargeDisplayStatus({
@@ -538,7 +524,12 @@ export async function listChargesAggregated(
       value: c.value != null ? Number(c.value) : 0,
       dueDate: c.dueDate?.toISOString() ?? null,
       billingType: c.billingType,
-      status: mapChargeStatus(c.status),
+      status: resolveUnifiedChargeStatus({
+        localStatus: c.status,
+        asaasStatus: c.asaasStatus,
+        liquidacaoStatus: c.liquidacaoStatus,
+        hasAsaasLink: Boolean(c.asaasPaymentId),
+      }),
       asaasStatus: c.asaasStatus,
       liquidacaoStatus: c.liquidacaoStatus,
       displayStatus: resolveChargeDisplayStatus({
@@ -936,6 +927,8 @@ export async function listChargesAggregated(
     // Sem agrupamento - retornar tudo individualmente
     processedItems = [...academicItems, ...standaloneItems, ...standaloneSubscriptionItems, ...eventItems];
   }
+
+  processedItems = processedItems.filter((item) => matchesStatusView(item.status, statusView));
 
   // Ordenar por data de criação (mais recente primeiro)
   processedItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());

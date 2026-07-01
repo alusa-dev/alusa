@@ -7,6 +7,7 @@ import {
   refundCobranca,
   isAsaasEnabled,
   readPaymentFullPreflight,
+  normalizeAsaasPaymentSnapshotStatus,
   auditLogService,
   syncPaymentStateFromAsaas,
   evaluatePaymentActionPolicy,
@@ -40,6 +41,22 @@ function resolveAcademicPaymentOrigin(tipo?: string | null) {
     default:
       return 'ACADEMIC';
   }
+}
+
+function getEffectiveAsaasStatus(payment: {
+  status?: string | null;
+  billingType?: string | null;
+  deleted?: boolean | null;
+}) {
+  return (
+    normalizeAsaasPaymentSnapshotStatus({
+      status: payment.status,
+      billingType: payment.billingType,
+      deleted: payment.deleted,
+    }) ??
+    payment.status ??
+    'PENDING'
+  );
 }
 
 /**
@@ -131,15 +148,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId: user.contaId });
+      const effectiveAsaasStatus = getEffectiveAsaasStatus(asaasPayment);
       const policy = evaluatePaymentActionPolicy({
         entityType: 'COBRANCA',
         origin: 'EVENT',
         localStatus: paymentLookup.localStatus,
-        asaasStatus: asaasPayment.status,
+        asaasStatus: effectiveAsaasStatus,
         billingType: asaasPayment.billingType ?? paymentLookup.billingType,
         hasAsaasPaymentId: true,
         hasInvoiceUrl: Boolean(paymentLookup.invoiceUrl || asaasPayment.invoiceUrl),
-        wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+        wasReceivedInCash: effectiveAsaasStatus === 'RECEIVED_IN_CASH',
         paymentValue: asaasPayment.value ?? paymentLookup.value ?? 0,
         refundedValue: paymentLookup.operational?.refundedAmount ?? 0,
       });
@@ -150,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           {
             error: decision.reason ?? 'Operação de estorno não permitida.',
             correlationId,
-            asaasStatus: asaasPayment.status,
+            asaasStatus: effectiveAsaasStatus,
             code: decision.code,
             ...(decision.hint ? { hint: decision.hint } : {}),
             ...(decision.code === 'REFUND_NOT_ALLOWED_FOR_CASH_PAYMENT'
@@ -179,7 +197,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           {
             error: decision.reason ?? 'Estorno parcial não permitido.',
             correlationId,
-            asaasStatus: asaasPayment.status,
+            asaasStatus: effectiveAsaasStatus,
             code: decision.code,
             ...(decision.hint ? { hint: decision.hint } : {}),
           },
@@ -218,6 +236,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           source: 'POST /api/cobrancas/[id]/refund',
           origin: 'EVENT',
           previousAsaasStatus: asaasPayment.status,
+          previousEffectiveAsaasStatus: effectiveAsaasStatus,
           refundValue: refundValue ?? paymentValue,
           isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
           splitRefunds: body.splitRefunds ?? null,
@@ -234,7 +253,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         });
         await markPaymentCommandSent({
           jobId: command.id,
-          providerStatus: asaasPayment.status,
+          providerStatus: effectiveAsaasStatus,
         });
       } catch (commandError) {
         await failPaymentCommand({ jobId: command.id, error: commandError });
@@ -304,6 +323,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Read-before-write: verificar estado atual no Asaas
     const asaasPayment = await readPaymentFullPreflight(asaasPaymentId, { contaId: user.contaId });
+    const effectiveAsaasStatus = getEffectiveAsaasStatus(asaasPayment);
     const policy = evaluatePaymentActionPolicy({
       entityType: cobranca ? 'COBRANCA' : 'CHARGE',
       origin: cobranca
@@ -314,11 +334,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             ? 'SUBSCRIPTION'
             : 'STANDALONE',
       localStatus: cobranca?.status ?? charge?.status ?? null,
-      asaasStatus: asaasPayment.status,
+      asaasStatus: effectiveAsaasStatus,
       billingType: asaasPayment.billingType ?? charge?.billingType ?? null,
       hasAsaasPaymentId: true,
       hasInvoiceUrl: Boolean(cobranca?.charge?.invoiceUrl || charge?.invoiceUrl || asaasPayment.invoiceUrl),
-      wasReceivedInCash: asaasPayment.status === 'RECEIVED_IN_CASH',
+      wasReceivedInCash: effectiveAsaasStatus === 'RECEIVED_IN_CASH',
       isInstallmentPayment: cobranca?.tipo === 'PARCELADA' || Boolean(charge?.standaloneInstallmentPlanId),
       isSubscriptionPayment: cobranca?.tipo === 'RECORRENTE' || Boolean(charge?.standaloneSubscriptionId),
       paymentValue: asaasPayment.value ?? Number(cobranca?.valor ?? charge?.value ?? 0),
@@ -336,7 +356,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         {
           error: decision.reason ?? 'Operação de estorno não permitida.',
           correlationId,
-          asaasStatus: asaasPayment.status,
+          asaasStatus: effectiveAsaasStatus,
           code: decision.code,
           ...(decision.hint ? { hint: decision.hint } : {}),
           ...(decision.code === 'REFUND_NOT_ALLOWED_FOR_CASH_PAYMENT'
@@ -353,7 +373,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         {
           error: decision.reason ?? 'Estorno parcial não permitido.',
           correlationId,
-          asaasStatus: asaasPayment.status,
+          asaasStatus: effectiveAsaasStatus,
           code: decision.code,
           ...(decision.hint ? { hint: decision.hint } : {}),
         },
@@ -399,6 +419,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       metadata: {
         source: 'POST /api/cobrancas/[id]/refund',
         previousAsaasStatus: asaasPayment.status,
+        previousEffectiveAsaasStatus: effectiveAsaasStatus,
         refundValue: refundValue ?? paymentValue,
         isPartialRefund: refundValue !== undefined && refundValue < paymentValue,
         splitRefunds: body.splitRefunds ?? null,
@@ -416,7 +437,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       await markPaymentCommandSent({
         jobId: command.id,
-        providerStatus: asaasPayment.status,
+        providerStatus: effectiveAsaasStatus,
       });
     } catch (commandError) {
       await failPaymentCommand({ jobId: command.id, error: commandError });

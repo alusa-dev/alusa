@@ -6,7 +6,7 @@ import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { Button } from '@/components/ui/button';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useRematriculas } from './hooks/use-rematriculas';
-import type { RematriculaElegivelItem, StatusContrato } from './services/rematriculas-service';
+import type { RematriculaElegivelItem } from './services/rematriculas-service';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { RematriculaDialog } from '@/components/matriculas/RematriculaDialog';
@@ -23,6 +23,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  RematriculaProcessCancelDialog,
+  RematriculaProcessDetailsDialog,
+} from './components/RematriculaProcessDialogs';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -35,7 +39,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { CalendarDays, Edit3, MoreVertical, Search, Trash2 } from 'lucide-react';
+import { Edit3, Megaphone, MoreVertical, Search, Trash2 } from 'lucide-react';
 import {
   cancelRematriculaProcessRequest,
   createRematriculaCommunicationRequest,
@@ -67,7 +71,7 @@ function getDiasBadgeVariant(diasRestantes: number): BadgeVariant {
   if (diasRestantes < 0) return 'destructive';
   if (diasRestantes <= 15) return 'warning';
   if (diasRestantes <= 45) return 'info';
-  return 'default';
+  return 'neutral';
 }
 
 function getInitials(name: string) {
@@ -132,7 +136,7 @@ function formatDateOnly(date: Date | undefined) {
 function getProcessLabel(status: RematriculaProcessSummary['status']) {
   const labels: Record<RematriculaProcessSummary['status'], string> = {
     DRAFT: 'Rascunho',
-    PREVIEWED: 'Preview',
+    PREVIEWED: 'Prévia',
     PARTIALLY_CONFIRMED: 'Parcial',
     CONFIRMED: 'Confirmada',
     WAITING_FOR_START: 'Aguardando início',
@@ -145,10 +149,43 @@ function getProcessLabel(status: RematriculaProcessSummary['status']) {
 }
 
 function getProcessBadgeVariant(status: RematriculaProcessSummary['status']): BadgeVariant {
-  if (status === 'REQUIRES_ATTENTION') return 'warning';
+  if (status === 'CONFIRMED' || status === 'EFFECTIVE') return 'success';
+  if (status === 'WAITING_FOR_START' || status === 'PREVIEWED') return 'info';
+  if (status === 'PARTIALLY_CONFIRMED' || status === 'REQUIRES_ATTENTION') return 'warning';
   if (status === 'CANCELLED') return 'destructive';
-  if (status === 'EFFECTIVE' || status === 'COMPLETED') return 'default';
-  return 'info';
+  return 'neutral';
+}
+
+function getProcessStudentNames(process: RematriculaProcessSummary) {
+  return process.itens
+    .map((item) => item.aluno?.nome)
+    .filter((name): name is string => Boolean(name));
+}
+
+function getProcessTitle(process: RematriculaProcessSummary) {
+  const names = getProcessStudentNames(process);
+  if (names.length === 0) return `Processo ${process.id.slice(0, 8)}`;
+  if (process.holderType === 'RESPONSIBLE' && names.length > 1) return 'Grupo familiar';
+  return names[0];
+}
+
+function getProcessSubtitle(process: RematriculaProcessSummary) {
+  if (process.holderType === 'RESPONSIBLE') return 'Responsável financeiro';
+  return 'Aluno titular';
+}
+
+function isProcessEditable(process: RematriculaProcessSummary) {
+  if (['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(process.status)) return false;
+  const effectiveAt = new Date(process.effectiveAt);
+  if (Number.isNaN(effectiveAt.getTime())) return true;
+  const today = new Date();
+  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const effectiveOnly = new Date(
+    effectiveAt.getFullYear(),
+    effectiveAt.getMonth(),
+    effectiveAt.getDate(),
+  ).getTime();
+  return todayOnly < effectiveOnly;
 }
 
 function campaignStatusLabel(status: RematriculaCampaignSummary['status']) {
@@ -163,12 +200,12 @@ function campaignStatusLabel(status: RematriculaCampaignSummary['status']) {
   return labels[status] ?? status;
 }
 
-function getCampaignStatusClasses(status: RematriculaCampaignSummary['status']) {
-  if (status === 'ACTIVE') return 'bg-emerald-100 text-emerald-700';
-  if (status === 'PAUSED' || status === 'SCHEDULED') return 'bg-amber-100 text-amber-700';
-  if (status === 'DRAFT') return 'bg-slate-100 text-slate-700';
-  if (status === 'CLOSED') return 'bg-indigo-100 text-indigo-700';
-  return 'bg-zinc-100 text-zinc-600';
+function getCampaignBadgeVariant(status: RematriculaCampaignSummary['status']): BadgeVariant {
+  if (status === 'ACTIVE') return 'success';
+  if (status === 'SCHEDULED') return 'info';
+  if (status === 'PAUSED') return 'warning';
+  if (status === 'ARCHIVED') return 'destructive';
+  return 'neutral';
 }
 
 function getCampaignAccentClasses(index: number) {
@@ -267,6 +304,83 @@ function buildTitularGroups(items: RematriculaElegivelItem[]): RematriculaTitula
   );
 }
 
+function buildEditProcessItem(process: RematriculaProcessSummary | null): RematriculaElegivelItem | null {
+  if (!process) return null;
+  const item = process.itens.find((processItem) => processItem.decision === 'RENEW') ?? process.itens[0];
+  if (!item?.aluno) return null;
+  const currentEnrollment = item.matriculaAtual;
+  const futureEnrollment = item.matriculaFutura;
+  const currentContractStart = currentEnrollment?.dataInicio ?? process.createdAt;
+  const currentContractEnd = currentEnrollment?.dataFimContrato ?? process.effectiveAt;
+
+  return {
+    id: item.matriculaOrigemId,
+    status: currentEnrollment?.status === 'ATIVA' ? 'ATIVA' : 'AGUARDANDO_CONFIRMACAO',
+    statusContrato:
+      currentEnrollment?.statusContrato === 'ATIVO' ||
+      currentEnrollment?.statusContrato === 'EXPIRADO' ||
+      currentEnrollment?.statusContrato === 'CANCELADO'
+        ? currentEnrollment.statusContrato
+        : 'AGUARDANDO_ASSINATURA',
+    dataInicio: currentContractStart,
+    dataFimContrato: currentContractEnd,
+    diasRestantes: 0,
+    contratoExpirado: false,
+    podeRenovar: true,
+    eligibilityStatus: 'ELEGIVEL',
+    aluno: {
+      id: item.aluno.id,
+      nome: item.aluno.nome,
+      cpf: item.aluno.cpf ?? null,
+      foto: item.aluno.foto ?? null,
+    },
+    responsavelFinanceiro: null,
+    plano: item.planoAtual ?? { id: item.targetPlanId ?? '', nome: 'Plano atual' },
+    turma: item.turmaAtual
+      ? { ...item.turmaAtual, diasSemana: [], horaInicio: '', horaFim: '' }
+      : null,
+    combo: item.comboAtual ?? null,
+    financeiro: {
+      pendencias: process.pendencias.length,
+      cobrancasEmAberto: 0,
+      cobrancasAtrasadas: 0,
+      financialStatus: 'REGULAR',
+      rematriculaActionStatus: 'LIBERADA',
+      blockReason: 'SEM_BLOQUEIO',
+      actionMessage: '',
+      canCurrentUserOverride: false,
+      requiresOverrideReason: true,
+      shouldBlockNewFinancialCycle: false,
+      formaPagamento:
+        futureEnrollment?.formaPagamento === 'BOLETO' ||
+        futureEnrollment?.formaPagamento === 'PIX' ||
+        futureEnrollment?.formaPagamento === 'CARTAO_CREDITO' ||
+        futureEnrollment?.formaPagamento === 'INDEFINIDO'
+          ? futureEnrollment.formaPagamento
+          : null,
+      formaPagamentoTaxa:
+        futureEnrollment?.formaPagamentoTaxa === 'BOLETO' ||
+        futureEnrollment?.formaPagamentoTaxa === 'PIX' ||
+        futureEnrollment?.formaPagamentoTaxa === 'CARTAO_CREDITO' ||
+        futureEnrollment?.formaPagamentoTaxa === 'INDEFINIDO'
+          ? futureEnrollment.formaPagamentoTaxa
+          : null,
+      vencimentoDia:
+        futureEnrollment?.vencimentoDia ??
+        (process.firstDueDate ? new Date(process.firstDueDate).getUTCDate() : null),
+      taxaMatricula: futureEnrollment?.taxaMatricula ?? process.enrollmentFeeTotal,
+      taxaIsenta: futureEnrollment?.taxaIsenta ?? process.enrollmentFeeTotal <= 0,
+      taxaJustificativa: futureEnrollment?.taxaJustificativa ?? null,
+      multaPercentual: futureEnrollment?.multaPercentual ?? null,
+      jurosMensal: futureEnrollment?.jurosMensal ?? null,
+      descontoAntecipado: futureEnrollment?.descontoAntecipado ?? null,
+      prazoDesconto: futureEnrollment?.prazoDesconto ?? null,
+      diasTolerancia: null,
+      descontos: [],
+    },
+  };
+}
+
 export default function RematriculasFeature() {
   const router = useRouter();
   const { user } = useCurrentUser();
@@ -274,10 +388,15 @@ export default function RematriculasFeature() {
 
   const [search, setSearch] = useState('');
   const [diasAntecedencia, setDiasAntecedencia] = useState(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
-  const [statusContrato, setStatusContrato] = useState<StatusContrato | undefined>(undefined);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('CAMPANHAS');
   const [campaignStatusFilter, setCampaignStatusFilter] = useState<'TODOS' | RematriculaCampaignSummary['status']>('TODOS');
   const [campaignPeriodFilter, setCampaignPeriodFilter] = useState('TODOS');
+  const [processStatusFilter, setProcessStatusFilter] = useState<'TODOS' | RematriculaProcessSummary['status']>('TODOS');
+  const [processOriginFilter, setProcessOriginFilter] = useState<'TODOS' | RematriculaProcessSummary['origin']>('TODOS');
+  const [processPeriodFilter, setProcessPeriodFilter] = useState('TODOS');
+  const [standaloneSearchOpen, setStandaloneSearchOpen] = useState(false);
+  const [standaloneSearch, setStandaloneSearch] = useState('');
+  const [selectedStandaloneGroupId, setSelectedStandaloneGroupId] = useState<string | null>(null);
   const [selectedMatricula, setSelectedMatricula] = useState<RematriculaElegivelItem | null>(null);
   const [selectedTitular, setSelectedTitular] = useState<RematriculaTitularGroup | null>(null);
   const [campaignFormOpen, setCampaignFormOpen] = useState(false);
@@ -286,15 +405,14 @@ export default function RematriculasFeature() {
   const [campaignPeriod, setCampaignPeriod] = useState(String(new Date().getFullYear() + 1));
   const [campaignStartsAt, setCampaignStartsAt] = useState(new Date().toISOString().slice(0, 10));
   const [campaignEndsAt, setCampaignEndsAt] = useState('');
-  const [campaignEditableUntil, setCampaignEditableUntil] = useState('');
-  const [campaignFirstDueDateRule, setCampaignFirstDueDateRule] = useState('AFTER_EFFECTIVE_AT');
   const [campaignAudienceType, setCampaignAudienceType] = useState('ALL_ACTIVE_ENROLLMENTS');
-  const [campaignFamilyRule, setCampaignFamilyRule] = useState('ALLOW_PARTIAL');
-  const [campaignFeePolicy, setCampaignFeePolicy] = useState('EXEMPT');
-  const [campaignExceptionPolicy, setCampaignExceptionPolicy] = useState('ALLOW_WITH_JUSTIFICATION');
   const [campaignSaving, setCampaignSaving] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<RematriculaCampaignSummary | null>(null);
   const [selectedProcess, setSelectedProcess] = useState<RematriculaProcessSummary | null>(null);
+  const [editingProcess, setEditingProcess] = useState<RematriculaProcessSummary | null>(null);
+  const [cancelProcess, setCancelProcess] = useState<RematriculaProcessSummary | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelSaving, setCancelSaving] = useState(false);
 
   const modalControlClass =
     'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30';
@@ -307,8 +425,6 @@ export default function RematriculasFeature() {
   const { items, loading, reload, campaigns, processes } = useRematriculas({
     contaId,
     diasAntecedencia,
-    statusContrato,
-    search: search || undefined,
   });
 
   const quickFilterOptions: Array<{ label: string; value: QuickFilter }> = [
@@ -316,19 +432,71 @@ export default function RematriculasFeature() {
     { label: 'Todos os processos', value: 'TODOS' },
   ];
 
-  const groupedItems = useMemo(() => buildTitularGroups(items), [items]);
+  const activeRenewalSourceIds = useMemo(() => {
+    return new Set(
+      processes
+        .filter((process) => process.status !== 'CANCELLED')
+        .flatMap((process) => process.itens.map((item) => item.matriculaOrigemId)),
+    );
+  }, [processes]);
 
-  const filteredGroups = useMemo(() => {
-    return groupedItems;
-  }, [groupedItems, quickFilter]);
+  const availableItems = useMemo(
+    () => items.filter((item) => !activeRenewalSourceIds.has(item.id)),
+    [activeRenewalSourceIds, items],
+  );
+
+  const groupedItems = useMemo(() => buildTitularGroups(availableItems), [availableItems]);
+
+  const filteredStandaloneGroups = useMemo(() => {
+    const normalizedSearch = standaloneSearch.trim().toLowerCase();
+    if (!normalizedSearch) return groupedItems;
+    return groupedItems.filter((group) => {
+      const students = group.itens
+        .map((item) => item.aluno.nome)
+        .filter(Boolean)
+        .join(' ');
+      return `${group.titular.nome} ${group.titular.cpf ?? ''} ${students}`
+        .toLowerCase()
+        .includes(normalizedSearch);
+    });
+  }, [groupedItems, standaloneSearch]);
+
+  const selectedStandaloneGroup = useMemo(
+    () => groupedItems.find((group) => group.id === selectedStandaloneGroupId) ?? null,
+    [groupedItems, selectedStandaloneGroupId],
+  );
 
   const filteredProcesses = useMemo(() => {
-    return processes;
-  }, [processes, quickFilter]);
+    const normalizedSearch = search.trim().toLowerCase();
+    return processes.filter((process) => {
+      const studentNames = getProcessStudentNames(process).join(' ');
+      const searchable = [
+        process.id,
+        process.campanha?.nome,
+        process.targetPeriodId,
+        studentNames,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
+      const matchesStatus =
+        processStatusFilter === 'TODOS' || process.status === processStatusFilter;
+      const matchesOrigin =
+        processOriginFilter === 'TODOS' || process.origin === processOriginFilter;
+      const matchesPeriod =
+        processPeriodFilter === 'TODOS' || process.targetPeriodId === processPeriodFilter;
+      return matchesSearch && matchesStatus && matchesOrigin && matchesPeriod;
+    });
+  }, [processOriginFilter, processPeriodFilter, processStatusFilter, processes, search]);
 
   const campaignPeriodOptions = useMemo(() => {
     return Array.from(new Set(campaigns.map((campaign) => campaign.targetPeriodId).filter(Boolean))).sort();
   }, [campaigns]);
+
+  const processPeriodOptions = useMemo(() => {
+    return Array.from(new Set(processes.map((process) => process.targetPeriodId).filter(Boolean))).sort();
+  }, [processes]);
 
   const filteredCampaigns = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -351,13 +519,8 @@ export default function RematriculasFeature() {
     setCampaignPeriod(String(new Date().getFullYear() + 1));
     setCampaignStartsAt(new Date().toISOString().slice(0, 10));
     setCampaignEndsAt('');
-    setCampaignEditableUntil('');
-    setCampaignFirstDueDateRule('AFTER_EFFECTIVE_AT');
     setCampaignAudienceType('ALL_ACTIVE_ENROLLMENTS');
     setDiasAntecedencia(DEFAULT_RENEWAL_LOOKAHEAD_DAYS);
-    setCampaignFamilyRule('ALLOW_PARTIAL');
-    setCampaignFeePolicy('EXEMPT');
-    setCampaignExceptionPolicy('ALLOW_WITH_JUSTIFICATION');
     setEditingCampaign(null);
   }
 
@@ -369,16 +532,7 @@ export default function RematriculasFeature() {
   }
 
   function openEditCampaignModal(campaign: RematriculaCampaignSummary) {
-    const rules = campaign.rules ?? {};
     const audienceDefinition = campaign.audienceDefinition ?? {};
-    const enrollmentFeePolicy =
-      rules.enrollmentFeePolicy && typeof rules.enrollmentFeePolicy === 'object'
-        ? (rules.enrollmentFeePolicy as Record<string, unknown>)
-        : {};
-    const exceptions =
-      rules.exceptions && typeof rules.exceptions === 'object'
-        ? (rules.exceptions as Record<string, unknown>)
-        : {};
 
     setEditingCampaign(campaign);
     setCampaignName(campaign.nome);
@@ -386,10 +540,6 @@ export default function RematriculasFeature() {
     setCampaignPeriod(campaign.targetPeriodId);
     setCampaignStartsAt(toDateInputValue(campaign.campaignStartsAt));
     setCampaignEndsAt(toDateInputValue(campaign.campaignEndsAt));
-    setCampaignEditableUntil(typeof rules.editableUntil === 'string' ? rules.editableUntil : '');
-    setCampaignFirstDueDateRule(
-      typeof rules.firstDueDateRule === 'string' ? rules.firstDueDateRule : 'AFTER_EFFECTIVE_AT',
-    );
     setCampaignAudienceType(
       typeof audienceDefinition.type === 'string'
         ? audienceDefinition.type
@@ -400,13 +550,6 @@ export default function RematriculasFeature() {
         ? audienceDefinition.diasAntecedencia
         : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
     );
-    setCampaignFamilyRule(rules.allowPartialFamilyRenewal === false ? 'REQUIRE_ALL' : 'ALLOW_PARTIAL');
-    setCampaignFeePolicy(
-      typeof enrollmentFeePolicy.chargeMoment === 'string'
-        ? enrollmentFeePolicy.chargeMoment
-        : 'EXEMPT',
-    );
-    setCampaignExceptionPolicy(exceptions.allowed === false ? 'BLOCK' : 'ALLOW_WITH_JUSTIFICATION');
     setCampaignFormOpen(true);
   }
 
@@ -428,23 +571,6 @@ export default function RematriculasFeature() {
             academicStatus: ['ATIVO'],
             financialStatus: ['ADIMPLENTE', 'COM_PENDENCIA_PERMITIDA'],
           },
-        },
-        rules: {
-          requireAllCurrentItemsDecision: true,
-          allowPartialFamilyRenewal: campaignFamilyRule === 'ALLOW_PARTIAL',
-          minimumFamilyParticipants: campaignFamilyRule === 'REQUIRE_ALL' ? 'ALL_CURRENT_ITEMS' : 1,
-          editableUntil: campaignEditableUntil || null,
-          firstDueDateRule: campaignFirstDueDateRule,
-          exceptions: {
-            allowed: campaignExceptionPolicy === 'ALLOW_WITH_JUSTIFICATION',
-            requiresJustification: campaignExceptionPolicy === 'ALLOW_WITH_JUSTIFICATION',
-          },
-          enrollmentFeePolicy: {
-            chargeMoment: campaignFeePolicy,
-            feeUnit: campaignFeePolicy === 'EXEMPT' ? 'NO_FEE' : 'PER_STUDENT',
-            purpose: 'ADMINISTRATIVE_FEE',
-          },
-          closeBehavior: 'KEEP_DRAFTS_AS_PENDING',
         },
       };
       if (editingCampaign) {
@@ -508,11 +634,11 @@ export default function RematriculasFeature() {
     }
   }
 
-  async function handleCancelProcess(processId: string) {
-    const reason = window.prompt('Informe o motivo do cancelamento do próximo ciclo:');
-    if (!reason?.trim()) return;
+  async function handleCancelProcess() {
+    if (!cancelProcess || !cancelReason.trim()) return;
     try {
-      await cancelRematriculaProcessRequest(processId, reason.trim());
+      setCancelSaving(true);
+      await cancelRematriculaProcessRequest(cancelProcess.id, cancelReason.trim());
       toast.custom((t) => (
         <CustomToast
           variant="success"
@@ -521,6 +647,9 @@ export default function RematriculasFeature() {
           onClose={() => toast.dismiss(t)}
         />
       ));
+      setSelectedProcess((current) => (current?.id === cancelProcess.id ? null : current));
+      setCancelProcess(null);
+      setCancelReason('');
       void reload();
     } catch (error) {
       toast.custom((t) => (
@@ -531,41 +660,8 @@ export default function RematriculasFeature() {
           onClose={() => toast.dismiss(t)}
         />
       ));
-    }
-  }
-
-  async function handleEditFutureLink(process: RematriculaProcessSummary) {
-    const targetClassId = window.prompt('ID da turma futura:', process.itens[0]?.targetClassId ?? '');
-    if (targetClassId == null) return;
-    const targetPlanId = window.prompt('ID do plano futuro:', process.itens[0]?.targetPlanId ?? '');
-    if (targetPlanId == null) return;
-    const reason = window.prompt('Justificativa da alteração:');
-    if (!reason?.trim()) return;
-
-    try {
-      await editRematriculaFutureLinkRequest(process.id, {
-        targetClassId: targetClassId.trim() || null,
-        targetPlanId: targetPlanId.trim() || null,
-        reason: reason.trim(),
-      });
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Próximo ciclo atualizado"
-          description="A alteração foi versionada e auditada."
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
-      void reload();
-    } catch (error) {
-      toast.custom((t) => (
-        <CustomToast
-          variant="error"
-          title="Não foi possível editar"
-          description={(error as Error).message}
-          onClose={() => toast.dismiss(t)}
-        />
-      ));
+    } finally {
+      setCancelSaving(false);
     }
   }
 
@@ -667,44 +763,56 @@ export default function RematriculasFeature() {
     }
   }
 
-  const getFinanceiroBadge = (group: RematriculaTitularGroup) => {
-    const status = getGroupActionStatus(group);
-    if (status === 'BLOQUEADA') {
-      return <Badge variant="destructive">Bloqueada</Badge>;
+  function startStandaloneRenewal(group: RematriculaTitularGroup | null) {
+    if (!group) return;
+    if (!getGroupCanRenew(group)) {
+      toast.custom((t) => (
+        <CustomToast
+          variant="warning"
+          title="Rematrícula indisponível"
+          description="Nenhum aluno elegível para rematrícula neste titular."
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
+      return;
     }
-    if (status === 'REQUER_OVERRIDE') {
-      return <Badge variant="warning">Override</Badge>;
+    setStandaloneSearchOpen(false);
+    setStandaloneSearch('');
+    setSelectedStandaloneGroupId(null);
+    if (group.tipo === 'RESPONSAVEL') {
+      setSelectedTitular(group);
+      return;
     }
-    if (status === 'LIBERADA_COM_AVISO') {
-      return <Badge variant="info">Aviso</Badge>;
-    }
-    return <Badge variant="default">Liberada</Badge>;
-  };
+    setSelectedMatricula(group.itens[0] ?? null);
+  }
 
-  const columns: DataTableColumn<RematriculaTitularGroup>[] = [
+  const processColumns: DataTableColumn<RematriculaProcessSummary>[] = [
     {
       id: 'titular',
-      header: 'Titular',
-      width: 'w-1/4',
+      header: 'Aluno / responsável',
+      width: 'min-w-0 lg:w-[30%]',
       align: 'left',
-      render: (row) => {
-        const initials = getInitials(row.titular.nome);
+      noWrap: false,
+      render: (process) => {
+        const title = getProcessTitle(process);
+        const studentNames = getProcessStudentNames(process);
+        const firstStudent = process.itens.find((item) => item.aluno)?.aluno;
         return (
-          <div className="flex items-center gap-3 min-w-0">
-            <Avatar className="h-10 w-10">
-              {row.titular.foto ? (
-                <AvatarImage src={row.titular.foto} alt={row.titular.nome} />
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar className="h-10 w-10 shrink-0">
+              {firstStudent?.foto ? (
+                <AvatarImage src={firstStudent.foto} alt={firstStudent.nome} />
               ) : null}
-              <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
-                {initials}
+              <AvatarFallback className="bg-purple-100 text-xs font-semibold text-purple-700">
+                {getInitials(title)}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <div className="font-normal text-gray-900 text-[13px] truncate">
-                {row.titular.nome}
+              <div className="truncate text-[13px] font-normal text-gray-900" title={studentNames.join(' · ')}>
+                {title}
               </div>
-              <div className="text-xs text-gray-500">
-                {row.tipo === 'RESPONSAVEL' ? 'Responsável financeiro' : 'Aluno titular'}
+              <div className="truncate text-xs text-gray-500">
+                {getProcessSubtitle(process)}
               </div>
             </div>
           </div>
@@ -712,80 +820,104 @@ export default function RematriculasFeature() {
       },
     },
     {
-      id: 'alunos',
-      header: 'Alunos',
-      width: 'w-1/4',
+      id: 'vinculo',
+      header: 'Vínculo atual',
+      width: 'min-w-0 lg:w-[20%]',
       align: 'left',
-      render: (row) => {
-        const compactNames = row.itens.map((item) =>
-          shortStudentDisplayName(item.aluno.nome ?? ''),
-        );
-        const fullNames = row.itens.map((item) => item.aluno.nome ?? '').filter(Boolean);
+      noWrap: false,
+      render: (process) => {
+        const vinculos = process.itens
+          .map((item) => item.turmaAtual?.nome ?? item.comboAtual?.nome)
+          .filter((value): value is string => Boolean(value));
         return (
-          <div className="truncate text-sm text-gray-900" title={fullNames.join(' · ')}>
-            {joinNamesPortuguese(compactNames)}
+          <div className="min-w-0">
+            <div className="truncate text-sm text-gray-900" title={vinculos.join(' · ')}>
+              {joinNamesPortuguese(vinculos) || 'Sem turma atual'}
+            </div>
           </div>
         );
       },
     },
     {
-      id: 'contrato',
-      header: 'Contrato',
-      width: 'w-1/6',
-      align: 'center',
-      render: (row) => {
-        const dias = getGroupDiasRestantes(row);
-        return (
-          <Badge variant={getDiasBadgeVariant(dias)}>
-            {dias < 0 ? 'Expirado' : `${dias} dia${dias === 1 ? '' : 's'}`}
-          </Badge>
-        );
-      },
+      id: 'origem',
+      header: 'Origem',
+      width: 'lg:w-[22%]',
+      align: 'left',
+      render: (process) => (
+        <span className="block truncate text-sm text-gray-700">
+          {process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Avulsa'}
+        </span>
+      ),
     },
     {
       id: 'status',
-      header: 'Operação',
-      width: 'w-1/6',
+      header: 'Status',
+      width: 'lg:w-[18%]',
       align: 'center',
-      render: (row) => (
-        <div className="flex items-center justify-center">{getFinanceiroBadge(row)}</div>
+      render: (process) => (
+        <Badge variant={getProcessBadgeVariant(process.status)}>
+          {getProcessLabel(process.status)}
+        </Badge>
       ),
     },
     {
       id: 'acoes',
       header: 'Ações',
-      width: 'w-1/6',
+      width: 'w-[5rem]',
       align: 'right',
-      render: (row) => (
-        <div className="flex justify-end">
-          <Button
-            variant={getGroupCanRenew(row) ? 'default' : 'outline'}
-            size="sm"
-            className={getGroupCanRenew(row) ? 'bg-brand-accent text-white' : 'text-xs'}
-            disabled={!getGroupCanRenew(row)}
-            onClick={() => {
-              if (!getGroupCanRenew(row)) {
-                toast.custom((t) => (
-                  <CustomToast
-                    variant="warning"
-                    title="Rematrícula indisponível"
-                    description="Nenhum aluno elegível para rematrícula neste titular."
-                    onClose={() => toast.dismiss(t)}
-                  />
-                ));
-                return;
-              }
-              if (row.tipo === 'RESPONSAVEL') {
-                setSelectedTitular(row);
-              } else {
-                setSelectedMatricula(row.itens[0] ?? null);
-              }
-            }}
-          >
-            Iniciar
-          </Button>
-        </div>
-      ),
+      headerClassName: 'pr-6 md:pr-8',
+      cellClassName: 'pr-6 md:pr-8',
+      render: (process) => {
+        const firstOpenPending = process.pendencias.find((pending) =>
+          ['OPEN', 'IN_PROGRESS'].includes(pending.status),
+        );
+        return (
+          <div className="flex justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                  aria-label={`Ações do processo ${process.id}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-48"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <DropdownMenuItem onSelect={() => setSelectedProcess(process)}>
+                  Ver detalhes
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!isProcessEditable(process)}
+                  onSelect={() => setEditingProcess(process)}
+                >
+                  Editar próximo ciclo
+                </DropdownMenuItem>
+                {firstOpenPending ? (
+                  <DropdownMenuItem onSelect={() => void handleResolvePending(firstOpenPending.id)}>
+                    Resolver pendência
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem
+                  disabled={!isProcessEditable(process)}
+                  className="text-red-600 focus:bg-red-50 data-[highlighted]:bg-red-50"
+                  onSelect={() => {
+                    setCancelProcess(process);
+                    setCancelReason('');
+                  }}
+                >
+                  Cancelar futuro
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        );
+      },
     },
   ];
 
@@ -793,7 +925,7 @@ export default function RematriculasFeature() {
     {
       id: 'campanha',
       header: 'Campanha',
-      width: 'min-w-0 lg:w-[33%]',
+      width: 'min-w-0 lg:w-[40%]',
       align: 'left',
       noWrap: false,
       render: (campaign) => {
@@ -803,14 +935,14 @@ export default function RematriculasFeature() {
         return (
           <div className="flex min-w-0 items-center gap-3">
             <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${accent.icon}`}>
-              <CalendarDays className="h-4 w-4" />
+              <Megaphone className="h-4 w-4" />
             </div>
             <div className="min-w-0">
               <div className="truncate text-[13px] font-normal text-gray-900">
                 {campaign.nome}
               </div>
               <div className="mt-0.5 truncate text-[12px] leading-snug text-gray-500">
-                {progress.total} incluídos · {progress.waiting} aguardando início · {progress.attention} requerem atenção
+                {progress.confirmed} {progress.confirmed === 1 ? 'Rematriculado' : 'Rematriculados'}
               </div>
             </div>
           </div>
@@ -829,7 +961,7 @@ export default function RematriculasFeature() {
     {
       id: 'janela',
       header: 'Janela da campanha',
-      width: 'lg:w-[20%]',
+      width: 'lg:w-[22%]',
       align: 'left',
       render: (campaign) => (
         <span className="leading-[20px] text-gray-700">
@@ -840,37 +972,13 @@ export default function RematriculasFeature() {
     {
       id: 'status',
       header: 'Status',
-      width: 'lg:w-[10%]',
-      align: 'center',
-      render: (campaign) => (
-        <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-medium ${getCampaignStatusClasses(campaign.status)}`}>
-          {campaignStatusLabel(campaign.status)}
-        </span>
-      ),
-    },
-    {
-      id: 'progresso',
-      header: 'Progresso',
-      width: 'lg:w-[13%]',
+      width: 'lg:w-[14%]',
       align: 'left',
-      render: (campaign) => {
-        const index = filteredCampaigns.findIndex((item) => item.id === campaign.id);
-        const accent = getCampaignAccentClasses(index < 0 ? 0 : index);
-        const progress = getCampaignProgress(campaign, processes);
-        return (
-          <div className="min-w-0">
-            <div className="mb-1.5 text-[13px] font-medium leading-none text-gray-700">
-              {progress.confirmed} / {progress.total}
-            </div>
-            <div className="h-1.5 w-full max-w-32 overflow-hidden rounded-full bg-gray-200">
-              <div
-                className={`h-full rounded-full ${accent.bar}`}
-                style={{ width: `${progress.percentage}%` }}
-              />
-            </div>
-          </div>
-        );
-      },
+      render: (campaign) => (
+        <Badge variant={getCampaignBadgeVariant(campaign.status)}>
+          {campaignStatusLabel(campaign.status)}
+        </Badge>
+      ),
     },
     {
       id: 'acoes',
@@ -917,7 +1025,6 @@ export default function RematriculasFeature() {
 
   const showCampaigns = quickFilter === 'CAMPANHAS';
   const showProcesses = quickFilter === 'TODOS';
-  const showAvailable = quickFilter === 'TODOS';
 
   return (
     <>
@@ -937,7 +1044,9 @@ export default function RematriculasFeature() {
               variant="outline"
               className="h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 md:w-auto"
               onClick={() => {
-                setQuickFilter('TODOS');
+                setStandaloneSearch('');
+                setSelectedStandaloneGroupId(null);
+                setStandaloneSearchOpen(true);
               }}
             >
               Rematrícula avulsa
@@ -1050,22 +1159,22 @@ export default function RematriculasFeature() {
             </div>
           ) : null}
 
-          {showAvailable ? (
+          {showProcesses ? (
             <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
               <label className="relative block">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar por responsável ou aluno"
+                  placeholder="Buscar por aluno, campanha ou período"
                   className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none lg:w-[360px] xl:w-[420px]"
                 />
               </label>
               <div className="grid min-w-0 grid-cols-2 gap-2 lg:flex lg:items-center lg:justify-end">
                 <Select
-                  value={statusContrato ?? 'TODOS'}
+                  value={processStatusFilter}
                   onValueChange={(value) =>
-                    setStatusContrato(value === 'TODOS' ? undefined : (value as StatusContrato))
+                    setProcessStatusFilter(value as 'TODOS' | RematriculaProcessSummary['status'])
                   }
                 >
                   <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:min-w-[170px]">
@@ -1073,246 +1182,224 @@ export default function RematriculasFeature() {
                   </SelectTrigger>
                   <SelectContent align="end" className="text-[13px]">
                     <SelectItem value="TODOS">Todos os status</SelectItem>
-                    <SelectItem value="ATIVO">Contrato ativo</SelectItem>
-                    <SelectItem value="AGUARDANDO_ASSINATURA">Aguardando assinatura</SelectItem>
-                    <SelectItem value="EXPIRADO">Expirado</SelectItem>
-                    <SelectItem value="CANCELADO">Cancelado</SelectItem>
+                    <SelectItem value="DRAFT">Rascunho</SelectItem>
+                    <SelectItem value="PREVIEWED">Prévia</SelectItem>
+                    <SelectItem value="PARTIALLY_CONFIRMED">Parcial</SelectItem>
+                    <SelectItem value="CONFIRMED">Confirmada</SelectItem>
+                    <SelectItem value="WAITING_FOR_START">Aguardando início</SelectItem>
+                    <SelectItem value="REQUIRES_ATTENTION">Requer atenção</SelectItem>
+                    <SelectItem value="EFFECTIVE">Novo ciclo iniciado</SelectItem>
+                    <SelectItem value="COMPLETED">Encerrada</SelectItem>
+                    <SelectItem value="CANCELLED">Cancelada</SelectItem>
                   </SelectContent>
                 </Select>
-                <label className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-700">
-                  <span>Dias</span>
-                  <input
-                    type="number"
-                    min={15}
-                    max={365}
-                    value={diasAntecedencia}
-                    onChange={(event) => {
-                      const parsed = Number(event.target.value);
-                      setDiasAntecedencia(
-                        Number.isFinite(parsed)
-                          ? Math.min(365, Math.max(15, parsed))
-                          : DEFAULT_RENEWAL_LOOKAHEAD_DAYS,
-                      );
-                    }}
-                    className="w-16 border-0 bg-transparent text-right outline-none"
-                  />
-                </label>
-              </div>
-            </div>
-          ) : null}
-
-          {selectedProcess ? (
-            <div className="rounded-xl border bg-white px-4 py-4">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-900">
-                    Processo {selectedProcess.id.slice(0, 8)}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {selectedProcess.origin === 'CAMPAIGN' ? selectedProcess.campanha?.nome ?? 'Campanha' : 'Avulsa'} · {getProcessLabel(selectedProcess.status)}
-                  </div>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleCreateCommunication(selectedProcess)}
-                  >
-                    Comunicação
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => void handleGrantException(selectedProcess)}
-                  >
-                    Exceção
-                  </Button>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedProcess(null)}>
-                    Fechar
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-4 pt-4 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Vínculo atual</div>
-                  <div className="mt-2 space-y-1 text-sm text-slate-700">
-                    {selectedProcess.itens.map((item) => (
-                      <div key={item.id}>
-                        <span className="font-medium text-slate-900">{item.aluno?.nome ?? item.matriculaOrigemId}</span>
-                        <span className="text-slate-500">
-                          {' '}· {item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma atual'} · decisão {item.decision}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Próximo ciclo</div>
-                  <div className="mt-2 space-y-1 text-sm text-slate-700">
-                    <div>Início: {formatDate(selectedProcess.effectiveAt)}</div>
-                    <div>Reserva: {selectedProcess.reservas[0]?.status ?? 'NOT_RESERVED'}</div>
-                    <div>Contrato futuro: {selectedProcess.contratos[0]?.status ?? 'DRAFT'}</div>
-                    <div>Financeiro futuro: {selectedProcess.financeiros[0]?.status ?? 'NOT_PREPARED'}</div>
-                  </div>
-                </div>
-              </div>
-              {selectedProcess.pendencias.length > 0 ? (
-                <div className="mt-4 border-t border-slate-100 pt-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                      Pendências
-                    </div>
-                    <Badge variant="warning">{selectedProcess.pendencias.length}</Badge>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedProcess.pendencias.map((pending) => (
-                      <div
-                        key={pending.id}
-                        className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-medium text-amber-950">{pending.title}</div>
-                          <div className="text-amber-900">{pending.message}</div>
-                          <div className="mt-1 text-xs text-amber-700">
-                            {pending.code} · {pending.status}
-                          </div>
-                        </div>
-                        {['OPEN', 'IN_PROGRESS'].includes(pending.status) ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void handleResolvePending(pending.id)}
-                          >
-                            Resolver
-                          </Button>
-                        ) : null}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              <div className="mt-4 grid gap-4 border-t border-slate-100 pt-4 md:grid-cols-2">
-                <div>
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Exceções
-                  </div>
-                  <div className="mt-2 space-y-2 text-sm text-slate-700">
-                    {selectedProcess.excecoes.length === 0 ? (
-                      <div className="text-slate-500">Nenhuma exceção registrada.</div>
-                    ) : (
-                      selectedProcess.excecoes.map((exception) => (
-                        <div key={exception.id} className="rounded-md border border-slate-200 px-3 py-2">
-                          <div className="font-medium text-slate-900">{exception.rule}</div>
-                          <div>{exception.justification}</div>
-                          <div className="mt-1 text-xs text-slate-500">{exception.status}</div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Comunicação
-                  </div>
-                  <div className="mt-2 space-y-2 text-sm text-slate-700">
-                    {selectedProcess.comunicacoes.length === 0 ? (
-                      <div className="text-slate-500">Nenhuma comunicação registrada.</div>
-                    ) : (
-                      selectedProcess.comunicacoes.map((communication) => (
-                        <div key={communication.id} className="rounded-md border border-slate-200 px-3 py-2">
-                          <div className="font-medium text-slate-900">
-                            {communication.subject ?? communication.channel}
-                          </div>
-                          <div className="text-xs text-slate-500">
-                            {communication.channel} · {communication.status} · {formatDate(communication.createdAt)}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {showProcesses && filteredProcesses.length > 0 ? (
-            <div className="overflow-hidden rounded-xl border bg-white">
-              <div className="grid grid-cols-[1fr_0.8fr_0.8fr_0.8fr_auto] gap-3 border-b bg-slate-50 px-4 py-3 text-xs font-medium uppercase tracking-wide text-slate-500">
-                <span>Processo</span>
-                <span>Status</span>
-                <span>Início</span>
-                <span>Financeiro futuro</span>
-                <span className="text-right">Ações</span>
-              </div>
-              {filteredProcesses.map((process) => (
-                <div
-                  key={process.id}
-                  className="grid grid-cols-[1fr_0.8fr_0.8fr_0.8fr_auto] items-center gap-3 border-b px-4 py-3 text-sm last:border-b-0"
+                <Select
+                  value={processOriginFilter}
+                  onValueChange={(value) =>
+                    setProcessOriginFilter(value as 'TODOS' | RematriculaProcessSummary['origin'])
+                  }
                 >
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-slate-900">
-                      {process.itens.map((item) => item.aluno?.nome).filter(Boolean).join(', ') || process.id}
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Avulsa'} · {process.targetPeriodId}
-                    </div>
-                  </div>
-                  <Badge variant={getProcessBadgeVariant(process.status)}>{getProcessLabel(process.status)}</Badge>
-                  <span>{formatDate(process.effectiveAt)}</span>
-                  <span>
-                    {process.financeiros[0]?.status ?? 'NOT_PREPARED'} · R$ {process.monthlyTotal.toFixed(2)}
-                  </span>
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => setSelectedProcess(process)}>
-                      Ver
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(process.status)}
-                      onClick={() => void handleEditFutureLink(process)}
-                    >
-                      Editar próximo ciclo
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(process.status)}
-                      onClick={() => void handleCancelProcess(process.id)}
-                    >
-                      Cancelar futuro
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                  <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:min-w-[150px]">
+                    <SelectValue placeholder="Todas as origens" />
+                  </SelectTrigger>
+                  <SelectContent align="end" className="text-[13px]">
+                    <SelectItem value="TODOS">Todas as origens</SelectItem>
+                    <SelectItem value="CAMPAIGN">Campanha</SelectItem>
+                    <SelectItem value="STANDALONE">Avulsa</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={processPeriodFilter}
+                  onValueChange={setProcessPeriodFilter}
+                >
+                  <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:min-w-[170px]">
+                    <SelectValue placeholder="Todos os períodos" />
+                  </SelectTrigger>
+                  <SelectContent align="end" className="text-[13px]">
+                    <SelectItem value="TODOS">Todos os períodos</SelectItem>
+                    {processPeriodOptions.map((period) => (
+                      <SelectItem key={period} value={period}>
+                        {period}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           ) : null}
 
-          {showAvailable ? (
-            <div className="bg-white rounded-xl border overflow-hidden px-0 py-0">
+          {showProcesses ? (
+            <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:rounded-xl">
               <DataTable
-                aria-label="Tabela de rematrículas elegíveis"
-                columns={columns}
-                data={filteredGroups}
-                rowKey={(row) => row.id}
+                columns={processColumns}
+                data={filteredProcesses}
+                rowKey={(process) => process.id}
                 loading={loading}
+                skeletonRows={4}
                 emptyMessage={
-                  <div className="px-6 py-12 text-center text-sm text-gray-500">
+                  <div className="px-6 py-12 text-center text-gray-500">
                     {loading
-                      ? 'Carregando rematrículas...'
-                      : 'Nenhuma matrícula elegível encontrada para os filtros atuais'}
+                      ? 'Carregando processos...'
+                      : 'Nenhum processo de rematrícula encontrado para os filtros atuais.'}
                   </div>
                 }
+                ariaLabel="Tabela de processos de rematrícula"
+                onRowClick={(process) => setSelectedProcess(process)}
               />
             </div>
           ) : null}
         </div>
       </section>
+
+      <RematriculaProcessDetailsDialog
+        process={selectedProcess}
+        onOpenChange={(open) => {
+          if (!open) setSelectedProcess(null);
+        }}
+        onCreateCommunication={(process) => void handleCreateCommunication(process)}
+        onGrantException={(process) => void handleGrantException(process)}
+        onResolvePending={(pendingId) => void handleResolvePending(pendingId)}
+      />
+
+      <RematriculaProcessCancelDialog
+        process={cancelProcess}
+        reason={cancelReason}
+        saving={cancelSaving}
+        onOpenChange={(open) => {
+          if (!open && !cancelSaving) {
+            setCancelProcess(null);
+            setCancelReason('');
+          }
+        }}
+        onReasonChange={setCancelReason}
+        onConfirm={() => void handleCancelProcess()}
+      />
+
+      <Dialog
+        open={standaloneSearchOpen}
+        onOpenChange={(open) => {
+          setStandaloneSearchOpen(open);
+          if (!open) {
+            setStandaloneSearch('');
+            setSelectedStandaloneGroupId(null);
+          }
+        }}
+      >
+        <DialogContent className="w-full max-w-2xl gap-0 overflow-hidden bg-white p-0 md:rounded-2xl">
+          <div className="border-b border-slate-200 px-6 py-5">
+            <DialogTitle className="text-xl font-semibold tracking-tight text-slate-900">
+              Rematrícula avulsa
+            </DialogTitle>
+            <DialogDescription className="mt-2 text-sm text-slate-600">
+              Selecione um aluno ou responsável com matrícula ativa para preparar o próximo ciclo.
+            </DialogDescription>
+          </div>
+
+          <div className="space-y-4 px-6 py-5">
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={standaloneSearch}
+                onChange={(event) => {
+                  setStandaloneSearch(event.target.value);
+                  setSelectedStandaloneGroupId(null);
+                }}
+                placeholder="Buscar aluno ou responsável"
+                className="h-10 w-full rounded-lg border-slate-200 pl-10 shadow-none"
+              />
+            </label>
+
+            <div className="max-h-[360px] overflow-y-auto rounded-lg border border-slate-200">
+              {filteredStandaloneGroups.length === 0 ? (
+                <div className="px-4 py-10 text-center text-sm text-slate-500">
+                  {loading
+                    ? 'Carregando candidatos...'
+                    : 'Nenhum candidato disponível para rematrícula avulsa.'}
+                </div>
+              ) : (
+                filteredStandaloneGroups.slice(0, 30).map((group) => {
+                  const selected = selectedStandaloneGroupId === group.id;
+                  const dias = getGroupDiasRestantes(group);
+                  const actionStatus = getGroupActionStatus(group);
+                  const studentNames = group.itens
+                    .map((item) => item.aluno.nome ?? '')
+                    .filter(Boolean);
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      className={`flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 ${
+                        selected ? 'bg-purple-50' : 'bg-white hover:bg-slate-50'
+                      }`}
+                      onClick={() => setSelectedStandaloneGroupId(group.id)}
+                    >
+                      <Avatar className="h-10 w-10 shrink-0">
+                        {group.titular.foto ? (
+                          <AvatarImage src={group.titular.foto} alt={group.titular.nome} />
+                        ) : null}
+                        <AvatarFallback className="bg-purple-100 text-purple-700 font-medium">
+                          {getInitials(group.titular.nome)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-900">
+                          {group.titular.nome}
+                        </div>
+                        <div className="truncate text-xs text-slate-500">
+                          {group.tipo === 'RESPONSAVEL' ? 'Responsável financeiro' : 'Aluno titular'} · {joinNamesPortuguese(studentNames.map(shortStudentDisplayName))}
+                        </div>
+                      </div>
+                      <div className="hidden shrink-0 items-center gap-2 sm:flex">
+                        <Badge variant={getDiasBadgeVariant(dias)}>
+                          {dias < 0 ? 'Expirado' : `${dias} dia${dias === 1 ? '' : 's'}`}
+                        </Badge>
+                        <Badge
+                          variant={
+                            actionStatus === 'BLOQUEADA'
+                              ? 'destructive'
+                              : actionStatus === 'REQUER_OVERRIDE'
+                                ? 'warning'
+                                : actionStatus === 'LIBERADA_COM_AVISO'
+                                  ? 'info'
+                                  : 'success'
+                          }
+                        >
+                          {actionStatus === 'BLOQUEADA'
+                            ? 'Bloqueada'
+                            : actionStatus === 'REQUER_OVERRIDE'
+                              ? 'Exceção'
+                              : actionStatus === 'LIBERADA_COM_AVISO'
+                                ? 'Aviso'
+                                : 'Liberada'}
+                        </Badge>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 border-t border-slate-200 bg-white px-6 py-4">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              onClick={() => setStandaloneSearchOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={!selectedStandaloneGroup || !getGroupCanRenew(selectedStandaloneGroup)}
+              className="h-10 min-w-[132px] bg-brand-accent text-white shadow-sm hover:bg-brand-accent/90"
+              onClick={() => startStandaloneRenewal(selectedStandaloneGroup)}
+            >
+              Continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={campaignFormOpen}
@@ -1332,7 +1419,7 @@ export default function RematriculasFeature() {
                 {editingCampaign ? 'Editar campanha' : 'Criar campanha'}
               </DialogTitle>
               <DialogDescription className="mt-2 max-w-2xl text-sm text-slate-600">
-                Defina o período futuro, a janela operacional, os candidatos iniciais e as regras da campanha.
+                Defina o período futuro, a janela operacional e o público inicial da campanha.
               </DialogDescription>
             </div>
 
@@ -1373,7 +1460,7 @@ export default function RematriculasFeature() {
 
               <div className={modalSectionClass}>
                 <span className="text-sm font-semibold text-slate-700">Janela e datas</span>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-1 md:col-span-2">
                     <label className={modalLabelClass}>Início da campanha</label>
                     <DatePicker
@@ -1396,33 +1483,6 @@ export default function RematriculasFeature() {
                       minDate={campaignStartsAt ? new Date(`${campaignStartsAt}T00:00:00`) : undefined}
                       className={modalControlClass}
                     />
-                  </div>
-                  <div className="space-y-1 md:col-span-2">
-                    <label className={modalLabelClass}>Editável até</label>
-                    <DatePicker
-                      value={campaignEditableUntil}
-                      onChange={(date) => setCampaignEditableUntil(formatDateOnly(date))}
-                      placeholder="Selecione a data"
-                      variant="input"
-                      dateFormat="dd/MM/yyyy"
-                      className={modalControlClass}
-                    />
-                  </div>
-                  <div className="space-y-1 md:col-span-2">
-                    <label className={modalLabelClass}>Primeira cobrança</label>
-                    <Select
-                      value={campaignFirstDueDateRule}
-                      onValueChange={setCampaignFirstDueDateRule}
-                    >
-                      <SelectTrigger className={modalControlClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="AFTER_EFFECTIVE_AT">Após início do ciclo</SelectItem>
-                        <SelectItem value="SAME_DAY_OF_CURRENT_CONTRACT">Mesmo dia do contrato atual</SelectItem>
-                        <SelectItem value="MANUAL_ON_PREVIEW">Definir no preview</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
               </div>
@@ -1461,52 +1521,6 @@ export default function RematriculasFeature() {
                       }}
                       className={modalControlClass}
                     />
-                  </div>
-                </div>
-              </div>
-
-              <div className={modalSectionClass}>
-                <span className="text-sm font-semibold text-slate-700">Regras iniciais</span>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="space-y-1">
-                    <label className={modalLabelClass}>Família</label>
-                    <Select value={campaignFamilyRule} onValueChange={setCampaignFamilyRule}>
-                      <SelectTrigger className={modalControlClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALLOW_PARTIAL">Permitir renovação parcial</SelectItem>
-                        <SelectItem value="REQUIRE_ALL">Exigir todos os vínculos</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className={modalLabelClass}>Taxa de rematrícula</label>
-                    <Select value={campaignFeePolicy} onValueChange={setCampaignFeePolicy}>
-                      <SelectTrigger className={modalControlClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="EXEMPT">Isenta</SelectItem>
-                        <SelectItem value="CHARGE_ON_CONFIRMATION">Cobrar na confirmação</SelectItem>
-                        <SelectItem value="CHARGE_ON_START">Cobrar no início</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className={modalLabelClass}>Exceções administrativas</label>
-                    <Select
-                      value={campaignExceptionPolicy}
-                      onValueChange={setCampaignExceptionPolicy}
-                    >
-                      <SelectTrigger className={modalControlClass}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALLOW_WITH_JUSTIFICATION">Permitir com justificativa</SelectItem>
-                        <SelectItem value="BLOCK">Bloquear exceções</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
               </div>
@@ -1560,6 +1574,22 @@ export default function RematriculasFeature() {
             />
           ));
           setSelectedMatricula(null);
+          void reload();
+        }}
+      />
+
+      <RematriculaDialog
+        mode="EDIT_FUTURE"
+        open={Boolean(editingProcess)}
+        contaId={contaId ?? undefined}
+        targetPeriodId={editingProcess?.targetPeriodId}
+        item={buildEditProcessItem(editingProcess)}
+        process={editingProcess}
+        onOpenChange={(open) => {
+          if (!open) setEditingProcess(null);
+        }}
+        onEdited={() => {
+          setEditingProcess(null);
           void reload();
         }}
       />

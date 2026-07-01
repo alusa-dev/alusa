@@ -16,6 +16,7 @@ import { buildInstallmentExternalReference, buildPaymentExternalReference, deriv
 import { mapAsaasPaymentStatusToCobranca, mapAsaasPaymentStatusToCharge } from '../mappers/charge-status/asaas-to-internal';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 
 export type CreateInstallmentPlanInput = {
   contaId: string;
@@ -313,6 +314,12 @@ export async function createInstallmentPlan(
 
       for (let index = 0; index < sortedPayments.length; index += 1) {
         const payment = sortedPayments[index];
+        const effectivePaymentStatus =
+          normalizeAsaasPaymentSnapshotStatus({
+            status: payment.status,
+            billingType: payment.billingType,
+            deleted: payment.deleted,
+          }) ?? payment.status;
 
         const existingCobranca = await prisma.cobranca.findFirst({
           where: {
@@ -339,12 +346,12 @@ export async function createInstallmentPlan(
             tipo: 'PARCELADA',
             valor: payment.value,
             vencimento,
-            status: mapAsaasPaymentStatusToCobranca(payment.status, { dueDate: vencimento }),
+            status: mapAsaasPaymentStatusToCobranca(effectivePaymentStatus, { dueDate: vencimento }),
             descricao,
             competenciaInicio,
             competenciaFim,
             asaasPaymentId: payment.id,
-            asaasStatus: payment.status,
+            asaasStatus: effectivePaymentStatus,
             asaasValue: payment.value,
             asaasNetValue: payment.netValue,
             asaasOriginalValue: payment.originalValue ?? null,
@@ -353,7 +360,7 @@ export async function createInstallmentPlan(
             asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
             lastAsaasFetchAt: new Date(),
             liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
-              asaasStatus: payment.status,
+              asaasStatus: effectivePaymentStatus,
               creditDate: payment.creditDate,
               billingType: payment.billingType,
             }),
@@ -367,7 +374,7 @@ export async function createInstallmentPlan(
           payment.id
         );
         const chargeSnapshot = {
-          asaasStatus: payment.status,
+          asaasStatus: effectivePaymentStatus,
           asaasValue: payment.value,
           asaasNetValue: payment.netValue,
           asaasOriginalValue: payment.originalValue ?? null,
@@ -376,7 +383,7 @@ export async function createInstallmentPlan(
           asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
           lastAsaasFetchAt: new Date(),
           liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
-            asaasStatus: payment.status,
+            asaasStatus: effectivePaymentStatus,
             creditDate: payment.creditDate,
             billingType: payment.billingType,
           }),
@@ -387,7 +394,7 @@ export async function createInstallmentPlan(
           update: {
             externalReference: paymentExternalReference,
             asaasPaymentId: payment.id,
-            status: mapAsaasPaymentStatusToCharge(payment.status),
+            status: mapAsaasPaymentStatusToCharge(effectivePaymentStatus),
             statusUpdatedAt: new Date(),
             billingType: payment.billingType,
             value: payment.value,
@@ -399,7 +406,7 @@ export async function createInstallmentPlan(
             contaId: input.contaId,
             cobrancaId: cobranca.id,
             externalReference: paymentExternalReference,
-            status: mapAsaasPaymentStatusToCharge(payment.status),
+            status: mapAsaasPaymentStatusToCharge(effectivePaymentStatus),
             statusUpdatedAt: new Date(),
             asaasPaymentId: payment.id,
             billingType: payment.billingType,

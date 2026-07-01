@@ -1,0 +1,31 @@
+{
+  "name": "@alusa/platform-billing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "pnpm -C ../stripe build",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true}); require('fs').rmSync('tsconfig.build.tsbuildinfo',{force:true})\" && tsc -p tsconfig.build.json",
+    "pretypecheck": "pnpm -C ../stripe build",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prisma/client": "5.18.0",
+    "@alusa/stripe": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.0.5"
+  }
+}

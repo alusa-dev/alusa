@@ -15,7 +15,6 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pushToast } from '@/components/ui/toast';
-import { Badge, type StatusType } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ChevronLeft as ArrowLeft } from '@/components/icons/icons';
 import {
@@ -26,10 +25,10 @@ import {
   BanknotesIcon,
   ClockIcon,
 } from '@heroicons/react/24/outline';
-import type { StatusCobranca } from '@prisma/client';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/financeiro/hooks/use-finance-list-load';
+import { ChargeDisplayStatusBadge } from '@/components/financeiro/ChargeDisplayStatusBadge';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
@@ -37,25 +36,18 @@ const formatCurrency = (value: number) =>
 const formatDate = (dateStr: string | null) =>
   dateStr ? new Date(dateStr).toLocaleDateString('pt-BR') : '—';
 
-// Mapear status de Cobrança para StatusType
-const cobrancaStatusMap: Record<StatusCobranca, StatusType> = {
-  PENDENTE: 'PENDENTE',
-  A_VENCER: 'A_VENCER',
-  PROCESSANDO: 'PROCESSANDO',
-  PAGO: 'PAGO',
-  ATRASADO: 'ATRASADO',
-  CANCELADO: 'CANCELADO',
-  CANCELAMENTO_PENDENTE: 'CANCELAMENTO_PENDENTE',
-  ESTORNADO: 'ESTORNADO',
-  ESTORNADO_PARCIAL: 'ESTORNADO_PARCIAL',
-};
-
 type CobrancaFilha = {
   id: string;
   numero: number;
   valor: number;
   vencimento: string;
-  status: StatusCobranca;
+  status: string;
+  displayStatus?: {
+    status: string;
+    label: string;
+    hint: string | null;
+    variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+  };
   dataPagamento: string | null;
   asaasPaymentId: string | null;
 };
@@ -392,11 +384,13 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                       </div>
                     </div>
                     <div className="flex w-[4.5rem] shrink-0 flex-col items-end gap-2 self-stretch sm:w-24">
-                      <Badge
-                        status={cobrancaStatusMap[cobranca.status] ?? 'PENDING'}
-                        size="sm"
-                        className="max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
-                      />
+                      {cobranca.displayStatus ? (
+                        <ChargeDisplayStatusBadge
+                          displayStatus={cobranca.displayStatus}
+                          size="sm"
+                          className="max-w-full whitespace-normal px-2 text-center text-[10px] leading-snug"
+                        />
+                      ) : null}
                       <Link
                         href={`/cobrancas/${cobranca.id}`}
                         className="mt-auto inline-flex items-center gap-1 text-xs font-medium text-brand-accent hover:underline"
@@ -431,7 +425,9 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                         </div>
                       </div>
                       <div className="col-span-3 flex justify-center">
-                        <Badge status={cobrancaStatusMap[cobranca.status] ?? 'PENDING'} size="sm" />
+                        {cobranca.displayStatus ? (
+                          <ChargeDisplayStatusBadge displayStatus={cobranca.displayStatus} size="sm" />
+                        ) : null}
                       </div>
                       <div className="col-span-2 flex justify-center">
                         <Link

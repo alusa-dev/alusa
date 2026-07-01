@@ -14,6 +14,7 @@ import {
   isAllowedInvoiceStatusTransition,
   mapAsaasInvoiceStatusToInternal,
 } from '../mappers/invoice-status.mapper';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 
 export type SyncInvoiceFromProviderInput = {
   contaId: string;
@@ -50,6 +51,10 @@ function extractAsaasErrorMessage(error: AsaasHttpError): string {
       ?.map((item) => item.description)
       .filter((value): value is string => Boolean(value)) ?? [];
   return details.join('; ') || error.message;
+}
+
+function isAsaasNotFound(error: AsaasHttpError): boolean {
+  return error.status === 404;
 }
 
 async function resolveInvoice(input: SyncInvoiceFromProviderInput) {
@@ -200,8 +205,61 @@ export async function syncInvoiceFromProvider(
       number: updated.number ?? null,
     });
   } catch (error) {
-    console.error('[finance][syncInvoiceFromProvider]', error);
     if (error instanceof AsaasHttpError) {
+      if (isAsaasNotFound(error)) {
+        const prisma = getFiscalPrisma();
+        const invoice = await resolveInvoice(input);
+        if (invoice) {
+          const message = extractAsaasErrorMessage(error) || 'Nota fiscal não encontrada no Asaas.';
+          await prisma.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              fiscalDivergence: true,
+              rawProviderStatus: 'PROVIDER_NOT_FOUND',
+              lastReconciledAt: new Date(),
+              operationStatus: 'FAILED',
+              operationLeaseExpiresAt: null,
+              lastErrorKind: 'PROVIDER_NOT_FOUND',
+              lastErrorMessage: message,
+              statusDescription: message,
+            },
+          });
+
+          await upsertFinanceReconciliationIssue({
+            contaId: input.contaId,
+            entityType: 'INVOICE',
+            entityId: invoice.id,
+            asaasId: invoice.asaasInvoiceId,
+            issueType: 'INVOICE_RECOVERY_REQUIRED',
+            severity: 'HIGH',
+            localStatus: invoice.status,
+            remoteStatus: 'NOT_FOUND',
+            metadata: {
+              source: 'syncInvoiceFromProvider',
+              reason: 'Provider returned 404 for stored invoice id.',
+              asaasStatus: error.status,
+              message,
+              correlationId: input.correlationId ?? null,
+            },
+          });
+
+          await recordInvoiceAuditEvent({
+            contaId: input.contaId,
+            invoiceId: invoice.id,
+            action: 'invoice.provider_not_found',
+            fromStatus: invoice.status,
+            toStatus: invoice.status,
+            metadata: {
+              asaasInvoiceId: invoice.asaasInvoiceId,
+              providerHttpStatus: 404,
+              message,
+            },
+            correlationId: input.correlationId,
+          });
+        }
+      } else {
+        console.error('[finance][syncInvoiceFromProvider]', error);
+      }
       return err({
         kind: 'ASAAS',
         message: extractAsaasErrorMessage(error),

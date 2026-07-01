@@ -12,6 +12,7 @@ import {
   UserCircleIcon,
   SunIcon,
   MoonIcon,
+  CreditCard,
 } from '@/components/icons/icons';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
@@ -26,6 +27,9 @@ type Props = {
 /** Itens do menu de usuário — reutilizado no dropdown desktop e no drawer mobile. */
 export function UserMenuPanel({ onClose }: { onClose: () => void }) {
   const { isDark, toggleTheme } = useTheme();
+  const menuUser = useUserStore((state: UserState) => state.user);
+  const role = (menuUser as { role?: string } | null)?.role?.toUpperCase();
+  const showPlatformBilling = role === 'ADMIN' || role === 'FINANCEIRO';
   const myAccountLocked = false;
 
   return (
@@ -46,6 +50,16 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
           Minha conta
         </MenuLink>
       )}
+
+      {showPlatformBilling ? (
+        <MenuLink
+          href="/conta/plano-faturamento"
+          icon={<CreditCard className="h-5 w-5" />}
+          onClick={onClose}
+        >
+          Plano e faturamento
+        </MenuLink>
+      ) : null}
 
       <MenuLink href="/ajuda" icon={<QuestionMarkCircleIcon className="h-5 w-5" />} onClick={onClose}>
         Ajuda

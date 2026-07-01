@@ -79,6 +79,63 @@ function isAsaasInvoiceAlreadyCancelingError(error: AsaasHttpError): boolean {
   );
 }
 
+function isAsaasInvoiceNotFoundError(error: AsaasHttpError): boolean {
+  return error.status === 404;
+}
+
+async function markInvoiceProviderNotFoundForCancel(input: {
+  contaId: string;
+  invoiceId: string;
+  asaasInvoiceId?: string | null;
+  localStatus?: InvoiceStatus | null;
+  message: string;
+}) {
+  const prisma = getFiscalPrisma();
+  await prisma.invoice.update({
+    where: { id: input.invoiceId },
+    data: {
+      fiscalDivergence: true,
+      rawProviderStatus: 'PROVIDER_NOT_FOUND',
+      lastReconciledAt: new Date(),
+      operationStatus: 'FAILED',
+      operationLeaseExpiresAt: null,
+      lastErrorKind: 'PROVIDER_NOT_FOUND',
+      lastErrorMessage: input.message,
+      statusDescription: input.message,
+      nextAttemptAt: new Date(Date.now() + 5 * 60_000),
+    },
+  });
+
+  await upsertFinanceReconciliationIssue({
+    contaId: input.contaId,
+    entityType: 'INVOICE',
+    entityId: input.invoiceId,
+    asaasId: input.asaasInvoiceId ?? null,
+    issueType: 'INVOICE_RECOVERY_REQUIRED',
+    severity: 'HIGH',
+    localStatus: input.localStatus ?? null,
+    remoteStatus: 'NOT_FOUND',
+    metadata: {
+      source: 'cancelChargeInvoice',
+      reason: 'Provider returned 404 while canceling invoice after payment state changed.',
+      message: input.message,
+    },
+  });
+
+  await recordInvoiceAuditEvent({
+    contaId: input.contaId,
+    invoiceId: input.invoiceId,
+    action: 'invoice.cancel_provider_not_found',
+    fromStatus: input.localStatus ?? undefined,
+    toStatus: input.localStatus ?? undefined,
+    metadata: {
+      asaasInvoiceId: input.asaasInvoiceId ?? null,
+      providerHttpStatus: 404,
+      message: input.message,
+    },
+  });
+}
+
 function toCancelOutput(invoice: {
   id: string;
   asaasInvoiceId: string | null;
@@ -294,6 +351,32 @@ export async function cancelChargeInvoice(
       statusUpdatedAt: updated.statusUpdatedAt.toISOString(),
     });
   } catch (error) {
+    if (error instanceof AsaasHttpError && isAsaasInvoiceNotFoundError(error)) {
+      const invoice = await resolveInvoice(input);
+      if (invoice) {
+        const message = extractAsaasErrorMessage(error) || 'Nota fiscal não encontrada no Asaas.';
+        await markInvoiceProviderNotFoundForCancel({
+          contaId: input.contaId,
+          invoiceId: invoice.id,
+          asaasInvoiceId: invoice.asaasInvoiceId,
+          localStatus: invoice.status,
+          message,
+        });
+
+        console.warn('[finance][cancelChargeInvoice] invoice provider not found; review required', {
+          contaId: input.contaId,
+          invoiceId: invoice.id,
+          asaasInvoiceId: invoice.asaasInvoiceId,
+          status: invoice.status,
+        });
+
+        return err({
+          kind: 'ASAAS',
+          message,
+        });
+      }
+    }
+
     if (error instanceof AsaasHttpError && isAsaasInvoiceAlreadyCancelingError(error)) {
       const invoice = await resolveInvoice(input);
       if (invoice) {

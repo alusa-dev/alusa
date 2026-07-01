@@ -24,6 +24,7 @@ export interface ListRematriculasParams {
   diasAntecedencia?: number;
   statusContrato?: StatusContrato;
   referencia?: string;
+  targetPeriodId?: string;
   search?: string;
   signal?: AbortSignal;
 }
@@ -135,14 +136,65 @@ export interface RematriculaProcessSummary {
     targetClassId: string | null;
     targetComboId: string | null;
     targetPlanId: string | null;
-    aluno: { id: string; nome: string; foto?: string | null } | null;
+    effectiveAt: string | null;
+    targetSnapshot: Record<string, unknown> | null;
+    aluno: { id: string; nome: string; cpf?: string | null; foto?: string | null } | null;
+    matriculaAtual?: {
+      id: string;
+      dataInicio: string;
+      dataFimContrato: string;
+      status: string;
+      statusContrato: string;
+      taxaMatricula: number;
+      taxaIsenta: boolean;
+      taxaJustificativa: string | null;
+      formaPagamento: string | null;
+      formaPagamentoTaxa: string | null;
+      vencimentoDia: number | null;
+      jurosMensal: number;
+      multaPercentual: number;
+      descontoAntecipado: number;
+      prazoDesconto: number | null;
+    } | null;
+    matriculaFutura?: {
+      id: string;
+      dataInicio: string;
+      dataFimContrato: string;
+      turmaId: string | null;
+      comboId: string | null;
+      planoId: string | null;
+      taxaMatricula: number;
+      taxaIsenta: boolean;
+      taxaJustificativa: string | null;
+      formaPagamento: string | null;
+      formaPagamentoTaxa: string | null;
+      vencimentoDia: number | null;
+      jurosMensal: number;
+      multaPercentual: number;
+      descontoAntecipado: number;
+      prazoDesconto: number | null;
+    } | null;
     turmaAtual?: { id: string; nome: string } | null;
     planoAtual?: { id: string; nome: string } | null;
     comboAtual?: { id: string; nome: string } | null;
   }>;
   reservas: Array<{ id: string; status: string; targetClassId: string | null; effectiveAt: string }>;
   contratos: Array<{ id: string; status: string; contractModelId: string | null; validFrom: string | null; validUntil: string | null }>;
-  financeiros: Array<{ id: string; status: string; monthlyTotal: number; enrollmentFeeTotal: number; provisionAt: string | null; asaasSubscriptionId: string | null; asaasPaymentId: string | null }>;
+  financeiros: Array<{
+    id: string;
+    status: string;
+    monthlyTotal: number;
+    enrollmentFeeTotal: number;
+    firstDueDate: string | null;
+    effectiveAt: string;
+    provisionAt: string | null;
+    feeChargeMoment: string | null;
+    feeUnit: string | null;
+    feePurpose: string | null;
+    asaasSubscriptionId: string | null;
+    asaasPaymentId: string | null;
+    snapshot?: Record<string, unknown> | null;
+  }>;
   pendencias: RematriculaPendingSummary[];
   excecoes: RematriculaExceptionSummary[];
   comunicacoes: RematriculaCommunicationSummary[];
@@ -233,13 +285,133 @@ function normalizeProcess(raw: unknown): RematriculaProcessSummary {
             targetClassId: itemRecord.targetClassId == null ? null : String(itemRecord.targetClassId),
             targetComboId: itemRecord.targetComboId == null ? null : String(itemRecord.targetComboId),
             targetPlanId: itemRecord.targetPlanId == null ? null : String(itemRecord.targetPlanId),
+            effectiveAt: parseDate(itemRecord.effectiveAt),
+            targetSnapshot:
+              itemRecord.targetSnapshot && typeof itemRecord.targetSnapshot === 'object'
+                ? (itemRecord.targetSnapshot as Record<string, unknown>)
+                : null,
             aluno: itemRecord.aluno && typeof itemRecord.aluno === 'object'
               ? {
                   id: String((itemRecord.aluno as Record<string, unknown>).id ?? ''),
                   nome: String((itemRecord.aluno as Record<string, unknown>).nome ?? ''),
+                  cpf: ((itemRecord.aluno as Record<string, unknown>).cpf as string | null) ?? null,
                   foto: ((itemRecord.aluno as Record<string, unknown>).foto as string | null) ?? null,
                 }
               : null,
+            matriculaAtual:
+              itemRecord.matriculaAtual && typeof itemRecord.matriculaAtual === 'object'
+                ? {
+                    id: String((itemRecord.matriculaAtual as Record<string, unknown>).id ?? ''),
+                    dataInicio:
+                      parseDate((itemRecord.matriculaAtual as Record<string, unknown>).dataInicio) ??
+                      new Date().toISOString(),
+                    dataFimContrato:
+                      parseDate((itemRecord.matriculaAtual as Record<string, unknown>).dataFimContrato) ??
+                      new Date().toISOString(),
+                    status: String((itemRecord.matriculaAtual as Record<string, unknown>).status ?? ''),
+                    statusContrato: String(
+                      (itemRecord.matriculaAtual as Record<string, unknown>).statusContrato ?? '',
+                    ),
+                    taxaMatricula: parseNumber(
+                      (itemRecord.matriculaAtual as Record<string, unknown>).taxaMatricula,
+                      0,
+                    ),
+                    taxaIsenta: Boolean((itemRecord.matriculaAtual as Record<string, unknown>).taxaIsenta),
+                    taxaJustificativa:
+                      (itemRecord.matriculaAtual as Record<string, unknown>).taxaJustificativa == null
+                        ? null
+                        : String((itemRecord.matriculaAtual as Record<string, unknown>).taxaJustificativa),
+                    formaPagamento:
+                      (itemRecord.matriculaAtual as Record<string, unknown>).formaPagamento == null
+                        ? null
+                        : String((itemRecord.matriculaAtual as Record<string, unknown>).formaPagamento),
+                    formaPagamentoTaxa:
+                      (itemRecord.matriculaAtual as Record<string, unknown>).formaPagamentoTaxa == null
+                        ? null
+                        : String((itemRecord.matriculaAtual as Record<string, unknown>).formaPagamentoTaxa),
+                    vencimentoDia:
+                      (itemRecord.matriculaAtual as Record<string, unknown>).vencimentoDia == null
+                        ? null
+                        : parseNumber((itemRecord.matriculaAtual as Record<string, unknown>).vencimentoDia, 0),
+                    jurosMensal: parseNumber(
+                      (itemRecord.matriculaAtual as Record<string, unknown>).jurosMensal,
+                      0,
+                    ),
+                    multaPercentual: parseNumber(
+                      (itemRecord.matriculaAtual as Record<string, unknown>).multaPercentual,
+                      0,
+                    ),
+                    descontoAntecipado: parseNumber(
+                      (itemRecord.matriculaAtual as Record<string, unknown>).descontoAntecipado,
+                      0,
+                    ),
+                    prazoDesconto:
+                      (itemRecord.matriculaAtual as Record<string, unknown>).prazoDesconto == null
+                        ? null
+                        : parseNumber((itemRecord.matriculaAtual as Record<string, unknown>).prazoDesconto, 0),
+                  }
+                : null,
+            matriculaFutura:
+              itemRecord.matriculaFutura && typeof itemRecord.matriculaFutura === 'object'
+                ? {
+                    id: String((itemRecord.matriculaFutura as Record<string, unknown>).id ?? ''),
+                    dataInicio:
+                      parseDate((itemRecord.matriculaFutura as Record<string, unknown>).dataInicio) ??
+                      new Date().toISOString(),
+                    dataFimContrato:
+                      parseDate((itemRecord.matriculaFutura as Record<string, unknown>).dataFimContrato) ??
+                      new Date().toISOString(),
+                    turmaId:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).turmaId == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).turmaId),
+                    comboId:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).comboId == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).comboId),
+                    planoId:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).planoId == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).planoId),
+                    taxaMatricula: parseNumber(
+                      (itemRecord.matriculaFutura as Record<string, unknown>).taxaMatricula,
+                      0,
+                    ),
+                    taxaIsenta: Boolean((itemRecord.matriculaFutura as Record<string, unknown>).taxaIsenta),
+                    taxaJustificativa:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).taxaJustificativa == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).taxaJustificativa),
+                    formaPagamento:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).formaPagamento == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).formaPagamento),
+                    formaPagamentoTaxa:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).formaPagamentoTaxa == null
+                        ? null
+                        : String((itemRecord.matriculaFutura as Record<string, unknown>).formaPagamentoTaxa),
+                    vencimentoDia:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).vencimentoDia == null
+                        ? null
+                        : parseNumber((itemRecord.matriculaFutura as Record<string, unknown>).vencimentoDia, 0),
+                    jurosMensal: parseNumber(
+                      (itemRecord.matriculaFutura as Record<string, unknown>).jurosMensal,
+                      0,
+                    ),
+                    multaPercentual: parseNumber(
+                      (itemRecord.matriculaFutura as Record<string, unknown>).multaPercentual,
+                      0,
+                    ),
+                    descontoAntecipado: parseNumber(
+                      (itemRecord.matriculaFutura as Record<string, unknown>).descontoAntecipado,
+                      0,
+                    ),
+                    prazoDesconto:
+                      (itemRecord.matriculaFutura as Record<string, unknown>).prazoDesconto == null
+                        ? null
+                        : parseNumber((itemRecord.matriculaFutura as Record<string, unknown>).prazoDesconto, 0),
+                  }
+                : null,
             turmaAtual:
               itemRecord.turmaAtual && typeof itemRecord.turmaAtual === 'object'
                 ? {
@@ -266,7 +438,32 @@ function normalizeProcess(raw: unknown): RematriculaProcessSummary {
       : [],
     reservas: Array.isArray(record.reservas) ? (record.reservas as RematriculaProcessSummary['reservas']) : [],
     contratos: Array.isArray(record.contratos) ? (record.contratos as RematriculaProcessSummary['contratos']) : [],
-    financeiros: Array.isArray(record.financeiros) ? (record.financeiros as RematriculaProcessSummary['financeiros']) : [],
+    financeiros: Array.isArray(record.financeiros)
+      ? record.financeiros.map((financeiro) => {
+          const financeiroRecord = (financeiro as Record<string, unknown>) || {};
+          return {
+            id: String(financeiroRecord.id ?? ''),
+            status: String(financeiroRecord.status ?? ''),
+            monthlyTotal: parseNumber(financeiroRecord.monthlyTotal, 0),
+            enrollmentFeeTotal: parseNumber(financeiroRecord.enrollmentFeeTotal, 0),
+            firstDueDate: parseDate(financeiroRecord.firstDueDate),
+            effectiveAt: parseDate(financeiroRecord.effectiveAt) ?? new Date().toISOString(),
+            provisionAt: parseDate(financeiroRecord.provisionAt),
+            feeChargeMoment:
+              financeiroRecord.feeChargeMoment == null ? null : String(financeiroRecord.feeChargeMoment),
+            feeUnit: financeiroRecord.feeUnit == null ? null : String(financeiroRecord.feeUnit),
+            feePurpose: financeiroRecord.feePurpose == null ? null : String(financeiroRecord.feePurpose),
+            asaasSubscriptionId:
+              financeiroRecord.asaasSubscriptionId == null ? null : String(financeiroRecord.asaasSubscriptionId),
+            asaasPaymentId:
+              financeiroRecord.asaasPaymentId == null ? null : String(financeiroRecord.asaasPaymentId),
+            snapshot:
+              financeiroRecord.snapshot && typeof financeiroRecord.snapshot === 'object'
+                ? (financeiroRecord.snapshot as Record<string, unknown>)
+                : null,
+          };
+        })
+      : [],
     pendencias: Array.isArray(record.pendencias)
       ? (record.pendencias as RematriculaPendingSummary[])
       : [],
@@ -474,6 +671,7 @@ export async function listRematriculasElegiveisRequest(
     searchParams.set('diasAntecedencia', String(params.diasAntecedencia));
   if (params.statusContrato) searchParams.set('statusContrato', params.statusContrato);
   if (params.referencia) searchParams.set('referencia', params.referencia);
+  if (params.targetPeriodId) searchParams.set('targetPeriodId', params.targetPeriodId);
 
   const response = await fetch(`/api/rematriculas?${searchParams.toString()}`, {
     headers: { Accept: 'application/json' },
@@ -518,6 +716,7 @@ export interface CreateRematriculaInput {
   planoId?: string;
   turmaId?: string | null;
   comboId?: string | null;
+  contractModelId?: string | null;
   responsavelFinanceiroId?: string | null;
   formaPagamento?: string;
   formaPagamentoTaxa?: string;
@@ -840,7 +1039,6 @@ export interface CreateRematriculaCampaignInput {
   targetPeriodId: string;
   campaignStartsAt: string;
   campaignEndsAt?: string | null;
-  rules?: Record<string, unknown> | null;
   audienceDefinition?: Record<string, unknown> | null;
 }
 
@@ -925,6 +1123,26 @@ export async function editRematriculaFutureLinkRequest(
     targetClassId?: string | null;
     targetComboId?: string | null;
     targetPlanId?: string | null;
+    holderType?: 'STUDENT' | 'RESPONSIBLE' | null;
+    holderId?: string | null;
+    effectiveAt?: string | null;
+    firstDueDate?: string | null;
+    targetContractEndsAt?: string | null;
+    contractModelId?: string | null;
+    paymentMethod?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null;
+    enrollmentFeePaymentMethod?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null;
+    dueDay?: number | null;
+    enrollmentFeeAmount?: number | null;
+    enrollmentFeeExempt?: boolean | null;
+    enrollmentFeeJustification?: string | null;
+    feeChargeMoment?: 'CHARGE_ON_CONFIRMATION' | 'CHARGE_ON_START' | 'EXEMPT' | null;
+    feeUnit?: 'NO_FEE' | 'PER_STUDENT' | 'PER_FAMILY' | null;
+    feePurpose?: 'ADMINISTRATIVE_FEE' | 'SEAT_RESERVATION' | 'ADVANCE_FIRST_TUITION' | null;
+    monthlyAmount?: number | null;
+    lateFeePercent?: number | null;
+    interestMonthlyPercent?: number | null;
+    earlyDiscountPercent?: number | null;
+    earlyDiscountDays?: number | null;
     reason: string;
   },
 ) {

@@ -19,6 +19,8 @@ import {
 } from '../core';
 import type { InstallmentStatus } from '@prisma/client';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 
 export type CreateStandaloneInstallmentInput = {
   contaId: string;
@@ -424,12 +426,33 @@ async function syncInstallmentPayments(params: {
   for (const payment of sortedPayments) {
     const vencimento = new Date(payment.dueDate);
     const paymentExternalReference = buildPaymentExternalReference(externalReference, payment.id);
+    const effectivePaymentStatus =
+      normalizeAsaasPaymentSnapshotStatus({
+        status: payment.status,
+        billingType: payment.billingType,
+        deleted: payment.deleted,
+      }) ?? payment.status;
+    const asaasSnapshot = {
+      asaasStatus: effectivePaymentStatus,
+      asaasValue: payment.value,
+      asaasNetValue: payment.netValue,
+      asaasOriginalValue: payment.originalValue ?? null,
+      asaasFeeValue: payment.value - payment.netValue,
+      asaasCreditDate: payment.creditDate ? new Date(payment.creditDate) : null,
+      asaasEstimatedCreditDate: payment.estimatedCreditDate ? new Date(payment.estimatedCreditDate) : null,
+      lastAsaasFetchAt: new Date(),
+      liquidacaoStatus: resolveLiquidacaoFromAsaasPayment({
+        asaasStatus: effectivePaymentStatus,
+        creditDate: payment.creditDate,
+        billingType: payment.billingType,
+      }),
+    };
 
     const syncedCharge = await prisma.charge.upsert({
       where: { asaasPaymentId: payment.id },
       update: {
         externalReference: paymentExternalReference,
-        status: mapAsaasToChargeStatus(payment.status),
+        status: mapAsaasToChargeStatus(effectivePaymentStatus),
         statusUpdatedAt: new Date(),
         payerName,
         description: payment.description ?? description,
@@ -439,11 +462,12 @@ async function syncInstallmentPayments(params: {
         customerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
+        ...asaasSnapshot,
       },
       create: {
         contaId,
         externalReference: paymentExternalReference,
-        status: mapAsaasToChargeStatus(payment.status),
+        status: mapAsaasToChargeStatus(effectivePaymentStatus),
         statusUpdatedAt: new Date(),
         asaasPaymentId: payment.id,
         payerName,
@@ -454,6 +478,7 @@ async function syncInstallmentPayments(params: {
         customerId,
         invoiceUrl: payment.invoiceUrl ?? null,
         standaloneInstallmentPlanId: installmentPlanId,
+        ...asaasSnapshot,
       },
     });
 

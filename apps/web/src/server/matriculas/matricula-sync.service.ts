@@ -9,6 +9,10 @@ import {
   pauseAssinatura,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
+import {
+  assertStudentCapacity,
+  countAdditionalActiveStudentsForEnrollment,
+} from '@/src/server/platform-billing/capacity';
 
 export class ManualSyncError extends Error {
   readonly statusCode: number;
@@ -420,9 +424,23 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     // Re-validate inside transaction for atomicity
     const verify = await tx.matricula.findFirst({
       where: { id: matricula.id, aluno: { contaId: input.contaId } },
-      select: { id: true },
+      select: { id: true, alunoId: true, status: true },
     });
     if (!verify) throw new ManualSyncError(404, 'MATRICULA_NOT_FOUND', 'Matrícula não encontrada durante a sincronização.');
+
+    if (newStatus === StatusMatricula.ATIVA && verify.status !== StatusMatricula.ATIVA) {
+      const additionalActiveStudents = await countAdditionalActiveStudentsForEnrollment({
+        tx,
+        contaId: input.contaId,
+        alunoId: verify.alunoId,
+      });
+      await assertStudentCapacity({
+        tx,
+        contaId: input.contaId,
+        additionalActiveStudents,
+        operation: 'matricula.status.activate',
+      });
+    }
 
     await tx.matricula.update({
       where: { id: matricula.id },

@@ -15,7 +15,6 @@ const campaignSchema = z.object({
   targetPeriodId: z.string().trim().min(1),
   campaignStartsAt: z.string().datetime().or(z.string().date()),
   campaignEndsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
-  rules: z.record(z.unknown()).nullable().optional(),
   audienceDefinition: z.record(z.unknown()).nullable().optional(),
   status: z.enum(['DRAFT', 'SCHEDULED', 'ACTIVE']).optional(),
 });
@@ -59,6 +58,16 @@ export async function POST(request: Request) {
 
   try {
     const body = campaignSchema.parse(await request.json().catch(() => null));
+    const campaignStartsAt = parseDate(body.campaignStartsAt);
+    const campaignEndsAt = body.campaignEndsAt ? parseDate(body.campaignEndsAt) : null;
+    if (campaignEndsAt && campaignEndsAt < campaignStartsAt) {
+      return jsonError(
+        422,
+        'JANELA_CAMPANHA_INVALIDA',
+        'A data final da campanha não pode ser anterior à data inicial.',
+      );
+    }
+
     const campaign = await createRenewalCampaign(
       {
         contaId: auth.user.contaId,
@@ -66,9 +75,8 @@ export async function POST(request: Request) {
         nome: body.nome,
         descricao: body.descricao,
         targetPeriodId: body.targetPeriodId,
-        campaignStartsAt: parseDate(body.campaignStartsAt),
-        campaignEndsAt: body.campaignEndsAt ? parseDate(body.campaignEndsAt) : null,
-        rules: body.rules,
+        campaignStartsAt,
+        campaignEndsAt,
         audienceDefinition: body.audienceDefinition,
         status: body.status,
       },

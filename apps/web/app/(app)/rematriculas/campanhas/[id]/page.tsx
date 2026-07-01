@@ -66,7 +66,7 @@ function getInitials(name: string) {
 function getProcessLabel(status: RematriculaProcessSummary['status']) {
   const labels: Record<RematriculaProcessSummary['status'], string> = {
     DRAFT: 'Rascunho',
-    PREVIEWED: 'Preview',
+    PREVIEWED: 'Prévia',
     PARTIALLY_CONFIRMED: 'Parcial',
     CONFIRMED: 'Confirmada',
     WAITING_FOR_START: 'Aguardando início',
@@ -79,10 +79,51 @@ function getProcessLabel(status: RematriculaProcessSummary['status']) {
 }
 
 function getProcessBadgeVariant(status: RematriculaProcessSummary['status']): BadgeVariant {
-  if (status === 'REQUIRES_ATTENTION') return 'warning';
+  if (status === 'CONFIRMED' || status === 'EFFECTIVE') return 'success';
+  if (status === 'WAITING_FOR_START' || status === 'PREVIEWED') return 'info';
+  if (status === 'PARTIALLY_CONFIRMED' || status === 'REQUIRES_ATTENTION') return 'warning';
   if (status === 'CANCELLED') return 'destructive';
-  if (status === 'EFFECTIVE' || status === 'COMPLETED') return 'default';
-  return 'info';
+  return 'neutral';
+}
+
+function getReservaLabel(status: string | null | undefined) {
+  const labels: Record<string, string> = {
+    NOT_RESERVED: 'Sem reserva',
+    RESERVED: 'Reservada',
+    FAILED: 'Falhou',
+    RELEASED: 'Liberada',
+    CANCELLED: 'Cancelada',
+  };
+  return status ? labels[status] ?? status : 'Sem reserva';
+}
+
+function getReservaBadgeVariant(status: string | null | undefined): BadgeVariant {
+  if (status === 'RESERVED' || status === 'CONVERTED') return 'success';
+  if (status === 'WAITLISTED') return 'warning';
+  if (status === 'FAILED' || status === 'CANCELLED') return 'destructive';
+  return 'neutral';
+}
+
+function getFinanceiroFuturoLabel(status: string | null | undefined) {
+  const labels: Record<string, string> = {
+    NOT_PREPARED: 'Não preparado',
+    PENDING: 'Pendente',
+    PREPARED: 'Preparado',
+    SCHEDULED: 'Agendado',
+    READY_TO_PROVISION: 'Pronto para gerar',
+    PROVISIONED: 'Gerado',
+    FAILED: 'Falhou',
+    CANCELLED: 'Cancelado',
+  };
+  return status ? labels[status] ?? status : 'Não preparado';
+}
+
+function getFinanceiroFuturoBadgeVariant(status: string | null | undefined): BadgeVariant {
+  if (status === 'PREPARED' || status === 'PROVISIONED') return 'success';
+  if (status === 'SCHEDULED' || status === 'READY_TO_PROVISION') return 'info';
+  if (status === 'PENDING') return 'warning';
+  if (status === 'FAILED' || status === 'CANCELLED') return 'destructive';
+  return 'neutral';
 }
 
 function buildTitularGroups(items: RematriculaElegivelItem[]): RematriculaTitularGroup[] {
@@ -149,7 +190,24 @@ export default function RematriculaCampanhaDetalhePage() {
     [campaignId, campaigns],
   );
 
-  const eligibleItems = items;
+  const activeRenewalSourceIds = useMemo(() => {
+    return new Set(
+      processes
+        .filter((process) => {
+          const sameCampaign = process.campanhaId === campaignId;
+          const sameTargetPeriod = campaign?.targetPeriodId
+            ? process.targetPeriodId === campaign.targetPeriodId
+            : false;
+          return (sameCampaign || sameTargetPeriod) && process.status !== 'CANCELLED';
+        })
+        .flatMap((process) => process.itens.map((item) => item.matriculaOrigemId)),
+    );
+  }, [campaign?.targetPeriodId, campaignId, processes]);
+
+  const eligibleItems = useMemo(
+    () => items.filter((item) => !activeRenewalSourceIds.has(item.id)),
+    [activeRenewalSourceIds, items],
+  );
 
   const titularGroups = useMemo(() => buildTitularGroups(eligibleItems), [eligibleItems]);
 
@@ -213,13 +271,25 @@ export default function RematriculaCampanhaDetalhePage() {
           .map((item) => item.aluno?.nome)
           .filter(Boolean)
           .join(', ');
+        const firstStudent = process.itens.find((item) => item.aluno)?.aluno;
+        const displayName = alunos || process.holderId;
         return (
-          <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium text-slate-900">
-              {alunos || process.holderId}
-            </div>
-            <div className="mt-0.5 truncate text-xs text-slate-500">
-              {process.holderType === 'RESPONSIBLE' ? 'Responsável financeiro' : 'Aluno titular'}
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar className="h-10 w-10 shrink-0">
+              {firstStudent?.foto ? (
+                <AvatarImage src={firstStudent.foto} alt={firstStudent.nome} />
+              ) : null}
+              <AvatarFallback className="bg-purple-100 text-xs font-semibold text-purple-700">
+                {getInitials(displayName)}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <div className="truncate text-[13px] font-medium text-slate-900">
+                {displayName}
+              </div>
+              <div className="mt-0.5 truncate text-xs text-slate-500">
+                {process.holderType === 'RESPONSIBLE' ? 'Responsável financeiro' : 'Aluno titular'}
+              </div>
             </div>
           </div>
         );
@@ -255,9 +325,9 @@ export default function RematriculaCampanhaDetalhePage() {
       width: 'lg:w-[12%]',
       align: 'center',
       render: (process) => (
-        <span className="text-[13px] text-slate-700">
-          {process.reservas[0]?.status ?? 'NOT_RESERVED'}
-        </span>
+        <Badge variant={getReservaBadgeVariant(process.reservas[0]?.status)}>
+          {getReservaLabel(process.reservas[0]?.status)}
+        </Badge>
       ),
     },
     {
@@ -266,12 +336,9 @@ export default function RematriculaCampanhaDetalhePage() {
       width: 'lg:w-[16%]',
       align: 'left',
       render: (process) => (
-        <div className="min-w-0 text-[13px] text-slate-700">
-          <div>{process.financeiros[0]?.status ?? 'NOT_PREPARED'}</div>
-          <div className="text-xs text-slate-500">
-            R$ {process.monthlyTotal.toFixed(2)}
-          </div>
-        </div>
+        <Badge variant={getFinanceiroFuturoBadgeVariant(process.financeiros[0]?.status)}>
+          {getFinanceiroFuturoLabel(process.financeiros[0]?.status)}
+        </Badge>
       ),
     },
     {

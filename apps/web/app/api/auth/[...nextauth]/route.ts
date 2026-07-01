@@ -6,6 +6,15 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
+const RATE_LIMIT_EXEMPT_GET_ACTIONS = new Set(['session', 'csrf', 'providers']);
+
+function getNextAuthAction(req: NextRequest): string | null {
+  const prefix = '/api/auth/';
+  const pathname = req.nextUrl.pathname;
+  if (!pathname.startsWith(prefix)) return null;
+  return pathname.slice(prefix.length).split('/')[0] || null;
+}
+
 async function resolveHandler() {
   const { authOptions } = await import('@/lib/auth-options');
   return NextAuth(authOptions);
@@ -17,15 +26,21 @@ async function withRateLimit(
   ctx?: { params?: Record<string, string | string[]> },
 ): Promise<Response> {
   try {
-    // 60 reqs / 15min por IP para endpoints de auth
-    const ip = ipFromRequest(req as unknown as Request);
-    const rl = rateLimit(`nextauth:${ip}`, 60, 15 * 60 * 1000);
+    const action = getNextAuthAction(req);
+    const shouldRateLimit =
+      req.method !== 'GET' || !action || !RATE_LIMIT_EXEMPT_GET_ACTIONS.has(action);
 
-    if (!rl.ok) {
-      return NextResponse.json(
-        { error: 'Muitas tentativas. Tente novamente mais tarde.' },
-        { status: 429 },
-      );
+    // 60 reqs / 15min por IP para endpoints de auth
+    if (shouldRateLimit) {
+      const ip = ipFromRequest(req as unknown as Request);
+      const rl = rateLimit(`nextauth:${ip}`, 60, 15 * 60 * 1000);
+
+      if (!rl.ok) {
+        return NextResponse.json(
+          { error: 'Muitas tentativas. Tente novamente mais tarde.' },
+          { status: 429 },
+        );
+      }
     }
 
     // Chama o handler original do NextAuth

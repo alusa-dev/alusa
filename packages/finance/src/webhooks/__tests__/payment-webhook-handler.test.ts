@@ -478,7 +478,48 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.charge.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'ch_1' },
-        data: expect.objectContaining({ status: 'CANCELED' }),
+        data: expect.objectContaining({
+          status: 'CANCELED',
+          asaasStatus: 'DELETED',
+          liquidacaoStatus: 'NAO_APLICAVEL',
+        }),
+      }),
+    );
+  });
+
+  it('normaliza recebimento em dinheiro mesmo quando o Asaas envia status RECEIVED', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+      id: 'ch_cash_1',
+      cobrancaId: null,
+      status: 'OPEN',
+      asaasPaymentId: 'pay_cash_1',
+    } as never);
+
+    vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_cash_1', status: 'PAID' } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay_cash_1',
+        status: 'RECEIVED',
+        value: 150,
+        netValue: 150,
+        paymentDate: '2026-06-21',
+        billingType: 'RECEIVED_IN_CASH',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.charge.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ch_cash_1' },
+        data: expect.objectContaining({
+          status: 'PAID',
+          asaasStatus: 'RECEIVED_IN_CASH',
+          liquidacaoStatus: 'DISPONIVEL',
+        }),
       }),
     );
   });

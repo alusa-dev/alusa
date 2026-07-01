@@ -12,7 +12,6 @@ const updateSchema = z.object({
   targetPeriodId: z.string().trim().min(1).optional(),
   campaignStartsAt: z.string().datetime().or(z.string().date()).optional(),
   campaignEndsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
-  rules: z.record(z.unknown()).nullable().optional(),
   audienceDefinition: z.record(z.unknown()).nullable().optional(),
   status: z.enum(['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED', 'CLOSED', 'ARCHIVED']).optional(),
 });
@@ -41,14 +40,24 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   try {
     const { id } = await context.params;
     const body = updateSchema.parse(await request.json().catch(() => null));
+    const campaignStartsAt = parseDate(body.campaignStartsAt) ?? undefined;
+    const campaignEndsAt = parseDate(body.campaignEndsAt);
+    if (campaignStartsAt && campaignEndsAt && campaignEndsAt < campaignStartsAt) {
+      return jsonError(
+        422,
+        'JANELA_CAMPANHA_INVALIDA',
+        'A data final da campanha não pode ser anterior à data inicial.',
+      );
+    }
+
     const campaign = await updateRenewalCampaign(
       {
         contaId: user.contaId,
         actorId: user.id,
         campaignId: id,
         ...body,
-        campaignStartsAt: parseDate(body.campaignStartsAt) ?? undefined,
-        campaignEndsAt: parseDate(body.campaignEndsAt),
+        campaignStartsAt,
+        campaignEndsAt,
       },
       { prisma },
     );

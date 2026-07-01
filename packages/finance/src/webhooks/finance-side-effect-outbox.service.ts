@@ -1,12 +1,28 @@
 import { prisma } from '@alusa/database';
-import { FinanceWebhookSideEffectStatus } from '@prisma/client';
+import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
 import type { BillingNotificationCandidate } from '@alusa/lib';
 import { emitBillingNotifications } from '@alusa/lib';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
 
-export type FinanceSideEffectType = 'BILLING_NOTIFICATION';
+export type FinanceSideEffectType =
+  | 'BILLING_NOTIFICATION'
+  | 'EVENT_PUBLIC_ORDER_TICKET_EMAIL'
+  | 'EVENT_PUBLIC_ORDER_CREATED_EMAIL';
+
+export type FinanceSideEffectSourceType =
+  | 'ASAAS_WEBHOOK'
+  | 'ASAAS_SYNC'
+  | 'FINANCE_EFFECT'
+  | 'EVENT_ORDER';
+
+export interface EnqueueFinanceSideEffectParams {
+  contaId: string;
+  effectType: FinanceSideEffectType;
+  dedupeKey: string;
+  payload: Prisma.InputJsonObject;
+}
 type EventPublicOrderTicketEmailPayload = {
   orderId: string;
   buyerEmail: string;
@@ -34,7 +50,7 @@ type EventPublicOrderCreatedEmailPayload = {
 export interface EnqueueBillingNotificationSideEffectsParams {
   contaId: string;
   candidates: BillingNotificationCandidate[];
-  sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
+  sourceType: Extract<FinanceSideEffectSourceType, 'ASAAS_WEBHOOK' | 'ASAAS_SYNC'>;
   webhookBatchId?: string;
 }
 
@@ -42,7 +58,7 @@ function buildDedupeKey(params: {
   contaId: string;
   effectType: FinanceSideEffectType;
   candidate: BillingNotificationCandidate;
-  sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
+  sourceType: Extract<FinanceSideEffectSourceType, 'ASAAS_WEBHOOK' | 'ASAAS_SYNC'>;
 }): string {
   const eventKey = params.candidate.eventId?.trim() || `${params.candidate.event}:${params.candidate.asaasPaymentId}`;
   return `${params.contaId}:${params.effectType}:${params.sourceType}:${eventKey}`;
@@ -226,6 +242,33 @@ async function sendEventPublicOrderCreatedEmail(payload: EventPublicOrderCreated
   });
 }
 
+export async function enqueueFinanceSideEffect(
+  params: EnqueueFinanceSideEffectParams,
+): Promise<{ enqueued: boolean; skipped: boolean }> {
+  try {
+    await prisma.financeWebhookSideEffectOutbox.create({
+      data: {
+        contaId: params.contaId,
+        effectType: params.effectType,
+        dedupeKey: params.dedupeKey,
+        payload: params.payload,
+        status: FinanceWebhookSideEffectStatus.PENDING,
+      },
+    });
+    return { enqueued: true, skipped: false };
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002'
+    ) {
+      return { enqueued: false, skipped: true };
+    }
+    throw error;
+  }
+}
+
 export async function enqueueBillingNotificationSideEffects(
   params: EnqueueBillingNotificationSideEffectsParams,
 ): Promise<{ enqueued: number; skipped: number }> {
@@ -244,32 +287,21 @@ export async function enqueueBillingNotificationSideEffects(
       sourceType: params.sourceType,
     });
 
-    try {
-      await prisma.financeWebhookSideEffectOutbox.create({
-        data: {
-          contaId: params.contaId,
-          effectType: 'BILLING_NOTIFICATION',
-          dedupeKey,
-          payload: {
-            candidate,
-            sourceType: params.sourceType,
-            webhookBatchId: params.webhookBatchId ?? null,
-          },
-          status: FinanceWebhookSideEffectStatus.PENDING,
-        },
-      });
+    const result = await enqueueFinanceSideEffect({
+      contaId: params.contaId,
+      effectType: 'BILLING_NOTIFICATION',
+      dedupeKey,
+      payload: {
+        candidate,
+        sourceType: params.sourceType,
+        webhookBatchId: params.webhookBatchId ?? null,
+      },
+    });
+
+    if (result.enqueued) {
       enqueued += 1;
-    } catch (error) {
-      if (
-        error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        (error as { code?: string }).code === 'P2002'
-      ) {
-        skipped += 1;
-        continue;
-      }
-      throw error;
+    } else if (result.skipped) {
+      skipped += 1;
     }
   }
 
@@ -287,10 +319,14 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     return { processed: false, reason: 'not_found_or_done' };
   }
 
+  if (event.status === FinanceWebhookSideEffectStatus.FAILED && event.attempts >= MAX_ATTEMPTS) {
+    return { processed: false, reason: 'exhausted' };
+  }
+
   const claimed = await prisma.financeWebhookSideEffectOutbox.updateMany({
     where: {
       id: eventId,
-      status: { in: [FinanceWebhookSideEffectStatus.PENDING, FinanceWebhookSideEffectStatus.FAILED] },
+      status: FinanceWebhookSideEffectStatus.PENDING,
       availableAt: { lte: new Date() },
     },
     data: {
@@ -358,7 +394,7 @@ export async function drainFinanceWebhookSideEffectOutbox(params?: {
 
   const events = await prisma.financeWebhookSideEffectOutbox.findMany({
     where: {
-      status: { in: [FinanceWebhookSideEffectStatus.PENDING, FinanceWebhookSideEffectStatus.FAILED] },
+      status: FinanceWebhookSideEffectStatus.PENDING,
       availableAt: { lte: new Date() },
       ...(params?.contaId ? { contaId: params.contaId } : {}),
     },

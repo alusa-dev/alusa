@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
 import {
@@ -20,14 +19,10 @@ import {
   updatePayment,
   auditLogService,
   evaluatePaymentActionPolicy,
-  expectedEventsForPaymentCommand,
-  failPaymentCommand,
-  markPaymentCommandSent,
-  registerPaymentCommand,
+  normalizeAsaasPaymentSnapshotStatus,
+  runAsaasPaymentCommand,
   type PaymentActionDecision,
   type PaymentOrigin,
-  type PaymentCommandEntityType,
-  type PaymentCommandJobType,
   resolveStandaloneChargeTipo,
 } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
@@ -57,22 +52,114 @@ import { privateJson } from '@/lib/private-cache';
 
 const ASAAS_EDITABLE_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
 const ASAAS_PAID_PAYMENT_STATUSES = new Set(['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED']);
-const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
-const TERMINAL_ASAAS_PAYMENT_STATUSES = new Set([
-  'RECEIVED',
-  'CONFIRMED',
-  'DUNNING_RECEIVED',
-  'RECEIVED_IN_CASH',
-  'REFUNDED',
-  'REFUND_IN_PROGRESS',
-  'REFUND_REQUESTED',
-  'CHARGEBACK_REQUESTED',
-  'CHARGEBACK_DISPUTE',
-  'AWAITING_CHARGEBACK_REVERSAL',
-  'DELETED',
-]);
 const CHARGE_DETAIL_CACHE_SECONDS = 20;
 const CHARGE_DETAIL_STALE_SECONDS = 40;
+
+const COBRANCA_STATUS_PRECEDENCE: Record<string, number> = {
+  PENDENTE: 5,
+  A_VENCER: 10,
+  PROCESSANDO: 15,
+  ATRASADO: 30,
+  PAGO: 40,
+  CANCELAMENTO_PENDENTE: 80,
+  ESTORNADO_PARCIAL: 90,
+  ESTORNADO: 92,
+  CANCELADO: 95,
+};
+
+const CHARGE_TO_COBRANCA_STATUS: Record<string, StatusCobranca> = {
+  CREATED: 'PENDENTE',
+  PENDING_SYNC: 'PENDENTE',
+  OPEN: 'PENDENTE',
+  OVERDUE: 'ATRASADO',
+  PAID: 'PAGO',
+  REFUNDED: 'ESTORNADO',
+  CANCELED: 'CANCELADO',
+};
+
+function getCobrancaStatusPrecedence(status: string | null | undefined): number {
+  return status ? COBRANCA_STATUS_PRECEDENCE[status] ?? 0 : 0;
+}
+
+function chooseHighestPrecedenceCobrancaStatus(statuses: Array<StatusCobranca | string | null | undefined>) {
+  return statuses.reduce<StatusCobranca | string | null>((selected, candidate) => {
+    if (!candidate) return selected;
+    if (!selected) return candidate;
+    return getCobrancaStatusPrecedence(candidate) >= getCobrancaStatusPrecedence(selected)
+      ? candidate
+      : selected;
+  }, null);
+}
+
+function mapChargeStatusToCobrancaStatus(status?: string | null): StatusCobranca | null {
+  if (!status) return null;
+  return CHARGE_TO_COBRANCA_STATUS[status] ?? null;
+}
+
+function getEffectiveRemotePaymentStatus(
+  payment?: { status?: string | null; deleted?: boolean | null; billingType?: string | null } | null,
+) {
+  if (!payment) return null;
+  return normalizeAsaasPaymentSnapshotStatus({
+    status: payment.status,
+    billingType: payment.billingType,
+    deleted: payment.deleted,
+  }) ?? payment.status ?? null;
+}
+
+async function convergeLocalCanceledPayment(params: {
+  contaId: string;
+  cobrancaId?: string | null;
+  chargeId?: string | null;
+  asaasPaymentId?: string | null;
+  actorId?: string | null;
+  reason?: string;
+}) {
+  const now = new Date();
+  const reason = params.reason ?? 'Cancelada no Asaas';
+
+  await prisma.$transaction(async (tx) => {
+    if (params.cobrancaId) {
+      await tx.cobranca.updateMany({
+        where: {
+          id: params.cobrancaId,
+          contaId: params.contaId,
+          status: { notIn: ['CANCELADO', 'PAGO', 'ESTORNADO', 'ESTORNADO_PARCIAL'] },
+        },
+        data: {
+          status: 'CANCELADO',
+          asaasStatus: 'DELETED',
+          canceladoEm: now,
+          canceladoMotivo: reason,
+          canceladoPor: params.actorId ?? 'system',
+          liquidacaoStatus: 'NAO_APLICAVEL',
+        },
+      });
+    }
+
+    const chargeWhere = [
+      params.chargeId ? { id: params.chargeId } : null,
+      params.cobrancaId ? { cobrancaId: params.cobrancaId } : null,
+      params.asaasPaymentId ? { asaasPaymentId: params.asaasPaymentId } : null,
+    ].filter((where): where is { id: string } | { cobrancaId: string } | { asaasPaymentId: string } => Boolean(where));
+
+    if (chargeWhere.length > 0) {
+      await tx.charge.updateMany({
+        where: {
+          contaId: params.contaId,
+          OR: chargeWhere,
+          status: { notIn: ['CANCELED', 'PAID', 'REFUNDED'] },
+        },
+        data: {
+          status: 'CANCELED',
+          statusUpdatedAt: now,
+          asaasStatus: 'DELETED',
+          liquidacaoStatus: 'NAO_APLICAVEL',
+        },
+      });
+    }
+  });
+}
 
 function mutationError(
   status: number,
@@ -163,46 +250,6 @@ function policyBlockedError(params: {
   );
 }
 
-async function runAsaasPaymentCommand<T>(input: {
-  contaId: string;
-  type: PaymentCommandJobType;
-  entityType: PaymentCommandEntityType;
-  entityId: string;
-  asaasPaymentId: string;
-  actorId: string;
-  chargeId?: string | null;
-  cobrancaId?: string | null;
-  providerStatus?: string | null;
-  metadata?: Record<string, unknown>;
-  run: () => Promise<T>;
-}): Promise<{ result: T; commandJobId: string }> {
-  const command = await registerPaymentCommand({
-    contaId: input.contaId,
-    type: input.type,
-    entityType: input.entityType,
-    entityId: input.entityId,
-    asaasPaymentId: input.asaasPaymentId,
-    expectedEvents: expectedEventsForPaymentCommand(input.type),
-    correlationId: randomUUID(),
-    actorId: input.actorId,
-    chargeId: input.chargeId ?? null,
-    cobrancaId: input.cobrancaId ?? null,
-    metadata: input.metadata,
-  });
-
-  try {
-    const result = await input.run();
-    await markPaymentCommandSent({
-      jobId: command.id,
-      providerStatus: input.providerStatus ?? null,
-    });
-    return { result, commandJobId: command.id };
-  } catch (error) {
-    await failPaymentCommand({ jobId: command.id, error });
-    throw error;
-  }
-}
-
 function resolveAcademicPaymentOrigin(tipo?: string | null): PaymentOrigin {
   switch (tipo) {
     case 'PARCELADA':
@@ -223,55 +270,30 @@ function resolveStandaloneDisplayedStatus(params: {
   remotePaymentStatus?: string | null;
   dueDate?: Date | null;
 }) {
-  const localStatusMap: Record<string, string> = {
-    CREATED: 'PENDENTE',
-    OPEN: 'PENDENTE',
-    PAID: 'PAGO',
-    OVERDUE: 'ATRASADO',
-    CANCELED: 'CANCELADO',
-    REFUNDED: 'ESTORNADO',
-  };
+  const localStatus = mapChargeStatusToCobrancaStatus(params.localChargeStatus) ?? 'PENDENTE';
+  const remoteStatus = params.remotePaymentStatus
+    ? mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, { dueDate: params.dueDate })
+    : null;
 
-  const localStatus = localStatusMap[params.localChargeStatus] ?? 'PENDENTE';
-  if (!params.remotePaymentStatus) {
-    return localStatus;
-  }
-
-  const remoteStatus = mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, {
-    dueDate: params.dueDate,
-  });
-
-  if (
-    TERMINAL_CHARGE_STATUSES.has(params.localChargeStatus) &&
-    !TERMINAL_ASAAS_PAYMENT_STATUSES.has(params.remotePaymentStatus)
-  ) {
-    return localStatus;
-  }
-
-  return remoteStatus;
+  return chooseHighestPrecedenceCobrancaStatus([localStatus, remoteStatus]) ?? localStatus;
 }
 
 function resolveAcademicDisplayedStatus(params: {
   localCobrancaStatus: string;
+  localChargeStatus?: string | null;
   remotePaymentStatus?: string | null;
   dueDate: Date;
 }) {
-  if (!params.remotePaymentStatus) {
-    return params.localCobrancaStatus;
-  }
+  const localChargeMappedStatus = mapChargeStatusToCobrancaStatus(params.localChargeStatus);
+  const remoteStatus = params.remotePaymentStatus
+    ? mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, { dueDate: params.dueDate })
+    : null;
 
-  const remoteStatus = mapAsaasPaymentStatusToCobranca(params.remotePaymentStatus, {
-    dueDate: params.dueDate,
-  });
-
-  if (
-    TERMINAL_CHARGE_STATUSES.has(params.localCobrancaStatus) &&
-    !TERMINAL_ASAAS_PAYMENT_STATUSES.has(params.remotePaymentStatus)
-  ) {
-    return params.localCobrancaStatus;
-  }
-
-  return remoteStatus;
+  return chooseHighestPrecedenceCobrancaStatus([
+    params.localCobrancaStatus,
+    localChargeMappedStatus,
+    remoteStatus,
+  ]) ?? params.localCobrancaStatus;
 }
 
 function parseDateOnly(value?: string | null): Date | null {
@@ -431,7 +453,7 @@ function buildDeletedPaymentWebhookPayload(
     event: 'PAYMENT_DELETED',
     payment: {
       id: payment.id,
-      status: payment.status,
+      status: 'DELETED',
       value: Number(payment.value ?? 0),
       netValue: Number(payment.netValue ?? payment.value ?? 0),
       originalValue: payment.originalValue ?? null,
@@ -551,6 +573,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         },
         charge: {
           select: {
+            status: true,
+            asaasStatus: true,
             invoiceUrl: true,
             billingType: true,
           },
@@ -593,9 +617,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
         const asaasData = remoteAsaasData ?? buildStandaloneAsaasData(charge);
 
+        const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData ?? asaasData);
+
         const effectiveStatus = resolveStandaloneDisplayedStatus({
           localChargeStatus: charge.status,
-          remotePaymentStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
+          remotePaymentStatus,
           dueDate: charge.dueDate,
         });
 
@@ -603,14 +629,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           remoteAsaasData?.paymentDate ?? remoteAsaasData?.clientPaymentDate ?? null;
         const effectiveLiquidacaoStatus = resolveStandaloneLiquidacaoStatus({
           displayedStatus: effectiveStatus,
-          remotePaymentStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
+          remotePaymentStatus,
           creditDate: remoteAsaasData?.creditDate ?? null,
           billingType: remoteAsaasData?.billingType ?? charge.billingType ?? null,
-        }) ?? charge.liquidacaoStatus;
+        }) ?? charge.liquidacaoStatus ?? null;
         const standaloneDisplayStatus = resolveCobrancaDisplayStatus({
           status: effectiveStatus as StatusCobranca,
           liquidacaoStatus: effectiveLiquidacaoStatus,
-          asaasStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
+          asaasStatus: remotePaymentStatus,
         });
         const effectiveFormaPagamento =
           mapBillingTypeToFormaPagamento(
@@ -710,9 +736,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           recordAsaasReadDecision('cobranca_detail', 'local');
         }
 
+        const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData);
         const localDisplayStatus = mapOperationalStatusToCobrancaDisplay(operationalCharge.localStatus);
-        const effectiveStatus = remoteAsaasData?.status
-          ? mapAsaasPaymentStatusToCobranca(remoteAsaasData.status, {
+        const effectiveStatus = remotePaymentStatus
+          ? mapAsaasPaymentStatusToCobranca(remotePaymentStatus, {
               dueDate: operationalCharge.dueDate,
             })
           : localDisplayStatus;
@@ -723,14 +750,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           null;
         const effectiveLiquidacaoStatus = resolveStandaloneLiquidacaoStatus({
           displayedStatus: effectiveStatus,
-          remotePaymentStatus: remoteAsaasData?.status ?? null,
+          remotePaymentStatus,
           creditDate: remoteAsaasData?.creditDate ?? null,
           billingType: remoteAsaasData?.billingType ?? operationalCharge.billingType ?? null,
         });
         const eventDisplayStatus = resolveCobrancaDisplayStatus({
           status: effectiveStatus as StatusCobranca,
           liquidacaoStatus: effectiveLiquidacaoStatus,
-          asaasStatus: remoteAsaasData?.status ?? null,
+          asaasStatus: remotePaymentStatus,
         });
         const effectiveFormaPagamento =
           mapBillingTypeToFormaPagamento(
@@ -854,6 +881,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const asaasData =
       remoteAsaasData ?? buildAcademicAsaasData(effectiveCobranca as unknown as Record<string, unknown>);
+    const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData ?? asaasData);
 
     const remoteBillingTypeForForma =
       (remoteAsaasData?.billingType as string | null | undefined) ??
@@ -888,24 +916,38 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     const effectiveStatus = resolveAcademicDisplayedStatus({
       localCobrancaStatus: effectiveCobranca.status,
-      remotePaymentStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
+      localChargeStatus: effectiveCobranca.charge?.status ?? null,
+      remotePaymentStatus,
       dueDate: effectiveCobranca.vencimento,
     });
 
     const storedLiquidacao = (effectiveCobranca as unknown as { liquidacaoStatus?: LiquidacaoStatus | null })
       .liquidacaoStatus;
+    const computedLiquidacaoStatus = resolveLiquidacaoFromAsaasPayment({
+      asaasStatus: remotePaymentStatus,
+      creditDate:
+        (remoteAsaasData?.creditDate as string | null | undefined) ??
+        (asaasData?.creditDate as string | null | undefined) ??
+        null,
+      billingType:
+        (remoteAsaasData?.billingType as string | null | undefined) ??
+        (asaasData?.billingType as string | null | undefined) ??
+        null,
+    });
+    const shouldPreferComputedLiquidacao =
+      Boolean(remoteAsaasData) ||
+      ['RECEIVED_IN_CASH', 'CONFIRMED', 'RECEIVED', 'DUNNING_RECEIVED'].includes(
+        String(remotePaymentStatus ?? '').toUpperCase(),
+      );
     const effectiveLiquidacaoStatus: LiquidacaoStatus =
-      storedLiquidacao ??
-      resolveLiquidacaoFromAsaasPayment({
-        asaasStatus: remoteAsaasData?.status ?? null,
-        creditDate: remoteAsaasData?.creditDate ?? null,
-        billingType: remoteAsaasData?.billingType ?? null,
-      });
+      shouldPreferComputedLiquidacao
+        ? computedLiquidacaoStatus
+        : (storedLiquidacao ?? computedLiquidacaoStatus);
 
     const displayStatus = resolveCobrancaDisplayStatus({
       status: effectiveStatus as StatusCobranca,
       liquidacaoStatus: effectiveLiquidacaoStatus,
-      asaasStatus: remoteAsaasData?.status ?? asaasData?.status ?? null,
+      asaasStatus: remotePaymentStatus,
     });
 
     const { charge: _academicCharge, ...cobrancaDetail } = effectiveCobranca;
@@ -1557,30 +1599,39 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
         try {
           const payment = await readPaymentFullPreflight(operationalCharge.asaasPaymentId, { contaId });
-          remoteStatusBeforeCommand = payment.status;
+          const effectivePaymentStatus = getEffectiveRemotePaymentStatus(payment) ?? payment.status;
+          remoteStatusBeforeCommand = effectivePaymentStatus;
           const remotePolicy = evaluatePaymentActionPolicy({
             entityType: 'COBRANCA',
             origin: 'EVENT',
             localStatus: operationalCharge.localStatus,
-            asaasStatus: payment.status,
+            asaasStatus: effectivePaymentStatus,
             billingType: payment.billingType ?? operationalCharge.billingType,
             hasAsaasPaymentId: true,
             hasInvoiceUrl: Boolean(operationalCharge.invoiceUrl || payment.invoiceUrl),
           });
 
-          if (!remotePolicy.canCancel) {
+          if (!remotePolicy.canCancel && effectivePaymentStatus !== 'DELETED') {
             return policyBlockedError({
               action: 'CANCEL',
               decision: remotePolicy.actions.CANCEL,
-              status: payment.status,
+              status: effectivePaymentStatus,
               source: 'ASAAS',
             });
           }
 
-          if (payment.deleted || payment.status === 'DELETED') {
+          if (effectivePaymentStatus === 'DELETED') {
             let localStateConverged = false;
             try {
               localStateConverged = await applyImmediateDeletedPaymentConvergence(contaId, payment);
+              await convergeLocalCanceledPayment({
+                contaId,
+                chargeId: operationalCharge.operationalId,
+                asaasPaymentId: operationalCharge.asaasPaymentId,
+                actorId: user.id,
+                reason: 'Cobrança já estava cancelada no Asaas',
+              });
+              localStateConverged = true;
             } catch (webhookError) {
               console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (event)', {
                 operationalId: operationalCharge.operationalId,
@@ -1628,13 +1679,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         asaasCommandJobId = commandJobId;
 
         let localStateConverged = false;
-        try {
-          const webhookResult = await handlePaymentWebhook(
-            contaId,
-            buildDeletedPaymentWebhookPayload(deletedPayment),
-          );
-          localStateConverged = webhookResult.success;
-        } catch (webhookError) {
+          try {
+            const webhookResult = await handlePaymentWebhook(
+              contaId,
+              buildDeletedPaymentWebhookPayload(deletedPayment),
+            );
+            localStateConverged = webhookResult.success;
+          } catch (webhookError) {
           console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (event)', {
             operationalId: operationalCharge.operationalId,
             asaasPaymentId: operationalCharge.asaasPaymentId,
@@ -1657,6 +1708,15 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
             });
           }
         }
+
+        await convergeLocalCanceledPayment({
+          contaId,
+          chargeId: operationalCharge.operationalId,
+          asaasPaymentId: operationalCharge.asaasPaymentId,
+          actorId: user.id,
+          reason: 'Cancelada no Asaas pelo endpoint de cobranças',
+        });
+        localStateConverged = true;
 
         await auditLogService.record({
           contaId,
@@ -1728,7 +1788,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       // Read-before-write: conferir status atual no Asaas (tolerante a falha)
       try {
         const payment = await readPaymentFullPreflight(charge.asaasPaymentId, { contaId });
-        remoteStatusBeforeCommand = payment.status;
+        const effectivePaymentStatus = getEffectiveRemotePaymentStatus(payment) ?? payment.status;
+        remoteStatusBeforeCommand = effectivePaymentStatus;
         const remotePolicy = evaluatePaymentActionPolicy({
           entityType: 'CHARGE',
           origin: charge.standaloneInstallmentPlanId
@@ -1737,7 +1798,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
               ? 'SUBSCRIPTION'
               : 'STANDALONE',
           localStatus: charge.status,
-          asaasStatus: payment.status,
+          asaasStatus: effectivePaymentStatus,
           billingType: payment.billingType ?? charge.billingType,
           hasAsaasPaymentId: true,
           hasInvoiceUrl: Boolean(charge.invoiceUrl || payment.invoiceUrl),
@@ -1745,27 +1806,35 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
           isSubscriptionPayment: Boolean(charge.standaloneSubscriptionId),
         });
 
-        if (!remotePolicy.canCancel) {
+        if (!remotePolicy.canCancel && effectivePaymentStatus !== 'DELETED') {
           return policyBlockedError({
             action: 'CANCEL',
             decision: remotePolicy.actions.CANCEL,
-            status: payment.status,
+            status: effectivePaymentStatus,
             source: 'ASAAS',
           });
         }
 
-        if (payment.deleted || payment.status === 'DELETED') {
+        if (effectivePaymentStatus === 'DELETED') {
           let localStateConverged = false;
-          try {
-            localStateConverged = await applyImmediateDeletedPaymentConvergence(
-              contaId,
-              payment,
-              charge.externalReference ?? buildStandaloneExternalReference({ chargeId: charge.id }),
-            );
-          } catch (webhookError) {
-            console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (standalone)', {
-              chargeId: charge.id,
-              asaasPaymentId: charge.asaasPaymentId,
+            try {
+              localStateConverged = await applyImmediateDeletedPaymentConvergence(
+                contaId,
+                payment,
+                charge.externalReference ?? buildStandaloneExternalReference({ chargeId: charge.id }),
+              );
+              await convergeLocalCanceledPayment({
+                contaId,
+                chargeId: charge.id,
+                asaasPaymentId: charge.asaasPaymentId,
+                actorId: user.id,
+                reason: 'Cobrança já estava cancelada no Asaas',
+              });
+              localStateConverged = true;
+            } catch (webhookError) {
+              console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (standalone)', {
+                chargeId: charge.id,
+                asaasPaymentId: charge.asaasPaymentId,
               error: webhookError instanceof Error ? webhookError.message : String(webhookError),
             });
           }
@@ -1810,16 +1879,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
       let localStateConverged = false;
 
-      try {
-        const webhookResult = await handlePaymentWebhook(
-          contaId,
-          buildDeletedPaymentWebhookPayload(
-            deletedPayment,
+        try {
+          const webhookResult = await handlePaymentWebhook(
+            contaId,
+            buildDeletedPaymentWebhookPayload(
+              deletedPayment,
             charge.externalReference ?? buildStandaloneExternalReference({ chargeId: charge.id }),
           ),
-        );
-        localStateConverged = webhookResult.success;
-      } catch (webhookError) {
+          );
+          localStateConverged = webhookResult.success;
+        } catch (webhookError) {
         console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (standalone)', {
           chargeId: charge.id,
           asaasPaymentId: charge.asaasPaymentId,
@@ -1842,6 +1911,15 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
           });
         }
       }
+
+      await convergeLocalCanceledPayment({
+        contaId,
+        chargeId: charge.id,
+        asaasPaymentId: charge.asaasPaymentId,
+        actorId: user.id,
+        reason: 'Cancelada no Asaas pelo endpoint de cobranças',
+      });
+      localStateConverged = true;
 
       await auditLogService.record({
         contaId,
@@ -1909,12 +1987,13 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     // Read-before-write: conferir status atual no Asaas (tolerante a falha)
     try {
       const payment = await readPaymentFullPreflight(cobranca.asaasPaymentId, { contaId: contaIdForDelete });
-      remoteStatusBeforeCommand = payment.status;
+      const effectivePaymentStatus = getEffectiveRemotePaymentStatus(payment) ?? payment.status;
+      remoteStatusBeforeCommand = effectivePaymentStatus;
       const remotePolicy = evaluatePaymentActionPolicy({
         entityType: 'COBRANCA',
         origin: resolveAcademicPaymentOrigin(cobranca.tipo),
         localStatus: cobranca.status,
-        asaasStatus: payment.status,
+        asaasStatus: effectivePaymentStatus,
         billingType: payment.billingType ?? cobranca.formaPagamento,
         hasAsaasPaymentId: true,
         hasInvoiceUrl: Boolean(payment.invoiceUrl),
@@ -1922,23 +2001,31 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         isSubscriptionPayment: cobranca.tipo === 'RECORRENTE',
       });
 
-      if (!remotePolicy.canCancel) {
+      if (!remotePolicy.canCancel && effectivePaymentStatus !== 'DELETED') {
         return policyBlockedError({
           action: 'CANCEL',
           decision: remotePolicy.actions.CANCEL,
-          status: payment.status,
+          status: effectivePaymentStatus,
           source: 'ASAAS',
         });
       }
 
-      if (payment.deleted || payment.status === 'DELETED') {
+      if (effectivePaymentStatus === 'DELETED') {
         let localStateConverged = false;
-        try {
-          localStateConverged = await applyImmediateDeletedPaymentConvergence(contaIdForDelete, payment);
-        } catch (webhookError) {
-          console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (cobranca)', {
-            cobrancaId: cobranca.id,
-            asaasPaymentId: cobranca.asaasPaymentId,
+          try {
+            localStateConverged = await applyImmediateDeletedPaymentConvergence(contaIdForDelete, payment);
+            await convergeLocalCanceledPayment({
+              contaId: contaIdForDelete,
+              cobrancaId: cobranca.id,
+              asaasPaymentId: cobranca.asaasPaymentId,
+              actorId: user.id,
+              reason: 'Cobrança já estava cancelada no Asaas',
+            });
+            localStateConverged = true;
+          } catch (webhookError) {
+            console.warn('[DELETE /api/cobrancas/[id]] Falha ao reconciliar cobrança já deletada (cobranca)', {
+              cobrancaId: cobranca.id,
+              asaasPaymentId: cobranca.asaasPaymentId,
             error: webhookError instanceof Error ? webhookError.message : String(webhookError),
           });
         }
@@ -1990,22 +2077,31 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
     let localStateConverged = false;
 
-    try {
-      const webhookResult = await handlePaymentWebhook(
-        contaIdForDelete,
-        buildDeletedPaymentWebhookPayload(deletedPayment),
-      );
-      localStateConverged = webhookResult.success;
-    } catch (webhookError) {
+      try {
+        const webhookResult = await handlePaymentWebhook(
+          contaIdForDelete,
+          buildDeletedPaymentWebhookPayload(deletedPayment),
+        );
+        localStateConverged = webhookResult.success;
+      } catch (webhookError) {
       console.warn('[DELETE /api/cobrancas/[id]] Falha ao aplicar convergência imediata (cobranca)', {
         cobrancaId: cobranca.id,
         asaasPaymentId: cobranca.asaasPaymentId,
         error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-      });
-    }
+        });
+      }
 
-    if (!localStateConverged) {
-      await prisma.cobranca.update({
+      await convergeLocalCanceledPayment({
+        contaId: contaIdForDelete,
+        cobrancaId: cobranca.id,
+        asaasPaymentId: cobranca.asaasPaymentId,
+        actorId: user.id,
+        reason: 'Cancelada no Asaas pelo endpoint de cobranças',
+      });
+      localStateConverged = true;
+
+      if (!localStateConverged) {
+        await prisma.cobranca.update({
         where: { id: cobranca.id },
         data: { status: 'CANCELAMENTO_PENDENTE' },
       });

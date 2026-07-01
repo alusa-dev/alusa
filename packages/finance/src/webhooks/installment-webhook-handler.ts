@@ -5,12 +5,14 @@ import type { InstallmentStatus } from '@prisma/client';
 import { auditLogService } from '../foundation/audit-log.service';
 import { parseExternalReference } from '../core';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
+import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 
 export type InstallmentWebhookPayload = {
   event: string;
   payment: {
     id: string;
     status?: string;
+    billingType?: string | null;
     externalReference?: string;
     installment?: string | null;
     installmentNumber?: number | null;
@@ -94,7 +96,13 @@ async function computeStatusViaAsaas(params: {
     if (!page) return null;
 
     for (const item of page.data) {
-      payments.push({ id: item.id, status: item.status, deleted: item.deleted });
+      const status =
+        normalizeAsaasPaymentSnapshotStatus({
+          status: item.status,
+          billingType: (item as { billingType?: string | null }).billingType,
+          deleted: item.deleted,
+        }) ?? item.status;
+      payments.push({ id: item.id, status, deleted: item.deleted });
     }
 
     if (!page.hasMore) break;
@@ -215,7 +223,13 @@ export async function handleInstallmentWebhook(
       computeStatusHeuristically({
         currentStatus: installmentPlan.status,
         event: payload.event,
-        paymentStatus: payload.payment.status,
+        paymentStatus:
+          normalizeAsaasPaymentSnapshotStatus({
+            eventName: payload.event,
+            status: payload.payment.status,
+            billingType: payload.payment.billingType,
+            deleted: payload.payment.deleted,
+          }) ?? payload.payment.status,
         installmentNumber: payload.payment.installmentNumber ?? null,
         installmentCount: installmentPlan.installmentCount,
       });

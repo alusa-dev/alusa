@@ -56,14 +56,26 @@ async function convergeAcademicSubscriptionDeletion(params: {
         id: { in: linkedCharges.map((charge) => charge.id) },
         status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
       },
-      data: { status: 'CANCELED' },
+      data: {
+        status: 'CANCELED',
+        statusUpdatedAt: params.now,
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
     prisma.cobranca.updateMany({
       where: {
         id: { in: cobrancaIds },
         status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
       },
-      data: { status: 'CANCELADO' },
+      data: {
+        status: 'CANCELADO',
+        asaasStatus: 'DELETED',
+        canceladoEm: params.now,
+        canceladoMotivo: 'Assinatura removida no Asaas',
+        canceladoPor: 'system',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
   ]);
 }
@@ -87,7 +99,12 @@ async function convergeStandaloneSubscriptionDeletion(params: {
         ],
         status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
       },
-      data: { status: 'CANCELED' },
+      data: {
+        status: 'CANCELED',
+        statusUpdatedAt: params.now,
+        asaasStatus: 'DELETED',
+        liquidacaoStatus: 'NAO_APLICAVEL',
+      },
     }),
   ]);
 }

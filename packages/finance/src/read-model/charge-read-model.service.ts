@@ -2,7 +2,7 @@ import { prisma } from '@alusa/database';
 import type { ChargeStatus, StatusCobranca } from '@prisma/client';
 
 import { parseExternalReference } from '../core';
-import { normalizeChargeStatus, normalizeCobrancaStatus } from '../dtos/unified-billing';
+import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
 import type { ListStandaloneChargesInput, ListStandaloneChargesOutput, StandaloneChargeItem } from '../use-cases/list-standalone-charges';
 
@@ -58,12 +58,32 @@ function inferLinkStatus(asaasPaymentId: string | null): LinkStatus {
   return asaasPaymentId ? 'LINKED' : 'NEEDS_REVIEW';
 }
 
-function statusFromCharge(status: ChargeStatus): string {
-  return normalizeChargeStatus(status);
+function statusFromCharge(input: {
+  status: ChargeStatus;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  asaasPaymentId?: string | null;
+}): string {
+  return resolveUnifiedChargeStatus({
+    localStatus: input.status,
+    asaasStatus: input.asaasStatus,
+    liquidacaoStatus: input.liquidacaoStatus,
+    hasAsaasLink: Boolean(input.asaasPaymentId),
+  });
 }
 
-function statusFromCobranca(status: StatusCobranca): string {
-  return normalizeCobrancaStatus(status);
+function statusFromCobranca(input: {
+  status: StatusCobranca;
+  asaasStatus?: string | null;
+  liquidacaoStatus?: string | null;
+  asaasPaymentId?: string | null;
+}): string {
+  return resolveUnifiedChargeStatus({
+    localStatus: input.status,
+    asaasStatus: input.asaasStatus,
+    liquidacaoStatus: input.liquidacaoStatus,
+    hasAsaasLink: Boolean(input.asaasPaymentId),
+  });
 }
 
 function projectionId(sourceKind: 'CHARGE' | 'COBRANCA', sourceId: string): string {
@@ -134,7 +154,12 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       value,
       dueDate,
       billingType,
-      status: statusFromCharge(charge.status),
+      status: statusFromCharge({
+        status: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
+        asaasPaymentId: charge.asaasPaymentId,
+      }),
       asaasStatus: charge.asaasStatus,
       liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: charge.asaasPaymentId,
@@ -162,7 +187,12 @@ export async function projectChargeReadModelByChargeId(chargeId: string): Promis
       value,
       dueDate,
       billingType,
-      status: statusFromCharge(charge.status),
+      status: statusFromCharge({
+        status: charge.status,
+        asaasStatus: charge.asaasStatus,
+        liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
+        asaasPaymentId: charge.asaasPaymentId,
+      }),
       asaasStatus: charge.asaasStatus,
       liquidacaoStatus: charge.liquidacaoStatus ?? charge.cobranca?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: charge.asaasPaymentId,
@@ -230,7 +260,12 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
-      status: statusFromCobranca(cobranca.status),
+      status: statusFromCobranca({
+        status: cobranca.status,
+        asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
+        liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
+        asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
+      }),
       asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
       liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
@@ -258,7 +293,12 @@ export async function projectChargeReadModelByCobrancaId(cobrancaId: string): Pr
       value: Number(cobranca.valor),
       dueDate: cobranca.vencimento,
       billingType: cobranca.formaPagamento,
-      status: statusFromCobranca(cobranca.status),
+      status: statusFromCobranca({
+        status: cobranca.status,
+        asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
+        liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
+        asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
+      }),
       asaasStatus: cobranca.asaasStatus ?? linkedCharge?.asaasStatus ?? null,
       liquidacaoStatus: cobranca.liquidacaoStatus ?? linkedCharge?.liquidacaoStatus ?? 'NAO_APLICAVEL',
       asaasPaymentId: cobranca.asaasPaymentId ?? linkedCharge?.asaasPaymentId ?? null,
@@ -380,7 +420,7 @@ export async function listStandaloneChargesFromReadModel(
   };
 
   if (statusView === 'open') {
-    where.status = { in: ['PENDING', 'OVERDUE'] };
+    where.status = { in: ['PENDING', 'PROCESSING', 'OVERDUE'] };
   } else if (statusView === 'paid') {
     where.status = 'PAID';
   }

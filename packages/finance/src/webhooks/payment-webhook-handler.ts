@@ -46,6 +46,7 @@ import type {
 } from '@prisma/client';
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
+import { normalizeAsaasPaymentSnapshotStatus as normalizeAsaasPaymentSnapshotStatusInput } from '../mappers/asaas-payment-snapshot-status';
 
 export type PaymentWebhookPayload = {
   event: string;
@@ -352,10 +353,20 @@ async function refreshReadModel(params: {
 }
 
 function computeLiquidacaoStatusFromPayload(payload: PaymentWebhookPayload): LiquidacaoStatus {
+  const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? payload.payment.status;
   return resolveLiquidacaoFromAsaasPayment({
-    asaasStatus: payload.payment.status,
+    asaasStatus: effectiveAsaasStatus,
     creditDate: payload.payment.creditDate,
     billingType: payload.payment.billingType,
+  });
+}
+
+function normalizeAsaasPaymentSnapshotStatus(payload: PaymentWebhookPayload): string | null {
+  return normalizeAsaasPaymentSnapshotStatusInput({
+    eventName: payload.event,
+    status: payload.payment.status,
+    billingType: payload.payment.billingType,
+    deleted: payload.payment.deleted,
   });
 }
 
@@ -366,6 +377,7 @@ async function publishPaymentRealtimeUpdate(params: {
   dueDate?: Date | null;
 }): Promise<void> {
   const p = params.payload.payment;
+  const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(params.payload) ?? 'PENDING';
   const dueDate =
     params.dueDate ??
     (typeof p.dueDate === 'string' ? new Date(`${p.dueDate}T12:00:00.000Z`) : null);
@@ -377,11 +389,11 @@ async function publishPaymentRealtimeUpdate(params: {
       entityId: params.entityId,
       asaasPaymentId: p.id,
       status: mapAsaasPaymentStatusToCobranca(
-        typeof p.status === 'string' ? p.status : 'PENDING',
+        effectiveAsaasStatus,
         { dueDate },
       ) as StatusCobranca,
       liquidacaoStatus: computeLiquidacaoStatusFromPayload(params.payload),
-      asaasStatus: typeof p.status === 'string' ? p.status : null,
+      asaasStatus: effectiveAsaasStatus,
       revision: Date.now(),
     });
   } catch (error) {
@@ -403,10 +415,12 @@ function buildChargeAsaasSnapshotUpdate(
 ): Record<string, unknown> {
   const p = payload.payment;
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
+  const incomingAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload);
+
   return {
     asaasStatus: resolveMonotonicAsaasPaymentStatus({
       currentAsaasStatus: context?.currentAsaasStatus,
-      incoming: p.status ?? null,
+      incoming: incomingAsaasStatus,
       localChargeStatus: context?.localChargeStatus,
       localCobrancaStatus: context?.localCobrancaStatus,
     }),
@@ -433,9 +447,11 @@ function resolveCobrancaAsaasStatusFromPayload(
     localChargeStatus?: ChargeStatus | string | null;
   },
 ): string | null {
+  const incomingAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload);
+
   return resolveMonotonicAsaasPaymentStatus({
     currentAsaasStatus: context.currentAsaasStatus,
-    incoming: payload.payment.status ?? null,
+    incoming: incomingAsaasStatus,
     localChargeStatus: context.localChargeStatus,
     localCobrancaStatus: context.localCobrancaStatus,
   });
@@ -581,9 +597,10 @@ async function handleStandaloneChargeWebhook(
   charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null; asaasStatus?: string | null }
 ): Promise<PaymentWebhookResult> {
   const p = payload.payment;
+  const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? p.status;
   const internalStatus = resolveInternalPaymentStatus({
     eventName: payload.event,
-    asaasPaymentStatus: typeof p.status === 'string' ? p.status : null,
+    asaasPaymentStatus: effectiveAsaasStatus,
     billingType: p.billingType ?? null,
     deleted: p.deleted ?? null,
   });
@@ -636,7 +653,7 @@ async function handleStandaloneChargeWebhook(
       metadata: {
         event: payload.event,
         asaasPaymentId: p.id,
-        asaasStatus: p.status,
+        asaasStatus: effectiveAsaasStatus,
         billingType: p.billingType ?? null,
         previousStatus: charge.status,
         attemptedStatus: nextStatusCharge,
@@ -760,6 +777,7 @@ async function updateEventFinancialEntryFromWebhook(
 ): Promise<void> {
   if (!prisma.eventFinancialEntry) return;
   const p = payload.payment;
+  const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? p.status;
   const paymentId = p.id;
   const installmentId = p.installment ?? null;
   const subscriptionId = p.subscription ?? null;
@@ -808,7 +826,7 @@ async function updateEventFinancialEntryFromWebhook(
   // Fallback if charges aren't materialised yet or is a one-off payment
   if (charges.length === 0) {
     charges = [{
-      status: p.status,
+      status: effectiveAsaasStatus,
       value: p.value,
       billingType: p.billingType,
     }];
@@ -861,7 +879,7 @@ async function updateEventFinancialEntryFromWebhook(
     where: { id: entry.id },
     data: {
       status: nextStatus as any,
-      paymentStatus: p.status,
+      paymentStatus: effectiveAsaasStatus,
       actualAmount: actualAmount ? new Prisma.Decimal(actualAmount) : null,
       refundedAmount: new Prisma.Decimal(refundedAmount),
       netAmount: netAmount == null ? null : new Prisma.Decimal(netAmount),
@@ -917,6 +935,7 @@ async function handlePaymentWebhookCore(
       ...payload,
       payment: await enrichPaymentWithOfficialLinks(contaId, payload.payment),
     };
+    const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? payload.payment.status;
 
     try {
       await confirmPaymentCommandsByProviderEvent({
@@ -942,13 +961,13 @@ async function handlePaymentWebhookCore(
         new Date().toISOString();
       if (
         ['PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_RECEIVED_IN_CASH', 'PAYMENT_DUNNING_RECEIVED'].includes(payload.event) ||
-        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(payload.payment.status)
+        ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(effectiveAsaasStatus)
       ) {
         const eventPaymentParams = {
           contaId,
           asaasPaymentId: payload.payment.id,
           externalReference: payload.payment.externalReference,
-          paymentStatus: payload.payment.status,
+          paymentStatus: effectiveAsaasStatus,
           invoiceUrl: payload.payment.invoiceUrl ?? null,
           paidAt,
           paidAmount: payload.payment.value,
@@ -971,10 +990,10 @@ async function handlePaymentWebhookCore(
           contaId,
           asaasPaymentId: payload.payment.id,
           externalReference: payload.payment.externalReference,
-          paymentStatus: payload.payment.status,
+          paymentStatus: effectiveAsaasStatus,
           invoiceUrl: payload.payment.invoiceUrl ?? null,
         });
-      } else if (payload.event === 'PAYMENT_REFUNDED' || payload.payment.status === 'REFUNDED') {
+      } else if (payload.event === 'PAYMENT_REFUNDED' || effectiveAsaasStatus === 'REFUNDED') {
         await refundPublicEventMapOrderByPayment({
           contaId,
           asaasPaymentId: payload.payment.id,
@@ -1219,9 +1238,7 @@ async function handlePaymentWebhookCore(
             (await resolveLocalCustomerPayerName(contaId, standaloneSubRecord.customerId)) ??
             'Cliente';
           const externalRef = buildPaymentExternalReference(standaloneSubRecord.externalReference, payload.payment.id);
-          const rawStatus = typeof payload.payment.status === 'string' ? payload.payment.status : '';
-          const normalizedStatus = rawStatus.trim().toUpperCase();
-          const chargeStatus = mapAsaasToChargeStatus(normalizedStatus);
+          const chargeStatus = mapAsaasToChargeStatus(effectiveAsaasStatus);
           const parsedDueDate = payload.payment.dueDate;
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
@@ -1431,7 +1448,7 @@ async function handlePaymentWebhookCore(
             valor: payload.payment.value,
             vencimento,
             descricao,
-            asaasStatus: payload.payment.status,
+            asaasStatus: effectiveAsaasStatus,
             asaasNetValue: payload.payment.netValue,
             formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
           });
@@ -1473,7 +1490,7 @@ async function handlePaymentWebhookCore(
           valor: payload.payment.value,
           vencimento,
           descricao,
-          asaasStatus: payload.payment.status,
+          asaasStatus: effectiveAsaasStatus,
           asaasNetValue: payload.payment.netValue,
           formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
         });
@@ -1549,7 +1566,7 @@ async function handlePaymentWebhookCore(
           valor: payload.payment.value,
           vencimento,
           descricao,
-          asaasStatus: payload.payment.status,
+          asaasStatus: effectiveAsaasStatus,
           asaasNetValue: payload.payment.netValue,
           formaPagamento: mapBillingTypeToFormaPagamento(payload.payment.billingType ?? '') ?? null,
         });
@@ -1881,7 +1898,7 @@ async function handlePaymentWebhookCore(
         metadata: {
           event: payload.event,
           asaasPaymentId: payload.payment.id,
-          asaasStatus: payload.payment.status,
+          asaasStatus: effectiveAsaasStatus,
           internalStatus,
           currentStatus,
           attemptedStatus: nextStatusCobranca,
@@ -1976,7 +1993,7 @@ async function handlePaymentWebhookCore(
       await prisma.cobranca.update({
         where: { id: cobranca.id },
         data: {
-          asaasStatus: payload.payment.status,
+          asaasStatus: effectiveAsaasStatus,
           lastAsaasFetchAt: new Date(),
         },
       });
@@ -2004,7 +2021,7 @@ async function handlePaymentWebhookCore(
           event: payload.event,
           warningReason,
           asaasPaymentId: payload.payment.id,
-          asaasStatus: payload.payment.status,
+          asaasStatus: effectiveAsaasStatus,
           billingType: payload.payment.billingType ?? null,
           value: payload.payment.value,
           currentStatus,
@@ -2029,7 +2046,7 @@ async function handlePaymentWebhookCore(
           where: { id: cobranca.id },
           data: {
             status: restoredStatus,
-            asaasStatus: payload.payment.status,
+            asaasStatus: effectiveAsaasStatus,
             lastAsaasFetchAt: nowDate,
           },
         });
@@ -2056,7 +2073,7 @@ async function handlePaymentWebhookCore(
             asaasPaymentId: payload.payment.id,
             previousStatus: currentStatus,
             restoredStatus,
-            asaasStatus: payload.payment.status,
+            asaasStatus: effectiveAsaasStatus,
             matriculaId: cobranca.matriculaId,
           },
         });
@@ -2566,7 +2583,7 @@ async function handlePaymentWebhookCore(
       metadata: {
         event: payload.event,
         asaasPaymentId: payload.payment.id,
-        asaasStatus: payload.payment.status,
+        asaasStatus: effectiveAsaasStatus,
         internalStatus,
         previousStatus: currentStatus,
         nextStatus: nextStatusCobranca,
@@ -2594,7 +2611,7 @@ async function handlePaymentWebhookCore(
     console.log('✅ Webhook processado:', {
       cobrancaId: cobranca.id,
       matriculaId: cobranca.matriculaId,
-      asaasStatus: payload.payment.status,
+      asaasStatus: effectiveAsaasStatus,
       billingType: payload.payment.billingType ?? null,
       internalStatus,
       nextStatusCobranca,
@@ -2612,7 +2629,7 @@ async function handlePaymentWebhookCore(
       asaasPaymentId: payload.payment.id,
       status: nextStatusCobranca,
       liquidacaoStatus,
-      asaasStatus: payload.payment.status,
+      asaasStatus: effectiveAsaasStatus,
       revision: Date.now(),
     });
 

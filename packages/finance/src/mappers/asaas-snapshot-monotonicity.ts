@@ -103,13 +103,26 @@ export function resolveMonotonicAsaasPaymentStatus(
     return incomingRank >= currentRank ? incoming : current;
   }
 
-  if (isLocalPaymentSettled(params.localChargeStatus, params.localCobrancaStatus)) {
+  const localPaymentSettled = isLocalPaymentSettled(
+    params.localChargeStatus,
+    params.localCobrancaStatus,
+  );
+
+  if (localPaymentSettled) {
     if (PAID_LIKE_ASAAS_STATUSES.has(current) && incomingRank < currentRank) {
       return current;
     }
     if (PAID_LIKE_ASAAS_STATUSES.has(current) && OPEN_LIKE_ASAAS_STATUSES.has(incoming)) {
       return current;
     }
+  }
+
+  if (
+    !localPaymentSettled &&
+    PAID_LIKE_ASAAS_STATUSES.has(current) &&
+    OPEN_LIKE_ASAAS_STATUSES.has(incoming)
+  ) {
+    return incoming;
   }
 
   if (currentRank >= 40 && incomingRank < currentRank) {

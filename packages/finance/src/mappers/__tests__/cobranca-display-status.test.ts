@@ -17,6 +17,51 @@ describe('resolveCobrancaDisplayStatus', () => {
       status: 'PROCESSANDO',
       asaasStatus: 'AWAITING_RISK_ANALYSIS',
     });
-    expect(result.label).toBe('Em analise');
+    expect(result.label).toBe('Em análise');
+  });
+
+  it('mantém cancelada quando o snapshot do Asaas ainda parece aberto', () => {
+    const result = resolveCobrancaDisplayStatus({
+      status: 'CANCELADO',
+      asaasStatus: 'PENDING',
+    });
+
+    expect(result.label).toBe('Cancelada');
+    expect(result.status).toBe('CANCELADO');
+    expect(result.source).toBe('local');
+  });
+
+  it('mantém paga quando o snapshot do Asaas ainda parece pendente', () => {
+    const result = resolveCobrancaDisplayStatus({
+      status: 'PAGO',
+      asaasStatus: 'PENDING',
+      liquidacaoStatus: 'PENDENTE',
+    });
+
+    expect(result.label).toBe('Confirmada');
+    expect(result.status).toBe('CONFIRMED');
+    expect(result.source).toBe('liquidacao');
+  });
+
+  it('mantém estornada quando o snapshot do Asaas ainda parece aberto', () => {
+    const result = resolveCobrancaDisplayStatus({
+      status: 'ESTORNADO',
+      asaasStatus: 'OVERDUE',
+    });
+
+    expect(result.label).toBe('Estornada');
+    expect(result.status).toBe('ESTORNADO');
+    expect(result.source).toBe('local');
+  });
+
+  it('permite que estorno do Asaas supere cobrança local paga', () => {
+    const result = resolveCobrancaDisplayStatus({
+      status: 'PAGO',
+      asaasStatus: 'REFUNDED',
+    });
+
+    expect(result.label).toBe('Estornada');
+    expect(result.status).toBe('REFUNDED');
+    expect(result.source).toBe('asaas');
   });
 });

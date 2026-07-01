@@ -1,6 +1,10 @@
 import { prisma } from '@alusa/database';
 import type { UnifiedChargeStatus } from '../dtos/charge-list-item.dto';
-import { normalizeChargeStatus } from '../dtos/unified-billing';
+import {
+  ASAAS_NON_OPEN_UNIFIED_STATUSES,
+  ASAAS_PAID_UNIFIED_STATUSES,
+  resolveUnifiedChargeStatus,
+} from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 
@@ -65,15 +69,43 @@ function buildStandaloneChargeWhere(input: {
 
   if (input.statusView === 'open') {
     where.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
+    where.AND = [
+      {
+        OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
+    ];
   } else if (input.statusView === 'paid') {
-    where.status = 'PAID';
+    where.OR = [
+      { status: 'PAID' },
+      { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } },
+    ];
   }
 
   if (input.search) {
-    where.OR = [
-      { payerName: { contains: input.search, mode: 'insensitive' } },
-      { description: { contains: input.search, mode: 'insensitive' } },
-    ];
+    const searchCondition = {
+      OR: [
+        { payerName: { contains: input.search, mode: 'insensitive' } },
+        { description: { contains: input.search, mode: 'insensitive' } },
+      ],
+    };
+
+    if (where.OR) {
+      const existingOr = where.OR;
+      delete where.OR;
+      where.AND = [
+        ...((Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []) as unknown[]),
+        { OR: existingOr },
+        searchCondition,
+      ];
+    } else {
+      where.AND = [
+        ...((Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []) as unknown[]),
+        searchCondition,
+      ];
+    }
   }
 
   return where;
@@ -194,7 +226,12 @@ export async function listStandaloneCharges(
     value: c.value != null ? Number(c.value) : 0,
     dueDate: c.dueDate?.toISOString() ?? null,
     billingType: c.billingType,
-    status: normalizeChargeStatus(c.status),
+    status: resolveUnifiedChargeStatus({
+      localStatus: c.status,
+      asaasStatus: c.asaasStatus,
+      liquidacaoStatus: c.liquidacaoStatus,
+      hasAsaasLink: Boolean(c.asaasPaymentId),
+    }),
     asaasStatus: c.asaasStatus,
     liquidacaoStatus: c.liquidacaoStatus,
     displayStatus: resolveChargeDisplayStatus({
