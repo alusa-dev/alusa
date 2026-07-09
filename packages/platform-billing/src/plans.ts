@@ -5,6 +5,7 @@ export const PLATFORM_PLANS = deepFreeze({
     amountCents: 14_900,
     currency: 'brl',
     interval: 'month',
+    trialDays: 14,
     maxActiveStudents: 60,
     publicCheckoutEnabled: true,
     includedFeatures: [
@@ -21,6 +22,7 @@ export const PLATFORM_PLANS = deepFreeze({
     amountCents: 27_900,
     currency: 'brl',
     interval: 'month',
+    trialDays: 14,
     maxActiveStudents: 150,
     publicCheckoutEnabled: true,
     includedFeatures: [
@@ -37,6 +39,7 @@ export const PLATFORM_PLANS = deepFreeze({
     amountCents: 49_900,
     currency: 'brl',
     interval: 'month',
+    trialDays: 14,
     maxActiveStudents: 300,
     publicCheckoutEnabled: true,
     includedFeatures: [
@@ -53,6 +56,7 @@ export const PLATFORM_PLANS = deepFreeze({
     amountCents: null,
     currency: 'brl',
     interval: 'month',
+    trialDays: null,
     maxActiveStudents: null,
     publicCheckoutEnabled: false,
     includedFeatures: [

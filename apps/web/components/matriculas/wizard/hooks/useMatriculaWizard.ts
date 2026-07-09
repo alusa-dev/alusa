@@ -41,6 +41,7 @@ const initialState: WizardState = {
   modoTurmas: 'TURMAS',
   turmaIds: [],
   alunosFamiliares: [],
+  billingStrategy: { kind: 'SEPARATE' },
   criarCobranca: true,
   confirmacaoRevisao: false,
   taxaIsenta: false,

@@ -2,6 +2,7 @@ import {
   createStripeBillingCustomer,
   createStripeBillingPortalSession,
   createStripeSubscriptionCheckoutSession,
+  createStripeTrialSubscriptionWithoutPaymentMethod,
   getStripeClient,
   previewStripeSubscriptionPlanChange,
   retrieveStripeSubscription,
@@ -17,6 +18,8 @@ export function createDefaultPlatformBillingStripeGateway(source?: StripeEnvSour
   return {
     createCustomer: (input) => createStripeBillingCustomer(client, input),
     createCheckoutSession: (input) => createStripeSubscriptionCheckoutSession(client, input),
+    createTrialSubscriptionWithoutPaymentMethod: (input) =>
+      createStripeTrialSubscriptionWithoutPaymentMethod(client, input),
     createPortalSession: (input) => createStripeBillingPortalSession(client, input),
     retrieveSubscription: (subscriptionId) => retrieveStripeSubscription(client, subscriptionId),
     previewSubscriptionPlanChange: (input) => previewStripeSubscriptionPlanChange(client, input),

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import type { StripeWebhookEvent } from '@alusa/stripe';
 import {
   processPlatformBillingWebhookEvent,
@@ -51,7 +51,49 @@ describe('@alusa/platform-billing webhooks', () => {
     expect(store.webhookEvents[0]?.status).toBe('PROCESSED');
   });
 
-  it('persiste invoice Stripe conhecida para histórico de faturamento', async () => {
+  it('limpa cancelamento pendente quando Stripe retorna cancel_at_period_end falso', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'ACTIVE',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        cancelAtPeriodEnd: true,
+        pendingChangeType: 'CANCEL_AT_PERIOD_END',
+        pendingChangeEffectiveAt: new Date('2026-07-15T22:55:35.000Z'),
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_subscription_uncanceled_1', 'customer.subscription.updated', {
+          id: 'sub_1',
+          customer: 'cus_1',
+          status: 'active',
+          cancel_at_period_end: false,
+          current_period_end: 1_798_000_000,
+          trial_end: null,
+          metadata: { contaId: 'conta_1' },
+          items: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'ACTIVE',
+      accessStatus: 'ACTIVE',
+      cancelAtPeriodEnd: false,
+      pendingChangeType: null,
+      pendingChangeEffectiveAt: null,
+    });
+  });
+
+  it('persiste invoice Stripe conhecida para histÃ³rico de faturamento', async () => {
     const store = createMemoryStore([
       buildAccount({
         status: 'ACTIVE',
@@ -96,7 +138,247 @@ describe('@alusa/platform-billing webhooks', () => {
     });
   });
 
-  it('não reprocessa evento já processado', async () => {
+  it('preserva status TRIALING quando invoice paid chega durante teste gratis', async () => {
+    const trialEndsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'TRIALING',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        currentPeriodEnd: trialEndsAt,
+        trialEndsAt,
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_invoice_trial_paid_1', 'invoice.paid', {
+          id: 'in_trial_1',
+          customer: 'cus_1',
+          subscription: 'sub_1',
+          status: 'paid',
+          amount_due: 0,
+          amount_paid: 0,
+          currency: 'brl',
+          period_start: 1_780_000_000,
+          period_end: 1_782_592_000,
+          status_transitions: { paid_at: 1_780_000_100 },
+          lines: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      planCode: 'PREMIUM',
+      stripePriceId: 'price_premium_test',
+      trialEndsAt,
+    });
+  });
+
+  it('abre periodo de regularizacao quando a cobranca da assinatura falha', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'ACTIVE',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_invoice_failed_1', 'invoice.payment_failed', {
+          id: 'in_failed_1',
+          customer: 'cus_1',
+          subscription: 'sub_1',
+          status: 'open',
+          amount_due: 27_900,
+          amount_paid: 0,
+          currency: 'brl',
+          attempted: true,
+          attempt_count: 2,
+          next_payment_attempt: 1_780_086_400,
+          payment_intent: {
+            last_payment_error: {
+              code: 'card_declined',
+              message: 'Your card was declined.',
+            },
+          },
+          period_start: 1_780_000_000,
+          period_end: 1_782_592_000,
+          lines: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'PAST_DUE',
+      accessStatus: 'GRACE_PERIOD',
+      pendingChangeType: 'PAYMENT_RECOVERY',
+      pendingChangeEffectiveAt: new Date(1_780_086_400 * 1000),
+    });
+    expect(store.accounts[0]?.gracePeriodEndsAt).toBeInstanceOf(Date);
+    expect(store.accounts[0]?.lastPaymentFailedAt).toBeInstanceOf(Date);
+    expect(store.invoices[0]).toMatchObject({
+      status: 'OPEN',
+      attempted: true,
+      attemptCount: 2,
+      nextPaymentAttempt: new Date(1_780_086_400 * 1000),
+      lastPaymentErrorCode: 'card_declined',
+      lastPaymentErrorMessage: 'Your card was declined.',
+    });
+    expect(store.invoices[0]?.failedAt).toBeInstanceOf(Date);
+  });
+
+  it('trata autenticacao pendente como regularizacao de pagamento', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'ACTIVE',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_invoice_action_required_1', 'invoice.payment_action_required', {
+          id: 'in_action_required_1',
+          customer: 'cus_1',
+          subscription: 'sub_1',
+          status: 'open',
+          amount_due: 27_900,
+          amount_paid: 0,
+          currency: 'brl',
+          attempted: true,
+          attempt_count: 1,
+          payment_intent: {
+            last_payment_error: {
+              code: 'authentication_required',
+              message: 'Authentication is required.',
+            },
+          },
+          lines: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'PAST_DUE',
+      accessStatus: 'GRACE_PERIOD',
+      pendingChangeType: 'PAYMENT_RECOVERY',
+    });
+    expect(store.invoices[0]).toMatchObject({
+      status: 'OPEN',
+      lastPaymentErrorCode: 'authentication_required',
+    });
+  });
+
+  it('limpa recuperacao de pagamento quando a fatura e paga', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'PAST_DUE',
+        accessStatus: 'GRACE_PERIOD',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        gracePeriodEndsAt: new Date('2026-07-10T00:00:00.000Z'),
+        lastPaymentFailedAt: new Date('2026-07-03T00:00:00.000Z'),
+        pendingChangeType: 'PAYMENT_RECOVERY',
+        pendingChangeEffectiveAt: new Date('2026-07-04T00:00:00.000Z'),
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_invoice_recovered_1', 'invoice.paid', {
+          id: 'in_recovered_1',
+          customer: 'cus_1',
+          subscription: 'sub_1',
+          status: 'paid',
+          amount_due: 27_900,
+          amount_paid: 27_900,
+          currency: 'brl',
+          attempted: true,
+          attempt_count: 3,
+          status_transitions: { paid_at: 1_780_000_100 },
+          lines: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'ACTIVE',
+      accessStatus: 'ACTIVE',
+      gracePeriodEndsAt: null,
+      lastPaymentFailedAt: null,
+      pendingChangeType: null,
+      pendingChangeEffectiveAt: null,
+    });
+  });
+
+  it('marca aviso recebido quando a Stripe informa fim proximo do trial', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'TRIALING',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_trial_will_end_1', 'customer.subscription.trial_will_end', {
+          id: 'sub_1',
+          customer: 'cus_1',
+          status: 'trialing',
+          cancel_at_period_end: false,
+          current_period_end: 1_783_555_200,
+          trial_end: 1_783_555_200,
+          metadata: { contaId: 'conta_1' },
+          items: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      planCode: 'PREMIUM',
+    });
+    expect(store.accounts[0]?.trialWillEndNotifiedAt).toBeInstanceOf(Date);
+  });
+
+  it('nÃ£o reprocessa evento jÃ¡ processado', async () => {
     const store = createMemoryStore([
       buildAccount({
         stripeCustomerId: 'cus_1',
@@ -116,6 +398,88 @@ describe('@alusa/platform-billing webhooks', () => {
 
     expect(duplicate.status).toBe('duplicate');
     expect(store.webhookEvents[0]?.attempts).toBe(1);
+  });
+
+  it('restringe acesso quando trial sem forma de pagamento pausa no Stripe', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'TRIALING',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_subscription_paused_1', 'customer.subscription.paused', {
+          id: 'sub_1',
+          customer: 'cus_1',
+          status: 'paused',
+          cancel_at_period_end: false,
+          current_period_end: null,
+          trial_end: 1_783_555_200,
+          metadata: { contaId: 'conta_1' },
+          items: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'PAUSED',
+      accessStatus: 'RESTRICTED',
+      planCode: 'PREMIUM',
+    });
+    expect(store.accounts[0]?.restrictedAt).toBeInstanceOf(Date);
+  });
+
+  it('finaliza cancelamento no fim do test clock sem manter reverter cancelamento', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'TRIALING',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        currentPeriodEnd: new Date('2026-07-15T22:55:35.000Z'),
+        trialEndsAt: new Date('2026-07-15T22:55:35.000Z'),
+        cancelAtPeriodEnd: true,
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_subscription_deleted_1', 'customer.subscription.deleted', {
+          id: 'sub_1',
+          customer: 'cus_1',
+          status: 'canceled',
+          cancel_at_period_end: true,
+          current_period_end: 1_784_155_335,
+          trial_end: 1_784_155_335,
+          canceled_at: 1_784_155_335,
+          metadata: { contaId: 'conta_1' },
+          items: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED',
+      accessStatus: 'CANCELED',
+      planCode: 'PREMIUM',
+      cancelAtPeriodEnd: false,
+    });
+    expect(store.accounts[0]?.canceledAt).toBeInstanceOf(Date);
   });
 });
 
@@ -140,11 +504,13 @@ function buildAccount(input: Partial<PlatformBillingAccountRecord>): PlatformBil
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
     trialEndsAt: null,
+    trialWillEndNotifiedAt: null,
     accessStatus: 'PENDING',
     gracePeriodEndsAt: null,
     restrictedAt: null,
     canceledAt: null,
     lastPaymentFailedAt: null,
+    lastReconciledAt: null,
     pendingPlanCode: null,
     pendingChangeType: null,
     pendingChangeEffectiveAt: null,
@@ -212,14 +578,19 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       account.currentPeriodEnd = input.currentPeriodEnd;
       account.cancelAtPeriodEnd = input.cancelAtPeriodEnd;
       account.trialEndsAt = input.trialEndsAt;
+      account.trialWillEndNotifiedAt = input.trialWillEndNotifiedAt === undefined ? account.trialWillEndNotifiedAt : input.trialWillEndNotifiedAt;
       account.accessStatus = input.accessStatus ?? account.accessStatus;
-      account.gracePeriodEndsAt = input.gracePeriodEndsAt ?? account.gracePeriodEndsAt;
-      account.restrictedAt = input.restrictedAt ?? account.restrictedAt;
-      account.canceledAt = input.canceledAt ?? account.canceledAt;
-      account.lastPaymentFailedAt = input.lastPaymentFailedAt ?? account.lastPaymentFailedAt;
+      account.gracePeriodEndsAt = input.gracePeriodEndsAt === undefined ? account.gracePeriodEndsAt : input.gracePeriodEndsAt;
+      account.restrictedAt = input.restrictedAt === undefined ? account.restrictedAt : input.restrictedAt;
+      account.canceledAt = input.canceledAt === undefined ? account.canceledAt : input.canceledAt;
+      account.lastPaymentFailedAt = input.lastPaymentFailedAt === undefined ? account.lastPaymentFailedAt : input.lastPaymentFailedAt;
       account.pendingPlanCode = input.pendingPlanCode === undefined ? account.pendingPlanCode : input.pendingPlanCode;
       account.pendingChangeType = input.pendingChangeType === undefined ? account.pendingChangeType : input.pendingChangeType;
       account.pendingChangeEffectiveAt = input.pendingChangeEffectiveAt === undefined ? account.pendingChangeEffectiveAt : input.pendingChangeEffectiveAt;
+      if (!input.cancelAtPeriodEnd && account.pendingChangeType === 'CANCEL_AT_PERIOD_END') {
+        account.pendingChangeType = null;
+        account.pendingChangeEffectiveAt = null;
+      }
       return account;
     },
     async findCheckoutSessionByIdempotencyKey(input) {
@@ -267,6 +638,12 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
         periodEnd: input.periodEnd ?? null,
         dueDate: input.dueDate ?? null,
         paidAt: input.paidAt ?? null,
+        failedAt: input.failedAt ?? null,
+        attempted: input.attempted ?? false,
+        attemptCount: input.attemptCount ?? 0,
+        nextPaymentAttempt: input.nextPaymentAttempt ?? null,
+        lastPaymentErrorCode: input.lastPaymentErrorCode ?? null,
+        lastPaymentErrorMessage: input.lastPaymentErrorMessage ?? null,
       };
       invoices.push(invoice);
       return invoice;
@@ -341,3 +718,4 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
 
   return store;
 }
+

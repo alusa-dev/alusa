@@ -11,6 +11,7 @@
  * - onboardingUrl rebatizado como redirectUrl — nunca exposto como "onboarding"
  */
 
+import { prisma } from '@alusa/database';
 import { getKycSnapshotByContaId } from './get-kyc-snapshot';
 import type { GetKycSnapshotOptions } from './get-kyc-snapshot';
 import {
@@ -193,10 +194,64 @@ async function withProvisioningHint(
   return subaccountProvisioning ? { ...result, subaccountProvisioning } : result;
 }
 
+function isSandboxEnvironment(): boolean {
+  return (process.env.ASAAS_ENVIRONMENT ?? '').toLowerCase() === 'sandbox'
+    || (process.env.ASAAS_BASE_URL ?? '').toLowerCase().includes('api-sandbox.asaas.com');
+}
+
+async function getLocalApprovedVerification(contaId: string): Promise<AccountVerificationResponse | null> {
+  if (!isSandboxEnvironment()) return null;
+
+  const process = await prisma.kycProcess.findFirst({
+    where: {
+      status: 'APPROVED',
+      asaasAccount: {
+        financeProfile: { contaId },
+      },
+    },
+    select: {
+      lastAsaasSyncAt: true,
+      updatedAt: true,
+      asaasAccount: {
+        select: {
+          commercialInfoStatus: true,
+          commercialInfoScheduledDate: true,
+        },
+      },
+    },
+  });
+
+  if (!process) return null;
+
+  const approvedSnapshot = {
+    generalStatus: 'APPROVED' as const,
+    documentationStatus: 'APPROVED' as const,
+    bankAccountStatus: 'APPROVED' as const,
+    commercialInfoAreaStatus: 'APPROVED' as const,
+  };
+
+  return {
+    status: 'ACCOUNT_ACTIVE',
+    actions: [],
+    areas: buildAreas(approvedSnapshot),
+    commercialInfoStatus: process.asaasAccount.commercialInfoStatus,
+    commercialInfoScheduledDate: process.asaasAccount.commercialInfoScheduledDate,
+    commercialInfoExpiration: null,
+    rejectReasons: [],
+    fetchedAt: (process.lastAsaasSyncAt ?? process.updatedAt).toISOString(),
+    isSandbox: true,
+  };
+}
+
 export async function getAccountVerificationStatus(
   contaId: string,
   opts: GetKycSnapshotOptions = {},
 ): Promise<GetAccountVerificationStatusResult> {
+  const localApproved = await getLocalApprovedVerification(contaId);
+  if (localApproved) {
+    return { ready: true, data: localApproved };
+  }
+
   if (opts.fresh) {
     try {
       await ensureSubaccountEmailSynced({ contaId, actor: { type: 'SYSTEM' } });

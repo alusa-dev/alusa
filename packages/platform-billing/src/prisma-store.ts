@@ -12,15 +12,22 @@ import type {
   PlatformBillingStore,
 } from './types';
 
-type PlatformBillingPrismaClient = Pick<
+type PlatformBillingPrismaClientBase = Pick<
   PrismaClient,
   | 'platformBillingAccount'
   | 'platformBillingCheckoutSession'
   | 'platformBillingInvoice'
   | 'platformBillingWebhookEvent'
   | 'platformBillingAuditLog'
+  | 'platformBillingPlanChange'
   | '$executeRaw'
 >;
+
+type PlatformBillingPrismaClient = PlatformBillingPrismaClientBase & {
+  $transaction?<T>(
+    fn: (tx: PlatformBillingPrismaClientBase) => Promise<T>,
+  ): Promise<T>;
+};
 
 export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient): PlatformBillingStore {
   return {
@@ -96,12 +103,22 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
     },
 
     markCheckoutPending: async (input) => {
+      const reactivationData = input.pendingChangeType === 'REACTIVATE'
+        ? {
+            status: 'CANCELED' as const,
+            accessStatus: 'CANCELED' as const,
+          }
+        : {
+            status: 'CHECKOUT_PENDING' as const,
+            accessStatus: 'PENDING' as const,
+          };
       const account = await db.platformBillingAccount.update({
         where: { id: input.accountId },
         data: {
-          status: 'CHECKOUT_PENDING',
-          accessStatus: 'PENDING',
+          ...reactivationData,
           pendingPlanCode: input.planCode,
+          pendingChangeType: input.pendingChangeType ?? null,
+          pendingChangeEffectiveAt: null,
         },
       });
 
@@ -109,26 +126,58 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
     },
 
     updateAccountFromStripeSubscription: async (input) => {
-      const account = await db.platformBillingAccount.update({
-        where: { id: input.accountId },
-        data: {
-          status: input.status,
-          planCode: input.planCode,
-          stripeSubscriptionId: input.stripeSubscriptionId,
-          stripePriceId: input.stripePriceId,
-          currentPeriodEnd: input.currentPeriodEnd,
-          cancelAtPeriodEnd: input.cancelAtPeriodEnd,
-          trialEndsAt: input.trialEndsAt,
-          accessStatus: input.accessStatus ?? deriveAccessStatusFromStripeStatus(input.status),
-          gracePeriodEndsAt: input.gracePeriodEndsAt,
-          restrictedAt: input.restrictedAt,
-          canceledAt: input.canceledAt,
-          lastPaymentFailedAt: input.lastPaymentFailedAt,
-          pendingPlanCode: input.pendingPlanCode,
-          pendingChangeType: input.pendingChangeType,
-          pendingChangeEffectiveAt: input.pendingChangeEffectiveAt,
-          lastStripeEventId: input.lastStripeEventId,
-        },
+      const now = new Date();
+      const account = await runWithOptionalTransaction(db, async (tx) => {
+        await tx.platformBillingAccount.update({
+          where: { id: input.accountId },
+          data: {
+            status: input.status,
+            planCode: input.planCode,
+            stripeSubscriptionId: input.stripeSubscriptionId,
+            stripePriceId: input.stripePriceId,
+            currentPeriodEnd: input.currentPeriodEnd,
+            cancelAtPeriodEnd: input.cancelAtPeriodEnd,
+            trialEndsAt: input.trialEndsAt,
+            accessStatus: input.accessStatus ?? deriveAccessStatusFromStripeStatus(input.status),
+            gracePeriodEndsAt: input.gracePeriodEndsAt,
+            restrictedAt: input.restrictedAt,
+            canceledAt: input.canceledAt,
+            lastPaymentFailedAt: input.lastPaymentFailedAt,
+            trialWillEndNotifiedAt: input.trialWillEndNotifiedAt,
+            pendingPlanCode: input.pendingPlanCode,
+            pendingChangeType: input.pendingChangeType,
+            pendingChangeEffectiveAt: input.pendingChangeEffectiveAt,
+            lastStripeEventId: input.lastStripeEventId,
+          },
+        });
+
+        if (!input.cancelAtPeriodEnd) {
+          await tx.platformBillingPlanChange.updateMany({
+            where: {
+              billingAccountId: input.accountId,
+              type: 'CANCEL_AT_PERIOD_END',
+              status: 'PENDING_EFFECTIVE_DATE',
+            },
+            data: {
+              status: 'CANCELED',
+              canceledAt: now,
+            },
+          });
+          await tx.platformBillingAccount.updateMany({
+            where: {
+              id: input.accountId,
+              pendingChangeType: 'CANCEL_AT_PERIOD_END',
+            },
+            data: {
+              pendingChangeType: null,
+              pendingChangeEffectiveAt: null,
+            },
+          });
+        }
+
+        return tx.platformBillingAccount.findUniqueOrThrow({
+          where: { id: input.accountId },
+        });
       });
 
       return toAccountRecord(account);
@@ -222,6 +271,12 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           periodEnd: input.periodEnd,
           dueDate: input.dueDate,
           paidAt: input.paidAt,
+          failedAt: input.failedAt,
+          attempted: input.attempted,
+          attemptCount: input.attemptCount,
+          nextPaymentAttempt: input.nextPaymentAttempt,
+          lastPaymentErrorCode: input.lastPaymentErrorCode,
+          lastPaymentErrorMessage: input.lastPaymentErrorMessage,
           raw: toPrismaJson(input.raw),
           lastStripeEventId: input.lastStripeEventId,
         },
@@ -242,6 +297,12 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           periodEnd: input.periodEnd,
           dueDate: input.dueDate,
           paidAt: input.paidAt,
+          failedAt: input.failedAt,
+          attempted: input.attempted,
+          attemptCount: input.attemptCount,
+          nextPaymentAttempt: input.nextPaymentAttempt,
+          lastPaymentErrorCode: input.lastPaymentErrorCode,
+          lastPaymentErrorMessage: input.lastPaymentErrorMessage,
           raw: toPrismaJson(input.raw),
           lastStripeEventId: input.lastStripeEventId,
         },
@@ -419,11 +480,13 @@ function toAccountRecord(account: {
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
   trialEndsAt: Date | null;
+  trialWillEndNotifiedAt: Date | null;
   accessStatus: string;
   gracePeriodEndsAt: Date | null;
   restrictedAt: Date | null;
   canceledAt: Date | null;
   lastPaymentFailedAt: Date | null;
+  lastReconciledAt: Date | null;
   pendingPlanCode: string | null;
   pendingChangeType: string | null;
   pendingChangeEffectiveAt: Date | null;
@@ -440,11 +503,13 @@ function toAccountRecord(account: {
     currentPeriodEnd: account.currentPeriodEnd,
     cancelAtPeriodEnd: account.cancelAtPeriodEnd,
     trialEndsAt: account.trialEndsAt,
+    trialWillEndNotifiedAt: account.trialWillEndNotifiedAt,
     accessStatus: account.accessStatus as PlatformBillingAccountRecord['accessStatus'],
     gracePeriodEndsAt: account.gracePeriodEndsAt,
     restrictedAt: account.restrictedAt,
     canceledAt: account.canceledAt,
     lastPaymentFailedAt: account.lastPaymentFailedAt,
+    lastReconciledAt: account.lastReconciledAt,
     pendingPlanCode: account.pendingPlanCode as PlatformBillingAccountRecord['pendingPlanCode'],
     pendingChangeType: account.pendingChangeType as PlatformBillingAccountRecord['pendingChangeType'],
     pendingChangeEffectiveAt: account.pendingChangeEffectiveAt,
@@ -500,6 +565,12 @@ function toInvoiceRecord(invoice: {
   periodEnd: Date | null;
   dueDate: Date | null;
   paidAt: Date | null;
+  failedAt: Date | null;
+  attempted: boolean;
+  attemptCount: number;
+  nextPaymentAttempt: Date | null;
+  lastPaymentErrorCode: string | null;
+  lastPaymentErrorMessage: string | null;
 }): PlatformBillingInvoiceRecord {
   return {
     id: invoice.id,
@@ -522,6 +593,12 @@ function toInvoiceRecord(invoice: {
     periodEnd: invoice.periodEnd,
     dueDate: invoice.dueDate,
     paidAt: invoice.paidAt,
+    failedAt: invoice.failedAt,
+    attempted: invoice.attempted,
+    attemptCount: invoice.attemptCount,
+    nextPaymentAttempt: invoice.nextPaymentAttempt,
+    lastPaymentErrorCode: invoice.lastPaymentErrorCode,
+    lastPaymentErrorMessage: invoice.lastPaymentErrorMessage,
   };
 }
 
@@ -566,9 +643,9 @@ function toWebhookEventRecord(event: {
 }
 
 function deriveAccessStatusFromStripeStatus(status: PlatformBillingAccountRecord['status']): PlatformBillingAccountRecord['accessStatus'] {
-  if (status === 'ACTIVE' || status === 'TRIALING' || status === 'PAUSED') return 'ACTIVE';
+  if (status === 'ACTIVE' || status === 'TRIALING') return 'ACTIVE';
   if (status === 'PAST_DUE') return 'GRACE_PERIOD';
-  if (status === 'UNPAID') return 'RESTRICTED';
+  if (status === 'UNPAID' || status === 'PAUSED') return 'RESTRICTED';
   if (status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED') return 'CANCELED';
   return 'PENDING';
 }
@@ -579,6 +656,13 @@ function isUniqueConstraintError(error: unknown): error is Prisma.PrismaClientKn
 
 function toPrismaJson(value: Record<string, unknown> | undefined): Prisma.InputJsonObject | undefined {
   return value as Prisma.InputJsonObject | undefined;
+}
+
+function runWithOptionalTransaction<T>(
+  db: PlatformBillingPrismaClient,
+  fn: (tx: PlatformBillingPrismaClientBase) => Promise<T>,
+): Promise<T> {
+  return db.$transaction ? db.$transaction(fn) : fn(db);
 }
 
 export type {

@@ -28,6 +28,9 @@ type ReconciliationAccount = {
   restrictedAt: Date | null;
   lastPaymentFailedAt: Date | null;
   pendingPlanCode: PlatformPlanCode | null;
+  pendingChangeType: string | null;
+  pendingChangeEffectiveAt: Date | null;
+  lastReconciledAt: Date | null;
 };
 
 type ReconciliationIssueInput = {
@@ -245,7 +248,9 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
     (desiredStatus === 'ACTIVE' || desiredStatus === 'TRIALING' || desiredStatus === 'PAST_DUE' || desiredStatus === 'UNPAID'),
   );
   const failedAt = input.account.lastPaymentFailedAt ?? now;
-  const update: Prisma.PlatformBillingAccountUpdateInput = {};
+  const update: Prisma.PlatformBillingAccountUpdateInput = {
+    lastReconciledAt: now,
+  };
 
   if (input.account.status !== desiredStatus) update.status = desiredStatus;
   if (input.account.accessStatus !== desiredAccessStatus) update.accessStatus = desiredAccessStatus;
@@ -284,16 +289,56 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
     update.pendingChangeType = null;
     update.pendingChangeEffectiveAt = null;
   }
+  if (!input.subscription.cancelAtPeriodEnd && input.account.pendingChangeType === 'CANCEL_AT_PERIOD_END') {
+    update.pendingChangeType = null;
+    update.pendingChangeEffectiveAt = null;
+  }
 
-  if (Object.keys(update).length === 0) return false;
+  const shouldInspectStaleCancellationChange = !input.subscription.cancelAtPeriodEnd;
+  const hasStaleCancellationChange = shouldInspectStaleCancellationChange
+    ? await prisma.platformBillingPlanChange.count({
+        where: {
+          billingAccountId: input.account.id,
+          type: 'CANCEL_AT_PERIOD_END',
+          status: 'PENDING_EFFECTIVE_DATE',
+        },
+      }).then((count) => count > 0)
+    : false;
+
+  const correctionFields = Object.keys(update).filter((field) => field !== 'lastReconciledAt');
+
+  if (correctionFields.length === 0 && !hasStaleCancellationChange) {
+    await prisma.platformBillingAccount.update({
+      where: { id: input.account.id },
+      data: {
+        lastReconciledAt: now,
+      },
+    });
+    return false;
+  }
 
   update.lastStripeEventId = `reconciliation:${input.subscription.id}`;
 
   await prisma.$transaction(async (tx) => {
-    await tx.platformBillingAccount.update({
-      where: { id: input.account.id },
-      data: update,
-    });
+    if (Object.keys(update).length > 0) {
+      await tx.platformBillingAccount.update({
+        where: { id: input.account.id },
+        data: update,
+      });
+    }
+    if (hasStaleCancellationChange) {
+      await tx.platformBillingPlanChange.updateMany({
+        where: {
+          billingAccountId: input.account.id,
+          type: 'CANCEL_AT_PERIOD_END',
+          status: 'PENDING_EFFECTIVE_DATE',
+        },
+        data: {
+          status: 'CANCELED',
+          canceledAt: now,
+        },
+      });
+    }
     await tx.platformBillingAuditLog.create({
       data: {
         contaId: input.account.contaId,
@@ -308,7 +353,10 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
           stripeStatus: input.subscription.status,
           planCode: input.planCode,
           priceId: input.subscription.priceId,
-          correctedFields: Object.keys(update),
+          correctedFields: [
+            ...correctionFields,
+            ...(hasStaleCancellationChange ? ['staleCancellationPlanChange'] : []),
+          ],
         },
       },
     });
@@ -362,7 +410,8 @@ function deriveReconciledAccessStatus(
   status: PlatformBillingAccountStatus,
   currentAccessStatus: PlatformBillingAccessStatus,
 ): PlatformBillingAccessStatus {
-  if (status === 'ACTIVE' || status === 'TRIALING' || status === 'PAUSED') return 'ACTIVE';
+  if (status === 'ACTIVE' || status === 'TRIALING') return 'ACTIVE';
+  if (status === 'PAUSED') return 'RESTRICTED';
   if (status === 'PAST_DUE') return currentAccessStatus === 'RESTRICTED' ? 'RESTRICTED' : 'GRACE_PERIOD';
   if (status === 'UNPAID') return 'RESTRICTED';
   if (status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED') return 'CANCELED';

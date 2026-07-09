@@ -95,6 +95,13 @@ function parseFine(raw: unknown): FinePayload | null {
   };
 }
 
+function isUncertainFinancialResult(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timeout|timed out|econnreset|etimedout|eai_again|socket hang up|network|fetch failed|und_err_connect_timeout|resultado_incerto/i.test(
+    message,
+  );
+}
+
 export function parseFamilyBillingPayload(raw: unknown): FamilyBillingPayload {
   if (!raw || typeof raw !== 'object') {
     throw new Error('Payload do outbox familiar inválido.');
@@ -278,6 +285,13 @@ async function persistAggregateFailure(payload: FamilyBillingPayload, message: s
   });
 }
 
+async function persistAggregateUncertain(payload: FamilyBillingPayload, message: string) {
+  await persistAggregateFailure(
+    payload,
+    `RESULTADO_INCERTO: ${message.slice(0, 1900)}`,
+  );
+}
+
 function buildStandaloneBaseInput(
   payload: FamilyBillingPayload,
   overrides?: {
@@ -380,6 +394,21 @@ export async function executeFamilyBilling(
     standaloneSubscriptionId,
     standaloneChargeId: standaloneEnrollmentChargeId,
   });
+
+  if (payload.aggregateType === 'MATRICULA_FAMILIAR') {
+    await prisma.familyFinancialAllocation.updateMany({
+      where: {
+        contaId: payload.contaId,
+        familyGroupId: payload.aggregateId,
+        status: 'PENDING',
+      },
+      data: {
+        standaloneSubscriptionId,
+        sourceAgreementId: standaloneEnrollmentChargeId ?? standaloneSubscriptionId,
+        status: 'AWAITING_WEBHOOK',
+      },
+    });
+  }
 
   if (standaloneSubscriptionId && payload.aggregateType === 'REMATRICULA_FAMILIAR') {
     await prisma.familyFinancialAllocation.updateMany({
@@ -490,7 +519,11 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     where: { id: eventId },
   });
 
-  if (!event || event.status === FamilyBillingOutboxStatus.PROCESSED) {
+  if (
+    !event ||
+    event.status === FamilyBillingOutboxStatus.PROCESSED ||
+    event.status === FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION
+  ) {
     return { processed: false, reason: 'NOT_FOUND_OR_ALREADY_PROCESSED' as const };
   }
 
@@ -594,14 +627,21 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     return { processed: true as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const uncertain = isUncertainFinancialResult(error);
     if (parsedFamilyPayload) {
-      await persistAggregateFailure(parsedFamilyPayload, message);
+      if (uncertain) {
+        await persistAggregateUncertain(parsedFamilyPayload, message);
+      } else {
+        await persistAggregateFailure(parsedFamilyPayload, message);
+      }
     } else if (event.aggregateType === 'REMATRICULA_FAMILIAR') {
       await prisma.rematriculaFamiliar.updateMany({
         where: { id: event.aggregateId, contaId: event.contaId },
         data: {
           status: FamilyBillingStatus.FALHO,
-          ultimoErro: message.slice(0, 2000),
+          ultimoErro: uncertain
+            ? `RESULTADO_INCERTO: ${message.slice(0, 1900)}`
+            : message.slice(0, 2000),
           failureMessage: message.slice(0, 2000),
         },
       });
@@ -609,11 +649,16 @@ export async function processFamilyBillingOutboxEvent(eventId: string) {
     await prisma.familyBillingOutbox.update({
       where: { id: eventId },
       data: {
-        status: FamilyBillingOutboxStatus.FAILED,
+        status: uncertain
+          ? FamilyBillingOutboxStatus.REQUIRES_RECONCILIATION
+          : FamilyBillingOutboxStatus.FAILED,
         lockedAt: null,
         lastError: message.slice(0, 2000),
       },
     });
+    if (uncertain) {
+      return { processed: false, reason: 'REQUIRES_RECONCILIATION' as const };
+    }
     throw error;
   }
 }
@@ -636,11 +681,13 @@ export async function processFamilyBillingOutboxBatch(params?: {
 
   let processed = 0;
   let failed = 0;
+  let requiresReconciliation = 0;
 
   for (const event of events) {
     try {
       const result = await processFamilyBillingOutboxEvent(event.id);
       if (result.processed) processed += 1;
+      if (result.reason === 'REQUIRES_RECONCILIATION') requiresReconciliation += 1;
     } catch {
       failed += 1;
     }
@@ -650,5 +697,6 @@ export async function processFamilyBillingOutboxBatch(params?: {
     attempted: events.length,
     processed,
     failed,
+    requiresReconciliation,
   };
 }

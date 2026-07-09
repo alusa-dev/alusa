@@ -3,7 +3,10 @@ import { z, ZodError } from 'zod';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
-import { updateRenewalCampaign } from '@/src/server/matriculas/renewal-management.service';
+import {
+  deleteRenewalCampaign,
+  updateRenewalCampaign,
+} from '@/src/server/matriculas/renewal-management.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
 
 const updateSchema = z.object({
@@ -73,6 +76,36 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       500,
       'ERRO_ATUALIZAR_CAMPANHA',
       error instanceof Error ? error.message : 'Erro ao atualizar campanha.',
+    );
+  }
+}
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'UsuÃ¡rio nÃ£o autenticado.');
+  if (!hasRenewalPermission(user.role, 'renewal.campaign.manage')) {
+    return jsonError(403, 'PERMISSAO_NEGADA', 'UsuÃ¡rio nÃ£o tem permissÃ£o para excluir campanhas.');
+  }
+
+  try {
+    const { id } = await context.params;
+    const result = await deleteRenewalCampaign(
+      {
+        contaId: user.contaId,
+        actorId: user.id,
+        campaignId: id,
+      },
+      { prisma },
+    );
+    return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'CAMPANHA_NAO_ENCONTRADA') {
+      return jsonError(404, 'CAMPANHA_NAO_ENCONTRADA', 'Campanha nÃ£o encontrada.');
+    }
+    return jsonError(
+      500,
+      'ERRO_EXCLUIR_CAMPANHA',
+      error instanceof Error ? error.message : 'Erro ao excluir campanha.',
     );
   }
 }

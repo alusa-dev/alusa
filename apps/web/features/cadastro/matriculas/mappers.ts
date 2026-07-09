@@ -20,6 +20,7 @@ import {
   type MatriculaAdjustmentTypeDTO,
   type MatriculaBillingTypeDTO,
   type MatriculaDeleteResultDTO,
+  type MatriculaOperationalWarningDTO,
   type MatriculaReenviarCobrancaResultDTO,
 } from './dtos';
 
@@ -54,7 +55,10 @@ function toBoolean(value: unknown, fallback = false) {
 function toDate(value: unknown): Date | undefined {
   if (value instanceof Date) return value;
   if (typeof value === 'string' && value.trim().length > 0) {
-    const date = new Date(value);
+    const trimmed = value.trim();
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(trimmed)
+      ? new Date(`${trimmed}T12:00:00.000Z`)
+      : new Date(trimmed);
     if (!Number.isNaN(date.getTime())) return date;
   }
   return undefined;
@@ -210,6 +214,12 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
     integrationStatus: matricula.integrationStatus
       ? String(matricula.integrationStatus)
       : 'SINCRONIZADO',
+    billingProvisionStatus: matricula.billingProvisionStatus
+      ? String(matricula.billingProvisionStatus)
+      : 'NAO_APLICAVEL',
+    billingProvisionError: matricula.billingProvisionError
+      ? String(matricula.billingProvisionError)
+      : null,
     warningCode: matricula.warningCode ? String(matricula.warningCode) : null,
     jurosMensal: toNumber(matricula.jurosMensal, null),
     jurosTipo: matricula.jurosTipo ? String(matricula.jurosTipo) : null,
@@ -388,6 +398,12 @@ export function mapMatriculaRecordToCoreDTO(matricula: Record<string, unknown>) 
     asaasSubscriptionId: matricula.asaasSubscriptionId
       ? String(matricula.asaasSubscriptionId)
       : null,
+    billingProvisionStatus: matricula.billingProvisionStatus
+      ? String(matricula.billingProvisionStatus)
+      : 'NAO_APLICAVEL',
+    billingProvisionError: matricula.billingProvisionError
+      ? String(matricula.billingProvisionError)
+      : null,
     createdAt:
       toIsoString(matricula.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     updatedAt:
@@ -443,6 +459,13 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     prazoDesconto: toNumber(parsed.prazoDesconto, null),
     descontoIds: parsed.descontoIds ?? [],
     uiRequestId: input.uiRequestId ?? parsed.uiRequestId ?? undefined,
+    billingStrategy: parsed.billingStrategy,
+    billingPreview: {
+      previewHash: parsed.previewHash,
+      sourceVersion: parsed.sourceVersion,
+      previewExpiresAt: toDate(parsed.previewExpiresAt) ?? new Date(0),
+      billingStrategy: parsed.billingStrategy,
+    },
   };
 }
 
@@ -475,8 +498,9 @@ export function mapCreateMatriculaResultToDTO(input: {
       message: string;
     }>;
   } | null;
+  operationalWarnings?: MatriculaOperationalWarningDTO[];
 }) {
-  const { result, taxaSync, subscriptionSync, notificationSync } = input;
+  const { result, taxaSync, subscriptionSync, notificationSync, operationalWarnings } = input;
   return createMatriculaResultDTOSchema.parse({
     matricula: mapMatriculaRecordToCoreDTO(result.matricula),
     cobrancas: {
@@ -528,6 +552,7 @@ export function mapCreateMatriculaResultToDTO(input: {
           warnings: notificationSync.warnings,
         }
       : null,
+    operationalWarnings: operationalWarnings ?? [],
   });
 }
 

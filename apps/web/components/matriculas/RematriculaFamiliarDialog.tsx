@@ -502,6 +502,7 @@ export function RematriculaFamiliarDialog({
         ...payload,
         previewId: preview.previewId,
         previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
       });
       const errors = result.results.filter((item) => item.status === 'error');
       const pendingOrCreated = result.results.filter((item) => item.novaMatriculaId);

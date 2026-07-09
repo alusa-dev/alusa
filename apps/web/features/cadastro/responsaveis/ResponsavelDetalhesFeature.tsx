@@ -66,6 +66,7 @@ type EditSection = 'responsavel' | 'complementares' | null;
 type ResponsavelCharge = ResponsavelOverview['charges'][number];
 type ResponsavelSubscription = ResponsavelOverview['subscriptions'][number];
 type ResponsavelInstallmentPlan = ResponsavelOverview['installmentPlans'][number];
+type ResponsavelEnrollmentHistory = ResponsavelOverview['enrollmentHistory'][number];
 
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
@@ -434,6 +435,8 @@ export function ResponsavelDetalhesFeature({ responsavelId }: { responsavelId: s
             />
           </div>
 
+          <HistoricoMatriculasResponsavelSection historico={overview?.enrollmentHistory ?? []} />
+
           <div className={DETAIL_SECTION_MAX}>
             <FinancialAccordion
               title="Assinaturas"
@@ -618,6 +621,109 @@ function EditableSection({
       {children}
     </section>
   );
+}
+
+function HistoricoMatriculasResponsavelSection({
+  historico,
+}: {
+  historico: ResponsavelEnrollmentHistory[];
+}) {
+  const sorted = [...historico].sort((a, b) => {
+    const aTime = new Date(a.dataInicio ?? a.createdAt).getTime();
+    const bTime = new Date(b.dataInicio ?? b.createdAt).getTime();
+    return bTime - aTime;
+  });
+
+  return (
+    <section className={sectionClass}>
+      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Histórico de matrículas</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Matrículas e rematrículas dos alunos vinculados a este responsável.
+          </p>
+        </div>
+        <span className="text-xs text-slate-500">{sorted.length} registros</span>
+      </div>
+
+      {sorted.length ? (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full min-w-[860px] border-collapse text-sm">
+            <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3 text-left">Aluno</th>
+                <th className="px-4 py-3 text-left">Tipo</th>
+                <th className="px-4 py-3 text-left">Curso/turma</th>
+                <th className="px-4 py-3 text-left">Início</th>
+                <th className="px-4 py-3 text-left">Fim</th>
+                <th className="px-4 py-3 text-left">Situação</th>
+                <th className="px-4 py-3 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((item) => (
+                <tr key={`${item.kind}-${item.id}`} className="border-t border-slate-200">
+                  <td className="max-w-[180px] px-4 py-3">
+                    <Link href={`/alunos/${item.alunoId}`} className="block truncate font-medium text-slate-900 hover:text-brand-accent">
+                      {item.alunoNome}
+                    </Link>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span className={cn('rounded-full px-2 py-1 text-xs font-medium', item.kind === 'REMATRICULA' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-700')}>
+                      {item.kind === 'REMATRICULA' ? 'Rematrícula' : 'Matrícula'}
+                    </span>
+                  </td>
+                  <td className="max-w-[280px] px-4 py-3">
+                    <span className="block truncate font-medium text-slate-900">
+                      {item.planoNome ?? item.comboNome ?? 'Matrícula'} · {item.turmaNome ?? 'Turma não informada'}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataInicio)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataFimContrato)}</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <span className={cn('rounded-full px-2 py-1 text-xs font-medium', getHistoryStatusClass(item.status))}>
+                      {getHistoryStatusLabel(item.status, item.dataInicio)}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <Link href={`/matriculas/${item.id}`} className="text-sm font-medium text-brand-accent hover:underline">
+                      Abrir
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyPanel message="Nenhuma matrícula vinculada aos alunos deste responsável." />
+      )}
+    </section>
+  );
+}
+
+function getHistoryStatusLabel(status: string, dataInicio: string | null | undefined) {
+  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
+  if (startsInFuture && ['ATIVA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'].includes(status)) {
+    return 'Próxima';
+  }
+  const labels: Record<string, string> = {
+    ATIVA: 'Ativa',
+    PAUSADA: 'Pausada',
+    AGUARDANDO_CONFIRMACAO: 'Pendente',
+    PENDENTE_TAXA: 'Taxa',
+    ENCERRADA: 'Encerrada',
+    CANCELADA: 'Cancelada',
+  };
+  return labels[status] ?? status;
+}
+
+function getHistoryStatusClass(status: string) {
+  if (status === 'ATIVA') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'ENCERRADA') return 'bg-slate-100 text-slate-600';
+  if (status === 'CANCELADA') return 'bg-red-50 text-red-700';
+  if (status === 'PAUSADA') return 'bg-amber-50 text-amber-700';
+  return 'bg-blue-50 text-blue-700';
 }
 
 function Field({

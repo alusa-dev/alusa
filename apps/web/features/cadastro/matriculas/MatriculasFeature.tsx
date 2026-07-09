@@ -82,6 +82,23 @@ const COBRANCA_BLOCKING_STATUSES: MatriculaCobrancaStatus[] = [
   'PAGO',
 ];
 
+type BillingProvisionStatus = NonNullable<MatriculaListItem['billingProvisionStatus']>;
+
+function resolveBillingProvisionBadge(status?: BillingProvisionStatus | null) {
+  if (status === 'PENDENTE' || status === 'PROCESSANDO') {
+    return { label: 'Sinc. fin.', title: 'Sincronizando financeiro', variant: 'info' as const };
+  }
+  if (status === 'PARCIAL') {
+    return { label: 'Fin. parcial', title: 'Financeiro parcialmente preparado', variant: 'warning' as const };
+  }
+  if (status === 'FALHO') {
+    return { label: 'Fin. erro', title: 'Financeiro com erro', variant: 'destructive' as const };
+  }
+  if (status === 'RESULTADO_INCERTO') {
+    return { label: 'Conferir fin.', title: 'Intervencao financeira necessaria', variant: 'destructive' as const };
+  }
+  return null;
+}
 function buildHardDeleteBlockedMessage(blockedBy?: {
   cobrancas?: number;
   cobrancasPorStatus?: Record<string, number>;
@@ -160,7 +177,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
 
   const statusFilter = useMemo(() => {
     if (statusValue === 'ATIVO') return 'ATIVA' as MatriculaStatus;
-    if (statusValue === 'INATIVO') return ['CANCELADA', 'CONCLUIDA'] as MatriculaStatus[];
+    if (statusValue === 'INATIVO') return ['CANCELADA', 'ENCERRADA'] as MatriculaStatus[];
     return undefined;
   }, [statusValue]);
 
@@ -602,12 +619,32 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         id: 'status',
         header: 'Status',
         align: 'center',
-        width: 'w-[4.5rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[10%]',
-        render: (m) => (
-          <div data-testid={`matricula-status-${m.id}`} className="flex items-center justify-center">
-            <Badge status={m.status as StatusType} size="sm" />
-          </div>
-        ),
+        width: 'w-[7.25rem] max-lg:shrink-0 max-lg:whitespace-nowrap lg:w-[10%]',
+        render: (m) => {
+          const billingBadge = resolveBillingProvisionBadge(m.billingProvisionStatus);
+
+          if (billingBadge) {
+            return (
+              <Badge
+                variant={billingBadge.variant}
+                size="sm"
+                title={billingBadge.title}
+                className="max-w-[6.5rem]"
+                data-testid={`matricula-status-${m.id}`}
+              >
+                {billingBadge.label}
+              </Badge>
+            );
+          }
+
+          return (
+            <Badge
+              status={m.status as StatusType}
+              size="sm"
+              data-testid={`matricula-status-${m.id}`}
+            />
+          );
+        },
       },
       {
         id: 'contrato',

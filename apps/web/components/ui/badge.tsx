@@ -79,6 +79,7 @@ const statusConfig = {
   PENDENTE_TAXA: { text: 'Pendente Taxa', className: 'alusa-badge alusa-badge-tone-warning' },
   AGUARDANDO_CONFIRMACAO: { text: 'Aguardando Confirmação', className: 'alusa-badge alusa-badge-tone-info' },
   ATIVA: { text: 'Ativa', className: 'alusa-badge alusa-badge-tone-success' },
+  ENCERRADA: { text: 'Encerrada', className: 'alusa-badge alusa-badge-tone-neutral' },
   INATIVA: { text: 'Inativa', className: 'alusa-badge alusa-badge-tone-danger' },
   PAUSADA: { text: 'Pausada', className: 'alusa-badge alusa-badge-tone-danger' },
   RECUSADA: { text: 'Recusada', className: 'alusa-badge alusa-badge-tone-danger' },

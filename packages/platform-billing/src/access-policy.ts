@@ -29,7 +29,7 @@ export function computeGracePeriodEnd(input: { failedAt: Date; gracePeriodDays?:
 export function derivePlatformAccessStatus(input: {
   account: Pick<
     PlatformBillingAccountRecord,
-    'status' | 'accessStatus' | 'cancelAtPeriodEnd' | 'currentPeriodEnd' | 'gracePeriodEndsAt'
+    'status' | 'accessStatus' | 'cancelAtPeriodEnd' | 'currentPeriodEnd' | 'gracePeriodEndsAt' | 'trialEndsAt'
   > | null;
   now?: Date;
 }): PlatformBillingAccessStatus {
@@ -37,12 +37,16 @@ export function derivePlatformAccessStatus(input: {
   if (!account) return 'PENDING';
 
   if (account.status === 'CANCELED' || account.status === 'INCOMPLETE_EXPIRED') return 'CANCELED';
+  if (account.status === 'PAUSED') return 'RESTRICTED';
   if (account.status === 'UNPAID') return 'RESTRICTED';
+  if (account.status === 'TRIALING' && account.trialEndsAt) {
+    return account.trialEndsAt.getTime() <= (input.now ?? new Date()).getTime() ? 'RESTRICTED' : 'ACTIVE';
+  }
   if (account.accessStatus === 'GRACE_PERIOD' && account.gracePeriodEndsAt) {
     return account.gracePeriodEndsAt.getTime() <= (input.now ?? new Date()).getTime() ? 'RESTRICTED' : 'GRACE_PERIOD';
   }
   if (account.accessStatus === 'RESTRICTED' || account.accessStatus === 'CANCELED') return account.accessStatus;
-  if (account.status === 'ACTIVE' || account.status === 'TRIALING' || account.status === 'PAUSED') return 'ACTIVE';
+  if (account.status === 'ACTIVE' || account.status === 'TRIALING') return 'ACTIVE';
   if (account.status === 'PAST_DUE') return 'GRACE_PERIOD';
 
   return account.accessStatus ?? 'PENDING';

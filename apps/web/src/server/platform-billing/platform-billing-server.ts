@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
 import type { PlatformPlanCode } from '@alusa/platform-billing';
-import { getMaxActiveStudents } from '@alusa/platform-billing';
+import { evaluateStudentCapacity } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 
 const PLATFORM_BILLING_MANAGE_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
@@ -75,15 +75,22 @@ export function assertPlanCapacity(params: {
   planCode: PlatformPlanCode;
   activeStudents: number;
 }): NextResponse | null {
-  const maxStudents = getMaxActiveStudents(params.planCode);
-  if (maxStudents === null || params.activeStudents <= maxStudents) return null;
+  const capacity = evaluateStudentCapacity({
+    contaId: 'platform-billing-checkout',
+    planCode: params.planCode,
+    activeStudents: params.activeStudents,
+    additionalActiveStudents: 0,
+  });
+  if (capacity.allowed) return null;
+  const maxStudents = capacity.maxActiveStudents;
 
   return NextResponse.json(
     {
       error: 'PLANO_INSUFICIENTE',
       message: `Este plano permite até ${maxStudents} alunos ativos.`,
-      activeStudents: params.activeStudents,
-      maxActiveStudents: maxStudents,
+      activeStudents: capacity.activeStudents,
+      maxActiveStudents: capacity.maxActiveStudents,
+      recommendedPlanCode: capacity.recommendedPlanCode,
     },
     { status: 422 },
   );

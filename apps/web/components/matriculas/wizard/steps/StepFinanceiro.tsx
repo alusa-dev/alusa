@@ -75,6 +75,35 @@ const paymentOptions: Array<{
   { value: 'BOLETO', label: 'Boleto', description: 'Pagamento mensal via boleto.' },
 ];
 
+const billingStrategyOptions: Array<{
+  kind: 'SEPARATE' | 'JOIN_EXISTING_CURRENT_CYCLE' | 'SCHEDULE_NEXT_CYCLE_UNIFICATION';
+  label: string;
+  description: string;
+}> = [
+  {
+    kind: 'SEPARATE',
+    label: 'Cobrança separada',
+    description: 'Mantém contrato e cobrança individual desta matrícula.',
+  },
+  {
+    kind: 'JOIN_EXISTING_CURRENT_CYCLE',
+    label: 'Incluir em cobrança existente',
+    description: 'Disponível quando houver agrupamento compatível para o pagador.',
+  },
+  {
+    kind: 'SCHEDULE_NEXT_CYCLE_UNIFICATION',
+    label: 'Unificar no próximo ciclo',
+    description: 'Disponível para agrupamentos compatíveis com vigência futura.',
+  },
+];
+
+type CompatibleBillingGroup = {
+  id: string;
+  label: string;
+  compatible: boolean;
+  blockers: string[];
+};
+
 interface StepFinanceiroProps {
   ctx: WizardContextValue;
 }
@@ -88,11 +117,18 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     state.dataFimContrato ? parseStoredDate(state.dataFimContrato) : undefined,
   );
   const [vencimento, setVencimento] = useState(state.vencimentoDia?.toString() ?? '5');
+  const [billingGroups, setBillingGroups] = useState<CompatibleBillingGroup[]>([]);
+  const [loadingBillingGroups, setLoadingBillingGroups] = useState(false);
   const { modelos, loading: loadingModelos } = useModelos({ activeOnly: true });
+  const activeBillingStrategy = state.billingStrategy?.kind ?? 'SEPARATE';
 
   const parsedVencimento = Number(vencimento);
   const hasDueDay = vencimento.trim().length > 0;
   const dueDayInvalid = hasDueDay && !isValidDueDay(parsedVencimento);
+  const responsavelFinanceiroId = state.aluno?.responsavel?.id ?? state.responsavelFamiliar?.id ?? null;
+  const payerType = responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
+  const payerId = responsavelFinanceiroId ?? state.aluno?.id ?? null;
+  const compatibleBillingGroup = billingGroups.find((group) => group.compatible) ?? null;
 
   const recurringChargeTotal = useMemo(() => {
     if (state.modoTurmas === 'COMBO') {
@@ -134,6 +170,47 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
       vencimentoDia: dueDayInvalid || !hasDueDay ? undefined : parsedVencimento,
     });
   }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, parsedVencimento, update, vencimento]);
+
+  useEffect(() => {
+    if (!payerId || !state.formaPagamento || dueDayInvalid || !hasDueDay) {
+      setBillingGroups([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      payerType,
+      payerId,
+      formaPagamento: state.formaPagamento,
+      vencimentoDia: String(parsedVencimento),
+    });
+    if (state.contaId) params.set('contaId', state.contaId);
+
+    setLoadingBillingGroups(true);
+    fetch(`/api/matriculas/billing-groups?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) return { data: [] };
+        return (await response.json()) as { data?: CompatibleBillingGroup[] };
+      })
+      .then((payload) => {
+        setBillingGroups(Array.isArray(payload.data) ? payload.data : []);
+      })
+      .catch((error) => {
+        if ((error as Error).name !== 'AbortError') setBillingGroups([]);
+      })
+      .finally(() => setLoadingBillingGroups(false));
+
+    return () => controller.abort();
+  }, [dueDayInvalid, hasDueDay, parsedVencimento, payerId, payerType, state.contaId, state.formaPagamento]);
+
+  useEffect(() => {
+    if (activeBillingStrategy !== 'SEPARATE' && !compatibleBillingGroup) {
+      update({ billingStrategy: { kind: 'SEPARATE' } });
+    }
+  }, [activeBillingStrategy, compatibleBillingGroup, update]);
 
   return (
     <SectionCard>
@@ -275,6 +352,56 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               O cliente receberá um link seguro para cadastrar o cartão após a matrícula.
             </p>
           )}
+        </div>
+
+        <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">Cobrança</h3>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {billingStrategyOptions.map((option) => {
+              const active = activeBillingStrategy === option.kind;
+              const disabled =
+                option.kind !== 'SEPARATE' &&
+                (!compatibleBillingGroup || loadingBillingGroups || !state.dataInicio);
+              return (
+                <button
+                  key={option.kind}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    if (option.kind === 'SEPARATE') {
+                      update({ billingStrategy: { kind: 'SEPARATE' } });
+                      return;
+                    }
+                    if (compatibleBillingGroup && state.dataInicio) {
+                      update({
+                        billingStrategy: {
+                          kind: option.kind,
+                          financialGroupId: compatibleBillingGroup.id,
+                          effectiveAt: state.dataInicio,
+                        },
+                      });
+                    }
+                  }}
+                  className={cn(
+                    'flex min-h-[92px] flex-col rounded-lg border p-3 text-left transition',
+                    active
+                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100',
+                    disabled && 'cursor-not-allowed opacity-60 hover:bg-white',
+                  )}
+                >
+                  <span className="text-sm font-semibold">{option.label}</span>
+                  <span className="mt-1 text-xs leading-relaxed text-gray-500">
+                    {disabled && option.kind !== 'SEPARATE'
+                      ? loadingBillingGroups
+                        ? 'Buscando cobranças compatíveis.'
+                        : 'Nenhuma cobrança compatível para este pagador.'
+                      : option.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </SectionCard>

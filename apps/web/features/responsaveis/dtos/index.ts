@@ -165,6 +165,36 @@ export const responsavelRematriculaCandidateDTOSchema = z.object({
   podeRenovar: z.boolean(),
 });
 
+export const responsavelEnrollmentHistoryDTOSchema = z.object({
+  id: z.string().min(1),
+  alunoId: z.string().min(1),
+  alunoNome: z.string().min(1),
+  kind: z.enum(['MATRICULA', 'REMATRICULA']),
+  status: z.string().min(1),
+  statusFinanceiro: z.string().min(1),
+  statusContrato: z.string().min(1),
+  dataInicio: z.string().min(1),
+  dataFimContrato: z.string().min(1),
+  createdAt: z.string().min(1),
+  planoNome: z.string().nullable(),
+  comboNome: z.string().nullable(),
+  turmaNome: z.string().nullable(),
+  rematricula: z
+    .object({
+      itemId: z.string().min(1),
+      processoId: z.string().min(1),
+      processoStatus: z.string().min(1),
+      processoOrigem: z.string().min(1),
+      decision: z.string().min(1),
+      itemStatus: z.string().min(1),
+      effectiveAt: z.string().min(1),
+      targetPeriodId: z.string().min(1),
+      matriculaOrigemId: z.string().nullable(),
+      matriculaFuturaId: z.string().nullable(),
+    })
+    .nullable(),
+});
+
 export const responsavelOverviewDTOSchema = z.object({
   summary: responsavelOverviewSummaryDTOSchema,
   families: z.array(responsavelFamilyAggregateDTOSchema),
@@ -173,6 +203,7 @@ export const responsavelOverviewDTOSchema = z.object({
   subscriptions: z.array(responsavelSubscriptionDTOSchema).default([]),
   installmentPlans: z.array(responsavelInstallmentPlanDTOSchema).default([]),
   rematriculaCandidates: z.array(responsavelRematriculaCandidateDTOSchema),
+  enrollmentHistory: z.array(responsavelEnrollmentHistoryDTOSchema).default([]),
 });
 
 export type ResponsavelOverviewDTO = z.infer<typeof responsavelOverviewDTOSchema>;

@@ -4,24 +4,20 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { getAccountVerificationStatus } from '@alusa/finance/use-cases/kyc/get-account-verification-status';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
-import { PrivateMemoryCache, privateCacheControl } from '@/lib/private-cache';
+import {
+  accountVerificationCacheControl,
+  getAccountVerificationCache,
+  setAccountVerificationCache,
+} from '@/src/server/kyc/account-verification-cache';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN']);
-const verificationCache = new PrivateMemoryCache<unknown>({
-  maxAgeSeconds: 30,
-  staleWhileRevalidateSeconds: 120,
-});
-const verificationCacheControl = privateCacheControl({
-  maxAgeSeconds: 30,
-  staleWhileRevalidateSeconds: 120,
-});
 
 function json(status: number, body: unknown, headers?: Record<string, string>) {
   return NextResponse.json(body, {
     status,
-    headers: { 'cache-control': verificationCacheControl, ...headers },
+    headers: { 'cache-control': accountVerificationCacheControl, ...headers },
   });
 }
 
@@ -52,7 +48,7 @@ export async function GET(req: Request) {
     const cacheKey = contaId;
 
     if (!fresh) {
-      const cached = verificationCache.get(cacheKey);
+      const cached = getAccountVerificationCache(cacheKey);
       if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
         timer.end('GET /verification-status (cache hit)', { fresh, cacheState: cached.state });
         return json(200, cached.body, { 'x-alusa-cache': cached.state });
@@ -79,9 +75,7 @@ export async function GET(req: Request) {
     }
 
     const body = { data: result.data };
-    if (!fresh) {
-      verificationCache.set(cacheKey, body);
-    }
+    setAccountVerificationCache(cacheKey, body);
 
     timer.end('GET /verification-status (cache miss)', { fresh });
     return json(200, body, { 'x-alusa-cache': 'MISS' });

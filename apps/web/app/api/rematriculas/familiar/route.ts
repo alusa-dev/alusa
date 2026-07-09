@@ -152,6 +152,13 @@ export async function POST(request: Request) {
         'O estado da composição mudou. Gere um novo preview antes de confirmar.',
       );
     }
+    if (body.sourceVersion && body.sourceVersion !== preview.sourceVersion) {
+      return jsonError(
+        409,
+        'TRANSICAO_DESATUALIZADA',
+        'O estado das matrículas mudou. Gere um novo preview antes de confirmar.',
+      );
+    }
 
     const result = await confirmRenewalProcess(
       {
@@ -182,6 +189,7 @@ export async function POST(request: Request) {
         targetBillingStatus: preview.renewCount > 0 ? 'SCHEDULED' : 'NOT_APPLICABLE',
         contractStatus: body.contratoModeloId ? 'WAITING_SIGNATURE' : 'NOT_SELECTED',
         previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
         warnings: preview.warnings,
         results: confirmedItems.map((item) => ({
           matriculaId: item.matriculaOrigemId,

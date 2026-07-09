@@ -30,6 +30,43 @@ interface MatriculaDetalhesDialogProps {
   onRefresh?: () => void;
 }
 
+type BillingProvisionStatus = NonNullable<MatriculaListItem['billingProvisionStatus']>;
+
+function resolveBillingProvisionPresentation(status?: BillingProvisionStatus | null) {
+  if (status === 'PENDENTE' || status === 'PROCESSANDO') {
+    return {
+      label: 'Sincronizando financeiro',
+      description:
+        'O sistema esta confirmando as cobrancas com o financeiro e acompanha webhook e sincronizacao automatica.',
+      variant: 'info' as const,
+    };
+  }
+  if (status === 'PARCIAL') {
+    return {
+      label: 'Financeiro parcialmente preparado',
+      description:
+        'Parte das cobrancas foi preparada. Revise a pendencia antes de novas tentativas.',
+      variant: 'warning' as const,
+    };
+  }
+  if (status === 'FALHO') {
+    return {
+      label: 'Financeiro com erro',
+      description:
+        'A preparacao financeira falhou. A matricula permanece registrada e precisa de intervencao.',
+      variant: 'destructive' as const,
+    };
+  }
+  if (status === 'RESULTADO_INCERTO') {
+    return {
+      label: 'Intervencao necessaria',
+      description:
+        'A resposta do financeiro ficou incerta. Confira a reconciliacao antes de tentar novamente.',
+      variant: 'destructive' as const,
+    };
+  }
+  return null;
+}
 export function MatriculaDetalhesDialog({
   open,
   matricula,
@@ -39,12 +76,14 @@ export function MatriculaDetalhesDialog({
   const [loadingLinks, setLoadingLinks] = useState(false);
   const [taxaLinks, setTaxaLinks] = useState<ResendCobrancaData | null>(null);
   const [copyingPix, setCopyingPix] = useState(false);
+  const [retryingProvision, setRetryingProvision] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setTaxaLinks(null);
       setLoadingLinks(false);
       setCopyingPix(false);
+      setRetryingProvision(false);
     }
   }, [open]);
 
@@ -59,6 +98,10 @@ export function MatriculaDetalhesDialog({
 
   const cobrancaStatus = taxaLinks?.status ?? taxaCobranca?.status ?? null;
   const previousStatus = taxaLinks?.previousStatus ?? null;
+  const billingProvision = useMemo(
+    () => resolveBillingProvisionPresentation(matricula?.billingProvisionStatus),
+    [matricula?.billingProvisionStatus],
+  );
 
   const formatTaxaStatus = useCallback((status?: MatriculaCobrancaStatus | null) => {
     if (!status) return '—';
@@ -144,6 +187,39 @@ export function MatriculaDetalhesDialog({
     }
     window.open(`/cobrancas/${taxaCobranca.id}`, '_blank', 'noopener,noreferrer');
   }, [taxaCobranca]);
+
+  const handleProvisionamentoAction = useCallback(async (action: 'RETRY_FAILED' | 'RECONCILE_LOCAL_CHARGES') => {
+    if (!matricula) return;
+    try {
+      setRetryingProvision(true);
+      const response = await fetch(`/api/matriculas/${matricula.id}/provisionamento`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error?.message || 'Não foi possível reenviar o financeiro.');
+      }
+      pushToast({
+        title: action === 'RETRY_FAILED' ? 'Financeiro reenviado' : 'Reconciliação solicitada',
+        description:
+          action === 'RETRY_FAILED'
+            ? 'O preparo financeiro voltou para a fila de acompanhamento.'
+            : 'As cobranças locais conhecidas foram conferidas com o financeiro.',
+        variant: 'success',
+      });
+      onRefresh?.();
+    } catch (error) {
+      pushToast({
+        title: 'Reenvio não realizado',
+        description: (error as Error).message || 'Tente novamente depois de revisar a pendência.',
+        variant: 'error',
+      });
+    } finally {
+      setRetryingProvision(false);
+    }
+  }, [matricula, onRefresh]);
 
   const cobrancasList = useMemo(() => {
     if (!matricula) return [];
@@ -546,6 +622,49 @@ export function MatriculaDetalhesDialog({
                       </div>
                     )}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {billingProvision && (
+              <div className="border-b pb-4">
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                  Financeiro operacional
+                </h3>
+                <div className="rounded-lg border bg-gray-50 p-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <Badge variant={billingProvision.variant} size="sm">
+                      {billingProvision.label}
+                    </Badge>
+                    {matricula.billingProvisionStatus === 'FALHO' ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleProvisionamentoAction('RETRY_FAILED')}
+                        disabled={retryingProvision}
+                      >
+                        {retryingProvision ? 'Reenviando...' : 'Reenviar preparo'}
+                      </Button>
+                    ) : matricula.billingProvisionStatus === 'RESULTADO_INCERTO' ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleProvisionamentoAction('RECONCILE_LOCAL_CHARGES')}
+                        disabled={retryingProvision}
+                      >
+                        {retryingProvision ? 'Conferindo...' : 'Conferir financeiro'}
+                      </Button>
+                    ) : (
+                      matricula.billingProvisionError && (
+                        <span className="text-xs text-gray-500">
+                        Último registro: {matricula.billingProvisionError}
+                        </span>
+                      )
+                    )}
+                  </div>
+                  <p className="mt-3 text-sm text-gray-600">{billingProvision.description}</p>
                 </div>
               </div>
             )}

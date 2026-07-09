@@ -1,6 +1,11 @@
 import { Resend } from 'resend';
 
-export type EmailCategory = 'invite_user' | 'verify_email' | 'reset_password' | 'account_reactivation';
+export type EmailCategory =
+  | 'invite_user'
+  | 'verify_email'
+  | 'reset_password'
+  | 'account_reactivation'
+  | 'platform_billing';
 
 export type SendTransactionalEmailInput = {
   to: string;

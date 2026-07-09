@@ -21,6 +21,7 @@ export const matriculaStatusDTOSchema = z.enum([
   'AGUARDANDO_CONFIRMACAO',
   'ATIVA',
   'PAUSADA',
+  'ENCERRADA',
   'RECUSADA',
   'CANCELADA',
 ]);
@@ -78,6 +79,129 @@ export const matriculaIntegrationStatusDTOSchema = z.enum([
   'DIVERGENTE',
 ]);
 export type MatriculaIntegrationStatusDTO = z.infer<typeof matriculaIntegrationStatusDTOSchema>;
+
+export const matriculaBillingProvisionStatusDTOSchema = z.enum([
+  'NAO_APLICAVEL',
+  'PENDENTE',
+  'PROCESSANDO',
+  'PROVISIONADO',
+  'PARCIAL',
+  'FALHO',
+  'RESULTADO_INCERTO',
+  'CANCELADO',
+]);
+export type MatriculaBillingProvisionStatusDTO = z.infer<
+  typeof matriculaBillingProvisionStatusDTOSchema
+>;
+
+export const initialEnrollmentBillingStrategyDTOSchema = z.enum([
+  'CREATE_SEPARATE',
+  'INCLUDE_EXISTING',
+  'UNIFY_NEXT_CYCLE',
+]);
+export type InitialEnrollmentBillingStrategyDTO = z.infer<
+  typeof initialEnrollmentBillingStrategyDTOSchema
+>;
+
+export const enrollmentBillingStrategyDTOSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('SEPARATE'),
+  }),
+  z.object({
+    kind: z.literal('JOIN_EXISTING_CURRENT_CYCLE'),
+    financialGroupId: z.string().trim().min(1),
+    effectiveAt: dateStringDTOSchema,
+  }),
+  z.object({
+    kind: z.literal('SCHEDULE_NEXT_CYCLE_UNIFICATION'),
+    financialGroupId: z.string().trim().min(1),
+    effectiveAt: dateStringDTOSchema,
+  }),
+]);
+export type EnrollmentBillingStrategyDTO = z.infer<typeof enrollmentBillingStrategyDTOSchema>;
+
+export const initialEnrollmentBillingPreviewInputDTOSchema = z.object({
+  contaId: z.string().trim().optional(),
+  strategy: initialEnrollmentBillingStrategyDTOSchema.default('CREATE_SEPARATE'),
+  billingStrategy: enrollmentBillingStrategyDTOSchema.optional(),
+  responsavelFinanceiroId: z.string().trim().min(1).nullable().optional(),
+  existingFamilyGroupId: z.string().trim().min(1).nullable().optional(),
+  dataInicio: dateStringDTOSchema,
+  dataFimContrato: dateStringDTOSchema,
+  formaPagamento: z.enum(['BOLETO', 'PIX', 'CARTAO', 'CARTAO_CREDITO']),
+  vencimentoDia: z.number().int().min(1).max(28),
+  descontoIds: z.array(z.string().trim().min(1)).default([]).optional(),
+  items: z
+    .array(
+      z.object({
+        alunoId: z.string().trim().min(1),
+        matriculaId: z.string().trim().min(1).nullable().optional(),
+        turmaId: z.string().trim().min(1).nullable().optional(),
+        comboId: z.string().trim().min(1).nullable().optional(),
+        planoId: z.string().trim().min(1).nullable().optional(),
+        taxaMatricula: z.number().nonnegative().nullable().optional(),
+        valorMensalidadeOverride: z.number().nonnegative().nullable().optional(),
+      }),
+    )
+    .min(1),
+});
+export type InitialEnrollmentBillingPreviewInputDTO = z.infer<
+  typeof initialEnrollmentBillingPreviewInputDTOSchema
+>;
+
+export const initialEnrollmentBillingPreviewResultDTOSchema = z.object({
+  previewHash: z.string(),
+  sourceVersion: z.string(),
+  expiresAt: dateStringDTOSchema,
+  strategy: initialEnrollmentBillingStrategyDTOSchema,
+  billingStrategy: enrollmentBillingStrategyDTOSchema,
+  compatibility: z.object({
+    compatible: z.boolean(),
+    blockers: z
+      .array(
+        z.object({
+          code: z.string(),
+          message: z.string(),
+          itemId: nullableStringDTOSchema.optional(),
+        }),
+      )
+      .default([]),
+    warnings: z.array(z.string()).default([]),
+  }),
+  totals: z.object({
+    monthlyTotal: z.number(),
+    enrollmentFeeTotal: z.number(),
+    itemCount: z.number().int().nonnegative(),
+  }),
+  groups: z.array(
+    z.object({
+      strategy: initialEnrollmentBillingStrategyDTOSchema,
+      payerId: nullableStringDTOSchema.default(null),
+      existingFamilyGroupId: nullableStringDTOSchema.default(null),
+      allocations: z.array(
+        z.object({
+          alunoId: z.string(),
+          alunoNome: z.string(),
+          matriculaId: nullableStringDTOSchema.default(null),
+          contratoId: nullableStringDTOSchema.default(null),
+          planoId: nullableStringDTOSchema.default(null),
+          comboId: nullableStringDTOSchema.default(null),
+          turmaId: nullableStringDTOSchema.default(null),
+          competenceStart: dateStringDTOSchema,
+          competenceEnd: dateStringDTOSchema,
+          baseAmount: z.number(),
+          amount: z.number(),
+          discountAmount: z.number(),
+          enrollmentFeeAmount: z.number(),
+        }),
+      ),
+    }),
+  ),
+  snapshot: z.unknown(),
+});
+export type InitialEnrollmentBillingPreviewResultDTO = z.infer<
+  typeof initialEnrollmentBillingPreviewResultDTOSchema
+>;
 
 export const matriculaTipoCobrancaDTOSchema = z.enum([
   'TAXA_MATRICULA',
@@ -143,6 +267,10 @@ export const createMatriculaInputDTOSchema = z.object({
     .default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
   uiRequestId: z.string().trim().min(1).max(120).optional(),
+  previewHash: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Preview inválido.'),
+  sourceVersion: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Versão do preview inválida.'),
+  previewExpiresAt: dateLikeDTOSchema,
+  billingStrategy: enrollmentBillingStrategyDTOSchema,
 });
 export type CreateMatriculaInputDTO = z.input<typeof createMatriculaInputDTOSchema>;
 
@@ -255,6 +383,28 @@ export const matriculaNotificationWarningDTOSchema = z.object({
   message: z.string(),
 });
 export type MatriculaNotificationWarningDTO = z.infer<typeof matriculaNotificationWarningDTOSchema>;
+
+export const matriculaOperationalWarningTypeDTOSchema = z.enum([
+  'FINANCIAL_PROVISION_PENDING',
+  'FINANCIAL_PROVISION_FAILED',
+  'RECONCILIATION_REQUIRED',
+  'MANUAL_INTERVENTION_REQUIRED',
+]);
+export type MatriculaOperationalWarningTypeDTO = z.infer<
+  typeof matriculaOperationalWarningTypeDTOSchema
+>;
+
+export const matriculaOperationalWarningDTOSchema = z.object({
+  type: matriculaOperationalWarningTypeDTOSchema,
+  code: z.string(),
+  message: z.string(),
+  severity: z.enum(['INFO', 'WARNING', 'BLOCKER']).default('WARNING'),
+  resourceId: nullableStringDTOSchema.default(null).optional(),
+  actionLabel: nullableStringDTOSchema.default(null).optional(),
+});
+export type MatriculaOperationalWarningDTO = z.infer<
+  typeof matriculaOperationalWarningDTOSchema
+>;
 
 export const updateMatriculaNotificationChannelsInputDTOSchema = z.object({
   contaId: z.string().trim().optional().nullable(),
@@ -373,6 +523,8 @@ export const matriculaResumoDTOSchema = z.object({
   cobrarDurantePausa: z.boolean().default(false).optional(),
   motivoPausa: nullableStringDTOSchema.default(null).optional(),
   integrationStatus: matriculaIntegrationStatusDTOSchema.default('SINCRONIZADO').optional(),
+  billingProvisionStatus: matriculaBillingProvisionStatusDTOSchema.default('NAO_APLICAVEL').optional(),
+  billingProvisionError: nullableStringDTOSchema.default(null).optional(),
   warningCode: nullableStringDTOSchema.default(null).optional(),
   jurosMensal: z.number().nullable().optional(),
   jurosTipo: nullableStringDTOSchema.default(null).optional(),
@@ -449,6 +601,8 @@ export const matriculaCoreDTOSchema = z.object({
   vencimentoDia: z.number().int(),
   asaasId: nullableStringDTOSchema.default(null),
   asaasSubscriptionId: nullableStringDTOSchema.default(null).optional(),
+  billingProvisionStatus: matriculaBillingProvisionStatusDTOSchema.default('NAO_APLICAVEL').optional(),
+  billingProvisionError: nullableStringDTOSchema.default(null).optional(),
   createdAt: dateStringDTOSchema,
   updatedAt: dateStringDTOSchema,
 });
@@ -566,6 +720,7 @@ export const createMatriculaResultDTOSchema = z.object({
     })
     .nullable()
     .optional(),
+  operationalWarnings: z.array(matriculaOperationalWarningDTOSchema).default([]),
 });
 export type CreateMatriculaResultDTO = z.infer<typeof createMatriculaResultDTOSchema>;
 

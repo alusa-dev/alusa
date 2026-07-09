@@ -1,6 +1,7 @@
 import {
   BillingMode,
   FormaPagamento,
+  MatriculaBillingProvisionStatus,
   Prisma,
   StatusCobranca,
   StatusFinanceiro,
@@ -28,6 +29,20 @@ import {
   assertStudentCapacity,
   countAdditionalActiveStudentsForEnrollment,
 } from '@/src/server/platform-billing/capacity';
+import {
+  calcularPrecoMatricula,
+  round2,
+  type CalcularPrecoInput,
+  type CalcularPrecoOutput,
+  type DescontoInput,
+} from './matricula-pricing';
+import {
+  previewInitialEnrollmentBilling,
+  type CanonicalEnrollmentBillingStrategy,
+} from './initial-enrollment-billing-preview.service';
+
+export { calcularPrecoMatricula };
+export type { CalcularPrecoInput, CalcularPrecoOutput, DescontoInput };
 
 export class MatriculaConflictError extends Error {
   readonly code:
@@ -50,56 +65,6 @@ export class MatriculaConflictError extends Error {
     this.name = 'MatriculaConflictError';
     this.code = code;
   }
-}
-
-export type DescontoInput = {
-  tipo: 'FIXO' | 'PERCENTUAL';
-  valor: number;
-  cumulativo?: boolean;
-};
-
-export type CalcularPrecoInput = {
-  planoValor: number;
-  taxaMatricula?: number;
-  descontos?: DescontoInput[];
-};
-
-export type CalcularPrecoOutput = {
-  plano: number;
-  planoLiquido: number;
-  taxa: number;
-  descontosAplicados: number[];
-  total: number;
-};
-
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-
-export function calcularPrecoMatricula(input: CalcularPrecoInput): CalcularPrecoOutput {
-  const plano = Math.max(0, Number(input.planoValor || 0));
-  const taxa = Math.max(0, Number(input.taxaMatricula || 0));
-  const descontos = input.descontos ?? [];
-
-  const valores = descontos.map((d) => {
-    const v = Number(d.valor || 0);
-    if (d.tipo === 'PERCENTUAL') return round2(plano * (v / 100));
-    return round2(v);
-  });
-
-  const hasCumulativo = descontos.some((d) => d.cumulativo);
-
-  const descontosAplicados = hasCumulativo ? valores : valores.length ? [Math.max(...valores)] : [];
-
-  const totalDescontos = round2(descontosAplicados.reduce((acc, n) => acc + n, 0));
-  const planoLiquido = Math.max(0, round2(plano - totalDescontos));
-  const total = round2(planoLiquido + taxa);
-
-  return {
-    plano: round2(plano),
-    planoLiquido,
-    taxa: round2(taxa),
-    descontosAplicados,
-    total,
-  };
 }
 
 function startOfDay(date: Date) {
@@ -174,14 +139,16 @@ async function assertNoDuplicateEnrollment(
     turmaId?: string | null;
     comboId?: string | null;
     excludeMatriculaId?: string;
+    referenceDate?: Date;
   },
 ) {
+  const occupancyWhere = buildSeatOccupancyWhereClause(params.referenceDate);
   if (params.turmaId) {
     const existingByTurma = await db.matricula.findFirst({
       where: {
         alunoId: params.alunoId,
         turmaId: params.turmaId,
-        ...buildSeatOccupancyWhereClause(),
+        ...occupancyWhere,
         ...(params.excludeMatriculaId ? { NOT: { id: params.excludeMatriculaId } } : {}),
       },
       select: { id: true },
@@ -200,7 +167,7 @@ async function assertNoDuplicateEnrollment(
       where: {
         alunoId: params.alunoId,
         comboId: params.comboId,
-        ...buildSeatOccupancyWhereClause(),
+        ...occupancyWhere,
         ...(params.excludeMatriculaId ? { NOT: { id: params.excludeMatriculaId } } : {}),
       },
       select: { id: true },
@@ -239,25 +206,36 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
     },
     ...(input.alunoId ? { alunoId: input.alunoId } : {}),
     ...(input.planoId ? { planoId: input.planoId } : {}),
-    ...(input.turmaId
-      ? {
-          OR: [
-            { turmaId: input.turmaId },
-            { matriculaTurmas: { some: { turmaId: input.turmaId } } },
-          ],
-        }
-      : {}),
     ...(input.comboId !== undefined ? { comboId: input.comboId } : {}),
     ...(input.status?.length ? { status: { in: input.status } } : {}),
-    ...(input.search?.trim()
-      ? {
-          OR: [
-            { aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } } },
-            { aluno: { cpf: { contains: input.search.trim() } } },
-          ],
-        }
-      : {}),
   };
+
+  const andFilters: Prisma.MatriculaWhereInput[] = [];
+
+  if (input.turmaId) {
+    andFilters.push(
+      {
+        OR: [
+          { turmaId: input.turmaId },
+          { matriculaTurmas: { some: { turmaId: input.turmaId } } },
+        ],
+      },
+      buildSeatOccupancyWhereClause() as Prisma.MatriculaWhereInput,
+    );
+  }
+
+  if (input.search?.trim()) {
+    andFilters.push({
+      OR: [
+        { aluno: { nome: { contains: input.search.trim(), mode: 'insensitive' as const } } },
+        { aluno: { cpf: { contains: input.search.trim() } } },
+      ],
+    });
+  }
+
+  if (andFilters.length) {
+    where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), ...andFilters];
+  }
 
   if (input.excludeStatus?.length) {
     if (where.status) {
@@ -392,6 +370,13 @@ export type CriarMatriculaInput = {
   descontoIds?: string[] | null;
   /** Idempotência opcional (header X-Idempotency-Key ou body) */
   uiRequestId?: string | null;
+  billingStrategy?: CanonicalEnrollmentBillingStrategy | null;
+  billingPreview?: {
+    previewHash: string;
+    sourceVersion: string;
+    previewExpiresAt: Date;
+    billingStrategy: CanonicalEnrollmentBillingStrategy;
+  } | null;
 };
 
 type DescontoMatriculaAplicavel = {
@@ -484,6 +469,149 @@ async function aplicarDescontosMatricula(
   }
 }
 
+function normalizePaymentForPreview(value?: FormaPagamento | null) {
+  if (value === FormaPagamento.PIX) return 'PIX';
+  if (value === FormaPagamento.CARTAO_CREDITO) {
+    return 'CARTAO_CREDITO';
+  }
+  return 'BOLETO';
+}
+
+function resolveBillingStrategy(input: CriarMatriculaInput): CanonicalEnrollmentBillingStrategy {
+  return input.billingPreview?.billingStrategy ?? input.billingStrategy ?? { kind: 'SEPARATE' };
+}
+
+function parseSubscriptionBillingTarget(strategy: CanonicalEnrollmentBillingStrategy) {
+  if (strategy.kind !== 'JOIN_EXISTING_CURRENT_CYCLE') return null;
+  const prefix = 'subscription:';
+  return strategy.financialGroupId.startsWith(prefix)
+    ? strategy.financialGroupId.slice(prefix.length)
+    : null;
+}
+
+async function assertInitialEnrollmentBillingPreview(
+  tx: Prisma.TransactionClient,
+  input: CriarMatriculaInput,
+) {
+  if (!input.billingPreview) return;
+
+  if (input.billingPreview.previewExpiresAt <= new Date()) {
+    throw new Error('PREVIEW_EXPIRADO');
+  }
+
+  const billingStrategy = input.billingPreview.billingStrategy;
+  const preview = await previewInitialEnrollmentBilling(
+    {
+      contaId: input.contaId,
+      billingStrategy,
+      responsavelFinanceiroId: input.responsavelFinanceiroId ?? null,
+      existingFamilyGroupId:
+        billingStrategy.kind === 'SEPARATE' ? null : billingStrategy.financialGroupId,
+      dataInicio: input.dataInicio,
+      dataFimContrato: input.dataFimContrato,
+      formaPagamento: normalizePaymentForPreview(input.formaPagamento),
+      vencimentoDia: input.vencimentoDia,
+      descontoIds: input.descontoIds ?? [],
+      items: [
+        {
+          alunoId: input.alunoId,
+          turmaId: input.turmaId ?? null,
+          comboId: input.comboId ?? null,
+          planoId: input.planoId ?? null,
+          taxaMatricula: input.taxaMatricula,
+          valorMensalidadeOverride: input.valorMensalidadeOverride ?? null,
+        },
+      ],
+    },
+    { prisma: tx },
+  );
+
+  if (!preview.compatibility.compatible) {
+    const first = preview.compatibility.blockers[0];
+    const message = first?.message ?? 'Preview financeiro incompatível.';
+    throw new Error(`PREVIEW_INCOMPATIVEL:${first?.code ?? 'UNKNOWN'}:${message}`);
+  }
+
+  if (
+    preview.previewHash.toLowerCase() !== input.billingPreview.previewHash.toLowerCase() ||
+    preview.sourceVersion.toLowerCase() !== input.billingPreview.sourceVersion.toLowerCase()
+  ) {
+    throw new Error('PREVIEW_DESATUALIZADO');
+  }
+}
+
+async function persistInitialEnrollmentFinancialAllocations(
+  tx: Prisma.TransactionClient,
+  params: {
+    input: CriarMatriculaInput;
+    matriculaId: string;
+    preco: CalcularPrecoOutput;
+  },
+) {
+  const strategy = resolveBillingStrategy(params.input);
+  const subscriptionTargetId = parseSubscriptionBillingTarget(strategy);
+  const familyGroupId =
+    strategy.kind === 'SEPARATE' || subscriptionTargetId
+      ? null
+      : strategy.financialGroupId.replace(/^family:/, '');
+  const rows: Prisma.FamilyFinancialAllocationCreateManyInput[] = [];
+  const metadataBase = {
+    source: 'MATRICULA_INICIAL',
+    billingStrategy: strategy,
+    subscriptionTargetId,
+    billingMode: params.input.billingMode ?? BillingMode.INDIVIDUAL,
+    formaPagamento: params.input.formaPagamento ?? FormaPagamento.BOLETO,
+    vencimentoDia: params.input.vencimentoDia,
+    descontoIds: params.input.descontoIds ?? [],
+    uiRequestId: params.input.uiRequestId ?? null,
+  } as Prisma.InputJsonValue;
+
+  if (params.input.criarCobranca && params.preco.planoLiquido > 0) {
+    rows.push({
+      contaId: params.input.contaId,
+      alunoId: params.input.alunoId,
+      matriculaId: params.matriculaId,
+      familyGroupId,
+      chargeKind: 'MENSALIDADE',
+      status: 'PENDING',
+      amount: params.preco.planoLiquido,
+      baseAmount: params.preco.plano,
+      discountAmount: round2(params.preco.plano - params.preco.planoLiquido),
+      competenceStart: params.input.dataInicio,
+      competenceEnd: params.input.dataFimContrato,
+      metadata: metadataBase,
+    });
+  }
+
+  if (
+    !params.input.taxaIsenta &&
+    params.input.gerarCobrancaTaxa &&
+    params.input.taxaMatricula > 0
+  ) {
+    rows.push({
+      contaId: params.input.contaId,
+      alunoId: params.input.alunoId,
+      matriculaId: params.matriculaId,
+      familyGroupId,
+      chargeKind: 'TAXA_MATRICULA',
+      status: 'PENDING',
+      amount: params.input.taxaMatricula,
+      baseAmount: params.input.taxaMatricula,
+      discountAmount: 0,
+      competenceStart: params.input.dataInicio,
+      competenceEnd: params.input.dataInicio,
+      metadata: metadataBase,
+    });
+  }
+
+  if (rows.length > 0) {
+    await tx.familyFinancialAllocation.createMany({
+      data: rows,
+      skipDuplicates: true,
+    });
+  }
+}
+
 export async function criarMatricula(input: CriarMatriculaInput) {
   if (input.uiRequestId) {
     const existing = await findExistingMatriculaByUiRequestId({
@@ -512,6 +640,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     alunoId: input.alunoId,
     turmaId: input.turmaId,
     comboId: input.comboId,
+    referenceDate: input.dataInicio,
   });
 
   // Validar datas de contrato
@@ -579,7 +708,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   // Validar capacidade de vagas
   if (turma) {
     const ocupadas = await prisma.matricula.count({
-      where: { turmaId: turma.id, ...buildSeatOccupancyWhereClause() },
+      where: { turmaId: turma.id, ...buildSeatOccupancyWhereClause(input.dataInicio) },
     });
     const capResult = validarCapacidade([
       {
@@ -600,7 +729,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   if (combo) {
     if ((combo as { vagasLimite?: number | null }).vagasLimite != null) {
       const comboOcupadas = await prisma.matricula.count({
-        where: { comboId: combo.id, ...buildSeatOccupancyWhereClause() },
+        where: { comboId: combo.id, ...buildSeatOccupancyWhereClause(input.dataInicio) },
       });
       const capResult = validarCapacidade([], {
         vagasLimite: (combo as { vagasLimite?: number | null }).vagasLimite,
@@ -615,7 +744,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   // Validar conflitos de horário
   if (turma) {
     const matriculasExistentes = await prisma.matricula.findMany({
-      where: { alunoId: input.alunoId, ...buildSeatOccupancyWhereClause() },
+      where: { alunoId: input.alunoId, ...buildSeatOccupancyWhereClause(input.dataInicio) },
       include: {
         turma: {
           select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
@@ -650,10 +779,13 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   let result;
   try {
     result = await prisma.$transaction(async (tx) => {
+    await assertInitialEnrollmentBillingPreview(tx, input);
+
     await assertNoDuplicateEnrollment(tx, {
       alunoId: input.alunoId,
       turmaId: input.turmaId,
       comboId: input.comboId,
+      referenceDate: input.dataInicio,
     });
 
     // Determinar status inicial baseado na política da conta
@@ -699,8 +831,14 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       })),
     });
 
-    const billingProvisionStatus = resolveInitialBillingProvisionStatus({
-      billingMode: input.billingMode,
+    const billingStrategy = resolveBillingStrategy(input);
+    const subscriptionTargetId = parseSubscriptionBillingTarget(billingStrategy);
+    const resolvedBillingMode =
+      billingStrategy.kind === 'SEPARATE' ? (input.billingMode ?? BillingMode.INDIVIDUAL) : BillingMode.SHARED_PLAN;
+    const billingProvisionStatus = subscriptionTargetId && input.criarCobranca && preco.planoLiquido > 0
+      ? MatriculaBillingProvisionStatus.PENDENTE
+      : resolveInitialBillingProvisionStatus({
+      billingMode: resolvedBillingMode,
       criarCobranca: input.criarCobranca,
       gerarCobrancaTaxa: input.gerarCobrancaTaxa,
       taxaIsenta: input.taxaIsenta,
@@ -716,7 +854,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         turmaId: input.turmaId ?? undefined,
         planoId: input.planoId ?? undefined,
         comboId: input.comboId ?? undefined,
-        billingMode: input.billingMode ?? BillingMode.INDIVIDUAL,
+        billingMode: resolvedBillingMode,
         uiRequestId: input.uiRequestId ?? undefined,
         billingProvisionStatus,
         dataInicio: input.dataInicio,
@@ -780,11 +918,49 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       });
     }
 
+    await persistInitialEnrollmentFinancialAllocations(tx, {
+      input,
+      matriculaId: matricula.id,
+      preco,
+    });
+
+    let billingOutboxEventId: string | null = null;
+
+    if (billingProvisionStatus === MatriculaBillingProvisionStatus.PENDENTE) {
+      const outboxEventType = subscriptionTargetId
+        ? 'UPDATE_EXISTING_SUBSCRIPTION_BILLING'
+        : 'PROVISION_ENROLLMENT_BILLING';
+      const dedupeKey = subscriptionTargetId
+        ? `enrollment-subscription-update:${subscriptionTargetId}:${matricula.id}`
+        : `enrollment-billing:${matricula.id}`;
+      const billingOutboxEvent = await tx.matriculaBillingOutbox.create({
+        data: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          aggregateType: 'MATRICULA',
+          aggregateId: matricula.id,
+          eventType: outboxEventType,
+          dedupeKey,
+          idempotencyKey: input.uiRequestId ?? dedupeKey,
+          externalReference: `matricula:${matricula.id}:billing`,
+          correlationId: input.uiRequestId ?? dedupeKey,
+          payload: {
+            matriculaId: matricula.id,
+            actorUserId: input.createdById,
+            subscriptionTargetId,
+            billingStrategy,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      billingOutboxEventId = billingOutboxEvent.id;
+    }
+
     return {
       matricula,
       cobrancas,
       descontosAplicaveis,
       preco,
+      billingOutboxEventId,
     };
     });
   } catch (error) {
@@ -810,6 +986,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     preco: result.preco,
     responsavelFinanceiro: null,
     primeiroVencimento,
+    billingOutboxEventId: result.billingOutboxEventId,
   };
 }
 
@@ -979,6 +1156,7 @@ export async function editarMatricula(input: {
         turmaId: true,
         comboId: true,
         planoId: true,
+        dataInicio: true,
       },
     });
     if (!verify) throw new Error('Matrícula não encontrada');
@@ -1008,7 +1186,7 @@ export async function editarMatricula(input: {
       const ocupadas = await tx.matricula.count({
         where: {
           turmaId: turma.id,
-          ...buildSeatOccupancyWhereClause(),
+          ...buildSeatOccupancyWhereClause(verify.dataInicio),
           NOT: { id: input.matriculaId },
         },
       });
@@ -1032,7 +1210,7 @@ export async function editarMatricula(input: {
       const matriculasExistentes = await tx.matricula.findMany({
         where: {
           alunoId: verify.alunoId,
-          ...buildSeatOccupancyWhereClause(),
+          ...buildSeatOccupancyWhereClause(verify.dataInicio),
           NOT: { id: input.matriculaId },
         },
         include: {
@@ -1075,7 +1253,7 @@ export async function editarMatricula(input: {
         const ocupadasCombo = await tx.matricula.count({
           where: {
             comboId: combo.id,
-            ...buildSeatOccupancyWhereClause(),
+            ...buildSeatOccupancyWhereClause(verify.dataInicio),
             NOT: { id: input.matriculaId },
           },
         });
@@ -1100,6 +1278,7 @@ export async function editarMatricula(input: {
         turmaId: turmaChanged ? targetTurmaId : null,
         comboId: comboChanged ? targetComboId : null,
         excludeMatriculaId: input.matriculaId,
+        referenceDate: verify.dataInicio,
       });
     }
 

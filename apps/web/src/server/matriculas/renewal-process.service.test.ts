@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { previewRenewalProcess } from './renewal-process.service';
+import { activateDueRenewalProcesses, previewRenewalProcess } from './renewal-process.service';
+
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertStudentCapacity: vi.fn().mockResolvedValue(undefined),
+}));
 
 const now = new Date('2026-01-10T00:00:00.000Z');
 
@@ -222,6 +226,75 @@ describe('renewal-process.service', () => {
       expect.arrayContaining([
         expect.objectContaining({ code: 'TARGET_CLASS_FULL', sourceEnrollmentId: 'mat-1' }),
       ]),
+    );
+  });
+
+  it('ativa futura e encerra origem como ENCERRADA', async () => {
+    const tx = {
+      rematriculaProcesso: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'proc-1',
+          contaId: 'conta-1',
+          effectiveAt: new Date('2026-07-02T00:00:00.000Z'),
+          itens: [
+            {
+              id: 'item-1',
+              decision: 'RENEW',
+              matriculaOrigemId: 'mat-origem',
+              matriculaFuturaId: 'mat-futura',
+            },
+          ],
+          reservas: [{ itemId: 'item-1', status: 'RESERVED' }],
+          financeiros: [{ id: 'fin-1', status: 'ACTIVE' }],
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      matricula: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: 'mat-origem',
+              dataFimContrato: new Date('2026-07-01T00:00:00.000Z'),
+              status: 'ATIVA',
+            },
+          ])
+          .mockResolvedValueOnce([{ alunoId: 'aluno-1' }]),
+        findFirst: vi.fn().mockResolvedValue({ id: 'mat-origem' }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      reservaVagaFutura: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      contratoFuturo: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      acordoFinanceiroFuturo: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      rematriculaAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+
+    const prisma = {
+      rematriculaProcesso: {
+        findMany: vi.fn().mockResolvedValue([{ id: 'proc-1' }]),
+      },
+      $transaction: vi.fn(async (callback) => callback(tx)),
+    };
+
+    const result = await activateDueRenewalProcesses(
+      { contaId: 'conta-1', now: new Date('2026-07-02T12:00:00.000Z') },
+      { prisma: prisma as never },
+    );
+
+    expect(result).toEqual([{ processId: 'proc-1', status: 'EFFECTIVE' }]);
+    expect(tx.matricula.updateMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['mat-origem'] } }),
+        data: expect.objectContaining({ status: 'ENCERRADA', statusContrato: 'EXPIRADO' }),
+      }),
+    );
+    expect(tx.matricula.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ['mat-futura'] } }),
+        data: expect.objectContaining({ status: 'ATIVA' }),
+      }),
     );
   });
 });

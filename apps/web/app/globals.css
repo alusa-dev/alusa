@@ -2040,10 +2040,10 @@ select:-webkit-autofill:active {
 	background-image: none !important;
 }
 
-/* Para navegadores que suportam ::autofill */
-input::autofill,
-textarea::autofill,
-select::autofill {
+/* Para navegadores que suportam :autofill */
+input:autofill,
+textarea:autofill,
+select:autofill {
 	background-color: white !important;
 	color: #111827 !important;
 	/* text-gray-900 */
@@ -2226,9 +2226,9 @@ html:not([data-theme="dark"]) [data-radix-select-trigger] {
 	background-image: none !important;
 }
 
-[data-theme="dark"] input::autofill,
-[data-theme="dark"] textarea::autofill,
-[data-theme="dark"] select::autofill {
+[data-theme="dark"] input:autofill,
+[data-theme="dark"] textarea:autofill,
+[data-theme="dark"] select:autofill {
 	background-color: var(--color-input-bg) !important;
 	color: var(--color-input-text) !important;
 }

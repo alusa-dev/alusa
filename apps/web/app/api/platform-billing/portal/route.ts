@@ -15,6 +15,8 @@ import {
 
 export async function POST(req: NextRequest) {
   const requestIp = ipFromRequest(req);
+  const body = await readBody(req);
+  const returnPath = readSafeReturnPath(body);
 
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(`platform-billing:portal:${contaId}:${userId}:${requestIp}`, 30, 10 * 60_000);
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
       result = await createPlatformBillingPortalSession(
         {
           contaId,
-          returnUrl: `${origin}/conta/plano-faturamento`,
+          returnUrl: `${origin}${returnPath}`,
           actorUserId: userId,
           idempotencyKey,
           correlationId: idempotencyKey,
@@ -53,6 +55,25 @@ export async function POST(req: NextRequest) {
       portalUrl: result.portalUrl,
     });
   });
+}
+
+async function readBody(req: NextRequest): Promise<unknown> {
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
+}
+
+function readSafeReturnPath(body: unknown): string {
+  if (!body || typeof body !== 'object') return '/conta/plano-faturamento';
+  const value = (body as { returnPath?: unknown }).returnPath;
+  if (typeof value !== 'string') return '/conta/plano-faturamento';
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
+    return '/conta/plano-faturamento';
+  }
+  return trimmed;
 }
 
 function billingActionErrorResponse(error: unknown): NextResponse {

@@ -39,6 +39,11 @@ export interface WizardFamiliarSubmitResult {
 
 export type WizardNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 
+export type WizardBillingStrategy =
+  | { kind: 'SEPARATE' }
+  | { kind: 'JOIN_EXISTING_CURRENT_CYCLE'; financialGroupId: string; effectiveAt: string }
+  | { kind: 'SCHEDULE_NEXT_CYCLE_UNIFICATION'; financialGroupId: string; effectiveAt: string };
+
 export interface WizardAluno {
   id: string;
   nome: string;
@@ -88,6 +93,7 @@ export interface WizardState {
   pagarTaxaAgora?: boolean; // Flag para pagar taxa imediatamente
   gerarCobrancaTaxa?: boolean;
   formaPagamento?: 'DINHEIRO' | 'PIX' | 'CARTAO' | 'CARTAO_CREDITO' | 'BOLETO';
+  billingStrategy?: WizardBillingStrategy;
   criarCobranca: boolean;
   dataInicio?: string; // ISO ou yyyy-mm-dd
   dataFimContrato?: string; // ISO ou yyyy-mm-dd (data de fim do contrato - obrigatório)

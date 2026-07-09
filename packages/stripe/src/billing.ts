@@ -19,6 +19,7 @@ export interface CreateStripeSubscriptionCheckoutSessionInput {
   cancelUrl: string;
   clientReferenceId: string;
   metadata: Record<string, string>;
+  trialDays?: number | null;
   idempotencyKey?: string;
 }
 
@@ -26,6 +27,14 @@ export interface StripeSubscriptionCheckoutSessionResult {
   id: string;
   url: string | null;
   expiresAt: Date | null;
+}
+
+export interface CreateStripeTrialSubscriptionWithoutPaymentMethodInput {
+  customerId: string;
+  priceId: string;
+  metadata: Record<string, string>;
+  trialDays: number;
+  idempotencyKey?: string;
 }
 
 export interface CreateStripeBillingPortalSessionInput {
@@ -49,6 +58,20 @@ export interface StripeSubscriptionRecord {
   cancelAtPeriodEnd: boolean;
   trialEndsAt: Date | null;
   pendingUpdateId: string | null;
+}
+
+export interface RetrieveStripeDefaultPaymentMethodInput {
+  customerId: string;
+  subscriptionId?: string | null;
+}
+
+export interface StripeDefaultPaymentMethodRecord {
+  id: string;
+  type: 'card';
+  brand: string | null;
+  last4: string;
+  expMonth: number | null;
+  expYear: number | null;
 }
 
 export interface PreviewStripeSubscriptionPlanChangeInput {
@@ -110,6 +133,22 @@ export async function createStripeSubscriptionCheckoutSession(
       metadata: input.metadata,
       subscription_data: {
         metadata: input.metadata,
+        ...(input.trialDays
+          ? {
+              trial_period_days: input.trialDays,
+              trial_settings: {
+                end_behavior: {
+                  missing_payment_method: 'cancel',
+                },
+              },
+            }
+          : {}),
+      },
+      payment_method_collection: input.trialDays ? 'always' : 'if_required',
+      saved_payment_method_options: {
+        allow_redisplay_filters: ['always', 'limited'],
+        payment_method_remove: 'enabled',
+        payment_method_save: 'enabled',
       },
       allow_promotion_codes: true,
     },
@@ -121,6 +160,28 @@ export async function createStripeSubscriptionCheckoutSession(
     url: session.url,
     expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
   };
+}
+
+export async function createStripeTrialSubscriptionWithoutPaymentMethod(
+  client: Stripe,
+  input: CreateStripeTrialSubscriptionWithoutPaymentMethodInput,
+): Promise<StripeSubscriptionRecord> {
+  const subscription = await client.subscriptions.create(
+    {
+      customer: input.customerId,
+      items: [{ price: input.priceId, quantity: 1 }],
+      metadata: input.metadata,
+      trial_period_days: input.trialDays,
+      trial_settings: {
+        end_behavior: {
+          missing_payment_method: 'pause',
+        },
+      },
+    },
+    buildRequestOptions(input.idempotencyKey),
+  );
+
+  return toSubscriptionRecord(subscription);
 }
 
 export async function createStripeBillingPortalSession(
@@ -148,6 +209,37 @@ export async function retrieveStripeSubscription(
 ): Promise<StripeSubscriptionRecord> {
   const subscription = await client.subscriptions.retrieve(subscriptionId);
   return toSubscriptionRecord(subscription);
+}
+
+export async function retrieveStripeDefaultPaymentMethod(
+  client: Stripe,
+  input: RetrieveStripeDefaultPaymentMethodInput,
+): Promise<StripeDefaultPaymentMethodRecord | null> {
+  if (input.subscriptionId) {
+    try {
+      const subscription = await client.subscriptions.retrieve(input.subscriptionId, {
+        expand: ['default_payment_method'],
+      });
+      const subscriptionPaymentMethod = await resolvePaymentMethodRecord(
+        client,
+        readRecord(subscription).default_payment_method,
+      );
+      if (subscriptionPaymentMethod) return subscriptionPaymentMethod;
+    } catch {
+      // Customer invoice settings are the fallback source for the default payment method.
+    }
+  }
+
+  const customer = await client.customers.retrieve(input.customerId, {
+    expand: ['invoice_settings.default_payment_method'],
+  });
+  const customerRecord = readRecord(customer);
+  if (customerRecord.deleted === true) return null;
+
+  return resolvePaymentMethodRecord(
+    client,
+    readRecord(customerRecord.invoice_settings).default_payment_method,
+  );
 }
 
 export async function previewStripeSubscriptionPlanChange(
@@ -258,12 +350,50 @@ function toSubscriptionRecord(subscription: Stripe.Subscription): StripeSubscrip
   };
 }
 
+async function resolvePaymentMethodRecord(
+  client: Stripe,
+  value: unknown,
+): Promise<StripeDefaultPaymentMethodRecord | null> {
+  const expanded = toDefaultPaymentMethodRecord(value);
+  if (expanded) return expanded;
+
+  const paymentMethodId = readString(value) ?? readString(readRecord(value).id);
+  if (!paymentMethodId) return null;
+
+  const paymentMethod = await client.paymentMethods.retrieve(paymentMethodId);
+  return toDefaultPaymentMethodRecord(paymentMethod);
+}
+
+function toDefaultPaymentMethodRecord(value: unknown): StripeDefaultPaymentMethodRecord | null {
+  const paymentMethod = readRecord(value);
+  if (readString(paymentMethod.object) !== 'payment_method') return null;
+  if (readString(paymentMethod.type) !== 'card') return null;
+
+  const card = readRecord(paymentMethod.card);
+  const id = readString(paymentMethod.id);
+  const last4 = readString(card.last4);
+  if (!id || !last4) return null;
+
+  return {
+    id,
+    type: 'card',
+    brand: readString(card.brand),
+    last4,
+    expMonth: readNumber(card.exp_month),
+    expYear: readNumber(card.exp_year),
+  };
+}
+
 function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function readStripeId(value: string | { id?: string } | null): string | null {

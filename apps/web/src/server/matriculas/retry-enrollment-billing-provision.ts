@@ -1,10 +1,15 @@
 import {
   BillingMode,
+  MatriculaBillingOutboxStatus,
   MatriculaBillingProvisionStatus,
 } from '@prisma/client';
 import { prisma } from '@/src/prisma';
-import { provisionIndividualEnrollmentBilling } from '@/src/server/matriculas/enrollment-billing.orchestrator';
-import { calcularPrecoMatricula } from '@/src/server/matriculas/matricula.service';
+import {
+  enqueueEnrollmentBillingOutbox,
+  enqueueEnrollmentSubscriptionMergeOutbox,
+  processEnrollmentBillingOutboxEvent,
+} from '@/src/server/matriculas/enrollment-billing-outbox.service';
+import { billingProvisionUpdate } from '@/src/server/matriculas/billing-provision-status';
 
 const DEFAULT_MIN_AGE_MINUTES = 5;
 const DEFAULT_LIMIT = 25;
@@ -23,6 +28,20 @@ export type RetryEnrollmentBillingProvisionResult = {
   skipped: number;
   errors: Array<{ matriculaId: string; error: string }>;
 };
+
+function readSubscriptionTargetId(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const direct = (metadata as Record<string, unknown>).subscriptionTargetId;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+  const strategy = (metadata as Record<string, unknown>).billingStrategy;
+  if (!strategy || typeof strategy !== 'object' || Array.isArray(strategy)) return null;
+  const financialGroupId = (strategy as Record<string, unknown>).financialGroupId;
+  if (typeof financialGroupId !== 'string') return null;
+  return financialGroupId.startsWith('subscription:')
+    ? financialGroupId.slice('subscription:'.length).trim() || null
+    : null;
+}
 
 function needsBillingRetry(status: MatriculaBillingProvisionStatus) {
   return (
@@ -50,7 +69,6 @@ export async function retryEnrollmentBillingProvisionJob(
 
   const candidates = await prisma.matricula.findMany({
     where: {
-      billingMode: BillingMode.INDIVIDUAL,
       billingProvisionStatus: {
         in: [
           MatriculaBillingProvisionStatus.PENDENTE,
@@ -61,16 +79,6 @@ export async function retryEnrollmentBillingProvisionJob(
       },
       createdAt: { lt: threshold },
       ...(input.contaId ? { contaId: input.contaId } : {}),
-    },
-    include: {
-      cobrancas: {
-        where: { tipo: 'TAXA_MATRICULA' },
-        orderBy: { createdAt: 'asc' },
-        take: 1,
-      },
-      descontos: { include: { desconto: true } },
-      plano: { select: { valor: true } },
-      combo: { select: { valor: true } },
     },
     orderBy: { createdAt: 'asc' },
     take: limit,
@@ -84,28 +92,31 @@ export async function retryEnrollmentBillingProvisionJob(
       continue;
     }
 
-    const planoValor = matricula.combo
-      ? Number(matricula.combo.valor)
-      : matricula.plano
-        ? Number(matricula.plano.valor)
-        : Number(matricula.taxaMatricula);
-
-    const preco = calcularPrecoMatricula({
-      planoValor,
-      taxaMatricula: Number(matricula.taxaMatricula),
-      descontos: matricula.descontos.map((item) => ({
-        tipo: item.desconto.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
-        valor: Number(item.desconto.valor),
-        cumulativo: false,
-      })),
+    const queued = await prisma.matriculaBillingOutbox.findFirst({
+      where: {
+        contaId: matricula.contaId,
+        matriculaId: matricula.id,
+        status: {
+          in: [
+            MatriculaBillingOutboxStatus.PENDING,
+            MatriculaBillingOutboxStatus.PROCESSING,
+            MatriculaBillingOutboxStatus.FAILED,
+            MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION,
+          ],
+        },
+      },
+      select: { id: true },
     });
-
-    const gerarCobrancaTaxa =
-      !matricula.taxaIsenta && Number(matricula.taxaMatricula) > 0 && Boolean(matricula.cobrancas[0]);
-    const criarCobranca = preco.planoLiquido > 0;
-
-    if (!gerarCobrancaTaxa && !criarCobranca) {
-      result.skipped += 1;
+    if (queued) {
+      if (input.dryRun) {
+        result.retried += 1;
+        continue;
+      }
+      const processed = await processEnrollmentBillingOutboxEvent(queued.id);
+      result.retried += 1;
+      if (processed.status === 'PROCESSED') {
+        result.recovered += 1;
+      }
       continue;
     }
 
@@ -115,36 +126,51 @@ export async function retryEnrollmentBillingProvisionJob(
     }
 
     try {
-      const outcome = await provisionIndividualEnrollmentBilling({
-        contaId: matricula.contaId,
-        actorUserId: 'retry-enrollment-billing-job',
-        matriculaId: matricula.id,
-        payload: {
-          criarCobranca,
-          gerarCobrancaTaxa,
-          taxaIsenta: matricula.taxaIsenta,
-        },
-        preco,
-        cobrancas: {
-          taxa: matricula.cobrancas[0]
-            ? {
-                id: matricula.cobrancas[0].id,
-                formaPagamento: matricula.cobrancas[0].formaPagamento,
-                asaasPaymentId: matricula.cobrancas[0].asaasPaymentId,
-              }
-            : null,
-          mensalidade: null,
-        },
-        matriculaSnapshot: {
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
-        },
-      });
+      let enqueued: { id: string } | null = null;
+      if (matricula.billingMode === BillingMode.SHARED_PLAN) {
+        const allocation = await prisma.familyFinancialAllocation.findFirst({
+          where: {
+            contaId: matricula.contaId,
+            matriculaId: matricula.id,
+            chargeKind: 'MENSALIDADE',
+          },
+          orderBy: { createdAt: 'asc' },
+          select: { metadata: true },
+        });
+        const subscriptionTargetId = readSubscriptionTargetId(
+          allocation?.metadata,
+        );
+        if (!subscriptionTargetId) {
+          await prisma.matricula.update({
+            where: { id: matricula.id },
+            data: billingProvisionUpdate(
+              MatriculaBillingProvisionStatus.FALHO,
+              'COBRANCA_UNIFICADA_SEM_ASSINATURA_DESTINO',
+            ),
+          });
+          result.errors.push({
+            matriculaId: matricula.id,
+            error: 'COBRANCA_UNIFICADA_SEM_ASSINATURA_DESTINO',
+          });
+          continue;
+        }
+        enqueued = await enqueueEnrollmentSubscriptionMergeOutbox({
+          contaId: matricula.contaId,
+          matriculaId: matricula.id,
+          subscriptionTargetId,
+          actorUserId: 'retry-enrollment-billing-job',
+        });
+      } else {
+        enqueued = await enqueueEnrollmentBillingOutbox({
+          contaId: matricula.contaId,
+          matriculaId: matricula.id,
+          actorUserId: 'retry-enrollment-billing-job',
+        });
+      }
 
       result.retried += 1;
-      const provisioned =
-        outcome.subscriptionSync?.success === true ||
-        (outcome.taxaSync?.success === true && !criarCobranca);
-      if (provisioned) {
+      const processed = await processEnrollmentBillingOutboxEvent(enqueued.id);
+      if (processed.status === 'PROCESSED') {
         result.recovered += 1;
       }
     } catch (error) {

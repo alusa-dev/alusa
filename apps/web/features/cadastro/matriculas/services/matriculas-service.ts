@@ -1,6 +1,8 @@
 import {
   createMatriculaInputDTOSchema,
   createMatriculaResultDTOSchema,
+  initialEnrollmentBillingPreviewInputDTOSchema,
+  initialEnrollmentBillingPreviewResultDTOSchema,
   listMatriculasResultDTOSchema,
   matriculaPausaResumoDTOSchema,
   matriculaCobrancaStatusDTOSchema,
@@ -13,6 +15,8 @@ import {
   updateMatriculaResultDTOSchema,
   type CreateMatriculaInputDTO,
   type CreateMatriculaResultDTO,
+  type InitialEnrollmentBillingPreviewInputDTO,
+  type InitialEnrollmentBillingPreviewResultDTO,
   type MatriculaCobrancaStatusDTO,
   type MatriculaFormaPagamentoDTO,
   type MatriculaPausaResumoDTO,
@@ -37,6 +41,8 @@ export type MatriculaTipoCobranca = MatriculaTipoCobrancaDTO;
 export type MatriculaListItem = MatriculaResumoDTO;
 export type CreateMatriculaInput = CreateMatriculaInputDTO;
 export type MatriculaCreatedPayload = CreateMatriculaResultDTO;
+export type InitialEnrollmentBillingPreviewInput = InitialEnrollmentBillingPreviewInputDTO;
+export type InitialEnrollmentBillingPreviewResult = InitialEnrollmentBillingPreviewResultDTO;
 export type MatriculaStatusSyncData = MatriculaStatusSyncDataDTO;
 export type MatriculaStatusSyncResponse = MatriculaStatusSyncResultDTO;
 export type MatriculaCobrancaPayload = NonNullable<MatriculaCreatedPayload['cobrancas']['taxa']>;
@@ -183,6 +189,23 @@ export async function createMatriculaRequest(
   });
 
   return parseResponse(res, createMatriculaResultDTOSchema, 'Não foi possível criar a matrícula.');
+}
+
+export async function previewInitialEnrollmentBillingRequest(
+  input: InitialEnrollmentBillingPreviewInput,
+): Promise<InitialEnrollmentBillingPreviewResult> {
+  const body = initialEnrollmentBillingPreviewInputDTOSchema.parse(input);
+  const res = await fetch('/api/matriculas/billing-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  return parseResponse(
+    res,
+    initialEnrollmentBillingPreviewResultDTOSchema,
+    'Não foi possível gerar o preview de cobrança.',
+  );
 }
 
 export async function atualizarStatusMatriculaRequest(input: {

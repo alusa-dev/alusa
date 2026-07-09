@@ -3,6 +3,7 @@ import {
   PlatformBillingError,
   createPlatformBillingCheckoutSession,
   createPlatformBillingPortalSession,
+  createPlatformBillingTrialWithoutPaymentMethod,
 } from '../src';
 import type {
   PlatformBillingAccountRecord,
@@ -49,6 +50,7 @@ describe('@alusa/platform-billing use cases', () => {
       expect.objectContaining({
         customerId: 'cus_test_1',
         priceId: 'price_starter_test',
+        trialDays: 14,
         idempotencyKey: 'idem_1:checkout',
       }),
     );
@@ -56,6 +58,50 @@ describe('@alusa/platform-billing use cases', () => {
     expect(store.accounts[0]?.status).toBe('CHECKOUT_PENDING');
     expect(store.accounts[0]?.planCode).toBeNull();
     expect(store.accounts[0]?.pendingPlanCode).toBe('STARTER');
+  });
+
+  it('nao reaplica trial quando conta ja teve assinatura Stripe', async () => {
+    const store = createMemoryStore([
+      {
+        id: 'pba_1',
+        contaId: 'conta_1',
+        environment: 'TEST',
+        status: 'CANCELED',
+        planCode: 'STARTER',
+        stripeCustomerId: 'cus_test_1',
+        stripeSubscriptionId: 'sub_old_1',
+        stripePriceId: 'price_starter_test',
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+        trialWillEndNotifiedAt: null,
+        accessStatus: 'CANCELED',
+        gracePeriodEndsAt: null,
+        restrictedAt: null,
+        canceledAt: null,
+        lastPaymentFailedAt: null,
+        lastReconciledAt: null,
+        pendingPlanCode: null,
+        pendingChangeType: null,
+        pendingChangeEffectiveAt: null,
+      },
+    ]);
+    const stripeGateway = createStripeGatewayMock();
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: 'cus_test_1',
+        trialDays: null,
+        metadata: expect.objectContaining({ flow: 'reactivation' }),
+      }),
+    );
+    expect(store.accounts[0]?.pendingChangeType).toBe('REACTIVATE');
+    expect(store.accounts[0]?.status).toBe('CANCELED');
+    expect(store.accounts[0]?.accessStatus).toBe('CANCELED');
+    expect(store.auditLogs[0]?.action).toBe('PLATFORM_BILLING_REACTIVATION_CHECKOUT_SESSION_CREATED');
   });
 
   it('reusa sessão local quando idempotency key já existe', async () => {
@@ -69,6 +115,87 @@ describe('@alusa/platform-billing use cases', () => {
     expect(reused.checkoutSessionId).toBe('cs_test_1');
     expect(stripeGateway.createCustomer).toHaveBeenCalledTimes(1);
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('cria trial sem forma de pagamento e persiste assinatura local', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+
+    const result = await createPlatformBillingTrialWithoutPaymentMethod(
+      {
+        contaId: 'conta_1',
+        contaName: 'Escola Alusa',
+        billingEmail: 'financeiro@escola.test',
+        planCode: 'PREMIUM',
+        actorUserId: 'user_1',
+        idempotencyKey: 'idem_trial_1',
+        envSource,
+      },
+      { store, stripeGateway },
+    );
+
+    expect(result.reused).toBe(false);
+    expect(result.stripeSubscriptionId).toBe('sub_test_trial_1');
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customerId: 'cus_test_1',
+        priceId: 'price_premium_test',
+        trialDays: 14,
+        idempotencyKey: 'idem_trial_1:trial-subscription',
+      }),
+    );
+    expect(store.accounts[0]).toMatchObject({
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      planCode: 'PREMIUM',
+      stripeSubscriptionId: 'sub_test_trial_1',
+      stripePriceId: 'price_premium_test',
+    });
+    expect(store.auditLogs[0]?.action).toBe('PLATFORM_BILLING_TRIAL_WITHOUT_PAYMENT_METHOD_CREATED');
+  });
+
+  it('nao duplica trial sem cartao quando assinatura ja existe', async () => {
+    const store = createMemoryStore([
+      {
+        id: 'pba_1',
+        contaId: 'conta_1',
+        environment: 'TEST',
+        status: 'TRIALING',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_test_1',
+        stripeSubscriptionId: 'sub_existing_1',
+        stripePriceId: 'price_premium_test',
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+        trialWillEndNotifiedAt: null,
+        accessStatus: 'ACTIVE',
+        gracePeriodEndsAt: null,
+        restrictedAt: null,
+        canceledAt: null,
+        lastPaymentFailedAt: null,
+        lastReconciledAt: null,
+        pendingPlanCode: null,
+        pendingChangeType: null,
+        pendingChangeEffectiveAt: null,
+      },
+    ]);
+    const stripeGateway = createStripeGatewayMock();
+
+    const result = await createPlatformBillingTrialWithoutPaymentMethod(
+      {
+        contaId: 'conta_1',
+        contaName: 'Escola Alusa',
+        planCode: 'PREMIUM',
+        idempotencyKey: 'idem_trial_1',
+        envSource,
+      },
+      { store, stripeGateway },
+    );
+
+    expect(result.reused).toBe(true);
+    expect(result.stripeSubscriptionId).toBe('sub_existing_1');
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).not.toHaveBeenCalled();
   });
 
   it('falha com Price ausente sem chamar Stripe', async () => {
@@ -104,6 +231,16 @@ describe('@alusa/platform-billing use cases', () => {
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         trialEndsAt: null,
+        trialWillEndNotifiedAt: null,
+        accessStatus: 'ACTIVE',
+        gracePeriodEndsAt: null,
+        restrictedAt: null,
+        canceledAt: null,
+        lastPaymentFailedAt: null,
+        lastReconciledAt: null,
+        pendingPlanCode: null,
+        pendingChangeType: null,
+        pendingChangeEffectiveAt: null,
       },
     ]);
     const stripeGateway = createStripeGatewayMock();
@@ -139,6 +276,16 @@ describe('@alusa/platform-billing use cases', () => {
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         trialEndsAt: null,
+        trialWillEndNotifiedAt: null,
+        accessStatus: 'PENDING',
+        gracePeriodEndsAt: null,
+        restrictedAt: null,
+        canceledAt: null,
+        lastPaymentFailedAt: null,
+        lastReconciledAt: null,
+        pendingPlanCode: null,
+        pendingChangeType: null,
+        pendingChangeEffectiveAt: null,
       },
     ]);
 
@@ -174,6 +321,16 @@ function createStripeGatewayMock(): PlatformBillingStripeGateway {
       id: 'cs_test_1',
       url: 'https://checkout.stripe.test/session',
       expiresAt: new Date('2026-06-28T12:00:00.000Z'),
+    })),
+    createTrialSubscriptionWithoutPaymentMethod: vi.fn(async () => ({
+      id: 'sub_test_trial_1',
+      customerId: 'cus_test_1',
+      status: 'trialing',
+      priceId: 'price_premium_test',
+      currentPeriodEnd: new Date('2026-07-15T00:00:00.000Z'),
+      cancelAtPeriodEnd: false,
+      trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+      pendingUpdateId: null,
     })),
     createPortalSession: vi.fn(async () => ({
       id: 'bps_test_1',
@@ -239,6 +396,14 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         trialEndsAt: null,
+        accessStatus: 'PENDING',
+        gracePeriodEndsAt: null,
+        restrictedAt: null,
+        canceledAt: null,
+        lastPaymentFailedAt: null,
+        pendingPlanCode: null,
+        pendingChangeType: null,
+        pendingChangeEffectiveAt: null,
       };
       accounts.push(account);
       return account;
@@ -252,9 +417,16 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
     async markCheckoutPending(input) {
       const account = accounts.find((item) => item.id === input.accountId);
       if (!account) throw new Error('account not found');
-      account.status = 'CHECKOUT_PENDING';
-      account.accessStatus = 'PENDING';
+      if (input.pendingChangeType === 'REACTIVATE') {
+        account.status = 'CANCELED';
+        account.accessStatus = 'CANCELED';
+      } else {
+        account.status = 'CHECKOUT_PENDING';
+        account.accessStatus = 'PENDING';
+      }
       account.pendingPlanCode = input.planCode;
+      account.pendingChangeType = input.pendingChangeType ?? null;
+      account.pendingChangeEffectiveAt = null;
       return account;
     },
     async updateAccountFromStripeSubscription(input) {
@@ -267,6 +439,15 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       account.currentPeriodEnd = input.currentPeriodEnd;
       account.cancelAtPeriodEnd = input.cancelAtPeriodEnd;
       account.trialEndsAt = input.trialEndsAt;
+      account.trialWillEndNotifiedAt = input.trialWillEndNotifiedAt === undefined ? account.trialWillEndNotifiedAt : input.trialWillEndNotifiedAt;
+      account.accessStatus = input.accessStatus ?? account.accessStatus;
+      account.gracePeriodEndsAt = input.gracePeriodEndsAt === undefined ? account.gracePeriodEndsAt : input.gracePeriodEndsAt;
+      account.restrictedAt = input.restrictedAt === undefined ? account.restrictedAt : input.restrictedAt;
+      account.canceledAt = input.canceledAt === undefined ? account.canceledAt : input.canceledAt;
+      account.lastPaymentFailedAt = input.lastPaymentFailedAt === undefined ? account.lastPaymentFailedAt : input.lastPaymentFailedAt;
+      account.pendingPlanCode = input.pendingPlanCode === undefined ? account.pendingPlanCode : input.pendingPlanCode;
+      account.pendingChangeType = input.pendingChangeType === undefined ? account.pendingChangeType : input.pendingChangeType;
+      account.pendingChangeEffectiveAt = input.pendingChangeEffectiveAt === undefined ? account.pendingChangeEffectiveAt : input.pendingChangeEffectiveAt;
       return account;
     },
     async findCheckoutSessionByIdempotencyKey(input) {

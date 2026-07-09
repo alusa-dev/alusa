@@ -25,6 +25,7 @@ export const SEAT_OCCUPYING_STATUSES: readonly StatusMatricula[] = [
  */
 export const NON_SEAT_OCCUPYING_STATUSES: readonly StatusMatricula[] = [
   StatusMatricula.PAUSADA,
+  StatusMatricula.ENCERRADA,
   StatusMatricula.RECUSADA,
   StatusMatricula.CANCELADA,
 ] as const;
@@ -73,11 +74,17 @@ export function getSeatOccupyingStatuses(): StatusMatricula[] {
  * - PENDENTE_TAXA, AGUARDANDO_CONFIRMACAO e ATIVA sempre ocupam vaga.
  * - PAUSADA só ocupa vaga quando manterVaga=true.
  */
-export function buildSeatOccupancyWhereClause() {
+export function buildSeatOccupancyWhereClause(referenceDate: Date = new Date()) {
   return {
-    OR: [
-      { status: { in: getSeatOccupyingStatuses() } },
-      { status: StatusMatricula.PAUSADA, manterVaga: true },
+    AND: [
+      {
+        OR: [
+          { status: { in: getSeatOccupyingStatuses() } },
+          { status: StatusMatricula.PAUSADA, manterVaga: true },
+        ],
+      },
+      { dataInicio: { lte: referenceDate } },
+      { dataFimContrato: { gte: referenceDate } },
     ],
   };
 }

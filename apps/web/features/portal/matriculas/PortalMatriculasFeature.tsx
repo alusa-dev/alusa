@@ -163,7 +163,7 @@ function MatriculaCard({ matricula }: { matricula: PortalMatriculaDTO }) {
     ATIVA: { label: 'Ativa', variant: 'default' as const, color: 'bg-green-100 text-green-800' },
     CANCELADA: { label: 'Cancelada', variant: 'destructive' as const, color: 'bg-red-100 text-red-800' },
     SUSPENSA: { label: 'Suspensa', variant: 'secondary' as const, color: 'bg-gray-100 text-gray-800' },
-    CONCLUIDA: { label: 'Concluída', variant: 'outline' as const, color: 'bg-blue-100 text-blue-800' },
+    ENCERRADA: { label: 'Encerrada', variant: 'outline' as const, color: 'bg-blue-100 text-blue-800' },
   };
 
   const status = statusConfig[matricula.status as keyof typeof statusConfig] || statusConfig.ATIVA;

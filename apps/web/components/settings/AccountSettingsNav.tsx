@@ -1,7 +1,6 @@
 'use client';
-import React, { useMemo } from 'react';
-void React;
 
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -9,13 +8,6 @@ import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabiliti
 
 type Item = { href: string; label: string; requiresFinance?: boolean };
 
-const BASE_ITEMS: Item[] = [
-  { href: '/conta/perfil', label: 'Perfil' },
-  { href: '/conta/seguranca', label: 'Segurança' },
-  { href: '/conta/assinaturas', label: 'Assinaturas' },
-];
-
-// Itens do módulo KYC/financeiro — visíveis apenas para ADMIN com fluxo financeiro iniciado
 const KYC_ITEMS: Item[] = [
   { href: '/conta/verificacao', label: 'Verificação da conta', requiresFinance: true },
 ];
@@ -32,83 +24,73 @@ export default function AccountSettingsNav() {
     financeIntegrationMode?: string;
     contaId?: string;
   } | undefined;
+
   const role = user?.role;
+  const normalizedRole = role?.toUpperCase() ?? '';
   const financeStatus = user?.financeStatus;
   const financialCapabilities = resolveFinancialCapabilities(user?.financeIntegrationMode);
   const showPaymentSection = role ? PAYMENT_ALLOWED_ROLES.has(role) : false;
-
-  const normalizedRole = role?.toUpperCase() ?? '';
   const isAdmin = normalizedRole === 'ADMIN';
   const canDeleteAccount = isAdmin;
   const showPlatformBilling = PLATFORM_BILLING_ALLOWED_ROLES.has(normalizedRole);
 
-  // Verifica se o fluxo financeiro foi iniciado
   const hasFinanceFlow = useMemo(() => {
     if (!financeStatus) return false;
-    // Se não for FINANCE_NOT_STARTED, significa que o fluxo financeiro foi iniciado
     return financeStatus !== 'FINANCE_NOT_STARTED';
   }, [financeStatus]);
 
-  const itemsWithDelete: Item[] = canDeleteAccount
-    ? (() => {
-        const insertAfterHref = '/conta/seguranca';
-        const insertIndex = BASE_ITEMS.findIndex((it) => it.href === insertAfterHref);
-        const next = [...BASE_ITEMS];
-        const deleteItem: Item = { href: '/conta/excluir-conta', label: 'Desativar conta' };
-        if (insertIndex === -1) return [...next, deleteItem];
-        next.splice(insertIndex + 1, 0, deleteItem);
-        return next;
-      })()
-    : BASE_ITEMS;
+  const items = useMemo(() => {
+    const result: Item[] = [
+      { href: '/conta/perfil', label: 'Perfil' },
+      { href: '/conta/seguranca', label: 'Segurança' },
+    ];
 
-  // Adiciona itens KYC para ADMIN com fluxo financeiro iniciado
-  const itemsWithKyc: Item[] = useMemo(() => {
-    if (!isAdmin || !hasFinanceFlow || !financialCapabilities.canUseKyc) return itemsWithDelete;
-    // Insere os itens KYC após "Segurança" e antes de "Excluir conta"
-    const insertAfterHref = '/conta/seguranca';
-    const insertIndex = itemsWithDelete.findIndex((it) => it.href === insertAfterHref);
-    const result = [...itemsWithDelete];
-    if (insertIndex === -1) {
-      // Adiciona no final, mas antes de "Excluir conta" se existir
-      const deleteIndex = result.findIndex((it) => it.href === '/conta/excluir-conta');
-      if (deleteIndex !== -1) {
-        result.splice(deleteIndex, 0, ...KYC_ITEMS);
-      } else {
-        result.push(...KYC_ITEMS);
-      }
-    } else {
-      result.splice(insertIndex + 1, 0, ...KYC_ITEMS);
+    if (showPaymentSection) {
+      result.push({ href: '/conta/assinaturas', label: 'Assinaturas' });
     }
+
+    if (isAdmin && hasFinanceFlow && financialCapabilities.canUseKyc) {
+      result.push(...KYC_ITEMS);
+    }
+
+    if (showPlatformBilling) {
+      result.push({ href: '/conta/plano-faturamento', label: 'Plano e faturamento' });
+    }
+
+    if (canDeleteAccount) {
+      result.push({ href: '/conta/excluir-conta', label: 'Desativar conta' });
+    }
+
     return result;
-  }, [financialCapabilities.canUseKyc, hasFinanceFlow, isAdmin, itemsWithDelete]);
-
-  const itemsWithPlatformBilling = showPlatformBilling
-    ? [...itemsWithKyc, { href: '/conta/plano-faturamento', label: 'Plano e faturamento' }]
-    : itemsWithKyc;
-
-  const items = showPaymentSection
-    ? itemsWithPlatformBilling
-    : itemsWithPlatformBilling.filter((item) => item.href !== '/conta/assinaturas');
+  }, [
+    canDeleteAccount,
+    financialCapabilities.canUseKyc,
+    hasFinanceFlow,
+    isAdmin,
+    showPaymentSection,
+    showPlatformBilling,
+  ]);
 
   return (
-    <nav aria-label="Navegação Minha Conta" data-testid="account-card-nav">
-      <ul className="space-y-2">
-        {items.map((it) => {
-          const active = pathname?.startsWith(it.href);
+    <nav aria-label="Navegação Minha Conta" data-testid="account-card-nav" className="w-full md:w-[191px]">
+      <ul className="space-y-2.5">
+        {items.map((item) => {
+          const active = pathname?.startsWith(item.href);
+
           return (
-            <li key={it.href}>
+            <li key={item.href}>
               <Link
-                href={it.href}
+                href={item.href}
                 aria-current={active ? 'page' : undefined}
                 className={[
-                  'flex w-full items-center rounded-lg px-3 py-2 text-sm transition-colors duration-150',
+                  'flex h-[35px] w-full items-center rounded-[7px] px-[21px] text-sm transition-colors duration-150',
                   active
-                    ? 'bg-purple-50 font-medium text-purple-700 alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-primary)]'
-                    : 'bg-white text-gray-700 hover:bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]',
+                    ? 'bg-[#f9f0ff] font-medium text-[#361D56] alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-primary)]'
+                    : 'bg-transparent text-[#1d1830] hover:bg-[#fbf7ff] alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.06)]',
                   'focus:outline-none focus:ring-0',
                 ].join(' ')}
               >
-                {it.label}
+                {item.label}
               </Link>
             </li>
           );

@@ -6,6 +6,8 @@ import type { WizardState } from '@/components/matriculas/wizard/types';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import { createContrato } from '@/features/contratos/services/contratos-service';
 import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
+import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
+import type { EnrollmentBillingStrategyDTO } from '@/features/cadastro/matriculas/dtos';
 
 export interface MatriculaResponse {
   matricula: {
@@ -72,6 +74,18 @@ export interface MatriculaResponse {
       message: string;
     }>;
   } | null;
+  operationalWarnings?: Array<{
+    type:
+      | 'FINANCIAL_PROVISION_PENDING'
+      | 'FINANCIAL_PROVISION_FAILED'
+      | 'RECONCILIATION_REQUIRED'
+      | 'MANUAL_INTERVENTION_REQUIRED';
+    code: string;
+    message: string;
+    severity?: 'INFO' | 'WARNING' | 'BLOCKER';
+    resourceId?: string | null;
+    actionLabel?: string | null;
+  }>;
 }
 
 interface UseMatriculaSubmitOptions {
@@ -95,6 +109,25 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       .replace(/provedor/gi, 'serviço financeiro')
       .trim();
 
+  const generateRequestId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return `matricula-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  };
+
+  const resolveBillingStrategy = (wizardState: WizardState): EnrollmentBillingStrategyDTO => {
+    const maybeStrategy = (wizardState as { billingStrategy?: EnrollmentBillingStrategyDTO })
+      .billingStrategy;
+    if (maybeStrategy?.kind) return maybeStrategy;
+    return { kind: 'SEPARATE' };
+  };
+
+  const numberFromPayload = (value: unknown, fallback = 0) => {
+    const number = Number(value ?? fallback);
+    return Number.isFinite(number) ? number : fallback;
+  };
+
   const submit = async (wizardState: WizardState) => {
     setLoading(true);
     setError(null);
@@ -111,6 +144,75 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       }
 
       const payload = validationResult.payload;
+      if (!payload) {
+        throw new Error('Não foi possível preparar os dados da matrícula.');
+      }
+      const billingStrategy = resolveBillingStrategy(wizardState);
+      const uiRequestId =
+        (wizardState as { uiRequestId?: string }).uiRequestId?.trim() || generateRequestId();
+
+      const formaPagamento = String(payload.formaPagamento ?? 'BOLETO');
+      const previewFormaPagamento =
+        formaPagamento === 'CARTAO'
+          ? 'CARTAO_CREDITO'
+          : formaPagamento === 'PIX' ||
+              formaPagamento === 'BOLETO' ||
+              formaPagamento === 'CARTAO_CREDITO'
+            ? formaPagamento
+            : 'BOLETO';
+      const billingPreview = await previewInitialEnrollmentBillingRequest({
+        contaId: typeof payload.contaId === 'string' ? payload.contaId : undefined,
+        billingStrategy,
+        strategy:
+          billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+            ? 'INCLUDE_EXISTING'
+            : billingStrategy.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+              ? 'UNIFY_NEXT_CYCLE'
+              : 'CREATE_SEPARATE',
+        existingFamilyGroupId:
+          'financialGroupId' in billingStrategy ? billingStrategy.financialGroupId : null,
+        responsavelFinanceiroId:
+          typeof payload.responsavelFinanceiroId === 'string'
+            ? payload.responsavelFinanceiroId
+            : null,
+        dataInicio: String(payload.dataInicio ?? ''),
+        dataFimContrato: String(payload.dataFimContrato ?? ''),
+        formaPagamento: previewFormaPagamento as 'BOLETO' | 'PIX' | 'CARTAO_CREDITO',
+        vencimentoDia: numberFromPayload(payload.vencimentoDia, 5),
+        descontoIds: Array.isArray(payload.descontoIds)
+          ? payload.descontoIds.filter((id): id is string => typeof id === 'string')
+          : [],
+        items: [
+          {
+            alunoId: String(payload.alunoId ?? ''),
+            turmaId: typeof payload.turmaId === 'string' ? payload.turmaId : null,
+            comboId: typeof payload.comboId === 'string' ? payload.comboId : null,
+            planoId: typeof payload.planoId === 'string' ? payload.planoId : null,
+            taxaMatricula: numberFromPayload(payload.taxaMatricula),
+            valorMensalidadeOverride:
+              payload.valorMensalidadeOverride === null ||
+              payload.valorMensalidadeOverride === undefined
+                ? null
+                : numberFromPayload(payload.valorMensalidadeOverride),
+          },
+        ],
+      });
+
+      if (!billingPreview.compatibility.compatible) {
+        const details = billingPreview.compatibility.blockers
+          .map((blocker) => blocker.message)
+          .join(', ');
+        throw new Error(details || 'O preview financeiro precisa ser revisado antes da confirmação.');
+      }
+
+      const commitPayload = {
+        ...payload,
+        uiRequestId,
+        billingStrategy,
+        previewHash: billingPreview.previewHash,
+        sourceVersion: billingPreview.sourceVersion,
+        previewExpiresAt: billingPreview.expiresAt,
+      };
 
       // Enviar para API
       const response = await fetch('/api/matriculas', {
@@ -118,7 +220,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(commitPayload),
       });
 
       if (!response.ok) {
@@ -139,6 +241,21 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         showNotificationSyncWarnings(result.notificationSync.warnings, {
           title: 'Matrícula criada — aviso sobre notificações',
         });
+      }
+
+      if (result.operationalWarnings?.length) {
+        const warning = result.operationalWarnings[0];
+        toast.custom(
+          (t) => (
+            <CustomToast
+              variant="warning"
+              title="Matrícula criada"
+              description={sanitizeMessage(warning.message)}
+              onClose={() => toast.dismiss(t)}
+            />
+          ),
+          { duration: 7000 },
+        );
       }
 
       // Gera contrato automaticamente usando o modelo escolhido

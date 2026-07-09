@@ -101,6 +101,7 @@ export const rematriculaFamiliarPreviewInputSchema = rematriculaFamiliarBaseSche
 export const rematriculaFamiliarCommitInputSchema = rematriculaFamiliarBaseSchema.extend({
   previewId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   previewHash: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
+  sourceVersion: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
 });
 
 export function formatRematriculaFamiliarValidationMessage(issues: z.ZodIssue[]): string {

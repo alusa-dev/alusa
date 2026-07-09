@@ -249,6 +249,7 @@ async function criarMatriculaViaAPI(
   ids: SeedIds,
   overrides: Record<string, unknown> = {},
 ) {
+  const uiRequestId = `e2e-matricula-${randomUUID()}`;
   const body = {
     contaId: ids.contaId,
     alunoId: ids.alunoMaiorId,
@@ -262,11 +263,77 @@ async function criarMatriculaViaAPI(
     pagarTaxaAgora: false,
     gerarCobrancaTaxa: false,
     criarCobranca: false,
+    uiRequestId,
+    billingStrategy: { kind: 'SEPARATE' },
     ...overrides,
   };
 
+  const formaPagamento = String(body.formaPagamento ?? 'BOLETO');
+  const previewFormaPagamento =
+    formaPagamento === 'CARTAO'
+      ? 'CARTAO_CREDITO'
+      : formaPagamento === 'PIX' ||
+          formaPagamento === 'BOLETO' ||
+          formaPagamento === 'CARTAO_CREDITO'
+        ? formaPagamento
+        : 'BOLETO';
+  const billingStrategy =
+    typeof body.billingStrategy === 'object' && body.billingStrategy
+      ? body.billingStrategy
+      : { kind: 'SEPARATE' };
+
+  const previewRes = await page.request.post('/api/matriculas/billing-preview', {
+    data: {
+      contaId: body.contaId,
+      strategy:
+        (billingStrategy as { kind?: string }).kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+          ? 'INCLUDE_EXISTING'
+          : (billingStrategy as { kind?: string }).kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+            ? 'UNIFY_NEXT_CYCLE'
+            : 'CREATE_SEPARATE',
+      billingStrategy,
+      responsavelFinanceiroId:
+        typeof body.responsavelFinanceiroId === 'string' ? body.responsavelFinanceiroId : null,
+      existingFamilyGroupId:
+        typeof (billingStrategy as { financialGroupId?: unknown }).financialGroupId === 'string'
+          ? (billingStrategy as { financialGroupId: string }).financialGroupId
+          : null,
+      dataInicio: body.dataInicio,
+      dataFimContrato: body.dataFimContrato,
+      formaPagamento: previewFormaPagamento,
+      vencimentoDia: Number(body.vencimentoDia ?? 5),
+      descontoIds: Array.isArray(body.descontoIds) ? body.descontoIds : [],
+      items: [
+        {
+          alunoId: body.alunoId,
+          turmaId: typeof body.turmaId === 'string' ? body.turmaId : null,
+          comboId: typeof body.comboId === 'string' ? body.comboId : null,
+          planoId: typeof body.planoId === 'string' ? body.planoId : null,
+          taxaMatricula: Number(body.taxaMatricula ?? 0),
+          valorMensalidadeOverride:
+            body.valorMensalidadeOverride === null ||
+            body.valorMensalidadeOverride === undefined
+              ? null
+              : Number(body.valorMensalidadeOverride),
+        },
+      ],
+    },
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  const previewBody = await previewRes.json().catch(() => null);
+  if (!previewRes.ok()) {
+    return { status: previewRes.status(), body: previewBody };
+  }
+
   const res = await page.request.post('/api/matriculas', {
-    data: body,
+    data: {
+      ...body,
+      billingStrategy: previewBody.billingStrategy ?? billingStrategy,
+      previewHash: previewBody.previewHash,
+      sourceVersion: previewBody.sourceVersion,
+      previewExpiresAt: previewBody.expiresAt,
+    },
     headers: { 'Content-Type': 'application/json' },
   });
 

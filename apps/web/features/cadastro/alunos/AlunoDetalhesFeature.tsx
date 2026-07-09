@@ -56,6 +56,7 @@ type MatriculaResumo = {
   dataInicio: Nullable<string>;
   dataFim: Nullable<string>;
   dataFimContrato: Nullable<string>;
+  createdAt?: Nullable<string>;
   vencimentoDia: number;
   taxaMatricula: Nullable<number>;
   taxaStatus: string;
@@ -80,6 +81,21 @@ type MatriculaResumo = {
     assinadoEm: Nullable<string>;
     createdAt: Nullable<string>;
   }>;
+  rematriculaOrigem?: Nullable<RematriculaResumo>;
+  rematriculaFutura?: Nullable<RematriculaResumo>;
+};
+
+type RematriculaResumo = {
+  itemId: string;
+  processoId: string;
+  processoStatus: string;
+  processoOrigem: string;
+  decision: string;
+  itemStatus: string;
+  matriculaOrigemId?: Nullable<string>;
+  matriculaFuturaId?: Nullable<string>;
+  effectiveAt: Nullable<string>;
+  targetPeriodId: string;
 };
 
 type CobrancaResumo = {
@@ -998,6 +1014,8 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
 
           <MatriculaResumoSection matricula={latestMatricula} total={aluno.resumo.matriculas} />
 
+          <HistoricoMatriculasSection matriculas={aluno.matriculas} />
+
           {notificationResponsavel ? (
             <CustomerNotificationsResponsavelNotice
               responsavel={notificationResponsavel}
@@ -1317,6 +1335,112 @@ function MatriculaResumoSection({ matricula, total }: { matricula: MatriculaResu
       )}
     </section>
   );
+}
+
+function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResumo[] }) {
+  const sorted = [...matriculas].sort((a, b) => {
+    const aTime = new Date(a.dataInicio ?? a.createdAt ?? 0).getTime();
+    const bTime = new Date(b.dataInicio ?? b.createdAt ?? 0).getTime();
+    return bTime - aTime;
+  });
+
+  return (
+    <section className={sectionClass}>
+      <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Histórico de matrículas</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Matrículas atuais, próximas, encerradas e canceladas do aluno.
+          </p>
+        </div>
+        <span className="text-xs text-slate-500">{sorted.length} registros</span>
+      </div>
+
+      {sorted.length ? (
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+          <table className="w-full min-w-[780px] border-collapse text-sm">
+            <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3 text-left">Tipo</th>
+                <th className="px-4 py-3 text-left">Curso/turma</th>
+                <th className="px-4 py-3 text-left">Início</th>
+                <th className="px-4 py-3 text-left">Fim</th>
+                <th className="px-4 py-3 text-left">Situação</th>
+                <th className="px-4 py-3 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((matricula) => (
+                <HistoricoMatriculaRow key={matricula.id} matricula={matricula} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyPanel message="Nenhuma matrícula vinculada." />
+      )}
+    </section>
+  );
+}
+
+function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
+  const isRenewal = Boolean(matricula.rematriculaFutura);
+  const title = matricula.plano?.nome ?? matricula.combo?.nome ?? 'Matrícula';
+  const turma =
+    matricula.turma?.nome ??
+    matricula.turmas.map((item) => item.nome).join(', ') ??
+    'Turma não informada';
+
+  return (
+    <tr className="border-t border-slate-200">
+      <td className="whitespace-nowrap px-4 py-3">
+        <span className={cn('rounded-full px-2 py-1 text-xs font-medium', isRenewal ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-700')}>
+          {isRenewal ? 'Rematrícula' : 'Matrícula'}
+        </span>
+      </td>
+      <td className="max-w-[280px] px-4 py-3">
+        <span className="block truncate font-medium text-slate-900">
+          {title} · {turma}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataInicio)}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataFimContrato)}</td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <span className={cn('rounded-full px-2 py-1 text-xs font-medium', getHistoryStatusClass(matricula.status))}>
+          {getHistoryStatusLabel(matricula.status, matricula.dataInicio)}
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-right">
+        <Link href={`/matriculas/${matricula.id}`} className="text-sm font-medium text-brand-accent hover:underline">
+          Abrir
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
+function getHistoryStatusLabel(status: string, dataInicio: string | null | undefined) {
+  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
+  if (startsInFuture && ['ATIVA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'].includes(status)) {
+    return 'Próxima';
+  }
+  const labels: Record<string, string> = {
+    ATIVA: 'Ativa',
+    PAUSADA: 'Pausada',
+    AGUARDANDO_CONFIRMACAO: 'Pendente',
+    PENDENTE_TAXA: 'Taxa',
+    ENCERRADA: 'Encerrada',
+    CANCELADA: 'Cancelada',
+  };
+  return labels[status] ?? status;
+}
+
+function getHistoryStatusClass(status: string) {
+  if (status === 'ATIVA') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'ENCERRADA') return 'bg-slate-100 text-slate-600';
+  if (status === 'CANCELADA') return 'bg-red-50 text-red-700';
+  if (status === 'PAUSADA') return 'bg-amber-50 text-amber-700';
+  return 'bg-blue-50 text-blue-700';
 }
 
 function CustomerNotificationsResponsavelNotice({

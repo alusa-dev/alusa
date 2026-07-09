@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   PLATFORM_PLANS,
@@ -26,8 +26,10 @@ export async function requestPlatformPlanChange(input: {
 }): Promise<{
   planChangeId: string;
   type: 'UPGRADE' | 'DOWNGRADE';
-  status: 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE';
+  status: 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED';
   effectiveAt: string | null;
+  message?: string;
+  detail?: string | null;
   preview?: { amountDue: number; amountRemaining: number; currency: string };
 }> {
   const environment = resolvePlatformBillingEnvironment();
@@ -45,8 +47,10 @@ export async function requestPlatformPlanChange(input: {
     return {
       planChangeId: existing.id,
       type: existing.type as 'UPGRADE' | 'DOWNGRADE',
-      status: existing.status as 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE',
+      status: existing.status as 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED',
       effectiveAt: existing.effectiveAt?.toISOString() ?? null,
+      message: getPlanChangeSuccessMessage(existing.status),
+      detail: getPlanChangeDetail(existing.status, existing.effectiveAt, accountTrialEndsAt(existing.metadata)),
     };
   }
 
@@ -83,6 +87,127 @@ export async function requestPlatformPlanChange(input: {
     environment,
     source: process.env,
   });
+
+  if (account.status === 'TRIALING') {
+    const activeStudents = await countActiveStudents(input.prisma, input.contaId);
+    const capacity = evaluateStudentCapacity({
+      contaId: input.contaId,
+      planCode: input.targetPlanCode,
+      activeStudents,
+      additionalActiveStudents: 0,
+    });
+    if (!capacity.allowed) {
+      throw new PlatformBillingError(
+        'Current active students are not compatible with the target plan.',
+        'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE',
+        { ...capacity },
+      );
+    }
+
+    const planChange = await input.prisma.platformBillingPlanChange.create({
+      data: {
+        contaId: input.contaId,
+        billingAccountId: account.id,
+        environment,
+        type,
+        status: 'APPLIED',
+        fromPlanCode: account.planCode as PlatformPlanCode,
+        toPlanCode: input.targetPlanCode,
+        stripeSubscriptionId: account.stripeSubscriptionId,
+        stripePriceId,
+        effectiveAt: new Date(),
+        idempotencyKey,
+        createdByUserId: input.actorUserId,
+        correlationId: idempotencyKey,
+        appliedAt: new Date(),
+        metadata: {
+          activeStudents,
+          trialEndsAt: account.trialEndsAt?.toISOString() ?? null,
+          targetPlanMaxActiveStudents: PLATFORM_PLANS[input.targetPlanCode].maxActiveStudents,
+        },
+      },
+    });
+
+    const gateway = createDefaultPlatformBillingStripeGateway(process.env);
+    try {
+      const updatedSubscription = await gateway.updateSubscriptionPlan({
+        subscriptionId: account.stripeSubscriptionId,
+        priceId: stripePriceId,
+        paymentBehavior: 'allow_incomplete',
+        prorationBehavior: 'none',
+        metadata: {
+          contaId: input.contaId,
+          planCode: input.targetPlanCode,
+          billingContext: 'platform',
+          planChangeId: planChange.id,
+          source: 'trial-plan-change',
+        },
+        idempotencyKey: `${idempotencyKey}:stripe-trial-plan-change`,
+      });
+
+      const trialEndsAt = updatedSubscription.trialEndsAt ?? account.trialEndsAt;
+      await input.prisma.platformBillingAccount.update({
+        where: { id: account.id },
+        data: {
+          status: 'TRIALING',
+          accessStatus: 'ACTIVE',
+          planCode: input.targetPlanCode,
+          stripePriceId,
+          currentPeriodEnd: updatedSubscription.currentPeriodEnd ?? account.currentPeriodEnd,
+          cancelAtPeriodEnd: updatedSubscription.cancelAtPeriodEnd,
+          trialEndsAt,
+          pendingPlanCode: null,
+          pendingChangeType: null,
+          pendingChangeEffectiveAt: null,
+        },
+      });
+
+      await input.prisma.platformBillingPlanChange.update({
+        where: { id: planChange.id },
+        data: {
+          metadata: {
+            activeStudents,
+            trialEndsAt: trialEndsAt?.toISOString() ?? null,
+            stripeSubscriptionStatus: updatedSubscription.status,
+            targetPlanMaxActiveStudents: PLATFORM_PLANS[input.targetPlanCode].maxActiveStudents,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      await auditPlanChange(input.prisma, {
+        contaId: input.contaId,
+        billingAccountId: account.id,
+        actorUserId: input.actorUserId,
+        action: 'PLATFORM_BILLING_TRIAL_PLAN_CHANGED',
+        entityId: planChange.id,
+        correlationId: idempotencyKey,
+        metadata: {
+          fromPlanCode: account.planCode,
+          toPlanCode: input.targetPlanCode,
+          trialEndsAt: trialEndsAt?.toISOString() ?? null,
+        },
+      });
+
+      return {
+        planChangeId: planChange.id,
+        type,
+        status: 'APPLIED',
+        effectiveAt: new Date().toISOString(),
+        message: 'Plano alterado com sucesso.',
+        detail: trialEndsAt ? `Seu teste gratuito continua até ${formatDatePtBr(trialEndsAt)}.` : null,
+      };
+    } catch (error) {
+      await input.prisma.platformBillingPlanChange.update({
+        where: { id: planChange.id },
+        data: {
+          status: 'FAILED',
+          failedAt: new Date(),
+          lastError: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+        },
+      });
+      throw error;
+    }
+  }
 
   if (type === 'DOWNGRADE') {
     const activeStudents = await countActiveStudents(input.prisma, input.contaId);
@@ -146,6 +271,8 @@ export async function requestPlatformPlanChange(input: {
       type,
       status: 'PENDING_EFFECTIVE_DATE',
       effectiveAt: account.currentPeriodEnd?.toISOString() ?? null,
+      message: 'Plano alterado com sucesso.',
+      detail: account.currentPeriodEnd ? `A mudança entra em vigor em ${formatDatePtBr(account.currentPeriodEnd)}.` : 'A mudança entra em vigor no próximo ciclo.',
     };
   }
 
@@ -231,6 +358,8 @@ export async function requestPlatformPlanChange(input: {
       type,
       status: 'PENDING_PAYMENT',
       effectiveAt: null,
+      message: 'Plano alterado com sucesso.',
+      detail: 'A alteração será concluída após a confirmação do pagamento.',
       preview: {
         amountDue: preview.amountDue,
         amountRemaining: preview.amountRemaining,
@@ -415,7 +544,7 @@ export async function applyDuePlatformPlanChanges(input: {
     const targetPlanCode = change.toPlanCode as PublicPlatformPlanCode | null;
     const account = change.billingAccount;
     if (!targetPlanCode || !account.stripeSubscriptionId) {
-      await markPlanChangeFailed(input.prisma, change.id, 'Downgrade missing target plan or Stripe subscription.');
+      await markPlanChangeFailed(input.prisma, change.id, 'Plan change missing target plan or Stripe subscription.');
       failed += 1;
       continue;
     }
@@ -428,7 +557,7 @@ export async function applyDuePlatformPlanChanges(input: {
       additionalActiveStudents: 0,
     });
     if (!capacity.allowed) {
-      await markPlanChangeFailed(input.prisma, change.id, 'Account is no longer eligible for scheduled downgrade.');
+      await markPlanChangeFailed(input.prisma, change.id, 'Account is no longer eligible for the requested plan change.');
       await input.prisma.platformBillingIssue.create({
         data: {
           contaId: change.contaId,
@@ -437,8 +566,8 @@ export async function applyDuePlatformPlanChanges(input: {
           severity: 'WARNING',
           status: 'OPEN',
           code: 'DOWNGRADE_NOT_ELIGIBLE',
-          title: 'Downgrade agendado perdeu elegibilidade',
-          message: 'A Conta possui alunos ativos acima do limite do plano agendado.',
+          title: 'Alteração de plano perdeu elegibilidade',
+          message: 'A Conta possui alunos ativos acima do limite do plano escolhido.',
           fingerprint: `${change.id}:downgrade-not-eligible`,
           details: { ...capacity } as Prisma.InputJsonValue,
           correlationId: change.correlationId,
@@ -503,6 +632,40 @@ async function markPlanChangeFailed(prisma: PrismaClient, id: string, message: s
   });
 }
 
+function getPlanChangeSuccessMessage(status: string): string {
+  if (status === 'APPLIED' || status === 'PENDING_EFFECTIVE_DATE') return 'Plano alterado com sucesso.';
+  return 'Plano alterado com sucesso.';
+}
+
+function getPlanChangeDetail(status: string, effectiveAt: Date | null, trialEndsAt: Date | null): string | null {
+  if (status === 'APPLIED' && trialEndsAt) {
+    return `Seu teste gratuito continua até ${formatDatePtBr(trialEndsAt)}.`;
+  }
+  if (status === 'PENDING_EFFECTIVE_DATE') {
+    return effectiveAt
+      ? `A mudança entra em vigor em ${formatDatePtBr(effectiveAt)}.`
+      : 'A mudança entra em vigor no próximo ciclo.';
+  }
+  if (status === 'PENDING_PAYMENT') return 'A alteração será concluída após a confirmação do pagamento.';
+  return null;
+}
+
+function accountTrialEndsAt(metadata: Prisma.JsonValue): Date | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const value = (metadata as { trialEndsAt?: unknown }).trialEndsAt;
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDatePtBr(value: Date): string {
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(value);
+}
+
 async function auditPlanChange(
   prisma: PrismaClient,
   input: {
@@ -542,3 +705,5 @@ async function countActiveStudents(prisma: PrismaClient, contaId: string): Promi
 
   return rows.length;
 }
+
+

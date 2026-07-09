@@ -19,8 +19,9 @@ export async function GET(_request: NextRequest, { params }: RouteContext) {
     const { orderId } = await params;
     const order = await getEventMapOrderTicketsForAdmin(ctx.contaId, orderId);
     const pdf = createEventTicketsPdf(order);
+    const body = new Uint8Array(pdf).buffer;
 
-    return new NextResponse(pdf, {
+    return new NextResponse(body, {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="ingressos-${order.id}.pdf"`,

@@ -23,7 +23,9 @@ export interface ResolvedPlatformPlanFromPrice {
 
 export function resolveStripePriceId(input: ResolveStripePriceIdInput): string {
   const planCode = parsePublicCheckoutPlanCode(input.planCode);
-  const priceId = input.source?.[PRICE_ENV_BY_PLAN[planCode]] ?? process.env[PRICE_ENV_BY_PLAN[planCode]];
+  const priceId = input.source
+    ? input.source[PRICE_ENV_BY_PLAN[planCode]]
+    : process.env[PRICE_ENV_BY_PLAN[planCode]];
 
   if (!priceId) {
     throw new PlatformBillingError('Stripe Price ID is not configured for plan.', 'PLATFORM_PRICE_MISSING', {

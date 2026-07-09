@@ -195,6 +195,7 @@ enum StatusMatricula {
   AGUARDANDO_CONFIRMACAO
   ATIVA
   PAUSADA
+  ENCERRADA
   RECUSADA
   CANCELADA
 }
@@ -482,6 +483,7 @@ enum RematriculaCampanhaStatus {
   ACTIVE
   PAUSED
   CLOSED
+  DELETED
   ARCHIVED
 }
 
@@ -716,6 +718,15 @@ enum FamilyBillingOutboxStatus {
   PROCESSING
   PROCESSED
   FAILED
+  REQUIRES_RECONCILIATION
+}
+
+enum MatriculaBillingOutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  REQUIRES_RECONCILIATION
 }
 
 enum MatriculaBillingProvisionStatus {
@@ -725,6 +736,7 @@ enum MatriculaBillingProvisionStatus {
   PROVISIONADO
   PARCIAL
   FALHO
+  RESULTADO_INCERTO
   CANCELADO
 }
 
@@ -1178,6 +1190,8 @@ model Conta {
   acordosFinanceirosFuturos         AcordoFinanceiroFuturo[]
   rematriculaAuditLogs              RematriculaAuditLog[]
   rematriculaOutboxEvents           RematriculaOutbox[]
+  matriculaBillingOutboxEvents      MatriculaBillingOutbox[]
+  rematriculaProcessoRevisoes       RematriculaProcessoRevisao[]
   rematriculaPendencias             RematriculaPendencia[]
   rematriculaExcecoes               RematriculaExcecao[]
   rematriculaComunicacoes           RematriculaComunicacao[]
@@ -1927,6 +1941,7 @@ model Matricula {
   matriculaFamiliarItems         MatriculaFamiliarItem[]
   rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemOrigem")
   rematriculaFamiliarItemsNova   RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemNova")
+  billingOutboxEvents            MatriculaBillingOutbox[]
 
   @@unique([contaId, uiRequestId], name: "uq_matricula_conta_request")
   @@index([contaId], name: "idx_matricula_conta")
@@ -1952,6 +1967,40 @@ model Matricula {
   @@index([contratoAtualId], name: "idx_matricula_contrato_atual")
   @@index([matriculaFamiliarId], name: "idx_matricula_familiar")
   @@index([contaId, billingProvisionStatus], name: "idx_matricula_conta_billing_provision")
+}
+
+model MatriculaBillingOutbox {
+  id          String                         @id @default(cuid())
+  contaId     String
+  matriculaId String?
+  aggregateType String                       @default("MATRICULA")
+  aggregateId   String?
+  version       Int                          @default(1)
+  eventType   String
+  payload     Json
+  status      MatriculaBillingOutboxStatus   @default(PENDING)
+  attempts    Int                            @default(0)
+  availableAt DateTime                       @default(now())
+  lockedAt    DateTime?
+  leaseExpiresAt DateTime?
+  processedAt DateTime?
+  lastAttemptAt DateTime?
+  lastError   String?
+  dedupeKey   String?
+  idempotencyKey   String?
+  externalReference String?
+  correlationId    String?
+  createdAt   DateTime                       @default(now())
+  updatedAt   DateTime                       @updatedAt
+
+  conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  matricula Matricula? @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, dedupeKey], name: "uq_matricula_billing_outbox_conta_dedupe")
+  @@index([contaId, status, availableAt], name: "idx_matricula_billing_outbox_conta_status_available")
+  @@index([contaId, matriculaId], name: "idx_matricula_billing_outbox_conta_matricula")
+  @@index([contaId, aggregateType, aggregateId], name: "idx_matricula_billing_outbox_conta_aggregate")
+  @@index([contaId, externalReference], name: "idx_matricula_billing_outbox_conta_external_ref")
 }
 
 model MatriculaFamiliar {
@@ -2100,7 +2149,7 @@ model RematriculaCampanha {
   campaignEndsAt     DateTime?
   rules              Json?
   audienceDefinition Json?
-  status             RematriculaCampanhaStatus @default(DRAFT)
+  status             RematriculaCampanhaStatus @default(ACTIVE)
   version            Int                       @default(1)
   createdById        String?
   createdAt          DateTime                  @default(now())
@@ -2189,6 +2238,7 @@ model RematriculaProcesso {
   pendencias   RematriculaPendencia[]
   excecoes     RematriculaExcecao[]
   comunicacoes RematriculaComunicacao[]
+  revisoes     RematriculaProcessoRevisao[]
 
   @@unique([contaId, idempotencyKey], name: "uq_rematricula_processo_conta_idempotency")
   @@unique([contaId, externalReference], name: "uq_rematricula_processo_conta_external_ref")
@@ -2197,6 +2247,24 @@ model RematriculaProcesso {
   @@index([contaId, campanhaId], name: "idx_rematricula_processo_conta_campanha")
   @@index([contaId, holderType, holderId], name: "idx_rematricula_processo_conta_holder")
   @@index([contaId, effectiveAt, status], name: "idx_rematricula_processo_conta_effective_status")
+}
+
+model RematriculaProcessoRevisao {
+  id          String   @id @default(cuid())
+  contaId     String
+  processoId  String
+  version     Int
+  reason      String
+  actorId     String?
+  beforeState Json
+  afterState  Json
+  createdAt   DateTime @default(now())
+
+  conta    Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  processo RematriculaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, processoId, version], name: "uq_rematricula_processo_revisao_version")
+  @@index([contaId, processoId, createdAt], name: "idx_rematricula_processo_revisao_created")
 }
 
 model RematriculaItem {
@@ -3159,11 +3227,13 @@ model PlatformBillingAccount {
   currentPeriodEnd     DateTime?
   cancelAtPeriodEnd    Boolean                      @default(false)
   trialEndsAt          DateTime?
+  trialWillEndNotifiedAt DateTime?
   accessStatus         PlatformBillingAccessStatus   @default(PENDING)
   gracePeriodEndsAt    DateTime?
   restrictedAt         DateTime?
   canceledAt           DateTime?
   lastPaymentFailedAt  DateTime?
+  lastReconciledAt      DateTime?
   pendingPlanCode      PlatformBillingPlanCode?
   pendingChangeType    PlatformBillingPlanChangeType?
   pendingChangeEffectiveAt DateTime?
@@ -3239,6 +3309,12 @@ model PlatformBillingInvoice {
   periodEnd            DateTime?
   dueDate              DateTime?
   paidAt               DateTime?
+  failedAt             DateTime?
+  attempted            Boolean                      @default(false)
+  attemptCount         Int                          @default(0)
+  nextPaymentAttempt   DateTime?
+  lastPaymentErrorCode String?
+  lastPaymentErrorMessage String?
   raw                  Json?
   lastStripeEventId    String?
   createdAt            DateTime                     @default(now())

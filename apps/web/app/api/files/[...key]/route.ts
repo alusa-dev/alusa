@@ -134,7 +134,8 @@ export async function GET(_req: NextRequest, context: { params: { key?: string[]
     if (object.ContentType) headers.set('content-type', object.ContentType);
     if (object.ContentLength !== undefined) headers.set('content-length', String(object.ContentLength));
 
-    return new Response(bytes, { status: 200, headers });
+    const body = new Uint8Array(bytes).buffer;
+    return new Response(body, { status: 200, headers });
   } catch (error) {
     if (error instanceof NoSuchKey || (error as { name?: string }).name === 'NoSuchKey') {
       return NextResponse.json({ error: 'Arquivo nao encontrado.' }, { status: 404 });

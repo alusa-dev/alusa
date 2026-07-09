@@ -7,29 +7,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   getServerSessionMock,
   criarMatriculaMock,
-  prismaMock,
   createChargeMock,
   createSubscriptionMock,
-  getAsaasPaymentDetailsMock,
   createEnrollmentCreatedNotificationMock,
   syncInitialSubscriptionPaymentFromAsaasMock,
   syncPaymentStateFromAsaasMock,
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
   criarMatriculaMock: vi.fn(),
-  prismaMock: {
-    matricula: {
-      findUnique: vi.fn(),
-      update: vi.fn().mockResolvedValue({}),
-    },
-    cobranca: {
-      findFirst: vi.fn().mockResolvedValue(null),
-      update: vi.fn(),
-    },
-  },
   createChargeMock: vi.fn(),
   createSubscriptionMock: vi.fn(),
-  getAsaasPaymentDetailsMock: vi.fn(),
   createEnrollmentCreatedNotificationMock: vi.fn(),
   syncInitialSubscriptionPaymentFromAsaasMock: vi.fn(),
   syncPaymentStateFromAsaasMock: vi.fn(),
@@ -51,15 +38,10 @@ vi.mock('@/src/server/matriculas/matricula.service', () => ({
   },
 }));
 
-vi.mock('@/src/prisma', () => ({
-  prisma: prismaMock,
-}));
-
 vi.mock('@alusa/finance', () => ({
   createCharge: createChargeMock,
   createSubscription: createSubscriptionMock,
   ensureCustomer: vi.fn(),
-  getAsaasPaymentDetails: getAsaasPaymentDetailsMock,
   syncPaymentStateFromAsaas: syncPaymentStateFromAsaasMock,
   syncCustomerNotificationChannels: vi.fn(),
 }));
@@ -74,6 +56,87 @@ vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
 
 const { POST } = await import('@/app/api/matriculas/route');
 
+const previewHash = 'a'.repeat(64);
+const sourceVersion = 'b'.repeat(64);
+const previewExpiresAt = '2099-12-31T00:00:00.000Z';
+
+function buildBody(overrides: Record<string, unknown> = {}) {
+  return {
+    contaId: 'conta-1',
+    alunoId: 'aluno-1',
+    planoId: 'plano-1',
+    turmaId: 'turma-1',
+    dataInicio: '2026-04-01',
+    dataFimContrato: '2027-03-31',
+    vencimentoDia: 5,
+    taxaMatricula: 0,
+    taxaIsenta: true,
+    pagarTaxaAgora: false,
+    gerarCobrancaTaxa: false,
+    criarCobranca: true,
+    formaPagamento: 'CARTAO_CREDITO',
+    formaPagamentoTaxa: 'BOLETO',
+    notificationChannels: [],
+    uiRequestId: 'ui-request-1',
+    previewHash,
+    sourceVersion,
+    previewExpiresAt,
+    billingStrategy: { kind: 'SEPARATE' },
+    ...overrides,
+  };
+}
+
+function buildRequest(overrides: Record<string, unknown> = {}) {
+  return new Request('http://localhost/api/matriculas', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(buildBody(overrides)),
+  });
+}
+
+function mockMatriculaResult(overrides: Record<string, unknown> = {}) {
+  criarMatriculaMock.mockResolvedValue({
+    matricula: {
+      id: 'mat-1',
+      alunoId: 'aluno-1',
+      responsavelFinanceiroId: null,
+      planoId: 'plano-1',
+      turmaId: 'turma-1',
+      comboId: null,
+      status: 'ATIVA',
+      statusFinanceiro: 'ADIMPLENTE',
+      statusContrato: null,
+      dataInicio: new Date('2026-04-01T00:00:00.000Z'),
+      dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
+      taxaMatricula: 0,
+      taxaStatus: 'ISENTO',
+      taxaIsenta: true,
+      taxaJustificativa: null,
+      vencimentoDia: 5,
+      asaasId: null,
+      asaasSubscriptionId: null,
+      billingProvisionStatus: 'NAO_APLICAVEL',
+      billingProvisionError: null,
+      createdAt: new Date('2026-03-31T00:00:00.000Z'),
+      updatedAt: new Date('2026-03-31T00:00:00.000Z'),
+      ...overrides,
+    },
+    cobrancas: {
+      taxa: null,
+      mensalidade: null,
+    },
+    preco: {
+      plano: 150,
+      planoLiquido: 75,
+      taxa: 0,
+      descontosAplicados: [75],
+      total: 75,
+    },
+    responsavelFinanceiro: null,
+    primeiroVencimento: new Date('2026-04-05T00:00:00.000Z'),
+  });
+}
+
 describe('POST /api/matriculas', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -85,181 +148,64 @@ describe('POST /api/matriculas', () => {
       },
     });
     createEnrollmentCreatedNotificationMock.mockResolvedValue(undefined);
-    createChargeMock.mockResolvedValue({ success: true, data: { asaasPaymentId: 'pay_taxa_1' } });
-    getAsaasPaymentDetailsMock.mockResolvedValue({
-      payment: {
-        id: 'pay_taxa_1',
-        invoiceUrl: 'https://sandbox.asaas.com/i/pay_taxa_1',
-        bankSlipUrl: null,
-      },
-    });
-    syncPaymentStateFromAsaasMock.mockResolvedValue({
-      success: true,
-      paymentStatus: 'PENDING',
-      appliedEvent: 'PAYMENT_CREATED',
-    });
-    syncInitialSubscriptionPaymentFromAsaasMock.mockResolvedValue({
-      found: false,
-      processed: false,
-      matchedBy: null,
-      payment: null,
-      localCharge: null,
-    });
   });
 
-  it('cria a assinatura no ato da matrícula sem fabricar mensalidade local', async () => {
-    criarMatriculaMock.mockResolvedValue({
-      matricula: {
-        id: 'mat-1',
-        alunoId: 'aluno-1',
-        responsavelFinanceiroId: null,
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        comboId: null,
-        status: 'ATIVA',
-        statusFinanceiro: 'ADIMPLENTE',
-        dataInicio: new Date('2026-04-01T00:00:00.000Z'),
-        dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
-        taxaMatricula: 0,
-        taxaStatus: 'ISENTO',
-        taxaIsenta: true,
-        taxaJustificativa: null,
-        vencimentoDia: 5,
-        asaasId: null,
-        asaasSubscriptionId: null,
-        createdAt: new Date('2026-03-31T00:00:00.000Z'),
-        updatedAt: new Date('2026-03-31T00:00:00.000Z'),
-      },
-      cobrancas: {
-        taxa: null,
-        mensalidade: null,
-      },
-      preco: {
-        plano: 150,
-        planoLiquido: 75,
-        taxa: 0,
-        descontosAplicados: [75],
-        total: 75,
-      },
-      responsavelFinanceiro: null,
-      primeiroVencimento: new Date('2026-04-05T00:00:00.000Z'),
-    });
+  it('salva a matricula local e agenda provisionamento financeiro sem chamar Asaas no commit', async () => {
+    mockMatriculaResult();
 
-    prismaMock.matricula.findUnique.mockResolvedValue({
-      id: 'mat-1',
-      dataInicio: new Date('2026-04-01T00:00:00.000Z'),
-      dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
-      vencimentoDia: 5,
-      formaPagamento: 'CARTAO_CREDITO',
-      descontoAntecipado: null,
-      prazoDesconto: null,
-      descontoTipo: 'PERCENTAGE',
-      jurosMensal: null,
-      multaPercentual: null,
-      multaTipo: 'PERCENTAGE',
-      plano: {
-        id: 'plano-1',
-        nome: 'Plano Mensal',
-        periodicidade: 'MENSAL',
-      },
-      combo: null,
-    });
-
-    createSubscriptionMock.mockResolvedValue({
-      success: true,
-      data: {
-        asaasSubscriptionId: 'sub_asaas_1',
-        subscriptionId: 'sub-local-1',
-        externalReference: 'alusa:subscription:mat-1:plano-1',
-        status: 'ACTIVE',
-        createdAt: '2026-03-31T00:00:00.000Z',
-        statusUpdatedAt: '2026-03-31T00:00:00.000Z',
-      },
-    });
-
-    const req = new Request('http://localhost/api/matriculas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        contaId: 'conta-1',
-        alunoId: 'aluno-1',
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        dataInicio: '2026-04-01',
-        dataFimContrato: '2027-03-31',
-        vencimentoDia: 5,
-        taxaMatricula: 0,
-        taxaIsenta: true,
-        pagarTaxaAgora: false,
-        gerarCobrancaTaxa: false,
-        criarCobranca: true,
-        formaPagamento: 'CARTAO_CREDITO',
-        formaPagamentoTaxa: 'BOLETO',
-        notificationChannels: [],
-      }),
-    });
-
-    const response = await POST(req);
+    const response = await POST(buildRequest());
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(createSubscriptionMock).toHaveBeenCalledWith(
+    expect(criarMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        contaId: 'conta-1',
-        contratoId: null,
-        matriculaId: 'mat-1',
-        value: 75,
-        endDate: '2027-03-31',
-        billingType: 'CREDIT_CARD',
-      }),
-    );
-    const subscriptionCall = createSubscriptionMock.mock.calls[0]?.[0];
-    expect(subscriptionCall?.nextDueDate).toMatch(/^\d{4}-\d{2}-05$/);
-    expect(data.cobrancas.mensalidade).toBeNull();
-    expect(data.asaasSync.subscription).toEqual(
-      expect.objectContaining({
-        success: true,
-        asaasSubscriptionId: 'sub_asaas_1',
-        expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
-      }),
-    );
-    expect(data.matricula.asaasSubscriptionId).toBe('sub_asaas_1');
-    expect(syncInitialSubscriptionPaymentFromAsaasMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contaId: 'conta-1',
-        asaasSubscriptionId: 'sub_asaas_1',
-        intent: 'RECONCILIATION',
-        targetDueDate: expect.any(Date),
-      }),
-    );
-    const syncCall = syncInitialSubscriptionPaymentFromAsaasMock.mock.calls[0]?.[0];
-    expect(syncCall?.targetDueDate.toISOString().slice(0, 10)).toBe(subscriptionCall?.nextDueDate);
-  });
-
-  it('bloqueia assinatura quando a data final vem antes do primeiro vencimento calculado', async () => {
-    const req = new Request('http://localhost/api/matriculas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
         contaId: 'conta-1',
         alunoId: 'aluno-1',
         planoId: 'plano-1',
         turmaId: 'turma-1',
-        dataInicio: '2026-04-01',
-        dataFimContrato: '2026-04-04',
-        vencimentoDia: 5,
-        taxaMatricula: 0,
-        taxaIsenta: true,
-        pagarTaxaAgora: false,
-        gerarCobrancaTaxa: false,
-        criarCobranca: true,
-        formaPagamento: 'CARTAO_CREDITO',
-        formaPagamentoTaxa: 'BOLETO',
-        notificationChannels: [],
+        uiRequestId: 'ui-request-1',
+        billingStrategy: { kind: 'SEPARATE' },
+        billingPreview: expect.objectContaining({
+          previewHash,
+          sourceVersion,
+          billingStrategy: { kind: 'SEPARATE' },
+        }),
       }),
+    );
+    expect(createChargeMock).not.toHaveBeenCalled();
+    expect(createSubscriptionMock).not.toHaveBeenCalled();
+    expect(syncPaymentStateFromAsaasMock).not.toHaveBeenCalled();
+    expect(syncInitialSubscriptionPaymentFromAsaasMock).not.toHaveBeenCalled();
+    expect(data.cobrancas.mensalidade).toBeNull();
+    expect(data.matricula.asaasSubscriptionId).toBeNull();
+    expect(data.matricula.billingProvisionStatus).toBe('PENDENTE');
+    expect(data.asaasSync.subscription).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'FINANCEIRO_PENDENTE',
+        expectedWebhooks: ['PAYMENT_CREATED', 'SUBSCRIPTION_CREATED'],
+      }),
+    );
+    expect(data.operationalWarnings).toContainEqual(
+      expect.objectContaining({
+        type: 'FINANCIAL_PROVISION_PENDING',
+        code: 'FINANCEIRO_PENDENTE',
+        severity: 'INFO',
+      }),
+    );
+    expect(createEnrollmentCreatedNotificationMock).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      matriculaId: 'mat-1',
+      actorUserId: 'user-1',
     });
+  });
 
-    const response = await POST(req);
+  it('bloqueia assinatura quando a data final vem antes do primeiro vencimento calculado', async () => {
+    const response = await POST(
+      buildRequest({
+        dataFimContrato: '2026-04-04',
+      }),
+    );
     const data = await response.json();
 
     expect(response.status).toBe(422);
@@ -272,252 +218,29 @@ describe('POST /api/matriculas', () => {
     expect(createSubscriptionMock).not.toHaveBeenCalled();
   });
 
-  it('aceita data final igual ao primeiro vencimento no payload da assinatura', async () => {
-    criarMatriculaMock.mockResolvedValue({
-      matricula: {
-        id: 'mat-1',
-        alunoId: 'aluno-1',
-        responsavelFinanceiroId: null,
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        comboId: null,
-        status: 'ATIVA',
-        statusFinanceiro: 'ADIMPLENTE',
-        dataInicio: new Date('2099-07-01T00:00:00.000Z'),
-        dataFimContrato: new Date('2099-07-05T00:00:00.000Z'),
-        taxaMatricula: 0,
-        taxaStatus: 'ISENTO',
-        taxaIsenta: true,
-        taxaJustificativa: null,
-        vencimentoDia: 5,
-        asaasId: null,
-        asaasSubscriptionId: null,
-        createdAt: new Date('2099-06-30T00:00:00.000Z'),
-        updatedAt: new Date('2099-06-30T00:00:00.000Z'),
-      },
-      cobrancas: {
-        taxa: null,
-        mensalidade: null,
-      },
-      preco: {
-        plano: 150,
-        planoLiquido: 75,
-        taxa: 0,
-        descontosAplicados: [],
-        total: 75,
-      },
-      responsavelFinanceiro: null,
-      primeiroVencimento: new Date('2099-07-05T00:00:00.000Z'),
-    });
-
-    prismaMock.matricula.findUnique.mockResolvedValue({
-      id: 'mat-1',
+  it('aceita data final igual ao primeiro vencimento e mantem o financeiro assíncrono', async () => {
+    mockMatriculaResult({
       dataInicio: new Date('2099-07-01T00:00:00.000Z'),
       dataFimContrato: new Date('2099-07-05T00:00:00.000Z'),
-      vencimentoDia: 5,
-      formaPagamento: 'CARTAO_CREDITO',
-      descontoAntecipado: null,
-      prazoDesconto: null,
-      descontoTipo: 'PERCENTAGE',
-      jurosMensal: null,
-      multaPercentual: null,
-      multaTipo: 'PERCENTAGE',
-      plano: {
-        id: 'plano-1',
-        nome: 'Plano Mensal',
-        periodicidade: 'MENSAL',
-      },
-      combo: null,
+      createdAt: new Date('2099-06-30T00:00:00.000Z'),
+      updatedAt: new Date('2099-06-30T00:00:00.000Z'),
     });
 
-    createSubscriptionMock.mockResolvedValue({
-      success: true,
-      data: {
-        asaasSubscriptionId: 'sub_asaas_1',
-        subscriptionId: 'sub-local-1',
-        externalReference: 'alusa:subscription:mat-1:plano-1',
-        status: 'ACTIVE',
-        createdAt: '2099-06-30T00:00:00.000Z',
-        statusUpdatedAt: '2099-06-30T00:00:00.000Z',
-      },
-    });
-
-    const req = new Request('http://localhost/api/matriculas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        contaId: 'conta-1',
-        alunoId: 'aluno-1',
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
+    const response = await POST(
+      buildRequest({
         dataInicio: '2099-07-01',
         dataFimContrato: '2099-07-05',
-        vencimentoDia: 5,
-        taxaMatricula: 0,
-        taxaIsenta: true,
-        pagarTaxaAgora: false,
-        gerarCobrancaTaxa: false,
-        criarCobranca: true,
-        formaPagamento: 'CARTAO_CREDITO',
-        formaPagamentoTaxa: 'BOLETO',
-        notificationChannels: [],
-      }),
-    });
-
-    const response = await POST(req);
-
-    expect(response.status).toBe(200);
-    expect(createSubscriptionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        nextDueDate: '2099-07-05',
-        endDate: '2099-07-05',
       }),
     );
-  });
-
-  it('materializa o primeiro ciclo oficial do Asaas ainda no fechamento da matrícula quando ele já existe', async () => {
-    criarMatriculaMock.mockResolvedValue({
-      matricula: {
-        id: 'mat-1',
-        alunoId: 'aluno-1',
-        responsavelFinanceiroId: null,
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        comboId: null,
-        status: 'ATIVA',
-        statusFinanceiro: 'ADIMPLENTE',
-        dataInicio: new Date('2026-04-01T00:00:00.000Z'),
-        dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
-        taxaMatricula: 0,
-        taxaStatus: 'ISENTO',
-        taxaIsenta: true,
-        taxaJustificativa: null,
-        vencimentoDia: 5,
-        asaasId: null,
-        asaasSubscriptionId: null,
-        createdAt: new Date('2026-03-31T00:00:00.000Z'),
-        updatedAt: new Date('2026-03-31T00:00:00.000Z'),
-      },
-      cobrancas: {
-        taxa: null,
-        mensalidade: null,
-      },
-      preco: {
-        plano: 150,
-        planoLiquido: 75,
-        taxa: 0,
-        descontosAplicados: [75],
-        total: 75,
-      },
-      responsavelFinanceiro: null,
-      primeiroVencimento: new Date('2026-04-05T00:00:00.000Z'),
-    });
-
-    prismaMock.matricula.findUnique.mockResolvedValue({
-      id: 'mat-1',
-      dataInicio: new Date('2026-04-01T00:00:00.000Z'),
-      dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
-      vencimentoDia: 5,
-      formaPagamento: 'CARTAO_CREDITO',
-      descontoAntecipado: null,
-      prazoDesconto: null,
-      descontoTipo: 'PERCENTAGE',
-      jurosMensal: null,
-      multaPercentual: null,
-      multaTipo: 'PERCENTAGE',
-      plano: {
-        id: 'plano-1',
-        nome: 'Plano Mensal',
-        periodicidade: 'MENSAL',
-      },
-      combo: null,
-    });
-
-    createSubscriptionMock.mockResolvedValue({
-      success: true,
-      data: {
-        asaasSubscriptionId: 'sub_asaas_1',
-        subscriptionId: 'sub-local-1',
-        externalReference: 'alusa:subscription:mat-1:plano-1',
-        status: 'ACTIVE',
-        createdAt: '2026-03-31T00:00:00.000Z',
-        statusUpdatedAt: '2026-03-31T00:00:00.000Z',
-      },
-    });
-
-    syncInitialSubscriptionPaymentFromAsaasMock.mockResolvedValue({
-      found: true,
-      processed: true,
-      matchedBy: 'EXACT_DUE_DATE',
-      payment: {
-        id: 'pay_asaas_1',
-        status: 'PENDING',
-        dueDate: '2026-04-05',
-        value: 75,
-        netValue: 72,
-        invoiceUrl: 'https://sandbox.asaas.com/i/pay_asaas_1',
-        bankSlipUrl: null,
-      },
-      localCharge: {
-        id: 'cobr-1',
-        valor: 75,
-        status: 'PENDENTE',
-        formaPagamento: 'CARTAO_CREDITO',
-        tipo: 'MENSALIDADE',
-        vencimento: new Date('2026-04-05T00:00:00.000Z'),
-        descricao: 'Mensalidade',
-        asaasPaymentId: 'pay_asaas_1',
-        asaasId: null,
-        createdAt: new Date('2026-03-31T00:00:00.000Z'),
-        competenciaInicio: new Date('2026-04-01T00:00:00.000Z'),
-        competenciaFim: new Date('2026-04-30T00:00:00.000Z'),
-        dataPagamento: null,
-      },
-    });
-
-    const req = new Request('http://localhost/api/matriculas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        contaId: 'conta-1',
-        alunoId: 'aluno-1',
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        dataInicio: '2026-04-01',
-        dataFimContrato: '2027-03-31',
-        vencimentoDia: 5,
-        taxaMatricula: 0,
-        taxaIsenta: true,
-        pagarTaxaAgora: false,
-        gerarCobrancaTaxa: false,
-        criarCobranca: true,
-        formaPagamento: 'CARTAO_CREDITO',
-        formaPagamentoTaxa: 'BOLETO',
-        notificationChannels: [],
-      }),
-    });
-
-    const response = await POST(req);
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(data.cobrancas.mensalidade).toMatchObject({
-      id: 'cobr-1',
-      asaasPaymentId: 'pay_asaas_1',
-      valor: 75,
-    });
-    expect(data.asaasSync.subscription).toEqual(
-      expect.objectContaining({
-        success: true,
-        asaasSubscriptionId: 'sub_asaas_1',
-        asaasPaymentId: 'pay_asaas_1',
-        invoiceUrl: 'https://sandbox.asaas.com/i/pay_asaas_1',
-        expectedWebhooks: [],
-      }),
-    );
+    expect(createSubscriptionMock).not.toHaveBeenCalled();
+    expect(data.matricula.billingProvisionStatus).toBe('PENDENTE');
+    expect(data.asaasSync.subscription?.error).toBe('FINANCEIRO_PENDENTE');
   });
 
-  it('bloqueia a assinatura quando a taxa nao materializa pelo payment oficial do Asaas', async () => {
+  it('agenda taxa e recorrencia juntas quando ha taxa de matricula', async () => {
     criarMatriculaMock.mockResolvedValue({
       matricula: {
         id: 'mat-1',
@@ -528,6 +251,7 @@ describe('POST /api/matriculas', () => {
         comboId: null,
         status: 'ATIVA',
         statusFinanceiro: 'PENDENTE_TAXA',
+        statusContrato: null,
         dataInicio: new Date('2026-04-01T00:00:00.000Z'),
         dataFimContrato: new Date('2027-03-31T00:00:00.000Z'),
         taxaMatricula: 50,
@@ -537,6 +261,8 @@ describe('POST /api/matriculas', () => {
         vencimentoDia: 5,
         asaasId: null,
         asaasSubscriptionId: null,
+        billingProvisionStatus: 'NAO_APLICAVEL',
+        billingProvisionError: null,
         createdAt: new Date('2026-03-31T00:00:00.000Z'),
         updatedAt: new Date('2026-03-31T00:00:00.000Z'),
       },
@@ -549,7 +275,7 @@ describe('POST /api/matriculas', () => {
           status: 'PENDENTE',
           formaPagamento: 'PIX',
           tipo: 'TAXA_MATRICULA',
-          descricao: 'Taxa de matrícula',
+          descricao: 'Taxa de matricula',
           asaasId: null,
           asaasPaymentId: null,
           createdAt: new Date('2026-03-31T00:00:00.000Z'),
@@ -570,69 +296,65 @@ describe('POST /api/matriculas', () => {
       primeiroVencimento: new Date('2026-04-05T00:00:00.000Z'),
     });
 
-    createChargeMock.mockResolvedValue({
-      success: true,
-      data: {
-        cobrancaId: 'cob_taxa_1',
-        chargeId: 'cob_taxa_1',
-        asaasPaymentId: 'pay_taxa_1',
-        externalReference: 'charge:cob_taxa_1',
-      },
-    });
-    syncPaymentStateFromAsaasMock.mockResolvedValue({
-      success: false,
-      error: 'SYNC_PIPELINE_FAILED',
-    });
-
-    const req = new Request('http://localhost/api/matriculas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        contaId: 'conta-1',
-        alunoId: 'aluno-1',
-        planoId: 'plano-1',
-        turmaId: 'turma-1',
-        dataInicio: '2026-04-01',
-        dataFimContrato: '2027-03-31',
-        vencimentoDia: 5,
+    const response = await POST(
+      buildRequest({
         taxaMatricula: 50,
         taxaIsenta: false,
-        pagarTaxaAgora: false,
         gerarCobrancaTaxa: true,
-        criarCobranca: true,
-        formaPagamento: 'CARTAO_CREDITO',
         formaPagamentoTaxa: 'PIX',
-        notificationChannels: [],
       }),
-    });
-
-    const response = await POST(req);
+    );
     const data = await response.json();
 
     expect(response.status).toBe(200);
-    expect(syncPaymentStateFromAsaasMock).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      asaasPaymentId: 'pay_taxa_1',
-      eventName: 'PAYMENT_CREATED',
-    });
+    expect(createChargeMock).not.toHaveBeenCalled();
     expect(createSubscriptionMock).not.toHaveBeenCalled();
-    expect(data.cobrancas.taxa).toMatchObject({
-      id: 'cob_taxa_1',
-      asaasPaymentId: 'pay_taxa_1',
-    });
+    expect(data.matricula.billingProvisionStatus).toBe('PENDENTE');
     expect(data.asaasSync.taxa).toEqual(
       expect.objectContaining({
         success: false,
-        error: 'SYNC_PIPELINE_FAILED',
-        asaasPaymentId: 'pay_taxa_1',
-        invoiceUrl: 'https://sandbox.asaas.com/i/pay_taxa_1',
+        error: 'FINANCEIRO_PENDENTE',
       }),
     );
     expect(data.asaasSync.subscription).toEqual(
       expect.objectContaining({
         success: false,
-        error: 'TAXA_ASAAS_NAO_CONFIRMADA',
+        error: 'FINANCEIRO_PENDENTE',
       }),
     );
+  });
+
+  it('exige chave de idempotencia para confirmar a matricula', async () => {
+    const response = await POST(
+      buildRequest({
+        uiRequestId: undefined,
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toEqual(
+      expect.objectContaining({
+        code: 'IDEMPOTENCY_KEY_OBRIGATORIA',
+      }),
+    );
+    expect(criarMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('rejeita preview expirado antes de criar a matricula', async () => {
+    const response = await POST(
+      buildRequest({
+        previewExpiresAt: '2026-01-01T00:00:00.000Z',
+      }),
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error).toEqual(
+      expect.objectContaining({
+        code: 'PREVIEW_EXPIRADO',
+      }),
+    );
+    expect(criarMatriculaMock).not.toHaveBeenCalled();
   });
 });

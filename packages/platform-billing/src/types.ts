@@ -2,6 +2,7 @@ import type {
   CreateStripeBillingCustomerInput,
   CreateStripeBillingPortalSessionInput,
   CreateStripeSubscriptionCheckoutSessionInput,
+  CreateStripeTrialSubscriptionWithoutPaymentMethodInput,
   PreviewStripeSubscriptionPlanChangeInput,
   StripeSubscriptionPlanChangePreview,
   StripeBillingCustomerResult,
@@ -69,11 +70,13 @@ export interface PlatformBillingAccountRecord {
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
   trialEndsAt: Date | null;
+  trialWillEndNotifiedAt: Date | null;
   accessStatus: PlatformBillingAccessStatus;
   gracePeriodEndsAt: Date | null;
   restrictedAt: Date | null;
   canceledAt: Date | null;
   lastPaymentFailedAt: Date | null;
+  lastReconciledAt: Date | null;
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: PlatformBillingPlanChangeType | null;
   pendingChangeEffectiveAt: Date | null;
@@ -114,6 +117,12 @@ export interface PlatformBillingInvoiceRecord {
   periodEnd: Date | null;
   dueDate: Date | null;
   paidAt: Date | null;
+  failedAt: Date | null;
+  attempted: boolean;
+  attemptCount: number;
+  nextPaymentAttempt: Date | null;
+  lastPaymentErrorCode: string | null;
+  lastPaymentErrorMessage: string | null;
 }
 
 export interface PlatformBillingWebhookEventRecord {
@@ -162,6 +171,7 @@ export interface MarkPlatformBillingCheckoutPendingInput {
   accountId: string;
   planCode: PublicPlatformPlanCode;
   stripePriceId: string;
+  pendingChangeType?: PlatformBillingPlanChangeType | null;
 }
 
 export interface CreatePlatformBillingCheckoutSessionRecordInput {
@@ -195,6 +205,7 @@ export interface UpdatePlatformBillingAccountFromStripeSubscriptionInput {
   restrictedAt?: Date | null;
   canceledAt?: Date | null;
   lastPaymentFailedAt?: Date | null;
+  trialWillEndNotifiedAt?: Date | null;
   pendingPlanCode?: PlatformPlanCode | null;
   pendingChangeType?: PlatformBillingPlanChangeType | null;
   pendingChangeEffectiveAt?: Date | null;
@@ -220,6 +231,12 @@ export interface UpsertPlatformBillingInvoiceInput {
   periodEnd?: Date;
   dueDate?: Date;
   paidAt?: Date;
+  failedAt?: Date | null;
+  attempted?: boolean;
+  attemptCount?: number;
+  nextPaymentAttempt?: Date | null;
+  lastPaymentErrorCode?: string | null;
+  lastPaymentErrorMessage?: string | null;
   raw?: Record<string, unknown>;
   lastStripeEventId: string;
 }
@@ -294,6 +311,9 @@ export interface PlatformBillingStripeGateway {
   createCheckoutSession(
     _input: CreateStripeSubscriptionCheckoutSessionInput,
   ): Promise<StripeSubscriptionCheckoutSessionResult>;
+  createTrialSubscriptionWithoutPaymentMethod(
+    _input: CreateStripeTrialSubscriptionWithoutPaymentMethodInput,
+  ): Promise<StripeSubscriptionRecord>;
   createPortalSession(_input: CreateStripeBillingPortalSessionInput): Promise<StripeBillingPortalSessionResult>;
   retrieveSubscription(_subscriptionId: string): Promise<StripeSubscriptionRecord>;
   previewSubscriptionPlanChange(

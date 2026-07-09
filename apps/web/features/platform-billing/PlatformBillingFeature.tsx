@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
@@ -17,7 +17,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { cn } from '@/lib/cn';
-import { Download, ExternalLink } from '@/components/icons/icons';
+import { Check, Download, ExternalLink } from '@/components/icons/icons';
 
 type PlanCode = 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM';
 type BillingStatus =
@@ -39,6 +39,7 @@ type PublicPlan = {
   amountCents: number;
   currency: 'brl';
   interval: 'month';
+  trialDays: number;
   maxActiveStudents: number;
   publicCheckoutEnabled: true;
   includedFeatures: string[];
@@ -49,14 +50,17 @@ type BillingAccount = {
   status: BillingStatus;
   accessStatus: 'PENDING' | 'ACTIVE' | 'GRACE_PERIOD' | 'RESTRICTED' | 'CANCELED';
   planCode: PlanCode | null;
+  stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   trialEndsAt: string | null;
+  trialWillEndNotifiedAt: string | null;
   gracePeriodEndsAt: string | null;
   restrictedAt: string | null;
   canceledAt: string | null;
   lastPaymentFailedAt: string | null;
+  lastReconciledAt: string | null;
   pendingPlanCode: PlanCode | null;
   pendingChangeType: 'UPGRADE' | 'DOWNGRADE' | 'CANCEL_AT_PERIOD_END' | 'UNDO_CANCEL' | 'REACTIVATE' | 'PAYMENT_RECOVERY' | null;
   pendingChangeEffectiveAt: string | null;
@@ -76,7 +80,25 @@ type BillingInvoice = {
   periodStart: string | null;
   periodEnd: string | null;
   paidAt: string | null;
+  failedAt: string | null;
+  attempted: boolean;
+  attemptCount: number;
+  nextPaymentAttempt: string | null;
+  lastPaymentErrorCode: string | null;
+  lastPaymentErrorMessage: string | null;
 };
+
+type PaymentMethodSummary =
+  | {
+      status: 'present';
+      type: 'card';
+      brand: string | null;
+      last4: string;
+      expMonth: number | null;
+      expYear: number | null;
+    }
+  | { status: 'missing' }
+  | { status: 'unknown' };
 
 type BillingSummary = {
   environment: 'TEST' | 'LIVE';
@@ -87,8 +109,27 @@ type BillingSummary = {
   };
   activeStudents: number;
   account: BillingAccount | null;
+  paymentMethod: PaymentMethodSummary;
   plans: PublicPlan[];
   invoices: BillingInvoice[];
+  health: {
+    contaId: string;
+    stripeCustomerId: string | null;
+    stripeSubscriptionId: string | null;
+    lastWebhook: {
+      id: string;
+      eventId: string;
+      eventType: string;
+      status: string;
+      receivedAt: string;
+      processedAt: string | null;
+      lastErrorCode: string | null;
+    } | null;
+    webhookStats: Record<string, number>;
+    lastReconciliation: string | null;
+    pendingChanges: number;
+    openIssues: number;
+  };
   planChanges: Array<{
     id: string;
     type: 'UPGRADE' | 'DOWNGRADE' | 'CANCEL_AT_PERIOD_END' | 'UNDO_CANCEL' | 'REACTIVATE' | 'PAYMENT_RECOVERY';
@@ -176,16 +217,30 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const activeStudentPercent = currentPlanMax
     ? Math.min(100, Math.round((summary?.activeStudents ?? 0) / currentPlanMax * 100))
     : 0;
-  const pendingChange = summary?.planChanges.find((change) =>
+  const pendingChangeRaw = summary?.planChanges.find((change) =>
     change.status === 'PENDING_PAYMENT' || change.status === 'PENDING_EFFECTIVE_DATE'
   ) ?? null;
+  const pendingChange =
+    pendingChangeRaw?.type === 'CANCEL_AT_PERIOD_END' && summary?.account?.cancelAtPeriodEnd === false
+      ? null
+      : pendingChangeRaw;
+  const isCancellationPendingChange = pendingChange?.type === 'CANCEL_AT_PERIOD_END';
   const planUsageLabel = currentPlanMax
     ? `${summary?.activeStudents ?? 0} de ${currentPlanMax} alunos ativos`
     : `${summary?.activeStudents ?? 0} alunos ativos`;
   const renewalLabel = getRenewalLabel(summary?.account ?? null);
   const currentAccessStatus = summary?.account?.accessStatus ?? 'PENDING';
   const hasActiveSubscription = Boolean(summary?.account?.stripeSubscriptionId && summary.account.planCode);
-  const availablePlanChanges = summary?.plans.filter((plan) => plan.code !== summary.account?.planCode) ?? [];
+  const isCanceledSubscription = summary?.account?.status === 'CANCELED' || summary?.account?.accessStatus === 'CANCELED';
+  const isReactivationFlow = isCanceledSubscription && Boolean(summary?.account?.id);
+  const blocksPlanActions = Boolean(pendingChange) && !(isReactivationFlow && isCancellationPendingChange);
+  const hasManageableSubscription = hasActiveSubscription && !isCanceledSubscription;
+  const hasScheduledCancellation = Boolean(summary?.account?.cancelAtPeriodEnd && !isCanceledSubscription);
+  const isTrialing = summary?.account?.status === 'TRIALING';
+  const canStartTrial = !hasActiveSubscription && !summary?.account?.trialEndsAt;
+  const availablePlanChanges = isReactivationFlow
+    ? summary?.plans ?? []
+    : summary?.plans.filter((plan) => plan.code !== summary.account?.planCode) ?? [];
   const requiresPaymentAttention = Boolean(
     currentAccessStatus === 'GRACE_PERIOD' ||
     currentAccessStatus === 'RESTRICTED' ||
@@ -193,6 +248,19 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     summary?.account?.status === 'UNPAID' ||
     summary?.account?.status === 'INCOMPLETE',
   );
+  const paymentMethod = summary?.paymentMethod ?? { status: 'missing' as const };
+  const paymentTitle = getPaymentMethodTitle(paymentMethod);
+  const paymentDescription = getPaymentMethodDescription(paymentMethod);
+  const paymentActionLabel = paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
+  const cancellationNotice = getCancellationNotice(summary?.account ?? null);
+  const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, paymentMethod);
+  const planActionLabel = getPlanActionLabel({
+    requiresPaymentAttention,
+    isTrialing,
+    isCanceledSubscription,
+    hasManageableSubscription,
+    canStartTrial,
+  });
 
   useEffect(() => {
     const account = summary?.account;
@@ -221,7 +289,17 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         action: 'portal',
       });
     }
-  }, [summary?.account]);
+
+    const trialNotice = getTrialEndingNotice(account, paymentMethod);
+    if (trialNotice && shouldShowTrialEndingDialog(account)) {
+      setNoticeDialog({
+        title: 'Teste gratuito terminando',
+        description: trialNotice,
+        actionLabel: 'Cadastrar pagamento',
+        action: 'portal',
+      });
+    }
+  }, [summary?.account, paymentMethod]);
 
   async function startCheckout(planCode: PublicPlan['code']) {
     setActionLoading(`checkout:${planCode}`);
@@ -236,9 +314,18 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         },
         body: JSON.stringify({ planCode, idempotencyKey }),
       });
-      const payload = (await response.json()) as { checkoutUrl?: string; message?: string; error?: string };
+      const payload = (await response.json()) as {
+        checkoutUrl?: string;
+        message?: string;
+        error?: string;
+        activeStudents?: number;
+        maxActiveStudents?: number;
+      };
       if (!response.ok || !payload.checkoutUrl) {
-        throw new Error(payload.message ?? payload.error ?? 'Não foi possível abrir o pagamento.');
+        const message = payload.error === 'PLANO_INSUFICIENTE'
+          ? buildIncompatiblePlanMessage(payload)
+          : payload.message ?? payload.error ?? 'Não foi possível abrir o pagamento.';
+        throw new Error(message);
       }
       window.location.assign(payload.checkoutUrl);
     } catch (err) {
@@ -253,7 +340,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     }
   }
 
-  async function openPortal() {
+  async function openPortal(options?: { newTab?: boolean }) {
     setActionLoading('portal');
     setError(null);
     try {
@@ -266,6 +353,11 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         throw new Error(payload.error === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
           ? 'Nenhuma assinatura encontrada para esta conta.'
           : 'Não foi possível abrir a área de pagamento.');
+      }
+      if (options?.newTab) {
+        window.open(payload.portalUrl, '_blank', 'noopener,noreferrer');
+        setActionLoading(null);
+        return;
       }
       window.location.assign(payload.portalUrl);
     } catch (err) {
@@ -296,10 +388,12 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setPendingPlanAction({
       planCode,
       type,
-      title: type === 'upgrade' ? `Confirmar upgrade para ${targetName}` : `Agendar downgrade para ${targetName}`,
-      description: type === 'upgrade'
-        ? 'A diferença do plano poderá ser cobrada agora. A mudança será aplicada após a confirmação do pagamento.'
-        : `O downgrade será aplicado no próximo ciclo, se a conta continuar dentro do limite de ${targetPlan?.maxActiveStudents ?? 'alunos'} alunos ativos.`,
+      title: isTrialing ? `Trocar para ${targetName}?` : `Alterar para ${targetName}?`,
+      description: isTrialing
+        ? `Seu teste gratuito continua até ${formatDate(summary.account?.trialEndsAt ?? null)}.`
+        : type === 'upgrade'
+          ? 'A alteração será concluída após a confirmação do pagamento.'
+          : `A mudança entra em vigor no próximo ciclo, se a conta continuar dentro do limite de ${targetPlan?.maxActiveStudents ?? 'alunos'} alunos ativos.`,
     });
   }
 
@@ -323,6 +417,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       });
       const payload = (await response.json()) as {
         message?: string;
+        detail?: string | null;
         error?: string;
         details?: {
           activeStudents?: number;
@@ -339,8 +434,8 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       setPlansOpen(false);
       setPendingPlanAction(null);
       setNoticeDialog({
-        title: 'Solicitação registrada',
-        description: payload.message ?? 'A alteração será aplicada após a confirmação do pagamento.',
+        title: payload.message ?? 'Plano alterado com sucesso',
+        description: payload.detail ?? 'A alteração foi registrada.',
       });
       await loadSummary();
     } catch (err) {
@@ -373,7 +468,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       if (!response.ok) throw new Error(payload.message ?? payload.error ?? 'Falha ao atualizar cancelamento.');
       setPendingCancellationAction(null);
       setNoticeDialog({
-        title: action === 'undo_cancel' ? 'Cancelamento revertido' : 'Cancelamento agendado',
+        title: action === 'undo_cancel' ? 'Cancelamento revertido' : 'Assinatura cancelada',
         description: action === 'undo_cancel'
           ? 'A assinatura continuará ativa.'
           : 'A conta mantém acesso até o fim do período atual.',
@@ -411,7 +506,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   }
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-7 rounded-lg bg-white p-6 alusa-dark:bg-transparent md:p-8">
       <header className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="max-w-[420px]">
           <h2 className="text-2xl font-medium text-gray-950 alusa-dark:text-[color:var(--color-text-primary)]">
@@ -447,9 +542,31 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : null}
 
-      {pendingChange ? (
+      {currentAccessStatus === 'CANCELED' && !cancellationNotice ? (
+        <InfoCallout variant="warning" size="sm" showIcon>
+          Assinatura cancelada. O acesso ao plano foi encerrado.
+        </InfoCallout>
+      ) : null}
+
+      {pendingChange && !isCancellationPendingChange ? (
         <InfoCallout variant="brand" size="sm" showIcon>
-          {getPlanChangeLabel(pendingChange)} {pendingChange.effectiveAt ? `em ${formatDate(pendingChange.effectiveAt)}` : 'aguarda confirmação'}.
+          {getPlanChangeLabel(pendingChange, pendingChange.effectiveAt)}
+        </InfoCallout>
+      ) : null}
+
+      {cancellationNotice ? (
+        <InfoCallout variant="brand" size="sm" showIcon>
+          {cancellationNotice}
+        </InfoCallout>
+      ) : null}
+
+      {trialEndingNotice ? (
+        <InfoCallout variant="warning" size="sm" showIcon>
+          {trialEndingNotice}
+        </InfoCallout>
+      ) : summary.account?.status === 'TRIALING' && summary.account.trialEndsAt && !hasScheduledCancellation ? (
+        <InfoCallout variant="brand" size="sm" showIcon>
+          Teste gratuito ativo até {formatDate(summary.account.trialEndsAt)}. A cobrança começa automaticamente após esse período.
         </InfoCallout>
       ) : null}
 
@@ -497,12 +614,12 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
             <Button
               type="button"
               onClick={() => requiresPaymentAttention ? void openPortal() : setPlansOpen(true)}
-              disabled={!summary.canManage || actionLoading !== null || (!requiresPaymentAttention && (Boolean(pendingChange) || availablePlanChanges.length === 0))}
+              disabled={!summary.canManage || actionLoading !== null || (!requiresPaymentAttention && (blocksPlanActions || availablePlanChanges.length === 0))}
               className="h-[34px] rounded-[5px] bg-[#512a82] px-5 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
             >
-              {requiresPaymentAttention ? 'Regularizar pagamento' : hasActiveSubscription ? 'Fazer upgrade' : 'Escolher plano'}
+              {planActionLabel}
             </Button>
-            {summary.account?.cancelAtPeriodEnd ? (
+            {hasScheduledCancellation ? (
               <Button
                 type="button"
                 variant="outline"
@@ -512,7 +629,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
               >
                 Reverter cancelamento
               </Button>
-            ) : hasActiveSubscription && summary.account?.id && summary.account.status !== 'CANCELED' ? (
+            ) : hasManageableSubscription && summary.account?.id ? (
               <Button
                 type="button"
                 variant="outline"
@@ -530,6 +647,35 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       <section className="grid gap-6 rounded-[10px] border border-[#e2e0e6] bg-white px-5 py-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:grid-cols-[1fr_auto] md:items-start md:px-6">
         <div>
           <h3 className="text-xl font-medium text-black alusa-dark:text-[color:var(--color-text-primary)]">
+            Pagamento
+          </h3>
+          <div className="mt-8 space-y-1 text-sm">
+            <p className="font-medium text-[#26222d] alusa-dark:text-[color:var(--color-text-primary)]">
+              {paymentTitle}
+            </p>
+            {paymentDescription ? (
+              <p className="text-xs text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
+                {paymentDescription}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            type="button"
+            onClick={() => void openPortal({ newTab: true })}
+            disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId}
+            className="h-[34px] rounded-[5px] bg-[#512a82] px-4 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
+          >
+            {actionLoading === 'portal' ? 'Abrindo...' : paymentActionLabel}
+          </Button>
+        </div>
+      </section>
+
+      <section className="grid gap-6 rounded-[10px] border border-[#e2e0e6] bg-white px-5 py-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:grid-cols-[1fr_auto] md:items-start md:px-6">
+        <div>
+          <h3 className="text-xl font-medium text-black alusa-dark:text-[color:var(--color-text-primary)]">
             Informações de faturamento
           </h3>
           <div className="mt-8 space-y-1 text-sm">
@@ -539,11 +685,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
             <p className="text-xs text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
               {summary.billingInfo.email ?? 'E-mail não informado'}
             </p>
-            {summary.account?.cancelAtPeriodEnd ? (
-              <p className="text-amber-700 alusa-dark:text-amber-300">
-                Cancelamento agendado para {formatDate(summary.account.currentPeriodEnd)}.
-              </p>
-            ) : null}
           </div>
         </div>
 
@@ -562,8 +703,10 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         open={plansOpen}
         onOpenChange={setPlansOpen}
         summary={summary}
+        canStartTrial={canStartTrial}
         actionLoading={actionLoading}
-        pendingChange={Boolean(pendingChange)}
+        pendingChange={blocksPlanActions}
+        isReactivationFlow={isReactivationFlow}
         onPlanChange={selectPlan}
         onOpenPortal={() => void openPortal()}
       />
@@ -581,7 +724,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         }}
         title={pendingPlanAction?.title ?? 'Confirmar mudança de plano'}
         description={pendingPlanAction?.description ?? 'Confirme para continuar.'}
-        confirmText={pendingPlanAction?.type === 'downgrade' ? 'Agendar downgrade' : 'Confirmar upgrade'}
+        confirmText={isTrialing ? 'Trocar plano' : 'Alterar plano'}
         cancelText="Voltar"
         onConfirm={() => {
           if (pendingPlanAction) void requestPlanChange(pendingPlanAction.planCode);
@@ -594,11 +737,11 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         onOpenChange={(open) => {
           if (!open) setPendingCancellationAction(null);
         }}
-        title={pendingCancellationAction === 'undo_cancel' ? 'Reverter cancelamento?' : 'Cancelar assinatura ao fim do período?'}
+        title={pendingCancellationAction === 'undo_cancel' ? 'Reverter cancelamento?' : 'Cancelar assinatura?'}
         description={pendingCancellationAction === 'undo_cancel'
           ? 'A assinatura continuará ativa e a próxima cobrança seguirá conforme o ciclo atual.'
           : 'A conta mantém acesso até o fim do período atual. Nenhum dado educacional será apagado.'}
-        confirmText={pendingCancellationAction === 'undo_cancel' ? 'Reverter cancelamento' : 'Agendar cancelamento'}
+        confirmText={pendingCancellationAction === 'undo_cancel' ? 'Reverter cancelamento' : 'Cancelar assinatura'}
         cancelText="Voltar"
         variant={pendingCancellationAction === 'cancel_at_period_end' ? 'destructive' : 'default'}
         onConfirm={() => {
@@ -657,7 +800,7 @@ function BillingHistoryDialog({
       header: 'Data',
       width: 'w-[14%]',
       align: 'left',
-      render: (invoice) => formatDate(invoice.paidAt ?? invoice.periodEnd ?? invoice.periodStart),
+      render: (invoice) => formatDate(invoice.paidAt ?? invoice.failedAt ?? invoice.periodEnd ?? invoice.periodStart),
     },
     {
       id: 'amount',
@@ -673,9 +816,16 @@ function BillingHistoryDialog({
       width: 'w-[14%]',
       align: 'left',
       render: (invoice) => (
-        <Badge variant={getInvoiceBadgeVariant(invoice.status)} size="sm">
-          {getInvoiceStatusLabel(invoice.status)}
-        </Badge>
+        <div className="space-y-1">
+          <Badge variant={getInvoiceBadgeVariant(invoice)} size="sm">
+            {getInvoiceStatusLabel(invoice)}
+          </Badge>
+          {invoice.nextPaymentAttempt && invoice.status === 'OPEN' ? (
+            <p className="text-[11px] text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+              Próxima tentativa {formatDate(invoice.nextPaymentAttempt)}
+            </p>
+          ) : null}
+        </div>
       ),
     },
     {
@@ -739,6 +889,73 @@ function BillingHistoryDialog({
   );
 }
 
+function BillingHealthDialog({
+  open,
+  onOpenChange,
+  summary,
+}: {
+  open: boolean;
+  onOpenChange: (_open: boolean) => void;
+  summary: BillingSummary;
+}) {
+  const rows = [
+    { label: 'Conta Alusa', value: summary.billingInfo.contaName },
+    { label: 'Customer Stripe', value: summary.health.stripeCustomerId ?? 'Não criado' },
+    { label: 'Subscription Stripe', value: summary.health.stripeSubscriptionId ?? 'Não criada' },
+    {
+      label: 'Último webhook',
+      value: summary.health.lastWebhook
+        ? `${formatStripeEventLabel(summary.health.lastWebhook.eventType)} em ${formatDateTime(summary.health.lastWebhook.receivedAt)}`
+        : 'Nenhum webhook registrado',
+    },
+    {
+      label: 'Última reconciliação',
+      value: summary.health.lastReconciliation ? formatDateTime(summary.health.lastReconciliation) : 'Ainda não executada',
+    },
+    { label: 'Pendências locais', value: String(summary.health.pendingChanges) },
+    { label: 'Alertas abertos', value: String(summary.health.openIssues) },
+    {
+      label: 'Fila de webhooks',
+      value: formatWebhookStats(summary.health.webhookStats),
+    },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[620px] gap-5 rounded-2xl p-6 sm:p-7">
+        <DialogHeader className="space-y-1.5">
+          <DialogTitle className="text-xl font-semibold text-gray-950 alusa-dark:text-[color:var(--color-text-primary)]">
+            Saúde da assinatura
+          </DialogTitle>
+          <DialogDescription className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+            Consulte os sinais operacionais da assinatura da conta.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-xl border border-gray-200 alusa-dark:border-[color:var(--color-border-default)]">
+          {rows.map((row) => (
+            <div
+              key={row.label}
+              className="grid grid-cols-[170px_1fr] gap-4 border-b border-gray-100 px-4 py-3 text-sm last:border-b-0 alusa-dark:border-[color:var(--color-border-subtle)]"
+            >
+              <span className="text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">{row.label}</span>
+              <span className="min-w-0 break-words font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {summary.health.lastWebhook?.lastErrorCode ? (
+          <InfoCallout variant="warning" size="sm" showIcon>
+            Último webhook com alerta: {summary.health.lastWebhook.lastErrorCode}.
+          </InfoCallout>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function BillingNoticeDialog({
   notice,
   onOpenChange,
@@ -781,16 +998,20 @@ function PlanChangeDialog({
   open,
   onOpenChange,
   summary,
+  canStartTrial,
   actionLoading,
   pendingChange,
+  isReactivationFlow,
   onPlanChange,
   onOpenPortal,
 }: {
   open: boolean;
   onOpenChange: (_open: boolean) => void;
   summary: BillingSummary;
+  canStartTrial: boolean;
   actionLoading: string | null;
   pendingChange: boolean;
+  isReactivationFlow: boolean;
   onPlanChange: (_planCode: PublicPlan['code']) => void;
   onOpenPortal: () => void;
 }) {
@@ -824,7 +1045,8 @@ function PlanChangeDialog({
             {summary.plans.map((plan) => {
               const current = summary.account?.planCode === plan.code;
               const exceeds = summary.activeStudents > plan.maxActiveStudents;
-              const disabled = !summary.canManage || current || exceeds || actionLoading !== null || pendingChange;
+              const currentBlocked = current && !isReactivationFlow;
+              const disabled = !summary.canManage || currentBlocked || exceeds || actionLoading !== null || pendingChange;
               const theme = getPlanCardTheme(plan.code);
               const displayName = getPlanMarketingName(plan.code);
               const benefits = plan.includedFeatures.length > 0
@@ -849,7 +1071,7 @@ function PlanChangeDialog({
                   <div className="flex h-[55px] items-center justify-between gap-4 px-5 text-[#3d3a3f]">
                     <div className="flex items-center gap-2">
                       <h4 className="text-2xl font-medium">{displayName}</h4>
-                      {current ? <Badge variant="success">Atual</Badge> : null}
+                      {current ? <Badge variant={isReactivationFlow ? 'neutral' : 'success'}>{isReactivationFlow ? 'Anterior' : 'Atual'}</Badge> : null}
                     </div>
                     <p className="shrink-0 whitespace-nowrap text-lg font-medium">
                       {formatMoney(plan.amountCents, plan.currency)}
@@ -868,8 +1090,8 @@ function PlanChangeDialog({
                       <ul className="mt-7 space-y-2.5">
                         {benefits.slice(0, 5).map((benefit) => (
                           <li key={benefit} className="flex items-start gap-2 text-xs leading-4 text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
-                            <span className="mt-0.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-current text-[10px] leading-none">
-                              ✓
+                            <span className="mt-0.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-current">
+                              <Check className="size-3" aria-hidden="true" strokeWidth={2.5} />
                             </span>
                             <span>{benefit}</span>
                           </li>
@@ -892,7 +1114,19 @@ function PlanChangeDialog({
                         theme.button,
                       )}
                     >
-                      {current ? 'Plano atual' : actionLoading?.endsWith(`:${plan.code}`) ? 'Processando...' : `Torna-se ${displayName}`}
+                      {exceeds
+                        ? 'Plano incompatível'
+                        : currentBlocked
+                        ? 'Plano atual'
+                        : actionLoading?.endsWith(`:${plan.code}`)
+                          ? 'Processando...'
+                          : isReactivationFlow
+                            ? 'Reativar assinatura'
+                            : canStartTrial
+                            ? `Testar ${displayName} por ${plan.trialDays} dias`
+                            : summary.account?.status === 'TRIALING'
+                              ? 'Trocar plano'
+                              : 'Alterar plano'}
                     </Button>
                   </div>
                 </div>
@@ -987,6 +1221,52 @@ function formatMoney(amountCents: number, currency: string) {
   }).format(amountCents / 100);
 }
 
+function getPaymentMethodTitle(paymentMethod: PaymentMethodSummary) {
+  if (paymentMethod.status === 'unknown') return 'Pagamento indisponível';
+  if (paymentMethod.status === 'missing') return 'Nenhuma forma de pagamento cadastrada';
+
+  const brand = formatCardBrand(paymentMethod.brand);
+  return `${brand} final ${paymentMethod.last4}`;
+}
+
+function getPaymentMethodDescription(paymentMethod: PaymentMethodSummary) {
+  if (paymentMethod.status === 'unknown') return 'Não foi possível consultar a forma de pagamento agora.';
+  if (paymentMethod.status === 'missing') return 'Cadastre um cartão para a cobrança automática após o teste.';
+
+  const expiry = formatCardExpiry(paymentMethod.expMonth, paymentMethod.expYear);
+  return expiry ? `Validade ${expiry}` : null;
+}
+
+function getPlanActionLabel(input: {
+  requiresPaymentAttention: boolean;
+  isTrialing: boolean;
+  isCanceledSubscription: boolean;
+  hasManageableSubscription: boolean;
+  canStartTrial: boolean;
+}) {
+  if (input.requiresPaymentAttention) return 'Regularizar pagamento';
+  if (input.isCanceledSubscription) return 'Reativar assinatura';
+  if (input.isTrialing) return 'Trocar plano';
+  if (input.hasManageableSubscription) return 'Alterar plano';
+  return input.canStartTrial ? 'Começar teste grátis' : 'Escolher plano';
+}
+
+function formatCardBrand(brand: string | null) {
+  if (!brand) return 'Cartão';
+  const normalized = brand.toLowerCase();
+  if (normalized === 'visa') return 'Visa';
+  if (normalized === 'mastercard') return 'Mastercard';
+  if (normalized === 'amex') return 'American Express';
+  if (normalized === 'elo') return 'Elo';
+  if (normalized === 'hiper' || normalized === 'hipercard') return 'Hipercard';
+  return normalized.replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function formatCardExpiry(month: number | null, year: number | null) {
+  if (!month || !year) return null;
+  return `${String(month).padStart(2, '0')}/${year}`;
+}
+
 function formatDate(value: string | null) {
   if (!value) return '-';
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(value));
@@ -1001,13 +1281,41 @@ function formatLongDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
 function getRenewalLabel(account: BillingAccount | null) {
   if (!account) return 'Assinatura ainda não iniciada.';
+  if (account.status === 'CANCELED') return 'Assinatura cancelada.';
+  const trialDate = formatLongDate(account.trialEndsAt);
+  if (account.status === 'TRIALING' && trialDate) return `Teste gratuito ativo até ${trialDate}.`;
   const date = formatLongDate(account.currentPeriodEnd);
   if (account.cancelAtPeriodEnd && date) return `Sua assinatura será encerrada em ${date}.`;
-  if (account.status === 'CANCELED') return 'Assinatura cancelada.';
   if (date) return `Seu plano será renovado automaticamente em ${date}.`;
   return getBillingStatusLabel(account.status);
+}
+
+function getCancellationNotice(account: BillingAccount | null) {
+  if (!account?.cancelAtPeriodEnd) return null;
+  if (account.status === 'CANCELED' || account.accessStatus === 'CANCELED') {
+    return 'Assinatura cancelada. O acesso ao plano foi encerrado.';
+  }
+
+  const accessDate = formatDate(account.currentPeriodEnd ?? account.trialEndsAt);
+  if (accessDate === '-') {
+    return 'Assinatura cancelada. O acesso continua até o fim do período atual.';
+  }
+
+  if (account.status === 'TRIALING') {
+    return `Assinatura cancelada. O acesso ao teste gratuito continua até ${accessDate}.`;
+  }
+
+  return `Assinatura cancelada. O acesso continua até ${accessDate}.`;
 }
 
 function planName(code: PlanCode) {
@@ -1041,15 +1349,23 @@ function getBillingStatusLabel(status: BillingStatus) {
   }
 }
 
-function getPlanChangeLabel(change: BillingSummary['planChanges'][number]) {
-  if (change.type === 'UPGRADE') return `Upgrade para ${change.toPlanCode ? planName(change.toPlanCode) : 'novo plano'}`;
-  if (change.type === 'DOWNGRADE') return `Downgrade para ${change.toPlanCode ? planName(change.toPlanCode) : 'novo plano'}`;
-  if (change.type === 'CANCEL_AT_PERIOD_END') return 'Cancelamento agendado';
-  return 'Alteração pendente';
+function getPlanChangeLabel(change: BillingSummary['planChanges'][number], effectiveAt: string | null) {
+  const target = change.toPlanCode ? planName(change.toPlanCode) : 'novo plano';
+  if (change.type === 'UPGRADE') return `Alteração para ${target} aguarda confirmação do pagamento.`;
+  if (change.type === 'DOWNGRADE') {
+    return effectiveAt
+      ? `Plano alterado para ${target}. A mudança entra em vigor em ${formatDate(effectiveAt)}.`
+      : `Plano alterado para ${target}. A mudança entra em vigor no próximo ciclo.`;
+  }
+  if (change.type === 'CANCEL_AT_PERIOD_END') return 'Assinatura cancelada. O acesso continua até o fim do período atual.';
+  return 'Alteração de plano pendente.';
 }
 
-function getInvoiceStatusLabel(status: BillingInvoice['status']) {
-  switch (status) {
+function getInvoiceStatusLabel(invoice: BillingInvoice) {
+  if (isFreeTrialInvoice(invoice)) return 'Grátis';
+  if (invoice.failedAt && invoice.status === 'OPEN') return 'Falhou';
+
+  switch (invoice.status) {
     case 'PAID':
       return 'Pago';
     case 'OPEN':
@@ -1065,8 +1381,14 @@ function getInvoiceStatusLabel(status: BillingInvoice['status']) {
   }
 }
 
-function getInvoiceBadgeVariant(status: BillingInvoice['status']): BadgeVariant {
-  switch (status) {
+function isFreeTrialInvoice(invoice: BillingInvoice) {
+  return invoice.status === 'PAID' && invoice.amountPaid === 0 && invoice.amountDue === 0;
+}
+
+function getInvoiceBadgeVariant(invoice: BillingInvoice): BadgeVariant {
+  if (invoice.failedAt && invoice.status === 'OPEN') return 'destructive';
+
+  switch (invoice.status) {
     case 'PAID':
       return 'success';
     case 'OPEN':
@@ -1079,3 +1401,78 @@ function getInvoiceBadgeVariant(status: BillingInvoice['status']): BadgeVariant 
       return 'neutral';
   }
 }
+
+function getTrialEndingNotice(account: BillingAccount | null, paymentMethod: PaymentMethodSummary) {
+  if (!account || account.status !== 'TRIALING' || !account.trialEndsAt || account.cancelAtPeriodEnd) return null;
+  if (paymentMethod.status === 'present') return null;
+
+  const trialEndsAt = new Date(account.trialEndsAt);
+  const msUntilEnd = trialEndsAt.getTime() - Date.now();
+  if (msUntilEnd <= 0) {
+    return 'O teste gratuito terminou. Cadastre um cartão para manter a assinatura ativa.';
+  }
+
+  const daysUntilEnd = Math.ceil(msUntilEnd / (24 * 60 * 60 * 1000));
+  if (daysUntilEnd > 3) return null;
+
+  return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'}. Cadastre um cartão para evitar pausa no acesso.`;
+}
+
+function shouldShowTrialEndingDialog(account: BillingAccount) {
+  if (typeof window === 'undefined' || !account.trialEndsAt) return false;
+
+  const now = new Date();
+  const hour = now.getHours();
+  if (hour < 8 || hour > 20) return false;
+
+  const trialEndsAt = new Date(account.trialEndsAt);
+  const msUntilEnd = trialEndsAt.getTime() - now.getTime();
+  if (msUntilEnd > 3 * 24 * 60 * 60 * 1000) return false;
+
+  const minIntervalMs = msUntilEnd <= 24 * 60 * 60 * 1000
+    ? 6 * 60 * 60 * 1000
+    : 24 * 60 * 60 * 1000;
+  const key = `platform-billing:trial-ending:${account.id}`;
+  const previous = Number(window.localStorage.getItem(key) ?? '0');
+  if (Number.isFinite(previous) && now.getTime() - previous < minIntervalMs) return false;
+
+  window.localStorage.setItem(key, String(now.getTime()));
+  return true;
+}
+
+function formatWebhookStats(stats: Record<string, number>) {
+  const total = Object.values(stats).reduce((sum, value) => sum + value, 0);
+  if (total === 0) return 'Sem pendências';
+
+  const parts = [
+    stats.PENDING ? `${stats.PENDING} pendente${stats.PENDING === 1 ? '' : 's'}` : null,
+    stats.PROCESSING ? `${stats.PROCESSING} em processamento` : null,
+    stats.FAILED ? `${stats.FAILED} falha${stats.FAILED === 1 ? '' : 's'}` : null,
+    stats.EXHAUSTED ? `${stats.EXHAUSTED} esgotado${stats.EXHAUSTED === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+
+  return parts.join(', ');
+}
+
+function formatStripeEventLabel(eventType: string) {
+  switch (eventType) {
+    case 'checkout.session.completed':
+      return 'Checkout concluído';
+    case 'invoice.paid':
+    case 'invoice.payment_succeeded':
+      return 'Pagamento confirmado';
+    case 'invoice.payment_failed':
+      return 'Pagamento falhou';
+    case 'customer.subscription.trial_will_end':
+      return 'Teste terminando';
+    case 'customer.subscription.deleted':
+      return 'Assinatura encerrada';
+    case 'customer.subscription.updated':
+      return 'Assinatura atualizada';
+    default:
+      return eventType;
+  }
+}
+
+
+

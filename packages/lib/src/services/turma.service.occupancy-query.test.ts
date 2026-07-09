@@ -11,7 +11,7 @@ describe('buildTurmaOccupancyMatriculaWhere', () => {
 
     const [seatRule, tenantScope, turmaScope] = where.AND as Array<Record<string, unknown>>;
 
-    expect(seatRule).toHaveProperty('OR');
+    expect(seatRule).toHaveProperty('AND');
     expect(tenantScope).toEqual({ aluno: { contaId: 'conta-1' } });
     expect(turmaScope).toEqual({
       OR: [

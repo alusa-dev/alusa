@@ -33,5 +33,5 @@ export function resolveEnrollmentRootId(id: string, byId: Map<string, Enrollment
 }
 
 export function isClosedEnrollmentStatus(status: string) {
-  return status === 'CANCELADA' || status === 'RECUSADA';
+  return status === 'ENCERRADA' || status === 'CANCELADA' || status === 'RECUSADA';
 }

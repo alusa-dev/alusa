@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { processFamilyBillingOutboxBatch } from '@/src/server/family-billing/processor';
+import { processEnrollmentBillingOutboxBatch } from '@/src/server/matriculas/enrollment-billing-outbox.service';
 import { retryEnrollmentBillingProvisionJob } from '@/src/server/matriculas/retry-enrollment-billing-provision';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,20 @@ async function run(req: Request) {
     const limit = Number(url.searchParams.get('limit') ?? '25');
     const dryRun = url.searchParams.get('dryRun') === 'true';
 
-    const [individualRetry, familyOutbox] = await Promise.all([
+    const [enrollmentOutbox, individualRetry, familyOutbox] = await Promise.all([
+      dryRun
+        ? Promise.resolve({
+            attempted: 0,
+            processed: 0,
+            failed: 0,
+            requiresReconciliation: 0,
+            skipped: 0,
+            results: [],
+          })
+        : processEnrollmentBillingOutboxBatch({
+            contaId: tenantScope.contaId ?? undefined,
+            limit,
+          }),
       retryEnrollmentBillingProvisionJob({
         contaId: tenantScope.contaId ?? undefined,
         minAgeMinutes: Number.isFinite(minAgeMinutes) ? minAgeMinutes : 5,
@@ -48,6 +62,7 @@ async function run(req: Request) {
 
     return NextResponse.json({
       success: true,
+      enrollmentOutbox,
       individualRetry,
       familyOutbox,
       dryRun,

@@ -10,6 +10,7 @@ import {
   MatriculaConflictError,
   type CriarMatriculaInput,
 } from '@/src/server/matriculas/matricula.service';
+import { previewInitialEnrollmentBilling } from '@/src/server/matriculas/initial-enrollment-billing-preview.service';
 import {
   formatIsoDate,
   mapPeriodicidadeToCycle,
@@ -24,7 +25,6 @@ import {
   enqueueFamilyBillingOutbox,
   markFamilyBillingFailed,
   parseFamilyBillingPayload,
-  processFamilyBillingOutboxEvent,
   type FamilyBillingPayload,
 } from '@/src/server/family-billing/processor';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
@@ -258,6 +258,14 @@ function buildIdempotentResponse(
     },
     { status: 200, headers: { 'cache-control': 'no-store' } },
   );
+}
+
+function splitAmount(total: number, count: number) {
+  if (count <= 0) return [];
+  const cents = Math.round(total * 100);
+  const base = Math.floor(cents / count);
+  const remainder = cents - base * count;
+  return Array.from({ length: count }, (_, index) => (base + (index < remainder ? 1 : 0)) / 100);
 }
 
 export async function POST(request: Request) {
@@ -518,11 +526,54 @@ export async function POST(request: Request) {
       if (!aluno) continue;
 
       try {
+        const childBillingStrategy = {
+          kind: 'JOIN_EXISTING_CURRENT_CYCLE' as const,
+          financialGroupId: family.id,
+          effectiveAt: dataInicio.toISOString(),
+        };
+        const childPreview = await previewInitialEnrollmentBilling(
+          {
+            contaId,
+            billingStrategy: childBillingStrategy,
+            responsavelFinanceiroId: responsavel.id,
+            existingFamilyGroupId: family.id,
+            dataInicio,
+            dataFimContrato,
+            formaPagamento,
+            vencimentoDia: body.vencimentoDia,
+            descontoIds: body.descontoIds,
+            items: [
+              {
+                alunoId: aluno.id,
+                turmaId: body.modoTurmas === 'TURMAS' ? (item.turmaId ?? null) : null,
+                comboId: body.modoTurmas === 'COMBO' ? (item.comboId ?? null) : null,
+                planoId: body.modoTurmas === 'TURMAS' ? (body.planoId ?? null) : null,
+                taxaMatricula: body.taxaMatricula,
+                valorMensalidadeOverride: null,
+              },
+            ],
+          },
+          { prisma },
+        );
+
+        if (!childPreview.compatibility.compatible) {
+          const first = childPreview.compatibility.blockers[0];
+          throw new Error(first?.message ?? 'Preview financeiro familiar incompatível.');
+        }
+
         const created = await criarMatricula({
           ...commonInput,
           alunoId: aluno.id,
           turmaId: body.modoTurmas === 'TURMAS' ? (item.turmaId ?? null) : null,
           comboId: body.modoTurmas === 'COMBO' ? (item.comboId ?? null) : null,
+          uiRequestId: `${body.uiRequestId}:aluno:${aluno.id}:item:${index}`,
+          billingStrategy: childPreview.billingStrategy,
+          billingPreview: {
+            previewHash: childPreview.previewHash,
+            sourceVersion: childPreview.sourceVersion,
+            previewExpiresAt: new Date(childPreview.expiresAt),
+            billingStrategy: childPreview.billingStrategy,
+          },
         });
 
         await prisma.$transaction([
@@ -584,8 +635,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5) Recalcular valores com base apenas nas matrículas que deram certo,
-    //    e disparar a cobrança consolidada (taxa avulsa + assinatura) inline.
+    // 5) Recalcular valores com base apenas nas matrículas que deram certo
+    //    e registrar a composição financeira para provisionamento assíncrono.
     const successfulAlunoIds = new Set(
       results.filter((r) => r.status === 'success').map((r) => r.alunoId),
     );
@@ -611,11 +662,67 @@ export async function POST(request: Request) {
       },
     });
 
+    const successfulResults = results.filter(
+      (result): result is FamilyResultItem & { matriculaId: string } =>
+        result.status === 'success' && Boolean(result.matriculaId),
+    );
+    const subscriptionSplits = splitAmount(subscriptionValue, successCount);
+    const enrollmentFeeSplits = splitAmount(enrollmentFeeTotal, successCount);
+    const allocationRows = successfulResults.flatMap((result, resultIndex) => {
+      const base = {
+        contaId,
+        alunoId: result.alunoId,
+        matriculaId: result.matriculaId,
+        familyGroupId: family.id,
+        competenceStart: dataInicio,
+        competenceEnd: dataFimContrato,
+        metadata: {
+          source: 'MATRICULA_FAMILIAR',
+          billingMode: 'SHARED_PLAN',
+          modeloId: body.modeloId ?? null,
+          formaPagamento,
+          vencimentoDia: body.vencimentoDia,
+          descontoIds: body.descontoIds,
+        } as Prisma.InputJsonValue,
+      };
+      const rows = [];
+      if (subscriptionValue > 0) {
+        const amount = subscriptionSplits[resultIndex] ?? 0;
+        rows.push({
+          ...base,
+          chargeKind: 'MENSALIDADE',
+          amount,
+          baseAmount: amount,
+          discountAmount: 0,
+          status: 'PENDING',
+        });
+      }
+      if (enrollmentFeeTotal > 0) {
+        const amount = enrollmentFeeSplits[resultIndex] ?? 0;
+        rows.push({
+          ...base,
+          chargeKind: 'TAXA_MATRICULA',
+          amount,
+          baseAmount: amount,
+          discountAmount: 0,
+          status: 'PENDING',
+        });
+      }
+      return rows;
+    });
+
+    if (allocationRows.length > 0) {
+      await prisma.familyFinancialAllocation.createMany({
+        data: allocationRows,
+        skipDuplicates: true,
+      });
+    }
+
     const shouldCreateSubscription = subscriptionValue > 0;
     const shouldCreateEnrollmentFee = enrollmentFeeTotal > 0;
 
     let financialStatus: FamilyBillingStatus =
-      failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
+      failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.PENDENTE;
     let financialError: string | null = null;
 
     if (shouldCreateSubscription || shouldCreateEnrollmentFee) {
@@ -674,32 +781,14 @@ export async function POST(request: Request) {
       }
 
       try {
-        const event = await enqueueFamilyBillingOutbox({
+        await enqueueFamilyBillingOutbox({
           contaId,
           aggregateType: 'MATRICULA_FAMILIAR',
           aggregateId: family.id,
           matriculaFamiliarId: family.id,
           payload,
         });
-
-        try {
-          await processFamilyBillingOutboxEvent(event.id);
-          financialStatus =
-            failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
-        } catch (processError) {
-          const message =
-            processError instanceof Error ? processError.message : String(processError);
-          financialError = message;
-          financialStatus = FamilyBillingStatus.FALHO;
-          console.error(
-            '[POST /api/matriculas/familiar] Falha ao processar outbox inline; retry agendado',
-            {
-              familyId: family.id,
-              eventId: event.id,
-              message,
-            },
-          );
-        }
+        financialStatus = failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.PENDENTE;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         financialError = message;
@@ -718,6 +807,14 @@ export async function POST(request: Request) {
       });
     }
 
+    await prisma.matriculaFamiliar.update({
+      where: { id: family.id },
+      data: {
+        status: financialStatus,
+        ultimoErro: financialError,
+      },
+    });
+
     return NextResponse.json(
       {
         familyId: family.id,
@@ -726,7 +823,7 @@ export async function POST(request: Request) {
         modeloId: body.modeloId ?? null,
         financialError,
       },
-      { status: 201, headers: { 'cache-control': 'no-store' } },
+      { status: 202, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
     console.error('[POST /api/matriculas/familiar]', error);

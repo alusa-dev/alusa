@@ -1,18 +1,14 @@
-import { NextResponse } from 'next/server';
+﻿import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { Prisma, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
 import {
+  buscarMatriculaPorId,
   criarMatricula,
   listarMatriculas,
   MatriculaConflictError,
 } from '@/src/server/matriculas/matricula.service';
-import { prisma } from '@/src/prisma';
-import {
-  ensureCustomer,
-  syncCustomerNotificationsForUserSelection,
-  channelPreferencesFromWizardSelection,
-} from '@alusa/finance';
+import { processEnrollmentBillingOutboxEvent } from '@/src/server/matriculas/enrollment-billing-outbox.service';
 import { createEnrollmentCreatedNotification } from '@alusa/lib';
 import {
   createMatriculaInputDTOSchema,
@@ -31,10 +27,9 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
-import { provisionIndividualEnrollmentBilling } from '@/src/server/matriculas/enrollment-billing.orchestrator';
-import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
 import type {
+  MatriculaOperationalWarningDTO,
   MatriculaAsaasSubscriptionSyncDTO,
   MatriculaAsaasTaxaSyncDTO,
 } from '@/features/cadastro/matriculas/dtos';
@@ -75,11 +70,24 @@ async function resolveAuthContext(explicit?: string | null) {
 const statusValues = new Set(Object.values(StatusMatricula));
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
+function normalizeMatriculaStatusFilters(values: string[]): StatusMatricula[] {
+  return values.flatMap((value) => {
+    if (value === 'CONCLUIDA') return [StatusMatricula.ENCERRADA];
+    return statusValues.has(value as StatusMatricula) ? [value as StatusMatricula] : [];
+  });
+}
+
+function parseCommitDate(value: unknown) {
+  if (value instanceof Date) return value;
+  if (typeof value === 'string' || typeof value === 'number') return new Date(value);
+  return new Date(NaN);
+}
+
 /**
- * POST /api/matriculas — cria matrícula acadêmica e provisiona cobrança (taxa + assinatura).
+ * POST /api/matriculas â€” cria matrÃ­cula acadÃªmica e agenda preparaÃ§Ã£o financeira.
  *
- * Fluxo: criarMatricula (DB) → provisionIndividualEnrollmentBilling (Asaas outbound).
- * Idempotência opcional via body.uiRequestId ou header X-Idempotency-Key.
+ * Fluxo: criarMatricula (DB) â†’ outbox local â†’ worker financeiro â†’ webhooks/reconciliaÃ§Ã£o.
+ * IdempotÃªncia opcional via body.uiRequestId ou header X-Idempotency-Key.
  */
 
 export async function GET(req: Request) {
@@ -125,7 +133,7 @@ export async function GET(req: Request) {
       return jsonError(
         400,
         'PARAMETROS_INVALIDOS',
-        parsedQuery.error.issues[0]?.message ?? 'Parâmetros inválidos.',
+        parsedQuery.error.issues[0]?.message ?? 'ParÃ¢metros invÃ¡lidos.',
         parsedQuery.error.issues,
       );
     }
@@ -133,10 +141,10 @@ export async function GET(req: Request) {
     const auth = await resolveAuthContext(parsedQuery.data.contaId ?? null);
 
     if (auth.mismatch) {
-      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
+      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada nÃ£o pertence ao usuÃ¡rio.');
     }
     if (!auth.contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId Ã© obrigatÃ³rio');
     }
     if (
       !auth.user?.id ||
@@ -146,16 +154,12 @@ export async function GET(req: Request) {
       return jsonError(
         403,
         'PERMISSAO_NEGADA',
-        'Usuário não tem permissão para acessar matrículas.',
+        'UsuÃ¡rio nÃ£o tem permissÃ£o para acessar matrÃ­culas.',
       );
     }
 
-    const validStatus = parsedQuery.data.status.filter((value): value is StatusMatricula =>
-      statusValues.has(value as StatusMatricula),
-    );
-    const validExcludeStatus = parsedQuery.data.excludeStatus.filter(
-      (value): value is StatusMatricula => statusValues.has(value as StatusMatricula),
-    );
+    const validStatus = normalizeMatriculaStatusFilters(parsedQuery.data.status);
+    const validExcludeStatus = normalizeMatriculaStatusFilters(parsedQuery.data.excludeStatus);
 
     const result = await listarMatriculas({
       contaId: auth.contaId,
@@ -172,7 +176,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json(mapListMatriculasResultToDTO(result));
   } catch (error) {
-    console.error('Erro ao listar matrículas:', error);
+    console.error('Erro ao listar matrÃ­culas:', error);
     return jsonError(500, 'ERRO_LISTAR_MATRICULAS', (error as Error).message);
   }
 }
@@ -186,7 +190,7 @@ export async function POST(req: Request) {
       return jsonError(
         400,
         'PAYLOAD_INVALIDO',
-        parsedBody.error.issues[0]?.message ?? 'Payload inválido',
+        parsedBody.error.issues[0]?.message ?? 'Payload invÃ¡lido',
         parsedBody.error.issues,
       );
     }
@@ -194,26 +198,26 @@ export async function POST(req: Request) {
     const auth = await resolveAuthContext(parsedBody.data.contaId ?? null);
 
     if (auth.mismatch) {
-      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
+      return jsonError(403, 'CONTA_INVALIDA', 'Conta informada nÃ£o pertence ao usuÃ¡rio.');
     }
     if (!auth.contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId Ã© obrigatÃ³rio');
     }
     if (!auth.user?.id) {
       return jsonError(
         403,
         'USUARIO_NAO_AUTENTICADO',
-        'Usuário não autenticado ou ID não encontrado.',
+        'UsuÃ¡rio nÃ£o autenticado ou ID nÃ£o encontrado.',
       );
     }
     if (!auth.user.role) {
-      return jsonError(403, 'PAPEL_USUARIO_NAO_DEFINIDO', 'Papel do usuário não está definido.');
+      return jsonError(403, 'PAPEL_USUARIO_NAO_DEFINIDO', 'Papel do usuÃ¡rio nÃ£o estÃ¡ definido.');
     }
     if (!allowedRoles.has(String(auth.user.role).toUpperCase())) {
       return jsonError(
         403,
         'PERMISSAO_NEGADA',
-        `Usuário com papel "${auth.user.role}" não tem permissão para criar matrículas.`,
+        `UsuÃ¡rio com papel "${auth.user.role}" nÃ£o tem permissÃ£o para criar matrÃ­culas.`,
       );
     }
 
@@ -226,7 +230,7 @@ export async function POST(req: Request) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_INVALIDA',
-        'Forma de pagamento da mensalidade é inválida.',
+        'Forma de pagamento da mensalidade Ã© invÃ¡lida.',
       );
     }
 
@@ -234,22 +238,43 @@ export async function POST(req: Request) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_TAXA_INVALIDA',
-        'Forma de pagamento da taxa de matrícula é inválida.',
+        'Forma de pagamento da taxa de matrÃ­cula Ã© invÃ¡lida.',
+      );
+    }
+
+    const idempotencyHeader = req.headers.get('x-idempotency-key')?.trim() || null;
+    const commitIdempotencyKey = parsedBody.data.uiRequestId ?? idempotencyHeader ?? null;
+    if (!commitIdempotencyKey) {
+      return jsonError(
+        400,
+        'IDEMPOTENCY_KEY_OBRIGATORIA',
+        'Informe uma chave de idempotÃªncia para confirmar a matrÃ­cula.',
+      );
+    }
+
+    const previewExpiresAt = parseCommitDate(parsedBody.data.previewExpiresAt);
+    if (Number.isNaN(previewExpiresAt.getTime())) {
+      return jsonError(400, 'PREVIEW_EXPIRACAO_INVALIDA', 'ExpiraÃ§Ã£o do preview invÃ¡lida.');
+    }
+    if (previewExpiresAt <= new Date()) {
+      return jsonError(
+        409,
+        'PREVIEW_EXPIRADO',
+        'O preview da matrÃ­cula expirou. Gere um novo preview antes de confirmar.',
       );
     }
 
     let payload;
     try {
-      const idempotencyHeader = req.headers.get('x-idempotency-key')?.trim() || null;
       payload = mapCreateMatriculaDTOToServiceInput({
         body: parsedBody.data,
         contaId: auth.contaId,
         createdById: auth.user.id,
-        uiRequestId: parsedBody.data.uiRequestId ?? idempotencyHeader ?? undefined,
+        uiRequestId: commitIdempotencyKey,
       });
     } catch (error) {
       const message = (error as Error).message;
-      if (message === 'dataFimContrato é obrigatório.') {
+      if (message === 'dataFimContrato Ã© obrigatÃ³rio.') {
         return jsonError(400, 'DATA_FIM_CONTRATO_OBRIGATORIA', message);
       }
       return jsonError(400, 'PAYLOAD_INVALIDO', message);
@@ -263,7 +288,7 @@ export async function POST(req: Request) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_INVALIDA',
-        'Forma de pagamento da mensalidade não suporta cobrança no Asaas.',
+        'Forma de pagamento da mensalidade nÃ£o suporta cobranÃ§a no Asaas.',
       );
     }
 
@@ -271,7 +296,7 @@ export async function POST(req: Request) {
       return jsonError(
         422,
         'FORMA_PAGAMENTO_TAXA_INVALIDA',
-        'Forma de pagamento da taxa de matrícula não suporta cobrança no Asaas.',
+        'Forma de pagamento da taxa de matrÃ­cula nÃ£o suporta cobranÃ§a no Asaas.',
       );
     }
 
@@ -287,143 +312,97 @@ export async function POST(req: Request) {
         return jsonError(
           422,
           'DATA_FIM_INVALIDA',
-          `A data de término do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de término ou o dia de vencimento.`,
+          `A data de tÃ©rmino do contrato (${dataFimContratoIso}) precisa ser igual ou posterior ao primeiro vencimento (${previewNextDueDateIso}). Ajuste a data de tÃ©rmino ou o dia de vencimento.`,
         );
       }
     }
 
-    if (willCreateSubscription || willCreateEnrollmentFee) {
-      const gate = await guardFinancialAccountOr412(auth.contaId);
-      if (!gate.ok) return gate.response;
-    }
-
     const result = await criarMatricula(payload);
+
+    let billingOutboxResult: Awaited<ReturnType<typeof processEnrollmentBillingOutboxEvent>> | null =
+      null;
+    const billingOutboxEventId =
+      (result as { billingOutboxEventId?: string | null }).billingOutboxEventId ?? null;
+    if (billingOutboxEventId) {
+      billingOutboxResult = await processEnrollmentBillingOutboxEvent(billingOutboxEventId);
+      const refreshedMatricula = await buscarMatriculaPorId({
+        id: result.matricula.id,
+        contaId: auth.contaId,
+      });
+      if (refreshedMatricula) {
+        result.matricula = refreshedMatricula;
+        const refreshedTaxa = refreshedMatricula.cobrancas.find(
+          (cobranca) => cobranca.tipo === 'TAXA_MATRICULA',
+        );
+        const refreshedMensalidade = refreshedMatricula.cobrancas.find(
+          (cobranca) => cobranca.tipo === 'MENSALIDADE',
+        );
+        if (refreshedTaxa) {
+          result.cobrancas.taxa = refreshedTaxa;
+        }
+        if (refreshedMensalidade) {
+          result.cobrancas.mensalidade = refreshedMensalidade;
+        }
+      }
+    }
 
     void createEnrollmentCreatedNotification({
       contaId: auth.contaId,
       matriculaId: result.matricula.id,
       actorUserId: auth.user.id,
     }).catch((error) => {
-      console.error('[API Matrícula] Falha não crítica ao criar notificação interna de matrícula', {
+      console.error('[API MatrÃ­cula] Falha nÃ£o crÃ­tica ao criar notificaÃ§Ã£o interna de matrÃ­cula', {
         matriculaId: result.matricula.id,
         message: error instanceof Error ? error.message : String(error),
       });
     });
 
-    let notificationSync: {
-      applied: { email: boolean; sms: boolean; whatsapp: boolean };
-      warnings: Array<{
-        notificationId: string;
-        event: string;
-        channel: string;
-        code: string;
-        message: string;
-      }>;
-    } | null = null;
-
-    if (parsedBody.data.notificationChannelsConfigured) {
-      try {
-        const payer = payload.responsavelFinanceiroId
-          ? { type: 'RESPONSAVEL' as const, id: payload.responsavelFinanceiroId }
-          : { type: 'ALUNO' as const, id: payload.alunoId };
-
-        const ensuredCustomer = await ensureCustomer({
-          contaId: auth.contaId,
-          payer,
-        });
-
-        if (ensuredCustomer.success) {
-          const channelPrefs = channelPreferencesFromWizardSelection(
-            parsedBody.data.notificationChannels,
-          );
-          const syncResult = await syncCustomerNotificationsForUserSelection(
-            auth.contaId,
-            ensuredCustomer.data.customerId,
-            channelPrefs,
-          );
-
-          notificationSync = {
-            applied: syncResult.applied,
-            warnings: syncResult.warnings,
-          };
-
-          if (syncResult.warnings.length > 0) {
-            console.warn('[API Matrícula] Avisos ao sincronizar notificações do customer', {
-              matriculaId: result.matricula.id,
-              customerId: ensuredCustomer.data.customerId,
-              warnings: syncResult.warnings,
-            });
-          }
-        } else {
-          console.warn(
-            '[API Matrícula] Não foi possível garantir o customer para sincronizar notificações',
-            {
-              matriculaId: result.matricula.id,
-              error: ensuredCustomer.error,
-            },
-          );
-        }
-      } catch (error) {
-        console.error(
-          '[API Matrícula] Falha não crítica ao sincronizar notificações escolhidas no wizard',
-          {
-            matriculaId: result.matricula.id,
-            message: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
-
+    const notificationSync = null;
+    const operationalWarnings: MatriculaOperationalWarningDTO[] = [];
     let taxaSync: MatriculaAsaasTaxaSyncDTO | null = null;
     let subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null = null;
 
-    const billingOutcome = await provisionIndividualEnrollmentBilling({
-      contaId: auth.contaId,
-      actorUserId: auth.user.id,
-      matriculaId: result.matricula.id,
-      payload: {
-        criarCobranca: payload.criarCobranca,
-        gerarCobrancaTaxa: payload.gerarCobrancaTaxa,
-        taxaIsenta: payload.taxaIsenta,
-      },
-      preco: result.preco,
-      cobrancas: {
-        taxa: result.cobrancas.taxa
-          ? {
-              id: result.cobrancas.taxa.id,
-              formaPagamento: result.cobrancas.taxa.formaPagamento,
-              asaasPaymentId: result.cobrancas.taxa.asaasPaymentId,
-            }
-          : null,
-        mensalidade: null,
-      },
-      matriculaSnapshot: {
-        asaasSubscriptionId: result.matricula.asaasSubscriptionId,
-      },
-    });
+    const currentBillingProvisionStatus = String(
+      result.matricula.billingProvisionStatus ?? 'NAO_APLICAVEL',
+    );
 
-    taxaSync = billingOutcome.taxaSync;
-    subscriptionSync = billingOutcome.subscriptionSync;
-
-    if (billingOutcome.cobrancas.taxa?.asaasPaymentId && result.cobrancas.taxa) {
-      result.cobrancas.taxa = {
-        ...result.cobrancas.taxa,
-        asaasPaymentId: billingOutcome.cobrancas.taxa.asaasPaymentId,
-      };
-    }
-
-    if (billingOutcome.cobrancas.mensalidade?.id) {
-      const mensalidade = await prisma.cobranca.findFirst({
-        where: { id: billingOutcome.cobrancas.mensalidade.id, contaId: auth.contaId },
+    if (
+      (willCreateEnrollmentFee || willCreateSubscription) &&
+      ['PENDENTE', 'PROCESSANDO', 'PARCIAL', 'FALHO', 'RESULTADO_INCERTO'].includes(
+        currentBillingProvisionStatus,
+      )
+    ) {
+      const isFailure =
+        currentBillingProvisionStatus === 'FALHO' ||
+        currentBillingProvisionStatus === 'RESULTADO_INCERTO' ||
+        billingOutboxResult?.status === 'FAILED' ||
+        billingOutboxResult?.status === 'REQUIRES_RECONCILIATION';
+      operationalWarnings.push({
+        type: 'FINANCIAL_PROVISION_PENDING',
+        code: isFailure ? 'FINANCEIRO_REQUER_ATENCAO' : 'FINANCEIRO_SINCRONIZANDO',
+        message: isFailure
+          ? 'Matrícula salva. O financeiro precisa de conferência antes de continuar.'
+          : 'Matrícula salva. O financeiro está sincronizando automaticamente.',
+        severity: isFailure ? 'WARNING' : 'INFO',
+        resourceId: result.matricula.id,
       });
-      result.cobrancas.mensalidade = mensalidade;
-    }
 
-    if (billingOutcome.matriculaSnapshot.asaasSubscriptionId) {
-      result.matricula = {
-        ...result.matricula,
-        asaasSubscriptionId: billingOutcome.matriculaSnapshot.asaasSubscriptionId,
-      };
+      if (willCreateEnrollmentFee) {
+        taxaSync = {
+          success: false,
+          error: isFailure ? 'FINANCEIRO_REQUER_ATENCAO' : 'FINANCEIRO_SINCRONIZANDO',
+        };
+      }
+
+      if (willCreateSubscription) {
+        subscriptionSync = {
+          success: false,
+          error: isFailure ? 'FINANCEIRO_REQUER_ATENCAO' : 'FINANCEIRO_SINCRONIZANDO',
+          message:
+            'Matrícula criada. O financeiro está sincronizando automaticamente.',
+          expectedWebhooks: isFailure ? [] : ['PAYMENT_CREATED', 'SUBSCRIPTION_CREATED'],
+        };
+      }
     }
 
     return NextResponse.json(
@@ -432,12 +411,36 @@ export async function POST(req: Request) {
         taxaSync,
         subscriptionSync,
         notificationSync,
+        operationalWarnings,
       }),
     );
   } catch (error) {
-    console.error('Erro ao criar matrícula:', error);
+    console.error('Erro ao criar matrÃ­cula:', error);
     if (error instanceof MatriculaConflictError) {
       return jsonError(409, error.code, error.message);
+    }
+    if (error instanceof Error && error.message === 'PREVIEW_EXPIRADO') {
+      return jsonError(
+        409,
+        'PREVIEW_EXPIRADO',
+        'O preview da matrícula expirou. Gere um novo preview antes de confirmar.',
+      );
+    }
+    if (error instanceof Error && error.message === 'PREVIEW_DESATUALIZADO') {
+      return jsonError(
+        409,
+        'PREVIEW_DESATUALIZADO',
+        'O preview da matrícula mudou. Revise os valores e confirme novamente.',
+      );
+    }
+    if (error instanceof Error && error.message.startsWith('PREVIEW_INCOMPATIVEL:')) {
+      const [, code, ...messageParts] = error.message.split(':');
+      return jsonError(
+        409,
+        'PREVIEW_INCOMPATIVEL',
+        messageParts.join(':') || 'A composição financeira da matrícula não está compatível.',
+        { code },
+      );
     }
     if (isPlatformBillingCapacityError(error)) {
       return jsonError(422, error.code, error.message, error.details);
@@ -450,7 +453,7 @@ export async function POST(req: Request) {
       return jsonError(
         500,
         'ERRO_INTERNO_MATRICULA',
-        'Falha interna ao preparar a matrícula. Atualize o servidor e tente novamente.',
+        'Falha interna ao preparar a matrÃ­cula. Atualize o servidor e tente novamente.',
       );
     }
     return jsonError(500, 'ERRO_CRIAR_MATRICULA', (error as Error).message);

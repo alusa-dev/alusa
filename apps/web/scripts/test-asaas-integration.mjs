@@ -8,6 +8,7 @@
  *   node scripts/test-asaas-integration.mjs [--dry-run] [--verbose]
  */
 
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -19,6 +20,12 @@ function log(message, data) {
   if (isVerbose) {
     console.log(`[Test Asaas] ${message}`, data || '');
   }
+}
+
+function isoDateFromNow(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
 }
 
 async function checkEnvironment() {
@@ -141,21 +148,75 @@ async function testMatriculaCreation(data) {
     planoId: data.plano.id,
     turmaId: data.turma.id,
     responsavelFinanceiroId: data.aluno.responsaveis[0]?.id || null,
+    dataInicio: isoDateFromNow(0),
+    dataFimContrato: isoDateFromNow(365),
     taxaMatricula: 80,
     taxaIsenta: false,
+    gerarCobrancaTaxa: true,
     vencimentoDia: 5,
     formaPagamento: 'BOLETO',
+    formaPagamentoTaxa: 'BOLETO',
     criarCobranca: true,
+    uiRequestId: `script-asaas-${randomUUID()}`,
+    billingStrategy: { kind: 'SEPARATE' },
     createdById: 'test-script',
   };
 
   try {
+    const previewResponse = await fetch('http://localhost:3000/api/matriculas/billing-preview', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contaId: payload.contaId,
+        strategy: 'CREATE_SEPARATE',
+        billingStrategy: payload.billingStrategy,
+        responsavelFinanceiroId: payload.responsavelFinanceiroId,
+        existingFamilyGroupId: null,
+        dataInicio: payload.dataInicio,
+        dataFimContrato: payload.dataFimContrato,
+        formaPagamento: payload.formaPagamento,
+        vencimentoDia: payload.vencimentoDia,
+        descontoIds: [],
+        items: [
+          {
+            alunoId: payload.alunoId,
+            turmaId: payload.turmaId,
+            planoId: payload.planoId,
+            comboId: null,
+            taxaMatricula: payload.taxaMatricula,
+            valorMensalidadeOverride: null,
+          },
+        ],
+      }),
+    });
+
+    if (!previewResponse.ok) {
+      const error = await previewResponse.json().catch(() => ({}));
+      console.error('Erro ao gerar preview financeiro:', error);
+      console.error('Dica: confirme que o servidor local esta autenticado para a conta usada no teste.');
+      process.exit(1);
+    }
+
+    const preview = await previewResponse.json();
+    if (!preview.compatibility?.compatible) {
+      console.error('Preview financeiro incompatível:', preview.compatibility?.blockers ?? []);
+      process.exit(1);
+    }
+
     const response = await fetch('http://localhost:3000/api/matriculas', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        ...payload,
+        billingStrategy: preview.billingStrategy,
+        previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
+        previewExpiresAt: preview.expiresAt,
+      }),
     });
 
     if (!response.ok) {
@@ -167,7 +228,8 @@ async function testMatriculaCreation(data) {
     const result = await response.json();
     console.log('✅ Matrícula criada com sucesso!');
     console.log(`   ID: ${result.matricula.id}`);
-    console.log(`   Asaas Subscription ID: ${result.matricula.asaasId || 'N/A'}`);
+    console.log(`   Provisionamento financeiro: ${result.matricula.billingProvisionStatus || 'N/A'}`);
+    console.log(`   Asaas Subscription ID: ${result.matricula.asaasId || 'N/A'} (pode ser preenchido pelo worker/webhook)`);
     console.log(`   Status: ${result.matricula.status}`);
     console.log('');
 
@@ -191,9 +253,13 @@ async function checkMatriculaAsaasSync(matriculaId) {
       where: { id: matriculaId },
       include: {
         cobrancas: true,
+        billingOutboxEvents: {
+          orderBy: { createdAt: 'desc' },
+          take: 3,
+        },
         logs: {
-          where: { action: 'ASAAS_INTEGRADO' },
-          take: 1,
+          orderBy: { createdAt: 'desc' },
+          take: 3,
         },
       },
     });
@@ -203,12 +269,24 @@ async function checkMatriculaAsaasSync(matriculaId) {
       return;
     }
 
+    console.log(`   Provisionamento financeiro local: ${matricula.billingProvisionStatus}`);
+
     if (matricula.asaasSubscriptionId) {
       console.log('✅ Matrícula sincronizada com Asaas');
       console.log(`   Subscription ID: ${matricula.asaasSubscriptionId}`);
+    } else if (matricula.billingProvisionStatus === 'PENDENTE') {
+      console.log('⏳ Provisionamento financeiro pendente');
+      console.log('   O worker de outbox ainda precisa preparar a assinatura/cobrança no Asaas');
     } else {
       console.warn('⚠️  Matrícula sem subscription no Asaas');
-      console.warn('   Verifique os logs do servidor para detalhes do erro');
+      console.warn('   Verifique o status de provisionamento, outbox e logs do servidor');
+    }
+
+    if (matricula.billingOutboxEvents.length > 0) {
+      console.log('   Outbox de provisionamento:');
+      matricula.billingOutboxEvents.forEach((event) => {
+        console.log(`   - ${event.eventType}: ${event.status} (${event.attempts} tentativa(s))`);
+      });
     }
 
     const cobrancaComAsaas = matricula.cobrancas.find((c) => c.asaasPaymentId);
@@ -220,7 +298,7 @@ async function checkMatriculaAsaasSync(matriculaId) {
     }
 
     if (matricula.logs.length > 0) {
-      console.log('✅ Log de integração registrado');
+      console.log('✅ Logs operacionais registrados');
     }
 
     console.log('');
@@ -264,6 +342,18 @@ async function showSummary() {
     const matriculasSemAsaas = await prisma.matricula.count({
       where: { asaasSubscriptionId: null, status: { not: 'CANCELADA' } },
     });
+    const provisionamentoPendente = await prisma.matricula.count({
+      where: {
+        billingProvisionStatus: { in: ['PENDENTE', 'PROCESSANDO'] },
+        status: { not: 'CANCELADA' },
+      },
+    });
+    const provisionamentoComErro = await prisma.matricula.count({
+      where: {
+        billingProvisionStatus: { in: ['FALHO', 'RESULTADO_INCERTO'] },
+        status: { not: 'CANCELADA' },
+      },
+    });
     const cobrancasComAsaas = await prisma.cobranca.count({
       where: { asaasPaymentId: { not: null } },
     });
@@ -276,16 +366,18 @@ async function showSummary() {
 
     console.log(`   Matrículas com Asaas: ${matriculasComAsaas}`);
     console.log(`   Matrículas sem Asaas: ${matriculasSemAsaas}`);
+    console.log(`   Provisionamento pendente/processando: ${provisionamentoPendente}`);
+    console.log(`   Provisionamento com erro/reconciliação: ${provisionamentoComErro}`);
     console.log(`   Cobranças com Asaas: ${cobrancasComAsaas}`);
     console.log(`   Webhooks processados: ${webhooksProcessados}`);
     console.log(`   Webhooks com erro: ${webhooksErro}`);
     console.log('');
 
-    if (matriculasSemAsaas > 0) {
+    if (provisionamentoComErro > 0) {
       console.warn(
-        `⚠️  ${matriculasSemAsaas} matrícula(s) ativa(s) sem sincronização com Asaas`,
+        `⚠️  ${provisionamentoComErro} matrícula(s) exigem intervenção/reconciliação financeira`,
       );
-      console.warn('   Execute o script de reprocessamento se necessário\n');
+      console.warn('   Use a ação operacional de reconciliação ou reprocessamento seguro\n');
     }
   } catch (error) {
     console.error('❌ Erro ao gerar resumo:', error.message);

@@ -1,0 +1,1 @@
+ALTER TYPE "RematriculaCampanhaStatus" ADD VALUE IF NOT EXISTS 'DELETED';

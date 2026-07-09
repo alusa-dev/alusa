@@ -74,5 +74,6 @@ export async function GET(
       : 'private, max-age=300, stale-while-revalidate=3600',
   );
 
-  return new Response(payload.buffer, { status: 200, headers });
+  const body = new Uint8Array(payload.buffer).buffer;
+  return new Response(body, { status: 200, headers });
 }

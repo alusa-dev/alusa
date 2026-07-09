@@ -10,191 +10,129 @@ import {
 
 describe('matricula-occupancy', () => {
   describe('SEAT_OCCUPYING_STATUSES', () => {
-    it('inclui PENDENTE_TAXA', () => {
-      expect(SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.PENDENTE_TAXA);
-    });
-
-    it('inclui AGUARDANDO_CONFIRMACAO', () => {
-      expect(SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.AGUARDANDO_CONFIRMACAO);
-    });
-
-    it('inclui ATIVA', () => {
-      expect(SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.ATIVA);
-    });
-
-    it('não inclui PAUSADA', () => {
+    it('inclui apenas status que podem ocupar vaga quando vigentes', () => {
+      expect(SEAT_OCCUPYING_STATUSES).toEqual([
+        StatusMatricula.PENDENTE_TAXA,
+        StatusMatricula.AGUARDANDO_CONFIRMACAO,
+        StatusMatricula.ATIVA,
+      ]);
       expect(SEAT_OCCUPYING_STATUSES).not.toContain(StatusMatricula.PAUSADA);
-    });
-
-    it('não inclui RECUSADA', () => {
       expect(SEAT_OCCUPYING_STATUSES).not.toContain(StatusMatricula.RECUSADA);
-    });
-
-    it('não inclui CANCELADA', () => {
       expect(SEAT_OCCUPYING_STATUSES).not.toContain(StatusMatricula.CANCELADA);
+      expect(SEAT_OCCUPYING_STATUSES).not.toContain(StatusMatricula.ENCERRADA);
     });
   });
 
   describe('NON_SEAT_OCCUPYING_STATUSES', () => {
-    it('inclui PAUSADA', () => {
+    it('inclui status que nao ocupam vaga por padrao', () => {
       expect(NON_SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.PAUSADA);
-    });
-
-    it('inclui RECUSADA', () => {
       expect(NON_SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.RECUSADA);
-    });
-
-    it('inclui CANCELADA', () => {
       expect(NON_SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.CANCELADA);
+      expect(NON_SEAT_OCCUPYING_STATUSES).toContain(StatusMatricula.ENCERRADA);
     });
   });
 
   describe('doesMatriculaOccupySeat', () => {
-    describe('status que ocupam vaga', () => {
-      it('PENDENTE_TAXA → true', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.PENDENTE_TAXA)).toBe(true);
-      });
-
-      it('AGUARDANDO_CONFIRMACAO → true', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.AGUARDANDO_CONFIRMACAO)).toBe(true);
-      });
-
-      it('ATIVA → true', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.ATIVA)).toBe(true);
-      });
+    it('retorna true para status ocupantes', () => {
+      expect(doesMatriculaOccupySeat(StatusMatricula.PENDENTE_TAXA)).toBe(true);
+      expect(doesMatriculaOccupySeat(StatusMatricula.AGUARDANDO_CONFIRMACAO)).toBe(true);
+      expect(doesMatriculaOccupySeat(StatusMatricula.ATIVA)).toBe(true);
+      expect(doesMatriculaOccupySeat('ATIVA')).toBe(true);
     });
 
-    describe('status que NÃO ocupam vaga', () => {
-      it('PAUSADA → false', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.PAUSADA)).toBe(false);
-      });
-
-      it('RECUSADA → false', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.RECUSADA)).toBe(false);
-      });
-
-      it('CANCELADA → false', () => {
-        expect(doesMatriculaOccupySeat(StatusMatricula.CANCELADA)).toBe(false);
-      });
-    });
-
-    describe('aceita string', () => {
-      it('string "ATIVA" → true', () => {
-        expect(doesMatriculaOccupySeat('ATIVA')).toBe(true);
-      });
-
-      it('string "CANCELADA" → false', () => {
-        expect(doesMatriculaOccupySeat('CANCELADA')).toBe(false);
-      });
+    it('retorna false para status nao ocupantes', () => {
+      expect(doesMatriculaOccupySeat(StatusMatricula.PAUSADA)).toBe(false);
+      expect(doesMatriculaOccupySeat(StatusMatricula.RECUSADA)).toBe(false);
+      expect(doesMatriculaOccupySeat(StatusMatricula.CANCELADA)).toBe(false);
+      expect(doesMatriculaOccupySeat(StatusMatricula.ENCERRADA)).toBe(false);
+      expect(doesMatriculaOccupySeat('CANCELADA')).toBe(false);
     });
   });
 
   describe('getSeatOccupyingStatuses', () => {
-    it('retorna array com 3 status', () => {
-      const statuses = getSeatOccupyingStatuses();
-      expect(statuses).toHaveLength(3);
-    });
-
-    it('retorna cópia (não é mesma referência)', () => {
+    it('retorna copia com os status de ocupacao', () => {
       const a = getSeatOccupyingStatuses();
       const b = getSeatOccupyingStatuses();
-      expect(a).not.toBe(b);
-      expect(a).toEqual(b);
-    });
 
-    it('contém todos os status de ocupação', () => {
-      const statuses = getSeatOccupyingStatuses();
-      expect(statuses).toContain(StatusMatricula.PENDENTE_TAXA);
-      expect(statuses).toContain(StatusMatricula.AGUARDANDO_CONFIRMACAO);
-      expect(statuses).toContain(StatusMatricula.ATIVA);
+      expect(a).toHaveLength(3);
+      expect(a).not.toBe(b);
+      expect(a).toEqual([
+        StatusMatricula.PENDENTE_TAXA,
+        StatusMatricula.AGUARDANDO_CONFIRMACAO,
+        StatusMatricula.ATIVA,
+      ]);
     });
   });
 
   describe('buildSeatOccupancyWhereClause', () => {
-    it('inclui status base que ocupam vaga', () => {
-      const where = buildSeatOccupancyWhereClause();
-      expect(where.OR[0]).toEqual({
-        status: {
-          in: [
-            StatusMatricula.PENDENTE_TAXA,
-            StatusMatricula.AGUARDANDO_CONFIRMACAO,
-            StatusMatricula.ATIVA,
-          ],
-        },
+    const referenceDate = new Date('2026-07-03T12:00:00.000Z');
+
+    it('inclui status base e pausa com retencao de vaga', () => {
+      const where = buildSeatOccupancyWhereClause(referenceDate);
+
+      expect(where.AND[0]).toEqual({
+        OR: [
+          {
+            status: {
+              in: [
+                StatusMatricula.PENDENTE_TAXA,
+                StatusMatricula.AGUARDANDO_CONFIRMACAO,
+                StatusMatricula.ATIVA,
+              ],
+            },
+          },
+          {
+            status: StatusMatricula.PAUSADA,
+            manterVaga: true,
+          },
+        ],
       });
     });
 
-    it('inclui exceção de pausa com retenção de vaga', () => {
-      const where = buildSeatOccupancyWhereClause();
-      expect(where.OR[1]).toEqual({
-        status: StatusMatricula.PAUSADA,
-        manterVaga: true,
-      });
+    it('exclui matriculas futuras e vencidas da ocupacao atual', () => {
+      const where = buildSeatOccupancyWhereClause(referenceDate);
+
+      expect(where.AND[1]).toEqual({ dataInicio: { lte: referenceDate } });
+      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: referenceDate } });
     });
   });
 
   describe('calcularVagasDisponiveis', () => {
-    describe('turma com vagas', () => {
-      it('capacidade 30, ocupadas 20 → 10 disponíveis, sem alerta', () => {
-        const resultado = calcularVagasDisponiveis(30, 20);
-        expect(resultado).toEqual({
-          disponiveis: 10,
-          temVaga: true,
-          alerta: false,
-        });
-      });
-
-      it('capacidade 30, ocupadas 28 → 2 disponíveis, com alerta', () => {
-        const resultado = calcularVagasDisponiveis(30, 28);
-        expect(resultado).toEqual({
-          disponiveis: 2,
-          temVaga: true,
-          alerta: true,
-          mensagem: '⚠️ Apenas 2 vaga(s) restante(s)',
-        });
-      });
-
-      it('capacidade 30, ocupadas 29 → 1 disponível, com alerta', () => {
-        const resultado = calcularVagasDisponiveis(30, 29);
-        expect(resultado).toEqual({
-          disponiveis: 1,
-          temVaga: true,
-          alerta: true,
-          mensagem: '⚠️ Apenas 1 vaga(s) restante(s)',
-        });
+    it('calcula turma com vagas sem alerta', () => {
+      expect(calcularVagasDisponiveis(30, 20)).toEqual({
+        disponiveis: 10,
+        temVaga: true,
+        alerta: false,
       });
     });
 
-    describe('turma sem vagas', () => {
-      it('capacidade 30, ocupadas 30 → 0 disponíveis', () => {
-        const resultado = calcularVagasDisponiveis(30, 30);
-        expect(resultado).toEqual({
-          disponiveis: 0,
-          temVaga: false,
-          alerta: true,
-          mensagem: 'Turma sem vagas disponíveis',
-        });
+    it('alerta quando restam duas vagas ou menos', () => {
+      expect(calcularVagasDisponiveis(30, 28)).toEqual({
+        disponiveis: 2,
+        temVaga: true,
+        alerta: true,
+        mensagem: '⚠️ Apenas 2 vaga(s) restante(s)',
       });
-
-      it('capacidade 30, ocupadas 35 → 0 disponíveis (não fica negativo)', () => {
-        const resultado = calcularVagasDisponiveis(30, 35);
-        expect(resultado).toEqual({
-          disponiveis: 0,
-          temVaga: false,
-          alerta: true,
-          mensagem: 'Turma sem vagas disponíveis',
-        });
+      expect(calcularVagasDisponiveis(30, 29)).toEqual({
+        disponiveis: 1,
+        temVaga: true,
+        alerta: true,
+        mensagem: '⚠️ Apenas 1 vaga(s) restante(s)',
       });
     });
 
-    describe('turma vazia', () => {
-      it('capacidade 30, ocupadas 0 → 30 disponíveis', () => {
-        const resultado = calcularVagasDisponiveis(30, 0);
-        expect(resultado).toEqual({
-          disponiveis: 30,
-          temVaga: true,
-          alerta: false,
-        });
+    it('nao deixa vagas negativas', () => {
+      expect(calcularVagasDisponiveis(30, 30)).toEqual({
+        disponiveis: 0,
+        temVaga: false,
+        alerta: true,
+        mensagem: 'Turma sem vagas disponíveis',
+      });
+      expect(calcularVagasDisponiveis(30, 35)).toEqual({
+        disponiveis: 0,
+        temVaga: false,
+        alerta: true,
+        mensagem: 'Turma sem vagas disponíveis',
       });
     });
   });

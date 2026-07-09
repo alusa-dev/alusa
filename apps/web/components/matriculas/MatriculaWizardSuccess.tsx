@@ -19,6 +19,9 @@ export function MatriculaWizardSuccess({
   onGoToList,
 }: MatriculaWizardSuccessProps) {
   const invoiceUrl = payload.asaasSync?.taxa?.invoiceUrl ?? null;
+  const financeiroSincronizando =
+    payload.matricula.billingProvisionStatus === 'PENDENTE' ||
+    payload.matricula.billingProvisionStatus === 'PROCESSANDO';
 
   const formatter = useMemo(
     () => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }),
@@ -57,7 +60,9 @@ export function MatriculaWizardSuccess({
           Matrícula criada com sucesso!
         </CardTitle>
         <p className="text-sm text-emerald-700">
-          Envie o link de pagamento do Asaas para o responsável confirmar o pagamento da taxa.
+          {financeiroSincronizando
+            ? 'O vínculo já foi registrado. O financeiro está sincronizando automaticamente.'
+            : 'Acompanhe contrato e cobranças pela lista de matrículas.'}
         </p>
       </CardHeader>
       <CardContent className="space-y-6 text-sm text-emerald-900">
@@ -105,7 +110,17 @@ export function MatriculaWizardSuccess({
           </div>
         </div>
 
-        {invoiceUrl ? (
+        {financeiroSincronizando ? (
+          <div className="rounded-xl border border-emerald-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-emerald-500">
+              Sincronização financeira
+            </p>
+            <p className="mt-2 text-sm text-emerald-700">
+              A cobrança será criada pelo processamento automático. Se houver falha, a matrícula
+              ficará marcada para intervenção da secretaria ou do financeiro.
+            </p>
+          </div>
+        ) : invoiceUrl ? (
           <div className="rounded-xl border border-emerald-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-emerald-500">Link de pagamento (Asaas)</p>
             <div className="mt-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">

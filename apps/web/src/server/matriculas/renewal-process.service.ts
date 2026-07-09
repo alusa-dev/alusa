@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+﻿import { createHash } from 'crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
@@ -6,6 +6,7 @@ import {
   type RenewalOrigin,
   type RenewalHolderType,
 } from '@alusa/domain';
+import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
 import { buildSeatOccupancyWhereClause } from '@alusa/lib';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
@@ -18,6 +19,25 @@ import {
 import { assertStudentCapacity } from '@/src/server/platform-billing/capacity';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+type RenewalRemoteCancellationStatus = 'NOT_NEEDED' | 'CANCELLED' | 'REQUIRES_RECONCILIATION' | 'FAILED';
+
+type RenewalRemoteCancellationIssue = {
+  targetType: 'PAYMENT' | 'SUBSCRIPTION';
+  externalId: string;
+  code: string;
+  message: string;
+  uncertain: boolean;
+};
+
+type RenewalRemoteCancellationResult = {
+  status: RenewalRemoteCancellationStatus;
+  cancelledPaymentIds: string[];
+  cancelledSubscriptionIds: string[];
+  alreadyAbsentPaymentIds: string[];
+  alreadyAbsentSubscriptionIds: string[];
+  issues: RenewalRemoteCancellationIssue[];
+};
 
 export type RenewalFinancialTermsInput = {
   paymentMethod?: 'BOLETO' | 'PIX' | 'CARTAO_CREDITO' | null;
@@ -239,7 +259,7 @@ async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInp
         {
           sourceEnrollmentId: 'process',
           code: 'CAMPAIGN_REQUIRED',
-          message: 'Rematrícula de campanha exige campanha vinculada.',
+          message: 'RematrÃ­cula de campanha exige campanha vinculada.',
         },
       ],
     };
@@ -257,7 +277,7 @@ async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInp
         {
           sourceEnrollmentId: 'process',
           code: 'CAMPAIGN_NOT_FOUND',
-          message: 'Campanha não encontrada para este período.',
+          message: 'Campanha nÃ£o encontrada para este perÃ­odo.',
         },
       ],
     };
@@ -270,7 +290,7 @@ async function loadCampaignSnapshot(prisma: PrismaLike, input: RenewalProcessInp
         {
           sourceEnrollmentId: 'process',
           code: 'CAMPAIGN_NOT_ACTIVE',
-          message: 'A campanha precisa estar ativa para iniciar ou confirmar rematrículas.',
+          message: 'A campanha precisa estar ativa para iniciar ou confirmar rematrÃ­culas.',
         },
       ],
     };
@@ -476,7 +496,7 @@ async function findDuplicateRenewalItems(
     return duplicates.map((item) => ({
       sourceEnrollmentId: item.matriculaOrigemId,
       code: 'DUPLICATE_SOURCE_TARGET_PERIOD',
-      message: 'Já existe rematrícula ativa para este vínculo e período de destino.',
+      message: 'JÃ¡ existe rematrÃ­cula ativa para este vÃ­nculo e perÃ­odo de destino.',
     }));
   }
 
@@ -494,7 +514,7 @@ async function findDuplicateRenewalItems(
   return sourceRows.filter((source) => duplicateRootIds.has(resolveEnrollmentRootId(source.id, chainById))).map((source) => ({
     sourceEnrollmentId: source.id,
     code: 'DUPLICATE_SOURCE_TARGET_PERIOD',
-    message: 'Já existe rematrícula ativa para este vínculo e período de destino.',
+    message: 'JÃ¡ existe rematrÃ­cula ativa para este vÃ­nculo e perÃ­odo de destino.',
   }));
 }
 
@@ -528,7 +548,7 @@ async function findOutdatedSourceEnrollments(
       {
         sourceEnrollmentId: source.id,
         code: 'OUTDATED_SOURCE_ENROLLMENT',
-        message: 'Esta matrícula já possui uma rematrícula posterior. Use o vínculo mais recente como origem.',
+        message: 'Esta matrÃ­cula jÃ¡ possui uma rematrÃ­cula posterior. Use o vÃ­nculo mais recente como origem.',
       },
     ];
   });
@@ -566,7 +586,7 @@ async function validateRenewalCapacity(
           contaId: input.contaId,
           turmaId: classId,
           dataFimContrato: { gte: effectiveAt },
-          ...buildSeatOccupancyWhereClause(),
+          ...buildSeatOccupancyWhereClause(effectiveAt),
           id: { notIn: sourceIds },
         },
       }),
@@ -586,7 +606,7 @@ async function validateRenewalCapacity(
         ...items.map((item) => ({
           sourceEnrollmentId: item.sourceEnrollmentId,
           code: 'TARGET_CLASS_FULL',
-          message: `Turma futura "${targetClass.nome}" não possui vagas disponíveis.`,
+          message: `Turma futura "${targetClass.nome}" nÃ£o possui vagas disponÃ­veis.`,
         })),
       );
     }
@@ -602,7 +622,7 @@ async function validateRenewalCapacity(
           contaId: input.contaId,
           comboId,
           dataFimContrato: { gte: effectiveAt },
-          ...buildSeatOccupancyWhereClause(),
+          ...buildSeatOccupancyWhereClause(effectiveAt),
           id: { notIn: sourceIds },
         },
       }),
@@ -623,7 +643,7 @@ async function validateRenewalCapacity(
         ...items.map((item) => ({
           sourceEnrollmentId: item.sourceEnrollmentId,
           code: 'TARGET_COMBO_FULL',
-          message: `Combo futuro "${targetCombo.nome}" não possui vagas disponíveis.`,
+          message: `Combo futuro "${targetCombo.nome}" nÃ£o possui vagas disponÃ­veis.`,
         })),
       );
     }
@@ -698,7 +718,7 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
           externalBlockers.push({
             sourceEnrollmentId: item.sourceEnrollmentId,
             code: 'TARGET_PLAN_NOT_FOUND',
-            message: 'Plano futuro não encontrado na conta atual.',
+            message: 'Plano futuro nÃ£o encontrado na conta atual.',
           });
         }
 
@@ -707,7 +727,7 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
             externalBlockers.push({
               sourceEnrollmentId: item.sourceEnrollmentId,
               code: 'TARGET_CLASS_NOT_FOUND',
-              message: 'Turma futura não encontrada na conta atual.',
+              message: 'Turma futura nÃ£o encontrada na conta atual.',
             });
           }
           monthlyAmount = toMoney(targetPlan?.valor);
@@ -717,7 +737,7 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
             externalBlockers.push({
               sourceEnrollmentId: item.sourceEnrollmentId,
               code: 'TARGET_COMBO_NOT_FOUND',
-              message: 'Combo futuro não encontrado na conta atual.',
+              message: 'Combo futuro nÃ£o encontrado na conta atual.',
             });
           }
           monthlyAmount = toMoney(targetCombo?.valor ?? targetPlan?.valor);
@@ -1056,6 +1076,8 @@ export async function cancelRenewalProcess(
   input: { contaId: string; processId: string; actorId: string; reason?: string | null },
   deps: { prisma: PrismaClient },
 ) {
+  const remoteCancellation = await cancelFutureFinancialRemoteEffects(input, deps);
+
   return deps.prisma.$transaction(async (tx) => {
     const processo = await tx.rematriculaProcesso.findFirst({
       where: { id: input.processId, contaId: input.contaId },
@@ -1097,26 +1119,33 @@ export async function cancelRenewalProcess(
     const provisionedFinancial = processo.financeiros.filter(
       (financeiro) => financeiro.asaasPaymentId || financeiro.asaasSubscriptionId,
     );
-    if (provisionedFinancial.length > 0) {
+    if (remoteCancellation.status === 'REQUIRES_RECONCILIATION' || remoteCancellation.status === 'FAILED') {
+      const uncertain = remoteCancellation.status === 'REQUIRES_RECONCILIATION';
       await createRenewalPending(
         {
           contaId: input.contaId,
           processoId: processo.id,
           type: 'MANUAL_REVIEW',
           severity: 'BLOCKER',
-          code: 'FUTURE_FINANCE_REMOTE_CANCEL_REQUIRED',
-          title: 'Cancelamento financeiro remoto pendente',
-          message:
-            'A rematrícula futura foi cancelada localmente, mas existe cobrança ou assinatura futura já provisionada para cancelar/reconciliar no Asaas.',
+          code: uncertain
+            ? 'FUTURE_FINANCE_REMOTE_CANCEL_RECONCILIATION_REQUIRED'
+            : 'FUTURE_FINANCE_REMOTE_CANCEL_FAILED',
+          title: uncertain
+            ? 'Conferencia financeira do cancelamento'
+            : 'Cancelamento financeiro remoto com erro',
+          message: uncertain
+            ? 'O proximo ciclo foi cancelado localmente, mas a resposta do financeiro ficou incerta. Confira o Asaas antes de tentar novamente.'
+            : 'O proximo ciclo foi cancelado localmente, mas o financeiro remoto nao confirmou o cancelamento automatico.',
           rule: 'cancelamento_financeiro_futuro',
           impact:
-            'O vínculo atual foi preservado; a equipe financeira deve cancelar ou reconciliar os efeitos futuros provisionados.',
+            'O vinculo atual foi preservado; a equipe financeira deve conferir os efeitos futuros provisionados.',
           metadata: {
             financialAgreementIds: provisionedFinancial.map((financeiro) => financeiro.id),
             asaasPaymentIds: provisionedFinancial.map((financeiro) => financeiro.asaasPaymentId).filter(Boolean),
             asaasSubscriptionIds: provisionedFinancial
               .map((financeiro) => financeiro.asaasSubscriptionId)
               .filter(Boolean),
+            remoteCancellation,
           },
           createdById: input.actorId,
         },
@@ -1135,11 +1164,167 @@ export async function cancelRenewalProcess(
         actorId: input.actorId,
         action: 'RENEWAL_CANCELLED',
         reason: input.reason ?? null,
+        metadata: {
+          remoteCancellation,
+        } as Prisma.InputJsonValue,
       },
     });
 
-    return { processId: processo.id, status: 'CANCELLED' as const };
+    return { processId: processo.id, status: 'CANCELLED' as const, remoteCancellation };
   });
+}
+
+async function cancelFutureFinancialRemoteEffects(
+  input: { contaId: string; processId: string },
+  deps: { prisma: PrismaClient },
+): Promise<RenewalRemoteCancellationResult> {
+  const processo = await deps.prisma.rematriculaProcesso.findFirst({
+    where: { id: input.processId, contaId: input.contaId },
+    include: { financeiros: true },
+  });
+  if (!processo) throw new Error('REMATRICULA_NAO_ENCONTRADA');
+  if (['CANCELLED', 'EFFECTIVE', 'COMPLETED'].includes(processo.status)) {
+    throw new Error('REMATRICULA_NAO_CANCELAVEL');
+  }
+
+  const paymentIds = uniqueStrings(processo.financeiros.map((financeiro) => financeiro.asaasPaymentId));
+  const subscriptionIds = uniqueStrings(processo.financeiros.map((financeiro) => financeiro.asaasSubscriptionId));
+  const result: RenewalRemoteCancellationResult = {
+    status: 'NOT_NEEDED',
+    cancelledPaymentIds: [],
+    cancelledSubscriptionIds: [],
+    alreadyAbsentPaymentIds: [],
+    alreadyAbsentSubscriptionIds: [],
+    issues: [],
+  };
+
+  if (paymentIds.length === 0 && subscriptionIds.length === 0) {
+    return result;
+  }
+
+  if (!isAsaasEnabled()) {
+    return {
+      ...result,
+      status: 'REQUIRES_RECONCILIATION',
+      issues: [
+        ...paymentIds.map((externalId) => ({
+          targetType: 'PAYMENT' as const,
+          externalId,
+          code: 'ASAAS_DISABLED',
+          message: 'Integracao Asaas desativada; cancelamento remoto nao executado.',
+          uncertain: true,
+        })),
+        ...subscriptionIds.map((externalId) => ({
+          targetType: 'SUBSCRIPTION' as const,
+          externalId,
+          code: 'ASAAS_DISABLED',
+          message: 'Integracao Asaas desativada; cancelamento remoto nao executado.',
+          uncertain: true,
+        })),
+      ],
+    };
+  }
+
+  for (const paymentId of paymentIds) {
+    try {
+      await deletePayment(paymentId, { contaId: input.contaId });
+      result.cancelledPaymentIds.push(paymentId);
+    } catch (error) {
+      const issue = buildRemoteCancellationIssue('PAYMENT', paymentId, error);
+      if (issue.code === 'REMOTE_NOT_FOUND') {
+        result.alreadyAbsentPaymentIds.push(paymentId);
+      } else {
+        result.issues.push(issue);
+      }
+    }
+  }
+
+  for (const subscriptionId of subscriptionIds) {
+    try {
+      await deleteSubscription(subscriptionId, { contaId: input.contaId });
+      result.cancelledSubscriptionIds.push(subscriptionId);
+    } catch (error) {
+      const issue = buildRemoteCancellationIssue('SUBSCRIPTION', subscriptionId, error);
+      if (issue.code === 'REMOTE_NOT_FOUND') {
+        result.alreadyAbsentSubscriptionIds.push(subscriptionId);
+      } else {
+        result.issues.push(issue);
+      }
+    }
+  }
+
+  if (result.issues.some((issue) => issue.uncertain)) {
+    result.status = 'REQUIRES_RECONCILIATION';
+  } else if (result.issues.length > 0) {
+    result.status = 'FAILED';
+  } else {
+    result.status = 'CANCELLED';
+  }
+
+  return result;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
+function buildRemoteCancellationIssue(
+  targetType: 'PAYMENT' | 'SUBSCRIPTION',
+  externalId: string,
+  error: unknown,
+): RenewalRemoteCancellationIssue {
+  if (error instanceof AsaasHttpError) {
+    if (error.status === 404 || error.status === 410) {
+      return {
+        targetType,
+        externalId,
+        code: 'REMOTE_NOT_FOUND',
+        message: 'Registro financeiro nao encontrado no Asaas; tratado como ja cancelado/removido.',
+        uncertain: false,
+      };
+    }
+
+    return {
+      targetType,
+      externalId,
+      code: `ASAAS_HTTP_${error.status}`,
+      message: extractRemoteCancellationMessage(error),
+      uncertain: error.status === 408 || error.status === 409 || error.status === 429 || error.status >= 500,
+    };
+  }
+
+  return {
+    targetType,
+    externalId,
+    code: 'REMOTE_CANCEL_ERROR',
+    message: error instanceof Error ? error.message : String(error),
+    uncertain: true,
+  };
+}
+
+function extractRemoteCancellationMessage(error: AsaasHttpError): string {
+  const responseBody = error.responseBody;
+  if (responseBody && typeof responseBody === 'object') {
+    const message = 'message' in responseBody && typeof responseBody.message === 'string'
+      ? responseBody.message
+      : null;
+    if (message) return message;
+
+    const errors = 'errors' in responseBody && Array.isArray(responseBody.errors) ? responseBody.errors : [];
+    const descriptions = errors
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        return 'description' in item && typeof item.description === 'string'
+          ? item.description
+          : 'message' in item && typeof item.message === 'string'
+            ? item.message
+            : null;
+      })
+      .filter((value): value is string => Boolean(value));
+    if (descriptions.length > 0) return descriptions.join(', ');
+  }
+
+  return error.message;
 }
 
 export async function activateDueRenewalProcesses(
@@ -1196,12 +1381,12 @@ export async function activateDueRenewalProcesses(
             type: 'ACTIVATION_BLOCKED',
             severity: 'BLOCKER',
             code: 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
-            title: 'Ativação do próximo ciclo bloqueada',
+            title: 'AtivaÃ§Ã£o do prÃ³ximo ciclo bloqueada',
             message:
-              'O job de ativação encontrou sobreposição de contrato atual, reserva futura ausente ou financeiro futuro inconsistente.',
+              'O job de ativaÃ§Ã£o encontrou sobreposiÃ§Ã£o de contrato atual, reserva futura ausente ou financeiro futuro inconsistente.',
             rule: 'activate_future_cycle',
             impact:
-              'A matrícula futura não foi ativada e nenhuma correção automática de turma/contrato foi aplicada.',
+              'A matrÃ­cula futura nÃ£o foi ativada e nenhuma correÃ§Ã£o automÃ¡tica de turma/contrato foi aplicada.',
             metadata: {
               hasOverlap,
               hasMissingReservation,
@@ -1241,7 +1426,7 @@ export async function activateDueRenewalProcesses(
 
       await tx.matricula.updateMany({
         where: { contaId: input.contaId, id: { in: sourceIds } },
-        data: { status: 'CANCELADA', statusContrato: 'EXPIRADO' },
+        data: { status: 'ENCERRADA', statusContrato: 'EXPIRADO' },
       });
       await tx.matricula.updateMany({
         where: { contaId: input.contaId, id: { in: futureIds } },
@@ -1268,6 +1453,12 @@ export async function activateDueRenewalProcesses(
           contaId: input.contaId,
           processoId: full.id,
           action: 'FUTURE_CYCLE_ACTIVATED',
+          metadata: {
+            sourceEnrollmentIds: sourceIds,
+            futureEnrollmentIds: futureIds,
+            sourceStatus: 'ENCERRADA',
+            futureStatus: 'ATIVA',
+          } as Prisma.InputJsonValue,
         },
       });
       return { processId: full.id, status: 'EFFECTIVE' as const };
@@ -1401,7 +1592,7 @@ export async function editRenewalFutureLink(
       capacityTargets,
     );
     if (capacityBlockers.length > 0) {
-      throw new Error(capacityBlockers[0]?.message ?? 'Destino futuro sem vagas disponíveis.');
+      throw new Error(capacityBlockers[0]?.message ?? 'Destino futuro sem vagas disponÃ­veis.');
     }
 
     const beforeState = {
@@ -1659,6 +1850,26 @@ export async function editRenewalFutureLink(
       },
     });
 
+    const afterState = {
+      ...updated,
+      effectiveAt: updated.effectiveAt.toISOString(),
+      firstDueDate: updated.firstDueDate?.toISOString() ?? null,
+      monthlyTotal: Number(updated.monthlyTotal.toString()),
+      enrollmentFeeTotal: Number(updated.enrollmentFeeTotal.toString()),
+    };
+
+    await tx.rematriculaProcessoRevisao.create({
+      data: {
+        contaId: input.contaId,
+        processoId: processo.id,
+        version: updated.version,
+        reason: input.reason,
+        actorId: input.actorId,
+        beforeState: beforeState as Prisma.InputJsonValue,
+        afterState: afterState as Prisma.InputJsonValue,
+      },
+    });
+
     await tx.rematriculaAuditLog.create({
       data: {
         contaId: input.contaId,
@@ -1667,13 +1878,7 @@ export async function editRenewalFutureLink(
         action: 'FUTURE_LINK_UPDATED',
         reason: input.reason,
         beforeState: beforeState as Prisma.InputJsonValue,
-        afterState: {
-          ...updated,
-          effectiveAt: updated.effectiveAt.toISOString(),
-          firstDueDate: updated.firstDueDate?.toISOString() ?? null,
-          monthlyTotal: Number(updated.monthlyTotal.toString()),
-          enrollmentFeeTotal: Number(updated.enrollmentFeeTotal.toString()),
-        } as Prisma.InputJsonValue,
+        afterState: afterState as Prisma.InputJsonValue,
       },
     });
 

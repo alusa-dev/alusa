@@ -109,6 +109,7 @@ export async function POST(request: Request) {
       {
         previewId: preview.previewHash,
         previewHash: preview.previewHash,
+        sourceVersion: preview.sourceVersion,
         blocks: preview.blockers,
         warnings: preview.warnings,
         sourceBillingAction: 'NONE',

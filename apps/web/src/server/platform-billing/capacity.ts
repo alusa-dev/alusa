@@ -150,5 +150,5 @@ export function isPlatformBillingCapacityError(error: unknown): error is Platfor
 }
 
 async function acquirePlatformBillingContaLock(tx: PlatformBillingTx, contaId: string): Promise<void> {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-billing:capacity:${contaId}`}, 0))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-billing:capacity:${contaId}`}, 0))`;
 }

@@ -3,6 +3,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { getAccountVerificationStatus } from '../get-account-verification-status';
 
 const resolveProvisioningHintMock = vi.fn();
+const mockFindFirstKycProcess = vi.fn();
+
+vi.mock('@alusa/database', () => ({
+  prisma: {
+    kycProcess: {
+      findFirst: (...args: unknown[]) => mockFindFirstKycProcess(...args),
+    },
+  },
+}));
 
 vi.mock('../subaccount-provisioning-hint', () => ({
   resolveSubaccountProvisioningHint: (contaId: string) => resolveProvisioningHintMock(contaId),
@@ -40,8 +49,32 @@ function baseSnapshot(overrides: Partial<Record<string, unknown>> = {}) {
 describe('getAccountVerificationStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.ASAAS_ENVIRONMENT = 'sandbox';
+    mockFindFirstKycProcess.mockResolvedValue(null);
     mockEnsureSubaccountEmailSynced.mockResolvedValue({ synced: false, canonicalEmail: null });
     resolveProvisioningHintMock.mockResolvedValue(null);
+  });
+
+  it('prioriza KycProcess APPROVED local no sandbox e nÃ£o rebaixa por leitura atrasada', async () => {
+    const syncedAt = new Date('2026-07-02T04:27:35.000Z');
+    mockFindFirstKycProcess.mockResolvedValueOnce({
+      lastAsaasSyncAt: syncedAt,
+      updatedAt: syncedAt,
+      asaasAccount: {
+        commercialInfoStatus: null,
+        commercialInfoScheduledDate: null,
+      },
+    });
+
+    const result = await getAccountVerificationStatus('conta_1', { fresh: true });
+
+    expect(result.ready).toBe(true);
+    if (!result.ready) return;
+
+    expect(mockGetKycSnapshotByContaId).not.toHaveBeenCalled();
+    expect(result.data.status).toBe('ACCOUNT_ACTIVE');
+    expect(result.data.actions).toEqual([]);
+    expect(result.data.areas.every((area) => area.status === 'APPROVED')).toBe(true);
   });
 
   it('mapeia group com onboardingUrl para action REDIRECT com redirectUrl (sem uploadGroupId)', async () => {

@@ -28,6 +28,19 @@ describe('@alusa/platform-billing access policy', () => {
     })).toBe('RESTRICTED');
   });
 
+  it('restringe trial expirado mesmo antes do webhook de pausa', () => {
+    const account = buildAccount({
+      status: 'TRIALING',
+      accessStatus: 'ACTIVE',
+      trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+    });
+
+    expect(derivePlatformAccessStatus({
+      account,
+      now: new Date('2026-07-16T00:00:00.000Z'),
+    })).toBe('RESTRICTED');
+  });
+
   it('calcula grace period central de 7 dias', () => {
     expect(computeGracePeriodEnd({ failedAt: new Date('2026-06-01T00:00:00.000Z') }).toISOString())
       .toBe('2026-06-08T00:00:00.000Z');
@@ -48,10 +61,12 @@ function buildAccount(input: Partial<PlatformBillingAccountRecord>): PlatformBil
     currentPeriodEnd: null,
     cancelAtPeriodEnd: false,
     trialEndsAt: null,
+    trialWillEndNotifiedAt: null,
     gracePeriodEndsAt: null,
     restrictedAt: null,
     canceledAt: null,
     lastPaymentFailedAt: null,
+    lastReconciledAt: null,
     pendingPlanCode: null,
     pendingChangeType: null,
     pendingChangeEffectiveAt: null,

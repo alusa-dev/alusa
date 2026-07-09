@@ -4,13 +4,14 @@ import type { StatusMatricula } from '@prisma/client';
 // ESTADOS TERMINAIS E TRANSIÇÕES VÁLIDAS
 // ============================================================================
 
-const TERMINAL_STATUSES: readonly StatusMatricula[] = ['CANCELADA', 'RECUSADA'] as const;
+const TERMINAL_STATUSES: readonly StatusMatricula[] = ['ENCERRADA', 'CANCELADA', 'RECUSADA'] as const;
 
 const VALID_TRANSITIONS: Record<StatusMatricula, readonly StatusMatricula[]> = {
-  PENDENTE_TAXA: ['ATIVA', 'CANCELADA', 'RECUSADA'],
-  AGUARDANDO_CONFIRMACAO: ['ATIVA', 'CANCELADA', 'RECUSADA'],
-  ATIVA: ['PAUSADA', 'CANCELADA'],
-  PAUSADA: ['ATIVA', 'CANCELADA'],
+  PENDENTE_TAXA: ['ATIVA', 'ENCERRADA', 'CANCELADA', 'RECUSADA'],
+  AGUARDANDO_CONFIRMACAO: ['ATIVA', 'ENCERRADA', 'CANCELADA', 'RECUSADA'],
+  ATIVA: ['PAUSADA', 'ENCERRADA', 'CANCELADA'],
+  PAUSADA: ['ATIVA', 'ENCERRADA', 'CANCELADA'],
+  ENCERRADA: [],
   RECUSADA: [],
   CANCELADA: [],
 };
@@ -26,7 +27,7 @@ const SEAT_OCCUPYING: readonly StatusMatricula[] = [
 const ELEGIVEL_REMATRICULA: readonly StatusMatricula[] = ['ATIVA', 'PAUSADA'] as const;
 
 // Status que impedem edição estrutural (turma, plano, combo)
-const BLOCKS_STRUCTURAL_EDIT: readonly StatusMatricula[] = ['CANCELADA', 'RECUSADA'] as const;
+const BLOCKS_STRUCTURAL_EDIT: readonly StatusMatricula[] = ['ENCERRADA', 'CANCELADA', 'RECUSADA'] as const;
 
 // ============================================================================
 // FUNÇÕES PÚBLICAS

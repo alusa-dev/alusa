@@ -38,11 +38,16 @@ const SUPPORTED_EVENTS = new Set([
   'customer.subscription.created',
   'customer.subscription.updated',
   'customer.subscription.deleted',
+  'customer.subscription.paused',
+  'customer.subscription.resumed',
+  'customer.subscription.trial_will_end',
   'invoice.created',
   'invoice.finalized',
+  'invoice.updated',
   'invoice.paid',
   'invoice.payment_succeeded',
   'invoice.payment_failed',
+  'invoice.payment_action_required',
   'invoice.marked_uncollectible',
   'invoice.voided',
 ]);
@@ -235,6 +240,7 @@ async function processSubscriptionEvent(
   const shouldCommitPlan = shouldCommitPlanFromSubscriptionStatus(status);
   const accountPlanCode = shouldCommitPlan ? planCode : account.planCode;
   const shouldClearPendingPlan = Boolean(shouldCommitPlan && account.pendingPlanCode && planCode === account.pendingPlanCode);
+  const isTerminalCancellation = status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED';
   const updated = await store.updateAccountFromStripeSubscription({
     accountId: account.id,
     status,
@@ -243,9 +249,11 @@ async function processSubscriptionEvent(
     stripeSubscriptionId: subscriptionId,
     stripePriceId: shouldCommitPlan ? priceId : account.stripePriceId,
     currentPeriodEnd: readSubscriptionCurrentPeriodEnd(subscription),
-    cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+    cancelAtPeriodEnd: isTerminalCancellation ? false : subscription.cancel_at_period_end === true,
     trialEndsAt: readUnixDate(subscription.trial_end),
     canceledAt: readUnixDate(subscription.canceled_at),
+    restrictedAt: status === 'PAUSED' ? new Date() : null,
+    trialWillEndNotifiedAt: input.event.type === 'customer.subscription.trial_will_end' ? new Date() : undefined,
     pendingPlanCode: shouldClearPendingPlan ? null : undefined,
     pendingChangeType: shouldClearPendingPlan ? null : undefined,
     pendingChangeEffectiveAt: shouldClearPendingPlan ? null : undefined,
@@ -297,6 +305,16 @@ async function processInvoiceEvent(
 
   const priceId = readInvoicePriceId(invoice) ?? account.stripePriceId;
   const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
+  const isPaymentFailedEvent = input.event.type === 'invoice.payment_failed' || input.event.type === 'invoice.payment_action_required';
+  const isPaymentPaidEvent = input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded';
+  const invoiceFailure = readInvoicePaymentFailure(invoice);
+  const nextPaymentAttempt = readUnixDate(invoice.next_payment_attempt);
+  const failedAt = isPaymentFailedEvent ? new Date() : isPaymentPaidEvent ? null : undefined;
+
+  const invoiceStatus = mapInvoiceStatus(readString(invoice.status));
+  const amountDue = readNumber(invoice.amount_due) ?? 0;
+  const amountPaid = readNumber(invoice.amount_paid) ?? 0;
+  const attemptCount = readNumber(invoice.attempt_count) ?? 0;
 
   await store.upsertInvoice({
     contaId: account.contaId,
@@ -308,9 +326,9 @@ async function processInvoiceEvent(
     stripePriceId: priceId ?? undefined,
     planCode: planCode ?? undefined,
     number: readString(invoice.number) ?? undefined,
-    status: mapInvoiceStatus(readString(invoice.status)),
-    amountDue: readNumber(invoice.amount_due) ?? 0,
-    amountPaid: readNumber(invoice.amount_paid) ?? 0,
+    status: invoiceStatus,
+    amountDue,
+    amountPaid,
     currency: readString(invoice.currency) ?? 'brl',
     hostedInvoiceUrl: readString(invoice.hosted_invoice_url) ?? undefined,
     invoicePdf: readString(invoice.invoice_pdf) ?? undefined,
@@ -318,32 +336,92 @@ async function processInvoiceEvent(
     periodEnd: readUnixDate(invoice.period_end) ?? undefined,
     dueDate: readUnixDate(invoice.due_date) ?? undefined,
     paidAt: readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at) ?? undefined,
+    failedAt,
+    attempted: readBoolean(invoice.attempted) ?? false,
+    attemptCount,
+    nextPaymentAttempt: isPaymentPaidEvent ? null : nextPaymentAttempt ?? undefined,
+    lastPaymentErrorCode: isPaymentPaidEvent ? null : invoiceFailure.code ?? undefined,
+    lastPaymentErrorMessage: isPaymentPaidEvent ? null : invoiceFailure.message ?? undefined,
     raw: invoice,
     lastStripeEventId: input.event.id,
   });
 
+  await store.createAuditLog({
+    contaId: account.contaId,
+    billingAccountId: account.id,
+    action: resolveInvoiceAuditAction(input.event.type),
+    entityType: 'StripeInvoice',
+    entityId: invoiceId,
+    correlationId: input.event.id,
+    metadata: {
+      environment: input.environment,
+      eventType: input.event.type,
+      status: invoiceStatus,
+      amountDue,
+      amountPaid,
+      attemptCount,
+      nextPaymentAttempt: nextPaymentAttempt?.toISOString() ?? null,
+      failureCode: invoiceFailure.code,
+    },
+  });
+
   const subscriptionToPersist = subscriptionId ?? account.stripeSubscriptionId;
-  if (subscriptionToPersist && (input.event.type === 'invoice.payment_failed' || input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded')) {
-    const failedAt = new Date();
-    const isPaymentFailed = input.event.type === 'invoice.payment_failed';
+  if (subscriptionToPersist && (isPaymentFailedEvent || isPaymentPaidEvent)) {
+    const paymentStateChangedAt = failedAt ?? new Date();
+    const nextStatus = resolveInvoicePaymentAccountStatus({
+      accountStatus: account.status,
+      trialEndsAt: account.trialEndsAt,
+      isPaymentFailed: isPaymentFailedEvent,
+    });
     await store.updateAccountFromStripeSubscription({
       accountId: account.id,
-      status: isPaymentFailed ? 'PAST_DUE' : account.status === 'CANCELED' ? 'CANCELED' : 'ACTIVE',
-      accessStatus: isPaymentFailed ? 'GRACE_PERIOD' : account.status === 'CANCELED' ? 'CANCELED' : 'ACTIVE',
+      status: nextStatus,
+      accessStatus: mapAccessStatusFromSubscription(nextStatus),
       planCode,
       stripeSubscriptionId: subscriptionToPersist,
       stripePriceId: priceId,
       currentPeriodEnd: account.currentPeriodEnd,
       cancelAtPeriodEnd: account.cancelAtPeriodEnd,
       trialEndsAt: account.trialEndsAt,
-      gracePeriodEndsAt: isPaymentFailed ? computeGracePeriodEnd({ failedAt }) : null,
-      restrictedAt: isPaymentFailed ? account.restrictedAt : null,
-      lastPaymentFailedAt: isPaymentFailed ? failedAt : null,
+      gracePeriodEndsAt: isPaymentFailedEvent ? computeGracePeriodEnd({ failedAt: paymentStateChangedAt }) : null,
+      restrictedAt: isPaymentFailedEvent ? account.restrictedAt : null,
+      lastPaymentFailedAt: isPaymentFailedEvent ? paymentStateChangedAt : null,
+      pendingChangeType: isPaymentFailedEvent
+        ? 'PAYMENT_RECOVERY'
+        : account.pendingChangeType === 'PAYMENT_RECOVERY'
+          ? null
+          : undefined,
+      pendingChangeEffectiveAt: isPaymentFailedEvent
+        ? nextPaymentAttempt
+        : account.pendingChangeType === 'PAYMENT_RECOVERY'
+          ? null
+          : undefined,
       lastStripeEventId: input.event.id,
     });
   }
 
   return account.contaId;
+}
+
+function resolveInvoicePaymentAccountStatus(input: {
+  accountStatus: PlatformBillingAccountStatus;
+  trialEndsAt: Date | null;
+  isPaymentFailed: boolean;
+}): PlatformBillingAccountStatus {
+  if (input.isPaymentFailed) return 'PAST_DUE';
+  if (input.accountStatus === 'CANCELED') return 'CANCELED';
+  if (input.trialEndsAt && input.trialEndsAt.getTime() > Date.now()) return 'TRIALING';
+  return 'ACTIVE';
+}
+
+function resolveInvoiceAuditAction(eventType: string): string {
+  if (eventType === 'invoice.payment_failed' || eventType === 'invoice.payment_action_required') {
+    return 'PLATFORM_BILLING_PAYMENT_REQUIRES_ATTENTION';
+  }
+  if (eventType === 'invoice.paid' || eventType === 'invoice.payment_succeeded') {
+    return 'PLATFORM_BILLING_INVOICE_PAID';
+  }
+  return 'PLATFORM_BILLING_INVOICE_SYNCED';
 }
 
 function mapSubscriptionStatus(status: string | null): PlatformBillingAccountStatus {
@@ -389,9 +467,9 @@ function mapInvoiceStatus(status: string | null): PlatformBillingInvoiceStatus {
 function mapAccessStatusFromSubscription(
   status: PlatformBillingAccountStatus,
 ): 'PENDING' | 'ACTIVE' | 'GRACE_PERIOD' | 'RESTRICTED' | 'CANCELED' {
-  if (status === 'ACTIVE' || status === 'TRIALING' || status === 'PAUSED') return 'ACTIVE';
+  if (status === 'ACTIVE' || status === 'TRIALING') return 'ACTIVE';
   if (status === 'PAST_DUE') return 'GRACE_PERIOD';
-  if (status === 'UNPAID') return 'RESTRICTED';
+  if (status === 'UNPAID' || status === 'PAUSED') return 'RESTRICTED';
   if (status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED') return 'CANCELED';
   return 'PENDING';
 }
@@ -433,6 +511,10 @@ function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
 function readStripeId(value: unknown): string | null {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'id' in value) return readString((value as StripeObject).id);
@@ -466,4 +548,29 @@ function readNestedString(value: StripeObject, path: string[]): string | null {
     current = (current as StripeObject)[key];
   }
   return readString(current);
+}
+
+function readInvoicePaymentFailure(invoice: StripeObject): { code: string | null; message: string | null } {
+  const candidates = [
+    readRecord(invoice.last_payment_error),
+    readRecord(readRecord(invoice.payment_intent).last_payment_error),
+    readRecord(invoice.last_finalization_error),
+  ];
+
+  for (const candidate of candidates) {
+    const code = readString(candidate.code) ?? readString(candidate.decline_code);
+    const message = readString(candidate.message);
+    if (code || message) {
+      return {
+        code: code ? code.slice(0, 120) : null,
+        message: message ? message.slice(0, 500) : null,
+      };
+    }
+  }
+
+  return { code: null, message: null };
+}
+
+function readRecord(value: unknown): StripeObject {
+  return value && typeof value === 'object' ? value as StripeObject : {};
 }

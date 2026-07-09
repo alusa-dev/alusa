@@ -145,6 +145,36 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             },
             subscriptions: { orderBy: { createdAt: 'desc' } },
             installmentPlans: { orderBy: { createdAt: 'desc' } },
+            rematriculaItensOrigem: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              include: {
+                processo: {
+                  select: {
+                    id: true,
+                    status: true,
+                    origin: true,
+                    effectiveAt: true,
+                    targetPeriodId: true,
+                  },
+                },
+              },
+            },
+            rematriculaItensFuturos: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              include: {
+                processo: {
+                  select: {
+                    id: true,
+                    status: true,
+                    origin: true,
+                    effectiveAt: true,
+                    targetPeriodId: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -271,6 +301,40 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         assinadoEm: toIso(contrato.assinadoEm),
         createdAt: toIso(contrato.createdAt),
       })),
+      rematriculaOrigem:
+        matricula.rematriculaItensOrigem[0]
+          ? {
+              itemId: matricula.rematriculaItensOrigem[0].id,
+              processoId: matricula.rematriculaItensOrigem[0].processoId,
+              processoStatus: matricula.rematriculaItensOrigem[0].processo.status,
+              processoOrigem: matricula.rematriculaItensOrigem[0].processo.origin,
+              decision: matricula.rematriculaItensOrigem[0].decision,
+              itemStatus: matricula.rematriculaItensOrigem[0].status,
+              matriculaFuturaId: matricula.rematriculaItensOrigem[0].matriculaFuturaId,
+              effectiveAt: toIso(
+                matricula.rematriculaItensOrigem[0].effectiveAt ??
+                  matricula.rematriculaItensOrigem[0].processo.effectiveAt,
+              ),
+              targetPeriodId: matricula.rematriculaItensOrigem[0].targetPeriodId,
+            }
+          : null,
+      rematriculaFutura:
+        matricula.rematriculaItensFuturos[0]
+          ? {
+              itemId: matricula.rematriculaItensFuturos[0].id,
+              processoId: matricula.rematriculaItensFuturos[0].processoId,
+              processoStatus: matricula.rematriculaItensFuturos[0].processo.status,
+              processoOrigem: matricula.rematriculaItensFuturos[0].processo.origin,
+              decision: matricula.rematriculaItensFuturos[0].decision,
+              itemStatus: matricula.rematriculaItensFuturos[0].status,
+              matriculaOrigemId: matricula.rematriculaItensFuturos[0].matriculaOrigemId,
+              effectiveAt: toIso(
+                matricula.rematriculaItensFuturos[0].effectiveAt ??
+                  matricula.rematriculaItensFuturos[0].processo.effectiveAt,
+              ),
+              targetPeriodId: matricula.rematriculaItensFuturos[0].targetPeriodId,
+            }
+          : null,
     }));
 
     const matriculaIds = aluno.matriculas.map((matricula) => matricula.id);

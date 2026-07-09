@@ -34,6 +34,7 @@ export type { StudentCapacityInput, StudentCapacityResult } from './student-capa
 export {
   createPlatformBillingCheckoutSession,
   createPlatformBillingPortalSession,
+  createPlatformBillingTrialWithoutPaymentMethod,
 } from './use-cases';
 export {
   enqueuePlatformBillingWebhookEvent,
@@ -54,6 +55,9 @@ export type {
   CreatePlatformBillingPortalSessionDeps,
   CreatePlatformBillingPortalSessionInput,
   CreatePlatformBillingPortalSessionResult,
+  CreatePlatformBillingTrialWithoutPaymentMethodDeps,
+  CreatePlatformBillingTrialWithoutPaymentMethodInput,
+  CreatePlatformBillingTrialWithoutPaymentMethodResult,
 } from './use-cases';
 export type {
   ProcessPlatformBillingWebhookInput,

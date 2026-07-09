@@ -90,7 +90,7 @@ export async function expirePlatformBillingGracePeriods(input: {
           status: 'OPEN',
           code: 'GRACE_PERIOD_EXPIRED',
           title: 'Conta restrita por pagamento pendente',
-          message: 'O período de regularização expirou e a Conta entrou em acesso restrito.',
+          message: 'O período de regularização expirou e a conta entrou em acesso restrito.',
           fingerprint: `${account.id}:grace-period-expired`,
           details: {
             planCode: account.planCode,
@@ -102,7 +102,7 @@ export async function expirePlatformBillingGracePeriods(input: {
           severity: 'CRITICAL',
           status: 'OPEN',
           title: 'Conta restrita por pagamento pendente',
-          message: 'O período de regularização expirou e a Conta entrou em acesso restrito.',
+          message: 'O período de regularização expirou e a conta entrou em acesso restrito.',
           detectedAt: now,
           resolvedAt: null,
           ignoredAt: null,

@@ -165,6 +165,32 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
     floatingInputRef.current?.setSelectionRange(length, length);
   }, [shouldShowPopover]);
 
+  if (!mounted) {
+    return (
+      <div className="relative w-full max-w-[460px]">
+        <label htmlFor={searchId} className="sr-only">
+          Pesquisar
+        </label>
+        <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
+          <Search className="h-4 w-4" />
+        </div>
+        <input
+          id={searchId}
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={false}
+          aria-haspopup="listbox"
+          value=""
+          readOnly
+          placeholder="Pesquise aqui"
+          aria-label="Pesquisar"
+          className="relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]"
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       {mounted && typeof document !== 'undefined'

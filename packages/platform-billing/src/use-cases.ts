@@ -3,6 +3,7 @@ import type { StripeEnvSource } from '@alusa/stripe';
 import { z } from 'zod';
 import { PlatformBillingError } from './errors';
 import { parsePublicCheckoutPlanCode, resolveStripePriceId } from './price-mapping';
+import { getPlatformPlan } from './plans';
 import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import type {
   PlatformBillingAccountRecord,
@@ -31,6 +32,16 @@ const createPortalInputSchema = z.object({
   returnUrl: urlSchema,
   actorUserId: nonEmptyString.optional(),
   idempotencyKey: nonEmptyString.optional(),
+  correlationId: nonEmptyString.optional(),
+});
+
+const createTrialWithoutPaymentMethodInputSchema = z.object({
+  contaId: nonEmptyString,
+  contaName: nonEmptyString,
+  billingEmail: z.string().trim().email().optional(),
+  planCode: z.unknown(),
+  actorUserId: nonEmptyString.optional(),
+  idempotencyKey: nonEmptyString,
   correlationId: nonEmptyString.optional(),
 });
 
@@ -67,6 +78,30 @@ export interface CreatePlatformBillingPortalSessionInput {
   idempotencyKey?: string;
   correlationId?: string;
   envSource?: StripeEnvSource;
+}
+
+export interface CreatePlatformBillingTrialWithoutPaymentMethodInput {
+  contaId: string;
+  contaName: string;
+  billingEmail?: string;
+  planCode: unknown;
+  actorUserId?: string;
+  idempotencyKey: string;
+  correlationId?: string;
+  envSource?: StripeEnvSource;
+}
+
+export interface CreatePlatformBillingTrialWithoutPaymentMethodDeps {
+  store: PlatformBillingStore;
+  stripeGateway?: PlatformBillingStripeGateway;
+}
+
+export interface CreatePlatformBillingTrialWithoutPaymentMethodResult {
+  billingAccountId: string;
+  stripeSubscriptionId: string;
+  trialEndsAt: Date | null;
+  reused: boolean;
+  account: PlatformBillingAccountRecord;
 }
 
 export interface CreatePlatformBillingPortalSessionDeps {
@@ -119,6 +154,8 @@ export async function createPlatformBillingCheckoutSession(
     environment: config.environment,
     idempotencyKey: `${parsed.idempotencyKey}:customer`,
   });
+  const trialDays = resolveTrialDaysForCheckout(account, planCode);
+  const isReactivation = isReactivationCheckoutAccount(account);
 
   const checkoutSession = await stripeGateway.createCheckoutSession({
     customerId: account.stripeCustomerId,
@@ -130,7 +167,10 @@ export async function createPlatformBillingCheckoutSession(
       contaId: parsed.contaId,
       planCode,
       billingContext: 'platform',
+      trialDays: trialDays ? String(trialDays) : '0',
+      flow: isReactivation ? 'reactivation' : 'subscription',
     },
+    trialDays,
     idempotencyKey: `${parsed.idempotencyKey}:checkout`,
   });
 
@@ -138,6 +178,7 @@ export async function createPlatformBillingCheckoutSession(
     accountId: account.id,
     planCode,
     stripePriceId,
+    pendingChangeType: isReactivation ? 'REACTIVATE' : null,
   });
 
   const record = await deps.store.createCheckoutSession({
@@ -160,7 +201,9 @@ export async function createPlatformBillingCheckoutSession(
     contaId: parsed.contaId,
     billingAccountId: account.id,
     actorUserId: parsed.actorUserId,
-    action: 'PLATFORM_BILLING_CHECKOUT_SESSION_CREATED',
+    action: isReactivation
+      ? 'PLATFORM_BILLING_REACTIVATION_CHECKOUT_SESSION_CREATED'
+      : 'PLATFORM_BILLING_CHECKOUT_SESSION_CREATED',
     entityType: 'PlatformBillingCheckoutSession',
     entityId: record.id,
     correlationId: parsed.correlationId ?? parsed.idempotencyKey,
@@ -168,6 +211,8 @@ export async function createPlatformBillingCheckoutSession(
       environment: config.environment,
       planCode,
       stripeCheckoutSessionId: checkoutSession.id,
+      trialDays,
+      flow: isReactivation ? 'reactivation' : 'subscription',
     },
   });
 
@@ -178,6 +223,133 @@ export async function createPlatformBillingCheckoutSession(
     reused: false,
     record,
   };
+}
+
+export async function createPlatformBillingTrialWithoutPaymentMethod(
+  input: CreatePlatformBillingTrialWithoutPaymentMethodInput,
+  deps: CreatePlatformBillingTrialWithoutPaymentMethodDeps,
+): Promise<CreatePlatformBillingTrialWithoutPaymentMethodResult> {
+  const parsed = parseTrialWithoutPaymentMethodInput(input);
+  const config = parseStripeRuntimeConfig(input.envSource);
+  const planCode = parsePublicCheckoutPlanCode(parsed.planCode);
+  const stripePriceId = resolveStripePriceId({
+    planCode,
+    environment: config.environment,
+    source: input.envSource,
+  });
+
+  const stripeGateway = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
+  const account = await ensureBillingAccount({
+    store: deps.store,
+    stripeGateway,
+    contaId: parsed.contaId,
+    contaName: parsed.contaName,
+    billingEmail: parsed.billingEmail,
+    environment: config.environment,
+    idempotencyKey: `${parsed.idempotencyKey}:customer`,
+  });
+
+  if (account.stripeSubscriptionId) {
+    return {
+      billingAccountId: account.id,
+      stripeSubscriptionId: account.stripeSubscriptionId,
+      trialEndsAt: account.trialEndsAt,
+      reused: true,
+      account,
+    };
+  }
+
+  if (account.trialEndsAt) {
+    throw new PlatformBillingError(
+      'Platform billing trial was already used for this account.',
+      'PLATFORM_BILLING_TRIAL_ALREADY_USED',
+      { contaId: parsed.contaId, environment: config.environment },
+    );
+  }
+
+  const trialDays = getPlatformPlan(planCode).trialDays;
+  if (!trialDays || trialDays <= 0) {
+    throw new PlatformBillingError(
+      'Selected platform plan does not support trial.',
+      'PLATFORM_BILLING_TRIAL_UNAVAILABLE',
+      { contaId: parsed.contaId, environment: config.environment, planCode },
+    );
+  }
+
+  const subscription = await stripeGateway.createTrialSubscriptionWithoutPaymentMethod({
+    customerId: account.stripeCustomerId,
+    priceId: stripePriceId,
+    metadata: {
+      contaId: parsed.contaId,
+      planCode,
+      billingContext: 'platform',
+      trialDays: String(trialDays),
+      source: 'finance-wizard-register-later',
+    },
+    trialDays,
+    idempotencyKey: `${parsed.idempotencyKey}:trial-subscription`,
+  });
+
+  const updated = await deps.store.updateAccountFromStripeSubscription({
+    accountId: account.id,
+    status: 'TRIALING',
+    accessStatus: 'ACTIVE',
+    planCode,
+    stripeSubscriptionId: subscription.id,
+    stripePriceId,
+    currentPeriodEnd: subscription.currentPeriodEnd,
+    cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+    trialEndsAt: subscription.trialEndsAt,
+    pendingPlanCode: null,
+    pendingChangeType: null,
+    pendingChangeEffectiveAt: null,
+    lastStripeEventId: 'local:trial_without_payment_method',
+  });
+
+  await deps.store.createAuditLog({
+    contaId: parsed.contaId,
+    billingAccountId: updated.id,
+    actorUserId: parsed.actorUserId,
+    action: 'PLATFORM_BILLING_TRIAL_WITHOUT_PAYMENT_METHOD_CREATED',
+    entityType: 'StripeSubscription',
+    entityId: subscription.id,
+    correlationId: parsed.correlationId ?? parsed.idempotencyKey,
+    metadata: {
+      environment: config.environment,
+      planCode,
+      stripePriceId,
+      stripeSubscriptionId: subscription.id,
+      trialEndsAt: subscription.trialEndsAt?.toISOString() ?? null,
+    },
+  });
+
+  return {
+    billingAccountId: updated.id,
+    stripeSubscriptionId: subscription.id,
+    trialEndsAt: updated.trialEndsAt,
+    reused: false,
+    account: updated,
+  };
+}
+
+function resolveTrialDaysForCheckout(
+  account: PlatformBillingAccountRecord,
+  planCode: ReturnType<typeof parsePublicCheckoutPlanCode>,
+): number | null {
+  if (account.stripeSubscriptionId || account.trialEndsAt) return null;
+
+  const trialDays = getPlatformPlan(planCode).trialDays;
+  return typeof trialDays === 'number' && trialDays > 0 ? trialDays : null;
+}
+
+function isReactivationCheckoutAccount(account: PlatformBillingAccountRecord): boolean {
+  return Boolean(
+    account.stripeSubscriptionId &&
+    account.planCode &&
+    (account.status === 'CANCELED' ||
+      account.accessStatus === 'CANCELED' ||
+      account.pendingChangeType === 'REACTIVATE'),
+  );
 }
 
 export async function createPlatformBillingPortalSession(
@@ -300,6 +472,21 @@ function parsePortalInput(input: CreatePlatformBillingPortalSessionInput) {
     throw new PlatformBillingError('Platform billing input is invalid.', 'PLATFORM_BILLING_INPUT_INVALID', {
       fields: parsed.error.issues.map((issue) => issue.path.join('.')).filter(Boolean),
     });
+  }
+
+  return parsed.data;
+}
+
+function parseTrialWithoutPaymentMethodInput(input: CreatePlatformBillingTrialWithoutPaymentMethodInput) {
+  const parsed = createTrialWithoutPaymentMethodInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    const missingIdempotency = parsed.error.issues.some((issue) => issue.path.includes('idempotencyKey'));
+    throw new PlatformBillingError(
+      missingIdempotency ? 'Trial idempotency key is required.' : 'Platform billing input is invalid.',
+      missingIdempotency ? 'PLATFORM_BILLING_IDEMPOTENCY_REQUIRED' : 'PLATFORM_BILLING_INPUT_INVALID',
+      { fields: parsed.error.issues.map((issue) => issue.path.join('.')).filter(Boolean) },
+    );
   }
 
   return parsed.data;

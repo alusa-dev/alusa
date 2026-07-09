@@ -419,12 +419,11 @@ async function createCampaign(page: Page, seed: Seed, overrides: Record<string, 
       campaignStartsAt: new Date().toISOString(),
       campaignEndsAt: null,
       audienceDefinition: { diasAntecedencia: 365 },
-      status: 'ACTIVE',
       ...overrides,
     },
   });
   const body = await expectOk(response);
-  return body.campaign as { id: string; nome: string; targetPeriodId: string };
+  return body.campaign as { id: string; nome: string; targetPeriodId: string; status: string };
 }
 
 async function createIndividualRenewal(
@@ -525,6 +524,7 @@ test('cria, edita, valida janela e arquiva campanhas sem vazar para outra conta'
   await expectStatus(invalid, 422);
 
   const campaign = await createCampaign(page, seed, { nome: 'Rematrículas Antecipadas E2E' });
+  expect(campaign.status).toBe('ACTIVE');
   const update = await page.request.patch(`/api/rematriculas/campanhas/${campaign.id}`, {
     data: {
       nome: 'Rematrículas Antecipadas Editada',
@@ -539,19 +539,29 @@ test('cria, edita, valida janela e arquiva campanhas sem vazar para outra conta'
   await expect(page.getByText('Rematrículas Antecipadas Editada')).toBeVisible();
   await expect(page.getByText('0 Rematriculados')).toBeVisible();
 
-  const archive = await page.request.patch(`/api/rematriculas/campanhas/${campaign.id}`, {
-    data: { status: 'ARCHIVED' },
-  });
-  await expectOk(archive);
-
-  const archived = await prisma.rematriculaCampanha.findUniqueOrThrow({ where: { id: campaign.id } });
-  expect(archived.status).toBe('ARCHIVED');
+  const hardDelete = await page.request.delete(`/api/rematriculas/campanhas/${campaign.id}`);
+  await expect(await hardDelete.json()).toMatchObject({ mode: 'HARD_DELETE' });
+  await expect(prisma.rematriculaCampanha.findUnique({ where: { id: campaign.id } })).resolves.toBeNull();
   await expect(
     prisma.rematriculaAuditLog.findMany({ where: { contaId: seed.contaId, campanhaId: campaign.id } }),
+  ).resolves.toEqual([]);
+
+  const campaignWithHistory = await createCampaign(page, seed, { nome: 'Rematrículas com histórico E2E' });
+  const activate = await page.request.post(`/api/rematriculas/campanhas/${campaignWithHistory.id}/activate`);
+  await expectOk(activate);
+
+  const softDelete = await page.request.delete(`/api/rematriculas/campanhas/${campaignWithHistory.id}`);
+  await expect(await softDelete.json()).toMatchObject({ mode: 'SOFT_DELETE' });
+
+  const deleted = await prisma.rematriculaCampanha.findUniqueOrThrow({ where: { id: campaignWithHistory.id } });
+  expect(deleted.status).toBe('DELETED');
+  await expect(
+    prisma.rematriculaAuditLog.findMany({ where: { contaId: seed.contaId, campanhaId: campaignWithHistory.id } }),
   ).resolves.toEqual(
     expect.arrayContaining([
       expect.objectContaining({ action: 'CAMPAIGN_CREATED' }),
-      expect.objectContaining({ action: 'CAMPAIGN_UPDATED' }),
+      expect.objectContaining({ action: 'CAMPAIGN_ACTIVATED' }),
+      expect.objectContaining({ action: 'CAMPAIGN_DELETED' }),
     ]),
   );
 });
