@@ -28,6 +28,7 @@ interface UseRematriculasState {
   campaigns: RematriculaCampaignSummary[];
   participants: RematriculaParticipantSummary[];
   processes: RematriculaProcessSummary[];
+  history: RematriculaProcessSummary[];
 }
 
 const INITIAL_STATE: UseRematriculasState = {
@@ -40,6 +41,7 @@ const INITIAL_STATE: UseRematriculasState = {
   campaigns: [],
   participants: [],
   processes: [],
+  history: [],
 };
 
 export function useRematriculas(options: UseRematriculasOptions) {
@@ -83,6 +85,7 @@ export function useRematriculas(options: UseRematriculasOptions) {
           campaigns: result.campaigns,
           participants: result.participants,
           processes: result.processes,
+          history: result.history,
         });
       } catch (error) {
         if ((error as { name?: string }).name === 'AbortError') return;
@@ -96,6 +99,7 @@ export function useRematriculas(options: UseRematriculasOptions) {
           campaigns: [],
           participants: [],
           processes: [],
+          history: [],
         });
       }
     },

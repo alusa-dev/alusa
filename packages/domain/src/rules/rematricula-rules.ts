@@ -152,10 +152,12 @@ export function validarDatasRematricula(input: ValidarDatasInput): ValidarDatasR
 // ============================================================================
 
 const STATUSES_ELEGIVEL_REMATRICULA: StatusMatricula[] = ['ATIVA', 'PAUSADA'];
+export const DIAS_MAXIMOS_CONTRATO_EXPIRADO_REMATRICULA = 90;
 
 export interface ValidarElegibilidadeInput {
   status: StatusMatricula;
   contratoExpirado: boolean;
+  diasContratoExpirado?: number | null;
 }
 
 export type ValidarElegibilidadeResult =
@@ -168,8 +170,15 @@ export function validarElegibilidadeRematricula(input: ValidarElegibilidadeInput
     return { success: false, error: 'STATUS_INVALIDO' };
   }
 
-  // Bloquear rematrícula de contratos expirados há muito tempo (> 90 dias)
-  if (input.contratoExpirado) {
+  if (!input.contratoExpirado) {
+    return { success: true };
+  }
+
+  if (typeof input.diasContratoExpirado !== 'number' || !Number.isFinite(input.diasContratoExpirado)) {
+    return { success: false, error: 'CONTRATO_EXPIRADO' };
+  }
+
+  if (input.diasContratoExpirado > DIAS_MAXIMOS_CONTRATO_EXPIRADO_REMATRICULA) {
     return { success: false, error: 'CONTRATO_EXPIRADO' };
   }
 

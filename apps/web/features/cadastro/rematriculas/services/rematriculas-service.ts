@@ -37,6 +37,7 @@ export interface ListRematriculasResponse {
   campaigns: RematriculaCampaignSummary[];
   participants: RematriculaParticipantSummary[];
   processes: RematriculaProcessSummary[];
+  history: RematriculaProcessSummary[];
 }
 
 export interface RematriculaCampaignSummary {
@@ -48,7 +49,7 @@ export interface RematriculaCampaignSummary {
   campaignEndsAt: string | null;
   rules: Record<string, unknown> | null;
   audienceDefinition: Record<string, unknown> | null;
-  status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'CLOSED' | 'ARCHIVED';
+  status: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'CLOSED' | 'DELETED' | 'ARCHIVED';
   version: number;
   metrics: { participantes: number; processos: number };
 }
@@ -200,6 +201,25 @@ export interface RematriculaProcessSummary {
   comunicacoes: RematriculaCommunicationSummary[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RematriculaCancelResult {
+  processId: string;
+  status: 'CANCELLED';
+  remoteCancellation?: {
+    status: 'NOT_NEEDED' | 'CANCELLED' | 'REQUIRES_RECONCILIATION' | 'FAILED';
+    cancelledPaymentIds?: string[];
+    cancelledSubscriptionIds?: string[];
+    alreadyAbsentPaymentIds?: string[];
+    alreadyAbsentSubscriptionIds?: string[];
+    issues?: Array<{
+      targetType: 'PAYMENT' | 'SUBSCRIPTION';
+      externalId: string;
+      code: string;
+      message: string;
+      uncertain: boolean;
+    }>;
+  };
 }
 
 function normalizeCampaign(raw: unknown): RematriculaCampaignSummary {
@@ -703,6 +723,9 @@ export async function listRematriculasElegiveisRequest(
     processes: Array.isArray((json as Record<string, unknown>)?.processes)
       ? ((json as Record<string, unknown>).processes as unknown[]).map(normalizeProcess)
       : [],
+    history: Array.isArray((json as Record<string, unknown>)?.history)
+      ? ((json as Record<string, unknown>).history as unknown[]).map(normalizeProcess)
+      : [],
   };
 }
 
@@ -850,6 +873,7 @@ export interface CreateRematriculaFamiliarInput {
   contratoModeloId?: string | null;
   previewId?: string | null;
   previewHash?: string | null;
+  sourceVersion?: string | null;
   uiRequestId?: string;
 }
 
@@ -863,6 +887,7 @@ export interface CreateRematriculaFamiliarResponse {
   targetBillingStatus?: string | null;
   contractStatus?: string | null;
   previewHash?: string | null;
+  sourceVersion?: string | null;
   warnings?: string[];
   results: Array<{
     matriculaId: string;
@@ -878,6 +903,7 @@ export interface CreateRematriculaFamiliarResponse {
 export interface RematriculaFamiliarPreviewResponse {
   previewId: string;
   previewHash: string;
+  sourceVersion: string;
   blocks: Array<{ sourceEnrollmentId: string; code: string; message: string }>;
   warnings: string[];
   sourceBillingAction: string;
@@ -913,6 +939,7 @@ export async function previewRematriculaFamiliarRequest(
   return {
     previewId: String(payload.previewId ?? ''),
     previewHash: String(payload.previewHash ?? ''),
+    sourceVersion: String(payload.sourceVersion ?? ''),
     blocks: Array.isArray(payload.blocks) ? payload.blocks : [],
     warnings: Array.isArray(payload.warnings) ? payload.warnings.map(String) : [],
     sourceBillingAction: String(payload.sourceBillingAction ?? ''),
@@ -983,6 +1010,7 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
   if (input.overrideReason?.trim()) body.overrideReason = input.overrideReason.trim();
   if (input.previewId) body.previewId = input.previewId;
   if (input.previewHash) body.previewHash = input.previewHash;
+  if (input.sourceVersion) body.sourceVersion = input.sourceVersion;
 
   return body;
 }
@@ -1017,6 +1045,7 @@ export async function createRematriculaFamiliarRequest(
     targetBillingStatus: payload.targetBillingStatus ? String(payload.targetBillingStatus) : null,
     contractStatus: payload.contractStatus ? String(payload.contractStatus) : null,
     previewHash: payload.previewHash ? String(payload.previewHash) : null,
+    sourceVersion: payload.sourceVersion ? String(payload.sourceVersion) : null,
     warnings: Array.isArray(payload.warnings) ? payload.warnings.map(String) : [],
     results: Array.isArray(payload.results)
       ? payload.results.map((result) => ({
@@ -1081,6 +1110,23 @@ export async function updateRematriculaCampaignRequest(
   return normalizeCampaign((json as { campaign?: unknown })?.campaign);
 }
 
+export async function deleteRematriculaCampaignRequest(
+  campaignId: string,
+): Promise<{ deleted: boolean; mode: 'HARD_DELETE' | 'SOFT_DELETE'; campaignId: string }> {
+  const response = await fetch(`/api/rematriculas/campanhas/${campaignId}`, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (json as { error?: { message?: string } } | null)?.error?.message ||
+        'Não foi possível excluir a campanha.',
+    );
+  }
+  return json as { deleted: boolean; mode: 'HARD_DELETE' | 'SOFT_DELETE'; campaignId: string };
+}
+
 export async function activateRematriculaCampaignRequest(
   campaignId: string,
 ): Promise<{ campaign: RematriculaCampaignSummary; createdParticipants: number }> {
@@ -1101,7 +1147,10 @@ export async function activateRematriculaCampaignRequest(
   };
 }
 
-export async function cancelRematriculaProcessRequest(processId: string, reason: string) {
+export async function cancelRematriculaProcessRequest(
+  processId: string,
+  reason: string,
+): Promise<RematriculaCancelResult> {
   const response = await fetch(`/api/rematriculas/${processId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -1114,7 +1163,7 @@ export async function cancelRematriculaProcessRequest(processId: string, reason:
         'Não foi possível cancelar o próximo ciclo.',
     );
   }
-  return json;
+  return json as RematriculaCancelResult;
 }
 
 export async function editRematriculaFutureLinkRequest(

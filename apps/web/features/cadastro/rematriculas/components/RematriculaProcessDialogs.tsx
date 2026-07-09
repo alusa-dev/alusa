@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import type React from 'react';
 import { Button } from '@/components/ui/button';
@@ -141,6 +141,7 @@ function getFinanceiroFuturoBadgeVariant(status: string | null | undefined): Bad
 
 type DetailsDialogProps = {
   process: RematriculaProcessSummary | null;
+  readOnly?: boolean;
   onOpenChange: (_open: boolean) => void;
   onCreateCommunication: (_process: RematriculaProcessSummary) => void;
   onGrantException: (_process: RematriculaProcessSummary) => void;
@@ -149,6 +150,7 @@ type DetailsDialogProps = {
 
 export function RematriculaProcessDetailsDialog({
   process,
+  readOnly = false,
   onOpenChange,
   onCreateCommunication,
   onGrantException,
@@ -245,7 +247,7 @@ export function RematriculaProcessDetailsDialog({
                           <div className="font-medium text-amber-950">{pending.title}</div>
                           <div className="text-amber-900">{pending.message}</div>
                         </div>
-                        {['OPEN', 'IN_PROGRESS'].includes(pending.status) ? (
+                        {!readOnly && ['OPEN', 'IN_PROGRESS'].includes(pending.status) ? (
                           <Button type="button" size="sm" variant="outline" onClick={() => onResolvePending(pending.id)}>
                             Resolver
                           </Button>
@@ -291,12 +293,16 @@ export function RematriculaProcessDetailsDialog({
             </div>
 
             <DialogFooter className="shrink-0 gap-2 border-t border-slate-200 bg-white px-4 py-4 md:px-8">
-              <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onCreateCommunication(process)}>
-                Comunicação
-              </Button>
-              <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onGrantException(process)}>
-                Exceção
-              </Button>
+              {!readOnly ? (
+                <>
+                  <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onCreateCommunication(process)}>
+                    Comunicação
+                  </Button>
+                  <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onGrantException(process)}>
+                    Exceção
+                  </Button>
+                </>
+              ) : null}
               <Button type="button" variant="outline" className="h-10 min-w-[112px] border-slate-300 bg-white text-slate-700 hover:bg-slate-50" onClick={() => onOpenChange(false)}>
                 Fechar
               </Button>
@@ -358,10 +364,10 @@ export function RematriculaProcessCancelDialog({
         <div className="border-b border-slate-200 bg-slate-50 px-6 py-5">
           <AlertDialogHeader className="space-y-1 text-left">
             <AlertDialogTitle className="text-lg font-semibold text-slate-900">
-              Cancelar próximo ciclo
+              Cancelar rematrícula
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-slate-600">
-              A matrícula atual será preservada. Apenas o processo futuro será cancelado.
+              A matrícula atual será preservada. A preparação do próximo ciclo, reserva, contrato e financeiro futuro serão cancelados ou marcados para conferência.
             </AlertDialogDescription>
           </AlertDialogHeader>
         </div>
@@ -381,7 +387,7 @@ export function RematriculaProcessCancelDialog({
               onConfirm();
             }}
           >
-            {saving ? 'Cancelando...' : 'Cancelar futuro'}
+            {saving ? 'Cancelando...' : 'Cancelar rematrícula'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

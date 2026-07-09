@@ -93,9 +93,11 @@ async function loadRematriculaDecision(params: {
   const diasRestantes = Math.ceil(
     (matricula.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
   );
+  const contratoExpirado = diasRestantes < 0;
   const academicEligible = validarElegibilidadeRematricula({
     status: matricula.status,
-    contratoExpirado: diasRestantes < 0,
+    contratoExpirado,
+    diasContratoExpirado: contratoExpirado ? Math.abs(diasRestantes) : 0,
   }).success;
 
   const financialSnapshot = buildFinancialSnapshot({
@@ -292,6 +294,7 @@ export async function GET(req: Request) {
         campaigns: management.campaigns,
         participants: management.participants,
         processes: management.processes,
+        history: management.history,
       },
       { headers: { 'cache-control': 'no-store' } },
     );

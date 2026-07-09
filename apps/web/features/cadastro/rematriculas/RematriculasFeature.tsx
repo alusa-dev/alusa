@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -44,6 +44,7 @@ import {
   cancelRematriculaProcessRequest,
   createRematriculaCommunicationRequest,
   createRematriculaCampaignRequest,
+  deleteRematriculaCampaignRequest,
   editRematriculaFutureLinkRequest,
   grantRematriculaExceptionRequest,
   resolveRematriculaPendingRequest,
@@ -52,7 +53,7 @@ import {
   type RematriculaProcessSummary,
 } from './services/rematriculas-service';
 
-type QuickFilter = 'CAMPANHAS' | 'TODOS';
+type QuickFilter = 'CAMPANHAS' | 'TODOS' | 'PENDENCIAS' | 'HISTORICO';
 const DEFAULT_RENEWAL_LOOKAHEAD_DAYS = 365;
 
 type RematriculaTitularGroup = {
@@ -86,7 +87,7 @@ function getInitials(name: string) {
 
 const NAME_PARTICLES = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
 
-/** Primeiro nome(s) + sobrenome essencial para exibição compacta (ex.: Lara Bianca de Alencar → Lara Bianca). */
+/** Primeiro nome(s) + sobrenome essencial para exibição compacta (ex.: Lara Bianca de Alencar â†’ Lara Bianca). */
 function shortStudentDisplayName(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '';
@@ -188,6 +189,10 @@ function isProcessEditable(process: RematriculaProcessSummary) {
   return todayOnly < effectiveOnly;
 }
 
+function isProcessCancelled(process: RematriculaProcessSummary) {
+  return process.status === 'CANCELLED';
+}
+
 function campaignStatusLabel(status: RematriculaCampaignSummary['status']) {
   const labels: Record<RematriculaCampaignSummary['status'], string> = {
     DRAFT: 'Rascunho',
@@ -195,6 +200,7 @@ function campaignStatusLabel(status: RematriculaCampaignSummary['status']) {
     ACTIVE: 'Ativa',
     PAUSED: 'Pausada',
     CLOSED: 'Fechada',
+    DELETED: 'Excluída',
     ARCHIVED: 'Arquivada',
   };
   return labels[status] ?? status;
@@ -204,7 +210,7 @@ function getCampaignBadgeVariant(status: RematriculaCampaignSummary['status']): 
   if (status === 'ACTIVE') return 'success';
   if (status === 'SCHEDULED') return 'info';
   if (status === 'PAUSED') return 'warning';
-  if (status === 'ARCHIVED') return 'destructive';
+  if (status === 'ARCHIVED' || status === 'DELETED') return 'destructive';
   return 'neutral';
 }
 
@@ -409,7 +415,9 @@ export default function RematriculasFeature() {
   const [campaignSaving, setCampaignSaving] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<RematriculaCampaignSummary | null>(null);
   const [selectedProcess, setSelectedProcess] = useState<RematriculaProcessSummary | null>(null);
+  const [selectedProcessReadOnly, setSelectedProcessReadOnly] = useState(false);
   const [editingProcess, setEditingProcess] = useState<RematriculaProcessSummary | null>(null);
+  const [renewAgainProcess, setRenewAgainProcess] = useState<RematriculaProcessSummary | null>(null);
   const [cancelProcess, setCancelProcess] = useState<RematriculaProcessSummary | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelSaving, setCancelSaving] = useState(false);
@@ -422,7 +430,7 @@ export default function RematriculasFeature() {
     'space-y-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4';
   const modalLabelClass = 'text-xs font-medium text-slate-600';
 
-  const { items, loading, reload, campaigns, processes } = useRematriculas({
+  const { items, loading, reload, campaigns, processes, history } = useRematriculas({
     contaId,
     diasAntecedencia,
   });
@@ -430,6 +438,8 @@ export default function RematriculasFeature() {
   const quickFilterOptions: Array<{ label: string; value: QuickFilter }> = [
     { label: 'Campanhas', value: 'CAMPANHAS' },
     { label: 'Todos os processos', value: 'TODOS' },
+    { label: 'Pendências', value: 'PENDENCIAS' },
+    { label: 'Histórico', value: 'HISTORICO' },
   ];
 
   const activeRenewalSourceIds = useMemo(() => {
@@ -466,37 +476,52 @@ export default function RematriculasFeature() {
     [groupedItems, selectedStandaloneGroupId],
   );
 
+  function processMatchesCurrentFilters(process: RematriculaProcessSummary, normalizedSearch: string) {
+    const studentNames = getProcessStudentNames(process).join(' ');
+    const searchable = [
+      process.id,
+      process.campanha?.nome,
+      process.targetPeriodId,
+      studentNames,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
+    const matchesStatus =
+      processStatusFilter === 'TODOS' || process.status === processStatusFilter;
+    const matchesOrigin =
+      processOriginFilter === 'TODOS' || process.origin === processOriginFilter;
+    const matchesPeriod =
+      processPeriodFilter === 'TODOS' || process.targetPeriodId === processPeriodFilter;
+    return matchesSearch && matchesStatus && matchesOrigin && matchesPeriod;
+  }
+
   const filteredProcesses = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    return processes.filter((process) => {
-      const studentNames = getProcessStudentNames(process).join(' ');
-      const searchable = [
-        process.id,
-        process.campanha?.nome,
-        process.targetPeriodId,
-        studentNames,
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      const matchesSearch = !normalizedSearch || searchable.includes(normalizedSearch);
-      const matchesStatus =
-        processStatusFilter === 'TODOS' || process.status === processStatusFilter;
-      const matchesOrigin =
-        processOriginFilter === 'TODOS' || process.origin === processOriginFilter;
-      const matchesPeriod =
-        processPeriodFilter === 'TODOS' || process.targetPeriodId === processPeriodFilter;
-      return matchesSearch && matchesStatus && matchesOrigin && matchesPeriod;
-    });
+    return processes.filter((process) => processMatchesCurrentFilters(process, normalizedSearch));
   }, [processOriginFilter, processPeriodFilter, processStatusFilter, processes, search]);
+
+  const filteredPendingProcesses = useMemo(() => {
+    return filteredProcesses.filter((process) =>
+      process.pendencias.some((pending) => ['OPEN', 'IN_PROGRESS'].includes(pending.status)),
+    );
+  }, [filteredProcesses]);
+
+  const filteredHistoryProcesses = useMemo(() => {
+    const normalizedSearch = search.trim().toLowerCase();
+    return history.filter((process) => processMatchesCurrentFilters(process, normalizedSearch));
+  }, [history, processOriginFilter, processPeriodFilter, processStatusFilter, search]);
 
   const campaignPeriodOptions = useMemo(() => {
     return Array.from(new Set(campaigns.map((campaign) => campaign.targetPeriodId).filter(Boolean))).sort();
   }, [campaigns]);
 
   const processPeriodOptions = useMemo(() => {
-    return Array.from(new Set(processes.map((process) => process.targetPeriodId).filter(Boolean))).sort();
-  }, [processes]);
+    return Array.from(
+      new Set([...processes, ...history].map((process) => process.targetPeriodId).filter(Boolean)),
+    ).sort();
+  }, [history, processes]);
 
   const filteredCampaigns = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -585,7 +610,7 @@ export default function RematriculasFeature() {
           description={
             editingCampaign
               ? 'Os dados da campanha foram salvos.'
-              : 'A campanha foi criada como rascunho.'
+              : 'A campanha foi criada ativa.'
           }
           onClose={() => toast.dismiss(t)}
         />
@@ -612,12 +637,16 @@ export default function RematriculasFeature() {
     if (!confirmed) return;
 
     try {
-      await updateRematriculaCampaignRequest(campaign.id, { status: 'ARCHIVED' });
+      const result = await deleteRematriculaCampaignRequest(campaign.id);
       toast.custom((t) => (
         <CustomToast
           variant="success"
           title="Campanha excluída"
-          description="A campanha foi arquivada e preservada no histórico."
+          description={
+            result.mode === 'HARD_DELETE'
+              ? 'A campanha foi removida definitivamente.'
+              : 'A campanha foi excluída e o histórico foi preservado.'
+          }
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -638,12 +667,19 @@ export default function RematriculasFeature() {
     if (!cancelProcess || !cancelReason.trim()) return;
     try {
       setCancelSaving(true);
-      await cancelRematriculaProcessRequest(cancelProcess.id, cancelReason.trim());
+      const result = await cancelRematriculaProcessRequest(cancelProcess.id, cancelReason.trim());
+      const remoteStatus = result.remoteCancellation?.status ?? 'NOT_NEEDED';
+      const needsFinancialReview =
+        remoteStatus === 'REQUIRES_RECONCILIATION' || remoteStatus === 'FAILED';
       toast.custom((t) => (
         <CustomToast
-          variant="success"
-          title="Próximo ciclo cancelado"
-          description="A matrícula atual foi preservada."
+          variant={needsFinancialReview ? 'warning' : 'success'}
+          title={needsFinancialReview ? 'Rematrícula cancelada com conferência financeira' : 'Rematrícula cancelada'}
+          description={
+            needsFinancialReview
+              ? 'A matrícula atual foi preservada. O financeiro futuro precisa de conferência operacional.'
+              : 'A matrícula atual foi preservada e a preparação do próximo ciclo foi cancelada.'
+          }
           onClose={() => toast.dismiss(t)}
         />
       ));
@@ -786,6 +822,27 @@ export default function RematriculasFeature() {
     setSelectedMatricula(group.itens[0] ?? null);
   }
 
+  function startRenewalAgain(process: RematriculaProcessSummary) {
+    const item = buildEditProcessItem(process);
+    if (!item) {
+      toast.custom((t) => (
+        <CustomToast
+          variant="warning"
+          title="Rematrícula indisponível"
+          description="Não foi possível recuperar a matrícula de origem deste processo."
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
+      return;
+    }
+    setRenewAgainProcess(process);
+  }
+
+  function openProcessDetails(process: RematriculaProcessSummary, readOnly = false) {
+    setSelectedProcessReadOnly(readOnly);
+    setSelectedProcess(process);
+  }
+
   const processColumns: DataTableColumn<RematriculaProcessSummary>[] = [
     {
       id: 'titular',
@@ -808,7 +865,7 @@ export default function RematriculasFeature() {
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <div className="truncate text-[13px] font-normal text-gray-900" title={studentNames.join(' · ')}>
+              <div className="truncate text-[13px] font-normal text-gray-900" title={studentNames.join(' / ')}>
                 {title}
               </div>
               <div className="truncate text-xs text-gray-500">
@@ -831,7 +888,7 @@ export default function RematriculasFeature() {
           .filter((value): value is string => Boolean(value));
         return (
           <div className="min-w-0">
-            <div className="truncate text-sm text-gray-900" title={vinculos.join(' · ')}>
+            <div className="truncate text-sm text-gray-900" title={vinculos.join(' / ')}>
               {joinNamesPortuguese(vinculos) || 'Sem turma atual'}
             </div>
           </div>
@@ -871,6 +928,8 @@ export default function RematriculasFeature() {
         const firstOpenPending = process.pendencias.find((pending) =>
           ['OPEN', 'IN_PROGRESS'].includes(pending.status),
         );
+        const cancelled = isProcessCancelled(process);
+        const editable = isProcessEditable(process);
         return (
           <div className="flex justify-end">
             <DropdownMenu>
@@ -889,35 +948,88 @@ export default function RematriculasFeature() {
                 className="w-48"
                 onClick={(event) => event.stopPropagation()}
               >
-                <DropdownMenuItem onSelect={() => setSelectedProcess(process)}>
+                <DropdownMenuItem onSelect={() => openProcessDetails(process)}>
                   Ver detalhes
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!isProcessEditable(process)}
-                  onSelect={() => setEditingProcess(process)}
-                >
-                  Editar próximo ciclo
-                </DropdownMenuItem>
+                {cancelled ? (
+                  <DropdownMenuItem onSelect={() => startRenewalAgain(process)}>
+                    Rematricular novamente
+                  </DropdownMenuItem>
+                ) : null}
+                {editable ? (
+                  <DropdownMenuItem onSelect={() => setEditingProcess(process)}>
+                    Editar próximo ciclo
+                  </DropdownMenuItem>
+                ) : null}
                 {firstOpenPending ? (
                   <DropdownMenuItem onSelect={() => void handleResolvePending(firstOpenPending.id)}>
                     Resolver pendência
                   </DropdownMenuItem>
                 ) : null}
-                <DropdownMenuItem
-                  disabled={!isProcessEditable(process)}
-                  className="text-red-600 focus:bg-red-50 data-[highlighted]:bg-red-50"
-                  onSelect={() => {
-                    setCancelProcess(process);
-                    setCancelReason('');
-                  }}
-                >
-                  Cancelar futuro
-                </DropdownMenuItem>
+                {editable ? (
+                  <DropdownMenuItem
+                    className="text-red-600 focus:bg-red-50 data-[highlighted]:bg-red-50"
+                    onSelect={() => {
+                      setCancelProcess(process);
+                      setCancelReason('');
+                    }}
+                  >
+                    Cancelar rematrícula
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         );
       },
+    },
+  ];
+
+  const historyColumns: DataTableColumn<RematriculaProcessSummary>[] = [
+    ...processColumns.slice(0, -1),
+    {
+      id: 'data',
+      header: 'Registro',
+      width: 'lg:w-[12%]',
+      align: 'left',
+      render: (process) => (
+        <span className="block truncate text-sm text-gray-700">
+          {formatDate(process.createdAt)}
+        </span>
+      ),
+    },
+    {
+      id: 'acoes',
+      header: 'Ações',
+      width: 'w-[5rem]',
+      align: 'right',
+      headerClassName: 'pr-6 md:pr-8',
+      cellClassName: 'pr-6 md:pr-8',
+      render: (process) => (
+        <div className="flex justify-end">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900"
+                aria-label={`Ações do histórico ${process.id}`}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <MoreVertical className="h-4 w-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-40"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <DropdownMenuItem onSelect={() => openProcessDetails(process, true)}>
+                Ver detalhes
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ),
     },
   ];
 
@@ -965,7 +1077,7 @@ export default function RematriculasFeature() {
       align: 'left',
       render: (campaign) => (
         <span className="leading-[20px] text-gray-700">
-          {formatDate(campaign.campaignStartsAt)} — {formatDate(campaign.campaignEndsAt)}
+          {formatDate(campaign.campaignStartsAt)} â€” {formatDate(campaign.campaignEndsAt)}
         </span>
       ),
     },
@@ -1025,6 +1137,9 @@ export default function RematriculasFeature() {
 
   const showCampaigns = quickFilter === 'CAMPANHAS';
   const showProcesses = quickFilter === 'TODOS';
+  const showPending = quickFilter === 'PENDENCIAS';
+  const showHistory = quickFilter === 'HISTORICO';
+  const showProcessFilters = showProcesses || showPending || showHistory;
 
   return (
     <>
@@ -1159,7 +1274,7 @@ export default function RematriculasFeature() {
             </div>
           ) : null}
 
-          {showProcesses ? (
+          {showProcessFilters ? (
             <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
               <label className="relative block">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1244,7 +1359,49 @@ export default function RematriculasFeature() {
                   </div>
                 }
                 ariaLabel="Tabela de processos de rematrícula"
-                onRowClick={(process) => setSelectedProcess(process)}
+                onRowClick={(process) => openProcessDetails(process)}
+              />
+            </div>
+          ) : null}
+
+          {showPending ? (
+            <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:rounded-xl">
+              <DataTable
+                columns={processColumns}
+                data={filteredPendingProcesses}
+                rowKey={(process) => process.id}
+                loading={loading}
+                skeletonRows={4}
+                emptyMessage={
+                  <div className="px-6 py-12 text-center text-gray-500">
+                    {loading
+                      ? 'Carregando pendências...'
+                      : 'Nenhuma pendência de rematrícula encontrada para os filtros atuais.'}
+                  </div>
+                }
+                ariaLabel="Tabela de pendências de rematrícula"
+                onRowClick={(process) => openProcessDetails(process)}
+              />
+            </div>
+          ) : null}
+
+          {showHistory ? (
+            <div className="alusa-session-panel w-full overflow-hidden rounded-lg border bg-white outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 md:rounded-xl">
+              <DataTable
+                columns={historyColumns}
+                data={filteredHistoryProcesses}
+                rowKey={(process) => process.id}
+                loading={loading}
+                skeletonRows={4}
+                emptyMessage={
+                  <div className="px-6 py-12 text-center text-gray-500">
+                    {loading
+                      ? 'Carregando histórico...'
+                      : 'Nenhum histórico de rematrícula encontrado para os filtros atuais.'}
+                  </div>
+                }
+                ariaLabel="Tabela de histórico de rematrícula"
+                onRowClick={(process) => openProcessDetails(process, true)}
               />
             </div>
           ) : null}
@@ -1253,8 +1410,12 @@ export default function RematriculasFeature() {
 
       <RematriculaProcessDetailsDialog
         process={selectedProcess}
+        readOnly={selectedProcessReadOnly}
         onOpenChange={(open) => {
-          if (!open) setSelectedProcess(null);
+          if (!open) {
+            setSelectedProcess(null);
+            setSelectedProcessReadOnly(false);
+          }
         }}
         onCreateCommunication={(process) => void handleCreateCommunication(process)}
         onGrantException={(process) => void handleGrantException(process)}
@@ -1579,6 +1740,29 @@ export default function RematriculasFeature() {
       />
 
       <RematriculaDialog
+        open={Boolean(renewAgainProcess)}
+        contaId={contaId ?? undefined}
+        campaignId={renewAgainProcess?.campanhaId ?? null}
+        targetPeriodId={renewAgainProcess?.targetPeriodId}
+        item={buildEditProcessItem(renewAgainProcess)}
+        onOpenChange={(open) => {
+          if (!open) setRenewAgainProcess(null);
+        }}
+        onCreated={() => {
+          toast.custom((t) => (
+            <CustomToast
+              variant="success"
+              title="Rematrícula preparada"
+              description="A nova tentativa ficou como processo atual; a cancelada permanece apenas como histórico."
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+          setRenewAgainProcess(null);
+          void reload();
+        }}
+      />
+
+      <RematriculaDialog
         mode="EDIT_FUTURE"
         open={Boolean(editingProcess)}
         contaId={contaId ?? undefined}
@@ -1597,7 +1781,7 @@ export default function RematriculasFeature() {
       <RematriculaFamiliarDialog
         open={Boolean(selectedTitular)}
         contaId={contaId ?? undefined}
-        titular={selectedTitular?.titular ? {
+        titular={selectedTitular ? {
           id: selectedTitular.titular.id,
           tipo: selectedTitular.tipo,
           nome: selectedTitular.titular.nome,

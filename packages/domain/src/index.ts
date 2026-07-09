@@ -22,6 +22,7 @@ export {
   validarCapacidadeRematricula,
   validarConflitosRematricula,
   validarDatasRematricula,
+  DIAS_MAXIMOS_CONTRATO_EXPIRADO_REMATRICULA,
   validarElegibilidadeRematricula,
 } from './rules/rematricula-rules.js';
 

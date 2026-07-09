@@ -27,6 +27,12 @@ export type UpdateRenewalCampaignInput = Partial<
   status?: 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'CLOSED' | 'ARCHIVED';
 };
 
+export type DeleteRenewalCampaignResult = {
+  deleted: true;
+  mode: 'HARD_DELETE' | 'SOFT_DELETE';
+  campaignId: string;
+};
+
 function toIso(date?: Date | null) {
   return date ? date.toISOString() : null;
 }
@@ -368,7 +374,7 @@ export async function createRenewalCampaign(input: CreateRenewalCampaignInput, d
       campaignEndsAt: input.campaignEndsAt ?? null,
       rules: buildCanonicalCampaignRules(),
       audienceDefinition: (input.audienceDefinition ?? {}) as Prisma.InputJsonValue,
-      status: input.status ?? 'DRAFT',
+      status: input.status ?? 'ACTIVE',
       createdById: input.actorId,
     },
     include: { _count: { select: { participantes: true, processos: true } } },
@@ -426,6 +432,66 @@ export async function updateRenewalCampaign(input: UpdateRenewalCampaignInput, d
     });
 
     return campaignDTO(updated);
+  });
+}
+
+export async function deleteRenewalCampaign(
+  input: { contaId: string; actorId: string; campaignId: string },
+  deps: { prisma: PrismaClient },
+): Promise<DeleteRenewalCampaignResult> {
+  return deps.prisma.$transaction(async (tx) => {
+    const campaign = await tx.rematriculaCampanha.findFirst({
+      where: { id: input.campaignId, contaId: input.contaId },
+      include: { _count: { select: { participantes: true, processos: true } } },
+    });
+    if (!campaign) throw new Error('CAMPANHA_NAO_ENCONTRADA');
+
+    const [pendencias, excecoes, comunicacoes] = await Promise.all([
+      tx.rematriculaPendencia.count({ where: { contaId: input.contaId, campanhaId: campaign.id } }),
+      tx.rematriculaExcecao.count({ where: { contaId: input.contaId, campanhaId: campaign.id } }),
+      tx.rematriculaComunicacao.count({ where: { contaId: input.contaId, campanhaId: campaign.id } }),
+    ]);
+    const hasOperationalHistory =
+      campaign._count.participantes > 0 ||
+      campaign._count.processos > 0 ||
+      pendencias > 0 ||
+      excecoes > 0 ||
+      comunicacoes > 0;
+
+    if (!hasOperationalHistory) {
+      await tx.rematriculaAuditLog.deleteMany({ where: { contaId: input.contaId, campanhaId: campaign.id } });
+      await tx.rematriculaCampanha.delete({ where: { id: campaign.id } });
+      return { deleted: true, mode: 'HARD_DELETE', campaignId: campaign.id };
+    }
+
+    const deleted = await tx.rematriculaCampanha.update({
+      where: { id: campaign.id },
+      data: { status: 'DELETED', version: { increment: 1 } },
+      include: { _count: { select: { participantes: true, processos: true } } },
+    });
+
+    await tx.rematriculaAuditLog.create({
+      data: {
+        contaId: input.contaId,
+        campanhaId: deleted.id,
+        actorId: input.actorId,
+        action: 'CAMPAIGN_DELETED',
+        beforeState: campaignDTO(campaign) as Prisma.InputJsonValue,
+        afterState: campaignDTO(deleted) as Prisma.InputJsonValue,
+        metadata: {
+          mode: 'SOFT_DELETE',
+          history: {
+            participantes: campaign._count.participantes,
+            processos: campaign._count.processos,
+            pendencias,
+            excecoes,
+            comunicacoes,
+          },
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return { deleted: true, mode: 'SOFT_DELETE', campaignId: campaign.id };
   });
 }
 
@@ -536,6 +602,7 @@ export async function listRenewalManagement(
     deps.prisma.rematriculaCampanha.findMany({
       where: {
         contaId: input.contaId,
+        status: { not: 'ARCHIVED' },
         ...(input.campaignId ? { id: input.campaignId } : {}),
         ...(input.targetPeriodId ? { targetPeriodId: input.targetPeriodId } : {}),
       },
@@ -694,9 +761,37 @@ export async function listRenewalManagement(
     }),
   ]);
 
+  const operationalProcessBySource = new Map<string, { processId: string; rank: number; createdAt: Date }>();
+  for (const processo of processes) {
+    const rank = processo.status === 'CANCELLED' ? 1 : 2;
+    for (const item of processo.itens) {
+      const key = [
+        processo.campanhaId ?? 'STANDALONE',
+        processo.targetPeriodId,
+        item.matriculaOrigemId,
+      ].join(':');
+      const current = operationalProcessBySource.get(key);
+      if (!current || rank > current.rank || (rank === current.rank && processo.createdAt > current.createdAt)) {
+        operationalProcessBySource.set(key, { processId: processo.id, rank, createdAt: processo.createdAt });
+      }
+    }
+  }
+
+  const operationalProcesses = processes.filter((processo) => {
+    if (processo.itens.length === 0) return true;
+    return processo.itens.some((item) => {
+      const key = [
+        processo.campanhaId ?? 'STANDALONE',
+        processo.targetPeriodId,
+        item.matriculaOrigemId,
+      ].join(':');
+      return operationalProcessBySource.get(key)?.processId === processo.id;
+    });
+  });
+
   return {
     eligible,
-    campaigns: campaigns.map(campaignDTO),
+    campaigns: campaigns.filter((campaign) => campaign.status !== 'DELETED').map(campaignDTO),
     participants: participants.map((participant) => ({
       id: participant.id,
       campanhaId: participant.campanhaId,
@@ -709,7 +804,10 @@ export async function listRenewalManagement(
       includedAt: participant.includedAt.toISOString(),
       snapshot: participant.eligibilitySnapshot,
     })),
-    processes: processes.map(processDTO),
+    processes: operationalProcesses.map(processDTO),
+    history: [...processes]
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      .map(processDTO),
   };
 }
 

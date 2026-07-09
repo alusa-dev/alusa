@@ -323,7 +323,11 @@ export async function listarRematriculasElegiveis(input: {
     );
     const contratoExpirado = diasRestantes < 0;
     // Usar regra canônica de elegibilidade do domínio
-    const elegibilidade = validarElegibilidadeRematricula({ status: m.status, contratoExpirado });
+    const elegibilidade = validarElegibilidadeRematricula({
+      status: m.status,
+      contratoExpirado,
+      diasContratoExpirado: contratoExpirado ? Math.abs(diasRestantes) : 0,
+    });
     const podeRenovar = elegibilidade.success;
     const payerKey = `${m.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO'}:${m.responsavelFinanceiroId ?? m.aluno.id}`;
     const customerId = customerByKey.get(payerKey);

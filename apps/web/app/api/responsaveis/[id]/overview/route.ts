@@ -60,9 +60,11 @@ async function loadRematriculaDecision(params: {
   const diasRestantes = Math.ceil(
     (matricula.dataFimContrato.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
   );
+  const contratoExpirado = diasRestantes < 0;
   const academicEligible = validarElegibilidadeRematricula({
     status: matricula.status,
-    contratoExpirado: diasRestantes < 0,
+    contratoExpirado,
+    diasContratoExpirado: contratoExpirado ? Math.abs(diasRestantes) : 0,
   }).success;
 
   const financialSnapshot = buildFinancialSnapshot({
@@ -158,17 +160,48 @@ export async function GET(
           id: true,
           nome: true,
           matriculas: {
-            where: {
-              status: { in: ['ATIVA', 'PAUSADA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'] },
-              statusContrato: { in: ['AGUARDANDO_ASSINATURA', 'ATIVO', 'EXPIRADO'] },
-            },
             orderBy: { dataFimContrato: 'asc' },
             select: {
               id: true,
+              status: true,
+              statusFinanceiro: true,
+              statusContrato: true,
+              dataInicio: true,
               dataFimContrato: true,
+              createdAt: true,
               plano: { select: { nome: true } },
               combo: { select: { nome: true } },
               turma: { select: { nome: true } },
+              matriculaTurmas: {
+                select: { turma: { select: { nome: true } } },
+                take: 3,
+              },
+              rematriculaItensOrigem: {
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+                select: {
+                  id: true,
+                  decision: true,
+                  status: true,
+                  matriculaFuturaId: true,
+                  effectiveAt: true,
+                  targetPeriodId: true,
+                  processo: { select: { id: true, status: true, origin: true, effectiveAt: true } },
+                },
+              },
+              rematriculaItensFuturos: {
+                orderBy: { createdAt: 'desc' },
+                take: 1,
+                select: {
+                  id: true,
+                  decision: true,
+                  status: true,
+                  matriculaOrigemId: true,
+                  effectiveAt: true,
+                  targetPeriodId: true,
+                  processo: { select: { id: true, status: true, origin: true, effectiveAt: true } },
+                },
+              },
             },
           },
         },
@@ -355,7 +388,11 @@ export async function GET(
 
     const rematriculaCandidates = [];
     for (const aluno of alunosVinculados) {
-      for (const matricula of aluno.matriculas) {
+      for (const matricula of aluno.matriculas.filter(
+        (item) =>
+          ['ATIVA', 'PAUSADA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'].includes(item.status) &&
+          ['AGUARDANDO_ASSINATURA', 'ATIVO', 'EXPIRADO'].includes(item.statusContrato),
+      )) {
         const decision = await loadRematriculaDecision({
           contaId: user.contaId,
           matriculaId: matricula.id,
@@ -379,6 +416,51 @@ export async function GET(
         });
       }
     }
+
+    const enrollmentHistory = alunosVinculados.flatMap((aluno) =>
+      aluno.matriculas.map((matricula) => {
+        const futureLink = matricula.rematriculaItensFuturos[0] ?? null;
+        const originLink = matricula.rematriculaItensOrigem[0] ?? null;
+        const renewalLink = futureLink ?? originLink;
+        return {
+          id: matricula.id,
+          alunoId: aluno.id,
+          alunoNome: aluno.nome,
+          kind: futureLink ? 'REMATRICULA' : 'MATRICULA',
+          status: matricula.status,
+          statusFinanceiro: matricula.statusFinanceiro,
+          statusContrato: matricula.statusContrato,
+          dataInicio: matricula.dataInicio.toISOString(),
+          dataFimContrato: matricula.dataFimContrato.toISOString(),
+          createdAt: matricula.createdAt.toISOString(),
+          planoNome: matricula.plano?.nome ?? null,
+          comboNome: matricula.combo?.nome ?? null,
+          turmaNome:
+            matricula.turma?.nome ??
+            (matricula.matriculaTurmas.map((item) => item.turma.nome).join(', ') || null),
+          rematricula: renewalLink
+            ? {
+                itemId: renewalLink.id,
+                processoId: renewalLink.processo.id,
+                processoStatus: renewalLink.processo.status,
+                processoOrigem: renewalLink.processo.origin,
+                decision: renewalLink.decision,
+                itemStatus: renewalLink.status,
+                effectiveAt: (
+                  renewalLink.effectiveAt ?? renewalLink.processo.effectiveAt
+                ).toISOString(),
+                targetPeriodId: renewalLink.targetPeriodId,
+                matriculaOrigemId: futureLink?.matriculaOrigemId ?? null,
+                matriculaFuturaId: originLink?.matriculaFuturaId ?? null,
+              }
+            : null,
+        };
+      }),
+    ).sort((a, b) => {
+      const aTime = new Date(a.dataInicio ?? a.createdAt).getTime();
+      const bTime = new Date(b.dataInicio ?? b.createdAt).getTime();
+      return bTime - aTime;
+    });
 
     return NextResponse.json(
       {
@@ -419,6 +501,7 @@ export async function GET(
           createdAt: plan.createdAt.toISOString(),
         })),
         rematriculaCandidates,
+        enrollmentHistory,
       },
       { headers: { 'cache-control': 'no-store' } },
     );
