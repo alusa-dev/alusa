@@ -2,12 +2,17 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
+  evaluateRenewalActivation,
   type RenewalItemInput,
   type RenewalOrigin,
   type RenewalHolderType,
 } from '@alusa/domain';
 import { AsaasHttpError, deletePayment, deleteSubscription, isAsaasEnabled } from '@alusa/finance';
-import { buildSeatOccupancyWhereClause } from '@alusa/lib';
+import {
+  buildSeatOccupancyWhereClause,
+  createContractEvidence,
+  createPublicContractToken,
+} from '@alusa/lib';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
 import {
@@ -580,26 +585,29 @@ async function validateRenewalCapacity(
     const targetClass = targets.classesById.get(classId);
     if (!targetClass) continue;
 
-    const [currentOccupancy, reservedOccupancy] = await Promise.all([
-      prisma.matricula.count({
-        where: {
-          contaId: input.contaId,
-          turmaId: classId,
-          dataFimContrato: { gte: effectiveAt },
-          ...buildSeatOccupancyWhereClause(effectiveAt),
-          id: { notIn: sourceIds },
-        },
-      }),
-      prisma.reservaVagaFutura.count({
-        where: {
-          contaId: input.contaId,
-          targetClassId: classId,
-          targetPeriodId: input.targetPeriodId,
-          status: { in: ['RESERVED', 'WAITLISTED'] },
-          matriculaOrigemId: { notIn: sourceIds },
-        },
-      }),
-    ]);
+    const reservations = await prisma.reservaVagaFutura.findMany({
+      where: {
+        contaId: input.contaId,
+        targetClassId: classId,
+        targetPeriodId: input.targetPeriodId,
+        status: { in: ['RESERVED', 'WAITLISTED'] },
+        matriculaOrigemId: { notIn: sourceIds },
+      },
+      select: { matriculaFuturaId: true },
+    });
+    const reservedFutureEnrollmentIds = reservations.flatMap((reservation) =>
+      reservation.matriculaFuturaId ? [reservation.matriculaFuturaId] : [],
+    );
+    const currentOccupancy = await prisma.matricula.count({
+      where: {
+        contaId: input.contaId,
+        turmaId: classId,
+        dataFimContrato: { gte: effectiveAt },
+        ...buildSeatOccupancyWhereClause(effectiveAt),
+        id: { notIn: [...sourceIds, ...reservedFutureEnrollmentIds] },
+      },
+    });
+    const reservedOccupancy = reservations.length;
 
     if (currentOccupancy + reservedOccupancy + items.length > targetClass.capacidade) {
       blockers.push(
@@ -616,27 +624,30 @@ async function validateRenewalCapacity(
     const targetCombo = targets.combosById.get(comboId);
     if (!targetCombo?.vagasLimite) continue;
 
-    const [currentOccupancy, reservedOccupancy] = await Promise.all([
-      prisma.matricula.count({
-        where: {
-          contaId: input.contaId,
-          comboId,
-          dataFimContrato: { gte: effectiveAt },
-          ...buildSeatOccupancyWhereClause(effectiveAt),
-          id: { notIn: sourceIds },
-        },
-      }),
-      prisma.rematriculaItem.count({
-        where: {
-          contaId: input.contaId,
-          targetPeriodId: input.targetPeriodId,
-          targetComboId: comboId,
-          decision: 'RENEW',
-          matriculaOrigemId: { notIn: sourceIds },
-          processo: { status: { notIn: ['CANCELLED'] } },
-        },
-      }),
-    ]);
+    const reservedItems = await prisma.rematriculaItem.findMany({
+      where: {
+        contaId: input.contaId,
+        targetPeriodId: input.targetPeriodId,
+        targetComboId: comboId,
+        decision: 'RENEW',
+        matriculaOrigemId: { notIn: sourceIds },
+        processo: { status: { notIn: ['CANCELLED'] } },
+      },
+      select: { matriculaFuturaId: true },
+    });
+    const reservedFutureEnrollmentIds = reservedItems.flatMap((item) =>
+      item.matriculaFuturaId ? [item.matriculaFuturaId] : [],
+    );
+    const currentOccupancy = await prisma.matricula.count({
+      where: {
+        contaId: input.contaId,
+        comboId,
+        dataFimContrato: { gte: effectiveAt },
+        ...buildSeatOccupancyWhereClause(effectiveAt),
+        id: { notIn: [...sourceIds, ...reservedFutureEnrollmentIds] },
+      },
+    });
+    const reservedOccupancy = reservedItems.length;
 
     if (currentOccupancy + reservedOccupancy + items.length > targetCombo.vagasLimite) {
       blockers.push(
@@ -671,6 +682,174 @@ function sourceSnapshot(source: LoadedSource) {
 
 function externalReferenceForProcess(contaId: string, idempotencyKey: string) {
   return `renewal:${contaId}:${idempotencyKey}`;
+}
+
+async function materializeFutureContract(
+  tx: Prisma.TransactionClient,
+  input: {
+    contaId: string;
+    actorId: string;
+    matriculaId: string;
+    modeloId: string;
+    processoId: string;
+    itemId: string;
+    sourceEnrollmentId: string;
+    validFrom: Date;
+    validUntil: Date;
+  },
+) {
+  const existing = await tx.contratoFuturo.findFirst({
+    where: { contaId: input.contaId, processoId: input.processoId, itemId: input.itemId },
+    select: { id: true, contratoId: true },
+  });
+  if (existing?.contratoId) return existing.contratoId;
+
+  const modelo = await tx.contratoModelo.findFirst({
+    where: { id: input.modeloId, contaId: input.contaId, status: 'ATIVO' },
+  });
+  if (!modelo) throw new Error('MODELO_CONTRATO_NAO_ENCONTRADO');
+
+  const { tokenHash } = createPublicContractToken();
+  const tokenExpiraEm = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const contrato = await tx.contrato.create({
+    data: {
+      contaId: input.contaId,
+      matriculaId: input.matriculaId,
+      modeloId: input.modeloId,
+      arquivoPdfUrl: modelo.arquivoPdfUrl,
+      hashPdf: modelo.hashSha256,
+      status: 'PENDENTE',
+      tokenPublico: `hash:${tokenHash}`,
+      tokenPublicoHash: tokenHash,
+      tokenExpiraEm,
+    },
+  });
+
+  await tx.contratoDocumento.create({
+    data: {
+      contaId: input.contaId,
+      contratoId: contrato.id,
+      tipo: 'GERADO_MATRICULA',
+      arquivoUrl: modelo.arquivoPdfUrl,
+      hashSha256: modelo.hashSha256,
+      tamanhoBytes: modelo.tamanhoBytes ?? null,
+      mimeType: modelo.mimeType,
+    },
+  });
+  await createContractEvidence(tx as never, {
+    contaId: input.contaId,
+    contratoId: contrato.id,
+    type: 'CONTRACT_CREATED',
+    actorType: 'USER',
+    actorId: input.actorId,
+    payload: {
+      processoId: input.processoId,
+      matriculaId: input.matriculaId,
+      modeloId: input.modeloId,
+      sourceEnrollmentId: input.sourceEnrollmentId,
+    },
+  });
+  await createContractEvidence(tx as never, {
+    contaId: input.contaId,
+    contratoId: contrato.id,
+    type: 'PUBLIC_LINK_CREATED',
+    actorType: 'USER',
+    actorId: input.actorId,
+    payload: { tokenPublicoHash: tokenHash, tokenExpiraEm: tokenExpiraEm.toISOString() },
+  });
+  await tx.matricula.update({
+    where: { id: input.matriculaId },
+    data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
+  });
+  const futureContractData = {
+      contaId: input.contaId,
+      processoId: input.processoId,
+      itemId: input.itemId,
+      matriculaFuturaId: input.matriculaId,
+      contractModelId: input.modeloId,
+      contratoId: contrato.id,
+      status: 'WAITING_SIGNATURE' as const,
+      validFrom: input.validFrom,
+      validUntil: input.validUntil,
+      snapshot: {
+        contractModelId: input.modeloId,
+        sourceEnrollmentId: input.sourceEnrollmentId,
+        futureEnrollmentId: input.matriculaId,
+        contratoId: contrato.id,
+      } as Prisma.InputJsonValue,
+  };
+  if (existing) {
+    await tx.contratoFuturo.update({
+      where: { id: existing.id },
+      data: {
+        contratoId: contrato.id,
+        contractModelId: input.modeloId,
+        status: 'WAITING_SIGNATURE',
+        validFrom: input.validFrom,
+        validUntil: input.validUntil,
+        snapshot: futureContractData.snapshot,
+      },
+    });
+  } else {
+    await tx.contratoFuturo.create({ data: futureContractData });
+  }
+  return contrato.id;
+}
+
+export async function materializePendingRenewalContracts(
+  input: { contaId: string; limit?: number },
+  deps: { prisma: PrismaClient },
+) {
+  const pending = await deps.prisma.contratoFuturo.findMany({
+    where: {
+      contaId: input.contaId,
+      contratoId: null,
+      contractModelId: { not: null },
+      status: { in: ['DRAFT', 'WAITING_SIGNATURE'] },
+      processo: { status: { in: ['CONFIRMED', 'WAITING_FOR_START', 'REQUIRES_ATTENTION'] } },
+      matriculaFuturaId: { not: null },
+      itemId: { not: null },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: input.limit ?? 25,
+    select: {
+      processoId: true,
+      itemId: true,
+      matriculaFuturaId: true,
+      contractModelId: true,
+      validFrom: true,
+      validUntil: true,
+      item: { select: { matriculaOrigemId: true } },
+    },
+  });
+
+  const results: Array<{ processoId: string; contratoId: string | null; success: boolean; error?: string }> = [];
+  for (const contract of pending) {
+    try {
+      const contratoId = await deps.prisma.$transaction((tx) =>
+        materializeFutureContract(tx, {
+          contaId: input.contaId,
+          actorId: 'RenewalContractScheduler',
+          matriculaId: contract.matriculaFuturaId!,
+          modeloId: contract.contractModelId!,
+          processoId: contract.processoId,
+          itemId: contract.itemId!,
+          sourceEnrollmentId: contract.item?.matriculaOrigemId ?? '',
+          validFrom: contract.validFrom ?? new Date(),
+          validUntil: contract.validUntil ?? new Date(),
+        }),
+      );
+      results.push({ processoId: contract.processoId, contratoId, success: true });
+    } catch (error) {
+      results.push({
+        processoId: contract.processoId,
+        contratoId: null,
+        success: false,
+        error: error instanceof Error ? error.message : 'Erro desconhecido',
+      });
+    }
+  }
+  return results;
 }
 
 export async function previewRenewalProcess(input: RenewalProcessInput, deps: { prisma: PrismaLike }) {
@@ -985,22 +1164,16 @@ export async function confirmRenewalProcess(
         });
 
         if (input.contractModelId) {
-          await tx.contratoFuturo.create({
-            data: {
-              contaId: input.contaId,
-              processoId: processo.id,
-              itemId: createdItem.id,
-              matriculaFuturaId: futureEnrollmentId,
-              contractModelId: input.contractModelId,
-              status: 'WAITING_SIGNATURE',
-              validFrom: effectiveAt,
-              validUntil: targetContractEndsAt,
-              snapshot: {
-                contractModelId: input.contractModelId,
-                sourceEnrollmentId: source.id,
-                futureEnrollmentId,
-              } as Prisma.InputJsonValue,
-            },
+          await materializeFutureContract(tx, {
+            contaId: input.contaId,
+            actorId: input.actorId,
+            matriculaId: futureEnrollmentId,
+            modeloId: input.contractModelId,
+            processoId: processo.id,
+            itemId: createdItem.id,
+            sourceEnrollmentId: source.id,
+            validFrom: effectiveAt,
+            validUntil: targetContractEndsAt,
           });
         }
       }
@@ -1335,7 +1508,7 @@ export async function activateDueRenewalProcesses(
   const processos = await deps.prisma.rematriculaProcesso.findMany({
     where: {
       contaId: input.contaId,
-      status: { in: ['CONFIRMED', 'WAITING_FOR_START'] },
+      status: { in: ['CONFIRMED', 'WAITING_FOR_START', 'REQUIRES_ATTENTION'] },
       effectiveAt: { lte: now },
     },
     take: input.limit ?? 25,
@@ -1348,7 +1521,16 @@ export async function activateDueRenewalProcesses(
     const result = await deps.prisma.$transaction(async (tx) => {
       const full = await tx.rematriculaProcesso.findFirst({
         where: { id: processo.id, contaId: input.contaId },
-        include: { itens: true, reservas: true, financeiros: true },
+        include: {
+          itens: true,
+          reservas: true,
+          financeiros: true,
+          contratos: true,
+          pendencias: {
+            where: { status: 'OPEN', severity: 'BLOCKER' },
+            select: { id: true, code: true },
+          },
+        },
       });
       if (!full) return { processId: processo.id, status: 'REQUIRES_ATTENTION' as const };
 
@@ -1366,10 +1548,27 @@ export async function activateDueRenewalProcesses(
           item.decision === 'RENEW' &&
           !full.reservas.some((reserva) => reserva.itemId === item.id && reserva.status === 'RESERVED'),
       );
-      const hasMissingFinancialAgreement = full.itens.some((item) => item.decision === 'RENEW') && full.financeiros.length === 0;
-      const failedFinancialAgreement = full.financeiros.find((financeiro) => financeiro.status === 'FAILED');
+      const renewedItems = full.itens.filter((item) => item.decision === 'RENEW');
+      const contractRequired = full.contratos.length > 0;
+      const contractStatus = full.contratos[0]?.status ?? null;
+      const financeRequired = renewedItems.length > 0;
+      const financeStatus = full.financeiros[0]?.status ?? null;
+      const activation = evaluateRenewalActivation({
+        now,
+        effectiveAt: full.effectiveAt,
+        sourceOverlapsEffectiveAt: hasOverlap,
+        hasFutureEnrollment: renewedItems.every((item) => Boolean(item.matriculaFuturaId)),
+        hasReservation: !hasMissingReservation,
+        contractRequired,
+        contractStatus,
+        financeRequired,
+        financeStatus,
+        hasOpenBlockingPending: full.pendencias.some(
+          (pending) => pending.code !== 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
+        ),
+      });
 
-      if (hasOverlap || hasMissingReservation || hasMissingFinancialAgreement || failedFinancialAgreement) {
+      if (!activation.eligible) {
         await tx.rematriculaProcesso.update({
           where: { id: full.id },
           data: { status: 'REQUIRES_ATTENTION' },
@@ -1388,11 +1587,9 @@ export async function activateDueRenewalProcesses(
             impact:
               'A matrÃ­cula futura nÃ£o foi ativada e nenhuma correÃ§Ã£o automÃ¡tica de turma/contrato foi aplicada.',
             metadata: {
-              hasOverlap,
-              hasMissingReservation,
-              hasMissingFinancialAgreement,
-              failedFinancialAgreementId: failedFinancialAgreement?.id ?? null,
-              failedFinancialAgreementCode: failedFinancialAgreement?.failureCode ?? null,
+              blockers: activation.blockers,
+              contractStatus,
+              financeStatus,
             },
           },
           { prisma: tx },
@@ -1403,10 +1600,9 @@ export async function activateDueRenewalProcesses(
             processoId: full.id,
             action: 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
             metadata: {
-              hasOverlap,
-              hasMissingReservation,
-              hasMissingFinancialAgreement,
-              failedFinancialAgreementId: failedFinancialAgreement?.id ?? null,
+              blockers: activation.blockers,
+              contractStatus,
+              financeStatus,
             } as Prisma.InputJsonValue,
           },
         });
@@ -1430,19 +1626,32 @@ export async function activateDueRenewalProcesses(
       });
       await tx.matricula.updateMany({
         where: { contaId: input.contaId, id: { in: futureIds } },
-        data: { status: 'ATIVA' },
+        data: {
+          status: 'ATIVA',
+          ...(contractRequired ? { statusContrato: 'ATIVO' } : {}),
+        },
       });
       await tx.reservaVagaFutura.updateMany({
         where: { contaId: input.contaId, processoId: full.id, status: 'RESERVED' },
         data: { status: 'CONVERTED', convertedAt: now },
       });
       await tx.contratoFuturo.updateMany({
-        where: { contaId: input.contaId, processoId: full.id, status: { in: ['SIGNED_SCHEDULED', 'WAITING_SIGNATURE', 'DRAFT'] } },
+        where: { contaId: input.contaId, processoId: full.id, status: 'SIGNED_SCHEDULED' },
         data: { status: 'ACTIVE' },
       });
-      await tx.acordoFinanceiroFuturo.updateMany({
-        where: { contaId: input.contaId, processoId: full.id, status: 'SCHEDULED' },
-        data: { status: 'READY_TO_PROVISION' },
+
+      await tx.rematriculaPendencia.updateMany({
+        where: {
+          contaId: input.contaId,
+          processoId: full.id,
+          code: 'FUTURE_CYCLE_ACTIVATION_BLOCKED',
+          status: { in: ['OPEN', 'IN_PROGRESS'] },
+        },
+        data: {
+          status: 'RESOLVED',
+          resolution: 'Pré-requisitos atendidos em nova avaliação automática.',
+          resolvedAt: now,
+        },
       });
       await tx.rematriculaProcesso.update({
         where: { id: full.id },

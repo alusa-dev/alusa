@@ -122,9 +122,11 @@ function getFinanceiroFuturoLabel(status: string | null | undefined) {
     NOT_PREPARED: 'Não preparado',
     PENDING: 'Pendente',
     PREPARED: 'Preparado',
-    SCHEDULED: 'Agendado',
+    SCHEDULED: 'Provisionamento agendado',
     READY_TO_PROVISION: 'Pronto para gerar',
+    PROVISIONING: 'Gerando no financeiro',
     PROVISIONED: 'Gerado',
+    ACTIVE: 'Provisionado',
     FAILED: 'Falhou',
     CANCELLED: 'Cancelado',
   };
@@ -132,8 +134,8 @@ function getFinanceiroFuturoLabel(status: string | null | undefined) {
 }
 
 function getFinanceiroFuturoBadgeVariant(status: string | null | undefined): BadgeVariant {
-  if (status === 'PREPARED' || status === 'PROVISIONED') return 'success';
-  if (status === 'SCHEDULED' || status === 'READY_TO_PROVISION') return 'info';
+  if (status === 'PREPARED' || status === 'PROVISIONED' || status === 'ACTIVE') return 'success';
+  if (status === 'SCHEDULED' || status === 'READY_TO_PROVISION' || status === 'PROVISIONING') return 'info';
   if (status === 'PENDING') return 'warning';
   if (status === 'FAILED' || status === 'CANCELLED') return 'destructive';
   return 'neutral';

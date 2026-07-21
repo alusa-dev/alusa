@@ -173,6 +173,15 @@ export const initialEnrollmentBillingPreviewResultDTOSchema = z.object({
     enrollmentFeeTotal: z.number(),
     itemCount: z.number().int().nonnegative(),
   }),
+  billingImpact: z.object({
+    currentMonthlyAmount: z.number(),
+    addedMonthlyAmount: z.number(),
+    resultingMonthlyAmount: z.number(),
+    enrollmentFeeAmount: z.number(),
+    application: z.enum(['SEPARATE', 'CURRENT_CYCLE', 'NEXT_CYCLE']),
+    updatesPendingPayments: z.boolean(),
+    targetLabel: nullableStringDTOSchema.default(null),
+  }),
   groups: z.array(
     z.object({
       strategy: initialEnrollmentBillingStrategyDTOSchema,

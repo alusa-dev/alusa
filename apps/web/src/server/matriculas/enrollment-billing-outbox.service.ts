@@ -13,7 +13,7 @@ import {
   pushEnrollmentFeeToAsaas,
 } from '@/src/server/matriculas/enrollment-billing.orchestrator';
 import { billingProvisionUpdate } from './billing-provision-status';
-import { updateSubscription } from '@alusa/finance';
+import { getSubscription, updateSubscription } from '@alusa/finance';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
@@ -150,6 +150,10 @@ function toAsaasDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function sameMoney(left: number, right: number) {
+  return Math.abs(left - right) < 0.005;
+}
+
 async function computeEnrollmentNetAmount(db: PrismaLike, matriculaId: string) {
   const matricula = await db.matricula.findUnique({
     where: { id: matriculaId },
@@ -230,8 +234,22 @@ async function runExistingSubscriptionUpdate(input: {
     }),
   ]);
   const previousMergedAmount = Number(activeAllocationTotal._sum.amount ?? 0);
+  const expectedCurrentValue =
+    Math.round((currentAmount + previousMergedAmount + Number.EPSILON) * 100) / 100;
   const nextValue =
-    Math.round((currentAmount + previousMergedAmount + newAmount + Number.EPSILON) * 100) / 100;
+    Math.round((expectedCurrentValue + newAmount + Number.EPSILON) * 100) / 100;
+
+  const remoteBefore = await getSubscription(targetSubscription.asaasSubscriptionId, {
+    contaId: input.contaId,
+  });
+  const remoteValueBefore = Number(remoteBefore.value);
+  const alreadyUpdated = sameMoney(remoteValueBefore, nextValue);
+  if (!alreadyUpdated && !sameMoney(remoteValueBefore, expectedCurrentValue)) {
+    return {
+      requiresReconciliation: true as const,
+      reason: `VALOR_ASSINATURA_DIVERGENTE:esperado=${expectedCurrentValue}:remoto=${remoteValueBefore}`,
+    };
+  }
 
   await defaultPrisma.matricula.updateMany({
     where: { id: input.matriculaId, contaId: input.contaId },
@@ -255,15 +273,28 @@ async function runExistingSubscriptionUpdate(input: {
     }
   }
 
-  await updateSubscription(
-    targetSubscription.asaasSubscriptionId,
-    {
-      value: nextValue,
-      updatePendingPayments: true,
-      endDate: toAsaasDate(targetSubscription.matricula.dataFimContrato),
-    },
-    { contaId: input.contaId },
-  );
+  if (!alreadyUpdated) {
+    await updateSubscription(
+      targetSubscription.asaasSubscriptionId,
+      {
+        value: nextValue,
+        updatePendingPayments: true,
+        endDate: toAsaasDate(targetSubscription.matricula.dataFimContrato),
+      },
+      { contaId: input.contaId },
+    );
+
+    const remoteAfter = await getSubscription(targetSubscription.asaasSubscriptionId, {
+      contaId: input.contaId,
+    });
+    const confirmedValue = Number(remoteAfter.value);
+    if (!sameMoney(confirmedValue, nextValue)) {
+      return {
+        requiresReconciliation: true as const,
+        reason: `ATUALIZACAO_ASSINATURA_NAO_CONFIRMADA:esperado=${nextValue}:remoto=${confirmedValue}`,
+      };
+    }
+  }
 
   await defaultPrisma.$transaction(async (tx) => {
     await tx.familyFinancialAllocation.updateMany({
@@ -282,6 +313,8 @@ async function runExistingSubscriptionUpdate(input: {
           asaasSubscriptionId: targetSubscription.asaasSubscriptionId,
           updatePendingPayments: true,
           mergedValue: nextValue,
+          remoteValueBefore,
+          updateSkippedAsIdempotent: alreadyUpdated,
         } as Prisma.InputJsonValue,
       },
     });
@@ -298,6 +331,8 @@ async function runExistingSubscriptionUpdate(input: {
           asaasSubscriptionId: targetSubscription.asaasSubscriptionId,
           updatePendingPayments: true,
           mergedValue: nextValue,
+          remoteValueBefore,
+          updateSkippedAsIdempotent: alreadyUpdated,
         } as Prisma.InputJsonValue,
       },
     });

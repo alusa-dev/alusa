@@ -320,8 +320,9 @@ describe('serviço de matrícula', () => {
       ).rejects.toThrow('Responsável financeiro é obrigatório para alunos menores de 18 anos.');
     });
 
-    it('listarMatriculas retorna matrículas do aluno', async () => {
+    it('listarMatriculas da turma inclui matrícula futura já confirmada', async () => {
       const dataInicio = new Date();
+      dataInicio.setHours(dataInicio.getHours() + 6);
       const dataFimContrato = new Date(dataInicio);
       dataFimContrato.setMonth(dataFimContrato.getMonth() + 12);
 
@@ -342,7 +343,13 @@ describe('serviço de matrícula', () => {
         createdById: ownerId,
       });
 
-      const { data: list } = await listarMatriculas({ contaId, alunoId, page: 1, pageSize: 50 });
+      const { data: list } = await listarMatriculas({
+        contaId,
+        alunoId,
+        turmaId,
+        page: 1,
+        pageSize: 50,
+      });
       const typed = list as Array<{
         turma?: { nome: string };
         plano?: { nome?: string | null } | null;

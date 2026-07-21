@@ -317,7 +317,11 @@ export async function updateTurma(input: TurmaUpdateInput): Promise<Turma> {
   return turma;
 }
 
-export type TurmaListItem = Turma & { professoresCount?: number; vagasOcupadas?: number };
+export type TurmaListItem = Turma & {
+  professoresCount?: number;
+  vagasOcupadas?: number;
+  matriculasVinculadas?: number;
+};
 
 export function buildTurmaOccupancyMatriculaWhere(
   contaId: string,
@@ -365,6 +369,8 @@ export async function listTurmas(
   const turmaIds = items.map((t) => t.id);
 
   const ocupacaoPorTurma = new Map<string, number>();
+  const vinculadasPorTurma = new Map<string, number>();
+  const referenceDate = new Date();
 
   if (turmaIds.length) {
     const matriculasQueOcupamVaga = await prisma.matricula.findMany({
@@ -387,13 +393,43 @@ export async function listTurmas(
         ocupacaoPorTurma.set(tid, (ocupacaoPorTurma.get(tid) ?? 0) + 1);
       });
     }
+
+    const matriculasVinculadas = await prisma.matricula.findMany({
+      where: {
+        aluno: { contaId },
+        status: { notIn: ['ENCERRADA', 'CANCELADA', 'RECUSADA'] },
+        dataInicio: { lte: referenceDate },
+        dataFimContrato: { gte: referenceDate },
+        OR: [
+          { turmaId: { in: turmaIds } },
+          { matriculaTurmas: { some: { turmaId: { in: turmaIds } } } },
+        ],
+      },
+      select: {
+        turmaId: true,
+        matriculaTurmas: {
+          where: { turmaId: { in: turmaIds } },
+          select: { turmaId: true },
+        },
+      },
+    });
+
+    for (const matricula of matriculasVinculadas) {
+      const turmasDaMatricula = new Set<string>();
+      if (matricula.turmaId) turmasDaMatricula.add(matricula.turmaId);
+      matricula.matriculaTurmas.forEach((item) => turmasDaMatricula.add(item.turmaId));
+      turmasDaMatricula.forEach((turmaId) => {
+        vinculadasPorTurma.set(turmaId, (vinculadasPorTurma.get(turmaId) ?? 0) + 1);
+      });
+    }
   }
 
   const data = items.map((t) => {
     const professoresCount = (t as { _count?: { professores?: number } })._count?.professores || 0;
     const vagasOcupadas = ocupacaoPorTurma.get(t.id) ?? 0;
+    const matriculasVinculadas = vinculadasPorTurma.get(t.id) ?? 0;
     const rest = t as unknown as Turma;
-    return { ...rest, professoresCount, vagasOcupadas };
+    return { ...rest, professoresCount, vagasOcupadas, matriculasVinculadas };
   });
   return { data, page, pageSize, total };
 }

@@ -1,8 +1,12 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import type { WizardContextValue } from '../types';
+import {
+  previewInitialEnrollmentBillingRequest,
+  type InitialEnrollmentBillingPreviewResult,
+} from '@/features/cadastro/matriculas/services/matriculas-service';
 import {
   calcularValorDescontoBeneficio,
   calcularValorLiquidoComBeneficio,
@@ -207,6 +211,10 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
 
 function StepResumoIndividual({ ctx }: StepResumoProps) {
   const { state, update } = ctx;
+  const [billingPreview, setBillingPreview] =
+    useState<InitialEnrollmentBillingPreviewResult | null>(null);
+  const [billingPreviewLoading, setBillingPreviewLoading] = useState(true);
+  const [billingPreviewError, setBillingPreviewError] = useState<string | null>(null);
   const turmaId = state.turmaIds[0];
   const initials = useMemo(() => {
     if (!state.aluno?.nome) return '';
@@ -234,6 +242,96 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
     state.beneficioSelecionado,
   );
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
+
+  useEffect(() => {
+    const alunoId = state.aluno?.id;
+    if (!alunoId || !state.dataInicio || !state.dataFimContrato || !state.formaPagamento || !state.vencimentoDia) {
+      setBillingPreview(null);
+      setBillingPreviewLoading(false);
+      setBillingPreviewError('Volte e complete os dados financeiros para gerar o preview.');
+      update({ confirmacaoRevisao: false });
+      return;
+    }
+
+    let active = true;
+    setBillingPreviewLoading(true);
+    setBillingPreviewError(null);
+    const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+    const formaPagamento = state.formaPagamento === 'CARTAO'
+      ? 'CARTAO_CREDITO'
+      : state.formaPagamento;
+
+    previewInitialEnrollmentBillingRequest({
+      contaId: state.contaId || undefined,
+      billingStrategy,
+      strategy:
+        billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+          ? 'INCLUDE_EXISTING'
+          : billingStrategy.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+            ? 'UNIFY_NEXT_CYCLE'
+            : 'CREATE_SEPARATE',
+      existingFamilyGroupId:
+        billingStrategy.kind === 'SEPARATE' ? null : billingStrategy.financialGroupId,
+      responsavelFinanceiroId: state.aluno?.responsavel?.id ?? null,
+      dataInicio: state.dataInicio,
+      dataFimContrato: state.dataFimContrato,
+      formaPagamento:
+        formaPagamento === 'PIX' || formaPagamento === 'BOLETO' || formaPagamento === 'CARTAO_CREDITO'
+          ? formaPagamento
+          : 'BOLETO',
+      vencimentoDia: state.vencimentoDia,
+      descontoIds: state.beneficioSelecionado?.id ? [state.beneficioSelecionado.id] : [],
+      items: [
+        {
+          alunoId,
+          turmaId: state.turmaIds[0] ?? null,
+          comboId: state.modoTurmas === 'COMBO' ? state.comboId ?? null : null,
+          planoId: state.modoTurmas === 'COMBO' ? null : state.planoId ?? null,
+          taxaMatricula: state.taxaIsenta ? 0 : state.taxaMatricula ?? 0,
+        },
+      ],
+    })
+      .then((preview) => {
+        if (!active) return;
+        setBillingPreview(preview);
+        if (!preview.compatibility.compatible) {
+          setBillingPreviewError(
+            preview.compatibility.blockers[0]?.message ?? 'O agrupamento financeiro não é compatível.',
+          );
+          update({ confirmacaoRevisao: false });
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setBillingPreview(null);
+        setBillingPreviewError(error instanceof Error ? error.message : 'Não foi possível gerar o preview financeiro.');
+        update({ confirmacaoRevisao: false });
+      })
+      .finally(() => {
+        if (active) setBillingPreviewLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [
+    state.aluno?.id,
+    state.aluno?.responsavel?.id,
+    state.beneficioSelecionado?.id,
+    state.billingStrategy,
+    state.comboId,
+    state.contaId,
+    state.dataFimContrato,
+    state.dataInicio,
+    state.formaPagamento,
+    state.modoTurmas,
+    state.planoId,
+    state.taxaIsenta,
+    state.taxaMatricula,
+    state.turmaIds,
+    state.vencimentoDia,
+    update,
+  ]);
 
   const temMulta = Boolean(state.multaPercentual && state.multaPercentual > 0);
   const temJuros = Boolean(state.jurosMensal && state.jurosMensal > 0);
@@ -330,6 +428,53 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
               </p>
             )}
           </div>
+        </div>
+
+        <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-4">
+          <h3 className="text-sm font-semibold text-gray-900">Impacto da cobrança</h3>
+          {billingPreviewLoading ? (
+            <p className="mt-2 text-sm text-gray-600">Calculando valores atuais e resultantes...</p>
+          ) : billingPreviewError ? (
+            <p className="mt-2 text-sm text-red-700" role="alert">{billingPreviewError}</p>
+          ) : billingPreview ? (
+            <div className="mt-3 space-y-2 text-sm">
+              {billingPreview.billingImpact.targetLabel && (
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-600">Destino</span>
+                  <span className="text-right font-medium text-gray-900">{billingPreview.billingImpact.targetLabel}</span>
+                </div>
+              )}
+              {billingPreview.billingImpact.application !== 'SEPARATE' && (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Valor mensal atual</span>
+                  <span className="font-medium">{formatter.format(billingPreview.billingImpact.currentMonthlyAmount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-600">Nova mensalidade</span>
+                <span className="font-medium">+ {formatter.format(billingPreview.billingImpact.addedMonthlyAmount)}</span>
+              </div>
+              <div className="flex justify-between border-t border-violet-200 pt-2 text-base">
+                <span className="font-semibold text-gray-900">
+                  {billingPreview.billingImpact.application === 'SEPARATE' ? 'Nova cobrança mensal' : 'Novo valor mensal'}
+                </span>
+                <span className="font-semibold text-violet-800">{formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}</span>
+              </div>
+              {billingPreview.billingImpact.enrollmentFeeAmount > 0 && (
+                <p className="text-xs text-gray-600">
+                  Taxa de matrícula separada: {formatter.format(billingPreview.billingImpact.enrollmentFeeAmount)}.
+                </p>
+              )}
+              {billingPreview.billingImpact.updatesPendingPayments && (
+                <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-800">
+                  Aplicação no ciclo atual: cobranças pendentes já emitidas poderão ter o valor atualizado.
+                </p>
+              )}
+              {billingPreview.billingImpact.application === 'NEXT_CYCLE' && (
+                <p className="text-xs text-gray-600">O valor será unificado somente no próximo ciclo.</p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         {/* Box Taxa de Matrícula + Box Mensalidade */}
@@ -440,6 +585,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
             <Checkbox
               id="confirmacao-revisao"
               checked={state.confirmacaoRevisao}
+              disabled={billingPreviewLoading || Boolean(billingPreviewError) || !billingPreview?.compatibility.compatible}
               onCheckedChange={handleConfirmacaoChange}
               className="mt-0.5"
             />

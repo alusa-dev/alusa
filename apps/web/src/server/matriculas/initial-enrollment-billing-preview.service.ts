@@ -64,6 +64,10 @@ function money(value: unknown) {
   return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
 }
 
+function dateOnly(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
 function toLegacyStrategy(
   billingStrategy?: CanonicalEnrollmentBillingStrategy,
   fallback: InitialEnrollmentBillingStrategy = 'CREATE_SEPARATE',
@@ -182,6 +186,7 @@ export async function previewInitialEnrollmentBilling(
             diaVencimento: true,
             dataInicio: true,
             dataFimContrato: true,
+            valorMensalidadeTotal: true,
             status: true,
             updatedAt: true,
           },
@@ -202,6 +207,8 @@ export async function previewInitialEnrollmentBilling(
                 responsavelFinanceiroId: true,
                 formaPagamento: true,
                 vencimentoDia: true,
+                dataInicio: true,
+                dataFimContrato: true,
                 aluno: { select: { id: true, nome: true } },
                 plano: { select: { valor: true, periodicidade: true } },
                 combo: { select: { valor: true, periodicidade: true } },
@@ -232,6 +239,18 @@ export async function previewInitialEnrollmentBilling(
     blockers.push({
       code: 'AGRUPAMENTO_NAO_ENCONTRADO',
       message: 'O agrupamento financeiro existente não foi encontrado nesta conta.',
+    });
+  }
+  if (strategy === 'INCLUDE_EXISTING' && existingFamilyGroup) {
+    blockers.push({
+      code: 'AGRUPAMENTO_FAMILIAR_NAO_SUPORTADO',
+      message: 'A matrícula individual só pode ser incluída em uma assinatura existente.',
+    });
+  }
+  if (strategy === 'UNIFY_NEXT_CYCLE') {
+    blockers.push({
+      code: 'UNIFICACAO_PROXIMO_CICLO_NAO_SUPORTADA',
+      message: 'A unificação no próximo ciclo ainda não possui processador financeiro para matrícula inicial.',
     });
   }
   if (strategy !== 'CREATE_SEPARATE' && !existingFamilyGroupId) {
@@ -292,6 +311,15 @@ export async function previewInitialEnrollmentBilling(
     blockers.push({
       code: 'VENCIMENTO_INCOMPATIVEL',
       message: 'O dia de vencimento nao e compativel com a assinatura existente.',
+    });
+  }
+  if (
+    existingSubscription &&
+    dateOnly(existingSubscription.matricula.dataFimContrato) !== dateOnly(input.dataFimContrato)
+  ) {
+    blockers.push({
+      code: 'VIGENCIA_INCOMPATIVEL',
+      message: 'A data final precisa ser igual à vigência da assinatura existente.',
     });
   }
 
@@ -378,6 +406,31 @@ export async function previewInitialEnrollmentBilling(
     warnings.push('Agrupamento financeiro costuma fazer sentido a partir de duas matrículas.');
   }
 
+  const existingActiveAllocations = existingSubscription
+    ? await deps.prisma.familyFinancialAllocation.aggregate({
+        where: {
+          contaId: input.contaId,
+          sourceAgreementId: existingSubscription.id,
+          chargeKind: 'MENSALIDADE',
+          status: 'ACTIVE',
+        },
+        _sum: { amount: true },
+      })
+    : null;
+  const existingBaseAmount = existingSubscription
+    ? money(existingSubscription.matricula.combo?.valor ?? existingSubscription.matricula.plano?.valor)
+    : existingFamilyGroup
+      ? money(existingFamilyGroup.valorMensalidadeTotal)
+      : 0;
+  const currentMonthlyAmount = money(
+    existingBaseAmount + Number(existingActiveAllocations?._sum.amount ?? 0),
+  );
+  const addedMonthlyAmount = money(allocations.reduce((sum, item) => sum + item.amount, 0));
+  const resultingMonthlyAmount =
+    strategy === 'CREATE_SEPARATE'
+      ? addedMonthlyAmount
+      : money(currentMonthlyAmount + addedMonthlyAmount);
+
   const sourceSnapshot = {
     alunos: alunos.map((aluno) => ({ id: aluno.id, updatedAt: aluno.updatedAt.toISOString() })),
     planos: planos.map((plano) => ({ id: plano.id, updatedAt: plano.updatedAt.toISOString(), valor: money(plano.valor) })),
@@ -403,6 +456,7 @@ export async function previewInitialEnrollmentBilling(
           updatedAt: existingSubscription.updatedAt.toISOString(),
           matriculaId: existingSubscription.matricula.id,
           alunoId: existingSubscription.matricula.alunoId,
+          currentMonthlyAmount,
         }
       : null,
   };
@@ -435,9 +489,29 @@ export async function previewInitialEnrollmentBilling(
       warnings,
     },
     totals: {
-      monthlyTotal: money(allocations.reduce((sum, item) => sum + item.amount, 0)),
+      monthlyTotal: addedMonthlyAmount,
       enrollmentFeeTotal: money(allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0)),
       itemCount: allocations.length,
+    },
+    billingImpact: {
+      currentMonthlyAmount,
+      addedMonthlyAmount,
+      resultingMonthlyAmount,
+      enrollmentFeeAmount: money(
+        allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0),
+      ),
+      application:
+        strategy === 'INCLUDE_EXISTING'
+          ? ('CURRENT_CYCLE' as const)
+          : strategy === 'UNIFY_NEXT_CYCLE'
+            ? ('NEXT_CYCLE' as const)
+            : ('SEPARATE' as const),
+      updatesPendingPayments: strategy === 'INCLUDE_EXISTING',
+      targetLabel: existingSubscription
+        ? `Assinatura de ${existingSubscription.matricula.aluno.nome}`
+        : existingFamilyGroup
+          ? 'Cobrança familiar existente'
+          : null,
     },
     groups: [
       {

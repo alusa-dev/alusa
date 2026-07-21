@@ -16,6 +16,10 @@ import { calcularValorLiquidoComBeneficio } from '../beneficios';
 import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR');
+const CURRENCY_FORMATTER = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
 
 function parseStoredDate(value?: string) {
   if (!value) return undefined;
@@ -100,8 +104,10 @@ const billingStrategyOptions: Array<{
 type CompatibleBillingGroup = {
   id: string;
   label: string;
+  type: 'FAMILY_GROUP' | 'SUBSCRIPTION';
   compatible: boolean;
   blockers: string[];
+  valorMensalidadeTotal: number;
 };
 
 interface StepFinanceiroProps {
@@ -128,7 +134,14 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
   const responsavelFinanceiroId = state.aluno?.responsavel?.id ?? state.responsavelFamiliar?.id ?? null;
   const payerType = responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
   const payerId = responsavelFinanceiroId ?? state.aluno?.id ?? null;
-  const compatibleBillingGroup = billingGroups.find((group) => group.compatible) ?? null;
+  const compatibleBillingGroup =
+    billingGroups.find(
+      (group) =>
+        group.compatible &&
+        (state.modoMatricula === 'FAMILIAR'
+          ? group.type === 'FAMILY_GROUP'
+          : group.type === 'SUBSCRIPTION'),
+    ) ?? null;
 
   const recurringChargeTotal = useMemo(() => {
     if (state.modoTurmas === 'COMBO') {
@@ -361,7 +374,10 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               const active = activeBillingStrategy === option.kind;
               const disabled =
                 option.kind !== 'SEPARATE' &&
-                (!compatibleBillingGroup || loadingBillingGroups || !state.dataInicio);
+                (option.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION' ||
+                  !compatibleBillingGroup ||
+                  loadingBillingGroups ||
+                  !state.dataInicio);
               return (
                 <button
                   key={option.kind}
@@ -393,7 +409,9 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                   <span className="text-sm font-semibold">{option.label}</span>
                   <span className="mt-1 text-xs leading-relaxed text-gray-500">
                     {disabled && option.kind !== 'SEPARATE'
-                      ? loadingBillingGroups
+                      ? option.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+                        ? 'Disponível após a implementação do processador do próximo ciclo.'
+                        : loadingBillingGroups
                         ? 'Buscando cobranças compatíveis.'
                         : 'Nenhuma cobrança compatível para este pagador.'
                       : option.description}
@@ -402,6 +420,21 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               );
             })}
           </div>
+          {activeBillingStrategy !== 'SEPARATE' && compatibleBillingGroup && (
+            <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/60 p-3 text-sm">
+              <p className="font-medium text-violet-900">{compatibleBillingGroup.label}</p>
+              <p className="mt-1 text-xs text-violet-800">
+                Atual: {CURRENCY_FORMATTER.format(compatibleBillingGroup.valorMensalidadeTotal)} ·{' '}
+                acréscimo: {CURRENCY_FORMATTER.format(recurringChargeTotal)} ·{' '}
+                total previsto:{' '}
+                <strong>
+                  {CURRENCY_FORMATTER.format(
+                    compatibleBillingGroup.valorMensalidadeTotal + recurringChargeTotal,
+                  )}
+                </strong>
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </SectionCard>

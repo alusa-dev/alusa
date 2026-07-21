@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronLeft as ArrowLeft,
   ChevronUp,
+  Eye,
   ExternalLink,
   Refresh,
   Trash,
@@ -757,11 +758,6 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
     router.push('/alunos');
   };
 
-  const latestMatricula = useMemo(() => {
-    if (!aluno) return null;
-    return aluno.matriculas.find((item) => ['ATIVA', 'PAUSADA', 'PENDENTE_TAXA'].includes(item.status)) ?? aluno.matriculas[0] ?? null;
-  }, [aluno]);
-
   const pendingCharges = useMemo(() => {
     if (!aluno) return [];
     return aluno.cobrancas
@@ -1011,8 +1007,6 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
               <Field label="UF" value={form.responsavelUf} editing={editSection === 'responsavel'} onChange={(value) => updateField('responsavelUf', value)} />
             </div>
           </EditableSection>
-
-          <MatriculaResumoSection matricula={latestMatricula} total={aluno.resumo.matriculas} />
 
           <HistoricoMatriculasSection matriculas={aluno.matriculas} />
 
@@ -1289,54 +1283,6 @@ function TextField({
   );
 }
 
-function MatriculaResumoSection({ matricula, total }: { matricula: MatriculaResumo | null; total: number }) {
-  return (
-    <section className={sectionClass}>
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm font-semibold text-slate-700">Informações da Matrícula</span>
-        {matricula ? (
-          <Link
-            href={`/matriculas/${matricula.id}`}
-            className="inline-flex h-10 items-center rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Abrir matrícula
-            <ExternalLink className="ml-2 h-4 w-4" />
-          </Link>
-        ) : null}
-      </div>
-
-      {matricula ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div className="space-y-1">
-            <label className={labelClass}>Status</label>
-            <div className="mt-1">
-              <Badge status={safeStatus(matricula.status)} />
-            </div>
-          </div>
-          <LockedField label="Data de início" value={formatDate(matricula.dataInicio)} />
-          <LockedField label="Dia de vencimento" value={`Dia ${matricula.vencimentoDia}`} />
-          <LockedField label="Plano ou combo" value={matricula.plano?.nome ?? matricula.combo?.nome ?? 'Não informado'} />
-          <LockedField
-            label="Turma"
-            value={
-              matricula.turma?.nome ??
-              (matricula.turmas.map((turma) => turma.nome).join(', ') || 'Não informada')
-            }
-          />
-          <LockedField label="Forma de pagamento" value={formatFormaPagamentoLabel(matricula.formaPagamento ?? '')} />
-          <LockedField label="Responsável financeiro" value={matricula.responsavelFinanceiro?.nome ?? 'Não informado'} />
-          <LockedField label="Contrato" value={matricula.contratoAtual?.status ?? matricula.statusContrato} />
-          <LockedField label="Matrículas do aluno" value={String(total)} />
-        </div>
-      ) : (
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-          Nenhuma matrícula vinculada.
-        </div>
-      )}
-    </section>
-  );
-}
-
 function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResumo[] }) {
   const sorted = [...matriculas].sort((a, b) => {
     const aTime = new Date(a.dataInicio ?? a.createdAt ?? 0).getTime();
@@ -1384,35 +1330,50 @@ function HistoricoMatriculasSection({ matriculas }: { matriculas: MatriculaResum
 }
 
 function HistoricoMatriculaRow({ matricula }: { matricula: MatriculaResumo }) {
+  const router = useRouter();
   const isRenewal = Boolean(matricula.rematriculaFutura);
-  const title = matricula.plano?.nome ?? matricula.combo?.nome ?? 'Matrícula';
   const turma =
     matricula.turma?.nome ??
-    matricula.turmas.map((item) => item.nome).join(', ') ??
-    'Turma não informada';
+    (matricula.turmas.map((item) => item.nome).join(', ') ||
+      'Turma não informada');
+  const href = `/matriculas/${matricula.id}`;
+  const statusLabel = getHistoryStatusLabel(matricula.status, matricula.dataInicio);
 
   return (
-    <tr className="border-t border-slate-200">
-      <td className="whitespace-nowrap px-4 py-3">
-        <span className={cn('rounded-full px-2 py-1 text-xs font-medium', isRenewal ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-700')}>
-          {isRenewal ? 'Rematrícula' : 'Matrícula'}
-        </span>
+    <tr
+      className="cursor-pointer border-t border-slate-200 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50"
+      role="link"
+      tabIndex={0}
+      aria-label={`Abrir ${isRenewal ? 'rematrícula' : 'matrícula'} de ${turma}`}
+      onClick={() => router.push(href)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          router.push(href);
+        }
+      }}
+    >
+      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+        {isRenewal ? 'Rematrícula' : 'Matrícula'}
       </td>
       <td className="max-w-[280px] px-4 py-3">
-        <span className="block truncate font-medium text-slate-900">
-          {title} · {turma}
-        </span>
+        <span className="block truncate font-medium text-slate-900">{turma}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataInicio)}</td>
       <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(matricula.dataFimContrato)}</td>
       <td className="whitespace-nowrap px-4 py-3">
-        <span className={cn('rounded-full px-2 py-1 text-xs font-medium', getHistoryStatusClass(matricula.status))}>
-          {getHistoryStatusLabel(matricula.status, matricula.dataInicio)}
-        </span>
+        <Badge variant={getHistoryStatusVariant(matricula.status, matricula.dataInicio)} size="sm">
+          {statusLabel}
+        </Badge>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
-        <Link href={`/matriculas/${matricula.id}`} className="text-sm font-medium text-brand-accent hover:underline">
-          Abrir
+        <Link
+          href={href}
+          aria-label={`Visualizar matrícula de ${turma}`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md text-brand-accent transition-colors hover:bg-violet-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <Eye className="h-4 w-4" aria-hidden="true" />
         </Link>
       </td>
     </tr>
@@ -1435,12 +1396,17 @@ function getHistoryStatusLabel(status: string, dataInicio: string | null | undef
   return labels[status] ?? status;
 }
 
-function getHistoryStatusClass(status: string) {
-  if (status === 'ATIVA') return 'bg-emerald-50 text-emerald-700';
-  if (status === 'ENCERRADA') return 'bg-slate-100 text-slate-600';
-  if (status === 'CANCELADA') return 'bg-red-50 text-red-700';
-  if (status === 'PAUSADA') return 'bg-amber-50 text-amber-700';
-  return 'bg-blue-50 text-blue-700';
+function getHistoryStatusVariant(
+  status: string,
+  dataInicio: string | null | undefined,
+): 'default' | 'destructive' | 'outline' | 'warning' | 'info' | 'success' | 'neutral' {
+  const startsInFuture = dataInicio ? new Date(dataInicio).getTime() > Date.now() : false;
+  if (startsInFuture) return 'info';
+  if (status === 'ATIVA') return 'success';
+  if (status === 'CANCELADA' || status === 'RECUSADA') return 'destructive';
+  if (status === 'PAUSADA' || status === 'PENDENTE_TAXA') return 'warning';
+  if (status === 'ENCERRADA') return 'neutral';
+  return 'info';
 }
 
 function CustomerNotificationsResponsavelNotice({

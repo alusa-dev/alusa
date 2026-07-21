@@ -2340,6 +2340,7 @@ model ContratoFuturo {
   itemId            String?
   matriculaFuturaId String?
   contractModelId   String?
+  contratoId        String?                         @unique
   status            RematriculaContratoFuturoStatus @default(DRAFT)
   version           Int                             @default(1)
   validFrom         DateTime?
@@ -2352,9 +2353,12 @@ model ContratoFuturo {
   conta    Conta               @relation(fields: [contaId], references: [id], onDelete: Cascade)
   processo RematriculaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
   item     RematriculaItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  contrato Contrato?           @relation(fields: [contratoId], references: [id], onDelete: SetNull)
 
   @@index([contaId, status, createdAt], name: "idx_contrato_futuro_conta_status_created")
   @@index([contaId, processoId], name: "idx_contrato_futuro_conta_processo")
+  @@index([contaId, contratoId], name: "idx_contrato_futuro_conta_contrato")
+  @@unique([contaId, processoId, itemId], name: "uq_contrato_futuro_conta_processo_item")
 }
 
 model AcordoFinanceiroFuturo {
@@ -4455,6 +4459,7 @@ model Contrato {
   installmentPlans       InstallmentPlan[]
   evidencias             ContractEvidence[]
   documentos             ContratoDocumento[]
+  rematriculaContratoFuturo ContratoFuturo?
 
   @@index([contaId, status], name: "idx_contrato_conta_status")
   @@index([contaId, matriculaId], name: "idx_contrato_conta_matricula")

@@ -41,6 +41,12 @@ function buildPrisma(overrides: Record<string, unknown> = {}) {
     matriculaFamiliar: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
+    subscription: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    familyFinancialAllocation: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { amount: null } }),
+    },
     ...overrides,
   };
 }
@@ -83,6 +89,15 @@ describe('previewInitialEnrollmentBilling', () => {
       enrollmentFeeTotal: 100,
       itemCount: 1,
     });
+    expect(preview.billingImpact).toEqual({
+      currentMonthlyAmount: 0,
+      addedMonthlyAmount: 180,
+      resultingMonthlyAmount: 180,
+      enrollmentFeeAmount: 100,
+      application: 'SEPARATE',
+      updatesPendingPayments: false,
+      targetLabel: null,
+    });
     expect(preview.groups[0]?.allocations[0]).toEqual(
       expect.objectContaining({
         alunoId: 'aluno-1',
@@ -107,6 +122,7 @@ describe('previewInitialEnrollmentBilling', () => {
           diaVencimento: 5,
           dataInicio: new Date('2026-01-01T12:00:00.000Z'),
           dataFimContrato: new Date('2026-12-31T12:00:00.000Z'),
+          valorMensalidadeTotal: 200,
           status: 'ATIVO',
           updatedAt,
         }),
@@ -133,6 +149,73 @@ describe('previewInitialEnrollmentBilling', () => {
         'PAGADOR_INCOMPATIVEL',
         'FORMA_PAGAMENTO_INCOMPATIVEL',
         'VENCIMENTO_INCOMPATIVEL',
+        'AGRUPAMENTO_FAMILIAR_NAO_SUPORTADO',
+      ]),
+    );
+  });
+
+  it('mostra valor atual, acréscimo e total ao incluir em assinatura existente', async () => {
+    const prisma = buildPrisma({
+      subscription: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'sub-local-1',
+          asaasSubscriptionId: 'sub_asaas_1',
+          status: 'ACTIVE',
+          updatedAt,
+          matricula: {
+            id: 'mat-atual',
+            alunoId: 'aluno-atual',
+            responsavelFinanceiroId: 'resp-1',
+            formaPagamento: 'PIX',
+            vencimentoDia: 10,
+            dataInicio: new Date('2026-01-01T12:00:00.000Z'),
+            dataFimContrato: baseInput.dataFimContrato,
+            aluno: { id: 'aluno-atual', nome: 'Aluno atual' },
+            plano: { valor: 200, periodicidade: 'MENSAL' },
+            combo: null,
+          },
+        }),
+      },
+      familyFinancialAllocation: {
+        aggregate: vi.fn().mockResolvedValue({ _sum: { amount: 50 } }),
+      },
+    });
+
+    const preview = await previewInitialEnrollmentBilling(
+      {
+        ...baseInput,
+        strategy: 'INCLUDE_EXISTING',
+        existingFamilyGroupId: 'subscription:sub-local-1',
+      },
+      { prisma: prisma as never },
+    );
+
+    expect(preview.compatibility.compatible).toBe(true);
+    expect(preview.billingImpact).toEqual({
+      currentMonthlyAmount: 250,
+      addedMonthlyAmount: 180,
+      resultingMonthlyAmount: 430,
+      enrollmentFeeAmount: 100,
+      application: 'CURRENT_CYCLE',
+      updatesPendingPayments: true,
+      targetLabel: 'Assinatura de Aluno atual',
+    });
+  });
+
+  it('bloqueia unificação no próximo ciclo sem processador financeiro', async () => {
+    const preview = await previewInitialEnrollmentBilling(
+      {
+        ...baseInput,
+        strategy: 'UNIFY_NEXT_CYCLE',
+        existingFamilyGroupId: 'family:fam-1',
+      },
+      { prisma: buildPrisma() as never },
+    );
+
+    expect(preview.compatibility.compatible).toBe(false);
+    expect(preview.compatibility.blockers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'UNIFICACAO_PROXIMO_CICLO_NAO_SUPORTADA' }),
       ]),
     );
   });

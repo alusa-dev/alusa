@@ -46,6 +46,12 @@ export {
   canTransitionRenewalProcess,
 } from './rules/renewal-process.js';
 
+export { evaluateRenewalActivation } from './rules/renewal-activation.js';
+export type {
+  EvaluateRenewalActivationInput,
+  RenewalActivationBlocker,
+} from './rules/renewal-activation.js';
+
 export type {
   BuildRenewalPreviewInput,
   RenewalDecision,

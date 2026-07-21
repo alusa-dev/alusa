@@ -10,8 +10,7 @@ export interface EncerrarContratosResult {
 }
 
 /**
- * Job que encerra automaticamente contratos expirados.
- * Atualiza matrículas com statusContrato = ATIVO e dataFimContrato < hoje.
+ * Job que encerra automaticamente matrículas cujo período contratual terminou.
  *
  * Ações realizadas:
  * 1. Atualiza statusContrato para ENCERRADO
@@ -31,7 +30,6 @@ export async function encerrarContratosExpirados(
   hoje.setHours(0, 0, 0, 0);
 
   const where = {
-    statusContrato: StatusContrato.ATIVO,
     status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
     dataFimContrato: { lt: hoje },
     aluno: { contaId },
@@ -62,6 +60,7 @@ export async function encerrarContratosExpirados(
           where: { id: matricula.id },
           data: {
             statusContrato: StatusContrato.EXPIRADO,
+            status: StatusMatricula.ENCERRADA,
             dataFim: matricula.dataFim ?? matricula.dataFimContrato,
           },
         });

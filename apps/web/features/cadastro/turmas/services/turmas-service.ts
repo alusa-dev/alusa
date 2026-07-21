@@ -12,6 +12,7 @@ export interface TurmaListItem {
   status: TurmaStatus;
   capacidade: number;
   vagasOcupadas: number;
+  matriculasVinculadas: number;
   horaInicio: string;
   horaFim: string;
   diasSemana: string[];
@@ -48,6 +49,9 @@ function normalizeTurma(input: Partial<TurmaListItem> & { id?: unknown }) {
     status: input.status === 'INATIVO' ? 'INATIVO' : 'ATIVO',
     capacidade: Number.isFinite(input.capacidade) ? Number(input.capacidade) : 0,
     vagasOcupadas: Number.isFinite(input.vagasOcupadas) ? Number(input.vagasOcupadas) : 0,
+    matriculasVinculadas: Number.isFinite(input.matriculasVinculadas)
+      ? Number(input.matriculasVinculadas)
+      : 0,
     horaInicio: String(input.horaInicio ?? ''),
     horaFim: String(input.horaFim ?? ''),
     diasSemana: diasSemana.map((dia) => String(dia)),

@@ -6,6 +6,10 @@ vi.mock('@/src/server/platform-billing/capacity', () => ({
   assertStudentCapacity: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('./renewal-governance.service', () => ({
+  createRenewalPending: vi.fn().mockResolvedValue({ id: 'pending-1' }),
+}));
+
 const now = new Date('2026-01-10T00:00:00.000Z');
 
 function basePrisma(overrides: Record<string, unknown> = {}) {
@@ -60,7 +64,7 @@ function basePrisma(overrides: Record<string, unknown> = {}) {
     rematriculaCampanha: { findFirst: vi.fn().mockResolvedValue(null) },
     rematriculaParticipante: { findMany: vi.fn().mockResolvedValue([]) },
     rematriculaItem: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
-    reservaVagaFutura: { count: vi.fn().mockResolvedValue(0) },
+    reservaVagaFutura: { findMany: vi.fn().mockResolvedValue([]) },
     ...overrides,
   };
 }
@@ -217,7 +221,7 @@ describe('renewal-process.service', () => {
         ...basePrisma().matricula,
         count: vi.fn().mockResolvedValue(1),
       },
-      reservaVagaFutura: { count: vi.fn().mockResolvedValue(1) },
+      reservaVagaFutura: { findMany: vi.fn().mockResolvedValue([{ matriculaFuturaId: 'mat-reservada' }]) },
     });
 
     const preview = await previewRenewalProcess(input, { prisma: prisma as never });
@@ -246,6 +250,8 @@ describe('renewal-process.service', () => {
           ],
           reservas: [{ itemId: 'item-1', status: 'RESERVED' }],
           financeiros: [{ id: 'fin-1', status: 'ACTIVE' }],
+          contratos: [],
+          pendencias: [],
         }),
         update: vi.fn().mockResolvedValue({}),
       },
@@ -266,6 +272,7 @@ describe('renewal-process.service', () => {
       reservaVagaFutura: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       contratoFuturo: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       acordoFinanceiroFuturo: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
+      rematriculaPendencia: { updateMany: vi.fn().mockResolvedValue({ count: 0 }) },
       rematriculaAuditLog: { create: vi.fn().mockResolvedValue({}) },
     };
 
@@ -296,5 +303,44 @@ describe('renewal-process.service', () => {
         data: expect.objectContaining({ status: 'ATIVA' }),
       }),
     );
+  });
+
+  it('nao efetiva rematricula com contrato aguardando assinatura', async () => {
+    const tx = {
+      rematriculaProcesso: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'proc-1',
+          contaId: 'conta-1',
+          effectiveAt: new Date('2026-07-02T00:00:00.000Z'),
+          itens: [{ id: 'item-1', decision: 'RENEW', matriculaOrigemId: 'origem', matriculaFuturaId: 'futura' }],
+          reservas: [{ itemId: 'item-1', status: 'RESERVED' }],
+          financeiros: [{ id: 'fin-1', status: 'ACTIVE' }],
+          contratos: [{ id: 'cf-1', status: 'WAITING_SIGNATURE' }],
+          pendencias: [],
+        }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      matricula: {
+        findMany: vi.fn().mockResolvedValue([{ id: 'origem', dataFimContrato: new Date('2026-07-01T00:00:00.000Z'), status: 'ATIVA' }]),
+        updateMany: vi.fn(),
+      },
+      rematriculaAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      rematriculaProcesso: { findMany: vi.fn().mockResolvedValue([{ id: 'proc-1' }]) },
+      $transaction: vi.fn(async (callback) => callback(tx)),
+    };
+
+    const result = await activateDueRenewalProcesses(
+      { contaId: 'conta-1', now: new Date('2026-07-02T12:00:00.000Z') },
+      { prisma: prisma as never },
+    );
+
+    expect(result).toEqual([{ processId: 'proc-1', status: 'REQUIRES_ATTENTION' }]);
+    expect(tx.matricula.updateMany).not.toHaveBeenCalled();
+    expect(tx.rematriculaProcesso.update).toHaveBeenCalledWith({
+      where: { id: 'proc-1' },
+      data: { status: 'REQUIRES_ATTENTION' },
+    });
   });
 });

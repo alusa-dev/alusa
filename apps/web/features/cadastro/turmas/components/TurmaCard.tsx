@@ -11,8 +11,9 @@ interface TurmaCardProps {
 }
 
 export function TurmaCard({ turma, onClick }: TurmaCardProps) {
-  const ocupacao = turma.capacidade > 0 ? (turma.vagasOcupadas / turma.capacidade) * 100 : 0;
-  const isFull = turma.vagasOcupadas >= turma.capacidade;
+  const matriculados = turma.matriculasVinculadas;
+  const ocupacao = turma.capacidade > 0 ? (matriculados / turma.capacidade) * 100 : 0;
+  const isFull = matriculados >= turma.capacidade;
 
   return (
     <Card 
@@ -46,7 +47,7 @@ export function TurmaCard({ turma, onClick }: TurmaCardProps) {
               Ocupação
             </span>
             <span className={cn(isFull && "text-red-600 font-medium")}>
-              {turma.vagasOcupadas} / {turma.capacidade}
+              {matriculados} / {turma.capacidade}
             </span>
           </div>
           <Progress value={ocupacao} className={cn("h-2", isFull ? "bg-red-100" : "bg-gray-100")} indicatorClassName={cn(isFull ? "bg-red-500" : "bg-brand-primary")} />

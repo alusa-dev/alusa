@@ -275,10 +275,22 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
       },
     });
 
+    const futureContract = await tx.contratoFuturo.findFirst({
+      where: { contaId: contrato.contaId, contratoId: contrato.id },
+      select: { id: true, validFrom: true },
+    });
+
+    if (futureContract) {
+      await tx.contratoFuturo.update({
+        where: { id: futureContract.id },
+        data: { status: 'SIGNED_SCHEDULED', signedAt: now },
+      });
+    }
+
     await tx.matricula.update({
       where: { id: contrato.matriculaId },
       data: {
-        statusContrato: 'ATIVO',
+        statusContrato: futureContract ? 'AGUARDANDO_ASSINATURA' : 'ATIVO',
         contratoAtualId: contrato.id,
       },
     });

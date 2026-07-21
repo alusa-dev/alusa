@@ -213,6 +213,7 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
   const andFilters: Prisma.MatriculaWhereInput[] = [];
 
   if (input.turmaId) {
+    const referenceDate = new Date();
     andFilters.push(
       {
         OR: [
@@ -220,7 +221,9 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
           { matriculaTurmas: { some: { turmaId: input.turmaId } } },
         ],
       },
-      buildSeatOccupancyWhereClause() as Prisma.MatriculaWhereInput,
+      { status: { notIn: [StatusMatricula.ENCERRADA, StatusMatricula.CANCELADA, StatusMatricula.RECUSADA] } },
+      { dataInicio: { lte: referenceDate } },
+      { dataFimContrato: { gte: referenceDate } },
     );
   }
 

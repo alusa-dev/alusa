@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { createStandaloneCharge } from '@alusa/finance';
 
 import { createRenewalPending } from './renewal-governance.service';
+import { mapPeriodicidadeToCycle } from './recurring-billing';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -68,6 +69,8 @@ async function loadAgreement(
                   formaPagamentoTaxa: true,
                   dataFimContrato: true,
                   vencimentoDia: true,
+                  plano: { select: { periodicidade: true } },
+                  combo: { select: { periodicidade: true } },
                 },
               },
             },
@@ -240,6 +243,19 @@ async function handleFutureFinanceProvision(
     return { skipped: true, reason: 'PROVISION_ZERO_VALUE' };
   }
 
+  const periodicidade = payerContext.firstFuture.combo?.periodicidade
+    ?? payerContext.firstFuture.plano?.periodicidade;
+  if (!periodicidade) {
+    await markFinancialFailure(prisma, {
+      contaId: event.contaId,
+      processoId: agreement.processoId,
+      agreementId: agreement.id,
+      code: 'RENEWAL_BILLING_CYCLE_MISSING',
+      message: 'Plano ou combo futuro não possui periodicidade financeira válida.',
+    });
+    throw new Error('RENEWAL_BILLING_CYCLE_MISSING');
+  }
+
   await prisma.acordoFinanceiroFuturo.update({
     where: { id: agreement.id },
     data: { status: 'PROVISIONING', failureCode: null, failureMessage: null },
@@ -258,7 +274,7 @@ async function handleFutureFinanceProvision(
     value: monthlyTotal,
     nextDueDate: toDateKey(agreement.firstDueDate ?? agreement.effectiveAt),
     endDate: toDateKey(payerContext.firstFuture.dataFimContrato),
-    cycle: 'MONTHLY',
+    cycle: mapPeriodicidadeToCycle(periodicidade),
     uiRequestId: `renewal-future-finance:${agreement.id}`,
   });
 
@@ -471,4 +487,3 @@ export async function processRenewalOutbox(
 
   return results;
 }
-
