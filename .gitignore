@@ -67,3 +67,8 @@ Thumbs.db
 debug-*.png
 *.zip
 .vercel
+
+# artefatos locais e relatorios gerados
+.tmp/
+**/*.backup.tsx
+apps/web/lighthouse-*.json
