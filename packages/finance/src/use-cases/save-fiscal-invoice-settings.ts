@@ -38,6 +38,12 @@ export type SaveFiscalInvoiceSettingsOutput = {
   readinessStatus: string;
   ready: boolean;
   issues: Array<{ code: string; message: string; blocking: boolean }>;
+  subscriptionSync: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    failures: Array<{ subscriptionId: string; kind: 'ACADEMIC' | 'STANDALONE'; error: string }>;
+  };
 };
 
 export type SaveFiscalInvoiceSettingsError =
@@ -195,31 +201,61 @@ export async function saveFiscalInvoiceSettings(
       }),
     ]);
 
-    await Promise.allSettled([
-      ...subscriptions.map((subscription) =>
+    const syncTargets = [
+      ...subscriptions.map((subscription) => ({ ...subscription, kind: 'ACADEMIC' as const })),
+      ...standaloneSubscriptions.map((subscription) => ({ ...subscription, kind: 'STANDALONE' as const })),
+    ];
+    const syncResults = await Promise.allSettled(
+      syncTargets.map((subscription) =>
         syncSubscriptionFiscalSettings({
           contaId: input.contaId,
           subscriptionId: subscription.id,
           asaasSubscriptionId: subscription.asaasSubscriptionId!,
-          kind: 'ACADEMIC',
+          kind: subscription.kind,
           actor: input.actor,
         }),
       ),
-      ...standaloneSubscriptions.map((subscription) =>
-        syncSubscriptionFiscalSettings({
-          contaId: input.contaId,
-          subscriptionId: subscription.id,
-          asaasSubscriptionId: subscription.asaasSubscriptionId!,
-          kind: 'STANDALONE',
-          actor: input.actor,
-        }),
-      ),
-    ]);
+    );
+    const failures = syncResults.flatMap((result, index) => {
+      if (result.status === 'rejected') {
+        return [{
+          subscriptionId: syncTargets[index]!.id,
+          kind: syncTargets[index]!.kind,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }];
+      }
+      if (!result.value.success) {
+        return [{
+          subscriptionId: syncTargets[index]!.id,
+          kind: syncTargets[index]!.kind,
+          error: typeof result.value.error === 'string'
+            ? result.value.error
+            : JSON.stringify(result.value.error),
+        }];
+      }
+      return [];
+    });
+
+    if (failures.length > 0) {
+      await auditLogService.record({
+        contaId: input.contaId,
+        actor: input.actor,
+        action: 'finance.fiscal.subscription_sync.partial_failure',
+        entity: { type: 'ContaFiscalSettings', id: settings.id },
+        metadata: { total: syncTargets.length, failures },
+      });
+    }
 
     return ok({
       readinessStatus: readiness.status,
       ready: readiness.ready,
       issues: readiness.issues,
+      subscriptionSync: {
+        total: syncTargets.length,
+        succeeded: syncTargets.length - failures.length,
+        failed: failures.length,
+        failures,
+      },
     });
   } catch (error) {
     console.error('[finance][saveFiscalInvoiceSettings]', error);
@@ -255,5 +291,6 @@ export async function getFiscalReadiness(input: {
     readinessStatus: result.data.readiness.status,
     ready: result.data.readiness.ready,
     issues: result.data.readiness.issues,
+    subscriptionSync: { total: 0, succeeded: 0, failed: 0, failures: [] },
   });
 }

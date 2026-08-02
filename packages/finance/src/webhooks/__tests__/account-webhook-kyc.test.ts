@@ -12,6 +12,8 @@ const {
   mockKycProcessUpsert,
 } = vi.hoisted(() => {
   const mockUpdateAccount = vi.fn().mockResolvedValue({ id: 'acc-1' });
+  const mockUpdateManyAccount = vi.fn().mockResolvedValue({ count: 1 });
+  const mockUpdateProfile = vi.fn().mockResolvedValue({ id: 'prof-1' });
   const mockUpdateConta = vi.fn().mockResolvedValue({ id: 'conta-1' });
   const mockCreateHistory = vi.fn().mockResolvedValue({ id: 'hist-1' });
 
@@ -23,8 +25,10 @@ const {
     mockCreateHistory,
     mockTransaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => {
       await fn({
-        asaasAccount: { update: mockUpdateAccount },
+        asaasAccount: { update: mockUpdateAccount, updateMany: mockUpdateManyAccount },
         asaasAccountStatusHistory: { create: mockCreateHistory },
+        financeProfile: { update: mockUpdateProfile },
+        kycProcess: { upsert: mockKycProcessUpsert },
         conta: { update: mockUpdateConta },
       });
     }),
@@ -72,18 +76,18 @@ vi.mock('../../foundation/finance-profile.service', () => ({
 }));
 
 import { handleAccountWebhook } from '../account-webhook-handler';
-import { prisma } from '@alusa/database';
 
 beforeEach(() => {
   vi.clearAllMocks();
 
-  mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1' });
+  mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1', onboardingCompletedAt: null });
   mockFindUniqueAccount.mockResolvedValue({
     id: 'acc-1',
     status: 'IN_PROGRESS',
     asaasAccountId: 'ext-acc-1',
     commercialInfoStatus: null,
     commercialInfoScheduledDate: null,
+    lastAccountStatusEventAt: null,
   });
 });
 
@@ -109,8 +113,8 @@ describe('handleAccountWebhook — KYC persist', () => {
 
     expect(result.success).toBe(true);
     // KycProcess deve ter sido upserted com APPROVED
-    expect(vi.mocked(prisma.kycProcess.upsert)).toHaveBeenCalled();
-    const call = vi.mocked(prisma.kycProcess.upsert).mock.calls[0][0];
+    expect(mockKycProcessUpsert).toHaveBeenCalled();
+    const call = mockKycProcessUpsert.mock.calls[0][0];
     expect(call.create.status).toBe('APPROVED');
   });
 
@@ -120,8 +124,8 @@ describe('handleAccountWebhook — KYC persist', () => {
       payloadId: 'evt-3',
     });
 
-    expect(vi.mocked(prisma.kycProcess.upsert)).toHaveBeenCalled();
-    const call = vi.mocked(prisma.kycProcess.upsert).mock.calls[0][0];
+    expect(mockKycProcessUpsert).toHaveBeenCalled();
+    const call = mockKycProcessUpsert.mock.calls[0][0];
     expect(call.create.status).toBe('REJECTED');
   });
 
@@ -173,7 +177,7 @@ describe('handleAccountWebhook — commercial info cache refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1' });
+    mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1', onboardingCompletedAt: null });
     mockFindUniqueAccount.mockResolvedValue({
       id: 'acc-1',
       status: 'IN_PROGRESS',

@@ -54,5 +54,21 @@ describe('criarMatricula conflicts', () => {
       code: 'MATRICULA_DUPLICADA_TURMA',
       message: 'Este aluno já está matriculado nesta turma.',
     });
+
+    expect(prismaMock.matricula.findFirst).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        alunoId: 'aluno-1',
+        OR: [
+          { turmaId: { in: ['turma-1'] } },
+          { matriculaTurmas: { some: { turmaId: { in: ['turma-1'] } } } },
+        ],
+        AND: expect.arrayContaining([
+          { dataInicio: { lte: dataFimContrato } },
+          { dataFimContrato: { gte: dataInicio } },
+        ]),
+      }),
+      select: { id: true },
+    });
   });
 });

@@ -1,8 +1,39 @@
 import { FormaPagamento, PeriodicidadePlano } from '@prisma/client';
 import type { AsaasBillingType, Cycle } from '@alusa/finance';
 
-function startOfToday(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+const ASAAS_OPERATIONAL_TIME_ZONE = 'America/Sao_Paulo';
+
+type CivilDate = { year: number; monthIndex: number; day: number };
+
+function toUtcCivilDate(parts: CivilDate) {
+  return new Date(Date.UTC(parts.year, parts.monthIndex, parts.day));
+}
+
+function compareCivilDate(left: CivilDate, right: CivilDate) {
+  return Date.UTC(left.year, left.monthIndex, left.day) - Date.UTC(right.year, right.monthIndex, right.day);
+}
+
+function addCivilDays(parts: CivilDate, days: number): CivilDate {
+  const date = new Date(Date.UTC(parts.year, parts.monthIndex, parts.day + days));
+  return { year: date.getUTCFullYear(), monthIndex: date.getUTCMonth(), day: date.getUTCDate() };
+}
+
+function getDatePartsInTimeZone(date: Date, timeZone: string): CivilDate {
+  const values = new Map(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return {
+    year: Number(values.get('year')),
+    monthIndex: Number(values.get('month')) - 1,
+    day: Number(values.get('day')),
+  };
 }
 
 function getCivilDateParts(date: Date) {
@@ -29,39 +60,46 @@ function getCivilDateParts(date: Date) {
 
 export function resolveFirstDueDate(dataInicio: Date, vencimentoDia: number) {
   const baseParts = getCivilDateParts(dataInicio);
-  const base = new Date(baseParts.year, baseParts.monthIndex, baseParts.day);
   const day = Math.min(28, Math.max(1, vencimentoDia));
-  const due = new Date(baseParts.year, baseParts.monthIndex, day);
-  if (due < startOfToday(base)) {
-    return new Date(baseParts.year, baseParts.monthIndex + 1, day);
-  }
-  return due;
+  return toUtcCivilDate({
+    year: baseParts.year,
+    monthIndex: baseParts.monthIndex + (day < baseParts.day ? 1 : 0),
+    day,
+  });
 }
 
 /**
  * Retorna a primeira data de vencimento >= hoje.
  * Necessário para cobranças no Asaas, que rejeita datas passadas.
  */
-export function resolveChargeableFirstDueDate(dataInicio: Date, vencimentoDia: number): Date {
+export function resolveChargeableFirstDueDate(
+  dataInicio: Date,
+  vencimentoDia: number,
+  now = new Date(),
+): Date {
   const day = Math.min(28, Math.max(1, vencimentoDia));
-  let due = resolveFirstDueDate(dataInicio, day);
-  const today = new Date();
-  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  while (new Date(due.getFullYear(), due.getMonth(), due.getDate()) < startToday) {
-    due = new Date(due.getFullYear(), due.getMonth() + 1, day);
+  let due = getCivilDateParts(resolveFirstDueDate(dataInicio, day));
+  const providerToday = getDatePartsInTimeZone(now, ASAAS_OPERATIONAL_TIME_ZONE);
+  while (compareCivilDate(due, providerToday) < 0) {
+    due = { year: due.year, monthIndex: due.monthIndex + 1, day };
   }
-  return due;
+  return toUtcCivilDate(due);
 }
 
 /**
  * Retorna a data de vencimento para a taxa de matrícula avulsa.
- * Se dataInicio for passada, usa hoje.
+ * Usa uma data posterior ao dia corrente do Asaas. O dia de segurança evita
+ * rejeições na virada Manaus/Brasília e durante o tempo entre preview e commit.
  */
-export function resolveEnrollmentFeeDueDate(dataInicio: Date): Date {
-  const today = new Date();
-  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const start = new Date(dataInicio.getFullYear(), dataInicio.getMonth(), dataInicio.getDate());
-  return start < startToday ? startToday : start;
+export function resolveEnrollmentFeeDueDate(dataInicio: Date, now = new Date()): Date {
+  const start = getCivilDateParts(dataInicio);
+  const providerTomorrow = addCivilDays(
+    getDatePartsInTimeZone(now, ASAAS_OPERATIONAL_TIME_ZONE),
+    1,
+  );
+  return toUtcCivilDate(
+    compareCivilDate(start, providerTomorrow) < 0 ? providerTomorrow : start,
+  );
 }
 
 export function formatIsoDate(date: Date) {
@@ -86,6 +124,30 @@ export function mapPeriodicidadeToCycle(periodicidade: PeriodicidadePlano): Cycl
     default:
       return 'MONTHLY';
   }
+}
+
+export function advanceRecurringDueDate(date: Date, periodicidade: PeriodicidadePlano): Date {
+  const parts = getCivilDateParts(date);
+  const next = toUtcCivilDate(parts);
+  switch (periodicidade) {
+    case PeriodicidadePlano.SEMANAL:
+      next.setUTCDate(next.getUTCDate() + 7);
+      break;
+    case PeriodicidadePlano.QUINZENAL:
+      next.setUTCDate(next.getUTCDate() + 14);
+      break;
+    case PeriodicidadePlano.TRIMESTRAL:
+      next.setUTCMonth(next.getUTCMonth() + 3);
+      break;
+    case PeriodicidadePlano.ANUAL:
+      next.setUTCFullYear(next.getUTCFullYear() + 1);
+      break;
+    case PeriodicidadePlano.MENSAL:
+    default:
+      next.setUTCMonth(next.getUTCMonth() + 1);
+      break;
+  }
+  return next;
 }
 
 export function mapFormaPagamentoToBillingType(

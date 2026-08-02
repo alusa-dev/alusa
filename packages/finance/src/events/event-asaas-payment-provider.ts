@@ -2,6 +2,7 @@ import {
   createCustomer,
   createPayment,
   deletePayment,
+  getPayment,
   getPixQrCode,
   listCustomers,
   listPayments,
@@ -23,6 +24,7 @@ export const eventAsaasPaymentProvider: EventAsaasPaymentProvider = {
       },
     }),
   listPayments: (params) => listPayments(params),
+  getPayment: (params) => getPayment(params),
   getPixQrCode: (params) => getPixQrCode(params),
   deletePayment: (params) => deletePayment(params),
 };

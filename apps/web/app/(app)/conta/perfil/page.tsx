@@ -32,6 +32,7 @@ import { disabledInputClasses, formatCepBR, formatCpfCnpjBR, formatPhoneBR, isVa
 import { ImageCropDialog } from '@/components/image/ImageCropDialog';
 import { useUserStore } from '@/lib/stores/user-store';
 import { Edit } from '@/components/icons/icons';
+import { removeCurrentAvatar, saveCurrentAvatar } from '@/features/account/services/avatar-service';
 
 type FinanceOnboardingSnapshot = {
   financeProfile: {
@@ -203,6 +204,12 @@ export default function ContaPerfilPage() {
   // Crop de imagem
   const [cropDialogOpen, setCropDialogOpen] = useState(false);
   const [imageToCrop, setImageToCrop] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (imageToCrop?.startsWith('blob:')) URL.revokeObjectURL(imageToCrop);
+    };
+  }, [imageToCrop]);
 
   // User store para atualizar avatar globalmente
   const updateUser = useUserStore((state) => state.updateUser);
@@ -500,113 +507,52 @@ export default function ContaPerfilPage() {
 
   // Handler para selecionar arquivo e abrir crop
   const handleFileSelect = useCallback((file: File) => {
-    console.log('📸 handleFileSelect chamado com arquivo:', file.name, file.type, file.size);
-    
-    if (!file.type.startsWith('image/')) {
-      console.error('❌ Tipo de arquivo inválido:', file.type);
+    const allowedTypes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(file.type.toLowerCase())) {
       pushToast({ title: 'Erro', description: 'Selecione uma imagem válida (JPG, PNG ou WebP)', variant: 'error' });
       return;
     }
 
     const MAX_SIZE = 15 * 1024 * 1024; // 15MB
     if (file.size > MAX_SIZE) {
-      console.error('❌ Arquivo muito grande:', file.size);
       pushToast({ title: 'Erro', description: 'A imagem deve ter no máximo 15MB', variant: 'error' });
       return;
     }
 
-    console.log('✅ Arquivo válido, iniciando leitura...');
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      console.log('✅ Arquivo carregado, tamanho do data URL:', typeof result === 'string' ? result.length : 0);
-      if (typeof result === 'string') {
-        setImageToCrop(result);
-        setCropDialogOpen(true);
-        console.log('✅ Dialog de crop aberto!');
-      }
-    };
-    reader.onerror = (error) => {
-      console.error('❌ Erro ao ler arquivo:', error);
-      pushToast({ title: 'Erro', description: 'Não foi possível carregar a imagem', variant: 'error' });
-    };
-    reader.readAsDataURL(file);
+    setImageToCrop(URL.createObjectURL(file));
+    setCropDialogOpen(true);
   }, []);
 
   // Handler após aplicar crop
   const handleCropApply = useCallback(async (result: { blob: Blob; dataUrl: string }) => {
-    console.log('🎨 handleCropApply chamado!', {
-      hasProfile: !!profile,
-      blobSize: result.blob.size,
-      dataUrlLength: result.dataUrl.length
-    });
-    
     if (!profile) {
-      console.error('❌ Profile não disponível');
-      return;
+      throw new Error('O perfil ainda não está disponível. Recarregue a página.');
     }
-    
+
     setIsUploadingPhoto(true);
     setPhotoPreview(result.dataUrl);
-    setCropDialogOpen(false);
-    console.log('📤 Iniciando upload...');
-    
+
     try {
-      const form = new FormData();
-      form.append('file', result.blob, 'profile.jpg');
-      console.log('📤 Enviando para /api/upload...');
-      
-      const res = await fetch('/api/upload', { method: 'POST', body: form });
-      const json = await res.json();
-      console.log('📥 Resposta do upload:', { ok: res.ok, status: res.status, json });
-      
-      if (!res.ok) throw new Error(json?.error || 'Falha no upload');
-
-      console.log('✅ Upload bem-sucedido! URL:', json.url);
-      console.log('📝 Atualizando perfil APENAS com foto...');
-
-      // Atualizar APENAS a foto via API diretamente
-      const res2 = await fetch('/api/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ foto: json.url }),
-      });
-
-      if (!res2.ok) {
-        const errorJson = await res2.json();
-        console.error('❌ Erro ao atualizar foto no perfil:', errorJson);
-        throw new Error(errorJson?.error || 'Falha ao atualizar foto no perfil');
-      }
-
-      const updated = await res2.json();
-      console.log('✅ Resposta da API:', updated);
-      
-      console.log('✅ Perfil atualizado!', updated);
-      setProfile((prev) => (prev ? { ...prev, ...updated } : updated as UserProfileWithSchool));
+      const updated = await saveCurrentAvatar(result.blob);
+      if (!updated.url) throw new Error('O servidor não retornou a nova foto.');
+      setProfile((prev) => prev ? { ...prev, foto: updated.url } : prev);
 
       // Atualizar store global e disparar evento para atualizar header/sidebar
       try {
-        console.log('🔄 Atualizando store global...');
-        updateUser({ foto: json.url });
-        window.dispatchEvent(new CustomEvent('user:updated', { 
-          detail: { foto: json.url } 
+        updateUser({ foto: updated.url });
+        window.dispatchEvent(new CustomEvent('user:updated', {
+          detail: { foto: updated.url },
         }));
-        console.log('✅ Store atualizada e evento disparado!');
-      } catch (storeError) {
-        console.error('⚠️ Erro ao atualizar store (não-crítico):', storeError);
+      } catch {
+        // A persistência já foi concluída; a store será atualizada no próximo carregamento.
       }
 
       pushToast({ title: 'Sucesso', description: 'Foto atualizada com sucesso!' });
     } catch (e) {
-      console.error('❌ Erro no handleCropApply:', e);
-      const message = e instanceof Error ? e.message : 'Falha ao enviar foto';
-      pushToast({ title: 'Erro', description: message, variant: 'error' });
+      throw e instanceof Error ? e : new Error('Falha ao salvar a foto.');
     } finally {
       setIsUploadingPhoto(false);
       setPhotoPreview(null);
-      setImageToCrop(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      console.log('🏁 handleCropApply finalizado');
     }
   }, [profile, updateUser]);
 
@@ -614,20 +560,8 @@ export default function ContaPerfilPage() {
     if (!profile) return;
     setIsUploadingPhoto(true);
     try {
-      // Atualizar APENAS a foto via API diretamente
-      const res = await fetch('/api/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ foto: null }),
-      });
-
-      if (!res.ok) {
-        const errorJson = await res.json();
-        throw new Error(errorJson?.error || 'Falha ao remover foto');
-      }
-
-      const updated = await res.json();
-      setProfile((prev) => (prev ? { ...prev, ...updated } : updated as UserProfileWithSchool));
+      await removeCurrentAvatar();
+      setProfile((prev) => prev ? { ...prev, foto: null } : prev);
 
       // Atualizar store global e disparar evento para atualizar header/sidebar
       try {
@@ -1522,20 +1456,11 @@ export default function ContaPerfilPage() {
         </CardContent>
       </Card>
 
-      {/* Dialog de crop de imagem */}
-      {(() => {
-        console.log('🖼️ Renderizando ImageCropDialog:', { 
-          cropDialogOpen, 
-          hasImageToCrop: !!imageToCrop,
-          imageToCropLength: imageToCrop?.length 
-        });
-        return null;
-      })()}
       <ImageCropDialog
         open={cropDialogOpen}
         onOpenChange={(open) => {
-          console.log('📊 Dialog onOpenChange:', open);
           setCropDialogOpen(open);
+          if (!open) setImageToCrop(null);
         }}
         src={imageToCrop}
         aspect={1}
@@ -1545,6 +1470,8 @@ export default function ContaPerfilPage() {
         exportQuality={0.9}
         exportSize={512}
         title="Ajustar foto de perfil"
+        applyLabel="Salvar foto"
+        applyingLabel="Salvando foto..."
         onApply={handleCropApply}
       />
     </section>

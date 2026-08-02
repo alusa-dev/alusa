@@ -5,7 +5,10 @@ import type { Result } from '@alusa/shared';
 import { ok, err } from '@alusa/shared';
 
 import { requireKycApproved } from '../foundation/kyc-guard';
-import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
+import {
+  assertAsaasTenantOperational,
+  FinanceBlockedError,
+} from '../foundation/asaas-operational-guard';
 import { buildSafeAsaasIdempotencyKey } from '../core';
 
 export type CreatePaymentInput = {
@@ -31,18 +34,35 @@ export type CreatePaymentInput = {
   };
 };
 
-export async function createAsaasPayment(
+export type CreateAsaasPaymentFailure = {
+  code: 'KYC_NOT_APPROVED' | 'FINANCE_CONFIGURATION' | 'PROVIDER_REJECTED' | 'RESULT_UNKNOWN';
+  message: string;
+  resultUnknown: boolean;
+  httpStatus?: number;
+};
+
+export async function createAsaasPaymentDetailed(
   input: CreatePaymentInput,
-): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, string>> {
+): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, CreateAsaasPaymentFailure>> {
   try {
     const kyc = await requireKycApproved(input.contaId);
-    if (!kyc.success) return err(kyc.error);
+    if (!kyc.success) {
+      return err({
+        code: 'KYC_NOT_APPROVED',
+        message: kyc.error,
+        resultUnknown: false,
+      });
+    }
 
     await assertAsaasTenantOperational(input.contaId);
 
     const creds = await loadAsaasCredentials(input.contaId);
     if (!creds) {
-      return err('Credenciais Asaas não configuradas');
+      return err({
+        code: 'FINANCE_CONFIGURATION',
+        message: 'Credenciais Asaas não configuradas',
+        resultUnknown: false,
+      });
     }
 
     const payment = await createPayment({
@@ -68,7 +88,8 @@ export async function createAsaasPayment(
     });
   } catch (error) {
     if (error instanceof AsaasHttpError) {
-      if (error.status === 400) {
+      const providerRejected = error.status >= 400 && error.status < 500 && ![408, 429].includes(error.status);
+      if (providerRejected) {
         console.warn('[finance][createAsaasPayment] payload rejeitado pelo Asaas', {
           contaId: input.contaId,
           billingType: input.billingType,
@@ -76,15 +97,34 @@ export async function createAsaasPayment(
           value: input.value,
           dueDate: input.dueDate,
           externalReference: input.externalReference,
-          discount: input.discount,
-          interest: input.interest,
-          fine: input.fine,
           response: error.responseBody ?? error.response,
         });
       }
-      return err(error.message || 'Erro ao criar pagamento');
+      return err({
+        code: providerRejected ? 'PROVIDER_REJECTED' : 'RESULT_UNKNOWN',
+        message: error.message || 'Erro ao criar pagamento',
+        resultUnknown: !providerRejected,
+        httpStatus: error.status,
+      });
     }
-    const message = error instanceof Error ? error.message : 'Erro ao criar pagamento';
-    return err(message);
+    if (error instanceof FinanceBlockedError) {
+      return err({
+        code: 'FINANCE_CONFIGURATION',
+        message: error.code,
+        resultUnknown: false,
+      });
+    }
+    return err({
+      code: 'RESULT_UNKNOWN',
+      message: error instanceof Error ? error.message : 'Erro ao criar pagamento',
+      resultUnknown: true,
+    });
   }
+}
+
+export async function createAsaasPayment(
+  input: CreatePaymentInput,
+): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, string>> {
+  const result = await createAsaasPaymentDetailed(input);
+  return result.success ? result : err(result.error.message);
 }

@@ -40,7 +40,6 @@ export interface WebhookOperationalDiagnostics {
   status: 'OK' | 'WARNING' | 'ERROR';
   generatedAt: Date;
   env: {
-    featureAsaasEnabled: boolean;
     hasWebhookSecret: boolean;
     webhookUrl: WebhookUrlRuntimeStatus;
     processing: WebhookProcessingRuntimeStatus;
@@ -185,7 +184,6 @@ export async function getWebhookOperationalDiagnostics(
   options: GetWebhookOperationalDiagnosticsOptions,
 ): Promise<WebhookOperationalDiagnostics> {
   const generatedAt = new Date();
-  const featureAsaasEnabled = process.env.FEATURE_ASAAS === 'true';
   const hasWebhookSecret = hasWebhookAuthTokenConfig();
   const webhookUrl = inspectWebhookUrlRuntimeStatus();
   const processing = inspectWebhookProcessingRuntimeStatus();
@@ -234,14 +232,6 @@ export async function getWebhookOperationalDiagnostics(
   const slo = evaluateWebhookSLOs(queue);
   const recommendations: WebhookOperationalRecommendation[] = [];
 
-  pushRecommendation(
-    recommendations,
-    fromBoolean(!featureAsaasEnabled, {
-      code: 'FEATURE_ASAAS_DISABLED',
-      severity: 'critical',
-      message: 'FEATURE_ASAAS está desabilitada.',
-    }),
-  );
   pushRecommendation(
     recommendations,
     fromBoolean(!hasWebhookSecret, {
@@ -476,7 +466,6 @@ export async function getWebhookOperationalDiagnostics(
     status: resolveDiagnosticsStatus(recommendations),
     generatedAt,
     env: {
-      featureAsaasEnabled,
       hasWebhookSecret,
       webhookUrl,
       processing,

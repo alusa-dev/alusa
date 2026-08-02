@@ -30,9 +30,33 @@ export async function encerrarContratosExpirados(
   hoje.setHours(0, 0, 0, 0);
 
   const where = {
+    contaId,
     status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
     dataFimContrato: { lt: hoje },
-    aluno: { contaId },
+    NOT: [
+      {
+        rematriculaItensOrigem: {
+          some: {
+            decision: 'RENEW' as const,
+            processo: { status: { not: 'CANCELLED' as const } },
+          },
+        },
+      },
+      {
+        rematriculasDerivadas: {
+          some: {
+            status: {
+              in: [
+                StatusMatricula.PENDENTE_TAXA,
+                StatusMatricula.AGUARDANDO_CONFIRMACAO,
+                StatusMatricula.ATIVA,
+                StatusMatricula.PAUSADA,
+              ],
+            },
+          },
+        },
+      },
+    ],
   };
 
   const matriculasExpiradas = await prisma.matricula.findMany({
@@ -56,14 +80,18 @@ export async function encerrarContratosExpirados(
   for (const matricula of matriculasExpiradas) {
     try {
       await prisma.$transaction(async (tx) => {
-        await tx.matricula.update({
-          where: { id: matricula.id },
+        const update = await tx.matricula.updateMany({
+          where: { id: matricula.id, contaId },
           data: {
             statusContrato: StatusContrato.EXPIRADO,
             status: StatusMatricula.ENCERRADA,
             dataFim: matricula.dataFim ?? matricula.dataFimContrato,
           },
         });
+
+        if (update.count !== 1) {
+          throw new Error('Matrícula não encontrada no tenant durante o encerramento.');
+        }
 
         await tx.matriculaLog.create({
           data: {

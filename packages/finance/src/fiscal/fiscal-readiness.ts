@@ -1,5 +1,7 @@
 import type { FiscalAccessMethod, FiscalReadinessStatus, ContaFiscalSettings, FiscalService } from '@prisma/client';
 import type { AsaasFiscalMunicipalOptions } from '@alusa/asaas';
+import { validateFiscalIbsCbs } from './ibs-cbs';
+import { validateAsaasInvoiceTaxesInput } from './invoice-taxes';
 
 export type FiscalReadinessIssue = {
   code: string;
@@ -101,6 +103,39 @@ export function computeFiscalReadiness(input: {
       message: 'Cadastre um serviço municipal padrão.',
       blocking: true,
     });
+  }
+
+  if (defaultService && !settings.simplesNacional) {
+    const pisCofinsIssues = validateAsaasInvoiceTaxesInput({
+      simplesNacional: false,
+      useNationalPortal: settings.useNationalPortal,
+      retainIss: defaultService.retainIss,
+      iss: Number(defaultService.iss),
+      pis: Number(defaultService.pis),
+      cofins: Number(defaultService.cofins),
+      csll: Number(defaultService.csll),
+      inss: Number(defaultService.inss),
+      ir: Number(defaultService.ir),
+      pisCofinsTaxStatus: defaultService.pisCofinsTaxStatus,
+      operationPis: defaultService.operationPis == null ? null : Number(defaultService.operationPis),
+      operationCofins:
+        defaultService.operationCofins == null ? null : Number(defaultService.operationCofins),
+    });
+    if (pisCofinsIssues.length > 0) {
+      issues.push({
+        code: 'PIS_COFINS_NT007_REQUIRED',
+        message: pisCofinsIssues[0]!.message,
+        blocking: true,
+      });
+    }
+
+    if (validateFiscalIbsCbs(defaultService).length > 0) {
+      issues.push({
+        code: 'IBS_CBS_REQUIRED',
+        message: 'Complete NBS e os códigos nacionais de IBS/CBS no serviço fiscal padrão.',
+        blocking: true,
+      });
+    }
   }
 
   if (input.municipalOptions?.usesServiceListItem && !settings.serviceListItem?.trim()) {

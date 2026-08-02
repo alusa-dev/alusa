@@ -28,6 +28,7 @@ function buildPaymentReferencePrefix(externalReference: string) {
 async function convergeAcademicSubscriptionDeletion(params: {
   contaId: string;
   subscriptionId: string;
+  billingAgreementId: string | null;
   externalReference: string;
   now: Date;
 }) {
@@ -46,12 +47,12 @@ async function convergeAcademicSubscriptionDeletion(params: {
     .map((charge) => charge.cobrancaId)
     .filter((value): value is string => Boolean(value));
 
-  await prisma.$transaction([
-    prisma.subscription.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.subscription.update({
       where: { id: params.subscriptionId },
       data: { status: 'DELETED', statusUpdatedAt: params.now },
-    }),
-    prisma.charge.updateMany({
+    });
+    await tx.charge.updateMany({
       where: {
         id: { in: linkedCharges.map((charge) => charge.id) },
         status: { in: ['CREATED', 'OPEN', 'OVERDUE'] },
@@ -62,8 +63,8 @@ async function convergeAcademicSubscriptionDeletion(params: {
         asaasStatus: 'DELETED',
         liquidacaoStatus: 'NAO_APLICAVEL',
       },
-    }),
-    prisma.cobranca.updateMany({
+    });
+    await tx.cobranca.updateMany({
       where: {
         id: { in: cobrancaIds },
         status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
@@ -76,22 +77,45 @@ async function convergeAcademicSubscriptionDeletion(params: {
         canceladoPor: 'system',
         liquidacaoStatus: 'NAO_APLICAVEL',
       },
-    }),
-  ]);
+    });
+    if (params.billingAgreementId) {
+      await tx.billingAllocation.updateMany({
+        where: { contaId: params.contaId, agreementId: params.billingAgreementId, status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] } },
+        data: { status: 'CANCELLED', validUntil: params.now },
+      });
+      await tx.billingAgreement.updateMany({
+        where: { id: params.billingAgreementId, contaId: params.contaId },
+        data: {
+          status: 'CANCELLED',
+          desiredValue: 0,
+          confirmedValue: 0,
+          asaasSubscriptionId: null,
+          remoteStatus: 'DELETED',
+          remoteStatusUpdatedAt: params.now,
+          lastReconciledAt: params.now,
+          reconciliationError: null,
+          version: { increment: 1 },
+        },
+      });
+    }
+  });
 }
 
 async function convergeStandaloneSubscriptionDeletion(params: {
+  contaId: string;
   subscriptionId: string;
+  billingAgreementId: string | null;
   externalReference: string;
   now: Date;
 }) {
-  await prisma.$transaction([
-    prisma.standaloneSubscription.update({
+  await prisma.$transaction(async (tx) => {
+    await tx.standaloneSubscription.update({
       where: { id: params.subscriptionId },
       data: { status: 'DELETED', statusUpdatedAt: params.now },
-    }),
-    prisma.charge.updateMany({
+    });
+    await tx.charge.updateMany({
       where: {
+        contaId: params.contaId,
         OR: [
           { standaloneSubscriptionId: params.subscriptionId },
           { externalReference: params.externalReference },
@@ -105,8 +129,28 @@ async function convergeStandaloneSubscriptionDeletion(params: {
         asaasStatus: 'DELETED',
         liquidacaoStatus: 'NAO_APLICAVEL',
       },
-    }),
-  ]);
+    });
+    if (params.billingAgreementId) {
+      await tx.billingAllocation.updateMany({
+        where: { contaId: params.contaId, agreementId: params.billingAgreementId, status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] } },
+        data: { status: 'CANCELLED', validUntil: params.now },
+      });
+      await tx.billingAgreement.updateMany({
+        where: { id: params.billingAgreementId, contaId: params.contaId },
+        data: {
+          status: 'CANCELLED',
+          desiredValue: 0,
+          confirmedValue: 0,
+          asaasSubscriptionId: null,
+          remoteStatus: 'DELETED',
+          remoteStatusUpdatedAt: params.now,
+          lastReconciledAt: params.now,
+          reconciliationError: null,
+          version: { increment: 1 },
+        },
+      });
+    }
+  });
 }
 
 /**
@@ -168,13 +212,13 @@ export async function DELETE(
 
     const academicSubscription = await prisma.subscription.findFirst({
       where: { id: rawParams.id, contaId: user.contaId },
-      select: { id: true, asaasSubscriptionId: true, status: true, externalReference: true },
+      select: { id: true, billingAgreementId: true, asaasSubscriptionId: true, status: true, externalReference: true },
     });
 
     const standaloneSubscription = !academicSubscription
       ? await prisma.standaloneSubscription.findFirst({
           where: { id: rawParams.id, contaId: user.contaId },
-          select: { id: true, asaasSubscriptionId: true, status: true, externalReference: true },
+          select: { id: true, billingAgreementId: true, asaasSubscriptionId: true, status: true, externalReference: true },
         })
       : null;
 
@@ -205,12 +249,15 @@ export async function DELETE(
           await convergeAcademicSubscriptionDeletion({
             contaId: user.contaId,
             subscriptionId: academicSubscription.id,
+            billingAgreementId: academicSubscription.billingAgreementId,
             externalReference: academicSubscription.externalReference,
             now,
           });
         } else {
           await convergeStandaloneSubscriptionDeletion({
+            contaId: user.contaId,
             subscriptionId: standaloneSubscription!.id,
+            billingAgreementId: standaloneSubscription!.billingAgreementId,
             externalReference: standaloneSubscription!.externalReference,
             now,
           });
@@ -237,12 +284,15 @@ export async function DELETE(
       await convergeAcademicSubscriptionDeletion({
         contaId: user.contaId,
         subscriptionId: academicSubscription.id,
+        billingAgreementId: academicSubscription.billingAgreementId,
         externalReference: academicSubscription.externalReference,
         now,
       });
     } else {
       await convergeStandaloneSubscriptionDeletion({
+        contaId: user.contaId,
         subscriptionId: standaloneSubscription!.id,
+        billingAgreementId: standaloneSubscription!.billingAgreementId,
         externalReference: standaloneSubscription!.externalReference,
         now,
       });

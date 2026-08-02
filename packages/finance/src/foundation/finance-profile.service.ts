@@ -24,6 +24,8 @@ export type FinanceProfileOnboardingData = {
   site?: string;
 };
 
+export type RegulatoryStateSource = 'WEBHOOK' | 'READ_MODEL' | 'RECONCILIATION' | 'SANDBOX_COMMAND';
+
 function normalizePostalCode(value: string): string {
   return value.replace(/\D/g, '').slice(0, 8);
 }
@@ -82,6 +84,7 @@ export const financeProfileService = {
     asaasAccountId?: string | null;
     generalStatus?: string | null;
     syncedAt?: Date;
+    source?: RegulatoryStateSource;
   }): Promise<FinanceProfile> {
     const syncedAt = params.syncedAt ?? new Date();
 
@@ -89,6 +92,20 @@ export const financeProfileService = {
 
     const general = (params.generalStatus ?? '').toUpperCase();
     const status = general === 'APPROVED' ? 'APPROVED' : general === 'REJECTED' ? 'REJECTED' : 'PENDING';
+    const source = params.source ?? 'READ_MODEL';
+
+    // Consultas GET podem observar snapshots atrasados durante a propagação do Asaas.
+    // Apenas webhooks gerais explícitos podem rebaixar uma aprovação já confirmada.
+    if (profile.status === 'APPROVED' && status !== 'APPROVED' && source !== 'WEBHOOK') {
+      return prisma.financeProfile.update({
+        where: { id: profile.id },
+        data: {
+          asaasAccountId: params.asaasAccountId ?? profile.asaasAccountId,
+          lastAsaasSyncAt: syncedAt,
+        },
+      });
+    }
+
     const isOnboardingCompleted = status === 'APPROVED';
 
     const updatedProfile = await prisma.financeProfile.update({

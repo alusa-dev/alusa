@@ -9,6 +9,7 @@ import {
 } from '@alusa/platform-billing';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
 import { privateJson } from '@/lib/private-cache';
+import { platformBillingSummaryDTOSchema } from '@/features/platform-billing/dtos/platform-billing-summary';
 import {
   assertCanManagePlatformBilling,
   countActivePlatformBillingStudents,
@@ -106,8 +107,7 @@ export async function GET() {
 
       const paymentMethod = await resolvePaymentMethodSummary(account);
 
-      return privateJson(
-        {
+      const summary = platformBillingSummaryDTOSchema.parse({
           environment,
           canManage: actor.canManagePlatformBilling,
           billingInfo: {
@@ -150,7 +150,10 @@ export async function GET() {
             ...issue,
             detectedAt: issue.detectedAt.toISOString(),
           })),
-        },
+      });
+
+      return privateJson(
+        summary,
         {
           maxAgeSeconds: 30,
           staleWhileRevalidateSeconds: 120,

@@ -13,7 +13,19 @@ import {
   pushEnrollmentFeeToAsaas,
 } from '@/src/server/matriculas/enrollment-billing.orchestrator';
 import { billingProvisionUpdate } from './billing-provision-status';
-import { getSubscription, updateSubscription } from '@alusa/finance';
+import {
+  commitBillingAgreementChange,
+  getSubscription,
+  materializeBillingAgreement,
+  previewBillingAgreementChange,
+  processPendingBillingAdjustments,
+} from '@alusa/finance';
+import {
+  formatIsoDate,
+  mapFormaPagamentoToBillingType,
+  mapPeriodicidadeToCycle,
+  resolveChargeableFirstDueDate,
+} from './recurring-billing';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
@@ -23,6 +35,8 @@ type EnrollmentBillingOutboxResult = {
   status: 'PROCESSED' | 'FAILED' | 'SKIPPED' | 'REQUIRES_RECONCILIATION';
   error?: string;
 };
+
+type ProvisionEnrollmentBilling = typeof provisionIndividualEnrollmentBilling;
 
 function retryDate(now: Date, attempts: number) {
   const minutes = Math.min(12 * 60, Math.max(5, attempts * attempts * 5));
@@ -42,6 +56,14 @@ function isUncertainFinancialResult(error: unknown) {
   return /timeout|timed out|econnreset|etimedout|eai_again|socket hang up|network|fetch failed|und_err_connect_timeout|resultado_incerto/i.test(
     message,
   );
+}
+
+export function resolveEnrollmentMergeEffectivePolicy(
+  billingStrategy?: { kind?: string } | null,
+) {
+  return billingStrategy?.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+    ? ('NEXT_CYCLE' as const)
+    : ('CURRENT_CYCLE_FULL' as const);
 }
 
 async function loadProvisionContext(db: PrismaLike, input: { contaId: string; matriculaId: string }) {
@@ -68,8 +90,11 @@ async function runProvisionForEnrollment(input: {
   contaId: string;
   matriculaId: string;
   actorUserId: string;
+}, deps: {
+  prisma: PrismaClient;
+  provisionEnrollmentBilling: ProvisionEnrollmentBilling;
 }) {
-  const matricula = await loadProvisionContext(defaultPrisma, {
+  const matricula = await loadProvisionContext(deps.prisma, {
     contaId: input.contaId,
     matriculaId: input.matriculaId,
   });
@@ -111,14 +136,14 @@ async function runProvisionForEnrollment(input: {
   const criarCobranca = preco.planoLiquido > 0;
 
   if (!gerarCobrancaTaxa && !criarCobranca) {
-    await defaultPrisma.matricula.update({
-      where: { id: matricula.id },
+    await deps.prisma.matricula.updateMany({
+      where: { id: matricula.id, contaId: input.contaId },
       data: billingProvisionUpdate(MatriculaBillingProvisionStatus.NAO_APLICAVEL),
     });
     return { skipped: true as const, reason: 'SEM_COBRANCA_A_PROVISIONAR' };
   }
 
-  await provisionIndividualEnrollmentBilling({
+  await deps.provisionEnrollmentBilling({
     contaId: matricula.contaId,
     actorUserId: input.actorUserId,
     matriculaId: matricula.id,
@@ -143,41 +168,51 @@ async function runProvisionForEnrollment(input: {
     },
   });
 
+  const completion = await deps.prisma.matricula.findFirst({
+    where: { id: matricula.id, contaId: matricula.contaId },
+    select: {
+      billingProvisionStatus: true,
+      billingProvisionError: true,
+    },
+  });
+
+  if (!completion) {
+    return {
+      retryableFailure: true as const,
+      reason: 'MATRICULA_NAO_ENCONTRADA_APOS_PROVISIONAMENTO',
+    };
+  }
+
+  if (completion.billingProvisionStatus === MatriculaBillingProvisionStatus.RESULTADO_INCERTO) {
+    return {
+      requiresReconciliation: true as const,
+      reason: completion.billingProvisionError ?? 'RESULTADO_INCERTO',
+    };
+  }
+
+  if (
+    completion.billingProvisionStatus !== MatriculaBillingProvisionStatus.PROVISIONADO &&
+    completion.billingProvisionStatus !== MatriculaBillingProvisionStatus.NAO_APLICAVEL
+  ) {
+    return {
+      retryableFailure: true as const,
+      reason: [
+        'BILLING_PROVISION_INCOMPLETE',
+        completion.billingProvisionStatus,
+        completion.billingProvisionError,
+      ]
+        .filter(Boolean)
+        .join(':'),
+    };
+  }
+
   return { skipped: false as const };
 }
 
-function toAsaasDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function sameMoney(left: number, right: number) {
-  return Math.abs(left - right) < 0.005;
-}
-
-async function computeEnrollmentNetAmount(db: PrismaLike, matriculaId: string) {
-  const matricula = await db.matricula.findUnique({
-    where: { id: matriculaId },
-    select: {
-      id: true,
-      taxaMatricula: true,
-      plano: { select: { valor: true } },
-      combo: { select: { valor: true } },
-      descontos: { include: { desconto: true } },
-    },
-  });
-  if (!matricula) return 0;
-
-  const baseAmount = Number(matricula.combo?.valor ?? matricula.plano?.valor ?? 0);
-  const price = calcularPrecoMatricula({
-    planoValor: baseAmount,
-    taxaMatricula: Number(matricula.taxaMatricula ?? 0),
-    descontos: matricula.descontos.map((item) => ({
-      tipo: item.desconto.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
-      valor: Number(item.desconto.valor),
-      cumulativo: false,
-    })),
-  });
-  return price.planoLiquido;
+function exclusiveDayAfter(date: Date) {
+  const end = new Date(date);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return formatIsoDate(end);
 }
 
 async function runExistingSubscriptionUpdate(input: {
@@ -185,24 +220,48 @@ async function runExistingSubscriptionUpdate(input: {
   matriculaId: string;
   subscriptionTargetId: string;
   actorUserId: string;
+  billingStrategy?: { kind?: string; effectiveAt?: string } | null;
+}, deps: {
+  prisma: PrismaClient;
+  previewChange: typeof previewBillingAgreementChange;
+  commitChange: typeof commitBillingAgreementChange;
+  processAdjustments: typeof processPendingBillingAdjustments;
+  getRemoteSubscription: typeof getSubscription;
+  materializeAgreement: typeof materializeBillingAgreement;
+  pushEnrollmentFee: typeof pushEnrollmentFeeToAsaas;
 }) {
-  const [targetSubscription, newAmount, enrollmentFeeCharge] = await Promise.all([
-    defaultPrisma.subscription.findFirst({
+  const [targetSubscription, enrollment, allocations, enrollmentFeeCharge] = await Promise.all([
+    deps.prisma.subscription.findFirst({
       where: { id: input.subscriptionTargetId, contaId: input.contaId },
       include: {
+        billingAgreement: true,
         matricula: {
           select: {
             id: true,
+            dataInicio: true,
             formaPagamento: true,
             vencimentoDia: true,
             dataFimContrato: true,
             asaasSubscriptionId: true,
+            plano: { select: { periodicidade: true } },
+            combo: { select: { periodicidade: true } },
           },
         },
       },
     }),
-    computeEnrollmentNetAmount(defaultPrisma, input.matriculaId),
-    defaultPrisma.cobranca.findFirst({
+    deps.prisma.matricula.findFirst({
+      where: { id: input.matriculaId, contaId: input.contaId },
+      select: { id: true, alunoId: true, dataInicio: true, dataFimContrato: true },
+    }),
+    deps.prisma.familyFinancialAllocation.findMany({
+      where: {
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        status: { in: ['PENDING', 'ACTIVE'] },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    deps.prisma.cobranca.findFirst({
       where: {
         contaId: input.contaId,
         matriculaId: input.matriculaId,
@@ -217,47 +276,24 @@ async function runExistingSubscriptionUpdate(input: {
     }),
   ]);
 
-  if (!targetSubscription?.asaasSubscriptionId) {
+  if (!targetSubscription?.asaasSubscriptionId || !enrollment) {
     throw new Error('ASSINATURA_DESTINO_NAO_PROVISIONADA');
   }
+  const tuition = allocations.find((item) => item.chargeKind === 'MENSALIDADE');
+  if (!tuition) throw new Error('ALOCACAO_MENSALIDADE_NAO_ENCONTRADA');
 
-  const [currentAmount, activeAllocationTotal] = await Promise.all([
-    computeEnrollmentNetAmount(defaultPrisma, targetSubscription.matriculaId),
-    defaultPrisma.familyFinancialAllocation.aggregate({
-      where: {
-        contaId: input.contaId,
-        sourceAgreementId: targetSubscription.id,
-        chargeKind: 'MENSALIDADE',
-        status: 'ACTIVE',
-      },
-      _sum: { amount: true },
-    }),
-  ]);
-  const previousMergedAmount = Number(activeAllocationTotal._sum.amount ?? 0);
-  const expectedCurrentValue =
-    Math.round((currentAmount + previousMergedAmount + Number.EPSILON) * 100) / 100;
-  const nextValue =
-    Math.round((expectedCurrentValue + newAmount + Number.EPSILON) * 100) / 100;
-
-  const remoteBefore = await getSubscription(targetSubscription.asaasSubscriptionId, {
+  const remoteBefore = await deps.getRemoteSubscription(targetSubscription.asaasSubscriptionId, {
     contaId: input.contaId,
   });
   const remoteValueBefore = Number(remoteBefore.value);
-  const alreadyUpdated = sameMoney(remoteValueBefore, nextValue);
-  if (!alreadyUpdated && !sameMoney(remoteValueBefore, expectedCurrentValue)) {
-    return {
-      requiresReconciliation: true as const,
-      reason: `VALOR_ASSINATURA_DIVERGENTE:esperado=${expectedCurrentValue}:remoto=${remoteValueBefore}`,
-    };
-  }
 
-  await defaultPrisma.matricula.updateMany({
+  await deps.prisma.matricula.updateMany({
     where: { id: input.matriculaId, contaId: input.contaId },
     data: billingProvisionUpdate(MatriculaBillingProvisionStatus.PROCESSANDO),
   });
 
   if (enrollmentFeeCharge && !enrollmentFeeCharge.asaasPaymentId) {
-    const feeSync = await pushEnrollmentFeeToAsaas({
+    const feeSync = await deps.pushEnrollmentFee({
       contaId: input.contaId,
       actorUserId: input.actorUserId,
       matriculaId: input.matriculaId,
@@ -273,66 +309,218 @@ async function runExistingSubscriptionUpdate(input: {
     }
   }
 
-  if (!alreadyUpdated) {
-    await updateSubscription(
-      targetSubscription.asaasSubscriptionId,
-      {
-        value: nextValue,
-        updatePendingPayments: true,
-        endDate: toAsaasDate(targetSubscription.matricula.dataFimContrato),
-      },
-      { contaId: input.contaId },
-    );
+  const billingType =
+    targetSubscription.billingAgreement?.billingType ??
+    mapFormaPagamentoToBillingType(targetSubscription.matricula.formaPagamento);
+  const periodicidade =
+    targetSubscription.matricula.combo?.periodicidade ??
+    targetSubscription.matricula.plano?.periodicidade;
+  if (!billingType || !periodicidade) {
+    throw new Error('DADOS_CANONICOS_DA_ASSINATURA_DESTINO_INCOMPLETOS');
+  }
+  const agreement = await deps.materializeAgreement({
+    kind: 'INDIVIDUAL',
+    contaId: input.contaId,
+    subscriptionId: targetSubscription.id,
+    actorId: input.actorUserId,
+    value: remoteValueBefore,
+    billingType,
+    cycle: targetSubscription.billingAgreement?.cycle ?? mapPeriodicidadeToCycle(periodicidade),
+    nextDueDate: targetSubscription.billingAgreement?.nextDueDate
+      ? formatIsoDate(targetSubscription.billingAgreement.nextDueDate)
+      : formatIsoDate(
+          resolveChargeableFirstDueDate(
+            targetSubscription.matricula.dataInicio,
+            targetSubscription.matricula.vencimentoDia,
+          ),
+        ),
+    validUntil: formatIsoDate(targetSubscription.matricula.dataFimContrato),
+    terms: targetSubscription.billingAgreement
+      ? {
+          interestValue: targetSubscription.billingAgreement.interestValue
+            ? Number(targetSubscription.billingAgreement.interestValue)
+            : null,
+          interestType: targetSubscription.billingAgreement.interestType,
+          fineValue: targetSubscription.billingAgreement.fineValue
+            ? Number(targetSubscription.billingAgreement.fineValue)
+            : null,
+          fineType: targetSubscription.billingAgreement.fineType,
+          discountValue: targetSubscription.billingAgreement.discountValue
+            ? Number(targetSubscription.billingAgreement.discountValue)
+            : null,
+          discountType: targetSubscription.billingAgreement.discountType,
+          discountDueDateLimitDays:
+            targetSubscription.billingAgreement.discountDueDateLimitDays,
+        }
+      : undefined,
+  });
 
-    const remoteAfter = await getSubscription(targetSubscription.asaasSubscriptionId, {
-      contaId: input.contaId,
+  const effectivePolicy = resolveEnrollmentMergeEffectivePolicy(input.billingStrategy);
+  const effectiveDate = formatIsoDate(
+    input.billingStrategy?.effectiveAt
+      ? new Date(input.billingStrategy.effectiveAt)
+      : enrollment.dataInicio,
+  );
+  const uiRequestId = `enrollment-merge:${input.subscriptionTargetId}:${input.matriculaId}`;
+  const completedOperation = await deps.prisma.billingChangeOperation.findFirst({
+    where: { contaId: input.contaId, uiRequestId, status: 'COMPLETED' },
+    select: { id: true },
+  });
+  const drafts = allocations.map((allocation) => ({
+    clientId: allocation.id,
+    enrollmentId: enrollment.id,
+    studentId: enrollment.alunoId,
+    kind: allocation.chargeKind === 'MENSALIDADE'
+      ? ('TUITION' as const)
+      : ('ENROLLMENT_FEE' as const),
+    recurring: allocation.chargeKind === 'MENSALIDADE',
+    baseAmountCents: Math.round(Number(allocation.baseAmount ?? allocation.amount) * 100),
+    discountAmountCents: Math.round(Number(allocation.discountAmount ?? 0) * 100),
+    netAmountCents: Math.round(Number(allocation.amount) * 100),
+    validFrom: formatIsoDate(allocation.competenceStart),
+    validUntil: allocation.chargeKind === 'MENSALIDADE'
+      ? exclusiveDayAfter(allocation.competenceEnd ?? enrollment.dataFimContrato)
+      : exclusiveDayAfter(allocation.competenceStart),
+    prorationPolicy: allocation.chargeKind === 'MENSALIDADE'
+      ? (effectivePolicy === 'NEXT_CYCLE' ? ('NEXT_CYCLE' as const) : ('FULL_CURRENT_CYCLE' as const))
+      : ('MANUAL' as const),
+  }));
+  const change = {
+    contaId: input.contaId,
+    agreementId: agreement.id,
+    actorId: input.actorUserId,
+    reason: `Inclusão da matrícula ${input.matriculaId} em cobrança existente`,
+    kind: 'ADD_ALLOCATION' as const,
+    effectivePolicy,
+    effectiveDate,
+    allocations: drafts,
+  };
+  let operationId = completedOperation?.id ?? null;
+  if (!operationId) {
+    const preview = await deps.previewChange(change);
+    if (preview.blockers.length > 0) {
+      return { requiresReconciliation: true as const, reason: `BILLING_PREVIEW_BLOCKED:${preview.blockers.join('|')}` };
+    }
+    if (preview.adjustments.some((adjustment) => adjustment.type === 'MANUAL_REVIEW')) {
+      return { requiresReconciliation: true as const, reason: 'CURRENT_CYCLE_REQUIRES_MANUAL_REVIEW' };
+    }
+    const result = await deps.commitChange({
+      ...change,
+      uiRequestId,
+      previewHash: preview.previewHash,
+      previewExpiresAt: preview.expiresAt,
+      expectedAgreementVersion: preview.sourceVersion,
     });
-    const confirmedValue = Number(remoteAfter.value);
-    if (!sameMoney(confirmedValue, nextValue)) {
+    if (result.status === 'REQUIRES_RECONCILIATION') {
+      return { requiresReconciliation: true as const, reason: `BILLING_OPERATION_UNCERTAIN:${result.operationId}` };
+    }
+    operationId = result.operationId;
+  }
+
+  const pendingAdjustment = await deps.prisma.billingAdjustment.findFirst({
+    where: { contaId: input.contaId, operationId, status: { not: 'APPLIED' } },
+    select: { id: true },
+  });
+  if (pendingAdjustment) {
+    await deps.processAdjustments({ contaId: input.contaId, operationId });
+    const unresolved = await deps.prisma.billingAdjustment.findFirst({
+      where: {
+        contaId: input.contaId,
+        operationId,
+        status: { not: 'APPLIED' },
+      },
+      select: { id: true, status: true, lastError: true },
+    });
+    if (unresolved) {
+      if (unresolved.status === 'PENDING' || unresolved.status === 'FAILED' || unresolved.status === 'PROCESSING') {
+        return {
+          retryableFailure: true as const,
+          reason: `BILLING_ADJUSTMENT_RETRY_PENDING:${unresolved.status}:${unresolved.lastError ?? unresolved.id}`,
+        };
+      }
       return {
         requiresReconciliation: true as const,
-        reason: `ATUALIZACAO_ASSINATURA_NAO_CONFIRMADA:esperado=${nextValue}:remoto=${confirmedValue}`,
+        reason: `BILLING_ADJUSTMENT_UNRESOLVED:${unresolved.status}:${unresolved.lastError ?? unresolved.id}`,
       };
     }
   }
 
-  await defaultPrisma.$transaction(async (tx) => {
-    await tx.familyFinancialAllocation.updateMany({
-      where: {
-        contaId: input.contaId,
-        matriculaId: input.matriculaId,
-        chargeKind: 'MENSALIDADE',
-        status: 'PENDING',
-      },
-      data: {
-        status: 'ACTIVE',
-        sourceAgreementId: targetSubscription.id,
-        metadata: {
-          source: 'MATRICULA_INICIAL',
-          subscriptionTargetId: targetSubscription.id,
-          asaasSubscriptionId: targetSubscription.asaasSubscriptionId,
-          updatePendingPayments: true,
-          mergedValue: nextValue,
-          remoteValueBefore,
-          updateSkippedAsIdempotent: alreadyUpdated,
-        } as Prisma.InputJsonValue,
-      },
-    });
+  const canonicalAllocations = await deps.prisma.billingAllocation.findMany({
+    where: { contaId: input.contaId, agreementId: agreement.id, sourceOperationId: operationId },
+    select: { id: true, kind: true },
+  });
+  const expectedKinds = allocations.map((allocation) =>
+    allocation.chargeKind === 'MENSALIDADE' ? 'TUITION' : 'ENROLLMENT_FEE',
+  );
+  const hasCompleteCanonicalProjection =
+    canonicalAllocations.length === expectedKinds.length &&
+    expectedKinds.every(
+      (kind) => canonicalAllocations.filter((allocation) => allocation.kind === kind).length === 1,
+    );
+  if (!hasCompleteCanonicalProjection) {
+    return {
+      requiresReconciliation: true as const,
+      reason: `CANONICAL_ALLOCATION_PROJECTION_INCOMPLETE:${operationId}`,
+    };
+  }
+  await deps.prisma.$transaction(async (tx) => {
+    for (const allocation of allocations) {
+      const kind = allocation.chargeKind === 'MENSALIDADE' ? 'TUITION' : 'ENROLLMENT_FEE';
+      const canonical = canonicalAllocations.find((item) => item.kind === kind);
+      await tx.familyFinancialAllocation.updateMany({
+        where: { id: allocation.id, contaId: input.contaId, matriculaId: input.matriculaId },
+        data: {
+          status: effectivePolicy === 'NEXT_CYCLE' ? 'SCHEDULED' : 'ACTIVE',
+          sourceAgreementId: agreement.id,
+          billingAllocationId: canonical!.id,
+          metadata: {
+            source: 'MATRICULA_INICIAL_CANONICAL',
+            subscriptionTargetId: targetSubscription.id,
+            billingAgreementId: agreement.id,
+            billingOperationId: operationId,
+            effectivePolicy,
+            remoteValueBefore,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
+    const [account, enrollment] = await Promise.all([
+      tx.conta.findFirst({
+        where: { id: input.contaId },
+        select: { matriculaActivationPolicy: true },
+      }),
+      tx.matricula.findFirst({
+        where: { id: input.matriculaId, contaId: input.contaId },
+        select: { status: true, taxaIsenta: true, taxaMatricula: true },
+      }),
+    ]);
+    const activationStatus =
+      account?.matriculaActivationPolicy === 'REQUIRES_PAYMENT' &&
+      enrollment &&
+      !enrollment.taxaIsenta &&
+      Number(enrollment.taxaMatricula) > 0
+        ? ('PENDENTE_TAXA' as const)
+        : ('ATIVA' as const);
+
     await tx.matricula.updateMany({
       where: { id: input.matriculaId, contaId: input.contaId },
-      data: billingProvisionUpdate(MatriculaBillingProvisionStatus.PROVISIONADO),
+      data: {
+        ...billingProvisionUpdate(MatriculaBillingProvisionStatus.PROVISIONADO),
+        ...(enrollment?.status === 'AGUARDANDO_CONFIRMACAO'
+          ? { status: activationStatus }
+          : {}),
+      },
     });
     await tx.matriculaLog.create({
       data: {
         matriculaId: input.matriculaId,
-        action: 'BILLING_MERGED_INTO_EXISTING_SUBSCRIPTION',
+        action: 'BILLING_ALLOCATION_ADDED_TO_CANONICAL_AGREEMENT',
         metadata: {
           subscriptionId: targetSubscription.id,
-          asaasSubscriptionId: targetSubscription.asaasSubscriptionId,
-          updatePendingPayments: true,
-          mergedValue: nextValue,
-          remoteValueBefore,
-          updateSkippedAsIdempotent: alreadyUpdated,
+          billingAgreementId: agreement.id,
+          billingOperationId: operationId,
+          effectivePolicy,
+          recoveredCompletedOperation: Boolean(completedOperation),
         } as Prisma.InputJsonValue,
       },
     });
@@ -397,6 +585,52 @@ export async function enqueueEnrollmentBillingOutbox(
       const raced = await db.matriculaBillingOutbox.findFirst({
         where: { contaId: input.contaId, dedupeKey },
       });
+      if (
+        raced?.status === MatriculaBillingOutboxStatus.PROCESSED &&
+        raced.matriculaId === input.matriculaId
+      ) {
+        const incompleteEnrollment = await db.matricula.findFirst({
+          where: {
+            id: input.matriculaId,
+            contaId: input.contaId,
+            billingProvisionStatus: {
+              in: [
+                MatriculaBillingProvisionStatus.PENDENTE,
+                MatriculaBillingProvisionStatus.PROCESSANDO,
+                MatriculaBillingProvisionStatus.PARCIAL,
+                MatriculaBillingProvisionStatus.FALHO,
+              ],
+            },
+          },
+          select: { id: true },
+        });
+        if (!incompleteEnrollment) return raced;
+
+        await db.matriculaBillingOutbox.updateMany({
+          where: {
+            id: raced.id,
+            contaId: input.contaId,
+            status: MatriculaBillingOutboxStatus.PROCESSED,
+          },
+          data: {
+            status: MatriculaBillingOutboxStatus.PENDING,
+            attempts: 0,
+            availableAt: input.availableAt ?? new Date(),
+            lockedAt: null,
+            leaseExpiresAt: null,
+            processedAt: null,
+            lastError: 'REABERTO_PARA_RECONCILIAR_PROVISIONAMENTO_INCOMPLETO',
+            payload: {
+              matriculaId: input.matriculaId,
+              actorUserId: input.actorUserId,
+            } as Prisma.InputJsonValue,
+          },
+        });
+        const reopened = await db.matriculaBillingOutbox.findFirst({
+          where: { contaId: input.contaId, dedupeKey },
+        });
+        if (reopened) return reopened;
+      }
       if (raced) return raced;
     }
     throw error;
@@ -476,7 +710,17 @@ export async function enqueueEnrollmentSubscriptionMergeOutbox(
 
 export async function processEnrollmentBillingOutboxEvent(
   eventId: string,
-  deps: { prisma?: PrismaClient; now?: Date } = {},
+  deps: {
+    prisma?: PrismaClient;
+    now?: Date;
+    provisionEnrollmentBilling?: ProvisionEnrollmentBilling;
+    previewBillingAgreementChange?: typeof previewBillingAgreementChange;
+    commitBillingAgreementChange?: typeof commitBillingAgreementChange;
+    processPendingBillingAdjustments?: typeof processPendingBillingAdjustments;
+    getSubscription?: typeof getSubscription;
+    materializeBillingAgreement?: typeof materializeBillingAgreement;
+    pushEnrollmentFeeToAsaas?: typeof pushEnrollmentFeeToAsaas;
+  } = {},
 ): Promise<EnrollmentBillingOutboxResult> {
   const db = deps.prisma ?? defaultPrisma;
   const now = deps.now ?? new Date();
@@ -551,6 +795,10 @@ export async function processEnrollmentBillingOutboxEvent(
       typeof payload.subscriptionTargetId === 'string' && payload.subscriptionTargetId.trim()
         ? payload.subscriptionTargetId.trim()
         : null;
+    const billingStrategy =
+      payload.billingStrategy && typeof payload.billingStrategy === 'object' && !Array.isArray(payload.billingStrategy)
+        ? payload.billingStrategy as { kind?: string; effectiveAt?: string }
+        : null;
     const result =
       event.eventType === 'UPDATE_EXISTING_SUBSCRIPTION_BILLING' && subscriptionTargetId
           ? await runExistingSubscriptionUpdate({
@@ -558,24 +806,89 @@ export async function processEnrollmentBillingOutboxEvent(
             matriculaId,
             subscriptionTargetId,
             actorUserId,
+            billingStrategy,
+          }, {
+            prisma: db,
+            previewChange: deps.previewBillingAgreementChange ?? previewBillingAgreementChange,
+            commitChange: deps.commitBillingAgreementChange ?? commitBillingAgreementChange,
+            processAdjustments:
+              deps.processPendingBillingAdjustments ?? processPendingBillingAdjustments,
+            getRemoteSubscription: deps.getSubscription ?? getSubscription,
+            materializeAgreement: deps.materializeBillingAgreement ?? materializeBillingAgreement,
+            pushEnrollmentFee: deps.pushEnrollmentFeeToAsaas ?? pushEnrollmentFeeToAsaas,
           })
         : await runProvisionForEnrollment({
             contaId: event.contaId,
             matriculaId,
             actorUserId,
+          }, {
+            prisma: db,
+            provisionEnrollmentBilling:
+              deps.provisionEnrollmentBilling ?? provisionIndividualEnrollmentBilling,
           });
 
     if ('requiresReconciliation' in result) {
-      await db.matriculaBillingOutbox.update({
-        where: { id: event.id },
-        data: {
-          status: MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION,
-          lockedAt: null,
-          leaseExpiresAt: null,
-          lastError: result.reason,
-        },
+      const reason = result.reason ?? 'REQUIRES_RECONCILIATION';
+      await db.$transaction(async (tx) => {
+        await tx.matriculaBillingOutbox.update({
+          where: { id: event.id },
+          data: {
+            status: MatriculaBillingOutboxStatus.REQUIRES_RECONCILIATION,
+            lockedAt: null,
+            leaseExpiresAt: null,
+            lastError: reason,
+          },
+        });
+        await tx.matricula.updateMany({
+          where: { id: matriculaId, contaId: event.contaId },
+          data: billingProvisionUpdate(
+            MatriculaBillingProvisionStatus.PARCIAL,
+            reason.slice(0, 2000),
+          ),
+        });
+        await tx.matriculaLog.create({
+          data: {
+            matriculaId,
+            action: 'BILLING_PROVISION_REQUIRES_RECONCILIATION',
+            metadata: { eventId: event.id, reason } as Prisma.InputJsonValue,
+          },
+        });
       });
       return { eventId: event.id, matriculaId, status: 'REQUIRES_RECONCILIATION' };
+    }
+
+    if ('retryableFailure' in result) {
+      const reason = (result.reason ?? 'BILLING_RETRY_PENDING').slice(0, 2000);
+      await db.$transaction(async (tx) => {
+        await tx.matriculaBillingOutbox.update({
+          where: { id: event.id },
+          data: {
+            status: MatriculaBillingOutboxStatus.FAILED,
+            lockedAt: null,
+            leaseExpiresAt: null,
+            lastError: reason,
+            availableAt: retryDate(now, event.attempts + 1),
+          },
+        });
+        await tx.matriculaLog.create({
+          data: {
+            matriculaId,
+            action: 'BILLING_PROVISION_INCOMPLETE_RETRY_SCHEDULED',
+            metadata: {
+              eventId: event.id,
+              correlationId: event.correlationId,
+              error: reason,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      });
+
+      return {
+        eventId: event.id,
+        matriculaId,
+        status: 'FAILED',
+        error: reason,
+      };
     }
 
     await db.matriculaBillingOutbox.update({

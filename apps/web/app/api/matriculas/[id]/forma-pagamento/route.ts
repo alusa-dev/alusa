@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { KycNotApprovedError, updateSubscription } from '@alusa/finance';
+import {
+  KycNotApprovedError,
+  projectConfirmedBillingAgreementSnapshot,
+  updateSubscription,
+} from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
 import { updateMatriculaBillingTypeInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
@@ -176,6 +180,12 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       }
       throw error;
     }
+
+    await projectConfirmedBillingAgreementSnapshot({
+      contaId: contaCtx.contaId,
+      asaasSubscriptionId: targetSubscriptionId,
+      billingType,
+    });
 
     await prisma.matriculaLog.create({
       data: {

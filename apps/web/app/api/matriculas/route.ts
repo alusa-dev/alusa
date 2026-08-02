@@ -2,6 +2,7 @@
 import { getServerSession } from 'next-auth';
 import { Prisma, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
+import { prisma } from '@/src/prisma';
 import {
   buscarMatriculaPorId,
   criarMatricula,
@@ -9,6 +10,10 @@ import {
   MatriculaConflictError,
 } from '@/src/server/matriculas/matricula.service';
 import { processEnrollmentBillingOutboxEvent } from '@/src/server/matriculas/enrollment-billing-outbox.service';
+import {
+  createImmediateEnrollment,
+  ImmediateEnrollmentCreationError,
+} from '@/src/server/matriculas/create-immediate-enrollment.use-case';
 import { createEnrollmentCreatedNotification } from '@alusa/lib';
 import {
   createMatriculaInputDTOSchema,
@@ -33,6 +38,7 @@ import type {
   MatriculaAsaasSubscriptionSyncDTO,
   MatriculaAsaasTaxaSyncDTO,
 } from '@/features/cadastro/matriculas/dtos';
+import type { StagedEnrollmentFinancialResources } from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -83,11 +89,60 @@ function parseCommitDate(value: unknown) {
   return new Date(NaN);
 }
 
+async function rejectUnconfirmedEnrollment(input: {
+  contaId: string;
+  matriculaId: string;
+  actorId: string;
+  reason: string;
+  requiresReconciliation: boolean;
+}) {
+  await prisma.$transaction(async (tx) => {
+    const enrollment = await tx.matricula.findFirst({
+      where: { id: input.matriculaId, contaId: input.contaId },
+      select: { id: true, contratoAtualId: true },
+    });
+    if (!enrollment) return;
+
+    await tx.matricula.updateMany({
+      where: { id: enrollment.id, contaId: input.contaId },
+      data: {
+        status: 'RECUSADA',
+        statusFinanceiro: 'SUSPENSO',
+        statusContrato: 'CANCELADO',
+        billingProvisionStatus: input.requiresReconciliation ? 'RESULTADO_INCERTO' : 'FALHO',
+        billingProvisionError: input.reason.slice(0, 2000),
+      },
+    });
+    if (enrollment.contratoAtualId) {
+      await tx.contrato.updateMany({
+        where: {
+          id: enrollment.contratoAtualId,
+          contaId: input.contaId,
+          status: { notIn: ['ASSINADO', 'CANCELADO'] },
+        },
+        data: { status: 'CANCELADO' },
+      });
+    }
+    await tx.matriculaLog.create({
+      data: {
+        matriculaId: enrollment.id,
+        actorId: input.actorId,
+        action: 'MATRICULA_RECUSADA_FINANCEIRO_NAO_CONFIRMADO',
+        metadata: {
+          reason: input.reason,
+          requiresReconciliation: input.requiresReconciliation,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  });
+}
+
 /**
- * POST /api/matriculas â€” cria matrÃ­cula acadÃªmica e agenda preparaÃ§Ã£o financeira.
+ * POST /api/matriculas — confirma o financeiro e cria a matrícula acadêmica.
  *
- * Fluxo: criarMatricula (DB) â†’ outbox local â†’ worker financeiro â†’ webhooks/reconciliaÃ§Ã£o.
- * IdempotÃªncia opcional via body.uiRequestId ou header X-Idempotency-Key.
+ * Matrículas individuais com cobrança usam uma saga síncrona compensável:
+ * Asaas → commit local. Rematrículas continuam no fluxo futuro próprio.
+ * Idempotência obrigatória via body.uiRequestId ou header X-Idempotency-Key.
  */
 
 export async function GET(req: Request) {
@@ -142,6 +197,13 @@ export async function GET(req: Request) {
 
     if (auth.mismatch) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada nÃ£o pertence ao usuÃ¡rio.');
+    }
+    if (!auth.sessionContaId) {
+      return jsonError(
+        403,
+        'CONTA_SESSAO_OBRIGATORIA',
+        'A conta ativa precisa estar vinculada à sessão do usuário.',
+      );
     }
     if (!auth.contaId) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId Ã© obrigatÃ³rio');
@@ -199,6 +261,13 @@ export async function POST(req: Request) {
 
     if (auth.mismatch) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada nÃ£o pertence ao usuÃ¡rio.');
+    }
+    if (!auth.sessionContaId) {
+      return jsonError(
+        403,
+        'CONTA_SESSAO_OBRIGATORIA',
+        'A conta ativa precisa estar vinculada à sessão do usuário.',
+      );
     }
     if (!auth.contaId) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId Ã© obrigatÃ³rio');
@@ -300,6 +369,14 @@ export async function POST(req: Request) {
       );
     }
 
+    if (willCreateEnrollmentFee && !willCreateSubscription) {
+      return jsonError(
+        422,
+        'ASSINATURA_OBRIGATORIA_PARA_MATRICULA_FINANCEIRA',
+        'A taxa de matrícula só pode ser confirmada junto com a assinatura da mensalidade.',
+      );
+    }
+
     if (willCreateSubscription) {
       const previewNextDueDate = resolveChargeableFirstDueDate(
         payload.dataInicio,
@@ -317,7 +394,11 @@ export async function POST(req: Request) {
       }
     }
 
-    const result = await criarMatricula(payload);
+    const usesSeparateSubscription =
+      !payload.billingStrategy || payload.billingStrategy.kind === 'SEPARATE';
+    const result = willCreateSubscription && usesSeparateSubscription
+      ? await createImmediateEnrollment(payload)
+      : await criarMatricula(payload);
 
     let billingOutboxResult: Awaited<ReturnType<typeof processEnrollmentBillingOutboxEvent>> | null =
       null;
@@ -325,6 +406,48 @@ export async function POST(req: Request) {
       (result as { billingOutboxEventId?: string | null }).billingOutboxEventId ?? null;
     if (billingOutboxEventId) {
       billingOutboxResult = await processEnrollmentBillingOutboxEvent(billingOutboxEventId);
+      const skippedButAlreadyConfirmed =
+        billingOutboxResult.status === 'SKIPPED' &&
+        Boolean(
+          await prisma.matricula.findFirst({
+            where: {
+              id: result.matricula.id,
+              contaId: auth.contaId,
+              billingProvisionStatus: 'PROVISIONADO',
+            },
+            select: { id: true },
+          }),
+        );
+      if (
+        willCreateSubscription &&
+        !usesSeparateSubscription &&
+        billingOutboxResult.status !== 'PROCESSED' &&
+        !skippedButAlreadyConfirmed
+      ) {
+        const requiresReconciliation =
+          billingOutboxResult.status === 'REQUIRES_RECONCILIATION';
+        const reason =
+          billingOutboxResult.error ??
+          (requiresReconciliation
+            ? 'A alteração da assinatura existente teve resultado incerto.'
+            : 'A alteração da assinatura existente não foi confirmada.');
+        await rejectUnconfirmedEnrollment({
+          contaId: auth.contaId,
+          matriculaId: result.matricula.id,
+          actorId: auth.user.id,
+          reason,
+          requiresReconciliation,
+        });
+        throw new ImmediateEnrollmentCreationError(
+          requiresReconciliation
+            ? 'UNIFICACAO_REQUER_RECONCILIACAO'
+            : 'UNIFICACAO_FINANCEIRA_NAO_CONFIRMADA',
+          requiresReconciliation
+            ? 'A alteração financeira precisa de reconciliação. A matrícula não foi ativada e a vaga foi liberada.'
+            : 'Não foi possível confirmar a alteração da assinatura. A matrícula não foi ativada.',
+          requiresReconciliation,
+        );
+      }
       const refreshedMatricula = await buscarMatriculaPorId({
         id: result.matricula.id,
         contaId: auth.contaId,
@@ -359,8 +482,34 @@ export async function POST(req: Request) {
 
     const notificationSync = null;
     const operationalWarnings: MatriculaOperationalWarningDTO[] = [];
-    let taxaSync: MatriculaAsaasTaxaSyncDTO | null = null;
-    let subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null = null;
+    const immediateSync =
+      'immediateFinancialSync' in result
+        ? (result as {
+            immediateFinancialSync: {
+              subscription: StagedEnrollmentFinancialResources['subscription'];
+              enrollmentFee: StagedEnrollmentFinancialResources['enrollmentFee'];
+            };
+          }).immediateFinancialSync
+        : null;
+    let taxaSync: MatriculaAsaasTaxaSyncDTO | null = immediateSync?.enrollmentFee
+      ? {
+          success: true,
+          asaasPaymentId: immediateSync.enrollmentFee.asaasPaymentId,
+          invoiceUrl: immediateSync.enrollmentFee.invoiceUrl,
+          bankSlipUrl: immediateSync.enrollmentFee.bankSlipUrl,
+        }
+      : null;
+    let subscriptionSync: MatriculaAsaasSubscriptionSyncDTO | null = immediateSync
+      ? {
+          success: true,
+          asaasSubscriptionId: immediateSync.subscription.asaasSubscriptionId,
+          asaasPaymentId: immediateSync.subscription.firstPayment.asaasPaymentId,
+          invoiceUrl: immediateSync.subscription.firstPayment.invoiceUrl,
+          bankSlipUrl: immediateSync.subscription.firstPayment.bankSlipUrl,
+          expectedWebhooks: [],
+          message: 'Assinatura e primeira mensalidade confirmadas no Asaas.',
+        }
+      : null;
 
     const currentBillingProvisionStatus = String(
       result.matricula.billingProvisionStatus ?? 'NAO_APLICAVEL',
@@ -416,6 +565,17 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     console.error('Erro ao criar matrÃ­cula:', error);
+    if (error instanceof ImmediateEnrollmentCreationError) {
+      return jsonError(
+        error.requiresReconciliation ? 503 : 422,
+        error.code,
+        error.message,
+        {
+          requiresReconciliation: error.requiresReconciliation,
+          ...(error.reasonCode ? { reasonCode: error.reasonCode } : {}),
+        },
+      );
+    }
     if (error instanceof MatriculaConflictError) {
       return jsonError(409, error.code, error.message);
     }

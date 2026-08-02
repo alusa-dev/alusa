@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { StatusCobranca, StatusMatricula } from '@prisma/client';
+import { Prisma, StatusCobranca, StatusMatricula } from '@prisma/client';
 import {
   ativarAssinatura,
   deletePayment,
@@ -7,6 +7,8 @@ import {
   getPayment,
   getSubscription,
   pauseAssinatura,
+  commitBillingAgreementChange,
+  previewBillingAgreementChange,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import {
@@ -356,6 +358,58 @@ function buildFinancialSyncError(
   );
 }
 
+async function getOrCreateCancellationOperation(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  matriculaId: string;
+  actorId: string;
+  motivo?: string;
+}) {
+  const where: Prisma.MatriculaOperacaoWhereInput = {
+    contaId: input.contaId,
+    matriculaId: input.matriculaId,
+    tipo: 'CANCELAMENTO' as const,
+    status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
+  };
+  const select = { id: true, correlationId: true } as const;
+  const existing = await input.prisma.matriculaOperacao.findFirst({
+    where,
+    orderBy: { createdAt: 'desc' },
+    select,
+  });
+  if (existing) return existing;
+
+  try {
+    return await input.prisma.matriculaOperacao.create({
+      data: {
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        tipo: 'CANCELAMENTO',
+        origem: 'USER',
+        status: 'PENDENTE_SINCRONISMO',
+        actorId: input.actorId,
+        observacao: input.motivo,
+        payloadEnviado: {
+          targetStatus: 'CANCELADA',
+          motivo: input.motivo ?? null,
+        } as Prisma.InputJsonValue,
+      },
+      select,
+    });
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+      throw error;
+    }
+    const concurrent = await input.prisma.matriculaOperacao.findFirst({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select,
+    });
+    if (!concurrent) throw error;
+    return concurrent;
+  }
+}
+
 export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Promise<SyncMatriculaStatusResult> {
   const matricula = await input.prisma.matricula.findFirst({
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
@@ -369,6 +423,48 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
   const previousStatus = matricula.status;
   const newStatus = input.targetStatus as StatusMatricula;
 
+  let cancellationOperation: { id: string; correlationId: string } | null = null;
+  if (input.targetStatus === 'CANCELADA') {
+    if (matricula.status === StatusMatricula.CANCELADA) {
+      cancellationOperation = await input.prisma.matriculaOperacao.findFirst({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          tipo: 'CANCELAMENTO',
+          status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, correlationId: true },
+      });
+      if (!cancellationOperation) {
+        return {
+          matriculaId: matricula.id,
+          previousStatus,
+          newStatus,
+          asaasAction: 'LOCAL_ONLY',
+          cobrancasAtualizadas: 0,
+          paymentSync: {
+            totalFromAsaas: 0,
+            matched: 0,
+            updated: 0,
+            warnings: [],
+            details: [],
+            expectedWebhooks: [],
+          },
+          nextDueDate: null,
+        };
+      }
+    } else {
+      cancellationOperation = await getOrCreateCancellationOperation({
+        prisma: input.prisma,
+        contaId: input.contaId,
+        matriculaId: matricula.id,
+        actorId: input.actorId,
+        motivo: input.motivo,
+      });
+    }
+  }
+
   let asaasAction: SyncMatriculaStatusResult['asaasAction'] = 'LOCAL_ONLY';
   let expectedWebhooks: string[] = [];
   let asaasResponse: unknown = undefined;
@@ -380,8 +476,76 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     details: [],
     expectedWebhooks: [],
   };
+  const canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+    where: {
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      kind: 'TUITION',
+      status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
+    },
+    orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
+    select: { id: true, agreementId: true, agreement: { select: { version: true, nextDueDate: true } } },
+  });
+  let canonicalHandled = false;
 
-  if (matricula.asaasSubscriptionId) {
+  if (canonicalAllocation) {
+    const effectiveDate = new Date().toISOString().slice(0, 10);
+    const change = input.targetStatus === 'ATIVA'
+      ? {
+          kind: 'RESUME_ALLOCATION' as const,
+          contaId: input.contaId,
+          agreementId: canonicalAllocation.agreementId,
+          actorId: input.actorId,
+          reason: input.motivo?.trim() || 'Ativação manual da matrícula',
+          effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
+          effectiveDate,
+          allocationIds: [canonicalAllocation.id],
+          nextDueDate: canonicalAllocation.agreement.nextDueDate?.toISOString().slice(0, 10) ?? effectiveDate,
+        }
+      : {
+          kind: input.targetStatus === 'PAUSADA' ? 'PAUSE_ALLOCATION' as const : 'REMOVE_ALLOCATION' as const,
+          contaId: input.contaId,
+          agreementId: canonicalAllocation.agreementId,
+          actorId: input.actorId,
+          reason: input.motivo?.trim() || `${input.targetStatus === 'PAUSADA' ? 'Pausa' : 'Cancelamento'} manual da matrícula`,
+          effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
+          effectiveDate,
+          allocationIds: [canonicalAllocation.id],
+        };
+    try {
+      const preview = await previewBillingAgreementChange(change);
+      const result = await commitBillingAgreementChange({
+        ...change,
+        uiRequestId: `status:${matricula.id}:${input.targetStatus}:${effectiveDate}`,
+        previewHash: preview.previewHash,
+        previewExpiresAt: preview.expiresAt,
+        expectedAgreementVersion: canonicalAllocation.agreement.version,
+      });
+      canonicalHandled = true;
+      asaasAction = input.targetStatus === 'PAUSADA' ? 'SUSPEND' : input.targetStatus === 'ATIVA' ? 'ACTIVATE' : 'DELETE';
+      expectedWebhooks = result.status === 'COMPLETED' ? [] : ['RECONCILIATION_REQUIRED'];
+      asaasResponse = { operationId: result.operationId, status: result.status };
+    } catch (error) {
+      if (input.targetStatus === 'CANCELADA' && cancellationOperation) {
+        await input.prisma.matriculaOperacao.update({
+          where: { id: cancellationOperation.id },
+          data: {
+            status: 'DIVERGENTE',
+            erro: error instanceof Error ? error.message : String(error),
+            processedAt: new Date(),
+          },
+        }).catch((operationError) => {
+          console.error('[MATRICULA_CANCELAMENTO] Falha ao registrar divergência da operação', {
+            operationId: cancellationOperation.id,
+            error: operationError instanceof Error ? operationError.message : String(operationError),
+          });
+        });
+      }
+      throw buildFinancialSyncError(input.targetStatus, matricula.asaasSubscriptionId ?? canonicalAllocation.agreementId, error);
+    }
+  }
+
+  if (!canonicalHandled && matricula.asaasSubscriptionId) {
     try {
       if (input.targetStatus === 'PAUSADA') {
         asaasAction = 'SUSPEND';
@@ -403,9 +567,32 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       } else if (input.targetStatus === 'CANCELADA') {
         asaasAction = 'DELETE';
         expectedWebhooks = ['SUBSCRIPTION_DELETED'];
-        asaasResponse = await deleteSubscription(matricula.asaasSubscriptionId, { contaId: input.contaId });
+        try {
+          asaasResponse = await deleteSubscription(matricula.asaasSubscriptionId, { contaId: input.contaId });
+        } catch (error) {
+          if (error instanceof AsaasHttpError && error.status === 404) {
+            asaasResponse = { deleted: true, alreadyAbsent: true };
+          } else {
+            throw error;
+          }
+        }
       }
     } catch (error) {
+      if (input.targetStatus === 'CANCELADA' && cancellationOperation) {
+        await input.prisma.matriculaOperacao.update({
+          where: { id: cancellationOperation.id },
+          data: {
+            status: 'DIVERGENTE',
+            erro: error instanceof Error ? error.message : String(error),
+            processedAt: new Date(),
+          },
+        }).catch((operationError) => {
+          console.error('[MATRICULA_CANCELAMENTO] Falha ao registrar divergência da operação', {
+            operationId: cancellationOperation.id,
+            error: operationError instanceof Error ? operationError.message : String(operationError),
+          });
+        });
+      }
       throw buildFinancialSyncError(input.targetStatus, matricula.asaasSubscriptionId, error);
     }
   }
@@ -442,10 +629,56 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
       });
     }
 
+    const cancellationHasWarnings =
+      input.targetStatus === 'CANCELADA' && paymentSync.warnings.length > 0;
+
     await tx.matricula.update({
-      where: { id: matricula.id },
-      data: { status: newStatus },
+      where: { uq_matricula_conta_id: { contaId: input.contaId, id: matricula.id } },
+      data: input.targetStatus === 'CANCELADA'
+        ? {
+            status: newStatus,
+            statusFinanceiro: 'SUSPENSO',
+            statusContrato: 'CANCELADO',
+            billingProvisionStatus: 'CANCELADO',
+            integrationStatus: cancellationHasWarnings ? 'DIVERGENTE' : 'SINCRONIZADO',
+            warningCode: cancellationHasWarnings
+              ? 'CANCELAMENTO_FINANCEIRO_REQUER_RECONCILIACAO'
+              : null,
+          }
+        : { status: newStatus },
     });
+
+    if (input.targetStatus === 'CANCELADA') {
+      await tx.contrato.updateMany({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          status: { not: 'CANCELADO' },
+        },
+        data: { status: 'CANCELADO' },
+      });
+      await tx.subscription.updateMany({
+        where: { contaId: input.contaId, matriculaId: matricula.id },
+        data: { status: 'DELETED', statusUpdatedAt: new Date() },
+      });
+
+      if (cancellationOperation) {
+        await tx.matriculaOperacao.update({
+          where: { id: cancellationOperation.id },
+          data: {
+            status: cancellationHasWarnings ? 'DIVERGENTE' : 'SINCRONIZADO',
+            erro: cancellationHasWarnings ? paymentSync.warnings.join(' | ') : null,
+            payloadRecebido: {
+              correlationId: cancellationOperation.correlationId,
+              asaasAction,
+              asaasResponse: asaasResponse ?? null,
+              paymentSync,
+            } as Prisma.InputJsonValue,
+            processedAt: new Date(),
+          },
+        });
+      }
+    }
 
     await tx.matriculaLog.create({
       data: {
@@ -459,6 +692,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           asaasAction,
           cobrancasAtualizadas: paymentSync.updated,
           paymentWarnings: paymentSync.warnings,
+          cancellationOperationId: cancellationOperation?.id ?? null,
         },
       },
     });
@@ -477,4 +711,54 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     asaasResponse,
     nextDueDate: null,
   };
+}
+
+export async function reconcilePendingMatriculaCancellations(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  limit?: number;
+}) {
+  const operations = await input.prisma.matriculaOperacao.findMany({
+    where: {
+      contaId: input.contaId,
+      tipo: 'CANCELAMENTO',
+      status: { in: ['PENDENTE_SINCRONISMO', 'DIVERGENTE', 'ERRO'] },
+    },
+    select: {
+      id: true,
+      matriculaId: true,
+      actorId: true,
+      observacao: true,
+      matricula: { select: { status: true } },
+    },
+    orderBy: { createdAt: 'asc' },
+    take: Math.max(1, Math.min(input.limit ?? 50, 200)),
+  });
+
+  const reconciled: string[] = [];
+  const errors: Array<{ operationId: string; error: string }> = [];
+
+  for (const operation of operations) {
+    try {
+      if (!operation.actorId) {
+        throw new Error('Operação de cancelamento sem actorId não pode ser reconciliada automaticamente.');
+      }
+      await syncMatriculaStatus({
+        prisma: input.prisma,
+        contaId: input.contaId,
+        matriculaId: operation.matriculaId,
+        targetStatus: 'CANCELADA',
+        actorId: operation.actorId,
+        motivo: operation.observacao ?? 'Reconciliação automática do cancelamento',
+      });
+      reconciled.push(operation.id);
+    } catch (error) {
+      errors.push({
+        operationId: operation.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { processed: operations.length, reconciled, errors };
 }

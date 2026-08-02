@@ -23,6 +23,10 @@ vi.mock('@alusa/database', () => {
       matriculaOperacao: {
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
+      enrollmentCreationOperation: {
+        findFirst: vi.fn(),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
     },
   };
 });
@@ -38,6 +42,59 @@ vi.mock('../../realtime/finance-realtime-publisher', () => ({
 describe('handleSubscriptionWebhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('registra assinatura na saga sem publicar entidade quando webhook chega antes do commit', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-1',
+      status: 'PROCESSING',
+    } as never);
+
+    const res = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: {
+        id: 'asaas-sub-1',
+        status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-1:subscription',
+      },
+    });
+
+    expect(res).toEqual({
+      success: false,
+      error: 'ENROLLMENT_CREATION_IN_PROGRESS',
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith({
+      where: { id: 'op-1', contaId: 't1' },
+      data: { asaasSubscriptionId: 'asaas-sub-1' },
+    });
+    expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('processa normalmente quando o commit local terminou antes da saga ser marcada como concluída', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-1',
+      status: 'REMOTE_PROVISIONED',
+    } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue({
+      id: 'subscription-local-1',
+      status: 'ACTIVE',
+      matriculaId: null,
+    } as never);
+
+    const res = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_UPDATED',
+      subscription: {
+        id: 'asaas-sub-1',
+        status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-1:subscription',
+      },
+    });
+
+    expect(res).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).toHaveBeenCalled();
   });
 
   it('deve retornar sucesso quando não encontra Subscription', async () => {

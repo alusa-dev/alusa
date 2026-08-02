@@ -3,8 +3,16 @@ import { StatusMatricula } from '@prisma/client';
 
 import { closeExpiredEnrollmentsWithoutSuccessor } from './enrollment-closure.service';
 
-function buildPrisma(candidates: Array<{ id: string; status: StatusMatricula; dataFimContrato: Date }>) {
+function buildPrisma(candidates: Array<{
+  id: string;
+  status: StatusMatricula;
+  dataFimContrato: Date;
+  contratoAtualId?: string | null;
+}>) {
   const tx = {
+    contrato: {
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     matricula: {
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
@@ -32,6 +40,7 @@ describe('closeExpiredEnrollmentsWithoutSuccessor', () => {
         id: 'mat-1',
         status: StatusMatricula.ATIVA,
         dataFimContrato: new Date('2026-07-01T00:00:00.000Z'),
+        contratoAtualId: 'contrato-1',
       },
     ]);
 
@@ -66,6 +75,14 @@ describe('closeExpiredEnrollmentsWithoutSuccessor', () => {
         }),
       }),
     );
+    expect(tx.contrato.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'contrato-1',
+        contaId: 'conta-1',
+        status: { notIn: ['EXPIRADO', 'CANCELADO'] },
+      },
+      data: { status: 'EXPIRADO' },
+    });
   });
 
   it('nao registra log quando a atualizacao perdeu a corrida', async () => {

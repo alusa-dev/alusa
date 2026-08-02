@@ -4,6 +4,7 @@ const prismaMock = vi.hoisted(() => ({
   invoice: {
     findFirst: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
     upsert: vi.fn(),
   },
   charge: {
@@ -30,17 +31,19 @@ describe('handleInvoiceWebhook', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('atualiza status monotonicamente', async () => {
-    vi.mocked(prisma.invoice.findFirst).mockResolvedValueOnce({
+    vi.mocked(prisma.invoice.findFirst)
+      .mockResolvedValueOnce({
       id: 'inv1',
       contaId: 't1',
       status: 'SCHEDULED',
       asaasInvoiceId: 'asaas-inv-1',
-    } as never);
+      lastWebhookEventAt: null,
+    } as never)
+      .mockResolvedValueOnce({
+        id: 'inv1', status: 'AUTHORIZED', contaId: 't1', asaasInvoiceId: 'asaas-inv-1',
+      } as never);
 
-    vi.mocked(prisma.invoice.update).mockResolvedValueOnce({
-      id: 'inv1',
-      status: 'AUTHORIZED',
-    } as never);
+    vi.mocked(prisma.invoice.updateMany).mockResolvedValueOnce({ count: 1 } as never);
 
     const result = await handleInvoiceWebhook('t1', {
       event: 'INVOICE_AUTHORIZED',
@@ -50,7 +53,24 @@ describe('handleInvoiceWebhook', () => {
 
     expect(result.handled).toBe(true);
     expect(result.nextStatus).toBe('AUTHORIZED');
-    expect(prisma.invoice.update).toHaveBeenCalled();
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 't1', status: 'SCHEDULED' }),
+    }));
+  });
+
+  it('ignora evento fiscal mais antigo que o último já aplicado', async () => {
+    vi.mocked(prisma.invoice.findFirst).mockResolvedValueOnce({
+      id: 'inv1', contaId: 't1', status: 'AUTHORIZED', asaasInvoiceId: 'asaas-inv-1',
+      lastWebhookEventAt: new Date('2026-08-01T12:00:00.000Z'),
+    } as never);
+
+    const result = await handleInvoiceWebhook('t1', {
+      event: 'INVOICE_ERROR', id: 'evt-old', dateCreated: '2026-08-01T11:59:00.000Z',
+      invoice: { id: 'asaas-inv-1', status: 'ERROR' },
+    });
+
+    expect(result.reason).toBe('OUT_OF_ORDER_EVENT');
+    expect(prisma.invoice.updateMany).not.toHaveBeenCalled();
   });
 
   it('ignora invoice de outro tenant (não encontrada)', async () => {

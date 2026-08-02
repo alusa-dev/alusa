@@ -18,6 +18,7 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         create: vi.fn(),
       },
+      asaasIntegrationJob: { update: vi.fn() },
     },
   };
 });
@@ -25,6 +26,19 @@ vi.mock('@alusa/database', () => {
 vi.mock('@alusa/asaas', () => ({
   createInstallment: vi.fn(),
   listInstallmentPayments: vi.fn(),
+  listPayments: vi.fn(async () => ({ data: [] })),
+}));
+
+vi.mock('../asaas-ops', () => ({
+  getInstallment: vi.fn(async () => ({ id: 'asaas_inst_1' })),
+}));
+
+vi.mock('../outbound-financial-operation', () => ({
+  reserveOutboundFinancialOperation: vi.fn(async () => ({ job: { id: 'job-1' }, payload: { remoteId: null } })),
+  markOutboundRemoteRequested: vi.fn(async () => true),
+  markOutboundRemoteConfirmed: vi.fn(),
+  markOutboundAwaitingWebhook: vi.fn(),
+  markOutboundResultUnknown: vi.fn(),
 }));
 
 vi.mock('../../foundation/feature-flags.service', () => ({

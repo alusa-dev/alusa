@@ -84,7 +84,6 @@ describe('getWebhookOperationalDiagnostics', () => {
     vi.clearAllMocks();
     process.env = {
       ...originalEnv,
-      FEATURE_ASAAS: 'true',
       ASAAS_WEBHOOK_AUTH_TOKEN_SECRET: 'secret',
     };
 
@@ -212,7 +211,6 @@ describe('getWebhookOperationalDiagnostics', () => {
   });
 
   it('eleva status para ERROR quando encontra problemas críticos de webhook', async () => {
-    process.env.FEATURE_ASAAS = 'false';
     delete process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET;
 
     mockFindFirst.mockResolvedValue(null);
@@ -341,7 +339,6 @@ describe('getWebhookOperationalDiagnostics', () => {
     expect(result.status).toBe('ERROR');
     expect(result.recommendations.map((item) => item.code)).toEqual(
       expect.arrayContaining([
-        'FEATURE_ASAAS_DISABLED',
         'WEBHOOK_SECRET_MISSING',
         'WEBHOOK_PUBLIC_URL_INVALID',
         'SUBACCOUNT_CREDENTIALS_MISSING',

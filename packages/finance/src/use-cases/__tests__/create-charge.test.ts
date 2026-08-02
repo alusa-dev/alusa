@@ -14,8 +14,11 @@ vi.mock('@alusa/database', () => {
       },
       charge: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
+        create: vi.fn(async (args) => ({ id: args.data.id })),
         upsert: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
       },
     },
   };
@@ -28,15 +31,32 @@ vi.mock('../../foundation/finance-profile.service', () => ({
 }));
 
 vi.mock('../ensure-customer', () => ({
-  ensureCustomer: vi.fn(async () => ({ success: true, data: { customerId: 'cust_1', externalReference: 'customer:r1' } })),
+  ensureCustomer: vi.fn(async () => ({ success: true, data: { customerId: 'cust_1', localCustomerId: 'local_cust_1', externalReference: 'customer:r1' } })),
 }));
 
 vi.mock('../create-payment', () => ({
   createAsaasPayment: vi.fn(async () => ({ success: true, data: { id: 'pay_1', externalReference: 'charge:c1' } })),
 }));
 
+vi.mock('../asaas-ops', () => ({
+  getPayment: vi.fn(async () => ({ id: 'pay_1', externalReference: 'charge:c1', status: 'PENDING' })),
+  listPayments: vi.fn(async () => ({ data: [] })),
+}));
+
+vi.mock('../outbound-financial-operation', () => ({
+  reserveOutboundFinancialOperation: vi.fn(async () => ({ job: { id: 'job-1' }, payload: { remoteId: null } })),
+  markOutboundRemoteRequested: vi.fn(async () => true),
+  markOutboundRemoteConfirmed: vi.fn(),
+  markOutboundAwaitingWebhook: vi.fn(),
+  markOutboundResultUnknown: vi.fn(),
+}));
+
 vi.mock('../../foundation/audit-log.service', () => ({
   auditLogService: { record: vi.fn(async () => {}) },
+}));
+
+vi.mock('../../foundation/kyc-guard', () => ({
+  requireKycApproved: vi.fn(async () => ({ success: true, data: true })),
 }));
 
 describe('createCharge', () => {
@@ -45,13 +65,11 @@ describe('createCharge', () => {
   });
 
   it('deve bloquear quando KYC não está aprovado', async () => {
-    const { prisma } = await import('@alusa/database');
-    const { financeProfileService } = await import('../../foundation/finance-profile.service');
+    const { requireKycApproved } = await import('../../foundation/kyc-guard');
     const { ensureCustomer } = await import('../ensure-customer');
     const { createAsaasPayment } = await import('../create-payment');
 
-    vi.mocked(financeProfileService.getOrCreateByTenant).mockResolvedValueOnce({ id: 'fp1' } as never);
-    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({ status: 'IN_PROGRESS' } as never);
+    vi.mocked(requireKycApproved).mockResolvedValueOnce({ success: false, error: 'KYC_NAO_APROVADO' });
 
     const result = await createCharge({ contaId: 't1', cobrancaId: 'c1', actor: { type: 'USER', id: 'u1' } });
 

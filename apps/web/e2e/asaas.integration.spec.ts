@@ -6,8 +6,12 @@
 
 import { test, expect } from '@playwright/test';
 
+const hasSandboxCredentials =
+  Boolean(process.env.ASAAS_API_KEY) &&
+  (process.env.ASAAS_BASE_URL ?? '').includes('sandbox.asaas.com');
+
 test.describe('Integração Asaas', () => {
-  test.skip(process.env.FEATURE_ASAAS !== 'true', 'Feature Asaas desabilitada');
+  test.skip(!hasSandboxCredentials, 'Credenciais do Asaas Sandbox não configuradas');
 
   let customerId: string;
 
@@ -107,8 +111,6 @@ test.describe('Integração Asaas', () => {
 });
 
 test.describe('Webhook Asaas', () => {
-  test.skip(process.env.FEATURE_ASAAS !== 'true', 'Feature Asaas desabilitada');
-
   test('deve ignorar webhook sem assinatura sem penalizar a fila', async ({ request }) => {
     const response = await request.post('http://localhost:3001/api/webhooks/asaas', {
       data: {

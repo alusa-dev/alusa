@@ -117,20 +117,6 @@ export async function testarConexaoAsaas(input: { contaId: string }): Promise<Te
 
   const baseUrl = toTrimmed(process.env.ASAAS_BASE_URL);
   const masterApiKey = toTrimmed(process.env.ASAAS_API_KEY);
-  const enabled = process.env.FEATURE_ASAAS === 'true';
-
-  if (!enabled) {
-    return fail({
-      summary: 'Integração com o Asaas está desabilitada.',
-      errorCode: 'ASAAS_DISABLED',
-      step: 'env',
-      message: 'Ative a integração para executar o teste.',
-      checks,
-      technical: {
-        featureAsaas: process.env.FEATURE_ASAAS ?? null,
-      },
-    });
-  }
 
   if (!baseUrl || !masterApiKey) {
     return fail({

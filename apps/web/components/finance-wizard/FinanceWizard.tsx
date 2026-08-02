@@ -6,6 +6,7 @@ import { useSession } from 'next-auth/react';
 import { Check, Loader2 } from 'lucide-react';
 
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -311,6 +312,7 @@ export function FinanceWizard() {
   const { data: session, update: updateSession } = useSession();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [registerLaterLoading, setRegisterLaterLoading] = useState(false);
   const [checkoutPolling, setCheckoutPolling] = useState(false);
@@ -648,18 +650,20 @@ export function FinanceWizard() {
   }, [planCode]);
 
   const handleCompleteWizard = useCallback(async () => {
+    setCompleting(true);
+
     try {
       setSaving(true);
       const result = await completeWizard();
 
       if (!result.success) {
+        setCompleting(false);
         toast.error(result.error?.message || 'Nao foi possivel confirmar a criacao da conta.');
         return;
       }
 
       setWizardState(result.wizard);
       await updateSession().catch(() => undefined);
-      router.refresh();
 
       if (isExternalAsaasMode) {
         toast.success('Perfil confirmado. Agora conecte sua conta de pagamentos existente.');
@@ -675,11 +679,16 @@ export function FinanceWizard() {
 
       router.replace('/dashboard');
     } catch (error) {
+      setCompleting(false);
       toast.error(extractError(error, 'Nao foi possivel confirmar a criacao da conta.'));
     } finally {
       setSaving(false);
     }
   }, [isExternalAsaasMode, router, updateSession]);
+
+  if (completing) {
+    return <AlusaLogoLoader fullScreen />;
+  }
 
   if (loading) {
     return (

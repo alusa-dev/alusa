@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { ContractEvidenceType, Prisma } from '@prisma/client';
 import { hashCanonicalPayload } from '@alusa/domain';
 
 type EvidenceWriter = {
@@ -7,7 +7,7 @@ type EvidenceWriter = {
       data: {
         contaId: string;
         contratoId: string;
-        type: string;
+        type: ContractEvidenceType;
         actorType?: string | null;
         actorId?: string | null;
         ip?: string | null;
@@ -28,7 +28,7 @@ export async function createContractEvidence(
   input: {
     contaId: string;
     contratoId: string;
-    type: string;
+    type: ContractEvidenceType;
     actorType?: string | null;
     actorId?: string | null;
     ip?: string | null;

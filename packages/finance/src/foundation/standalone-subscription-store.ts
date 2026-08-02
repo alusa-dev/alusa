@@ -15,6 +15,7 @@ type StandaloneSubscriptionClient = {
   standaloneSubscription?: {
     findFirst: (args: any) => Promise<StandaloneSubscriptionProjection | null>;
     create: (args: any) => Promise<StandaloneSubscriptionProjection>;
+    update: (args: any) => Promise<StandaloneSubscriptionProjection>;
   };
   $queryRaw: <T = unknown>(query: Prisma.Sql) => Promise<T>;
 };
@@ -208,5 +209,60 @@ export async function createStandaloneSubscriptionRecord(
     throw new Error('STANDALONE_SUBSCRIPTION_INSERT_FAILED');
   }
 
+  return rows[0];
+}
+
+export async function updateStandaloneSubscriptionRemoteLink(
+  client: StandaloneSubscriptionClient,
+  params: {
+    id: string;
+    contaId: string;
+    asaasSubscriptionId: string;
+    status: SubscriptionStatus;
+  },
+): Promise<StandaloneSubscriptionProjection> {
+  const delegate = getStandaloneSubscriptionDelegate(client);
+  const now = new Date();
+  if (delegate) {
+    return delegate.update({
+      where: { id: params.id },
+      data: {
+        asaasSubscriptionId: params.asaasSubscriptionId,
+        status: params.status,
+        statusUpdatedAt: now,
+      },
+      select: {
+        id: true,
+        asaasSubscriptionId: true,
+        externalReference: true,
+        status: true,
+        description: true,
+        billingType: true,
+        customerId: true,
+        familyGroupId: true,
+      },
+    });
+  }
+
+  const rows = await client.$queryRaw<Array<StandaloneSubscriptionProjection>>(Prisma.sql`
+    UPDATE "StandaloneSubscription"
+    SET
+      "asaasSubscriptionId" = ${params.asaasSubscriptionId},
+      status = ${params.status}::"SubscriptionStatus",
+      "statusUpdatedAt" = ${now},
+      "updatedAt" = ${now}
+    WHERE id = ${params.id}
+      AND "contaId" = ${params.contaId}
+    RETURNING
+      id,
+      "asaasSubscriptionId",
+      "externalReference",
+      status,
+      description,
+      "billingType",
+      "customerId",
+      "familyGroupId"
+  `);
+  if (!rows[0]) throw new Error('STANDALONE_SUBSCRIPTION_NOT_FOUND');
   return rows[0];
 }

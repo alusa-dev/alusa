@@ -9,6 +9,7 @@ const {
   getServerSessionMock,
   getSubscriptionMock,
   updateSubscriptionMock,
+  projectConfirmedBillingAgreementSnapshotMock,
   atualizarStatusMatriculaMock,
   atualizarDetalhesMatriculaMock,
   buscarMatriculaPorIdMock,
@@ -17,6 +18,7 @@ const {
   getServerSessionMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
   updateSubscriptionMock: vi.fn(),
+  projectConfirmedBillingAgreementSnapshotMock: vi.fn(),
   atualizarStatusMatriculaMock: vi.fn(),
   atualizarDetalhesMatriculaMock: vi.fn(),
   buscarMatriculaPorIdMock: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@alusa/finance', () => ({
   getSubscription: getSubscriptionMock,
   updateSubscription: updateSubscriptionMock,
+  projectConfirmedBillingAgreementSnapshot: projectConfirmedBillingAgreementSnapshotMock,
 }));
 
 vi.mock('@/src/prisma', () => ({

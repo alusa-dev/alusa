@@ -20,6 +20,11 @@ import {
   buildAsaasInvoiceTaxes,
   validateAsaasInvoiceTaxesInput,
 } from '../fiscal/invoice-taxes';
+import {
+  buildFinanceReconciliationIssueDedupeKey,
+  resolveFinanceReconciliationIssueByDedupe,
+  upsertFinanceReconciliationIssue,
+} from '../reconciliation/finance-reconciliation-issue.service';
 
 export type SyncSubscriptionFiscalSettingsInput = {
   contaId: string;
@@ -46,6 +51,23 @@ function asNumber(value: unknown): number {
   if (value == null) return 0;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function fiscalSettingsIssueDedupe(input: SyncSubscriptionFiscalSettingsInput): string {
+  return buildFinanceReconciliationIssueDedupeKey({
+    entityType: 'SUBSCRIPTION',
+    entityId: input.subscriptionId,
+    asaasId: input.asaasSubscriptionId,
+    issueType: 'SUBSCRIPTION_STATUS_DRIFT',
+  });
+}
+
+async function resolveFiscalSettingsIssue(input: SyncSubscriptionFiscalSettingsInput) {
+  await resolveFinanceReconciliationIssueByDedupe({
+    contaId: input.contaId,
+    dedupeKey: fiscalSettingsIssueDedupe(input),
+    resolution: 'Configuração fiscal da assinatura reconciliada com o Asaas.',
+  });
 }
 
 function buildTaxes(service: {
@@ -89,7 +111,7 @@ function buildTaxes(service: {
 }
 
 async function markLocal(input: SyncSubscriptionFiscalSettingsInput & {
-  configured: boolean;
+  configured?: boolean;
   error?: string | null;
 }) {
   const prisma = getFiscalPrisma();
@@ -140,6 +162,7 @@ export async function syncSubscriptionFiscalSettings(
   input: SyncSubscriptionFiscalSettingsInput,
 ): Promise<Result<SyncSubscriptionFiscalSettingsOutput, SyncSubscriptionFiscalSettingsError>> {
   const actor = input.actor ?? { type: 'SYSTEM' as const };
+  let deletionOutcomeUnknown = false;
 
   try {
     const local = await assertLocalSubscription(input);
@@ -167,17 +190,21 @@ export async function syncSubscriptionFiscalSettings(
 
     const shouldDelete =
       input.action === 'DELETE' ||
+      settings?.simplesNacional === false ||
       !invoicesEnabled ||
       !readiness.ready ||
       settings?.emissionMode !== 'ON_PAYMENT';
 
     if (shouldDelete) {
+      deletionOutcomeUnknown = true;
       await deleteSubscriptionInvoiceSettingsIfConfigured({
         apiKey: credentials.apiKey,
         subscriptionId: input.asaasSubscriptionId,
       });
+      deletionOutcomeUnknown = false;
 
       await markLocal({ ...input, configured: false });
+      await resolveFiscalSettingsIssue(input).catch(() => undefined);
       await auditLogService.record({
         contaId: input.contaId,
         actor,
@@ -189,7 +216,13 @@ export async function syncSubscriptionFiscalSettings(
           readinessStatus: readiness.status,
         },
       });
-      return ok({ configured: false, action: 'DELETED', reason: 'NOT_ELIGIBLE' });
+      return ok({
+        configured: false,
+        action: 'DELETED',
+        reason: settings?.simplesNacional === false
+          ? 'IBS_CBS_REQUIRES_LOCAL_EMISSION'
+          : 'NOT_ELIGIBLE',
+      });
     }
 
     const defaultService = services.find((service) => service.isDefault);
@@ -268,6 +301,7 @@ export async function syncSubscriptionFiscalSettings(
     }
 
     await markLocal({ ...input, configured: true });
+    await resolveFiscalSettingsIssue(input).catch(() => undefined);
     await auditLogService.record({
       contaId: input.contaId,
       actor,
@@ -286,8 +320,24 @@ export async function syncSubscriptionFiscalSettings(
     console.error('[finance][syncSubscriptionFiscalSettings]', error);
     await markLocal({
       ...input,
-      configured: false,
+      configured: deletionOutcomeUnknown ? true : undefined,
       error: error instanceof Error ? error.message.slice(0, 1000) : 'Erro interno',
+    }).catch(() => undefined);
+    await upsertFinanceReconciliationIssue({
+      contaId: input.contaId,
+      entityType: 'SUBSCRIPTION',
+      entityId: input.subscriptionId,
+      asaasId: input.asaasSubscriptionId,
+      issueType: 'SUBSCRIPTION_STATUS_DRIFT',
+      severity: deletionOutcomeUnknown ? 'HIGH' : 'MEDIUM',
+      localStatus: deletionOutcomeUnknown ? 'PROVIDER_NATIVE_PRESERVED' : 'SYNC_FAILED',
+      remoteStatus: 'UNKNOWN',
+      metadata: {
+        scope: 'INVOICE_SETTINGS',
+        kind: input.kind ?? 'ACADEMIC',
+        deletionOutcomeUnknown,
+        error: error instanceof Error ? error.message.slice(0, 1000) : String(error),
+      },
     }).catch(() => undefined);
     return err(error instanceof AsaasHttpError ? 'ERRO_ASAAS' : 'ERRO_INTERNO');
   }

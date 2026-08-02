@@ -1,11 +1,37 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { encerrarContratosExpirados } from '@alusa/lib';
+import { prisma } from '@/src/prisma';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function clampPositiveInt(value: string | null, fallback: number, max: number) {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.trunc(parsed))) : fallback;
+}
+
+async function listContasWithExpiredEnrollments(maxAccounts: number) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const candidates = await prisma.matricula.findMany({
+    where: {
+      status: { in: ['ATIVA', 'PAUSADA'] },
+      dataFimContrato: { lt: today },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { contaId: true },
+    distinct: ['contaId'],
+    orderBy: { contaId: 'asc' },
+    take: maxAccounts,
+  });
+
+  return candidates.map((candidate) => candidate.contaId);
 }
 
 /**
@@ -15,7 +41,8 @@ function jsonError(status: number, code: string, message: string) {
  * Pode ser chamado manualmente por admins ou por um cron job externo.
  *
  * Query params:
- * - contaId (opcional): se informado, processa apenas matrículas desta conta
+ * - contaId (opcional): admins processam a própria conta; o cron pode limitar a uma conta
+ * - maxAccounts (opcional): limite do cron multi-tenant, default 25, máximo 100
  */
 export async function POST(req: Request) {
   try {
@@ -23,23 +50,36 @@ export async function POST(req: Request) {
     const tenantScope = await resolveTenantScope(req, {
       allowCron: true,
       requestedContaId: url.searchParams.get('contaId'),
-      requireContaIdForCron: true,
     });
     if (!tenantScope.ok) {
       return tenantScope.response;
     }
 
-    const contaId = tenantScope.contaId;
+    const maxAccounts = clampPositiveInt(url.searchParams.get('maxAccounts'), 25, 100);
+    const contaIds = tenantScope.contaId
+      ? [tenantScope.contaId]
+      : await listContasWithExpiredEnrollments(maxAccounts);
 
-    if (!contaId) {
-      return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório para executar o job.');
+    const results = [];
+    const errors: Array<{ contaId: string; erro: string }> = [];
+
+    for (const contaId of contaIds) {
+      try {
+        results.push({ contaId, ...(await encerrarContratosExpirados(contaId)) });
+      } catch (error) {
+        errors.push({
+          contaId,
+          erro: error instanceof Error ? error.message : 'Erro desconhecido',
+        });
+      }
     }
-
-    const result = await encerrarContratosExpirados(contaId);
 
     return NextResponse.json({
       success: true,
-      ...result,
+      processedAccounts: contaIds.length,
+      updatedEnrollments: results.reduce((total, result) => total + result.atualizados, 0),
+      results,
+      errors,
     });
   } catch (error) {
     console.error('[Job Encerrar Contratos] Erro:', error);
@@ -58,7 +98,8 @@ export async function GET() {
     description: 'Encerra automaticamente contratos com dataFimContrato < hoje',
     method: 'POST',
     params: {
-      contaId: 'opcional - processa apenas matrículas desta conta',
+      contaId: 'opcional - processa uma conta; sem conta, o cron percorre contas elegíveis',
+      maxAccounts: 'opcional - limite de contas por execução (default 25, máximo 100)',
     },
     headers: {
       'x-cron-token': 'token para execução via cron (opcional se admin)',

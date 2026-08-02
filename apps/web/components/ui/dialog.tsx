@@ -36,12 +36,14 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
   /** Conteúdo ocupa a viewport no mobile (sem margens); desktop inalterado. */
   fullScreenMobile?: boolean;
+  /** Impede fechar pelo botão enquanto uma operação crítica está em andamento. */
+  closeDisabled?: boolean;
 };
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, fullScreenMobile, ...props }, ref) => (
+>(({ className, children, fullScreenMobile, closeDisabled = false, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay className={cn(fullScreenMobile && 'max-md:p-0')} />
     {/* Wrapper flex para centralização perfeita e suportar scroll em telas baixas */}
@@ -64,8 +66,10 @@ const DialogContent = React.forwardRef<
       >
         {children}
         <DialogPrimitive.Close
+          disabled={closeDisabled}
           className={cn(
             'absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/50 disabled:pointer-events-none',
+            closeDisabled && 'cursor-wait opacity-35',
             fullScreenMobile &&
               'max-md:right-4 max-md:top-[calc(0.5rem+env(safe-area-inset-top,0px))] max-md:z-10 max-md:rounded-md max-md:bg-slate-50/90 max-md:p-1.5 max-md:ring-1 max-md:ring-slate-200/80',
           )}

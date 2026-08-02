@@ -27,6 +27,17 @@ vi.mock('@alusa/lib', () => ({
   encerrarContratosExpirados: vi.fn(),
 }));
 
+vi.mock('@/src/prisma', () => ({
+  prisma: {
+    matricula: { findMany: vi.fn() },
+    matriculaOperacao: { findMany: vi.fn() },
+  },
+}));
+
+vi.mock('@/src/server/matriculas/matricula-sync.service', () => ({
+  reconcilePendingMatriculaCancellations: vi.fn(),
+}));
+
 vi.mock('@/lib/notifications/emit-billing-notifications', () => ({
   emitBillingNotificationCandidate: vi.fn(),
   emitBillingNotifications: vi.fn(),
@@ -44,12 +55,15 @@ import {
   syncPaymentStateFromAsaas,
 } from '@alusa/finance';
 import { encerrarContratosExpirados } from '@alusa/lib';
+import { prisma } from '@/src/prisma';
+import { reconcilePendingMatriculaCancellations } from '@/src/server/matriculas/matricula-sync.service';
 
 import { POST as postArchiveWebhooks } from '@/app/api/jobs/archive-finance-webhooks/route';
 import { POST as postEncerrarContratos } from '@/app/api/jobs/encerrar-contratos/route';
 import { POST as postProcessWebhooks } from '@/app/api/jobs/process-finance-webhooks/route';
 import { POST as postReconcileAccounts } from '@/app/api/jobs/reconcile-finance-accounts/route';
 import { POST as postReconcileWebhooks } from '@/app/api/jobs/reconcile-finance-webhooks/route';
+import { POST as postReconcileMatriculaCancellations } from '@/app/api/jobs/reconcile-matricula-cancellations/route';
 import { POST as postWebhookMaintenance } from '@/app/api/jobs/webhook-maintenance/route';
 
 function makeRequest(url: string, headers?: HeadersInit) {
@@ -88,6 +102,13 @@ describe('admin jobs multi-tenant isolation', () => {
     vi.mocked(archiveProcessedWebhooks).mockResolvedValue({ archived: 1 } as never);
     vi.mocked(syncPaymentStateFromAsaas).mockResolvedValue({ success: true, paymentStatus: 'CONFIRMED', appliedEvent: 'PAYMENT_CONFIRMED' } as never);
     vi.mocked(encerrarContratosExpirados).mockResolvedValue({ processed: 1, updated: 1 } as never);
+    vi.mocked(prisma.matricula.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.matriculaOperacao.findMany).mockResolvedValue([] as never);
+    vi.mocked(reconcilePendingMatriculaCancellations).mockResolvedValue({
+      processed: 0,
+      reconciled: [],
+      errors: [],
+    });
   });
 
   afterEach(() => {
@@ -198,16 +219,77 @@ describe('admin jobs multi-tenant isolation', () => {
     expect(encerrarContratosExpirados).not.toHaveBeenCalled();
   });
 
-  it('exige contaId no cron de encerrar-contratos', async () => {
+  it('percorre contas elegíveis no cron global de encerrar-contratos', async () => {
     vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(prisma.matricula.findMany).mockResolvedValue([
+      { contaId: 'conta-1' },
+      { contaId: 'conta-2' },
+    ] as never);
+
+    const response = await postEncerrarContratos(
+      makeRequest('http://localhost/api/jobs/encerrar-contratos?maxAccounts=10', {
+        'x-cron-token': 'cron-secret',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.matricula.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 10, distinct: ['contaId'] }),
+    );
+    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(1, 'conta-1');
+    expect(encerrarContratosExpirados).toHaveBeenNthCalledWith(2, 'conta-2');
+  });
+
+  it('isola falha de uma conta e continua as demais no cron global', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(prisma.matricula.findMany).mockResolvedValue([
+      { contaId: 'conta-1' },
+      { contaId: 'conta-2' },
+    ] as never);
+    vi.mocked(encerrarContratosExpirados)
+      .mockRejectedValueOnce(new Error('falha tenant 1'))
+      .mockResolvedValueOnce({ processados: 1, atualizados: 1, erros: [], dataExecucao: new Date() });
 
     const response = await postEncerrarContratos(
       makeRequest('http://localhost/api/jobs/encerrar-contratos', {
         'x-cron-token': 'cron-secret',
       }),
     );
+    const body = await response.json();
 
-    expect(response.status).toBe(400);
-    expect(encerrarContratosExpirados).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(encerrarContratosExpirados).toHaveBeenCalledTimes(2);
+    expect(body).toMatchObject({
+      success: true,
+      processedAccounts: 2,
+      updatedEnrollments: 1,
+      errors: [{ contaId: 'conta-1', erro: 'falha tenant 1' }],
+    });
+  });
+
+  it('reconcilia cancelamentos pendentes por tenant no cron global', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(prisma.matriculaOperacao.findMany).mockResolvedValue([
+      { contaId: 'conta-1' },
+      { contaId: 'conta-2' },
+    ] as never);
+
+    const response = await postReconcileMatriculaCancellations(
+      makeRequest('http://localhost/api/jobs/reconcile-matricula-cancellations?maxAccounts=10&limit=20', {
+        'x-cron-token': 'cron-secret',
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(reconcilePendingMatriculaCancellations).toHaveBeenNthCalledWith(1, {
+      prisma,
+      contaId: 'conta-1',
+      limit: 20,
+    });
+    expect(reconcilePendingMatriculaCancellations).toHaveBeenNthCalledWith(2, {
+      prisma,
+      contaId: 'conta-2',
+      limit: 20,
+    });
   });
 });

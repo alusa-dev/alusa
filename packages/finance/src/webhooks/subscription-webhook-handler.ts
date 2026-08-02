@@ -110,6 +110,52 @@ export async function handleSubscriptionWebhook(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const externalReference = payload.subscription.externalReference;
+
+    const stagedReference = externalReference?.match(/^enrollment-op:([^:]+):subscription$/);
+    if (stagedReference) {
+      const operationId = stagedReference[1]!;
+      const operation = await prisma.enrollmentCreationOperation.findFirst({
+        where: { id: operationId, contaId },
+        select: { id: true, status: true },
+      });
+      if (
+        operation &&
+        ['PROCESSING', 'REMOTE_PROVISIONED', 'REQUIRES_RECONCILIATION'].includes(
+          operation.status,
+        )
+      ) {
+        const locallyCommittedSubscription =
+          operation.status === 'REMOTE_PROVISIONED'
+            ? await prisma.subscription.findFirst({
+                where: { contaId, asaasSubscriptionId: payload.subscription.id },
+                select: { id: true },
+              })
+            : null;
+        if (locallyCommittedSubscription) {
+          // O commit local terminou e apenas a atualização final da saga ainda não.
+          // O webhook deve seguir pelo fluxo normal para não perder a transição.
+        } else {
+          await prisma.enrollmentCreationOperation.updateMany({
+            where: { id: operation.id, contaId },
+            data: { asaasSubscriptionId: payload.subscription.id },
+          });
+          await auditLogService.record({
+            contaId,
+            action: 'finance.webhook.enrollment_creation_subscription_staged',
+            entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+            metadata: {
+              event: payload.event,
+              asaasSubscriptionId: payload.subscription.id,
+              status: payload.subscription.status ?? null,
+            },
+          });
+          return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+        }
+      }
+      if (operation && ['COMPENSATING', 'COMPENSATED'].includes(operation.status)) {
+        return { success: true };
+      }
+    }
     
     // Tentar V2 primeiro, depois V1
     const parsed = externalReference ? parseExternalReference(externalReference) : null;
@@ -133,6 +179,7 @@ export async function handleSubscriptionWebhook(
       },
       select: {
         id: true,
+        billingAgreementId: true,
         status: true,
         asaasSubscriptionId: true,
         externalReference: true,
@@ -170,6 +217,26 @@ export async function handleSubscriptionWebhook(
         where: { id: standaloneSubscription.id },
         data: updates,
       });
+
+      if (standaloneSubscription.billingAgreementId) {
+        await prisma.billingAgreement.updateMany({
+          where: { id: standaloneSubscription.billingAgreementId, contaId },
+          data: {
+            asaasSubscriptionId: payload.subscription.id,
+            remoteStatus: nextStatus ?? payload.subscription.status ?? null,
+            remoteStatusUpdatedAt: new Date(),
+            lastReconciledAt: new Date(),
+            reconciliationError: null,
+            ...(nextStatus === 'DELETED'
+              ? { status: 'CANCELLED' as const }
+              : nextStatus === 'INACTIVE' || nextStatus === 'EXPIRED'
+                ? { status: 'INACTIVE' as const }
+                : nextStatus === 'ACTIVE'
+                  ? { status: 'ACTIVE' as const }
+                  : {}),
+          },
+        });
+      }
 
       if (standaloneSubscription.familyTransitionId) {
         await prisma.rematriculaFamiliar.updateMany({
@@ -240,7 +307,7 @@ export async function handleSubscriptionWebhook(
           ...(subscriptionId ? [{ id: subscriptionId }] : []),
         ],
       },
-      select: { id: true, status: true, asaasSubscriptionId: true, externalReference: true, matriculaId: true },
+      select: { id: true, billingAgreementId: true, status: true, asaasSubscriptionId: true, externalReference: true, matriculaId: true },
     });
 
     if (!subscription) {
@@ -262,6 +329,26 @@ export async function handleSubscriptionWebhook(
 
     if (Object.keys(updates).length > 0) {
       await prisma.subscription.update({ where: { id: subscription.id }, data: updates });
+
+      if (subscription.billingAgreementId) {
+        await prisma.billingAgreement.updateMany({
+          where: { id: subscription.billingAgreementId, contaId },
+          data: {
+            asaasSubscriptionId: payload.subscription.id,
+            remoteStatus: nextStatus ?? payload.subscription.status ?? null,
+            remoteStatusUpdatedAt: new Date(),
+            lastReconciledAt: new Date(),
+            reconciliationError: null,
+            ...(nextStatus === 'DELETED'
+              ? { status: 'CANCELLED' as const }
+              : nextStatus === 'INACTIVE' || nextStatus === 'EXPIRED'
+                ? { status: 'INACTIVE' as const }
+                : nextStatus === 'ACTIVE'
+                  ? { status: 'ACTIVE' as const }
+                  : {}),
+          },
+        });
+      }
 
       // Compat: manter matricula.asaasSubscriptionId como fallback de resolução
       await prisma.matricula.update({

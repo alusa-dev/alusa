@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { getSubscription, KycNotApprovedError, updateSubscription } from '@alusa/finance';
+import {
+  getSubscription,
+  KycNotApprovedError,
+  projectConfirmedBillingAgreementSnapshot,
+  updateSubscription,
+} from '@alusa/finance';
 import { prisma } from '@/src/prisma';
 import { updateMatriculaJurosMultaInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaSubscriptionTermsUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
@@ -236,6 +241,20 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       }
       throw error;
     }
+
+    await projectConfirmedBillingAgreementSnapshot({
+      contaId: contaCtx.contaId,
+      asaasSubscriptionId: targetSubscriptionId,
+      terms: {
+        interestValue: asaasInterest?.value ?? null,
+        interestType: asaasInterest ? 'PERCENTAGE' : null,
+        fineValue: asaasFine?.value ?? null,
+        fineType: asaasFine?.type ?? null,
+        discountValue: asaasDiscount?.value ?? null,
+        discountType: asaasDiscount?.type ?? null,
+        discountDueDateLimitDays: asaasDiscount?.dueDateLimitDays ?? null,
+      },
+    });
 
     const remotePaymentsAlignment = await syncEditableSubscriptionPayments({
       contaId: contaCtx.contaId,

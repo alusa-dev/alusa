@@ -20,7 +20,7 @@ type SessionUser = { id?: string; role?: string; contaId?: string };
 
 const allowedRoles = new Set(['ADMIN']);
 
-type HealthCheckName = 'base_url' | 'credentials' | 'webhook' | 'feature_flag';
+type HealthCheckName = 'base_url' | 'credentials' | 'webhook';
 
 type HealthCheck = {
   name: HealthCheckName;
@@ -90,9 +90,6 @@ export async function GET() {
                 ? 'REMOTE_INTERRUPTED'
                 : 'REMOTE_DISABLED',
     });
-
-    const featureFlagOk = process.env.FEATURE_ASAAS === 'true';
-    checks.push({ name: 'feature_flag', ok: featureFlagOk, message: featureFlagOk ? undefined : 'DISABLED' });
 
     const ok = checks.every((c) => c.ok);
     const queueStatus = queueMetrics.backlog > 0

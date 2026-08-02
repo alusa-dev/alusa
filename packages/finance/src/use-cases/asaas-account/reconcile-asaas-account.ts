@@ -171,6 +171,7 @@ export async function reconcileAsaasAccount(params: {
       asaasAccountId: asaasAccount.asaasAccountId,
       generalStatus: myAccountStatus.general,
       syncedAt: new Date(),
+      source: 'RECONCILIATION',
     });
   }
 

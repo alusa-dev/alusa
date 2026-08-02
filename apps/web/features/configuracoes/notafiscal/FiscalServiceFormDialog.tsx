@@ -78,7 +78,7 @@ const emptyForm: FiscalServiceInputDTO = {
   inss: 0,
   ir: 0,
   retainIss: false,
-  useTaxSystemReformNT007: false,
+  useTaxSystemReformNT007: true,
 };
 
 const TAX_FIELDS = [
@@ -197,7 +197,7 @@ export function FiscalServiceFormDialog({
         pisCofinsTaxStatus: simplesNacional ? undefined : nextForm.pisCofinsTaxStatus,
         operationPis: normalizedOperationRates.operationPis,
         operationCofins: normalizedOperationRates.operationCofins,
-        useTaxSystemReformNT007: simplesNacional ? false : nextForm.useTaxSystemReformNT007,
+        useTaxSystemReformNT007: !simplesNacional,
       });
       setTaxPercents({
         iss: String(nextForm.iss ?? 0),
@@ -218,8 +218,8 @@ export function FiscalServiceFormDialog({
             initial?.taxSituationCode ||
             initial?.taxClassificationCode ||
             initial?.operationIndicatorCode ||
-            initial?.useTaxSystemReformNT007 ||
-            useNationalPortal,
+            useNationalPortal ||
+            !simplesNacional,
         ),
       );
     }
@@ -377,9 +377,7 @@ export function FiscalServiceFormDialog({
         pisCofinsTaxStatus: simplesNacional ? undefined : form.pisCofinsTaxStatus || undefined,
         operationPis: simplesNacional ? null : form.operationPis ?? null,
         operationCofins: simplesNacional ? null : form.operationCofins ?? null,
-        useTaxSystemReformNT007: simplesNacional
-          ? false
-          : form.useTaxSystemReformNT007 ?? true,
+        useTaxSystemReformNT007: !simplesNacional,
       };
       const res = await fetch(url, {
         method: isEdit ? 'PUT' : 'POST',
@@ -600,7 +598,7 @@ export function FiscalServiceFormDialog({
             >
               Portal Nacional e reforma tributária
               <span className="text-xs font-normal text-gray-500">
-                {showAdvanced ? 'Ocultar' : 'Opcional'}
+                {showAdvanced ? 'Ocultar' : simplesNacional ? 'Opcional' : 'Obrigatório'}
               </span>
             </button>
             {showAdvanced ? (
@@ -712,21 +710,6 @@ export function FiscalServiceFormDialog({
                   onSearch={searchOperationIndicatorCodes}
                 />
 
-                <label className="flex items-start gap-2 text-sm text-gray-900">
-                  <Checkbox
-                    checked={form.useTaxSystemReformNT007 ?? false}
-                    onCheckedChange={(checked) =>
-                      setForm((f) => ({ ...f, useTaxSystemReformNT007: checked === true }))
-                    }
-                  />
-                  <span>
-                    Usar validações NT-007 (PIS/COFINS)
-                    <span className="mt-0.5 block text-xs font-normal text-gray-500">
-                      Permite antecipar as regras de PIS/COFINS da NT-007 durante a migração ao
-                      Portal Nacional.
-                    </span>
-                  </span>
-                </label>
                 </div>
               </FiscalDropdownScope>
             ) : null}
@@ -744,7 +727,14 @@ export function FiscalServiceFormDialog({
               !form.name ||
               (form.source === 'MUNICIPAL_LIST'
                 ? !form.asaasMunicipalServiceId
-                : !form.municipalServiceCode)
+                : !form.municipalServiceCode) ||
+              (!simplesNacional &&
+                (!form.nationalTaxCode ||
+                  !form.nbsCode ||
+                  !form.pisCofinsTaxStatus ||
+                  !form.taxSituationCode ||
+                  !form.taxClassificationCode ||
+                  !form.operationIndicatorCode))
             }
           >
             {saving ? 'Salvando…' : 'Salvar serviço'}

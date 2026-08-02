@@ -2,11 +2,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { listInvoices } from '../list-invoices';
 
-vi.mock('@alusa/database', () => ({
-  prisma: {
-    invoice: { findMany: vi.fn(), count: vi.fn() },
-  },
+const prismaMock = vi.hoisted(() => ({
+  invoice: { findMany: vi.fn(), count: vi.fn() },
 }));
+
+vi.mock('@alusa/database', () => ({
+  prisma: prismaMock,
+}));
+
+vi.mock('../../fiscal/fiscal-prisma', () => ({ getFiscalPrisma: () => prismaMock }));
 
 describe('listInvoices', () => {
   beforeEach(() => {

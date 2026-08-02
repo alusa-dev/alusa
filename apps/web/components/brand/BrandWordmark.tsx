@@ -1,3 +1,4 @@
+import React from 'react';
 import type { ImgHTMLAttributes } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -21,7 +22,7 @@ export function BrandWordmark({
   className,
   draggable = false,
   ...props
-}: BrandWordmarkProps) {
+}: BrandWordmarkProps): React.ReactElement {
   return (
     <img
       src={WORDMARK_SRC[variant]}

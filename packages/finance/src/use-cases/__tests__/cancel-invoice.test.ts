@@ -2,15 +2,33 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { cancelInvoice } from '../cancel-invoice';
 
+const prismaMock = vi.hoisted(() => ({
+  invoice: { findFirst: vi.fn(), update: vi.fn() },
+}));
+
 vi.mock('@alusa/database', () => ({
-  prisma: {
-    invoice: { findFirst: vi.fn(), update: vi.fn() },
-  },
+  prisma: prismaMock,
   loadAsaasCredentials: vi.fn(),
 }));
 
-vi.mock('@alusa/asaas', () => ({
+vi.mock('../../fiscal/fiscal-prisma', () => ({ getFiscalPrisma: () => prismaMock }));
+
+vi.mock('@alusa/asaas', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@alusa/asaas')>()),
   cancelInvoice: vi.fn(),
+  getMunicipalOptions: vi.fn().mockResolvedValue({ supportsCancellation: true }),
+}));
+
+vi.mock('../sync-invoice-from-provider', () => ({
+  syncInvoiceFromProvider: vi.fn().mockResolvedValue({ success: true, data: {} }),
+}));
+
+vi.mock('../../webhooks/ensure-webhook-config-operational', () => ({
+  ensureWebhookConfigOperational: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../fiscal/invoice-audit.service', () => ({
+  recordInvoiceAuditEvent: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('../../foundation/feature-flags.service', () => ({
@@ -27,7 +45,7 @@ vi.mock('../../foundation/kyc-guard', () => ({
 
 describe('cancelInvoice', () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
   });
 
   it('retorna KYC_NAO_APROVADO quando não aprovado', async () => {

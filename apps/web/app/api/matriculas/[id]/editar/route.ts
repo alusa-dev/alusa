@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { getSubscription, updateSubscription } from '@alusa/finance';
+import {
+  getSubscription,
+  projectConfirmedBillingAllocationValues,
+  updateSubscription,
+} from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
 import { editarMatricula, MatriculaConflictError } from '@/src/server/matriculas/matricula.service';
@@ -126,13 +130,15 @@ async function resolveFamilyPricing(input: {
 
   const pricing = familyItems.map((item) => {
     if (item.id === input.editedMatriculaId) {
-      return input.editedPricing;
+      return { ...input.editedPricing, matriculaId: item.id };
     }
 
     const product = item.combo ?? item.plano;
     if (!product) return null;
 
     return {
+      kind: item.combo ? ('COMBO' as const) : ('PLAN' as const),
+      matriculaId: item.id,
       value: Number(product.valor),
       periodicidade: product.periodicidade,
       cycle: mapPeriodicidadeToCycle(product.periodicidade),
@@ -148,11 +154,14 @@ async function resolveFamilyPricing(input: {
   }
 
   const resolvedPricing = pricing as Array<{
+    kind: 'COMBO' | 'PLAN';
+    matriculaId: string;
     value: number;
     periodicidade: PeriodicidadePlano;
     cycle: ReturnType<typeof mapPeriodicidadeToCycle>;
   }>;
   const cycles = new Set(resolvedPricing.map((item) => item.cycle));
+  const kinds = new Set(resolvedPricing.map((item) => item.kind));
 
   if (cycles.size !== 1) {
     return {
@@ -162,10 +171,31 @@ async function resolveFamilyPricing(input: {
     };
   }
 
+  if (kinds.size !== 1) {
+    return {
+      ok: false as const,
+      code: 'SEMANTICA_FAMILIAR_DIVERGENTE',
+      message: 'Não é possível misturar plano familiar agregado e combos individualizados na mesma cobrança.',
+    };
+  }
+
+  const totalValue =
+    resolvedPricing[0]?.kind === 'PLAN'
+      ? Number(input.editedPricing.value.toFixed(2))
+      : Number(resolvedPricing.reduce((sum, item) => sum + item.value, 0).toFixed(2));
+  const totalCents = Math.round(totalValue * 100);
+  const equalBase = Math.floor(totalCents / resolvedPricing.length);
+  const equalRemainder = totalCents % resolvedPricing.length;
   return {
     ok: true as const,
-    value: Number(resolvedPricing.reduce((sum, item) => sum + item.value, 0).toFixed(2)),
+    value: totalValue,
     cycle: resolvedPricing[0]?.cycle ?? input.editedPricing.cycle,
+    allocationValues: resolvedPricing.map((item, index) => ({
+      matriculaId: item.matriculaId,
+      value: item.kind === 'PLAN'
+        ? Number(((equalBase + (index < equalRemainder ? 1 : 0)) / 100).toFixed(2))
+        : Number(item.value.toFixed(2)),
+    })),
   };
 }
 
@@ -247,6 +277,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           cycle: ReturnType<typeof mapPeriodicidadeToCycle>;
         }
       | null = null;
+    let pendingCanonicalAllocationValues: Array<{ matriculaId: string; value: number }> | null = null;
 
     if (productChanged && targetSubscriptionId) {
       if (!financialContext) {
@@ -325,9 +356,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           value: familyPricing.value,
           cycle: familyPricing.cycle,
         };
+        pendingCanonicalAllocationValues = familyPricing.allocationValues;
       } else {
         nextSubscriptionValue = nextPricing.value;
         nextSubscriptionCycle = nextPricing.cycle;
+        pendingCanonicalAllocationValues = [{ matriculaId: currentMatricula.id, value: nextPricing.value }];
       }
 
       const resolvedNextSubscriptionValue = nextSubscriptionValue;
@@ -413,6 +446,16 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       motivo: parsedBody.data.motivo ?? undefined,
       metadata: financialMetadata,
     });
+
+    if (targetSubscriptionId && nextSubscriptionValue != null && pendingCanonicalAllocationValues) {
+      await projectConfirmedBillingAllocationValues({
+        contaId: contaCtx.contaId,
+        asaasSubscriptionId: targetSubscriptionId,
+        totalValue: nextSubscriptionValue,
+        cycle: nextSubscriptionCycle,
+        allocations: pendingCanonicalAllocationValues,
+      });
+    }
 
     const localAlignment =
       pendingFamilyLocalUpdate && financialContext

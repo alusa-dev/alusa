@@ -193,9 +193,7 @@ export class AsaasHttp {
             statusText: response.statusText,
             contentType,
             emptyBody: isEmptyBody,
-            requestBodyPreview: body
-              ? JSON.stringify(body).slice(0, 500)
-              : undefined,
+            requestBodyPreview: buildSafeRequestBodyPreview(body),
             idempotencyKey: options?.headers?.['Idempotency-Key'] ?? undefined,
           });
         }
@@ -272,6 +270,45 @@ export class AsaasHttp {
     if (typeof obj.error === 'string') return obj.error;
 
     return null;
+  }
+}
+
+const SENSITIVE_BODY_KEYS = new Set([
+  'access_token',
+  'apikey',
+  'api_key',
+  'authorization',
+  'ccv',
+  'cvv',
+  'number',
+  'password',
+  'token',
+]);
+
+function redactSensitiveBody(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (!value || typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveBody(item, seen));
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      SENSITIVE_BODY_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : redactSensitiveBody(item, seen),
+    ]),
+  );
+}
+
+function buildSafeRequestBodyPreview(body: unknown): string | undefined {
+  if (body === undefined || body === null) return undefined;
+
+  try {
+    return JSON.stringify(redactSensitiveBody(body)).slice(0, 500);
+  } catch {
+    return '[Unserializable request body]';
   }
 }
 

@@ -2,10 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { handlePaymentWebhook } from '../payment-webhook-handler';
 
-const { mockUpdateFinanceStatusFromPayment, mockResolvePaymentToLocalEntity, mockEnsureAcademicChargeForCobranca } = vi.hoisted(() => ({
+const {
+  mockUpdateFinanceStatusFromPayment,
+  mockResolvePaymentToLocalEntity,
+  mockEnsureAcademicChargeForCobranca,
+  mockProjectAcademicEnrollmentFeeState,
+  mockProjectFamilyEnrollmentFeeState,
+} = vi.hoisted(() => ({
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
   mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
   mockEnsureAcademicChargeForCobranca: vi.fn(async () => ({ id: 'charge_academic_mock', cobrancaId: 'c_mock' })),
+  mockProjectAcademicEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
+  mockProjectFamilyEnrollmentFeeState: vi.fn(async () => ({ projected: true })),
 }));
 
 vi.mock('../../foundation/payment-resolution-policy', () => {
@@ -30,9 +38,23 @@ vi.mock('../../fiscal/ensure-academic-charge-for-cobranca', () => ({
   ensureAcademicChargeForCobranca: mockEnsureAcademicChargeForCobranca,
 }));
 
+vi.mock('../../use-cases/payment-command-ledger', () => ({
+  confirmPaymentCommandsByProviderEvent: vi.fn(async () => ({ confirmed: 0 })),
+}));
+
+vi.mock('../../use-cases/store-inventory', () => ({
+  fulfillReservedSaleOnPayment: vi.fn(async () => ({ fulfilled: false })),
+}));
+
+vi.mock('../../projections/enrollment-fee-projection.service', () => ({
+  projectAcademicEnrollmentFeeState: mockProjectAcademicEnrollmentFeeState,
+  projectFamilyEnrollmentFeeState: mockProjectFamilyEnrollmentFeeState,
+}));
+
 vi.mock('@alusa/database', () => ({
   prisma: {
     $transaction: vi.fn(async (callback: (_tx: unknown) => Promise<unknown>) => callback((await import('@alusa/database')).prisma)),
+    $executeRaw: vi.fn(),
     $queryRaw: vi.fn(),
     cobranca: {
       findFirst: vi.fn(),
@@ -81,6 +103,10 @@ vi.mock('@alusa/database', () => ({
     logIntegracao: {
       create: vi.fn(),
     },
+    enrollmentCreationOperation: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
   },
 }));
 
@@ -94,12 +120,44 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(false);
     mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'not_found', reason: 'test_default' });
     mockEnsureAcademicChargeForCobranca.mockResolvedValue({ id: 'charge_academic_mock', cobrancaId: 'c_mock' });
+    mockProjectAcademicEnrollmentFeeState.mockResolvedValue({ projected: true });
+    mockProjectFamilyEnrollmentFeeState.mockResolvedValue({ projected: true });
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
   });
 
-  it('deve promover statusFinanceiro quando a taxa de matrícula for confirmada', async () => {
+  it('mantém payment da saga invisível quando webhook chega antes do commit', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-1',
+      status: 'PROCESSING',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-fee-1',
+        status: 'PENDING',
+        value: 80,
+        dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-1:fee',
+      },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'ENROLLMENT_CREATION_IN_PROGRESS',
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith({
+      where: { id: 'op-1', contaId: 'conta-1' },
+      data: { asaasEnrollmentFeePaymentId: 'pay-fee-1' },
+    });
+    expect(prisma.charge.upsert).not.toHaveBeenCalled();
+  });
+
+  it('deve projetar a taxa de matrícula quando o pagamento for confirmado', async () => {
     const { prisma } = await import('@alusa/database');
 
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
@@ -128,18 +186,12 @@ describe('handlePaymentWebhook', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(prisma.matricula.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'm_taxa', taxaStatus: { not: 'PAGO' } },
-        data: { taxaStatus: 'PAGO' },
-      }),
-    );
-    expect(mockUpdateFinanceStatusFromPayment).toHaveBeenCalledWith({
-      matriculaId: 'm_taxa',
-      newStatus: 'ADIMPLENTE',
+    expect(mockProjectAcademicEnrollmentFeeState).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      cobrancaId: 'c_taxa',
       eventName: 'PAYMENT_CONFIRMED',
-      reason: 'Webhook Asaas: PAYMENT_CONFIRMED',
     });
+    expect(mockUpdateFinanceStatusFromPayment).not.toHaveBeenCalled();
   });
 
   it('deve registrar Pagamento quando confirmado mesmo sem liquidação', async () => {

@@ -1,9 +1,13 @@
 import { useRef, useState } from 'react';
-import type { WizardFamiliarSubmitResult, WizardState } from '@/components/matriculas/wizard/types';
-import { createContrato } from '@/features/contratos/services/contratos-service';
+import type {
+  FamilyEnrollmentOutcome,
+  WizardFamiliarSubmitResult,
+  WizardState,
+} from '@/components/matriculas/wizard/types';
+import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
 
 interface UseMatriculaFamiliarSubmitOptions {
-  onSuccess?: (_results: WizardFamiliarSubmitResult[]) => void;
+  onSuccess?: (_outcome: FamilyEnrollmentOutcome) => void;
   onError?: (_error: Error) => void;
 }
 
@@ -23,7 +27,30 @@ function generateRequestId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function buildPayload(state: WizardState, uiRequestId: string): Record<string, unknown> {
+function applyBenefit(value: number, state: WizardState) {
+  const benefit = state.beneficioSelecionado;
+  if (!benefit) return value;
+  return benefit.tipo === 'PERCENTUAL'
+    ? Math.max(0, value - (value * benefit.valor) / 100)
+    : Math.max(0, value - benefit.valor);
+}
+
+function familyMonthlyAmount(state: WizardState) {
+  const total =
+    state.modoTurmas === 'TURMAS'
+      ? applyBenefit(state.planoValor ?? 0, state)
+      : state.alunosFamiliares.reduce(
+          (sum, aluno) => sum + applyBenefit(aluno.comboValor ?? 0, state),
+          0,
+        );
+  return Math.round((total + Number.EPSILON) * 100) / 100;
+}
+
+function buildPayload(
+  state: WizardState,
+  uiRequestId: string,
+  preview: { previewHash: string; sourceVersion: string; expiresAt: string },
+): Record<string, unknown> {
   const normalizePayment = (value: unknown) => {
     if (typeof value !== 'string') return value;
     return value === 'CARTAO' ? 'CARTAO_CREDITO' : value;
@@ -35,6 +62,7 @@ function buildPayload(state: WizardState, uiRequestId: string): Record<string, u
     modoTurmas: state.modoTurmas,
     planoId: state.modoTurmas === 'TURMAS' ? state.planoId : undefined,
     alunos: state.alunosFamiliares.map((aluno) => ({
+      itemId: aluno.itemId,
       alunoId: aluno.id,
       turmaId: state.modoTurmas === 'TURMAS' ? aluno.turmaId : undefined,
       comboId: state.modoTurmas === 'COMBO' ? aluno.comboId : undefined,
@@ -56,6 +84,10 @@ function buildPayload(state: WizardState, uiRequestId: string): Record<string, u
     formaPagamento: normalizePayment(state.formaPagamento),
     formaPagamentoTaxa: normalizePayment(state.formaPagamentoTaxa),
     modeloId: state.modeloId,
+    billingStrategy: state.billingStrategy ?? { kind: 'SEPARATE' },
+    previewHash: preview.previewHash,
+    sourceVersion: preview.sourceVersion,
+    previewExpiresAt: preview.expiresAt,
     notificationChannels: Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
     notificationChannelsConfigured: state.notificationChannelsTouched === true,
     multaPercentual: state.multaPercentual,
@@ -70,6 +102,7 @@ function buildPayload(state: WizardState, uiRequestId: string): Record<string, u
 export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOptions = {}) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<WizardFamiliarSubmitResult[]>([]);
+  const [outcome, setOutcome] = useState<FamilyEnrollmentOutcome | null>(null);
   // Mantém o uiRequestId estável entre tentativas para garantir idempotência
   // ponta-a-ponta (mesmo se o usuário clicar duas vezes ou der refresh).
   const requestIdRef = useRef<string | null>(null);
@@ -88,10 +121,58 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
         throw new Error('Nenhum aluno selecionado para matrícula familiar.');
       }
 
+      const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+      const descontoIds =
+        state.beneficioSelecionado?.origem === 'CATALOGO' ? [state.beneficioSelecionado.id] : [];
+      const previewPaymentMethod =
+        state.formaPagamento === 'PIX' ||
+        state.formaPagamento === 'BOLETO' ||
+        state.formaPagamento === 'CARTAO_CREDITO'
+          ? state.formaPagamento
+          : state.formaPagamento === 'CARTAO'
+            ? 'CARTAO_CREDITO'
+            : 'BOLETO';
+      const preview = await previewInitialEnrollmentBillingRequest({
+        contaId: state.contaId || undefined,
+        enrollmentMode: 'FAMILY',
+        familyPricingMode:
+          state.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
+        aggregateMonthlyAmount: familyMonthlyAmount(state),
+        aggregateEnrollmentFeeAmount: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
+        billingStrategy,
+        strategy:
+          billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+            ? 'INCLUDE_EXISTING'
+            : 'CREATE_SEPARATE',
+        existingFamilyGroupId:
+          billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+            ? billingStrategy.financialGroupId
+            : null,
+        responsavelFinanceiroId: state.responsavelFamiliar?.id ?? null,
+        dataInicio: state.dataInicio ?? '',
+        dataFimContrato: state.dataFimContrato ?? '',
+        formaPagamento: previewPaymentMethod,
+        vencimentoDia: state.vencimentoDia ?? 5,
+        descontoIds,
+        items: state.alunosFamiliares.map((aluno) => ({
+          alunoId: aluno.id,
+          turmaId: state.modoTurmas === 'TURMAS' ? aluno.turmaId ?? null : null,
+          comboId: state.modoTurmas === 'COMBO' ? aluno.comboId ?? null : null,
+          planoId: state.modoTurmas === 'TURMAS' ? state.planoId ?? null : null,
+          taxaMatricula: state.taxaMatricula ?? 0,
+        })),
+      });
+      if (!preview.compatibility.compatible) {
+        throw new Error(
+          preview.compatibility.blockers.map((blocker) => blocker.message).join(' ') ||
+            'O agrupamento financeiro escolhido não é compatível.',
+        );
+      }
+
       const response = await fetch('/api/matriculas/familiar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload(state, uiRequestId)),
+        body: JSON.stringify(buildPayload(state, uiRequestId, preview)),
       });
 
       const payload = await response.json().catch(() => ({}));
@@ -110,34 +191,50 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
             : [];
 
         setResults(errorResults);
-        options.onSuccess?.(errorResults);
-        return errorResults;
+        if (
+          typeof payload.familyId === 'string' &&
+          errorResults.some((result) => result.status === 'success')
+        ) {
+          const partialOutcome: FamilyEnrollmentOutcome = {
+            familyId: payload.familyId,
+            operationId:
+              typeof payload.operationId === 'string' ? payload.operationId : undefined,
+            operationStatus: payload.operationStatus ?? 'FAILED',
+            academicStatus: payload.academicStatus ?? 'PARCIAL',
+            billingProvisionStatus: payload.billingProvisionStatus ?? 'FALHO',
+            paymentStatus: payload.paymentStatus ?? 'PENDENTE',
+            financialError: sanitizeMessage(message),
+            results: errorResults,
+          };
+          setOutcome(partialOutcome);
+          options.onSuccess?.(partialOutcome);
+          requestIdRef.current = null;
+          return partialOutcome;
+        }
+        throw new Error(sanitizeMessage(message));
       }
 
       const allResults = Array.isArray(payload.results)
         ? (payload.results as WizardFamiliarSubmitResult[])
         : [];
-
-      if (state.modeloId) {
-        for (const result of allResults) {
-          if (result.status !== 'success' || !result.matriculaId) continue;
-          try {
-            await createContrato({
-              matriculaId: result.matriculaId,
-              modeloId: state.modeloId,
-            });
-          } catch {
-            // não bloqueia o fluxo se um contrato falhar
-          }
-        }
-      }
+      const accepted: FamilyEnrollmentOutcome = {
+        familyId: String(payload.familyId ?? ''),
+        operationId: typeof payload.operationId === 'string' ? payload.operationId : undefined,
+        operationStatus: payload.operationStatus ?? 'PENDING',
+        academicStatus: payload.academicStatus ?? 'PENDENTE',
+        billingProvisionStatus: payload.billingProvisionStatus ?? 'PENDENTE',
+        paymentStatus: payload.paymentStatus ?? 'PENDENTE',
+        financialError: payload.financialError ?? null,
+        results: allResults,
+      };
 
       // Sucesso: zera para que um novo wizard gere novo uiRequestId.
       requestIdRef.current = null;
 
       setResults(allResults);
-      options.onSuccess?.(allResults);
-      return allResults;
+      setOutcome(accepted);
+      options.onSuccess?.(accepted);
+      return accepted;
     } catch (e) {
       const error = e instanceof Error ? e : new Error('Erro ao processar matrículas.');
       options.onError?.(error);
@@ -150,7 +247,8 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
   const reset = () => {
     requestIdRef.current = null;
     setResults([]);
+    setOutcome(null);
   };
 
-  return { submit, loading, results, reset };
+  return { submit, loading, results, outcome, reset };
 }

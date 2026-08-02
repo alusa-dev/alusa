@@ -16,6 +16,7 @@ import {
   normalizePisCofinsTaxStatus,
   validatePisCofinsTaxRules,
 } from '../fiscal/pis-cofins-tax-status';
+import { validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
 
 export type FiscalServiceInput = {
   name: string;
@@ -46,6 +47,7 @@ export type ManageFiscalServiceError =
   | 'SERVICO_NAO_ENCONTRADO'
   | 'SERVICO_MUNICIPAL_INVALIDO'
   | 'PIS_COFINS_INVALIDO'
+  | 'IBS_CBS_INVALIDO'
   | 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
   | 'FISCAL_CORE_NOT_SYNCED'
   | 'DEFAULT_SERVICE_REQUIRED'
@@ -254,6 +256,13 @@ function hasValidPisCofinsConfiguration(
   );
 }
 
+function hasValidIbsCbsConfiguration(
+  service: ReturnType<typeof normalizeServiceInput>,
+  context: { simplesNacional: boolean },
+): boolean {
+  return context.simplesNacional || validateFiscalIbsCbs(service).length === 0;
+}
+
 export async function createFiscalService(
   contaId: string,
   input: FiscalServiceInput,
@@ -269,6 +278,9 @@ export async function createFiscalService(
     if (!validateServiceSelection(normalized)) return err('SERVICO_MUNICIPAL_INVALIDO');
     if (!hasValidPisCofinsConfiguration(normalized, settings)) {
       return err('PIS_COFINS_INVALIDO');
+    }
+    if (!hasValidIbsCbsConfiguration(normalized, settings)) {
+      return err('IBS_CBS_INVALIDO');
     }
     const pisCofinsTaxStatus = normalizePisCofinsTaxStatus(normalized.pisCofinsTaxStatus);
     const operationRates = normalizeOperationPisCofinsRates({
@@ -301,7 +313,8 @@ export async function createFiscalService(
         pisCofinsTaxStatus,
         operationPis: operationRates.operationPis,
         operationCofins: operationRates.operationCofins,
-        useTaxSystemReformNT007: normalized.useTaxSystemReformNT007 ?? false,
+        // NT-007 is mandatory for Regime Normal; it is not a user-controlled rollout.
+        useTaxSystemReformNT007: !settings.simplesNacional,
       },
     });
 
@@ -336,6 +349,9 @@ export async function updateFiscalService(
     if (!validateServiceSelection(normalized)) return err('SERVICO_MUNICIPAL_INVALIDO');
     if (settings && !hasValidPisCofinsConfiguration(normalized, settings)) {
       return err('PIS_COFINS_INVALIDO');
+    }
+    if (settings && !hasValidIbsCbsConfiguration(normalized, settings)) {
+      return err('IBS_CBS_INVALIDO');
     }
     const pisCofinsTaxStatus = normalizePisCofinsTaxStatus(normalized.pisCofinsTaxStatus);
     const operationRates = normalizeOperationPisCofinsRates({
@@ -373,7 +389,7 @@ export async function updateFiscalService(
         pisCofinsTaxStatus,
         operationPis: operationRates.operationPis,
         operationCofins: operationRates.operationCofins,
-        useTaxSystemReformNT007: normalized.useTaxSystemReformNT007 ?? false,
+        useTaxSystemReformNT007: settings ? !settings.simplesNacional : existing.useTaxSystemReformNT007,
       },
     });
 

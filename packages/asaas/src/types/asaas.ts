@@ -30,14 +30,14 @@ export interface AsaasInvoiceTaxesRequest {
   ir: number;
   pis: number | null;
   iss: number;
-  nbsCode?: string | null;
-  taxSituationCode?: string | null;
-  taxClassificationCode?: string | null;
-  operationIndicatorCode?: string | null;
-  pisCofinsTaxStatus?: string | null;
-  operationPis?: number | null;
-  operationCofins?: number | null;
-  useTaxSystemReformNT007?: boolean;
+  nbsCode: string | null;
+  taxSituationCode: string | null;
+  taxClassificationCode: string | null;
+  operationIndicatorCode: string | null;
+  pisCofinsTaxStatus: string | null;
+  operationPis: number | null;
+  operationCofins: number | null;
+  useTaxSystemReformNT007: boolean;
 }
 
 export interface AsaasInvoiceTaxesResponse extends AsaasInvoiceTaxesRequest {
@@ -52,6 +52,14 @@ export interface AsaasInvoiceTaxesResponse extends AsaasInvoiceTaxesRequest {
   municipalIbsValue?: number | null;
   cbs?: number | null;
   cbsValue?: number | null;
+}
+
+export interface AsaasInvoiceIbsCbsRequest {
+  nbsCode: string;
+  nationalServiceCode: string;
+  taxSituation: string;
+  taxClassification: string;
+  operationIndicatorCode: string;
 }
 
 export type AsaasInvoiceTaxes = AsaasInvoiceTaxesResponse;
@@ -71,6 +79,8 @@ export interface CreateInvoiceInput {
   municipalServiceName: string;
   updatePayment?: boolean;
   taxes: AsaasInvoiceTaxesRequest;
+  /** Reforma tributária IBS/CBS. Habilitar somente para contas obrigadas. */
+  ibsCbs?: AsaasInvoiceIbsCbsRequest;
 }
 
 export interface AsaasInvoice {
@@ -96,6 +106,7 @@ export interface AsaasInvoice {
   estimatedTaxesDescription?: string | null;
   externalReference?: string | null;
   taxes?: AsaasInvoiceTaxesResponse;
+  ibsCbs?: AsaasInvoiceIbsCbsRequest | null;
   municipalServiceId?: string | null;
   municipalServiceCode?: string | null;
   municipalServiceName?: string | null;

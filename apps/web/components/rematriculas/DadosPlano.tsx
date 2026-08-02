@@ -39,6 +39,15 @@ interface DadosPlanoProps {
     valor?: number;
     periodicidade?: string;
   } | null;
+  billingAgreement?: {
+    id: string;
+    allocationValue: number;
+    desiredValue: number;
+    confirmedValue: number;
+    status: string;
+    reconciliationError?: string | null;
+  } | null;
+  familyMode?: boolean;
 }
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -48,7 +57,7 @@ const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 t
 const controlClass =
   'flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm transition focus:border-[#A94DFF] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30 disabled:bg-slate-50 disabled:text-slate-700 disabled:cursor-not-allowed';
 
-export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano, turma, combo }: DadosPlanoProps) {
+export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano, turma, combo, billingAgreement, familyMode = false }: DadosPlanoProps) {
   const { user } = useCurrentUser();
   const contaId = user?.contaId ?? null;
 
@@ -59,12 +68,21 @@ export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano,
   const [salvando, setSalvando] = useState(false);
   const [planoIdSelecionado, setPlanoIdSelecionado] = useState(plano?.id ?? '');
   const [turmaIdSelecionado, setTurmaIdSelecionado] = useState(turma?.id ?? '');
+  const [valorPersonalizado, setValorPersonalizado] = useState(
+    String(billingAgreement?.allocationValue ?? plano?.valor ?? combo?.valor ?? 0),
+  );
+  const [vigenciaValor, setVigenciaValor] = useState<'CURRENT' | 'NEXT'>('NEXT');
+  const [salvandoValor, setSalvandoValor] = useState(false);
 
   useEffect(() => {
     if (editando) return;
     setPlanoIdSelecionado(plano?.id ?? '');
     setTurmaIdSelecionado(turma?.id ?? '');
   }, [editando, plano?.id, turma?.id]);
+
+  useEffect(() => {
+    setValorPersonalizado(String(billingAgreement?.allocationValue ?? plano?.valor ?? combo?.valor ?? 0));
+  }, [billingAgreement?.allocationValue, combo?.valor, plano?.valor]);
 
   const planoSelecionado = useMemo(() => {
     return planosDisponiveis.find((item) => item.id === planoIdSelecionado) ??
@@ -165,6 +183,30 @@ export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano,
     }
   };
 
+  const handleSalvarValor = async () => {
+    const value = Number(valorPersonalizado.replace(',', '.'));
+    if (!Number.isFinite(value) || value < 0.01) {
+      pushToast({ title: 'Valor inválido', description: 'Informe um valor maior que zero.', variant: 'warning' });
+      return;
+    }
+    setSalvandoValor(true);
+    try {
+      const res = await fetch(`/api/matriculas/${matriculaId}/valor`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ contaId, value, updatePendingPayments: vigenciaValor === 'CURRENT' }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error?.message ?? 'Não foi possível atualizar o valor.');
+      pushToast({ title: 'Valor financeiro atualizado', description: data?.message ?? 'Alteração registrada.', variant: 'success' });
+      onRefresh();
+    } catch (error) {
+      pushToast({ title: 'Erro ao alterar valor', description: error instanceof Error ? error.message : String(error), variant: 'error' });
+    } finally {
+      setSalvandoValor(false);
+    }
+  };
+
   return (
     <div className={sectionClass}>
       <div className="flex items-center justify-between gap-4">
@@ -203,6 +245,54 @@ export function DadosPlano({ matriculaId, onRefresh, asaasSubscriptionId, plano,
             entre matrícula, plano e cobrança.
           </InfoCalloutItem>
         </InfoCallout>
+      ) : null}
+
+      {billingAgreement ? (
+        <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Valor financeiro desta matrícula</p>
+              <p className="text-xs text-slate-500">
+                {familyMode
+                  ? `Esta parcela compõe a cobrança familiar total de ${currency.format(billingAgreement.desiredValue)}.`
+                  : 'A alteração fica registrada na Alusa e é sincronizada com a assinatura.'}
+              </p>
+            </div>
+            <span className="text-xs font-medium text-slate-600">
+              Asaas confirmado: {currency.format(billingAgreement.confirmedValue)}
+            </span>
+          </div>
+          {billingAgreement.reconciliationError ? (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {billingAgreement.reconciliationError}
+            </p>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+            <div className="space-y-1">
+              <label className={labelClass} htmlFor="custom-tuition-value">Novo valor</label>
+              <Input
+                id="custom-tuition-value"
+                inputMode="decimal"
+                value={valorPersonalizado}
+                onChange={(event) => setValorPersonalizado(event.target.value)}
+                disabled={salvandoValor}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={labelClass}>Vigência</label>
+              <Select value={vigenciaValor} onValueChange={(value) => setVigenciaValor(value as 'CURRENT' | 'NEXT')} disabled={salvandoValor}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NEXT">Próximo ciclo</SelectItem>
+                  <SelectItem value="CURRENT">Ciclo atual e pendências</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={handleSalvarValor} disabled={salvandoValor || !contaId}>
+              {salvandoValor ? 'Salvando…' : 'Alterar valor'}
+            </Button>
+          </div>
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

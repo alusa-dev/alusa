@@ -1,5 +1,5 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { createInstallment, listInstallmentPayments, type BillingType } from '@alusa/asaas';
+import { createInstallment, listInstallmentPayments, listPayments, type BillingType } from '@alusa/asaas';
 import { resolvePayer } from '@alusa/domain';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
@@ -21,6 +21,14 @@ import type { InstallmentStatus } from '@prisma/client';
 import { chargeReadModelService } from '../read-model/charge-read-model.service';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
+import { getInstallment } from './asaas-ops';
+import {
+  markOutboundAwaitingWebhook,
+  markOutboundRemoteConfirmed,
+  markOutboundRemoteRequested,
+  markOutboundResultUnknown,
+  reserveOutboundFinancialOperation,
+} from './outbound-financial-operation';
 
 export type CreateStandaloneInstallmentInput = {
   contaId: string;
@@ -177,27 +185,72 @@ export async function createStandaloneInstallmentPlan(
       ...(input.fine != null && { fine: input.fine }),
     };
 
-    const asaasInstallment = await createInstallment({
-      apiKey: credentials.apiKey,
-      idempotencyKey: externalReference,
-      data: asaasPayload,
-    }).catch((e) => {
-      const asaasResponse = (e as { responseBody?: unknown })?.responseBody;
-      const asaasErrors = (asaasResponse as { errors?: Array<{ code?: string; description?: string }> })?.errors;
-      const errorDetails = asaasErrors?.[0];
-
-      console.error('[finance][createStandaloneInstallmentPlan][asaasCreateInstallment] Falha:', {
-        contaId: input.contaId,
-        message: e instanceof Error ? e.message : String(e),
-        asaasErrorCode: errorDetails?.code,
-        asaasErrorDescription: errorDetails?.description,
-        externalReference,
-        firstDueDate: input.firstDueDate,
-      });
-      return null;
+    const operation = await reserveOutboundFinancialOperation({
+      contaId: input.contaId,
+      type: 'CREATE_INSTALLMENT',
+      idempotencyKey,
+      resource: 'INSTALLMENT_PLAN',
+      entityId: installmentPlanId,
+      externalReference,
+      requestFingerprint: hashPayload(asaasPayload),
     });
+    let asaasInstallment = operation.payload.remoteId
+      ? await getInstallment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+      : null;
 
-    if (!asaasInstallment?.id) return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    if (!asaasInstallment) {
+      const recoveredPayments = await listPayments({
+        apiKey: credentials.apiKey,
+        externalReference,
+        limit: 100,
+        includeDeleted: true,
+      }).then((result) => result.data).catch(() => []);
+      const installmentIds = [...new Set(recoveredPayments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+      if (installmentIds.length > 1) {
+        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: 'MULTIPLE_REMOTE_INSTALLMENTS_FOR_EXTERNAL_REFERENCE' });
+        return err('ERRO_AO_CRIAR_PARCELAMENTO');
+      }
+      if (installmentIds[0]) {
+        asaasInstallment = await getInstallment(installmentIds[0], { contaId: input.contaId }).catch(() => null);
+      }
+    }
+
+    if (!asaasInstallment) {
+      const claimed = await markOutboundRemoteRequested(operation.job.id);
+      if (!claimed) return err('ERRO_AO_CRIAR_PARCELAMENTO');
+      try {
+        const created = await createInstallment({
+          apiKey: credentials.apiKey,
+          idempotencyKey: externalReference,
+          data: asaasPayload,
+        });
+        asaasInstallment = await getInstallment(created.id, { contaId: input.contaId }).catch(() => created);
+      } catch (remoteError) {
+        const recoveredPayments = await listPayments({
+          apiKey: credentials.apiKey,
+          externalReference,
+          limit: 100,
+          includeDeleted: true,
+        }).then((result) => result.data).catch(() => []);
+        const installmentIds = [...new Set(recoveredPayments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+        if (installmentIds.length === 1) {
+          asaasInstallment = await getInstallment(installmentIds[0]!, { contaId: input.contaId }).catch(() => null);
+        }
+        if (!asaasInstallment) {
+          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: remoteError });
+          return err('ERRO_AO_CRIAR_PARCELAMENTO');
+        }
+      }
+    }
+    const installmentMismatch = !asaasInstallment?.id
+      || (asaasInstallment.customer != null && asaasInstallment.customer !== customer.asaasCustomerId)
+      || (asaasInstallment.installmentCount != null && asaasInstallment.installmentCount !== input.installmentCount)
+      || (asaasInstallment.value != null && Math.abs(asaasInstallment.value - input.value) > 0.001);
+    if (installmentMismatch) {
+      await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'INSTALLMENT_PLAN', entityId: installmentPlanId, externalReference, error: 'REMOTE_INSTALLMENT_CONFIRMATION_MISMATCH' });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
+    await markOutboundRemoteConfirmed(operation.job.id, asaasInstallment.id);
 
     const firstDueDate = new Date(`${input.firstDueDate}T00:00:00.000Z`);
 
@@ -270,6 +323,12 @@ export async function createStandaloneInstallmentPlan(
         });
       },
     });
+
+    await prisma.asaasIntegrationJob.update({
+      where: { id: operation.job.id },
+      data: { installmentPlanId: updated.id },
+    });
+    await markOutboundAwaitingWebhook(operation.job.id, asaasInstallment.id);
 
     await syncInstallmentPayments({
       contaId: input.contaId,

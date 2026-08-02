@@ -21,7 +21,7 @@ export const adminTestCustomerResultDTOSchema = z.object({
 export type AdminTestCustomerResultDTO = z.infer<typeof adminTestCustomerResultDTOSchema>;
 
 export const adminFinancialHealthCheckDTOSchema = z.object({
-  name: z.enum(['base_url', 'credentials', 'webhook', 'feature_flag']),
+  name: z.enum(['base_url', 'credentials', 'webhook']),
   ok: z.boolean(),
   message: z.string().optional(),
 });

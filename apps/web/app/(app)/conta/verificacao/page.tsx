@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 
 import { Badge } from '@/components/ui/badge';
@@ -72,6 +72,7 @@ export default function VerificacaoPage() {
 
   const [uploadModal, setUploadModal] = useState<VerificationAction | null>(null);
   const [sandboxApproving, setSandboxApproving] = useState(false);
+  const sandboxApprovingRef = useRef(false);
   const [verifyingActionId, setVerifyingActionId] = useState<string | null>(null);
 
   const pendingActions = verification?.actions ?? [];
@@ -79,6 +80,8 @@ export default function VerificacaoPage() {
   const provisioningBanner = provisioningHint ? provisioningCopy(provisioningHint) : null;
 
   const handleSandboxApprove = async () => {
+    if (sandboxApprovingRef.current) return;
+    sandboxApprovingRef.current = true;
     setSandboxApproving(true);
     try {
       const res = await fetch('/api/kyc/sandbox/approve', { method: 'POST' });
@@ -87,11 +90,21 @@ export default function VerificacaoPage() {
         pushToast({ title: body.message ?? 'Erro ao aprovar sandbox', variant: 'error' });
         return;
       }
-      pushToast({ title: 'Conta aprovada no sandbox', variant: 'success' });
-      await refresh(true);
+      const body = await res.json().catch(() => null) as {
+        data?: { generalStatus?: string; alreadyRequested?: boolean };
+      } | null;
+      const approved = body?.data?.generalStatus?.toUpperCase() === 'APPROVED';
+      pushToast({
+        title: approved
+          ? 'Conta aprovada no sandbox'
+          : 'Aprovação solicitada. Aguardando confirmação do Asaas.',
+        variant: 'success',
+      });
+      await refresh(!approved);
     } catch {
       pushToast({ title: 'Erro ao aprovar sandbox', variant: 'error' });
     } finally {
+      sandboxApprovingRef.current = false;
       setSandboxApproving(false);
     }
   };

@@ -13,6 +13,7 @@ const {
   prismaMock,
   resolveMatriculaFinancialContextMock,
   updateFamilyFinancialLocalStateMock,
+  projectConfirmedBillingAllocationValuesMock,
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
@@ -38,6 +39,7 @@ const {
   },
   resolveMatriculaFinancialContextMock: vi.fn(),
   updateFamilyFinancialLocalStateMock: vi.fn(),
+  projectConfirmedBillingAllocationValuesMock: vi.fn(),
 }));
 
 vi.mock('next-auth', () => ({
@@ -51,6 +53,7 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@alusa/finance', () => ({
   getSubscription: getSubscriptionMock,
   updateSubscription: updateSubscriptionMock,
+  projectConfirmedBillingAllocationValues: projectConfirmedBillingAllocationValuesMock,
 }));
 
 vi.mock('@/src/prisma', () => ({
@@ -86,6 +89,7 @@ function buildRequest(body: Record<string, unknown>) {
 describe('PATCH /api/matriculas/[id]/editar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    projectConfirmedBillingAllocationValuesMock.mockResolvedValue({ id: 'agreement-1' });
     getServerSessionMock.mockResolvedValue({ user: { id: 'user-1', contaId: 'conta-1' } });
     prismaMock.cobranca.updateMany.mockResolvedValue({ count: 2 });
     prismaMock.charge.updateMany.mockResolvedValue({ count: 2 });
@@ -241,7 +245,7 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
     expect(data.asyncSync.cycle).toBe('QUARTERLY');
   });
 
-  it('atualiza assinatura familiar consolidada com a soma dos itens da família', async () => {
+  it('preserva o preço agregado do plano familiar ao editar um dos vínculos', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({
       id: 'mat-1',
       planoId: 'plano-antigo',
@@ -290,13 +294,13 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
       'sub_family',
       {
         updatePendingPayments: true,
-        value: 400,
+        value: 250,
       },
       { contaId: 'conta-1' },
     );
     expect(updateFamilyFinancialLocalStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        value: 400,
+        value: 250,
         cycle: 'MONTHLY',
       }),
     );

@@ -21,6 +21,14 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/jobs/retry-enrollment-billing-provision?limit=25&minAgeMinutes=5",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/jobs/process-billing-agreement-lifecycle?limit=50",
+      "schedule": "*/10 * * * *"
+    },
+    {
       "path": "/api/jobs/events-expire-reservations?limit=200&maxAccounts=20",
       "schedule": "*/10 * * * *"
     },

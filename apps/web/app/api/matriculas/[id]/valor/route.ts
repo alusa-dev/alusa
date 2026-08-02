@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { KycNotApprovedError, updateSubscription } from '@alusa/finance';
+import {
+  commitBillingAgreementChange,
+  previewBillingAgreementChange,
+} from '@alusa/finance';
+import type { BillingAgreementChangeInput } from '@alusa/finance';
 import { prisma } from '@/src/prisma';
 import { updateMatriculaValueInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaSubscriptionValueUpdateResultToDTO } from '@/features/cadastro/matriculas/mappers';
-import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asaas-subscription-mutation-error';
-import { deriveLocalAssinaturaSnapshot } from '@/src/server/matriculas/subscription-snapshot';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -80,22 +82,17 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       },
       select: {
         id: true,
-        asaasSubscriptionId: true,
-        planoId: true,
-        formaPagamento: true,
-        formaPagamentoTaxa: true,
-        updatedAt: true,
-        plano: { select: { valor: true } },
-        combo: { select: { valor: true } },
-        cobrancas: {
-          select: {
-            tipo: true,
-            status: true,
-            formaPagamento: true,
-            valor: true,
-            vencimento: true,
-            updatedAt: true,
-          },
+        contratoAtual: { select: { id: true, status: true } },
+        subscriptions: {
+          where: { contaId: contaCtx.contaId },
+          select: { billingAgreementId: true },
+          take: 1,
+        },
+        billingAllocations: {
+          where: { contaId: contaCtx.contaId, kind: 'TUITION', status: { in: ['ACTIVE', 'SCHEDULED'] } },
+          select: { id: true, agreementId: true, baseAmount: true, discountAmount: true, netAmount: true },
+          orderBy: { validFrom: 'desc' },
+          take: 1,
         },
       },
     });
@@ -104,67 +101,61 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(404, 'NAO_ENCONTRADO', 'Matrícula não encontrada');
     }
 
-    if (!matricula.asaasSubscriptionId) {
-      return jsonError(400, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui vínculo financeiro ativo');
+    const agreementId = matricula.billingAllocations[0]?.agreementId
+      ?? matricula.subscriptions[0]?.billingAgreementId
+      ?? null;
+    const allocation = matricula.billingAllocations[0];
+    if (!agreementId || !allocation) {
+      return jsonError(409, 'ACORDO_FINANCEIRO_NAO_MATERIALIZADO', 'O vínculo financeiro precisa ser reconciliado antes da alteração.');
     }
-
-    const localSubscription = await prisma.subscription.findFirst({
-      where: {
-        contaId: contaCtx.contaId,
-        matriculaId: matricula.id,
-      },
-      select: {
-        status: true,
-        updatedAt: true,
-      },
+    const agreement = await prisma.billingAgreement.findFirst({
+      where: { id: agreementId, contaId: contaCtx.contaId },
+      select: { version: true, nextDueDate: true, asaasSubscriptionId: true },
     });
-    const localSnapshot = deriveLocalAssinaturaSnapshot(
-      matricula as unknown as Record<string, unknown>,
-      localSubscription,
-    );
-
-    if (localSnapshot?.deleted || localSnapshot?.status === 'EXPIRED') {
-      return jsonError(409, 'ASSINATURA_NAO_EDITAVEL', 'O vínculo recorrente não pode ser atualizado no momento.');
+    if (!agreement?.asaasSubscriptionId) {
+      return jsonError(409, 'ASSINATURA_NAO_ENCONTRADA', 'Esta matrícula não possui assinatura financeira confirmada.');
     }
 
-    if (localSnapshot?.value === value) {
-      return NextResponse.json(
-        mapMatriculaSubscriptionValueUpdateResultToDTO({
-          subscriptionId: matricula.asaasSubscriptionId,
-          value,
-          updatePendingPayments,
-          message: 'A assinatura já está configurada com este valor.',
-        }),
-        { headers: { 'cache-control': 'no-store' } },
+    const today = new Date().toISOString().slice(0, 10);
+    const effectivePolicy = updatePendingPayments ? 'CURRENT_CYCLE_FULL' as const : 'NEXT_CYCLE' as const;
+    const effectiveDate = updatePendingPayments
+      ? today
+      : agreement.nextDueDate?.toISOString().slice(0, 10) ?? today;
+    const amountCents = Math.round(value * 100);
+    const change: BillingAgreementChangeInput = {
+      kind: 'UPDATE_ALLOCATION' as const,
+      contaId: contaCtx.contaId,
+      agreementId,
+      actorId: sessionUser?.id ?? 'system',
+      reason: 'Alteração manual do valor da mensalidade',
+      effectivePolicy,
+      effectiveDate,
+      allocations: [{
+        allocationId: allocation.id,
+        baseAmountCents: amountCents,
+        discountAmountCents: 0,
+        netAmountCents: amountCents,
+      }],
+    };
+    const preview = await previewBillingAgreementChange(change);
+    if (preview.blockers.length > 0) {
+      return jsonError(422, 'ALTERACAO_FINANCEIRA_BLOQUEADA', preview.blockers[0] ?? 'Alteração bloqueada.', preview.blockers);
+    }
+    const uiRequestId = req.headers.get('idempotency-key')?.trim();
+    if (!uiRequestId) {
+      return jsonError(
+        400,
+        'IDEMPOTENCY_KEY_OBRIGATORIA',
+        'Informe uma chave de idempotência para alterar o valor da matrícula.',
       );
     }
-
-    let asaasResponse;
-    try {
-      asaasResponse = await updateSubscription(matricula.asaasSubscriptionId, {
-        value,
-        updatePendingPayments,
-      }, {
-        contaId: contaCtx.contaId,
-      });
-    } catch (error) {
-      const classified = classifyAsaasSubscriptionMutationError(error);
-      if (classified.kind === 'not_found' || classified.kind === 'not_editable') {
-        return jsonError(
-          409,
-          'ASSINATURA_NAO_EDITAVEL',
-          classified.providerMessage ?? 'O vínculo recorrente não pode ser atualizado no momento.',
-        );
-      }
-      if (classified.kind === 'unauthorized') {
-        return jsonError(
-          502,
-          'FINANCEIRO_AUTENTICACAO_INVALIDA',
-          classified.providerMessage ?? 'A conta financeira rejeitou a operação.',
-        );
-      }
-      throw error;
-    }
+    const result = await commitBillingAgreementChange({
+      ...change,
+      uiRequestId,
+      previewHash: preview.previewHash,
+      previewExpiresAt: preview.expiresAt,
+      expectedAgreementVersion: agreement.version,
+    });
 
     await prisma.matriculaLog.create({
       data: {
@@ -172,38 +163,54 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         actorId: sessionUser?.id ?? 'system',
         action: 'MATRICULA_SUBSCRIPTION_VALUE_UPDATED',
         metadata: {
-          asaasSubscriptionId: matricula.asaasSubscriptionId,
-          previousValue: localSnapshot?.value ?? null,
+          billingAgreementId: agreementId,
+          previousValue: Number(allocation.netAmount),
           nextValue: value,
           updatePendingPayments,
+          operationId: result.operationId,
+          operationStatus: result.status,
+          requiresContractAmendment: matricula.contratoAtual?.status === 'ASSINADO',
         },
       },
     });
 
-    console.log('[ASAAS_SYNC] Valor da assinatura atualizado com sucesso no Asaas:', {
-      subscriptionId: asaasResponse.id,
-      newValue: asaasResponse.value,
-    });
-
-    // Atualizar valor no banco local se necessário (ex: campo de valor personalizado)
-    // Nota: O valor da mensalidade vem do Plano, mas podemos armazenar um override
+    if (matricula.contratoAtual?.status === 'ASSINADO') {
+      await prisma.matriculaLog.create({
+        data: {
+          matriculaId,
+          actorId: sessionUser?.id ?? 'system',
+          action: 'CONTRATO_ADITIVO_REQUERIDO',
+          metadata: {
+            contratoOrigemId: matricula.contratoAtual.id,
+            billingAgreementId: agreementId,
+            billingOperationId: result.operationId,
+            previousValue: Number(allocation.netAmount),
+            nextValue: value,
+            effectivePolicy,
+            effectiveDate,
+          },
+        },
+      });
+    }
 
     return NextResponse.json(
       mapMatriculaSubscriptionValueUpdateResultToDTO({
-        subscriptionId: asaasResponse.id,
-        value: asaasResponse.value,
+        subscriptionId: agreement.asaasSubscriptionId,
+        value,
         updatePendingPayments,
-        message: updatePendingPayments
-          ? 'Valor da mensalidade atualizado com sucesso (incluindo cobranças pendentes)'
-          : 'Valor da mensalidade atualizado com sucesso (apenas futuras cobranças)',
+        message: result.status === 'REQUIRES_RECONCILIATION'
+          ? 'A alteração foi registrada e será confirmada pela reconciliação financeira.'
+          : updatePendingPayments
+            ? 'Valor atualizado na Alusa e no Asaas, incluindo cobranças pendentes elegíveis.'
+            : 'Valor agendado para o próximo ciclo, sem alterar cobranças já geradas.',
       }),
-      { headers: { 'cache-control': 'no-store' } },
+      {
+        status: result.status === 'REQUIRES_RECONCILIATION' ? 202 : 200,
+        headers: { 'cache-control': 'no-store' },
+      },
     );
   } catch (error) {
     console.error('[ASAAS_SYNC] Erro ao atualizar valor:', error);
-    if (error instanceof KycNotApprovedError) {
-      return jsonError(409, 'KYC_NAO_APROVADO', 'Conta não aprovada para operações financeiras');
-    }
     return jsonError(500, 'ERRO_ATUALIZAR_VALOR', (error as Error).message);
   }
 }

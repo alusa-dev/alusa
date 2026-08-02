@@ -20,16 +20,23 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@alusa/finance', () => {
   class KycNotApprovedError extends Error {}
   class AsaasEnvError extends Error {}
+  class AsaasHttpError extends Error {
+    constructor(message: string, public status: number) {
+      super(message);
+      this.name = 'AsaasHttpError';
+    }
+  }
 
   return {
     KycNotApprovedError,
     AsaasEnvError,
+    AsaasHttpError,
     markChargeAsPaid: markChargeAsPaidMock,
   };
 });
 
 import { getServerSession } from 'next-auth';
-import { KycNotApprovedError, markChargeAsPaid } from '@alusa/finance';
+import { AsaasHttpError, KycNotApprovedError, markChargeAsPaid } from '@alusa/finance';
 import { POST } from '@/app/api/financeiro/cobrancas/[id]/marcar-pago/route';
 
 const buildPostRequest = (body: unknown): NextRequest =>
@@ -115,6 +122,39 @@ describe('POST /api/financeiro/cobrancas/[id]/marcar-pago', () => {
       error: {
         code: 'KYC_NAO_APROVADO',
         message: 'Conta não aprovada para operações financeiras',
+      },
+    });
+  });
+
+  it('classifica HTTP 500 do Asaas como falha externa sem expor erro interno', async () => {
+    vi.mocked(markChargeAsPaid).mockRejectedValueOnce(
+      new AsaasHttpError('Asaas API error: 500', 500),
+    );
+
+    const res = await POST(buildPostRequest({ formaPagamentoManual: 'DINHEIRO' }), params);
+
+    expect(res.status).toBe(502);
+    await expect(res.json()).resolves.toEqual({
+      error: {
+        code: 'ASAAS_FALHA_PROCESSAMENTO',
+        message:
+          'A plataforma financeira não conseguiu processar o recebimento. Nenhuma baixa foi registrada. Tente novamente ou contate o suporte.',
+      },
+    });
+  });
+
+  it('preserva mensagem de rejeição 4xx do Asaas', async () => {
+    vi.mocked(markChargeAsPaid).mockRejectedValueOnce(
+      new AsaasHttpError('Cobrança não pode ser recebida em dinheiro.', 400),
+    );
+
+    const res = await POST(buildPostRequest({ formaPagamentoManual: 'DINHEIRO' }), params);
+
+    expect(res.status).toBe(422);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        code: 'ASAAS_OPERACAO_REJEITADA',
+        message: 'Cobrança não pode ser recebida em dinheiro.',
       },
     });
   });

@@ -82,6 +82,7 @@ export type SyncKycModelsParams = {
   myAccountStatus: AsaasMyAccountStatus | null;
   documents: AsaasMyAccountDocumentsResponse;
   webhookEventId?: string;
+  source?: 'WEBHOOK' | 'READ_MODEL' | 'RECONCILIATION' | 'SANDBOX_COMMAND';
 };
 
 /**
@@ -94,6 +95,24 @@ export async function syncKycModels(params: SyncKycModelsParams): Promise<void> 
 
   const processStatus = deriveProcessStatus(myAccountStatus, documents.data);
   const rejectReasons = normalizeRejectReasons(documents.rejectReasons);
+
+  const existingProcess = await prisma.kycProcess.findUnique({
+    where: { asaasAccountId },
+    select: { id: true, status: true },
+  });
+  const preserveApprovedReadModel =
+    existingProcess?.status === 'APPROVED'
+    && processStatus !== 'APPROVED'
+    && params.source !== 'WEBHOOK';
+
+  if (preserveApprovedReadModel) {
+    await prisma.kycProcess.update({
+      where: { id: existingProcess.id },
+      data: { lastAsaasSyncAt: now },
+      select: { id: true },
+    });
+    return;
+  }
 
   // Upsert KycProcess
   const process = await prisma.kycProcess.upsert({

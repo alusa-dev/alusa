@@ -308,6 +308,7 @@ export async function getKycSnapshot(
       asaasAccountId: asaasAccount?.asaasAccountId ?? null,
       generalStatus: myAccountStatus.general,
       syncedAt: new Date(),
+      source: 'READ_MODEL',
     });
   }
 
@@ -328,6 +329,7 @@ export async function getKycSnapshot(
       asaasAccountId: asaasAccount.id,
       myAccountStatus,
       documents,
+      source: 'READ_MODEL',
     }).catch(() => {
       // best-effort: se falhar, o cache v2 já foi salvo
     });

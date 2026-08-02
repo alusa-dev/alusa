@@ -4,9 +4,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import {
-  createInvoice,
+  scheduleChargeInvoice,
   createInvoiceDTOSchema,
-  mapCreateInvoiceDTOToInput,
   mapCreateInvoiceOutputToDTO,
   listInvoices,
   listInvoicesQueryDTOSchema,
@@ -48,12 +47,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const input = mapCreateInvoiceDTOToInput(parsed.data, {
+    const result = await scheduleChargeInvoice({
       contaId: user.contaId,
-      actorId: user.id,
+      chargeId: parsed.data.chargeId,
+      serviceDescription: parsed.data.serviceDescription,
+      observations: parsed.data.observations,
+      deductions: parsed.data.deductions,
+      effectiveDate: parsed.data.effectiveDate,
+      actor: { type: 'USER', id: user.id },
     });
-
-    const result = await createInvoice(input);
 
     if (!result.success) {
       const status =
@@ -67,7 +69,11 @@ export async function POST(req: NextRequest) {
               ? 409
               : result.error === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
                 ? 503
-                : 500;
+                : typeof result.error === 'object' && result.error.kind === 'VALIDATION'
+                  ? 422
+                  : typeof result.error === 'object' && result.error.status
+                    ? result.error.status
+                    : 500;
 
       return json(status, { error: result.error });
     }

@@ -1,4 +1,3 @@
-import { getPayment } from '@alusa/asaas';
 import { FinanceWebhookSideEffectStatus, Prisma, PrismaClient, type EventMapPublicSeatStatus } from '@prisma/client';
 
 import {
@@ -2612,7 +2611,10 @@ export async function syncPublicEventMapOrderPaymentByBuyer(orderId: string, acc
     throw new EventsError('ASAAS_NAO_CONFIGURADO', 'Integração Asaas não configurada.', 409);
   }
 
-  const payment = await getPayment({ apiKey: credentials.apiKey, paymentId: order.asaasPaymentId });
+  const payment = await getEventAsaasPaymentProvider().getPayment({
+    apiKey: credentials.apiKey,
+    paymentId: order.asaasPaymentId,
+  });
   const paymentStatus = (payment.status ?? '').trim().toUpperCase();
 
   await prisma.auditLog.create({

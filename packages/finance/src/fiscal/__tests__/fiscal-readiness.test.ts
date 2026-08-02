@@ -117,6 +117,26 @@ describe('computeFiscalReadiness', () => {
     expect(result.issues.some((i) => i.code === 'MUNICIPAL_OPTIONS_UNAVAILABLE')).toBe(true);
   });
 
+  it('bloqueia Regime Normal sem a classificação IBS/CBS completa', () => {
+    const result = computeFiscalReadiness({
+      settings: {
+        fiscalEmail: 'fiscal@escola.com', municipalInscription: '123', rpsSerie: '1', rpsNumber: 10,
+        accessMethod: 'TOKEN', accessConfiguredAt: new Date(), accessTokenConfigured: true,
+        simplesNacional: false,
+      } as never,
+      services: [{
+        id: 's1', contaId: 't1', name: 'Ensino', municipalServiceCode: '8.02', isDefault: true,
+        retainIss: false, iss: 2, pis: 0, cofins: 0, csll: 0, inss: 0, ir: 0,
+        pisCofinsTaxStatus: 'NON_TAXABLE_OPERATION',
+      } as never],
+      kycApproved: true,
+      invoicesEnabled: true,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.issues.some((issue) => issue.code === 'IBS_CBS_REQUIRED')).toBe(true);
+  });
+
   it('exige inscrição estadual e AEDF conforme municipalOptions', () => {
     const baseSettings = {
       id: '1',

@@ -23,6 +23,12 @@ describe('@alusa/platform-billing plans catalog', () => {
     expect(PLATFORM_PLANS.PRO.interval).toBe('month');
   });
 
+  it('mantém duração válida de teste em todos os planos públicos', () => {
+    expect(PLATFORM_PLANS.STARTER.trialDays).toBe(14);
+    expect(PLATFORM_PLANS.PREMIUM.trialDays).toBe(14);
+    expect(PLATFORM_PLANS.PRO.trialDays).toBe(14);
+  });
+
   it('rejeita códigos inválidos', () => {
     expect(isPlatformPlanCode('UNKNOWN')).toBe(false);
     expect(() => parsePublicCheckoutPlanCode('UNKNOWN')).toThrow();

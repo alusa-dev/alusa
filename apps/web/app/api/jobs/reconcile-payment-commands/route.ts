@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
-import { reconcilePendingPaymentCommands } from '@alusa/finance';
+import { reconcileOutboundFinancialOperations, reconcilePendingPaymentCommands } from '@alusa/finance';
+import { reconcileEnrollmentCreationOperations } from '@/src/server/matriculas/reconcile-enrollment-creation-operations';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -36,18 +37,40 @@ async function run(req: Request) {
     const pollOlderThanSecondsRaw = Number(url.searchParams.get('pollOlderThanSeconds') ?? '30');
     const staleOlderThanMinutesRaw = Number(url.searchParams.get('staleOlderThanMinutes') ?? '10');
 
-    const result = await reconcilePendingPaymentCommands({
+    const common = {
       contaId: tenantScope.contaId,
       limit: Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 50,
-      pollOlderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
-        ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
-        : 30,
-      staleOlderThanMinutes: Number.isFinite(staleOlderThanMinutesRaw)
-        ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw))
-        : 10,
+    };
+    const [commands, creations, enrollmentCreations] = await Promise.all([
+      reconcilePendingPaymentCommands({
+        ...common,
+        pollOlderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
+          ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
+          : 30,
+        staleOlderThanMinutes: Number.isFinite(staleOlderThanMinutesRaw)
+          ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw))
+          : 10,
+      }),
+      reconcileOutboundFinancialOperations({
+        ...common,
+        olderThanSeconds: Number.isFinite(pollOlderThanSecondsRaw)
+          ? Math.max(5, Math.min(60 * 60, pollOlderThanSecondsRaw))
+          : 30,
+      }),
+      reconcileEnrollmentCreationOperations({
+        ...common,
+        olderThanSeconds: Number.isFinite(staleOlderThanMinutesRaw)
+          ? Math.max(1, Math.min(24 * 60, staleOlderThanMinutesRaw)) * 60
+          : 600,
+      }),
+    ]);
+    // Preserva o contrato legado em `result` e expõe a nova trilha separadamente.
+    return NextResponse.json({
+      success: true,
+      result: commands,
+      creations,
+      enrollmentCreations,
     });
-
-    return NextResponse.json({ success: true, result });
   } catch (error) {
     console.error('[Job Reconcile Payment Commands] Erro:', error);
     return jsonError(500, 'ERRO_JOB', error instanceof Error ? error.message : String(error));

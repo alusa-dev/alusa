@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { getSubscription, updateSubscription } from '@alusa/finance';
+import {
+  getSubscription,
+  projectConfirmedBillingAgreementSnapshot,
+  updateSubscription,
+} from '@alusa/finance';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/src/prisma';
 import {
@@ -174,7 +178,7 @@ type HardDeleteCheck = {
     pagamentos: number;
     subscriptions: number;
     installmentPlans: number;
-    contratoComAceite: number;
+    contratos: number;
     asaasSubscriptionId: string | null;
   };
 };
@@ -189,25 +193,13 @@ async function canHardDeleteMatricula(
   });
   if (!matricula) return null;
 
-  const [cobrancas, pagamentos, subscriptions, installmentPlans, contratoComAceite] =
+  const [cobrancas, pagamentos, subscriptions, installmentPlans, contratos] =
     await Promise.all([
       prisma.cobranca.count({ where: { matriculaId } }),
       prisma.pagamento.count({ where: { cobranca: { matriculaId } } }),
       prisma.subscription.count({ where: { matriculaId } }),
       prisma.installmentPlan.count({ where: { matriculaId } }),
-      prisma.contrato.count({
-        where: {
-          matriculaId,
-          OR: [
-            { status: 'ASSINADO' },
-            { assinadoEm: { not: null } },
-            { assinadoCpf: { not: null } },
-            { assinadoEmail: { not: null } },
-            { assinadoPor: { not: null } },
-            { hashAssinatura: { not: null } },
-          ],
-        },
-      }),
+      prisma.contrato.count({ where: { matriculaId, contaId } }),
     ]);
 
   const cobrancasPorStatusRaw = await prisma.cobranca.groupBy({
@@ -227,7 +219,7 @@ async function canHardDeleteMatricula(
     pagamentos,
     subscriptions,
     installmentPlans,
-    contratoComAceite,
+    contratos,
     asaasSubscriptionId: matricula.asaasSubscriptionId ?? null,
   };
 
@@ -236,7 +228,7 @@ async function canHardDeleteMatricula(
     pagamentos === 0 &&
     subscriptions === 0 &&
     installmentPlans === 0 &&
-    contratoComAceite === 0 &&
+    contratos === 0 &&
     !matricula.asaasSubscriptionId;
 
   return { ok, details };
@@ -325,6 +317,28 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
       contaId: contaCtx.contaId,
       matricula: matricula as unknown as Record<string, unknown>,
     });
+    const canonicalAllocation = await prisma.billingAllocation.findFirst({
+      where: {
+        contaId: contaCtx.contaId,
+        matriculaId: matricula.id,
+        kind: 'TUITION',
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+      },
+      orderBy: { validFrom: 'desc' },
+      select: {
+        id: true,
+        netAmount: true,
+        agreement: {
+          select: {
+            id: true,
+            status: true,
+            desiredValue: true,
+            confirmedValue: true,
+            reconciliationError: true,
+          },
+        },
+      },
+    });
 
     const mappedMatricula = {
       ...(matricula as unknown as Record<string, unknown>),
@@ -333,6 +347,17 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         ? [familyEnrollmentCharge, ...((matricula.cobrancas ?? []) as unknown[])]
         : matricula.cobrancas,
       assinaturaSnapshot,
+      billingAgreement: canonicalAllocation
+        ? {
+            id: canonicalAllocation.agreement.id,
+            allocationId: canonicalAllocation.id,
+            allocationValue: Number(canonicalAllocation.netAmount),
+            desiredValue: Number(canonicalAllocation.agreement.desiredValue),
+            confirmedValue: Number(canonicalAllocation.agreement.confirmedValue),
+            status: canonicalAllocation.agreement.status,
+            reconciliationError: canonicalAllocation.agreement.reconciliationError,
+          }
+        : null,
       financialContext: financialContext
         ? {
             mode: financialContext.mode,
@@ -360,7 +385,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     );
   } catch (error) {
     console.error('Erro ao buscar matrícula:', error);
-    return jsonError(500, 'ERRO_BUSCAR_MATRICULA', (error as Error).message);
+    return jsonError(
+      500,
+      'ERRO_BUSCAR_MATRICULA',
+      'Não foi possível carregar a matrícula. Tente novamente em instantes.',
+    );
   }
 }
 
@@ -624,6 +653,18 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         throw error;
       }
 
+      await projectConfirmedBillingAgreementSnapshot({
+        contaId: contaCtx.contaId,
+        asaasSubscriptionId: targetSubscriptionId,
+        ...(billingDayChanged
+          ? {
+              dueDay: parsedBody.data.vencimentoDia as number,
+              nextDueDate,
+            }
+          : {}),
+        ...(contractEndDateChanged ? { validUntil: effectiveEndDate } : {}),
+      });
+
       subscriptionMetadata = {
         asaasSubscriptionId: targetSubscriptionId,
         subscriptionSync: {
@@ -789,7 +830,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
           blockedBy: eligibility.details,
           guidance: [
             'Use cancelar matrícula para encerrar o fluxo sem perder histórico.',
-            'Exclusão permanente só é permitida para cadastros sem cobranças, pagamentos, assinatura, parcelamento ou contrato aceito.',
+            'Exclusão permanente só é permitida para rascunhos sem cobranças, pagamentos, assinatura, parcelamento ou contrato.',
           ],
         },
       );

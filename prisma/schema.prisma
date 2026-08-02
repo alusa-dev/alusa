@@ -713,6 +713,143 @@ enum FamilyBillingStatus {
   CANCELADO
 }
 
+enum FamilyAcademicStatus {
+  PENDENTE
+  COMPLETO
+  PARCIAL
+  FALHO
+  CANCELADO
+}
+
+enum FamilyAllocationMethod {
+  EQUAL_SPLIT
+  PRODUCT_PROPORTIONAL
+  MANUAL
+}
+
+enum FamilyEnrollmentOperationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+  REQUIRES_RECONCILIATION
+  CANCELLED
+}
+
+enum EnrollmentCreationOperationStatus {
+  PENDING
+  PROCESSING
+  REMOTE_PROVISIONED
+  COMMITTED
+  COMPENSATING
+  COMPENSATED
+  FAILED
+  REQUIRES_RECONCILIATION
+}
+
+// Acordo financeiro canônico. O acordo pertence ao pagador e agrega
+// alocações de matrículas; nenhuma matrícula é "titular" da assinatura.
+enum BillingAgreementStatus {
+  DRAFT
+  PENDING_PROVISION
+  ACTIVE
+  INACTIVE
+  CANCELLATION_PENDING
+  CANCELLED
+  FAILED
+  REQUIRES_RECONCILIATION
+}
+
+enum BillingAgreementSource {
+  CANONICAL
+  LEGACY_SUBSCRIPTION
+  LEGACY_STANDALONE_SUBSCRIPTION
+  LEGACY_FAMILY_ALLOCATION
+}
+
+enum BillingAllocationKind {
+  TUITION
+  ENROLLMENT_FEE
+  MATERIAL
+  ADJUSTMENT
+}
+
+enum BillingAllocationStatus {
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  ENDED
+  CANCELLED
+}
+
+enum BillingProrationPolicy {
+  FULL_CURRENT_CYCLE
+  DAILY_CURRENT_CYCLE
+  NEXT_CYCLE
+  MANUAL
+}
+
+enum BillingChangeOperationType {
+  ADD
+  REMOVE
+  UPDATE
+  UPDATE_TERMS
+  TRANSFER
+  CHANGE_PAYER
+  REBALANCE_PAYER_SHARES
+  PAUSE_ALLOCATION
+  RESUME_ALLOCATION
+  PAUSE_AGREEMENT
+  RESUME_AGREEMENT
+  CANCEL
+  RENEW
+}
+
+enum BillingChangeOperationStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REQUIRES_RECONCILIATION
+  CANCELLED
+}
+
+enum BillingEffectivePolicy {
+  CURRENT_CYCLE_FULL
+  CURRENT_CYCLE_PRORATED
+  NEXT_CYCLE
+  MANUAL_ADJUSTMENT
+}
+
+enum BillingAdjustmentType {
+  CREDIT
+  COMPLEMENT
+  REFUND
+  MANUAL_REVIEW
+}
+
+enum BillingAdjustmentStatus {
+  PENDING
+  PROCESSING
+  APPLIED
+  FAILED
+  CANCELLED
+  REQUIRES_RECONCILIATION
+}
+
+enum BillingPayerShareType {
+  PERCENTAGE
+  FIXED
+}
+
+enum BillingPayerShareStatus {
+  SCHEDULED
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
 enum FamilyBillingOutboxStatus {
   PENDING
   PROCESSING
@@ -774,6 +911,11 @@ enum FinanceReconciliationIssueType {
   WEBHOOK_DROPPED_RISK
   WEBHOOK_CONFIG_DRIFT
   ASAAS_SNAPSHOT_STALE
+  BILLING_AGREEMENT_VALUE_DRIFT
+  BILLING_AGREEMENT_REMOTE_MISSING
+  BILLING_AGREEMENT_ORPHAN_REMOTE
+  BILLING_ALLOCATION_DRIFT
+  BILLING_OPERATION_UNCERTAIN
 }
 
 enum FinanceReconciliationIssueSeverity {
@@ -864,6 +1006,9 @@ enum AsaasIntegrationJobType {
   SYNC_KYC_STATUS
   HEALTH_CHECK_SUBACCOUNT
   ROTATE_OR_VALIDATE_API_KEY
+  PROCESS_BILLING_AGREEMENT_CHANGE
+  PROCESS_BILLING_ADJUSTMENT
+  RECONCILE_BILLING_AGREEMENT
 }
 
 enum TransferStatus {
@@ -1196,6 +1341,13 @@ model Conta {
   rematriculaExcecoes               RematriculaExcecao[]
   rematriculaComunicacoes           RematriculaComunicacao[]
   familyBillingOutboxEvents         FamilyBillingOutbox[]
+  familyEnrollmentOperations        FamilyEnrollmentOperation[]
+  enrollmentCreationOperations      EnrollmentCreationOperation[]
+  billingAgreements                 BillingAgreement[]
+  billingAllocations                BillingAllocation[]
+  billingChangeOperations           BillingChangeOperation[]
+  billingAdjustments                BillingAdjustment[]
+  billingPayerShares                BillingPayerShare[]
   calendarEvents                    CalendarEvent[]
   aulasExperimentais                AulaExperimental[]
   attendanceRecords                 AttendanceRecord[]
@@ -1486,18 +1638,21 @@ model Aluno {
   createdAt                      DateTime  @default(now())
   updatedAt                      DateTime  @updatedAt
 
-  conta              Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  inscricoesEvento   PortalEventoInscricao[]
-  responsaveis       AlunoResponsavel[]
-  matriculas         Matricula[]
-  aulasExperimentais AulaExperimental[]
-  attendanceRecords  AttendanceRecord[]
-  makeupClasses      MakeupClass[]
-  sales              Sale[]
-  eventTicketSales   EventTicketSale[]
-  eventAssignments   EventCostumeAssignment[]
-  eventParticipants  EventParticipant[]
+  conta                        Conta                         @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  inscricoesEvento             PortalEventoInscricao[]
+  responsaveis                 AlunoResponsavel[]
+  matriculas                   Matricula[]
+  aulasExperimentais           AulaExperimental[]
+  attendanceRecords            AttendanceRecord[]
+  makeupClasses                MakeupClass[]
+  sales                        Sale[]
+  eventTicketSales             EventTicketSale[]
+  eventAssignments             EventCostumeAssignment[]
+  eventParticipants            EventParticipant[]
+  billingAllocations           BillingAllocation[]
+  enrollmentCreationOperations EnrollmentCreationOperation[]
 
+  @@unique([contaId, id], name: "uq_aluno_conta_id")
   @@unique([contaId, cpf])
   @@unique([contaId, email])
   @@unique([contaId, codigoInterno])
@@ -1912,38 +2067,41 @@ model Matricula {
   createdAt                  DateTime                        @default(now())
   updatedAt                  DateTime                        @updatedAt
 
-  conta                          Conta                     @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  aluno                          Aluno                     @relation(fields: [alunoId], references: [id], onDelete: Restrict)
-  responsavelFinanceiro          Responsavel?              @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
-  matriculaFamiliar              MatriculaFamiliar?        @relation(fields: [matriculaFamiliarId], references: [id], onDelete: SetNull)
-  turma                          Turma?                    @relation(fields: [turmaId], references: [id])
-  plano                          Plano?                    @relation(fields: [planoId], references: [id])
-  combo                          Combo?                    @relation(fields: [comboId], references: [id])
+  conta                          Conta                        @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  aluno                          Aluno                        @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+  responsavelFinanceiro          Responsavel?                 @relation("MatriculaResponsavelFinanceiro", fields: [responsavelFinanceiroId], references: [id])
+  matriculaFamiliar              MatriculaFamiliar?           @relation(fields: [matriculaFamiliarId], references: [id], onDelete: SetNull)
+  turma                          Turma?                       @relation(fields: [turmaId], references: [id])
+  plano                          Plano?                       @relation(fields: [planoId], references: [id])
+  combo                          Combo?                       @relation(fields: [comboId], references: [id])
   descontos                      DescontoMatricula[]
   cobrancas                      Cobranca[]
   checkoutLinks                  CheckoutLink[]
   logs                           MatriculaLog[]
   matriculaTurmas                MatriculaTurma[]
-  contratos                      Contrato[]                @relation("MatriculaContratos")
-  contratoAtual                  Contrato?                 @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
+  contratos                      Contrato[]                   @relation("MatriculaContratos")
+  contratoAtual                  Contrato?                    @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
   subscriptions                  Subscription[]
   installmentPlans               InstallmentPlan[]
   operacoes                      MatriculaOperacao[]
-  rematriculadaDe                Matricula?                @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
-  rematriculasDerivadas          Matricula[]               @relation("RematriculaHistorico")
-  rematriculaParticipantesOrigem RematriculaParticipante[] @relation("RematriculaParticipanteOrigem")
-  rematriculaItensOrigem         RematriculaItem[]         @relation("RematriculaItemOrigem")
-  rematriculaItensFuturos        RematriculaItem[]         @relation("RematriculaItemFutura")
+  rematriculadaDe                Matricula?                   @relation("RematriculaHistorico", fields: [rematriculadaDeId], references: [id])
+  rematriculasDerivadas          Matricula[]                  @relation("RematriculaHistorico")
+  rematriculaParticipantesOrigem RematriculaParticipante[]    @relation("RematriculaParticipanteOrigem")
+  rematriculaItensOrigem         RematriculaItem[]            @relation("RematriculaItemOrigem")
+  rematriculaItensFuturos        RematriculaItem[]            @relation("RematriculaItemFutura")
   payerChangeOperacoes           PayerChangeOperacao[]
   attendanceRecords              AttendanceRecord[]
   makeupClasses                  MakeupClass[]
   sales                          Sale[]
   matriculaFamiliarItems         MatriculaFamiliarItem[]
-  rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemOrigem")
-  rematriculaFamiliarItemsNova   RematriculaFamiliarItem[] @relation("RematriculaFamiliarItemNova")
+  rematriculaFamiliarItemsOrigem RematriculaFamiliarItem[]    @relation("RematriculaFamiliarItemOrigem")
+  rematriculaFamiliarItemsNova   RematriculaFamiliarItem[]    @relation("RematriculaFamiliarItemNova")
   billingOutboxEvents            MatriculaBillingOutbox[]
+  billingAllocations             BillingAllocation[]
+  creationOperation              EnrollmentCreationOperation?
 
   @@unique([contaId, uiRequestId], name: "uq_matricula_conta_request")
+  @@unique([contaId, id], name: "uq_matricula_conta_id")
   @@index([contaId], name: "idx_matricula_conta")
   @@index([contaId, status], name: "idx_matricula_conta_status")
   @@index([contaId, statusFinanceiro], name: "idx_matricula_conta_status_financeiro")
@@ -1969,32 +2127,78 @@ model Matricula {
   @@index([contaId, billingProvisionStatus], name: "idx_matricula_conta_billing_provision")
 }
 
+model EnrollmentCreationOperation {
+  id                          String                            @id @default(cuid())
+  contaId                     String
+  alunoId                     String
+  matriculaId                 String?
+  uiRequestId                 String
+  requestFingerprint          String
+  externalReference           String
+  correlationId               String
+  status                      EnrollmentCreationOperationStatus @default(PENDING)
+  requestSnapshot             Json
+  result                      Json?
+  asaasSubscriptionId         String?
+  asaasFirstPaymentId         String?
+  asaasEnrollmentFeePaymentId String?
+  actorId                     String?
+  lastError                   String?
+  attempts                    Int                               @default(0)
+  version                     Int                               @default(0)
+  lockedAt                    DateTime?
+  leaseExpiresAt              DateTime?
+  lastAttemptAt               DateTime?
+  remoteProvisionedAt         DateTime?
+  completedAt                 DateTime?
+  compensatedAt               DateTime?
+  createdAt                   DateTime                          @default(now())
+  updatedAt                   DateTime                          @updatedAt
+
+  conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  aluno     Aluno      @relation(fields: [contaId, alunoId], references: [contaId, id], onDelete: Restrict)
+  matricula Matricula? @relation(fields: [contaId, matriculaId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, id], name: "uq_enrollment_creation_operation_conta_id")
+  @@unique([contaId, uiRequestId], name: "uq_enrollment_creation_operation_request")
+  @@unique([contaId, externalReference], name: "uq_enrollment_creation_operation_external_ref")
+  @@unique([contaId, matriculaId], name: "uq_enrollment_creation_operation_matricula")
+  @@unique([contaId, asaasSubscriptionId], name: "uq_enrollment_creation_operation_asaas_subscription")
+  @@unique([contaId, asaasFirstPaymentId], name: "uq_enrollment_creation_operation_asaas_first_payment")
+  @@unique([contaId, asaasEnrollmentFeePaymentId], name: "uq_enrollment_creation_operation_asaas_fee_payment")
+  @@index([contaId, status, updatedAt], name: "idx_enrollment_creation_operation_status_updated")
+  @@index([contaId, requestFingerprint, status], name: "idx_enrollment_creation_operation_fingerprint_status")
+  @@index([contaId, alunoId, createdAt], name: "idx_enrollment_creation_operation_aluno_created")
+  @@index([contaId, correlationId], name: "idx_enrollment_creation_operation_correlation")
+  @@index([contaId, leaseExpiresAt], name: "idx_enrollment_creation_operation_lease")
+}
+
 model MatriculaBillingOutbox {
-  id          String                         @id @default(cuid())
-  contaId     String
-  matriculaId String?
-  aggregateType String                       @default("MATRICULA")
-  aggregateId   String?
-  version       Int                          @default(1)
-  eventType   String
-  payload     Json
-  status      MatriculaBillingOutboxStatus   @default(PENDING)
-  attempts    Int                            @default(0)
-  availableAt DateTime                       @default(now())
-  lockedAt    DateTime?
-  leaseExpiresAt DateTime?
-  processedAt DateTime?
-  lastAttemptAt DateTime?
-  lastError   String?
-  dedupeKey   String?
-  idempotencyKey   String?
+  id                String                       @id @default(cuid())
+  contaId           String
+  matriculaId       String?
+  aggregateType     String                       @default("MATRICULA")
+  aggregateId       String?
+  version           Int                          @default(1)
+  eventType         String
+  payload           Json
+  status            MatriculaBillingOutboxStatus @default(PENDING)
+  attempts          Int                          @default(0)
+  availableAt       DateTime                     @default(now())
+  lockedAt          DateTime?
+  leaseExpiresAt    DateTime?
+  processedAt       DateTime?
+  lastAttemptAt     DateTime?
+  lastError         String?
+  dedupeKey         String?
+  idempotencyKey    String?
   externalReference String?
-  correlationId    String?
-  createdAt   DateTime                       @default(now())
-  updatedAt   DateTime                       @updatedAt
+  correlationId     String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
 
   conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  matricula Matricula? @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
+  matricula Matricula? @relation(fields: [contaId, matriculaId], references: [contaId, id], onDelete: Restrict)
 
   @@unique([contaId, dedupeKey], name: "uq_matricula_billing_outbox_conta_dedupe")
   @@index([contaId, status, availableAt], name: "idx_matricula_billing_outbox_conta_status_available")
@@ -2004,14 +2208,17 @@ model MatriculaBillingOutbox {
 }
 
 model MatriculaFamiliar {
-  id                           String              @id @default(cuid())
+  id                           String                          @id @default(cuid())
   contaId                      String
   responsavelId                String
-  billingMode                  BillingMode         @default(SHARED_PLAN)
-  status                       FamilyBillingStatus @default(PENDENTE)
-  totalAlunos                  Int                 @default(0)
-  valorMensalidadeTotal        Decimal             @default(0) @db.Decimal(12, 2)
-  valorTaxaMatriculaTotal      Decimal             @default(0) @db.Decimal(12, 2)
+  billingMode                  BillingMode                     @default(SHARED_PLAN)
+  status                       FamilyBillingStatus             @default(PENDENTE)
+  academicStatus               FamilyAcademicStatus            @default(PENDENTE)
+  billingProvisionStatus       MatriculaBillingProvisionStatus @default(PENDENTE)
+  billingVersion               Int                             @default(1)
+  totalAlunos                  Int                             @default(0)
+  valorMensalidadeTotal        Decimal                         @default(0) @db.Decimal(12, 2)
+  valorTaxaMatriculaTotal      Decimal                         @default(0) @db.Decimal(12, 2)
   formaPagamento               String?
   ciclo                        String?
   diaVencimento                Int?
@@ -2022,21 +2229,54 @@ model MatriculaFamiliar {
   ultimoErro                   String?
   actorId                      String?
   uiRequestId                  String?
-  createdAt                    DateTime            @default(now())
-  updatedAt                    DateTime            @updatedAt
+  createdAt                    DateTime                        @default(now())
+  updatedAt                    DateTime                        @updatedAt
 
-  conta        Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  responsavel  Responsavel             @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
-  matriculas   Matricula[]
-  items        MatriculaFamiliarItem[]
-  outboxEvents FamilyBillingOutbox[]
+  conta                Conta                       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  responsavel          Responsavel                 @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  matriculas           Matricula[]
+  items                MatriculaFamiliarItem[]
+  outboxEvents         FamilyBillingOutbox[]
+  enrollmentOperations FamilyEnrollmentOperation[]
 
   @@unique([contaId, uiRequestId], name: "uq_matricula_familiar_conta_request")
+  @@unique([contaId, id], name: "uq_matricula_familiar_conta_id")
   @@index([contaId], name: "idx_matricula_familiar_conta")
   @@index([contaId, status, createdAt], name: "idx_matricula_familiar_conta_status_created")
   @@index([contaId, responsavelId], name: "idx_matricula_familiar_conta_responsavel")
   @@index([responsavelId], name: "idx_matricula_familiar_responsavel")
   @@index([status], name: "idx_matricula_familiar_status")
+}
+
+model FamilyEnrollmentOperation {
+  id                     String                          @id @default(cuid())
+  contaId                String
+  familyGroupId          String
+  uiRequestId            String
+  strategy               String
+  status                 FamilyEnrollmentOperationStatus @default(PENDING)
+  previewHash            String
+  sourceVersion          String
+  requestFingerprint     String
+  expectedBillingVersion Int
+  previousMonthlyAmount  Decimal                         @db.Decimal(12, 2)
+  addedMonthlyAmount     Decimal                         @db.Decimal(12, 2)
+  resultingMonthlyAmount Decimal                         @db.Decimal(12, 2)
+  enrollmentFeeAmount    Decimal                         @default(0) @db.Decimal(12, 2)
+  result                 Json?
+  lastError              String?
+  actorId                String?
+  createdAt              DateTime                        @default(now())
+  updatedAt              DateTime                        @updatedAt
+  completedAt            DateTime?
+
+  conta       Conta                       @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  familyGroup MatriculaFamiliar           @relation(fields: [contaId, familyGroupId], references: [contaId, id], onDelete: Restrict)
+  allocations FamilyFinancialAllocation[]
+
+  @@unique([contaId, uiRequestId], name: "uq_family_enrollment_operation_request")
+  @@unique([contaId, id], name: "uq_family_enrollment_operation_conta_id")
+  @@index([contaId, familyGroupId, status, createdAt], name: "idx_family_enrollment_operation_group_status")
 }
 
 model MatriculaFamiliarItem {
@@ -2096,6 +2336,7 @@ model RematriculaFamiliar {
 
   @@unique([contaId, uiRequestId], name: "uq_rematricula_familiar_conta_request")
   @@unique([contaId, correlationId], name: "uq_rematricula_familiar_conta_correlation")
+  @@unique([contaId, id], name: "uq_rematricula_familiar_conta_id")
   @@index([contaId], name: "idx_rematricula_familiar_conta")
   @@index([contaId, status, createdAt], name: "idx_rematricula_familiar_conta_status_created")
   @@index([contaId, step, updatedAt], name: "idx_rematricula_familiar_conta_step_updated")
@@ -2227,8 +2468,8 @@ model RematriculaProcesso {
   createdAt             DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
 
-  conta        Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  campanha     RematriculaCampanha?     @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  conta        Conta                        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  campanha     RematriculaCampanha?         @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
   itens        RematriculaItem[]
   reservas     ReservaVagaFutura[]
   contratos    ContratoFuturo[]
@@ -2355,10 +2596,10 @@ model ContratoFuturo {
   item     RematriculaItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
   contrato Contrato?           @relation(fields: [contratoId], references: [id], onDelete: SetNull)
 
+  @@unique([contaId, processoId, itemId], name: "uq_contrato_futuro_conta_processo_item")
   @@index([contaId, status, createdAt], name: "idx_contrato_futuro_conta_status_created")
   @@index([contaId, processoId], name: "idx_contrato_futuro_conta_processo")
   @@index([contaId, contratoId], name: "idx_contrato_futuro_conta_contrato")
-  @@unique([contaId, processoId, itemId], name: "uq_contrato_futuro_conta_processo_item")
 }
 
 model AcordoFinanceiroFuturo {
@@ -2532,32 +2773,263 @@ model RematriculaComunicacao {
 }
 
 model FamilyFinancialAllocation {
-  id                        String    @id @default(cuid())
-  contaId                   String
-  alunoId                   String
-  matriculaId               String?
-  sourceMatriculaId         String?
-  rematriculaFamiliarId     String?
-  rematriculaFamiliarItemId String?
-  standaloneSubscriptionId  String?
-  familyGroupId             String?
-  chargeKind                String    @default("MENSALIDADE")
-  status                    String    @default("PENDING")
-  amount                    Decimal   @db.Decimal(12, 2)
-  baseAmount                Decimal?  @db.Decimal(12, 2)
-  discountAmount            Decimal?  @db.Decimal(12, 2)
-  competenceStart           DateTime
-  competenceEnd             DateTime?
-  sourceAgreementId         String?
-  metadata                  Json?
-  createdAt                 DateTime  @default(now())
-  updatedAt                 DateTime  @updatedAt
+  id                          String                 @id @default(cuid())
+  contaId                     String
+  alunoId                     String
+  matriculaId                 String?
+  sourceMatriculaId           String?
+  rematriculaFamiliarId       String?
+  rematriculaFamiliarItemId   String?
+  standaloneSubscriptionId    String?
+  familyGroupId               String?
+  familyEnrollmentOperationId String?
+  sourceChargeId              String?
+  billingAllocationId         String?
+  chargeKind                  String                 @default("MENSALIDADE")
+  allocationMethod            FamilyAllocationMethod @default(EQUAL_SPLIT)
+  weight                      Decimal?               @db.Decimal(12, 4)
+  status                      String                 @default("PENDING")
+  amount                      Decimal                @db.Decimal(12, 2)
+  baseAmount                  Decimal?               @db.Decimal(12, 2)
+  discountAmount              Decimal?               @db.Decimal(12, 2)
+  competenceStart             DateTime
+  competenceEnd               DateTime?
+  sourceAgreementId           String?
+  metadata                    Json?
+  createdAt                   DateTime               @default(now())
+  updatedAt                   DateTime               @updatedAt
 
+  familyEnrollmentOperation FamilyEnrollmentOperation? @relation(fields: [contaId, familyEnrollmentOperationId], references: [contaId, id], onDelete: Restrict)
+  sourceCharge              Charge?                    @relation(fields: [contaId, sourceChargeId], references: [contaId, id], onDelete: Restrict)
+  billingAllocation         BillingAllocation?         @relation(fields: [contaId, billingAllocationId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, id], name: "uq_family_fin_alloc_conta_id")
+  @@unique([contaId, billingAllocationId], name: "uq_family_fin_alloc_billing_allocation")
   @@unique([contaId, matriculaId, chargeKind, competenceStart, standaloneSubscriptionId], name: "uq_family_fin_alloc_identity")
+  @@unique([contaId, familyEnrollmentOperationId, matriculaId, chargeKind], name: "uq_family_fin_alloc_operation_item")
   @@index([contaId, alunoId, chargeKind, competenceStart, competenceEnd], name: "idx_family_fin_alloc_conta_aluno_period")
   @@index([contaId, rematriculaFamiliarId], name: "idx_family_fin_alloc_conta_rematricula")
   @@index([contaId, standaloneSubscriptionId], name: "idx_family_fin_alloc_conta_subscription")
   @@index([contaId, familyGroupId], name: "idx_family_fin_alloc_conta_family_group")
+  @@index([contaId, sourceChargeId], name: "idx_family_fin_alloc_conta_source_charge")
+  @@index([contaId, familyEnrollmentOperationId], name: "idx_family_fin_alloc_conta_operation")
+  @@index([contaId, billingAllocationId], name: "idx_family_fin_alloc_conta_billing_allocation")
+}
+
+model BillingAgreement {
+  id                       String                 @id @default(cuid())
+  contaId                  String
+  customerId               String?
+  payerType                CustomerPayerType
+  payerId                  String
+  source                   BillingAgreementSource @default(CANONICAL)
+  status                   BillingAgreementStatus @default(DRAFT)
+  externalReference        String
+  idempotencyKey           String
+  billingGroupKey          String?
+  billingType              String
+  cycle                    String
+  dueDay                   Int?
+  interestValue            Decimal?               @db.Decimal(12, 2)
+  interestType             String?
+  fineValue                Decimal?               @db.Decimal(12, 2)
+  fineType                 String?
+  discountValue            Decimal?               @db.Decimal(12, 2)
+  discountType             String?
+  discountDueDateLimitDays Int?
+  confirmedTerms           Json?
+  nextDueDate              DateTime?
+  validFrom                DateTime
+  validUntil               DateTime?
+  desiredValue             Decimal                @default(0) @db.Decimal(12, 2)
+  confirmedValue           Decimal                @default(0) @db.Decimal(12, 2)
+  asaasSubscriptionId      String?
+  remoteStatus             String?
+  remoteStatusUpdatedAt    DateTime?
+  version                  Int                    @default(1)
+  lastReconciledAt         DateTime?
+  reconciliationError      String?
+  createdById              String?
+  createdAt                DateTime               @default(now())
+  updatedAt                DateTime               @updatedAt
+
+  conta                         Conta                    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  customer                      Customer?                @relation(fields: [contaId, customerId], references: [contaId, id], onDelete: Restrict)
+  allocations                   BillingAllocation[]
+  sourceOperations              BillingChangeOperation[] @relation("BillingOperationSourceAgreement")
+  targetOperations              BillingChangeOperation[] @relation("BillingOperationTargetAgreement")
+  adjustments                   BillingAdjustment[]
+  payerShares                   BillingPayerShare[]
+  legacySubscriptions           Subscription[]           @relation("SubscriptionBillingAgreement")
+  legacyStandaloneSubscriptions StandaloneSubscription[] @relation("StandaloneSubscriptionBillingAgreement")
+
+  @@unique([contaId, id], name: "uq_billing_agreement_conta_id")
+  @@unique([contaId, externalReference], name: "uq_billing_agreement_conta_external_ref")
+  @@unique([contaId, idempotencyKey], name: "uq_billing_agreement_conta_idempotency")
+  @@unique([contaId, asaasSubscriptionId], name: "uq_billing_agreement_conta_asaas_subscription")
+  @@index([contaId, payerType, payerId, status], name: "idx_billing_agreement_conta_payer_status")
+  @@index([contaId, customerId, status], name: "idx_billing_agreement_conta_customer_status")
+  @@index([contaId, status, nextDueDate], name: "idx_billing_agreement_conta_status_due")
+  @@index([contaId, validFrom, validUntil], name: "idx_billing_agreement_conta_validity")
+  @@index([contaId, billingGroupKey, status], name: "idx_billing_agreement_conta_group_status")
+}
+
+model BillingAllocation {
+  id                String                  @id @default(cuid())
+  contaId           String
+  agreementId       String
+  matriculaId       String
+  alunoId           String
+  sourceOperationId String?
+  sourceChargeId    String?
+  kind              BillingAllocationKind
+  status            BillingAllocationStatus @default(SCHEDULED)
+  recurring         Boolean                 @default(true)
+  baseAmount        Decimal                 @db.Decimal(12, 2)
+  discountAmount    Decimal                 @default(0) @db.Decimal(12, 2)
+  netAmount         Decimal                 @db.Decimal(12, 2)
+  validFrom         DateTime
+  validUntil        DateTime?
+  prorationPolicy   BillingProrationPolicy  @default(FULL_CURRENT_CYCLE)
+  metadata          Json?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  conta                   Conta                       @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  agreement               BillingAgreement            @relation(fields: [contaId, agreementId], references: [contaId, id], onDelete: Restrict)
+  matricula               Matricula                   @relation(fields: [contaId, matriculaId], references: [contaId, id], onDelete: Restrict)
+  aluno                   Aluno                       @relation(fields: [contaId, alunoId], references: [contaId, id], onDelete: Restrict)
+  sourceOperation         BillingChangeOperation?     @relation("BillingAllocationSourceOperation", fields: [contaId, sourceOperationId], references: [contaId, id], onDelete: Restrict)
+  sourceCharge            Charge?                     @relation(fields: [contaId, sourceChargeId], references: [contaId, id], onDelete: Restrict)
+  operations              BillingChangeOperation[]    @relation("BillingOperationAllocation")
+  adjustments             BillingAdjustment[]
+  legacyFamilyAllocations FamilyFinancialAllocation[]
+
+  @@unique([contaId, id], name: "uq_billing_allocation_conta_id")
+  @@index([contaId, agreementId, status, validFrom, validUntil], name: "idx_billing_allocation_conta_agreement_status_validity")
+  @@index([contaId, matriculaId, kind, status], name: "idx_billing_allocation_conta_matricula_kind_status")
+  @@index([contaId, alunoId, status], name: "idx_billing_allocation_conta_aluno_status")
+  @@index([contaId, sourceOperationId], name: "idx_billing_allocation_conta_source_operation")
+  @@index([contaId, sourceChargeId], name: "idx_billing_allocation_conta_source_charge")
+}
+
+model BillingChangeOperation {
+  id                 String                       @id @default(cuid())
+  contaId            String
+  sourceAgreementId  String?
+  targetAgreementId  String?
+  allocationId       String?
+  type               BillingChangeOperationType
+  status             BillingChangeOperationStatus @default(PENDING)
+  uiRequestId        String
+  requestFingerprint String
+  expectedVersion    Int
+  effectivePolicy    BillingEffectivePolicy
+  effectiveAt        DateTime
+  previewHash        String
+  sourceVersion      String // Hash/version composta do preview; expectedVersion é o CAS numérico do acordo.
+  previousAmount     Decimal                      @default(0) @db.Decimal(12, 2)
+  addedAmount        Decimal                      @default(0) @db.Decimal(12, 2)
+  removedAmount      Decimal                      @default(0) @db.Decimal(12, 2)
+  resultingAmount    Decimal                      @default(0) @db.Decimal(12, 2)
+  requestPayload     Json
+  result             Json?
+  correlationId      String
+  actorId            String?
+  attempts           Int                          @default(0)
+  availableAt        DateTime                     @default(now())
+  lockedAt           DateTime?
+  leaseExpiresAt     DateTime?
+  lastAttemptAt      DateTime?
+  lastError          String?
+  completedAt        DateTime?
+  scheduledAppliedAt DateTime?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  conta              Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  sourceAgreement    BillingAgreement?   @relation("BillingOperationSourceAgreement", fields: [contaId, sourceAgreementId], references: [contaId, id], onDelete: Restrict)
+  targetAgreement    BillingAgreement?   @relation("BillingOperationTargetAgreement", fields: [contaId, targetAgreementId], references: [contaId, id], onDelete: Restrict)
+  allocation         BillingAllocation?  @relation("BillingOperationAllocation", fields: [contaId, allocationId], references: [contaId, id], onDelete: Restrict)
+  createdAllocations BillingAllocation[] @relation("BillingAllocationSourceOperation")
+  adjustments        BillingAdjustment[]
+
+  @@unique([contaId, uiRequestId], name: "uq_billing_change_operation_conta_request")
+  @@unique([contaId, id], name: "uq_billing_change_operation_conta_id")
+  @@index([contaId, status, availableAt], name: "idx_billing_change_operation_conta_queue")
+  @@index([contaId, sourceAgreementId, status, createdAt], name: "idx_billing_change_operation_conta_source_status")
+  @@index([contaId, targetAgreementId, status, createdAt], name: "idx_billing_change_operation_conta_target_status")
+  @@index([contaId, correlationId], name: "idx_billing_change_operation_conta_correlation")
+}
+
+model BillingAdjustment {
+  id                String                  @id @default(cuid())
+  contaId           String
+  agreementId       String
+  operationId       String?
+  allocationId      String?
+  chargeId          String?
+  type              BillingAdjustmentType
+  status            BillingAdjustmentStatus @default(PENDING)
+  amount            Decimal                 @db.Decimal(12, 2)
+  effectiveAt       DateTime
+  idempotencyKey    String
+  externalReference String
+  providerPaymentId String?
+  providerRefundId  String?
+  result            Json?
+  attempts          Int                     @default(0)
+  availableAt       DateTime                @default(now())
+  lockedAt          DateTime?
+  leaseExpiresAt    DateTime?
+  lastAttemptAt     DateTime?
+  lastError         String?
+  appliedAt         DateTime?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  conta      Conta                   @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  agreement  BillingAgreement        @relation(fields: [contaId, agreementId], references: [contaId, id], onDelete: Restrict)
+  operation  BillingChangeOperation? @relation(fields: [contaId, operationId], references: [contaId, id], onDelete: Restrict)
+  allocation BillingAllocation?      @relation(fields: [contaId, allocationId], references: [contaId, id], onDelete: Restrict)
+  charge     Charge?                 @relation(fields: [contaId, chargeId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, idempotencyKey], name: "uq_billing_adjustment_conta_idempotency")
+  @@unique([contaId, externalReference], name: "uq_billing_adjustment_conta_external_ref")
+  @@index([contaId, status, availableAt], name: "idx_billing_adjustment_conta_queue")
+  @@index([contaId, agreementId, status, effectiveAt], name: "idx_billing_adjustment_conta_agreement_status")
+  @@index([contaId, operationId], name: "idx_billing_adjustment_conta_operation")
+  @@index([contaId, chargeId], name: "idx_billing_adjustment_conta_charge")
+}
+
+// Regra de origem/projeção de um único acordo. Cada pagador tem outro
+// BillingAgreement/Customer/assinatura Asaas sob o mesmo billingGroupKey;
+// nunca representa vários customers dentro de uma assinatura remota.
+model BillingPayerShare {
+  id            String                  @id @default(cuid())
+  contaId       String
+  agreementId   String
+  customerId    String?
+  payerType     CustomerPayerType
+  payerId       String
+  shareType     BillingPayerShareType
+  percentage    Decimal?                @db.Decimal(5, 2)
+  fixedAmount   Decimal?                @db.Decimal(12, 2)
+  status        BillingPayerShareStatus @default(ACTIVE)
+  validFrom     DateTime
+  validUntil    DateTime?
+  roundingOrder Int                     @default(0)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  conta     Conta            @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  agreement BillingAgreement @relation(fields: [contaId, agreementId], references: [contaId, id], onDelete: Restrict)
+  customer  Customer?        @relation(fields: [contaId, customerId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, agreementId, payerType, payerId, validFrom], name: "uq_billing_payer_share_conta_identity")
+  @@index([contaId, agreementId, status, validFrom, validUntil], name: "idx_billing_payer_share_conta_agreement_status")
+  @@index([contaId, payerType, payerId, status], name: "idx_billing_payer_share_conta_payer_status")
+  @@index([contaId, customerId], name: "idx_billing_payer_share_conta_customer")
 }
 
 model FamilyBillingOutbox {
@@ -2571,6 +3043,7 @@ model FamilyBillingOutbox {
   attempts              Int                       @default(0)
   availableAt           DateTime                  @default(now())
   lockedAt              DateTime?
+  leaseExpiresAt        DateTime?
   processedAt           DateTime?
   lastAttemptAt         DateTime?
   lastError             String?
@@ -2581,8 +3054,8 @@ model FamilyBillingOutbox {
   updatedAt             DateTime                  @updatedAt
 
   conta               Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  matriculaFamiliar   MatriculaFamiliar?   @relation(fields: [matriculaFamiliarId], references: [id], onDelete: Cascade)
-  rematriculaFamiliar RematriculaFamiliar? @relation(fields: [rematriculaFamiliarId], references: [id], onDelete: Cascade)
+  matriculaFamiliar   MatriculaFamiliar?   @relation(fields: [contaId, matriculaFamiliarId], references: [contaId, id], onDelete: Restrict)
+  rematriculaFamiliar RematriculaFamiliar? @relation(fields: [contaId, rematriculaFamiliarId], references: [contaId, id], onDelete: Restrict)
 
   @@unique([contaId, dedupeKey], name: "uq_family_billing_outbox_dedupe")
   @@index([contaId, status, availableAt], name: "idx_family_billing_outbox_queue")
@@ -3220,30 +3693,30 @@ model LogIntegracao {
 }
 
 model PlatformBillingAccount {
-  id                   String                       @id @default(cuid())
-  contaId              String
-  environment          PlatformBillingEnvironment
-  status               PlatformBillingAccountStatus @default(NOT_STARTED)
-  planCode             PlatformBillingPlanCode?
-  stripeCustomerId     String?
-  stripeSubscriptionId String?
-  stripePriceId        String?
-  currentPeriodEnd     DateTime?
-  cancelAtPeriodEnd    Boolean                      @default(false)
-  trialEndsAt          DateTime?
-  trialWillEndNotifiedAt DateTime?
-  accessStatus         PlatformBillingAccessStatus   @default(PENDING)
-  gracePeriodEndsAt    DateTime?
-  restrictedAt         DateTime?
-  canceledAt           DateTime?
-  lastPaymentFailedAt  DateTime?
-  lastReconciledAt      DateTime?
-  pendingPlanCode      PlatformBillingPlanCode?
-  pendingChangeType    PlatformBillingPlanChangeType?
+  id                       String                         @id @default(cuid())
+  contaId                  String
+  environment              PlatformBillingEnvironment
+  status                   PlatformBillingAccountStatus   @default(NOT_STARTED)
+  planCode                 PlatformBillingPlanCode?
+  stripeCustomerId         String?
+  stripeSubscriptionId     String?
+  stripePriceId            String?
+  currentPeriodEnd         DateTime?
+  cancelAtPeriodEnd        Boolean                        @default(false)
+  trialEndsAt              DateTime?
+  trialWillEndNotifiedAt   DateTime?
+  accessStatus             PlatformBillingAccessStatus    @default(PENDING)
+  gracePeriodEndsAt        DateTime?
+  restrictedAt             DateTime?
+  canceledAt               DateTime?
+  lastPaymentFailedAt      DateTime?
+  lastReconciledAt         DateTime?
+  pendingPlanCode          PlatformBillingPlanCode?
+  pendingChangeType        PlatformBillingPlanChangeType?
   pendingChangeEffectiveAt DateTime?
-  lastStripeEventId    String?
-  createdAt            DateTime                     @default(now())
-  updatedAt            DateTime                     @updatedAt
+  lastStripeEventId        String?
+  createdAt                DateTime                       @default(now())
+  updatedAt                DateTime                       @updatedAt
 
   conta            Conta                            @relation(fields: [contaId], references: [id], onDelete: Cascade)
   checkoutSessions PlatformBillingCheckoutSession[]
@@ -3293,36 +3766,36 @@ model PlatformBillingCheckoutSession {
 }
 
 model PlatformBillingInvoice {
-  id                   String                       @id @default(cuid())
-  contaId              String
-  billingAccountId     String?
-  environment          PlatformBillingEnvironment
-  stripeInvoiceId      String
-  stripeCustomerId     String
-  stripeSubscriptionId String?
-  stripePriceId        String?
-  planCode             PlatformBillingPlanCode?
-  number               String?
-  status               PlatformBillingInvoiceStatus @default(UNKNOWN)
-  amountDue            Int                          @default(0)
-  amountPaid           Int                          @default(0)
-  currency             String                       @default("brl") @db.VarChar(3)
-  hostedInvoiceUrl     String?
-  invoicePdf           String?
-  periodStart          DateTime?
-  periodEnd            DateTime?
-  dueDate              DateTime?
-  paidAt               DateTime?
-  failedAt             DateTime?
-  attempted            Boolean                      @default(false)
-  attemptCount         Int                          @default(0)
-  nextPaymentAttempt   DateTime?
-  lastPaymentErrorCode String?
+  id                      String                       @id @default(cuid())
+  contaId                 String
+  billingAccountId        String?
+  environment             PlatformBillingEnvironment
+  stripeInvoiceId         String
+  stripeCustomerId        String
+  stripeSubscriptionId    String?
+  stripePriceId           String?
+  planCode                PlatformBillingPlanCode?
+  number                  String?
+  status                  PlatformBillingInvoiceStatus @default(UNKNOWN)
+  amountDue               Int                          @default(0)
+  amountPaid              Int                          @default(0)
+  currency                String                       @default("brl") @db.VarChar(3)
+  hostedInvoiceUrl        String?
+  invoicePdf              String?
+  periodStart             DateTime?
+  periodEnd               DateTime?
+  dueDate                 DateTime?
+  paidAt                  DateTime?
+  failedAt                DateTime?
+  attempted               Boolean                      @default(false)
+  attemptCount            Int                          @default(0)
+  nextPaymentAttempt      DateTime?
+  lastPaymentErrorCode    String?
   lastPaymentErrorMessage String?
-  raw                  Json?
-  lastStripeEventId    String?
-  createdAt            DateTime                     @default(now())
-  updatedAt            DateTime                     @updatedAt
+  raw                     Json?
+  lastStripeEventId       String?
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
 
   conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
   billingAccount PlatformBillingAccount? @relation(fields: [billingAccountId], references: [id], onDelete: SetNull)
@@ -3336,27 +3809,27 @@ model PlatformBillingInvoice {
 }
 
 model PlatformBillingWebhookEvent {
-  id          String                            @id @default(cuid())
-  environment PlatformBillingEnvironment
-  eventId     String
-  eventType   String
-  contaId     String?
-  status      PlatformBillingWebhookEventStatus @default(PENDING)
-  attempts    Int                               @default(0)
-  payload     Json
-  lastError   String?
-  lastErrorCode String?
-  receivedAt  DateTime                          @default(now())
-  lockedAt    DateTime?
-  lastAttemptAt DateTime?
-  nextAttemptAt DateTime                         @default(now())
+  id                  String                            @id @default(cuid())
+  environment         PlatformBillingEnvironment
+  eventId             String
+  eventType           String
+  contaId             String?
+  status              PlatformBillingWebhookEventStatus @default(PENDING)
+  attempts            Int                               @default(0)
+  payload             Json
+  lastError           String?
+  lastErrorCode       String?
+  receivedAt          DateTime                          @default(now())
+  lockedAt            DateTime?
+  lastAttemptAt       DateTime?
+  nextAttemptAt       DateTime                          @default(now())
   processingTimeoutAt DateTime?
-  processedAt DateTime?
-  exhaustedAt DateTime?
-  workerId    String?
-  correlationId String?
-  createdAt   DateTime                          @default(now())
-  updatedAt   DateTime                          @updatedAt
+  processedAt         DateTime?
+  exhaustedAt         DateTime?
+  workerId            String?
+  correlationId       String?
+  createdAt           DateTime                          @default(now())
+  updatedAt           DateTime                          @updatedAt
 
   @@unique([environment, eventId], name: "uq_platform_billing_webhook_env_event")
   @@index([status, nextAttemptAt], name: "idx_platform_billing_webhook_status_next")
@@ -3392,29 +3865,29 @@ model PlatformBillingAuditLog {
 }
 
 model PlatformBillingPlanChange {
-  id                       String                          @id @default(cuid())
-  contaId                  String
-  billingAccountId         String
-  environment              PlatformBillingEnvironment
-  type                     PlatformBillingPlanChangeType
-  status                   PlatformBillingPlanChangeStatus
-  fromPlanCode             PlatformBillingPlanCode?
-  toPlanCode               PlatformBillingPlanCode?
-  stripeSubscriptionId     String?
-  stripePriceId            String?
-  stripePendingUpdateId    String?
-  effectiveAt              DateTime?
-  requestedAt              DateTime                        @default(now())
-  appliedAt                DateTime?
-  canceledAt               DateTime?
-  failedAt                 DateTime?
-  lastError                String?
-  idempotencyKey           String
-  createdByUserId          String?
-  correlationId            String?
-  metadata                 Json?
-  createdAt                DateTime                        @default(now())
-  updatedAt                DateTime                        @updatedAt
+  id                    String                          @id @default(cuid())
+  contaId               String
+  billingAccountId      String
+  environment           PlatformBillingEnvironment
+  type                  PlatformBillingPlanChangeType
+  status                PlatformBillingPlanChangeStatus
+  fromPlanCode          PlatformBillingPlanCode?
+  toPlanCode            PlatformBillingPlanCode?
+  stripeSubscriptionId  String?
+  stripePriceId         String?
+  stripePendingUpdateId String?
+  effectiveAt           DateTime?
+  requestedAt           DateTime                        @default(now())
+  appliedAt             DateTime?
+  canceledAt            DateTime?
+  failedAt              DateTime?
+  lastError             String?
+  idempotencyKey        String
+  createdByUserId       String?
+  correlationId         String?
+  metadata              Json?
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @updatedAt
 
   conta          Conta                  @relation(fields: [contaId], references: [id], onDelete: Cascade)
   billingAccount PlatformBillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
@@ -4449,16 +4922,16 @@ model Contrato {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta                  Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  matricula              Matricula           @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Restrict)
-  modelo                 ContratoModelo?     @relation(fields: [modeloId], references: [id])
-  contratoOrigem         Contrato?           @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
-  aditivos               Contrato[]          @relation("ContratoAditivo")
-  matriculaContratoAtual Matricula?          @relation("MatriculaContratoAtual")
-  subscriptions          Subscription[]
-  installmentPlans       InstallmentPlan[]
-  evidencias             ContractEvidence[]
-  documentos             ContratoDocumento[]
+  conta                     Conta               @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  matricula                 Matricula           @relation("MatriculaContratos", fields: [matriculaId], references: [id], onDelete: Restrict)
+  modelo                    ContratoModelo?     @relation(fields: [modeloId], references: [id])
+  contratoOrigem            Contrato?           @relation("ContratoAditivo", fields: [contratoOrigemId], references: [id])
+  aditivos                  Contrato[]          @relation("ContratoAditivo")
+  matriculaContratoAtual    Matricula?          @relation("MatriculaContratoAtual")
+  subscriptions             Subscription[]
+  installmentPlans          InstallmentPlan[]
+  evidencias                ContractEvidence[]
+  documentos                ContratoDocumento[]
   rematriculaContratoFuturo ContratoFuturo?
 
   @@index([contaId, status], name: "idx_contrato_conta_status")
@@ -4804,6 +5277,10 @@ model AsaasAccount {
   documentsCache          Json?
   documentsCacheUpdatedAt DateTime?
 
+  // Claim idempotente do comando de aprovação manual no sandbox.
+  sandboxApprovalRequestedAt DateTime?
+  lastAccountStatusEventAt   DateTime?
+
   // Webhook (Fase 2): authToken configurado no Asaas (persistido como hash)
   webhookAuthTokenHash              String?   @unique
   previousWebhookAuthTokenHash      String?   @unique
@@ -4835,6 +5312,7 @@ model AsaasAccount {
   @@index([apiKeyStatus])
   @@index([webhookStatus])
   @@index([operationalStatus])
+  @@index([sandboxApprovalRequestedAt])
   @@index([deletionState])
   @@index([previousWebhookAuthTokenExpiresAt], name: "idx_asaas_account_prev_webhook_token_expires")
 }
@@ -4958,7 +5436,10 @@ model Customer {
   standaloneInstallmentPlans StandaloneInstallmentPlan[]
   standaloneSubscriptions    StandaloneSubscription[]
   asaasCustomerSnapshots     AsaasCustomerSnapshot[]
+  billingAgreements          BillingAgreement[]
+  billingPayerShares         BillingPayerShare[]
 
+  @@unique([contaId, id], name: "uq_customer_conta_id")
   @@unique([contaId, payerType, payerId])
   @@unique([contaId, asaasCustomerId])
   @@index([contaId])
@@ -5043,15 +5524,19 @@ model Charge {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta                     Conta                      @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  cobranca                  Cobranca?                  @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
-  customer                  Customer?                  @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
-  standaloneSubscription    StandaloneSubscription?    @relation(fields: [standaloneSubscriptionId], references: [id], onDelete: SetNull)
-  arquivos                  ArquivoCharge[]
-  asaasIntegrationJobs      AsaasIntegrationJob[]
-  sale                      Sale?
+  conta                      Conta                       @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  cobranca                   Cobranca?                   @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
+  customer                   Customer?                   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  standaloneInstallmentPlan  StandaloneInstallmentPlan?  @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
+  standaloneSubscription     StandaloneSubscription?     @relation(fields: [standaloneSubscriptionId], references: [id], onDelete: SetNull)
+  arquivos                   ArquivoCharge[]
+  asaasIntegrationJobs       AsaasIntegrationJob[]
+  familyFinancialAllocations FamilyFinancialAllocation[]
+  billingAdjustments         BillingAdjustment[]
+  billingAllocations         BillingAllocation[]
+  sale                       Sale?
 
+  @@unique([contaId, id], name: "uq_charge_conta_id")
   @@index([contaId])
   @@index([status])
   @@index([contaId, status, dueDate], name: "idx_charge_conta_status_due")
@@ -5481,7 +5966,8 @@ model StandaloneSubscription {
   id      String @id @default(cuid())
   contaId String
 
-  customerId String
+  customerId         String
+  billingAgreementId String?
 
   externalReference String @unique
   idempotencyKey    String
@@ -5513,10 +5999,13 @@ model StandaloneSubscription {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  charges  Charge[]
+  conta            Conta             @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  billingAgreement BillingAgreement? @relation("StandaloneSubscriptionBillingAgreement", fields: [contaId, billingAgreementId], references: [contaId, id], onDelete: Restrict)
+  charges          Charge[]
 
+  @@unique([contaId, id], name: "uq_standalone_subscription_conta_id")
+  @@unique([contaId, billingAgreementId], name: "uq_standalone_subscription_billing_agreement")
   @@unique([contaId, idempotencyKey])
   @@index([contaId])
   @@index([status])
@@ -5527,6 +6016,7 @@ model StandaloneSubscription {
   @@index([asaasSubscriptionId])
   @@index([customerId])
   @@index([familyGroupId])
+  @@index([contaId, billingAgreementId], name: "idx_standalone_subscription_conta_agreement")
 }
 
 model ArquivoCharge {
@@ -5590,8 +6080,16 @@ model Invoice {
   providerPisCofinsTaxStatus     String?
   providerOperationPis           Decimal?  @db.Decimal(5, 2)
   providerOperationCofins        Decimal?  @db.Decimal(5, 2)
+  providerStateIbs               Decimal?  @db.Decimal(8, 4)
+  providerStateIbsValue          Decimal?  @db.Decimal(12, 2)
+  providerMunicipalIbs           Decimal?  @db.Decimal(8, 4)
+  providerMunicipalIbsValue      Decimal?  @db.Decimal(12, 2)
+  providerCbs                    Decimal?  @db.Decimal(8, 4)
+  providerCbsValue               Decimal?  @db.Decimal(12, 2)
   fiscalDivergence               Boolean   @default(false)
   lastReconciledAt               DateTime?
+  lastWebhookEventAt             DateTime?
+  lastWebhookEventId             String?
 
   municipalServiceCode String?
   municipalServiceName String?
@@ -5612,6 +6110,7 @@ model Invoice {
   @@unique([contaId, asaasInvoiceId])
   @@index([contaId])
   @@index([contaId, status])
+  @@index([contaId, lastWebhookEventAt])
   @@index([cobrancaId])
   @@index([asaasInvoiceId])
 }
@@ -5727,8 +6226,9 @@ model Subscription {
   id      String @id @default(cuid())
   contaId String
 
-  contratoId  String?
-  matriculaId String
+  contratoId         String?
+  matriculaId        String
+  billingAgreementId String?
 
   externalReference String @unique
 
@@ -5746,15 +6246,19 @@ model Subscription {
   conta                Conta                 @relation(fields: [contaId], references: [id], onDelete: Restrict)
   contrato             Contrato?             @relation(fields: [contratoId], references: [id], onDelete: Restrict)
   matricula            Matricula             @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
+  billingAgreement     BillingAgreement?     @relation("SubscriptionBillingAgreement", fields: [contaId, billingAgreementId], references: [contaId, id], onDelete: Restrict)
   asaasIntegrationJobs AsaasIntegrationJob[]
 
   @@unique([contaId, contratoId])
   @@unique([contaId, matriculaId])
+  @@unique([contaId, id], name: "uq_subscription_conta_id")
+  @@unique([contaId, billingAgreementId], name: "uq_subscription_billing_agreement")
   @@index([contaId])
   @@index([status])
   @@index([contaId, asaasInvoiceSettingsConfigured], name: "idx_subscription_conta_invoice_settings")
   @@index([contaId, status, createdAt], name: "idx_subscription_conta_status_created")
   @@index([asaasSubscriptionId])
+  @@index([contaId, billingAgreementId], name: "idx_subscription_conta_agreement")
 }
 
 model InstallmentPlan {

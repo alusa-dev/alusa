@@ -14,6 +14,7 @@ import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reco
 import { handleInvoiceWebhook } from '../webhooks/invoice-webhook-handler';
 import { emitChargeInvoice } from './emit-charge-invoice';
 import { syncInvoiceFromProvider } from './sync-invoice-from-provider';
+import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
 
 const DEFAULT_STALE_MINUTES = 60;
 const DEFAULT_LIMIT = 50;
@@ -69,6 +70,9 @@ export type ReconcileStaleInvoicesOutput = {
   paidChargesScanned: number;
   paidChargesRecovered: number;
   paidChargesFailed: number;
+  subscriptionSettingsScanned: number;
+  subscriptionSettingsSynced: number;
+  subscriptionSettingsFailed: number;
   invoices: Array<{
     id: string;
     contaId: string;
@@ -516,6 +520,29 @@ export async function reconcileStaleInvoices(
     take: limit,
   });
 
+  const [academicFiscalSync, standaloneFiscalSync] = await Promise.all([
+    prisma.subscription.findMany({
+      where: {
+        contaId: input.contaId,
+        asaasSubscriptionId: { not: null },
+        fiscalInvoiceSettingsError: { not: null },
+        status: { in: ['REQUESTED', 'ACTIVE'] },
+      },
+      select: { id: true, contaId: true, asaasSubscriptionId: true },
+      take: limit,
+    }),
+    prisma.standaloneSubscription.findMany({
+      where: {
+        contaId: input.contaId,
+        asaasSubscriptionId: { not: null },
+        fiscalInvoiceSettingsError: { not: null },
+        status: { in: ['REQUESTED', 'ACTIVE'] },
+      },
+      select: { id: true, contaId: true, asaasSubscriptionId: true },
+      take: limit,
+    }),
+  ]);
+
   const results = await Promise.allSettled(
     candidates.map(async (candidate) => ({
       candidate,
@@ -529,6 +556,27 @@ export async function reconcileStaleInvoices(
       result: await reconcilePaidChargeWithoutInvoice(candidate),
     })),
   );
+
+  const subscriptionSettingsResults = await Promise.allSettled([
+    ...academicFiscalSync.map((subscription) =>
+      syncSubscriptionFiscalSettings({
+        contaId: subscription.contaId,
+        subscriptionId: subscription.id,
+        asaasSubscriptionId: subscription.asaasSubscriptionId!,
+        kind: 'ACADEMIC',
+        actor: { type: 'SYSTEM' },
+      }),
+    ),
+    ...standaloneFiscalSync.map((subscription) =>
+      syncSubscriptionFiscalSettings({
+        contaId: subscription.contaId,
+        subscriptionId: subscription.id,
+        asaasSubscriptionId: subscription.asaasSubscriptionId!,
+        kind: 'STANDALONE',
+        actor: { type: 'SYSTEM' },
+      }),
+    ),
+  ]);
 
   const reconciled = results.map((item, index) => {
     const candidate = candidates[index]!;
@@ -591,6 +639,10 @@ export async function reconcileStaleInvoices(
     };
   });
 
+  const subscriptionSettingsFailed = subscriptionSettingsResults.filter(
+    (item) => item.status === 'rejected' || !item.value.success,
+  ).length;
+
   return {
     scanned: candidates.length,
     synced: reconciled.filter((item) => item.success).length,
@@ -599,6 +651,9 @@ export async function reconcileStaleInvoices(
     paidChargesScanned: paidChargeCandidates.length,
     paidChargesRecovered: reconciledPaidCharges.filter((item) => item.success && item.recovered).length,
     paidChargesFailed: reconciledPaidCharges.filter((item) => !item.success).length,
+    subscriptionSettingsScanned: subscriptionSettingsResults.length,
+    subscriptionSettingsSynced: subscriptionSettingsResults.length - subscriptionSettingsFailed,
+    subscriptionSettingsFailed,
     invoices: reconciled,
     paidCharges: reconciledPaidCharges,
   };

@@ -17,10 +17,10 @@ import { prisma, loadAsaasCredentials } from '@alusa/database';
 import { Prisma } from '@prisma/client';
 
 import { financeProfileService } from '../../foundation/finance-profile.service';
-import { getMyAccountStatusCached } from './kyc-asaas-read-cache';
+import { updateKycProcessStatus } from './kyc-persistence.service';
 
 export type ApproveSandboxKycResult =
-  | { success: true; generalStatus: string }
+  | { success: true; generalStatus: string; alreadyRequested?: boolean }
   | { success: false; reason: 'NOT_SANDBOX' | 'NO_CREDENTIALS' | 'NO_ACCOUNT' | 'ASAAS_ERROR'; message: string };
 
 export async function approveSandboxKyc(contaId: string): Promise<ApproveSandboxKycResult> {
@@ -47,29 +47,61 @@ export async function approveSandboxKyc(contaId: string): Promise<ApproveSandbox
 
   const asaasAccount = await prisma.asaasAccount.findUnique({
     where: { financeProfileId: fp.id },
-    select: { id: true, asaasAccountId: true },
+    select: { id: true, asaasAccountId: true, kycProcess: { select: { status: true } } },
   });
   if (!asaasAccount) {
     return { success: false, reason: 'NO_ACCOUNT', message: 'Subconta Asaas não encontrada' };
   }
 
+  if (asaasAccount.kycProcess?.status === 'APPROVED') {
+    return { success: true, generalStatus: 'APPROVED', alreadyRequested: true };
+  }
+
+  const retryBefore = new Date(Date.now() - 2 * 60_000);
+  const claim = await prisma.asaasAccount.updateMany({
+    where: {
+      id: asaasAccount.id,
+      OR: [
+        { sandboxApprovalRequestedAt: null },
+        { sandboxApprovalRequestedAt: { lt: retryBefore } },
+      ],
+    },
+    data: { sandboxApprovalRequestedAt: new Date() },
+  });
+
+  if (claim.count === 0) {
+    return { success: true, generalStatus: 'AWAITING_APPROVAL', alreadyRequested: true };
+  }
+
+  let status;
   try {
-    await approveSandboxAccount({ apiKey: creds.apiKey });
+    status = await approveSandboxAccount({ apiKey: creds.apiKey });
   } catch (err) {
+    await prisma.asaasAccount.update({
+      where: { id: asaasAccount.id },
+      data: { sandboxApprovalRequestedAt: null },
+      select: { id: true },
+    }).catch(() => undefined);
     const msg = err instanceof Error ? err.message : 'Falha ao chamar sandbox/approve';
     return { success: false, reason: 'ASAAS_ERROR', message: msg };
   }
 
-  // Confirmar via GET (read-after-write)
-  const status = await getMyAccountStatusCached({ apiKey: creds.apiKey }, { forceRefresh: true });
-
-  // Sincronizar regulatoryState
-  await financeProfileService.syncRegulatoryState({
-    contaId,
-    asaasAccountId: asaasAccount.asaasAccountId,
-    generalStatus: status.general,
-    syncedAt: new Date(),
-  });
+  // A resposta do próprio comando contém o snapshot oficial. Não fazemos um GET
+  // imediato, que pode observar um estado intermediário durante a propagação.
+  if (status.general?.toUpperCase() === 'APPROVED') {
+    const syncedAt = new Date();
+    await financeProfileService.syncRegulatoryState({
+      contaId,
+      asaasAccountId: asaasAccount.asaasAccountId,
+      generalStatus: 'APPROVED',
+      syncedAt,
+      source: 'SANDBOX_COMMAND',
+    });
+    await updateKycProcessStatus({
+      asaasAccountId: asaasAccount.id,
+      status: 'APPROVED',
+    });
+  }
 
   // Invalidar cache de documentos p/ forçar fresh
   await prisma.asaasAccount.update({

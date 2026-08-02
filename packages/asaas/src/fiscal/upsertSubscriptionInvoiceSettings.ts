@@ -13,14 +13,14 @@ export type SubscriptionInvoiceSettingsTaxesRequest = {
   inss: number;
   ir: number;
   pis: number | null;
-  nbsCode?: string | null;
-  taxSituationCode?: string | null;
-  taxClassificationCode?: string | null;
-  operationIndicatorCode?: string | null;
-  pisCofinsTaxStatus?: string | null;
-  operationPis?: number | null;
-  operationCofins?: number | null;
-  useTaxSystemReformNT007?: boolean;
+  nbsCode: string | null;
+  taxSituationCode: string | null;
+  taxClassificationCode: string | null;
+  operationIndicatorCode: string | null;
+  pisCofinsTaxStatus: string | null;
+  operationPis: number | null;
+  operationCofins: number | null;
+  useTaxSystemReformNT007: boolean;
 };
 
 export type SubscriptionInvoiceSettingsTaxesResponse =

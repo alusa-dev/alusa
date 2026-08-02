@@ -134,14 +134,21 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
   const responsavelFinanceiroId = state.aluno?.responsavel?.id ?? state.responsavelFamiliar?.id ?? null;
   const payerType = responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO';
   const payerId = responsavelFinanceiroId ?? state.aluno?.id ?? null;
-  const compatibleBillingGroup =
-    billingGroups.find(
+  const compatibleBillingGroups = billingGroups.filter(
       (group) =>
         group.compatible &&
         (state.modoMatricula === 'FAMILIAR'
           ? group.type === 'FAMILY_GROUP'
           : group.type === 'SUBSCRIPTION'),
-    ) ?? null;
+    );
+  const selectedFinancialGroupId =
+    state.billingStrategy && 'financialGroupId' in state.billingStrategy
+      ? state.billingStrategy.financialGroupId
+      : null;
+  const compatibleBillingGroup =
+    compatibleBillingGroups.find((group) => group.id === selectedFinancialGroupId) ??
+    compatibleBillingGroups[0] ??
+    null;
 
   const recurringChargeTotal = useMemo(() => {
     if (state.modoTurmas === 'COMBO') {
@@ -165,16 +172,17 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
   const firstChargeableDueDate = shouldValidateRecurringEndDate && normalizedStartDate
     ? resolveChargeableFirstDueDate(normalizedStartDate, parsedVencimento)
     : undefined;
-  const minimumEndDate = firstChargeableDueDate ?? normalizedStartDate;
+  const minimumEndDate = normalizedStartDate;
   const contractEndsBeforeStart = Boolean(normalizedStartDate && normalizedEndDate && normalizedEndDate < normalizedStartDate);
   const contractEndsBeforeFirstDue = Boolean(
     firstChargeableDueDate && normalizedEndDate && normalizedEndDate < firstChargeableDueDate,
   );
+  const shortContractWarning = contractEndsBeforeFirstDue
+    ? `O contrato termina antes da primeira recorrência (${formatDateLabel(firstChargeableDueDate)}). O preview avaliará uma cobrança avulsa em vez de criar uma assinatura inválida.`
+    : null;
   const contractEndError = contractEndsBeforeStart
     ? `A data de término precisa ser igual ou posterior a ${formatDateLabel(normalizedStartDate)}.`
-    : contractEndsBeforeFirstDue
-      ? `Com vencimento no dia ${parsedVencimento}, a primeira cobrança válida será em ${formatDateLabel(firstChargeableDueDate)}. Escolha essa data ou uma posterior.`
-      : null;
+    : null;
 
   useEffect(() => {
     update({
@@ -264,12 +272,21 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                 id="data-fim-contrato-feedback"
                 aria-live="polite"
                 role={contractEndError ? 'alert' : 'status'}
-                className={cn('text-xs leading-relaxed', contractEndError ? 'text-red-700' : 'text-slate-600')}
+                className={cn(
+                  'text-xs leading-relaxed',
+                  contractEndError
+                    ? 'text-red-700'
+                    : shortContractWarning
+                      ? 'text-amber-700'
+                      : 'text-slate-600',
+                )}
               >
                 <p>
                   {contractEndError
                     ? contractEndError
-                    : minimumEndDate
+                    : shortContractWarning
+                      ? shortContractWarning
+                      : minimumEndDate
                       ? `Datas válidas a partir de ${formatDateLabel(minimumEndDate)}.`
                       : 'Defina a data de início e o dia do vencimento para liberar datas válidas.'}
                 </p>
@@ -374,10 +391,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               const active = activeBillingStrategy === option.kind;
               const disabled =
                 option.kind !== 'SEPARATE' &&
-                (option.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION' ||
-                  !compatibleBillingGroup ||
-                  loadingBillingGroups ||
-                  !state.dataInicio);
+                (!compatibleBillingGroup || loadingBillingGroups || !state.dataInicio);
               return (
                 <button
                   key={option.kind}
@@ -406,12 +420,17 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                     disabled && 'cursor-not-allowed opacity-60 hover:bg-white',
                   )}
                 >
-                  <span className="text-sm font-semibold">{option.label}</span>
+                  <span className="text-sm font-semibold">
+                    {state.modoMatricula === 'FAMILIAR' && option.kind === 'SEPARATE'
+                      ? 'Criar novo agrupamento familiar'
+                      : state.modoMatricula === 'FAMILIAR' &&
+                          option.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+                        ? 'Adicionar ao agrupamento familiar existente'
+                        : option.label}
+                  </span>
                   <span className="mt-1 text-xs leading-relaxed text-gray-500">
                     {disabled && option.kind !== 'SEPARATE'
-                      ? option.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
-                        ? 'Disponível após a implementação do processador do próximo ciclo.'
-                        : loadingBillingGroups
+                      ? loadingBillingGroups
                         ? 'Buscando cobranças compatíveis.'
                         : 'Nenhuma cobrança compatível para este pagador.'
                       : option.description}
@@ -420,6 +439,42 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               );
             })}
           </div>
+          {compatibleBillingGroups.length > 1 && (
+            <div className="mt-3 space-y-2">
+              <Label className="text-xs text-gray-600">
+                {state.modoMatricula === 'FAMILIAR'
+                  ? 'Agrupamento familiar de destino'
+                  : 'Assinatura de destino'}
+              </Label>
+              <Select
+                value={compatibleBillingGroup?.id ?? ''}
+                onValueChange={(financialGroupId) => {
+                  if (!state.dataInicio) return;
+                  update({
+                    billingStrategy: {
+                      kind:
+                        activeBillingStrategy === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+                          ? 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+                          : 'JOIN_EXISTING_CURRENT_CYCLE',
+                      financialGroupId,
+                      effectiveAt: state.dataInicio,
+                    },
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o agrupamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  {compatibleBillingGroups.map((group) => (
+                    <SelectItem key={group.id} value={group.id}>
+                      {group.label} · {CURRENCY_FORMATTER.format(group.valorMensalidadeTotal)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {activeBillingStrategy !== 'SEPARATE' && compatibleBillingGroup && (
             <div className="mt-3 rounded-md border border-violet-200 bg-violet-50/60 p-3 text-sm">
               <p className="font-medium text-violet-900">{compatibleBillingGroup.label}</p>

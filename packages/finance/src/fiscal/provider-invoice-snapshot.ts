@@ -44,6 +44,12 @@ export function buildInvoiceProviderSnapshotUpdate(
   | 'providerPisCofinsTaxStatus'
   | 'providerOperationPis'
   | 'providerOperationCofins'
+  | 'providerStateIbs'
+  | 'providerStateIbsValue'
+  | 'providerMunicipalIbs'
+  | 'providerMunicipalIbsValue'
+  | 'providerCbs'
+  | 'providerCbsValue'
   | 'lastReconciledAt'
 > {
   const taxes = invoice.taxes;
@@ -55,6 +61,12 @@ export function buildInvoiceProviderSnapshotUpdate(
     providerPisCofinsTaxStatus: taxes?.pisCofinsTaxStatus ?? null,
     providerOperationPis: taxes?.operationPis ?? null,
     providerOperationCofins: taxes?.operationCofins ?? null,
+    providerStateIbs: taxes?.stateIbs ?? null,
+    providerStateIbsValue: taxes?.stateIbsValue ?? null,
+    providerMunicipalIbs: taxes?.municipalIbs ?? null,
+    providerMunicipalIbsValue: taxes?.municipalIbsValue ?? null,
+    providerCbs: taxes?.cbs ?? null,
+    providerCbsValue: taxes?.cbsValue ?? null,
     lastReconciledAt: new Date(),
   };
 }

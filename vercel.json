@@ -103,8 +103,12 @@
       "schedule": "0 8 * * *"
     },
     {
-      "path": "/api/jobs/encerrar-contratos",
+      "path": "/api/jobs/encerrar-contratos?maxAccounts=100",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/jobs/reconcile-matricula-cancellations?maxAccounts=100&limit=100",
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/jobs/rematriculas/run?maxAccounts=25&limit=25",

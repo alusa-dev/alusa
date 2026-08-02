@@ -90,6 +90,29 @@ export function buildSeatOccupancyWhereClause(referenceDate: Date = new Date()) 
 }
 
 /**
+ * Cláusula para detectar ocupações que se sobrepõem a um novo período.
+ * Os limites são inclusivos porque uma vaga ainda está ocupada na data final
+ * registrada da matrícula.
+ */
+export function buildSeatOccupancyOverlapWhereClause(
+  dataInicio: Date,
+  dataFimContrato: Date,
+) {
+  return {
+    AND: [
+      {
+        OR: [
+          { status: { in: getSeatOccupyingStatuses() } },
+          { status: StatusMatricula.PAUSADA, manterVaga: true },
+        ],
+      },
+      { dataInicio: { lte: dataFimContrato } },
+      { dataFimContrato: { gte: dataInicio } },
+    ],
+  };
+}
+
+/**
  * Calcula quantas vagas estão disponíveis em uma turma.
  *
  * @param capacidade - Capacidade máxima da turma

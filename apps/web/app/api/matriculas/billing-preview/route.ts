@@ -5,6 +5,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
 import { previewInitialEnrollmentBilling } from '@/src/server/matriculas/initial-enrollment-billing-preview.service';
 import { enrollmentBillingStrategyDTOSchema } from '@/features/cadastro/matriculas/dtos';
+import { getSubscription } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -12,6 +13,10 @@ const dateSchema = z.union([z.string().datetime(), z.string().date()]);
 
 const previewSchema = z.object({
   contaId: z.string().trim().optional(),
+  enrollmentMode: z.enum(['INDIVIDUAL', 'FAMILY']).optional().default('INDIVIDUAL'),
+  familyPricingMode: z.enum(['AGGREGATE_PLAN', 'ITEMIZED_COMBOS']).optional(),
+  aggregateMonthlyAmount: z.number().nonnegative().optional(),
+  aggregateEnrollmentFeeAmount: z.number().nonnegative().optional(),
   strategy: z
     .enum(['CREATE_SEPARATE', 'INCLUDE_EXISTING', 'UNIFY_NEXT_CYCLE'])
     .default('CREATE_SEPARATE'),
@@ -71,6 +76,10 @@ export async function POST(request: Request) {
     const preview = await previewInitialEnrollmentBilling(
       {
         contaId,
+        enrollmentMode: body.enrollmentMode,
+        familyPricingMode: body.familyPricingMode,
+        aggregateMonthlyAmount: body.aggregateMonthlyAmount,
+        aggregateEnrollmentFeeAmount: body.aggregateEnrollmentFeeAmount,
         strategy: body.strategy,
         billingStrategy: body.billingStrategy,
         responsavelFinanceiroId: body.responsavelFinanceiroId ?? null,
@@ -82,7 +91,13 @@ export async function POST(request: Request) {
         descontoIds: body.descontoIds,
         items: body.items,
       },
-      { prisma },
+      {
+        prisma,
+        getRemoteSubscription: async ({ contaId: targetContaId, subscriptionId }) => {
+          const subscription = await getSubscription(subscriptionId, { contaId: targetContaId });
+          return { status: subscription.status, deleted: subscription.deleted };
+        },
+      },
     );
 
     return NextResponse.json(preview, { status: 200, headers: { 'cache-control': 'no-store' } });

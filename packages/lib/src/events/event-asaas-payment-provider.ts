@@ -6,6 +6,9 @@ export type EventAsaasCustomer = {
 export type EventAsaasPayment = {
   id: string;
   status?: string;
+  paymentDate?: string | null;
+  clientPaymentDate?: string | null;
+  value?: number;
   invoiceUrl?: string | null;
   deleted?: boolean;
 };
@@ -71,6 +74,7 @@ export type EventAsaasPaymentProvider = {
     externalReference?: string;
     limit?: number;
   }): Promise<{ data: EventAsaasPayment[] }>;
+  getPayment(_params: { apiKey: string; paymentId: string }): Promise<EventAsaasPayment>;
   getPixQrCode(_params: { apiKey: string; paymentId: string }): Promise<EventPixQrCode>;
   deletePayment(_params: { apiKey: string; paymentId: string }): Promise<EventAsaasPayment>;
 };

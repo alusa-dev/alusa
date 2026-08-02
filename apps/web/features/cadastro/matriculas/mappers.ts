@@ -266,6 +266,21 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
             ),
           }
         : null,
+    billingAgreement:
+      matricula.billingAgreement && typeof matricula.billingAgreement === 'object'
+        ? {
+            id: String((matricula.billingAgreement as Record<string, unknown>).id ?? ''),
+            allocationId: String((matricula.billingAgreement as Record<string, unknown>).allocationId ?? ''),
+            allocationValue: Number((matricula.billingAgreement as Record<string, unknown>).allocationValue ?? 0),
+            desiredValue: Number((matricula.billingAgreement as Record<string, unknown>).desiredValue ?? 0),
+            confirmedValue: Number((matricula.billingAgreement as Record<string, unknown>).confirmedValue ?? 0),
+            status: String((matricula.billingAgreement as Record<string, unknown>).status ?? 'DRAFT'),
+            reconciliationError:
+              (matricula.billingAgreement as Record<string, unknown>).reconciliationError != null
+                ? String((matricula.billingAgreement as Record<string, unknown>).reconciliationError)
+                : null,
+          }
+        : null,
     financialContext:
       matricula.financialContext && typeof matricula.financialContext === 'object'
         ? {
@@ -436,6 +451,7 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     turmaId: parsed.turmaId ?? undefined,
     comboId: parsed.comboId ?? undefined,
     responsavelFinanceiroId: parsed.responsavelFinanceiroId ?? undefined,
+    modeloId: parsed.modeloId,
     taxaJustificativa: parsed.taxaJustificativa ?? undefined,
     contaId: input.contaId,
     taxaMatricula: taxaMatriculaValue,

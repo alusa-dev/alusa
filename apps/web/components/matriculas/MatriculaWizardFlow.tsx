@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { StepAluno } from './wizard/steps/StepAluno';
@@ -20,6 +20,8 @@ import type { WizardContextValue, WizardState } from './wizard/types';
 import type { MatriculaCreatedPayload } from '@/features/cadastro/matriculas/services/matriculas-service';
 import { useMatriculaSubmit } from '@/hooks/use-matricula-submit';
 import { useMatriculaFamiliarSubmit } from '@/hooks/use-matricula-familiar-submit';
+import { MatriculaFamiliarWizardOutcome } from './MatriculaFamiliarWizardOutcome';
+import type { FamilyEnrollmentOutcome } from './wizard/types';
 
 type WizardVariant = 'dialog' | 'page';
 
@@ -42,7 +44,7 @@ function canAdvanceFromResponsavelFamiliar(state: WizardState) {
 
 function canAdvanceFromAlunosFamiliares(state: WizardState) {
   const alunos = state.alunosFamiliares;
-  if (alunos.length < 2) return false;
+  if (alunos.length < 1) return false;
   // All active alunos must have turma or combo selected
   return alunos.every((a) => {
     if (a.ativo === false) return false;
@@ -53,7 +55,7 @@ function canAdvanceFromAlunosFamiliares(state: WizardState) {
 
 function canSubmitFamiliar(state: WizardState) {
   if (!state.responsavelFamiliar?.id) return false;
-  if (state.alunosFamiliares.length < 2) return false;
+  if (state.alunosFamiliares.length < 1) return false;
   if (!canAdvanceFromAlunosFamiliares(state)) return false;
   if (!state.dataInicio) return false;
   if (!state.dataFimContrato) return false;
@@ -141,21 +143,15 @@ export function MatriculaWizardFlow({
   const wizard = useMatriculaWizard(contaId);
   const prevOpenRef = useRef<boolean | undefined>(open);
   const prevContaRef = useRef<string | undefined>(contaId);
+  const [familyOutcome, setFamilyOutcome] = useState<FamilyEnrollmentOutcome | null>(null);
 
   // Hook de submissão de matrícula
   const { submit, loading: submitting } = useMatriculaSubmit({
     redirectOnSuccess: false, // Não redirecionar, usar callback
     onSuccess: (result) => {
-      console.log('[MatriculaWizardFlow] Matrícula criada com sucesso:', result.matricula.id);
-
-      // Primeiro resetar o wizard e fechar o dialog
       wizard.reset({ contaId: contaId ?? '' });
       onClose?.();
-
-      // Depois chamar callback para recarregar listagem
       onCompleted?.(result as unknown as MatriculaCreatedPayload);
-
-      console.log('[MatriculaWizardFlow] Callbacks executados');
     },
     onError: (error) => {
       console.error('[MatriculaWizardFlow] Erro ao criar matrícula:', error);
@@ -163,13 +159,8 @@ export function MatriculaWizardFlow({
   });
 
   const { submit: submitFamiliar, loading: submittingFamiliar } = useMatriculaFamiliarSubmit({
-    onSuccess: (results) => {
-      const firstSuccess = results.find((r) => r.status === 'success');
-      wizard.reset({ contaId: contaId ?? '' });
-      onClose?.();
-      if (firstSuccess) {
-        onCompleted?.({ matricula: { id: firstSuccess.matriculaId ?? '' } } as unknown as MatriculaCreatedPayload);
-      }
+    onSuccess: (outcome) => {
+      setFamilyOutcome(outcome);
     },
     onError: (error) => {
       console.error('[MatriculaWizardFlow] Erro ao criar matrículas familiares:', error);
@@ -183,6 +174,7 @@ export function MatriculaWizardFlow({
     const wasOpen = prevOpenRef.current ?? false;
     const contaChangedWhileOpen = isOpen && prevContaRef.current !== contaId;
     if ((isOpen && !wasOpen) || contaChangedWhileOpen) {
+      setFamilyOutcome(null);
       wizard.reset({ contaId: contaId ?? '' });
     }
     prevOpenRef.current = isOpen;
@@ -285,6 +277,26 @@ export function MatriculaWizardFlow({
     if (wizard.step === 'modo') return;
     wizard.goBack();
   }, [wizard]);
+
+  if (familyOutcome) {
+    const firstSuccess = familyOutcome.results.find((result) => result.status === 'success');
+    return (
+      <MatriculaFamiliarWizardOutcome
+        initialOutcome={familyOutcome}
+        onCreateAnother={() => {
+          setFamilyOutcome(null);
+          wizard.reset({ contaId: contaId ?? '' });
+        }}
+        onClose={() => {
+          if (firstSuccess) {
+            onCompleted?.({ matricula: { id: firstSuccess.matriculaId ?? '' } } as unknown as MatriculaCreatedPayload);
+          }
+          setFamilyOutcome(null);
+          onClose?.();
+        }}
+      />
+    );
+  }
 
   return (
     <div

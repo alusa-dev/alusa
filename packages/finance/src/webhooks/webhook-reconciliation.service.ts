@@ -24,6 +24,7 @@ import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -1166,7 +1167,7 @@ export async function reconcileWithAsaas(
   let checkedInstallments = 0;
   let installmentDrift = 0;
 
-  const [subscriptions, installmentPlans, standaloneInstallments] = await Promise.all([
+  const [subscriptions, canonicalAgreements, installmentPlans, standaloneInstallments] = await Promise.all([
     prisma.subscription.findMany({
       where: {
         contaId: options.contaId,
@@ -1179,6 +1180,23 @@ export async function reconcileWithAsaas(
         id: true,
         asaasSubscriptionId: true,
         status: true,
+      },
+    }),
+    prisma.billingAgreement.findMany({
+      where: {
+        contaId: options.contaId,
+        asaasSubscriptionId: { not: null },
+        status: { notIn: ['CANCELLED', 'DRAFT'] },
+      },
+      orderBy: [{ lastReconciledAt: 'asc' }, { updatedAt: 'asc' }],
+      take: limit,
+      select: {
+        id: true,
+        asaasSubscriptionId: true,
+        status: true,
+        remoteStatus: true,
+        desiredValue: true,
+        confirmedValue: true,
       },
     }),
     prisma.installmentPlan.findMany({
@@ -1328,6 +1346,87 @@ export async function reconcileWithAsaas(
     }
   }
 
+  for (const agreement of canonicalAgreements) {
+    if (!agreement.asaasSubscriptionId) continue;
+    checkedSubscriptions += 1;
+    try {
+      recordAsaasReadIntent('RECONCILIATION');
+      const remote = await getSubscription({
+        apiKey: credentials.apiKey,
+        subscriptionId: agreement.asaasSubscriptionId,
+      });
+      const remoteValue = Number(remote.value ?? 0);
+      const remoteStatus = remote.deleted ? 'DELETED' : remote.status ?? 'UNKNOWN';
+      const valueDrift = Number(agreement.confirmedValue) !== remoteValue;
+      const statusDrift = (agreement.remoteStatus ?? '').toUpperCase() !== remoteStatus.toUpperCase();
+      if (!valueDrift && !statusDrift) {
+        if (!dryRun) {
+          await prisma.billingAgreement.updateMany({
+            where: { id: agreement.id, contaId: options.contaId },
+            data: { lastReconciledAt: now, reconciliationError: null },
+          });
+        }
+        continue;
+      }
+
+      subscriptionDrift += 1;
+      if (!dryRun) {
+        const desiredDiverges = Number(agreement.desiredValue) !== remoteValue;
+        await upsertFinanceReconciliationIssue({
+          contaId: options.contaId,
+          entityType: 'SUBSCRIPTION',
+          entityId: agreement.id,
+          asaasId: agreement.asaasSubscriptionId,
+          issueType: valueDrift ? 'BILLING_AGREEMENT_VALUE_DRIFT' : 'SUBSCRIPTION_STATUS_DRIFT',
+          severity: desiredDiverges ? 'HIGH' : 'MEDIUM',
+          localStatus: agreement.status,
+          remoteStatus,
+          metadata: {
+            desiredValue: Number(agreement.desiredValue),
+            previousConfirmedValue: Number(agreement.confirmedValue),
+            remoteValue,
+            source: 'canonicalBillingAgreement',
+          },
+        });
+        await prisma.billingAgreement.updateMany({
+          where: { id: agreement.id, contaId: options.contaId },
+          data: {
+            confirmedValue: remoteValue,
+            remoteStatus,
+            remoteStatusUpdatedAt: now,
+            lastReconciledAt: now,
+            status: desiredDiverges ? 'REQUIRES_RECONCILIATION' : agreement.status,
+            reconciliationError: desiredDiverges
+              ? `Valor desejado ${Number(agreement.desiredValue).toFixed(2)} diverge do Asaas ${remoteValue.toFixed(2)}.`
+              : null,
+          },
+        });
+        const event = chooseSyntheticSubscriptionEvent({ status: remote.status, deleted: remote.deleted });
+        await handleSubscriptionWebhook(options.contaId, {
+          event,
+          subscription: {
+            id: remote.id,
+            status: remote.status,
+            externalReference: remote.externalReference ?? undefined,
+            deleted: remote.deleted,
+          },
+        });
+        if (desiredDiverges) {
+          await prisma.billingAgreement.updateMany({
+            where: { id: agreement.id, contaId: options.contaId },
+            data: {
+              status: 'REQUIRES_RECONCILIATION',
+              reconciliationError: `Valor desejado ${Number(agreement.desiredValue).toFixed(2)} diverge do Asaas ${remoteValue.toFixed(2)}.`,
+            },
+          });
+        }
+        reconciledSubscriptions += 1;
+      }
+    } catch (error) {
+      errors.push(`agreement:${agreement.id}:${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const allInstallments = [
     ...installmentPlans.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, source: 'ACADEMIC' as const })),
     ...standaloneInstallments.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, source: 'STANDALONE' as const })),
@@ -1388,6 +1487,19 @@ export async function reconcileWithAsaas(
   }
 
   if (!dryRun) {
+    await reconcileEnrollmentFeeProjections({ contaId: options.contaId, limit })
+      .then((result) => {
+        if (result.failures > 0) {
+          errors.push(
+            `enrollment-fee-projection:${result.failures}:${result.failedSources.join(',')}`,
+          );
+        }
+      })
+      .catch((error) => {
+        errors.push(
+          `enrollment-fee-projection:${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
     await alertService
       .alertReconciliationDrift(options.contaId, {
         payments: paymentDrift,

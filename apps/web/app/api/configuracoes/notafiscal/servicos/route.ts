@@ -24,6 +24,9 @@ function fiscalServiceErrorMessage(error: string): string | undefined {
   if (error === 'PIS_COFINS_INVALIDO') {
     return 'Revise a situação tributária e as alíquotas de PIS/COFINS conforme as regras do Portal Nacional.';
   }
+  if (error === 'IBS_CBS_INVALIDO') {
+    return 'Preencha NBS, código nacional do serviço, situação tributária, classificação tributária e indicador de operação para emitir com IBS/CBS.';
+  }
   return undefined;
 }
 
@@ -88,6 +91,7 @@ export async function POST(request: Request) {
           ? 412
           : result.error === 'SERVICO_MUNICIPAL_INVALIDO' ||
               result.error === 'PIS_COFINS_INVALIDO'
+              || result.error === 'IBS_CBS_INVALIDO'
             ? 422
             : 500;
       return json(status, {

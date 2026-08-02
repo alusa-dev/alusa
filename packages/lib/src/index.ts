@@ -68,6 +68,7 @@ export {
   doesMatriculaOccupySeat,
   getSeatOccupyingStatuses,
   buildSeatOccupancyWhereClause,
+  buildSeatOccupancyOverlapWhereClause,
   calcularVagasDisponiveis,
   SEAT_OCCUPYING_STATUSES,
   NON_SEAT_OCCUPYING_STATUSES,

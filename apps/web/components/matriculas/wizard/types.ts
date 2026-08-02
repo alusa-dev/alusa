@@ -15,6 +15,8 @@ export type StepId =
   | 'resumo';
 
 export interface WizardAlunoFamiliar {
+  /** Identifica a linha de matrícula; o mesmo aluno pode ocupar mais de uma linha. */
+  itemId?: string;
   id: string;
   nome: string;
   dataNasc?: string;
@@ -30,11 +32,39 @@ export interface WizardAlunoFamiliar {
 }
 
 export interface WizardFamiliarSubmitResult {
+  itemId?: string;
   alunoId: string;
   alunoNome: string;
   status: 'success' | 'error';
   matriculaId?: string;
+  contratoId?: string;
   errorMessage?: string;
+}
+
+export interface FamilyEnrollmentOutcome {
+  familyId: string;
+  operationId?: string;
+  operationStatus?:
+    | 'PENDING'
+    | 'PROCESSING'
+    | 'COMPLETED'
+    | 'PARTIAL'
+    | 'FAILED'
+    | 'REQUIRES_RECONCILIATION'
+    | 'CANCELLED';
+  academicStatus: 'PENDENTE' | 'COMPLETO' | 'PARCIAL' | 'FALHO' | 'CANCELADO';
+  billingProvisionStatus:
+    | 'NAO_APLICAVEL'
+    | 'PENDENTE'
+    | 'PROCESSANDO'
+    | 'PROVISIONADO'
+    | 'PARCIAL'
+    | 'FALHO'
+    | 'RESULTADO_INCERTO'
+    | 'CANCELADO';
+  paymentStatus: string;
+  financialError?: string | null;
+  results: WizardFamiliarSubmitResult[];
 }
 
 export type WizardNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
-import { AsaasEnvError, KycNotApprovedError, markChargeAsPaid } from '@alusa/finance';
+import {
+  AsaasEnvError,
+  AsaasHttpError,
+  KycNotApprovedError,
+  markChargeAsPaid,
+} from '@alusa/finance';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -82,6 +87,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (e instanceof AsaasEnvError) {
       return err(503, 'ASAAS_INDISPONIVEL', 'Credenciais Asaas não configuradas');
+    }
+    if (e instanceof AsaasHttpError) {
+      console.error('[API Marcar Pago] Falha no provedor financeiro', {
+        cobrancaId: (await params).id,
+        providerStatus: e.status,
+      });
+
+      if (e.status === 429) {
+        return err(
+          503,
+          'ASAAS_TEMPORARIAMENTE_INDISPONIVEL',
+          'A plataforma financeira está temporariamente indisponível. Tente novamente em alguns instantes.',
+        );
+      }
+
+      if (e.status >= 500) {
+        return err(
+          502,
+          'ASAAS_FALHA_PROCESSAMENTO',
+          'A plataforma financeira não conseguiu processar o recebimento. Nenhuma baixa foi registrada. Tente novamente ou contate o suporte.',
+        );
+      }
+
+      return err(
+        422,
+        'ASAAS_OPERACAO_REJEITADA',
+        e.message || 'A plataforma financeira rejeitou a operação.',
+      );
     }
     console.error('[API Marcar Pago] Erro', e);
     return err(500, 'ERRO_INTERNO', (e as Error).message);

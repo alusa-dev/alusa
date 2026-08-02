@@ -17,6 +17,67 @@ interface StepResumoProps {
   ctx: WizardContextValue;
 }
 
+function BillingOperationalSummary({
+  preview,
+}: {
+  preview: InitialEnrollmentBillingPreviewResult;
+}) {
+  const blocked = !preview.compatibility.compatible;
+  const requiresAttention =
+    blocked ||
+    preview.billingImpact.currentCycleAction === 'CREATE_COMPLEMENT' ||
+    preview.billingImpact.currentCycleAction === 'CREATE_ONE_TIME_CHARGE';
+  const nextCycleDate = preview.billingImpact.nextCycleDate
+    ? new Date(preview.billingImpact.nextCycleDate).toLocaleDateString('pt-BR')
+    : null;
+
+  return (
+    <div
+      className={
+        blocked
+          ? 'rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800'
+          : requiresAttention
+            ? 'rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900'
+            : 'rounded-md border border-violet-200 bg-white/70 p-3 text-xs text-violet-900'
+      }
+      role={blocked ? 'alert' : 'status'}
+    >
+      <p className="font-semibold">Decisão operacional</p>
+      <p className="mt-1">{preview.billingImpact.operationalMessage}</p>
+      {preview.billingImpact.currentChargeDueDate && (
+        <p className="mt-1">
+          Cobrança analisada:{' '}
+          {new Date(preview.billingImpact.currentChargeDueDate).toLocaleDateString('pt-BR')} ·{' '}
+          {preview.billingImpact.currentChargeState === 'PAID'
+            ? 'paga'
+            : preview.billingImpact.currentChargeState === 'OVERDUE'
+              ? 'vencida'
+              : preview.billingImpact.currentChargeState === 'PENDING'
+                ? 'pendente'
+                : preview.billingImpact.currentChargeState.toLowerCase()}
+        </p>
+      )}
+      {preview.billingImpact.application === 'NEXT_CYCLE' && nextCycleDate && (
+        <p className="mt-1">Aplicação prevista: {nextCycleDate}.</p>
+      )}
+      {preview.compatibility.blockers.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-4">
+          {preview.compatibility.blockers.map((blocker) => (
+            <li key={`${blocker.code}:${blocker.itemId ?? ''}`}>{blocker.message}</li>
+          ))}
+        </ul>
+      )}
+      {preview.compatibility.warnings.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-4">
+          {preview.compatibility.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function StepResumo({ ctx }: StepResumoProps) {
   const { state } = ctx;
 
@@ -31,6 +92,10 @@ export function StepResumo({ ctx }: StepResumoProps) {
 
 function StepResumoFamiliar({ ctx }: StepResumoProps) {
   const { state, update } = ctx;
+  const [billingPreview, setBillingPreview] =
+    useState<InitialEnrollmentBillingPreviewResult | null>(null);
+  const [billingPreviewLoading, setBillingPreviewLoading] = useState(true);
+  const [billingPreviewError, setBillingPreviewError] = useState<string | null>(null);
 
   const formatter = useMemo(
     () => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }),
@@ -59,6 +124,101 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
   const totalTaxas = state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0);
+
+  useEffect(() => {
+    if (
+      !state.responsavelFamiliar?.id ||
+      !state.dataInicio ||
+      !state.dataFimContrato ||
+      !state.formaPagamento ||
+      !state.vencimentoDia ||
+      state.alunosFamiliares.length < 1
+    ) {
+      setBillingPreview(null);
+      setBillingPreviewLoading(false);
+      setBillingPreviewError('Volte e complete os dados familiares para gerar o preview.');
+      update({ confirmacaoRevisao: false });
+      return;
+    }
+    let active = true;
+    const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+    const paymentMethod =
+      state.formaPagamento === 'PIX' ||
+      state.formaPagamento === 'BOLETO' ||
+      state.formaPagamento === 'CARTAO_CREDITO'
+        ? state.formaPagamento
+        : 'BOLETO';
+    setBillingPreviewLoading(true);
+    setBillingPreviewError(null);
+    previewInitialEnrollmentBillingRequest({
+      contaId: state.contaId || undefined,
+      enrollmentMode: 'FAMILY',
+      familyPricingMode:
+        state.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
+      aggregateMonthlyAmount: totalMensalidades,
+      aggregateEnrollmentFeeAmount: totalTaxas,
+      billingStrategy,
+      strategy:
+        billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+          ? 'INCLUDE_EXISTING'
+          : billingStrategy.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+            ? 'UNIFY_NEXT_CYCLE'
+            : 'CREATE_SEPARATE',
+      existingFamilyGroupId:
+        billingStrategy.kind === 'SEPARATE' ? null : billingStrategy.financialGroupId,
+      responsavelFinanceiroId: state.responsavelFamiliar.id,
+      dataInicio: state.dataInicio,
+      dataFimContrato: state.dataFimContrato,
+      formaPagamento: paymentMethod,
+      vencimentoDia: state.vencimentoDia,
+      descontoIds: state.beneficioSelecionado?.id ? [state.beneficioSelecionado.id] : [],
+      items: state.alunosFamiliares.map((aluno) => ({
+        alunoId: aluno.id,
+        turmaId: state.modoTurmas === 'TURMAS' ? aluno.turmaId ?? null : null,
+        comboId: state.modoTurmas === 'COMBO' ? aluno.comboId ?? null : null,
+        planoId: state.modoTurmas === 'TURMAS' ? state.planoId ?? null : null,
+        taxaMatricula: totalTaxas,
+      })),
+    })
+      .then((preview) => {
+        if (!active) return;
+        setBillingPreview(preview);
+        if (!preview.compatibility.compatible) {
+          update({ confirmacaoRevisao: false });
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        setBillingPreview(null);
+        setBillingPreviewError(
+          error instanceof Error ? error.message : 'Não foi possível gerar o preview financeiro.',
+        );
+        update({ confirmacaoRevisao: false });
+      })
+      .finally(() => {
+        if (active) setBillingPreviewLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    state.alunosFamiliares,
+    state.beneficioSelecionado?.id,
+    state.billingStrategy,
+    state.contaId,
+    state.dataFimContrato,
+    state.dataInicio,
+    state.formaPagamento,
+    state.modoTurmas,
+    state.planoId,
+    state.responsavelFamiliar?.id,
+    state.taxaMatricula,
+    state.taxaIsenta,
+    state.vencimentoDia,
+    totalMensalidades,
+    totalTaxas,
+    update,
+  ]);
 
   const formaPagamentoLabel = (forma: string | undefined) => {
     if (!forma) return '—';
@@ -111,7 +271,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
 
             return (
               <div
-                key={aluno.id}
+                key={aluno.itemId ?? aluno.id}
                 className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/50 p-3"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-semibold text-violet-700">
@@ -137,6 +297,26 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
               </div>
             );
           })}
+        </div>
+
+        <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm">
+          <p className="font-medium text-slate-900">Impacto financeiro</p>
+          {billingPreviewLoading ? (
+            <p className="mt-2 text-slate-600">Validando agrupamento e valores...</p>
+          ) : billingPreviewError ? (
+            <p className="mt-2 text-red-700" role="alert">{billingPreviewError}</p>
+          ) : billingPreview ? (
+            <div className="mt-2 space-y-3">
+              <div className="grid gap-1 text-slate-600 sm:grid-cols-3">
+                <span>Atual: {formatter.format(billingPreview.billingImpact.currentMonthlyAmount)}</span>
+                <span>Acréscimo: {formatter.format(billingPreview.billingImpact.addedMonthlyAmount)}</span>
+                <strong className="text-slate-900">
+                  Total: {formatter.format(billingPreview.billingImpact.resultingMonthlyAmount)}
+                </strong>
+              </div>
+              <BillingOperationalSummary preview={billingPreview} />
+            </div>
+          ) : null}
         </div>
 
         {/* Totais */}
@@ -194,6 +374,7 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
               id="confirmacao-revisao-familiar"
               checked={state.confirmacaoRevisao}
               onCheckedChange={handleConfirmacaoChange}
+              disabled={billingPreviewLoading || Boolean(billingPreviewError) || !billingPreview?.compatibility.compatible}
               className="mt-0.5"
             />
             <Label
@@ -295,9 +476,6 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
         if (!active) return;
         setBillingPreview(preview);
         if (!preview.compatibility.compatible) {
-          setBillingPreviewError(
-            preview.compatibility.blockers[0]?.message ?? 'O agrupamento financeiro não é compatível.',
-          );
           update({ confirmacaoRevisao: false });
         }
       })
@@ -473,6 +651,7 @@ function StepResumoIndividual({ ctx }: StepResumoProps) {
               {billingPreview.billingImpact.application === 'NEXT_CYCLE' && (
                 <p className="text-xs text-gray-600">O valor será unificado somente no próximo ciclo.</p>
               )}
+              <BillingOperationalSummary preview={billingPreview} />
             </div>
           ) : null}
         </div>

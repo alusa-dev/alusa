@@ -9,9 +9,11 @@ import {
   receiveInCash as asaasReceiveInCash,
   undoReceivedInCash as asaasUndoReceivedInCash,
   refundPayment as asaasRefundPayment,
+  refundBankSlip as asaasRefundBankSlip,
   getBillingInfo as asaasGetBillingInfo,
   updatePayment as asaasUpdatePayment,
   getSubscription as asaasGetSubscription,
+  listSubscriptions as asaasListSubscriptions,
   updateSubscription as asaasUpdateSubscription,
   deleteSubscription as asaasDeleteSubscription,
   createSubscription as asaasCreateSubscription,
@@ -30,6 +32,7 @@ import {
   type DeleteInstallmentPaymentsResponse,
   type CreatePaymentInput,
   type AsaasSubscription,
+  type ListSubscriptionsParams as AsaasListSubscriptionsParams,
   type UpdateSubscriptionInput,
   type BillingInfoResponse,
 } from '@alusa/asaas';
@@ -54,7 +57,10 @@ export class KycNotApprovedError extends Error {
 }
 
 export function isAsaasEnabled(): boolean {
-  return process.env.FEATURE_ASAAS === 'true';
+  // A integração financeira é parte obrigatória do produto. Mantemos a função
+  // apenas para compatibilidade com consumidores legados durante o cutover;
+  // disponibilidade real é validada por tenant (credencial, KYC e webhook).
+  return true;
 }
 
 export function getCurrentBrasiliaDate(): {
@@ -325,6 +331,18 @@ export async function refundCobranca(input: {
   return { success: true, message: 'Reembolso solicitado' };
 }
 
+export async function requestBankSlipRefund(input: {
+  paymentId: string;
+  contaId: string;
+}): Promise<{ requestUrl: string }> {
+  await assertKycApprovedOrThrow(input.contaId);
+  await ensureWebhookConfigOperational(input.contaId);
+  const { apiKey } = await getCredentialsOrThrow(input.contaId);
+  const result = await asaasRefundBankSlip({ apiKey, paymentId: input.paymentId });
+  invalidateReadCache([paymentCachePrefix(input.contaId, input.paymentId)]);
+  return result;
+}
+
 export async function getSubscription(
   subscriptionId: string,
   opts: { contaId: string },
@@ -335,6 +353,14 @@ export async function getSubscription(
     READ_CACHE_TTL_MS,
     () => asaasGetSubscription({ apiKey, subscriptionId }),
   );
+}
+
+export async function listSubscriptions(
+  filters: Omit<AsaasListSubscriptionsParams, 'apiKey'>,
+  opts: { contaId: string },
+): Promise<Awaited<ReturnType<typeof asaasListSubscriptions>>> {
+  const { apiKey } = await getCredentialsOrThrow(opts.contaId);
+  return asaasListSubscriptions({ apiKey, ...filters });
 }
 
 export async function getInstallment(

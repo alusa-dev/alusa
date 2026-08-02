@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { createSubscription } from '../create-subscription';
+import {
+  createSubscription,
+  isCompatibleSubscriptionNextDueDate,
+} from '../create-subscription';
 
 vi.mock('@alusa/database', () => {
   return {
@@ -16,7 +19,13 @@ vi.mock('@alusa/database', () => {
       },
       subscription: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
+        update: vi.fn(),
+      },
+      asaasIntegrationJob: {
+        findUnique: vi.fn(),
+        upsert: vi.fn(),
         update: vi.fn(),
       },
     },
@@ -27,10 +36,20 @@ vi.mock('@alusa/asaas', () => ({
   createSubscription: vi.fn(),
 }));
 
-vi.mock('../../foundation/feature-flags.service', () => ({
-  featureFlagsService: {
-    isEnabled: vi.fn(),
-  },
+vi.mock('../asaas-ops', () => ({
+  getSubscription: vi.fn(),
+  listSubscriptions: vi.fn(async () => ({ data: [] })),
+}));
+
+vi.mock('../outbound-financial-operation', () => ({
+  reserveOutboundFinancialOperation: vi.fn(async () => ({
+    job: { id: 'job-1' },
+    payload: { remoteId: null },
+  })),
+  markOutboundRemoteRequested: vi.fn(async () => true),
+  markOutboundRemoteConfirmed: vi.fn(),
+  markOutboundAwaitingWebhook: vi.fn(),
+  markOutboundResultUnknown: vi.fn(),
 }));
 
 vi.mock('../../foundation/audit-log.service', () => ({
@@ -47,7 +66,29 @@ vi.mock('../ensure-customer', () => ({
   ensureCustomer: vi.fn(),
 }));
 
+vi.mock('../../billing-agreements/materialize', () => ({
+  materializeBillingAgreement: vi.fn(async () => ({ id: 'agreement-1' })),
+}));
+
 describe('createSubscription', () => {
+  it('aceita nextDueDate avançado exatamente um ciclo após materializar o primeiro pagamento', () => {
+    expect(
+      isCompatibleSubscriptionNextDueDate({
+        requestedNextDueDate: '2026-08-05',
+        remoteNextDueDate: '2026-09-05',
+        cycle: 'MONTHLY',
+      }),
+    ).toBe(true);
+
+    expect(
+      isCompatibleSubscriptionNextDueDate({
+        requestedNextDueDate: '2026-08-05',
+        remoteNextDueDate: '2026-10-05',
+        cycle: 'MONTHLY',
+      }),
+    ).toBe(false);
+  });
+
   beforeEach(async () => {
     vi.clearAllMocks();
 
@@ -55,7 +96,7 @@ describe('createSubscription', () => {
     vi.mocked(requireKycApproved).mockResolvedValue({ success: true, data: true } as never);
 
     const { prisma } = await import('@alusa/database');
-    vi.mocked(prisma.$transaction).mockImplementation(async (callback: any) =>
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback) =>
       callback({
         subscription: {
           create: prisma.subscription.create,
@@ -68,30 +109,10 @@ describe('createSubscription', () => {
     );
   });
 
-  it('deve bloquear quando enableSubscriptions está off', async () => {
-    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-    vi.mocked(featureFlagsService.isEnabled).mockResolvedValueOnce(false);
-
-    const res = await createSubscription({
-      contaId: 't1',
-      contratoId: 'c1',
-      matriculaId: 'm1',
-      value: 150,
-      nextDueDate: '2099-01-10',
-      billingType: 'BOLETO',
-      cycle: 'MONTHLY',
-      actor: { type: 'USER', id: 'u1' },
-    });
-
-    expect(res.success).toBe(false);
-    if (!res.success) expect(res.error).toBe('FEATURE_DISABLED');
-  });
-
-  it('deve retornar conflito quando já existe Subscription com asaasSubscriptionId', async () => {
+  it('deve recuperar idempotentemente Subscription que já possui asaasSubscriptionId', async () => {
     const { prisma } = await import('@alusa/database');
-    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
-
-    vi.mocked(featureFlagsService.isEnabled).mockResolvedValueOnce(true);
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { materializeBillingAgreement } = await import('../../billing-agreements/materialize');
 
     vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
       id: 'm1',
@@ -124,16 +145,66 @@ describe('createSubscription', () => {
       actor: { type: 'USER', id: 'u1' },
     });
 
-    expect(res.success).toBe(false);
-    if (!res.success) expect(res.error).toBe('ASSINATURA_CONFLITANTE');
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.data.asaasSubscriptionId).toBe('asaas_sub_1');
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
+    expect(materializeBillingAgreement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'INDIVIDUAL',
+        contaId: 't1',
+        subscriptionId: 's1',
+      }),
+    );
+  });
+
+  it('expõe falha específica e recuperável quando o BillingAgreement não materializa', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { materializeBillingAgreement } = await import('../../billing-agreements/materialize');
+
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
+      id: 'm1',
+      alunoId: 'a1',
+      responsavelFinanceiroId: 'r1',
+      asaasSubscriptionId: 'asaas_sub_1',
+    } as never);
+    vi.mocked(prisma.contrato.findFirst).mockResolvedValueOnce({ id: 'c1' } as never);
+    vi.mocked(prisma.subscription.findUnique).mockResolvedValueOnce({
+      id: 's1',
+      contratoId: 'c1',
+      matriculaId: 'm1',
+      externalReference: 'subscription:s1',
+      asaasSubscriptionId: 'asaas_sub_1',
+      status: 'ACTIVE',
+      createdAt: new Date('2099-01-01T00:00:00.000Z'),
+      statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    } as never);
+    vi.mocked(materializeBillingAgreement).mockRejectedValueOnce(
+      new Error('CUSTOMER_LOCAL_NAO_ENCONTRADO'),
+    );
+
+    const res = await createSubscription({
+      contaId: 't1',
+      contratoId: 'c1',
+      matriculaId: 'm1',
+      value: 150,
+      nextDueDate: '2099-01-10',
+      billingType: 'BOLETO',
+      cycle: 'MONTHLY',
+      actor: { type: 'USER', id: 'u1' },
+    });
+
+    expect(res).toEqual({
+      success: false,
+      error: 'BILLING_AGREEMENT_MATERIALIZATION_FAILED',
+    });
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
   });
 
   it('deve bloquear quando KYC não está aprovado', async () => {
-    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
     const { prisma } = await import('@alusa/database');
     const { requireKycApproved } = await import('../../foundation/kyc-guard');
 
-    vi.mocked(featureFlagsService.isEnabled).mockResolvedValueOnce(true);
     vi.mocked(requireKycApproved).mockResolvedValueOnce({ success: false, error: 'KYC_NAO_APROVADO' } as never);
 
     const res = await createSubscription({
@@ -155,10 +226,9 @@ describe('createSubscription', () => {
   it('deve criar assinatura no Asaas e persistir asaasSubscriptionId', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
-    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+    const { getSubscription } = await import('../asaas-ops');
     const { ensureCustomer } = await import('../ensure-customer');
-
-    vi.mocked(featureFlagsService.isEnabled).mockResolvedValueOnce(true);
+    const { materializeBillingAgreement } = await import('../../billing-agreements/materialize');
 
     vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
       id: 'm1',
@@ -187,10 +257,24 @@ describe('createSubscription', () => {
       status: 'ACTIVE',
       deleted: false,
     } as never);
+    vi.mocked(getSubscription).mockResolvedValueOnce({
+      id: 'asaas_sub_1',
+      status: 'ACTIVE',
+      deleted: false,
+      externalReference: 'alusa:subscription:m1:c1',
+    } as never);
 
     vi.mocked(prisma.subscription.create).mockResolvedValueOnce({
       id: 'sub_generated',
       externalReference: 'subscription:sub_generated',
+      asaasSubscriptionId: 'asaas_sub_1',
+      status: 'ACTIVE',
+      createdAt: new Date('2099-01-01T00:00:00.000Z'),
+      statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    } as never);
+    vi.mocked(prisma.subscription.update).mockResolvedValueOnce({
+      id: 'sub_generated',
+      externalReference: 'alusa:subscription:m1:c1',
       asaasSubscriptionId: 'asaas_sub_1',
       status: 'ACTIVE',
       createdAt: new Date('2099-01-01T00:00:00.000Z'),
@@ -234,25 +318,29 @@ describe('createSubscription', () => {
     expect(prisma.subscription.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          asaasSubscriptionId: 'asaas_sub_1',
-          status: 'ACTIVE',
+          status: 'REQUESTED',
         }),
       }),
+    );
+    expect(prisma.subscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ asaasSubscriptionId: 'asaas_sub_1' }) }),
     );
 
     expect(prisma.matricula.update).toHaveBeenCalledWith({
       where: { id: 'm1' },
       data: { asaasSubscriptionId: 'asaas_sub_1' },
     });
+    expect(materializeBillingAgreement).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: expect.any(String), contaId: 't1' }),
+      expect.objectContaining({ tx: expect.any(Object) }),
+    );
   });
 
   it('deve enviar billingType CREDIT_CARD ao Asaas quando wizard solicitar CREDIT_CARD', async () => {
     const { prisma, loadAsaasCredentials } = await import('@alusa/database');
     const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
-    const { featureFlagsService } = await import('../../foundation/feature-flags.service');
+    const { getSubscription } = await import('../asaas-ops');
     const { ensureCustomer } = await import('../ensure-customer');
-
-    vi.mocked(featureFlagsService.isEnabled).mockResolvedValueOnce(true);
 
     vi.mocked(prisma.matricula.findFirst).mockResolvedValueOnce({
       id: 'm1',
@@ -279,6 +367,9 @@ describe('createSubscription', () => {
       status: 'ACTIVE',
       deleted: false,
     } as never);
+    vi.mocked(getSubscription).mockResolvedValueOnce({
+      id: 'asaas_sub_1', status: 'ACTIVE', deleted: false, externalReference: 'alusa:subscription:m1:c1',
+    } as never);
 
     vi.mocked(prisma.subscription.create).mockResolvedValueOnce({
       id: 'sub_generated',
@@ -287,6 +378,9 @@ describe('createSubscription', () => {
       status: 'ACTIVE',
       createdAt: new Date('2099-01-01T00:00:00.000Z'),
       statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    } as never);
+    vi.mocked(prisma.subscription.update).mockResolvedValueOnce({
+      id: 'sub_generated', externalReference: 'alusa:subscription:m1:c1', asaasSubscriptionId: 'asaas_sub_1', status: 'ACTIVE', createdAt: new Date('2099-01-01T00:00:00.000Z'), statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
     } as never);
 
     vi.mocked(prisma.matricula.update).mockResolvedValueOnce({} as never);

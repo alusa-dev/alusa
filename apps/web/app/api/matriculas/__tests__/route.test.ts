@@ -19,6 +19,19 @@ vi.mock('@/src/server/matriculas/matricula.service', () => ({
   },
 }));
 
+vi.mock('@/src/server/matriculas/create-immediate-enrollment.use-case', () => ({
+  createImmediateEnrollment: vi.fn(),
+  ImmediateEnrollmentCreationError: class ImmediateEnrollmentCreationError extends Error {
+    constructor(
+      readonly code: string,
+      message: string,
+      readonly requiresReconciliation = false,
+    ) {
+      super(message);
+    }
+  },
+}));
+
 vi.mock('@/src/prisma', () => ({
   prisma: {
     cobranca: {
@@ -118,6 +131,7 @@ describe('POST /api/matriculas', () => {
         alunoId: 'aluno-1',
         responsavelFinanceiroId: 'resp-1',
         planoId: 'plano-1',
+        modeloId: 'modelo-1',
         turmaId: 'turma-1',
         comboId: null,
         status: 'ATIVA',
@@ -152,6 +166,7 @@ describe('POST /api/matriculas', () => {
         alunoId: 'aluno-1',
         responsavelFinanceiroId: 'resp-1',
         planoId: 'plano-1',
+        modeloId: 'modelo-1',
         turmaId: 'turma-1',
         dataInicio: '2099-01-10',
         dataFimContrato: '2099-12-10',
@@ -189,6 +204,7 @@ describe('POST /api/matriculas', () => {
         alunoId: 'aluno-1',
         responsavelFinanceiroId: 'resp-1',
         planoId: 'plano-1',
+        modeloId: 'modelo-1',
         turmaId: 'turma-1',
         comboId: null,
         status: 'ATIVA',
@@ -223,6 +239,7 @@ describe('POST /api/matriculas', () => {
         alunoId: 'aluno-1',
         responsavelFinanceiroId: 'resp-1',
         planoId: 'plano-1',
+        modeloId: 'modelo-1',
         turmaId: 'turma-1',
         dataInicio: '2099-01-10',
         dataFimContrato: '2099-12-10',
@@ -244,9 +261,11 @@ describe('POST /api/matriculas', () => {
     expect(syncCustomerNotificationsForUserSelection).not.toHaveBeenCalled();
   });
 
-  it('cria matrícula local e enfileira financeiro sem bloquear por provisionamento externo', async () => {
+  it('confirma o financeiro inline antes de retornar a matrícula', async () => {
     const { getServerSession } = await import('next-auth');
-    const { criarMatricula } = await import('@/src/server/matriculas/matricula.service');
+    const { createImmediateEnrollment } = await import(
+      '@/src/server/matriculas/create-immediate-enrollment.use-case'
+    );
     const { guardFinancialAccountOr412 } = await import('@/lib/finance/financial-account-gate');
     const { enqueueEnrollmentBillingOutbox } = await import(
       '@/src/server/matriculas/enrollment-billing-outbox.service'
@@ -266,7 +285,7 @@ describe('POST /api/matriculas', () => {
         { status: 412 },
       ) as never,
     });
-    vi.mocked(criarMatricula).mockResolvedValue({
+    vi.mocked(createImmediateEnrollment).mockResolvedValue({
       matricula: {
         id: 'mat-1',
         alunoId: 'aluno-1',
@@ -285,11 +304,21 @@ describe('POST /api/matriculas', () => {
         taxaJustificativa: null,
         vencimentoDia: 10,
         asaasId: null,
-        asaasSubscriptionId: null,
+        asaasSubscriptionId: 'sub-1',
+        billingProvisionStatus: 'PROVISIONADO',
         createdAt: new Date('2099-01-01T00:00:00.000Z'),
         updatedAt: new Date('2099-01-01T00:00:00.000Z'),
       },
-      cobrancas: { taxa: null, mensalidade: null },
+      cobrancas: {
+        taxa: null,
+        mensalidade: {
+          id: 'cob-1',
+          asaasPaymentId: 'pay-1',
+          status: 'PENDENTE',
+          formaPagamento: 'PIX',
+          tipo: 'MENSALIDADE',
+        },
+      },
       preco: { plano: 300, planoLiquido: 300, taxa: 0, descontosAplicados: [], total: 300 },
       responsavelFinanceiro: {
         id: 'resp-1',
@@ -298,6 +327,22 @@ describe('POST /api/matriculas', () => {
         telefone: '11999999999',
       },
       primeiroVencimento: new Date('2099-02-10T00:00:00.000Z'),
+      immediateFinancialSync: {
+        subscription: {
+          asaasSubscriptionId: 'sub-1',
+          externalReference: 'enrollment-op:op-1:subscription',
+          firstPayment: {
+            asaasPaymentId: 'pay-1',
+            externalReference: 'enrollment-op:op-1:subscription',
+            value: 300,
+            dueDate: '2099-02-10',
+            status: 'PENDING',
+            invoiceUrl: null,
+            bankSlipUrl: null,
+          },
+        },
+        enrollmentFee: null,
+      },
     } as never);
 
     const response = await POST(
@@ -306,6 +351,7 @@ describe('POST /api/matriculas', () => {
         alunoId: 'aluno-1',
         responsavelFinanceiroId: 'resp-1',
         planoId: 'plano-1',
+        modeloId: 'modelo-1',
         turmaId: 'turma-1',
         dataInicio: '2099-01-10',
         dataFimContrato: '2099-12-10',
@@ -318,15 +364,16 @@ describe('POST /api/matriculas', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(criarMatricula).toHaveBeenCalled();
+    expect(createImmediateEnrollment).toHaveBeenCalled();
     expect(guardFinancialAccountOr412).not.toHaveBeenCalled();
     expect(enqueueEnrollmentBillingOutbox).not.toHaveBeenCalled();
     const json = await response.json();
-    expect(json.matricula.billingProvisionStatus).toBe('PENDENTE');
-    expect(json.asaasSync.subscription.error).toBe('FINANCEIRO_SINCRONIZANDO');
-    expect(json.operationalWarnings[0]).toMatchObject({
-      type: 'FINANCIAL_PROVISION_PENDING',
-      code: 'FINANCEIRO_SINCRONIZANDO',
+    expect(json.matricula.billingProvisionStatus).toBe('PROVISIONADO');
+    expect(json.asaasSync.subscription).toMatchObject({
+      success: true,
+      asaasSubscriptionId: 'sub-1',
+      asaasPaymentId: 'pay-1',
     });
+    expect(json.operationalWarnings).toEqual([]);
   });
 });

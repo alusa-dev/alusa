@@ -10,7 +10,12 @@
  * Ver também: `apps/web/app/api/matriculas/route.ts`, `@alusa/finance` use cases.
  */
 
-import { FormaPagamento, PeriodicidadePlano } from '@prisma/client';
+import {
+  FormaPagamento,
+  PeriodicidadePlano,
+  StatusCobranca,
+  TipoCobranca,
+} from '@prisma/client';
 import { prisma } from '@/src/prisma';
 import {
   createCharge,
@@ -167,8 +172,8 @@ export async function createEnrollmentSubscription(input: {
 }> {
   logEnrollmentBilling('subscription.start', { matriculaId: input.matriculaId });
 
-  const recurringContext = await prisma.matricula.findUnique({
-    where: { id: input.matriculaId },
+  const recurringContext = await prisma.matricula.findFirst({
+    where: { id: input.matriculaId, contaId: input.contaId },
     select: {
       id: true,
       dataInicio: true,
@@ -194,7 +199,8 @@ export async function createEnrollmentSubscription(input: {
     };
   }
 
-  const billingType = mapFormaPagamentoToBillingType(recurringContext.formaPagamento);
+  const paymentMethod = recurringContext.formaPagamento ?? FormaPagamento.BOLETO;
+  const billingType = mapFormaPagamentoToBillingType(paymentMethod);
   if (!billingType) {
     return {
       subscriptionSync: { success: false, error: 'FORMA_PAGAMENTO_INVALIDA' },
@@ -219,6 +225,89 @@ export async function createEnrollmentSubscription(input: {
   const fineValue = recurringContext.multaPercentual
     ? Number(recurringContext.multaPercentual)
     : 0;
+
+  // Se o contrato termina antes do primeiro vencimento recorrente, uma
+  // assinatura nunca terá ciclo válido. Materializamos uma única mensalidade.
+  if (recurringContext.dataFimContrato.getTime() < nextDueDateObj.getTime()) {
+    const dueDate = recurringContext.dataFimContrato;
+    const existingCharge = await prisma.cobranca.findFirst({
+      where: {
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        tipo: TipoCobranca.MENSALIDADE,
+        competenciaInicio: recurringContext.dataInicio,
+        competenciaFim: recurringContext.dataFimContrato,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    const charge = existingCharge ?? await prisma.cobranca.create({
+      data: {
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        tipo: TipoCobranca.MENSALIDADE,
+        descricao: planoOuCombo?.nome
+          ? `Mensalidade avulsa - ${planoOuCombo.nome}`
+          : 'Mensalidade avulsa de contrato curto',
+        competenciaInicio: recurringContext.dataInicio,
+        competenciaFim: recurringContext.dataFimContrato,
+        valor: input.planoLiquido,
+        vencimento: dueDate,
+        formaPagamento: paymentMethod,
+        status: dueDate.getTime() > Date.now() ? StatusCobranca.A_VENCER : StatusCobranca.PENDENTE,
+      },
+    });
+    const chargeResult = await createCharge({
+      contaId: input.contaId,
+      cobrancaId: charge.id,
+      actor: { type: 'USER', id: input.actorUserId },
+    });
+    if (!chargeResult.success || !chargeResult.data.asaasPaymentId) {
+      return {
+        subscriptionSync: {
+          success: false,
+          error: chargeResult.success ? 'ASAAS_PAYMENT_ID_NAO_RETORNADO' : chargeResult.error,
+        },
+        asaasSubscriptionId: null,
+        mensalidadeCobranca: null,
+      };
+    }
+    const paymentId = chargeResult.data.asaasPaymentId;
+    await prisma.familyFinancialAllocation.updateMany({
+      where: {
+        contaId: input.contaId,
+        matriculaId: input.matriculaId,
+        chargeKind: 'MENSALIDADE',
+        status: 'PENDING',
+      },
+      data: {
+        sourceChargeId: chargeResult.data.chargeId,
+        status: 'AWAITING_WEBHOOK',
+      },
+    });
+    const synced = await syncPaymentStateFromAsaas({
+      contaId: input.contaId,
+      asaasPaymentId: paymentId,
+      eventName: 'PAYMENT_CREATED',
+    });
+    return {
+      subscriptionSync: {
+        success: synced.success,
+        asaasSubscriptionId: null,
+        asaasPaymentId: paymentId,
+        expectedWebhooks: synced.success ? [] : ['PAYMENT_CREATED'],
+        message: synced.success
+          ? 'Contrato curto provisionado como cobrança avulsa.'
+          : 'Cobrança avulsa criada; aguardando confirmação pelo webhook.',
+        error: synced.success ? undefined : synced.error,
+      },
+      asaasSubscriptionId: null,
+      mensalidadeCobranca: {
+        id: charge.id,
+        formaPagamento: paymentMethod,
+        asaasPaymentId: paymentId,
+      },
+    };
+  }
 
   const subscriptionResult = await createSubscription({
     contaId: input.contaId,
@@ -335,8 +424,8 @@ export async function provisionIndividualEnrollmentBilling(
     !input.payload.taxaIsenta &&
     Number(input.preco.taxa ?? 0) > 0;
 
-  await prisma.matricula.update({
-    where: { id: input.matriculaId },
+  await prisma.matricula.updateMany({
+    where: { id: input.matriculaId, contaId: input.contaId },
     data: billingProvisionUpdate(MatriculaBillingProvisionStatus.PROCESSANDO),
   });
 
@@ -398,8 +487,8 @@ export async function provisionIndividualEnrollmentBilling(
     hasAsaasSubscriptionId: Boolean(result.matriculaSnapshot.asaasSubscriptionId),
   });
 
-  await prisma.matricula.update({
-    where: { id: input.matriculaId },
+  await prisma.matricula.updateMany({
+    where: { id: input.matriculaId, contaId: input.contaId },
     data: billingProvisionUpdate(
       finalStatus,
       result.subscriptionSync?.error ?? result.taxaSync?.error ?? null,

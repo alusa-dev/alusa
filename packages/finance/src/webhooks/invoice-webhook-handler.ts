@@ -10,10 +10,12 @@ import {
 } from '../mappers/invoice-status.mapper';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
+import { syncInvoiceFromProvider } from '../use-cases/sync-invoice-from-provider';
 
 export type InvoiceWebhookPayload = {
   event: string;
   id?: string;
+  dateCreated?: string | null;
   invoice?: {
     id: string;
     status?: string | null;
@@ -33,6 +35,12 @@ export type InvoiceWebhookPayload = {
       pisCofinsTaxStatus?: string | null;
       operationPis?: number | null;
       operationCofins?: number | null;
+      stateIbs?: number | null;
+      stateIbsValue?: number | null;
+      municipalIbs?: number | null;
+      municipalIbsValue?: number | null;
+      cbs?: number | null;
+      cbsValue?: number | null;
       [key: string]: unknown;
     } | null;
   };
@@ -83,6 +91,12 @@ function buildWebhookProviderUpdate(invoicePayload: NonNullable<InvoiceWebhookPa
     providerPisCofinsTaxStatus: invoicePayload.taxes?.pisCofinsTaxStatus ?? null,
     providerOperationPis: invoicePayload.taxes?.operationPis ?? null,
     providerOperationCofins: invoicePayload.taxes?.operationCofins ?? null,
+    providerStateIbs: invoicePayload.taxes?.stateIbs ?? null,
+    providerStateIbsValue: invoicePayload.taxes?.stateIbsValue ?? null,
+    providerMunicipalIbs: invoicePayload.taxes?.municipalIbs ?? null,
+    providerMunicipalIbsValue: invoicePayload.taxes?.municipalIbsValue ?? null,
+    providerCbs: invoicePayload.taxes?.cbs ?? null,
+    providerCbsValue: invoicePayload.taxes?.cbsValue ?? null,
     lastReconciledAt: new Date(),
   };
 }
@@ -122,6 +136,10 @@ export async function handleInvoiceWebhook(
   if (!invoicePayload?.id) {
     return { handled: false, reason: 'MISSING_INVOICE' };
   }
+  const parsedEventAt = payload.dateCreated ? new Date(payload.dateCreated) : null;
+  const eventAt = parsedEventAt && !Number.isNaN(parsedEventAt.getTime())
+    ? parsedEventAt
+    : new Date();
 
   let invoice = await prisma.invoice.findFirst({
     where: {
@@ -216,6 +234,8 @@ export async function handleInvoiceWebhook(
         operationStatus: nextStatus === 'ERROR' ? 'FAILED' : 'IDLE',
         operationLeaseExpiresAt: null,
         nextAttemptAt: null,
+        lastWebhookEventAt: eventAt,
+        lastWebhookEventId: payload.id ?? null,
         errorMessage:
           nextStatus === 'ERROR'
             ? invoicePayload.statusDescription ?? 'Erro na emissão fiscal'
@@ -241,6 +261,8 @@ export async function handleInvoiceWebhook(
         operationStatus: nextStatus === 'ERROR' ? 'FAILED' : 'IDLE',
         operationLeaseExpiresAt: null,
         nextAttemptAt: nextStatus === 'ERROR' ? undefined : null,
+        lastWebhookEventAt: eventAt,
+        lastWebhookEventId: payload.id ?? undefined,
         errorMessage:
           nextStatus === 'ERROR'
             ? invoicePayload.statusDescription ?? 'Erro na emissão fiscal'
@@ -263,7 +285,7 @@ export async function handleInvoiceWebhook(
 
     await recordInvoiceAuditEvent({
       contaId,
-      invoiceId: invoice.id,
+      invoiceId,
       action: 'finance.invoice.webhook_upserted',
       fromStatus: null,
       toStatus: nextStatus,
@@ -289,6 +311,23 @@ export async function handleInvoiceWebhook(
   const hasUnknownRawStatus = Boolean(invoicePayload.status && !payloadStatus);
   const providerUpdate = buildWebhookProviderUpdate(invoicePayload);
 
+  if (invoice.lastWebhookEventAt && eventAt < invoice.lastWebhookEventAt) {
+    await recordInvoiceAuditEvent({
+      contaId,
+      invoiceId: invoice.id,
+      action: 'webhook.invoice_out_of_order_ignored',
+      fromStatus: invoice.status,
+      toStatus: invoice.status,
+      metadata: {
+        webhookEventId: payload.id ?? null,
+        eventAt: eventAt.toISOString(),
+        lastWebhookEventAt: invoice.lastWebhookEventAt.toISOString(),
+      },
+      correlationId: payload.id,
+    });
+    return { handled: true, invoiceId: invoice.id, skipped: true, reason: 'OUT_OF_ORDER_EVENT' };
+  }
+
   if (hasUnknownRawStatus) {
     invoice = await prisma.invoice.update({
       where: { id: invoice.id },
@@ -296,6 +335,8 @@ export async function handleInvoiceWebhook(
         asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
         ...providerUpdate,
         fiscalDivergence: true,
+        lastWebhookEventAt: eventAt,
+        lastWebhookEventId: payload.id ?? undefined,
       },
     });
 
@@ -339,9 +380,10 @@ export async function handleInvoiceWebhook(
   }
 
   if (!isAllowedInvoiceStatusTransition(invoice.status, nextStatus)) {
+    const invoiceId = invoice.id;
     console.warn('[finance][handleInvoiceWebhook][state-regression-blocked]', {
       contaId,
-      invoiceId: invoice.id,
+      invoiceId,
       from: invoice.status,
       to: nextStatus,
       event: payload.event,
@@ -352,20 +394,36 @@ export async function handleInvoiceWebhook(
         asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
         ...providerUpdate,
         fiscalDivergence: true,
+        lastWebhookEventAt: eventAt,
+        lastWebhookEventId: payload.id ?? undefined,
       },
     });
     await recordInvoiceStatusDriftIssue({
       contaId,
-      invoiceId: invoice.id,
+      invoiceId,
       asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
       fromStatus: invoice.status,
       toStatus: nextStatus,
       event: payload.event,
       eventId: payload.id,
     });
+    // Webhooks are delivered at least once and without ordering guarantees.
+    // A conflicting transition is never trusted directly: the provider GET is
+    // the tie-breaker and keeps the local terminal state monotonic.
+    await syncInvoiceFromProvider({
+      contaId,
+      invoiceId: invoice.id,
+      correlationId: payload.id,
+    }).catch((error: unknown) => {
+      console.warn('[finance][handleInvoiceWebhook][conflict-reconciliation-failed]', {
+        contaId,
+        invoiceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     return {
       handled: true,
-      invoiceId: invoice.id,
+      invoiceId,
       skipped: true,
       reason: 'STATUS_REGRESSION_BLOCKED',
       previousStatus: invoice.status,
@@ -375,8 +433,13 @@ export async function handleInvoiceWebhook(
 
   const previousStatus = invoice.status;
 
-  invoice = await prisma.invoice.update({
-    where: { id: invoice.id },
+  const updated = await prisma.invoice.updateMany({
+    where: {
+      id: invoice.id,
+      contaId,
+      status: previousStatus,
+      lastWebhookEventAt: invoice.lastWebhookEventAt,
+    },
     data: {
       asaasInvoiceId: invoice.asaasInvoiceId ?? invoicePayload.id,
       status: nextStatus,
@@ -398,8 +461,28 @@ export async function handleInvoiceWebhook(
           : nextStatus === 'AUTHORIZED'
             ? null
             : undefined,
+      lastWebhookEventAt: eventAt,
+      lastWebhookEventId: payload.id ?? undefined,
     },
   });
+
+  if (updated.count === 0) {
+    await syncInvoiceFromProvider({
+      contaId,
+      invoiceId: invoice.id,
+      correlationId: payload.id,
+    }).catch(() => undefined);
+    return {
+      handled: true,
+      invoiceId: invoice.id,
+      skipped: true,
+      reason: 'CONCURRENT_EVENT_RECONCILED',
+      previousStatus,
+      nextStatus,
+    };
+  }
+
+  invoice = (await prisma.invoice.findFirst({ where: { id: invoice.id, contaId } }))!;
 
   if (previousStatus !== nextStatus) {
     await recordInvoiceAuditEvent({

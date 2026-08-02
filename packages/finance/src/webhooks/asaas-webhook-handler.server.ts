@@ -8,6 +8,7 @@ import { handleInstallmentWebhook } from './installment-webhook-handler';
 import { handleAccountWebhook } from './account-webhook-handler';
 import { handleInternalTransferWebhook } from './internal-transfer-webhook-handler';
 import { handleInvoiceWebhook } from './invoice-webhook-handler';
+import { confirmOutboundCreateByProviderEvent } from '../use-cases/outbound-financial-operation';
 import { auditLogService } from '../foundation/audit-log.service';
 import { computeNextRetryAt } from './webhook-backoff';
 import { withCorrelationId, generateCorrelationId } from '../foundation/correlation';
@@ -71,6 +72,7 @@ function buildNextAttemptsLog(prev: unknown, entry: AttemptLogEntry): AttemptLog
 type AsaasWebhookBody = {
   id?: string;
   event?: string;
+  dateCreated?: string;
   additionalInfo?: {
     scheduledDate?: string;
   };
@@ -260,6 +262,7 @@ async function processAsaasWebhookForRecord(params: {
       const result = await handleAccountWebhook(contaId, {
         event,
         payloadId: payload.id ?? null,
+        eventCreatedAt: payload.dateCreated ?? null,
         scheduledDate: payload.additionalInfo?.scheduledDate ?? null,
       });
 
@@ -325,6 +328,24 @@ async function processAsaasWebhookForRecord(params: {
 
       const ok = paymentResult.success && installmentResult.success;
       const error = paymentResult.error ?? installmentResult.error;
+      if (ok) {
+        await confirmOutboundCreateByProviderEvent({
+          contaId,
+          resource: 'PAYMENT',
+          remoteId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          eventName: event,
+        });
+        if (payload.payment.installment) {
+          await confirmOutboundCreateByProviderEvent({
+            contaId,
+            resource: 'INSTALLMENT_PLAN',
+            remoteId: payload.payment.installment,
+            externalReference: payload.payment.externalReference,
+            eventName: event,
+          });
+        }
+      }
       const occurredAt = [
         payload.payment.clientPaymentDate,
         payload.payment.paymentDate,
@@ -404,6 +425,16 @@ async function processAsaasWebhookForRecord(params: {
         },
       });
 
+      if (result.success) {
+        await confirmOutboundCreateByProviderEvent({
+          contaId,
+          resource: 'SUBSCRIPTION',
+          remoteId: subscriptionId,
+          externalReference: payload.subscription?.externalReference,
+          eventName: event,
+        });
+      }
+
       return {
         ok: result.success,
         httpStatus: result.success ? 200 : 500,
@@ -416,6 +447,7 @@ async function processAsaasWebhookForRecord(params: {
       const result = await handleInvoiceWebhook(contaId, {
         event,
         id: payload.id,
+        dateCreated: payload.dateCreated ?? null,
         invoice: payload.invoice,
       });
 

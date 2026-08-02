@@ -42,15 +42,18 @@ export async function POST() {
       return json(status, { error: result.reason, message: result.message });
     }
 
-    const verification = await getAccountVerificationStatus(user.contaId, { fresh: true });
-    if (verification.ready) {
+    const verification = result.generalStatus.toUpperCase() === 'APPROVED'
+      ? await getAccountVerificationStatus(user.contaId)
+      : null;
+    if (verification?.ready) {
       setAccountVerificationCache(user.contaId, { data: verification.data });
     }
 
     return json(200, {
       data: {
         generalStatus: result.generalStatus,
-        verification: verification.ready ? verification.data : null,
+        alreadyRequested: result.alreadyRequested ?? false,
+        verification: verification?.ready ? verification.data : null,
       },
     });
   } catch (error) {

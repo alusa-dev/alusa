@@ -53,6 +53,15 @@ type MatriculaDetalhes = {
     syncError?: string | null;
     syncedAt?: string | null;
   } | null;
+  billingAgreement?: {
+    id: string;
+    allocationId: string;
+    allocationValue: number;
+    desiredValue: number;
+    confirmedValue: number;
+    status: string;
+    reconciliationError?: string | null;
+  } | null;
   financialContext?: {
     mode: 'INDIVIDUAL' | 'FAMILY';
     sourceMatriculaId: string;
@@ -327,6 +336,8 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
             plano={matricula.plano}
             turma={matricula.turma}
             combo={matricula.combo}
+            billingAgreement={matricula.billingAgreement}
+            familyMode={matricula.financialContext?.mode === 'FAMILY'}
           />
 
           {/* Taxa de Matrícula */}

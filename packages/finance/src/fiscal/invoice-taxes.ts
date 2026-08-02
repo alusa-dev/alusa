@@ -28,13 +28,9 @@ export type BuildAsaasInvoiceTaxesInput = {
   useTaxSystemReformNT007?: boolean;
 };
 
-function optionalString(value: string | null | undefined): string | undefined {
+function optionalString(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
-  return trimmed ? trimmed : undefined;
-}
-
-function optionalNumber(value: number | null | undefined): number | undefined {
-  return value == null ? undefined : value;
+  return trimmed ? trimmed : null;
 }
 
 export function validateAsaasInvoiceTaxesInput(
@@ -68,7 +64,7 @@ export function buildAsaasInvoiceTaxes(
         operationPis: input.operationPis,
         operationCofins: input.operationCofins,
       });
-  const useTaxSystemReformNT007 = input.simplesNacional ? undefined : true;
+  const useTaxSystemReformNT007 = !input.simplesNacional;
 
   return {
     retainIss: input.retainIss,
@@ -82,9 +78,9 @@ export function buildAsaasInvoiceTaxes(
     taxSituationCode: optionalString(input.taxSituationCode),
     taxClassificationCode: optionalString(input.taxClassificationCode),
     operationIndicatorCode: optionalString(input.operationIndicatorCode),
-    pisCofinsTaxStatus: pisCofinsTaxStatus ?? undefined,
-    operationPis: optionalNumber(operationRates.operationPis),
-    operationCofins: optionalNumber(operationRates.operationCofins),
+    pisCofinsTaxStatus,
+    operationPis: operationRates.operationPis,
+    operationCofins: operationRates.operationCofins,
     useTaxSystemReformNT007,
   };
 }

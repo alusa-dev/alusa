@@ -101,7 +101,6 @@ describe('GET /api/admin/financial/health', () => {
     vi.mocked(prisma.asaasAccount.findFirst).mockResolvedValue({ webhookAuthTokenHash: 'hash' } as never);
 
     process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET = 'secret';
-    process.env.FEATURE_ASAAS = 'true';
   });
 
   afterEach(() => {
@@ -145,7 +144,6 @@ describe('GET /api/admin/financial/health', () => {
         expect.objectContaining({ name: 'base_url', ok: true }),
         expect.objectContaining({ name: 'credentials', ok: true }),
         expect.objectContaining({ name: 'webhook', ok: true }),
-        expect.objectContaining({ name: 'feature_flag', ok: true }),
       ]),
     );
   });

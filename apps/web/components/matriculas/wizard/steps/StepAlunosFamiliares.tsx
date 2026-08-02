@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -53,7 +52,15 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AlunoSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [studentsLoaded, setStudentsLoaded] = useState(false);
+  const [studentsError, setStudentsError] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
+
+  const createItemId = () =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const rowId = (aluno: WizardAlunoFamiliar) => aluno.itemId ?? aluno.id;
 
   // Carrega turmas/combos da conta
   useEffect(() => {
@@ -98,22 +105,25 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
     return () => controller.abort();
   }, [contaId]);
 
-  // Busca alunos para adicionar
+  // Busca somente alunos formalmente vinculados ao responsável selecionado.
   const buscarAlunos = useCallback(
     (term: string) => {
-      if (!contaId || !term.trim()) {
+      const responsavelId = state.responsavelFamiliar?.id;
+      if (!contaId || !responsavelId) {
         setSearchResults([]);
         return;
       }
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
       debounceRef.current = window.setTimeout(async () => {
         setSearching(true);
+        setStudentsError(null);
         try {
-          const qp = new URLSearchParams({ contaId, q: term.trim() });
-          const res = await fetch(`/api/alunos?${qp.toString()}`);
+          const res = await fetch(`/api/responsaveis/${encodeURIComponent(responsavelId)}/alunos`);
+          if (!res.ok) throw new Error('Não foi possível carregar os alunos vinculados.');
           const json = await res.json();
           const items: unknown[] = json?.items ?? [];
           const jaAdicionados = new Set(state.alunosFamiliares.map((a) => a.id));
+          const normalizedTerm = term.trim().toLocaleLowerCase('pt-BR');
           setSearchResults(
             items
               .map((raw) => {
@@ -124,19 +134,28 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                   dataNasc: typeof a.dataNasc === 'string' ? a.dataNasc : null,
                   cpf: typeof a.cpf === 'string' ? a.cpf : null,
                   foto: typeof a.foto === 'string' ? a.foto : null,
-                  ativo: a.status !== 'INATIVO',
+                  ativo: a.ativo === true,
                 };
               })
-              .filter((a) => !jaAdicionados.has(a.id)),
+              .filter(
+                (a) =>
+                  !jaAdicionados.has(a.id) &&
+                  (!normalizedTerm ||
+                    a.nome.toLocaleLowerCase('pt-BR').includes(normalizedTerm) ||
+                    (a.cpf ?? '').includes(normalizedTerm)),
+              ),
           );
-        } catch {
-          // silencioso
+          setStudentsLoaded(true);
+        } catch (error) {
+          setStudentsError(
+            error instanceof Error ? error.message : 'Não foi possível carregar os alunos vinculados.',
+          );
         } finally {
           setSearching(false);
         }
       }, 250);
     },
-    [contaId, state.alunosFamiliares],
+    [contaId, state.alunosFamiliares, state.responsavelFamiliar?.id],
   );
 
   useEffect(() => {
@@ -145,6 +164,7 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
 
   const adicionarAluno = (aluno: AlunoSearchResult) => {
     const novo: WizardAlunoFamiliar = {
+      itemId: createItemId(),
       id: aluno.id,
       nome: aluno.nome,
       dataNasc: aluno.dataNasc ?? undefined,
@@ -157,24 +177,42 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
     setSearchResults([]);
   };
 
-  const removerAluno = (id: string) => {
-    update({ alunosFamiliares: state.alunosFamiliares.filter((a) => a.id !== id) });
+  const adicionarOutroVinculo = (aluno: WizardAlunoFamiliar) => {
+    update({
+      alunosFamiliares: [
+        ...state.alunosFamiliares,
+        {
+          ...aluno,
+          itemId: createItemId(),
+          turmaId: undefined,
+          turmaLabel: undefined,
+          comboId: undefined,
+          comboLabel: undefined,
+          comboValor: undefined,
+          comboPeriodicidade: undefined,
+        },
+      ],
+    });
   };
 
-  const atualizarTurma = (alunoId: string, turmaId: string) => {
+  const removerAluno = (itemId: string) => {
+    update({ alunosFamiliares: state.alunosFamiliares.filter((a) => rowId(a) !== itemId) });
+  };
+
+  const atualizarTurma = (itemId: string, turmaId: string) => {
     const turma = turmas.find((t) => t.id === turmaId);
     update({
       alunosFamiliares: state.alunosFamiliares.map((a) =>
-        a.id === alunoId ? { ...a, turmaId, turmaLabel: turma?.nome } : a,
+        rowId(a) === itemId ? { ...a, turmaId, turmaLabel: turma?.nome } : a,
       ),
     });
   };
 
-  const atualizarCombo = (alunoId: string, comboId: string) => {
+  const atualizarCombo = (itemId: string, comboId: string) => {
     const combo = combos.find((c) => c.id === comboId);
     update({
       alunosFamiliares: state.alunosFamiliares.map((a) =>
-        a.id === alunoId
+        rowId(a) === itemId
           ? {
               ...a,
               comboId,
@@ -240,9 +278,11 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
         {/* Lista de alunos adicionados */}
         {state.alunosFamiliares.length > 0 && (
           <ul className="space-y-2">
-            {state.alunosFamiliares.map((aluno) => (
+            {state.alunosFamiliares.map((aluno) => {
+              const enrollmentItemId = rowId(aluno);
+              return (
               <li
-                key={aluno.id}
+                key={enrollmentItemId}
                 className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50/50 p-3 sm:flex-row sm:items-center"
               >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -261,7 +301,7 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                   {state.modoTurmas === 'TURMAS' ? (
                     <Select
                       value={aluno.turmaId ?? ''}
-                      onValueChange={(v) => atualizarTurma(aluno.id, v)}
+                      onValueChange={(v) => atualizarTurma(enrollmentItemId, v)}
                       disabled={loadingTurmas}
                     >
                       <SelectTrigger className="h-8 text-xs flex-1">
@@ -269,7 +309,17 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                       </SelectTrigger>
                       <SelectContent>
                         {turmas.map((t) => (
-                          <SelectItem key={t.id} value={t.id} className="text-xs">
+                          <SelectItem
+                            key={t.id}
+                            value={t.id}
+                            className="text-xs"
+                            disabled={state.alunosFamiliares.some(
+                              (other) =>
+                                rowId(other) !== enrollmentItemId &&
+                                other.id === aluno.id &&
+                                other.turmaId === t.id,
+                            )}
+                          >
                             {t.nome}
                           </SelectItem>
                         ))}
@@ -278,7 +328,7 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                   ) : (
                     <Select
                       value={aluno.comboId ?? ''}
-                      onValueChange={(v) => atualizarCombo(aluno.id, v)}
+                      onValueChange={(v) => atualizarCombo(enrollmentItemId, v)}
                       disabled={loadingTurmas}
                     >
                       <SelectTrigger className="h-8 text-xs flex-1">
@@ -286,7 +336,17 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                       </SelectTrigger>
                       <SelectContent>
                         {combos.map((c) => (
-                          <SelectItem key={c.id} value={c.id} className="text-xs">
+                          <SelectItem
+                            key={c.id}
+                            value={c.id}
+                            className="text-xs"
+                            disabled={state.alunosFamiliares.some(
+                              (other) =>
+                                rowId(other) !== enrollmentItemId &&
+                                other.id === aluno.id &&
+                                other.comboId === c.id,
+                            )}
+                          >
                             {c.nome}
                           </SelectItem>
                         ))}
@@ -296,7 +356,16 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
 
                   <button
                     type="button"
-                    onClick={() => removerAluno(aluno.id)}
+                    onClick={() => adicionarOutroVinculo(aluno)}
+                    className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-violet-700 hover:bg-violet-50"
+                    aria-label={`Adicionar outra matrícula para ${aluno.nome}`}
+                  >
+                    {state.modoTurmas === 'TURMAS' ? 'Outra turma' : 'Outro combo'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => removerAluno(enrollmentItemId)}
                     className="shrink-0 rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500"
                     aria-label="Remover aluno"
                   >
@@ -304,12 +373,12 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
                   </button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
 
-        {/* Aviso mínimo de 2 alunos */}
-        {state.alunosFamiliares.length < 2 && (
+        {state.alunosFamiliares.length === 0 && (
           <InfoCallout
             data-testid="alunos-aviso-minimo"
             variant="warning"
@@ -318,9 +387,7 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
           >
             <span className="flex items-center gap-2">
               <Users className="h-3.5 w-3.5 shrink-0 text-amber-700" />
-              {state.alunosFamiliares.length === 0
-                ? 'Adicione pelo menos 2 alunos para a matrícula familiar.'
-                : 'Adicione mais 1 aluno para continuar.'}
+              Adicione ao menos uma matrícula ao agrupamento financeiro.
             </span>
           </InfoCallout>
         )}
@@ -340,6 +407,15 @@ export function StepAlunosFamiliares({ ctx, contaId }: StepAlunosFamiliaresProps
           </div>
 
           {searching && <p className="text-xs text-slate-500">Buscando...</p>}
+          {studentsError && (
+            <p className="text-xs text-red-700" role="alert">{studentsError}</p>
+          )}
+          {!searching && !studentsError && studentsLoaded && searchResults.length === 0 && (
+            <InfoCallout variant="info" size="sm" showIcon={false}>
+              Nenhum outro aluno vinculado foi encontrado. Vincule o aluno no cadastro do
+              responsável antes de continuar.
+            </InfoCallout>
+          )}
 
           {!searching && searchResults.length > 0 && (
             <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white shadow-sm">

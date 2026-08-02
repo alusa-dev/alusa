@@ -15,19 +15,23 @@ vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
 }));
 
+vi.mock('@/lib/finance/financial-account-gate', () => ({
+  guardFinancialAccountOr412: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 vi.mock('@alusa/finance', async () => {
   const actual = await vi.importActual<typeof import('@alusa/finance')>('@alusa/finance');
   return {
     ...actual,
     getKycSummary: vi.fn(),
-    createInvoice: vi.fn(),
+    scheduleChargeInvoice: vi.fn(),
     listInvoices: vi.fn(),
     cancelInvoice: vi.fn(),
   };
 });
 
 const { getServerSession } = await import('next-auth');
-const { createInvoice, listInvoices, cancelInvoice, getKycSummary } = await import('@alusa/finance');
+const { scheduleChargeInvoice, listInvoices, cancelInvoice, getKycSummary } = await import('@alusa/finance');
 
 function mockSession(user: { id?: string; contaId?: string; role?: string } | null) {
   vi.mocked(getServerSession).mockResolvedValueOnce(user ? ({ user } as never) : (null as never));
@@ -87,7 +91,7 @@ describe('API Finance Invoices', () => {
 
     vi.mocked(listInvoices).mockResolvedValueOnce({ total: 12, items: [] } as never);
 
-    const res = await GET(makeGetReq('http://test/api/finance/invoices?page=2&pageSize=5&status=REQUESTED'));
+    const res = await GET(makeGetReq('http://test/api/finance/invoices?page=2&pageSize=5&status=SCHEDULED'));
 
     expect(res.status).toBe(200);
     expect(listInvoices).toHaveBeenCalledWith({
@@ -107,13 +111,13 @@ describe('API Finance Invoices', () => {
     const json = await res.json();
     expect(json).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
 
-    expect(createInvoice).not.toHaveBeenCalled();
+    expect(scheduleChargeInvoice).not.toHaveBeenCalled();
   });
 
   it('POST: 403 quando feature flag desabilitada', async () => {
     mockSession({ id: 'u1', contaId: 'c1', role: 'FINANCEIRO' });
 
-    vi.mocked(createInvoice).mockResolvedValueOnce({
+    vi.mocked(scheduleChargeInvoice).mockResolvedValueOnce({
       success: false,
       error: 'FEATURE_DISABLED',
     } as never);
@@ -123,11 +127,8 @@ describe('API Finance Invoices', () => {
         chargeId: 'ch_1',
         serviceDescription: 'Desc',
         observations: 'Obs',
-        value: '150.00',
-        deductions: '0.00',
+        deductions: 0,
         effectiveDate: '2026-01-04',
-        municipalServiceName: 'Serviço',
-        taxes: { retainIss: false, cofins: 0, csll: 0, inss: 0, ir: 0, pis: 0, iss: 0 },
       }),
     );
 
@@ -137,7 +138,7 @@ describe('API Finance Invoices', () => {
   it('POST: 409 quando KYC não aprovado', async () => {
     mockSession({ id: 'u1', contaId: 'c1', role: 'FINANCEIRO' });
 
-    vi.mocked(createInvoice).mockResolvedValueOnce({
+    vi.mocked(scheduleChargeInvoice).mockResolvedValueOnce({
       success: false,
       error: 'KYC_NAO_APROVADO',
     } as never);
@@ -147,11 +148,8 @@ describe('API Finance Invoices', () => {
         chargeId: 'ch_1',
         serviceDescription: 'Desc',
         observations: 'Obs',
-        value: '150.00',
-        deductions: '0.00',
+        deductions: 0,
         effectiveDate: '2026-01-04',
-        municipalServiceName: 'Serviço',
-        taxes: { retainIss: false, cofins: 0, csll: 0, inss: 0, ir: 0, pis: 0, iss: 0 },
       }),
     );
 
@@ -161,7 +159,7 @@ describe('API Finance Invoices', () => {
   it('POST: 200 no sucesso', async () => {
     mockSession({ id: 'u1', contaId: 'c1', role: 'FINANCEIRO' });
 
-    vi.mocked(createInvoice).mockResolvedValueOnce({
+    vi.mocked(scheduleChargeInvoice).mockResolvedValueOnce({
       success: true,
       data: {
         invoiceId: 'ch_1',
@@ -182,11 +180,8 @@ describe('API Finance Invoices', () => {
         chargeId: 'ch_1',
         serviceDescription: 'Desc',
         observations: 'Obs',
-        value: '150.00',
-        deductions: '0.00',
+        deductions: 0,
         effectiveDate: '2026-01-04',
-        municipalServiceName: 'Serviço',
-        taxes: { retainIss: false, cofins: 0, csll: 0, inss: 0, ir: 0, pis: 0, iss: 0 },
       }),
     );
 

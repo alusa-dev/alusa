@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { prisma } from '@/lib/prisma';
 import { resolveResponsavelRouteId } from '../../_lib/resolve-responsavel-route-id';
+import { listStudentsLinkedToResponsible } from '@/src/server/responsaveis/linked-students.service';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,21 +27,7 @@ export async function GET(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
     }
 
-    const vinculos = await prisma.alunoResponsavel.findMany({
-      where: { responsavelId },
-      select: {
-        aluno: {
-          select: {
-            id: true,
-            nome: true,
-            dataNasc: true,
-            cpf: true,
-            foto: true,
-            status: true,
-          },
-        },
-      },
-    });
+    const vinculos = await listStudentsLinkedToResponsible(prisma, { contaId, responsavelId });
 
     const items = vinculos.map(({ aluno }) => ({
       id: aluno.id,

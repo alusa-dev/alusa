@@ -182,7 +182,10 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
   }, [statusValue]);
 
   const excludeStatus = useMemo(
-    () => (initialTurmaId ? (['CANCELADA'] as MatriculaStatus[]) : undefined),
+    () =>
+      initialTurmaId
+        ? (['CANCELADA', 'ENCERRADA', 'RECUSADA'] as MatriculaStatus[])
+        : undefined,
     [initialTurmaId],
   );
 

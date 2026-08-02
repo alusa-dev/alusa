@@ -120,6 +120,7 @@ async function getWebhookProcessor() {
 type WebhookPayload = {
   id?: string;
   event?: string;
+  dateCreated?: string;
   additionalInfo?: { scheduledDate?: string };
   payment?: {
     id: string;
@@ -192,6 +193,7 @@ async function processWebhookReplay(params: {
       const result = await handlers.handleAccountWebhook(contaId, {
         event,
         payloadId: payload.id ?? null,
+        eventCreatedAt: payload.dateCreated ?? null,
         scheduledDate: payload.additionalInfo?.scheduledDate ?? null,
       });
       return { ok: result.success, error: result.error, durationMs: Date.now() - startedAt };

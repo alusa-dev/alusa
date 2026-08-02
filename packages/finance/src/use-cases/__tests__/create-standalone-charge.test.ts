@@ -14,6 +14,7 @@ vi.mock('@alusa/database', () => {
     matricula: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     customer: {
       findUnique: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@alusa/database', () => {
       findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       upsert: vi.fn(),
     },
     cobranca: {
@@ -57,6 +59,29 @@ vi.mock('../ensure-customer', () => ({
 
 vi.mock('../create-payment', () => ({
   createAsaasPayment: vi.fn(),
+}));
+
+vi.mock('../asaas-ops', () => ({
+  listPayments: vi.fn(async () => ({ data: [] })),
+  listSubscriptions: vi.fn(async () => ({ data: [] })),
+  getPayment: vi.fn(async (id: string) => {
+    const { createAsaasPayment } = await import('../create-payment');
+    const call = vi.mocked(createAsaasPayment).mock.calls.at(-1)?.[0];
+    return { id, externalReference: call?.externalReference, status: 'PENDING' };
+  }),
+  getSubscription: vi.fn(async (id: string) => {
+    const { createSubscription } = await import('@alusa/asaas');
+    const call = vi.mocked(createSubscription).mock.calls.at(-1)?.[0];
+    return { id, externalReference: call?.data.externalReference, status: 'ACTIVE', deleted: false };
+  }),
+}));
+
+vi.mock('../outbound-financial-operation', () => ({
+  reserveOutboundFinancialOperation: vi.fn(async () => ({ job: { id: 'job-1' }, payload: { remoteId: null } })),
+  markOutboundRemoteRequested: vi.fn(async () => true),
+  markOutboundRemoteConfirmed: vi.fn(),
+  markOutboundAwaitingWebhook: vi.fn(),
+  markOutboundResultUnknown: vi.fn(),
 }));
 
 vi.mock('../../services/sync-customer-notifications-at-charge', () => ({
@@ -495,7 +520,17 @@ describe('createStandaloneCharge', () => {
 
       vi.mocked(prisma.$queryRaw)
         .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'sub_manual_1', status: 'REQUESTED', asaasSubscriptionId: null,
+          externalReference: 'alusa:standalone-subscription:sub_manual_1', description: 'Mensalidade manual',
+          billingType: 'CREDIT_CARD', customerId: 'cust_local_4', familyGroupId: null,
+        }] as never)
         .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'sub_manual_1', status: 'REQUESTED', asaasSubscriptionId: null,
+          externalReference: 'alusa:standalone-subscription:sub_manual_1', description: 'Mensalidade manual',
+          billingType: 'CREDIT_CARD', customerId: 'cust_local_4', familyGroupId: null,
+        }] as never)
         .mockResolvedValueOnce([
           {
             id: 'sub_manual_1',

@@ -1,5 +1,7 @@
 import {
   BillingMode,
+  ChargeStatus,
+  EnrollmentCreationOperationStatus,
   FormaPagamento,
   MatriculaBillingProvisionStatus,
   Prisma,
@@ -9,8 +11,9 @@ import {
   StatusTaxaMatricula,
   TipoCobranca,
 } from '@prisma/client';
-import type { Cobranca } from '@prisma/client';
+import type { Cobranca, PrismaClient } from '@prisma/client';
 import { prisma } from '@/src/prisma';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   resolvePayer,
   validarCapacidade,
@@ -19,8 +22,19 @@ import {
   validateTransition,
   canEditStructural,
 } from '@alusa/domain';
-import { buildSeatOccupancyWhereClause } from '@alusa/lib';
-import { reconcileAcademicChargesWithAsaas } from '@alusa/finance';
+import {
+  buildSeatOccupancyOverlapWhereClause,
+  buildSeatOccupancyWhereClause,
+} from '@alusa/lib';
+import {
+  materializeBillingAgreement,
+  mapAsaasPaymentStatusToCharge,
+  mapAsaasPaymentStatusToCobranca,
+  reconcileAcademicChargesWithAsaas,
+  type AsaasBillingType,
+  type Cycle,
+  type StagedEnrollmentFinancialResources,
+} from '@alusa/finance';
 import { resolveFirstDueDate } from '@/src/server/matriculas/recurring-billing';
 import {
   resolveInitialBillingProvisionStatus,
@@ -40,6 +54,7 @@ import {
   previewInitialEnrollmentBilling,
   type CanonicalEnrollmentBillingStrategy,
 } from './initial-enrollment-billing-preview.service';
+import { createPendingEnrollmentContract } from '@/src/server/contracts/create-pending-enrollment-contract.service';
 
 export { calcularPrecoMatricula };
 export type { CalcularPrecoInput, CalcularPrecoOutput, DescontoInput };
@@ -81,9 +96,7 @@ async function findExistingMatriculaByUiRequestId(input: {
     where: { contaId: input.contaId, uiRequestId: input.uiRequestId },
     include: {
       cobrancas: {
-        where: { tipo: TipoCobranca.TAXA_MATRICULA },
         orderBy: { createdAt: 'asc' },
-        take: 1,
       },
       descontos: { include: { desconto: true } },
       plano: { select: { valor: true } },
@@ -116,12 +129,19 @@ async function buildCriarMatriculaResultFromExisting(
   return {
     matricula,
     cobrancas: {
-      taxa: matricula.cobrancas[0] ?? null,
-      mensalidade: null as Cobranca | null,
+      taxa:
+        matricula.cobrancas.find(
+          (cobranca) => cobranca.tipo === TipoCobranca.TAXA_MATRICULA,
+        ) ?? null,
+      mensalidade:
+        matricula.cobrancas.find(
+          (cobranca) => cobranca.tipo === TipoCobranca.MENSALIDADE,
+        ) ?? null,
     },
     preco,
     responsavelFinanceiro: null,
     primeiroVencimento,
+    contratoId: matricula.contratoAtualId,
     idempotent: true as const,
   };
 }
@@ -135,19 +155,32 @@ type MatriculaPersistence = {
 async function assertNoDuplicateEnrollment(
   db: MatriculaPersistence,
   params: {
+    contaId: string;
     alunoId: string;
     turmaId?: string | null;
+    turmaIds?: string[];
     comboId?: string | null;
     excludeMatriculaId?: string;
-    referenceDate?: Date;
+    dataInicio: Date;
+    dataFimContrato: Date;
   },
 ) {
-  const occupancyWhere = buildSeatOccupancyWhereClause(params.referenceDate);
-  if (params.turmaId) {
+  const occupancyWhere = buildSeatOccupancyOverlapWhereClause(
+    params.dataInicio,
+    params.dataFimContrato,
+  );
+  const targetTurmaIds = Array.from(
+    new Set([params.turmaId, ...(params.turmaIds ?? [])].filter((id): id is string => Boolean(id))),
+  );
+  if (targetTurmaIds.length > 0) {
     const existingByTurma = await db.matricula.findFirst({
       where: {
+        contaId: params.contaId,
         alunoId: params.alunoId,
-        turmaId: params.turmaId,
+        OR: [
+          { turmaId: { in: targetTurmaIds } },
+          { matriculaTurmas: { some: { turmaId: { in: targetTurmaIds } } } },
+        ],
         ...occupancyWhere,
         ...(params.excludeMatriculaId ? { NOT: { id: params.excludeMatriculaId } } : {}),
       },
@@ -165,6 +198,7 @@ async function assertNoDuplicateEnrollment(
   if (params.comboId) {
     const existingByCombo = await db.matricula.findFirst({
       where: {
+        contaId: params.contaId,
         alunoId: params.alunoId,
         comboId: params.comboId,
         ...occupancyWhere,
@@ -179,6 +213,102 @@ async function assertNoDuplicateEnrollment(
         'Este aluno já possui uma matrícula ativa neste combo.',
       );
     }
+  }
+}
+
+type EnrollmentTargetTurma = {
+  id: string;
+  nome: string;
+  capacidade: number;
+  diasSemana: string[];
+  horaInicio: string;
+  horaFim: string;
+};
+
+async function assertTargetTurmasAvailable(
+  db: PrismaClient | Prisma.TransactionClient,
+  params: {
+    contaId: string;
+    alunoId: string;
+    targetTurmas: EnrollmentTargetTurma[];
+    dataInicio: Date;
+    dataFimContrato: Date;
+    excludeMatriculaId?: string;
+  },
+) {
+  const overlap = buildSeatOccupancyOverlapWhereClause(
+    params.dataInicio,
+    params.dataFimContrato,
+  );
+
+  for (const targetTurma of params.targetTurmas) {
+    const ocupadas = await db.matricula.count({
+      where: {
+        contaId: params.contaId,
+        OR: [
+          { turmaId: targetTurma.id },
+          { matriculaTurmas: { some: { turmaId: targetTurma.id } } },
+        ],
+        ...overlap,
+        ...(params.excludeMatriculaId ? { NOT: { id: params.excludeMatriculaId } } : {}),
+      },
+    });
+    const capacity = validarCapacidade([
+      {
+        id: targetTurma.id,
+        nome: targetTurma.nome,
+        capacidade: targetTurma.capacidade,
+        matriculasOcupantes: ocupadas,
+      },
+    ]);
+    if (!capacity.success) {
+      throw new MatriculaConflictError(
+        'TURMA_SEM_VAGAS',
+        `Turma "${targetTurma.nome}" não possui vagas disponíveis.`,
+      );
+    }
+  }
+
+  const existingEnrollments = await db.matricula.findMany({
+    where: {
+      contaId: params.contaId,
+      alunoId: params.alunoId,
+      ...overlap,
+      ...(params.excludeMatriculaId ? { NOT: { id: params.excludeMatriculaId } } : {}),
+    },
+    include: {
+      turma: {
+        select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+      },
+      matriculaTurmas: {
+        include: {
+          turma: {
+            select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+          },
+        },
+      },
+    },
+  });
+  const existingTurmas = Array.from(
+    new Map(
+      existingEnrollments
+        .flatMap((enrollment) => [
+          enrollment.turma,
+          ...enrollment.matriculaTurmas.map((item) => item.turma),
+        ])
+        .filter((item): item is NonNullable<typeof item> => item !== null)
+        .map((item) => [item.id, item]),
+    ).values(),
+  );
+  const schedule = validarConflitosHorario(
+    params.targetTurmas,
+    [...existingTurmas, ...params.targetTurmas],
+  );
+  if (!schedule.success) {
+    throw new MatriculaConflictError(
+      'CONFLITO_HORARIO',
+      `Conflito de horário entre "${schedule.turma1}" e "${schedule.turma2}".`,
+    );
   }
 }
 
@@ -222,7 +352,6 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
         ],
       },
       { status: { notIn: [StatusMatricula.ENCERRADA, StatusMatricula.CANCELADA, StatusMatricula.RECUSADA] } },
-      { dataInicio: { lte: referenceDate } },
       { dataFimContrato: { gte: referenceDate } },
     );
   }
@@ -355,10 +484,13 @@ export type CriarMatriculaInput = {
   gerarCobrancaTaxa: boolean;
   criarCobranca: boolean;
   billingMode?: BillingMode | null;
+  matriculaFamiliarId?: string | null;
+  familyOrderIndex?: number | null;
   valorMensalidadeOverride?: number | null;
   formaPagamento?: FormaPagamento;
   formaPagamentoTaxa?: FormaPagamento;
   createdById: string;
+  modeloId: string;
   /** Juros mensal em percentual (ex: 1.0 = 1%) */
   jurosMensal?: number | null;
   /** Multa por atraso em percentual (ex: 2.0 = 2%) */
@@ -380,6 +512,14 @@ export type CriarMatriculaInput = {
     previewExpiresAt: Date;
     billingStrategy: CanonicalEnrollmentBillingStrategy;
   } | null;
+  /** Artefatos já confirmados no Asaas pela saga síncrona de criação. */
+  preprovisionedBilling?: (StagedEnrollmentFinancialResources & {
+    billingType: AsaasBillingType;
+    enrollmentFeeBillingType: AsaasBillingType | null;
+    cycle: Cycle;
+    nextDueDate: string;
+    endDate: string;
+  }) | null;
 };
 
 type DescontoMatriculaAplicavel = {
@@ -485,7 +625,10 @@ function resolveBillingStrategy(input: CriarMatriculaInput): CanonicalEnrollment
 }
 
 function parseSubscriptionBillingTarget(strategy: CanonicalEnrollmentBillingStrategy) {
-  if (strategy.kind !== 'JOIN_EXISTING_CURRENT_CYCLE') return null;
+  if (
+    strategy.kind !== 'JOIN_EXISTING_CURRENT_CYCLE' &&
+    strategy.kind !== 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+  ) return null;
   const prefix = 'subscription:';
   return strategy.financialGroupId.startsWith(prefix)
     ? strategy.financialGroupId.slice(prefix.length)
@@ -640,10 +783,12 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   }
 
   await assertNoDuplicateEnrollment(prisma, {
+    contaId: input.contaId,
     alunoId: input.alunoId,
     turmaId: input.turmaId,
     comboId: input.comboId,
-    referenceDate: input.dataInicio,
+    dataInicio: input.dataInicio,
+    dataFimContrato: input.dataFimContrato,
   });
 
   // Validar datas de contrato
@@ -689,7 +834,21 @@ export async function criarMatricula(input: CriarMatriculaInput) {
             valor: true,
             periodicidade: true,
             vagasLimite: true,
-            turmas: { select: { turmaId: true } },
+            turmas: {
+              select: {
+                turmaId: true,
+                turma: {
+                  select: {
+                    id: true,
+                    nome: true,
+                    capacidade: true,
+                    diasSemana: true,
+                    horaInicio: true,
+                    horaFim: true,
+                  },
+                },
+              },
+            },
           },
         })
       : Promise.resolve(null),
@@ -708,23 +867,32 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       : Promise.resolve(null),
   ]);
 
-  // Validar capacidade de vagas
-  if (turma) {
+  const targetTurmas = turma ? [turma] : combo?.turmas.map((item) => item.turma) ?? [];
+
+  // Validar capacidade de cada turma, inclusive as turmas internas de combos.
+  for (const targetTurma of targetTurmas) {
     const ocupadas = await prisma.matricula.count({
-      where: { turmaId: turma.id, ...buildSeatOccupancyWhereClause(input.dataInicio) },
+      where: {
+        contaId: input.contaId,
+        OR: [
+          { turmaId: targetTurma.id },
+          { matriculaTurmas: { some: { turmaId: targetTurma.id } } },
+        ],
+        ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
+      },
     });
     const capResult = validarCapacidade([
       {
-        id: turma.id,
-        nome: turma.nome,
-        capacidade: turma.capacidade,
+        id: targetTurma.id,
+        nome: targetTurma.nome,
+        capacidade: targetTurma.capacidade,
         matriculasOcupantes: ocupadas,
       },
     ]);
     if (!capResult.success) {
       throw new MatriculaConflictError(
         'TURMA_SEM_VAGAS',
-        `Turma "${turma.nome}" não possui vagas disponíveis.`,
+        `Turma "${targetTurma.nome}" não possui vagas disponíveis.`,
       );
     }
   }
@@ -732,7 +900,11 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   if (combo) {
     if ((combo as { vagasLimite?: number | null }).vagasLimite != null) {
       const comboOcupadas = await prisma.matricula.count({
-        where: { comboId: combo.id, ...buildSeatOccupancyWhereClause(input.dataInicio) },
+        where: {
+          contaId: input.contaId,
+          comboId: combo.id,
+          ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
+        },
       });
       const capResult = validarCapacidade([], {
         vagasLimite: (combo as { vagasLimite?: number | null }).vagasLimite,
@@ -744,21 +916,43 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     }
   }
 
-  // Validar conflitos de horário
-  if (turma) {
+  // Validar conflitos de horário para turma individual e todas as turmas do combo.
+  if (targetTurmas.length > 0) {
     const matriculasExistentes = await prisma.matricula.findMany({
-      where: { alunoId: input.alunoId, ...buildSeatOccupancyWhereClause(input.dataInicio) },
+      where: {
+        contaId: input.contaId,
+        alunoId: input.alunoId,
+        ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
+      },
       include: {
         turma: {
           select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
         },
+        matriculaTurmas: {
+          include: {
+            turma: {
+              select: { id: true, nome: true, diasSemana: true, horaInicio: true, horaFim: true },
+            },
+          },
+        },
       },
     });
-    const turmasExistentes = matriculasExistentes
-      .map((m) => m.turma)
-      .filter((t): t is NonNullable<typeof t> => t !== null);
+    const turmasExistentes = Array.from(
+      new Map(
+        matriculasExistentes
+          .flatMap((matriculaExistente) => [
+            matriculaExistente.turma,
+            ...matriculaExistente.matriculaTurmas.map((item) => item.turma),
+          ])
+          .filter((item): item is NonNullable<typeof item> => item !== null)
+          .map((item) => [item.id, item]),
+      ).values(),
+    );
 
-    const conflitosResult = validarConflitosHorario([turma], turmasExistentes);
+    const conflitosResult = validarConflitosHorario(
+      targetTurmas,
+      [...turmasExistentes, ...targetTurmas],
+    );
     if (!conflitosResult.success) {
       throw new MatriculaConflictError(
         'CONFLITO_HORARIO',
@@ -781,15 +975,46 @@ export async function criarMatricula(input: CriarMatriculaInput) {
 
   let result;
   try {
-    result = await prisma.$transaction(async (tx) => {
+    result = await runWithTenant(input.contaId, async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${input.alunoId}))
+    `;
     await assertInitialEnrollmentBillingPreview(tx, input);
 
     await assertNoDuplicateEnrollment(tx, {
+      contaId: input.contaId,
       alunoId: input.alunoId,
       turmaId: input.turmaId,
       comboId: input.comboId,
-      referenceDate: input.dataInicio,
+      turmaIds: combo?.turmas.map((item) => item.turmaId) ?? [],
+      dataInicio: input.dataInicio,
+      dataFimContrato: input.dataFimContrato,
     });
+
+    await assertTargetTurmasAvailable(tx, {
+      contaId: input.contaId,
+      alunoId: input.alunoId,
+      targetTurmas,
+      dataInicio: input.dataInicio,
+      dataFimContrato: input.dataFimContrato,
+    });
+
+    if (combo?.vagasLimite != null) {
+      const comboOcupadas = await tx.matricula.count({
+        where: {
+          contaId: input.contaId,
+          comboId: combo.id,
+          ...buildSeatOccupancyOverlapWhereClause(input.dataInicio, input.dataFimContrato),
+        },
+      });
+      const comboCapacity = validarCapacidade([], {
+        vagasLimite: combo.vagasLimite,
+        matriculasOcupantes: comboOcupadas,
+      });
+      if (!comboCapacity.success) {
+        throw new MatriculaConflictError('COMBO_SEM_VAGAS', 'Combo não possui vagas disponíveis.');
+      }
+    }
 
     // Determinar status inicial baseado na política da conta
     const conta = await tx.conta.findUnique({
@@ -798,8 +1023,15 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     });
     const policy = conta?.matriculaActivationPolicy ?? 'IMMEDIATE';
 
+    const requiresDeferredBillingConfirmation =
+      input.criarCobranca && !input.preprovisionedBilling;
+
     let statusInicial: StatusMatricula;
-    if (policy === 'REQUIRES_PAYMENT' && !input.taxaIsenta && input.taxaMatricula > 0) {
+    if (requiresDeferredBillingConfirmation) {
+      // Estratégias que alteram uma assinatura existente só se tornam matrícula
+      // efetiva depois que o comando financeiro síncrono for confirmado.
+      statusInicial = StatusMatricula.AGUARDANDO_CONFIRMACAO;
+    } else if (policy === 'REQUIRES_PAYMENT' && !input.taxaIsenta && input.taxaMatricula > 0) {
       statusInicial = StatusMatricula.PENDENTE_TAXA;
     } else {
       statusInicial = StatusMatricula.ATIVA;
@@ -838,16 +1070,46 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     const subscriptionTargetId = parseSubscriptionBillingTarget(billingStrategy);
     const resolvedBillingMode =
       billingStrategy.kind === 'SEPARATE' ? (input.billingMode ?? BillingMode.INDIVIDUAL) : BillingMode.SHARED_PLAN;
-    const billingProvisionStatus = subscriptionTargetId && input.criarCobranca && preco.planoLiquido > 0
-      ? MatriculaBillingProvisionStatus.PENDENTE
-      : resolveInitialBillingProvisionStatus({
-      billingMode: resolvedBillingMode,
-      criarCobranca: input.criarCobranca,
-      gerarCobrancaTaxa: input.gerarCobrancaTaxa,
-      taxaIsenta: input.taxaIsenta,
-      taxaMatricula: input.taxaMatricula,
-      planoLiquido: preco.planoLiquido,
-    });
+    const billingProvisionStatus = input.preprovisionedBilling
+      ? MatriculaBillingProvisionStatus.PROVISIONADO
+      : subscriptionTargetId && input.criarCobranca && preco.planoLiquido > 0
+        ? MatriculaBillingProvisionStatus.PENDENTE
+        : resolveInitialBillingProvisionStatus({
+            billingMode: resolvedBillingMode,
+            criarCobranca: input.criarCobranca,
+            gerarCobrancaTaxa: input.gerarCobrancaTaxa,
+            taxaIsenta: input.taxaIsenta,
+            taxaMatricula: input.taxaMatricula,
+            planoLiquido: preco.planoLiquido,
+          });
+
+    const stagedBilling = input.preprovisionedBilling;
+    if (stagedBilling) {
+      const [stagedOperation, stagedCustomer] = await Promise.all([
+        tx.enrollmentCreationOperation.findFirst({
+          where: {
+            id: stagedBilling.operationId,
+            contaId: input.contaId,
+            status: EnrollmentCreationOperationStatus.REMOTE_PROVISIONED,
+            asaasSubscriptionId: stagedBilling.subscription.asaasSubscriptionId,
+            asaasFirstPaymentId: stagedBilling.subscription.firstPayment.asaasPaymentId,
+            asaasEnrollmentFeePaymentId:
+              stagedBilling.enrollmentFee?.asaasPaymentId ?? null,
+          },
+          select: { id: true },
+        }),
+        tx.customer.findFirst({
+          where: {
+            id: stagedBilling.customer.localCustomerId,
+            contaId: input.contaId,
+          },
+          select: { id: true },
+        }),
+      ]);
+      if (!stagedOperation || !stagedCustomer) {
+        throw new Error('PREPROVISIONED_BILLING_TENANT_MISMATCH');
+      }
+    }
 
     const matricula = await tx.matricula.create({
       data: {
@@ -858,6 +1120,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         planoId: input.planoId ?? undefined,
         comboId: input.comboId ?? undefined,
         billingMode: resolvedBillingMode,
+        matriculaFamiliarId: input.matriculaFamiliarId ?? undefined,
         uiRequestId: input.uiRequestId ?? undefined,
         billingProvisionStatus,
         dataInicio: input.dataInicio,
@@ -886,6 +1149,21 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       mensalidade: null,
     };
 
+    if (input.matriculaFamiliarId) {
+      const family = await tx.matriculaFamiliar.findFirst({
+        where: { id: input.matriculaFamiliarId, contaId: input.contaId },
+        select: { id: true },
+      });
+      if (!family) throw new Error('AGRUPAMENTO_FAMILIAR_NAO_ENCONTRADO');
+      await tx.matriculaFamiliarItem.create({
+        data: {
+          matriculaFamiliarId: family.id,
+          matriculaId: matricula.id,
+          orderIndex: input.familyOrderIndex ?? 0,
+        },
+      });
+    }
+
     // Criar registros MatriculaTurma (N:N) para rastreabilidade
     if (input.turmaId) {
       await tx.matriculaTurma.create({
@@ -913,12 +1191,47 @@ export async function criarMatricula(input: CriarMatriculaInput) {
           descricao: 'Taxa de matrícula',
           competenciaInicio: startOfDay(new Date()),
           competenciaFim: startOfDay(new Date()),
-          valor: input.taxaMatricula,
-          vencimento: new Date(),
+          valor:
+            input.preprovisionedBilling?.enrollmentFee?.value ?? input.taxaMatricula,
+          vencimento: input.preprovisionedBilling?.enrollmentFee
+            ? new Date(`${input.preprovisionedBilling.enrollmentFee.dueDate}T12:00:00.000Z`)
+            : new Date(),
           formaPagamento: input.formaPagamentoTaxa ?? input.formaPagamento ?? FormaPagamento.BOLETO,
-          status: StatusCobranca.PENDENTE,
+          status: input.preprovisionedBilling?.enrollmentFee
+            ? mapAsaasPaymentStatusToCobranca(
+                input.preprovisionedBilling.enrollmentFee.status,
+                { dueDate: input.preprovisionedBilling.enrollmentFee.dueDate },
+              )
+            : StatusCobranca.PENDENTE,
+          asaasId: input.preprovisionedBilling?.enrollmentFee?.asaasPaymentId ?? undefined,
+          asaasPaymentId:
+            input.preprovisionedBilling?.enrollmentFee?.asaasPaymentId ?? undefined,
+          asaasStatus: input.preprovisionedBilling?.enrollmentFee?.status ?? undefined,
+          asaasValue: input.preprovisionedBilling?.enrollmentFee?.value ?? undefined,
         },
       });
+
+      const stagedFee = input.preprovisionedBilling?.enrollmentFee;
+      if (stagedFee) {
+        await tx.charge.create({
+          data: {
+            contaId: input.contaId,
+            cobrancaId: cobrancas.taxa.id,
+            externalReference:
+              stagedFee.externalReference ??
+              `enrollment-fee:${stagedFee.asaasPaymentId}`,
+            status: mapAsaasPaymentStatusToCharge(stagedFee.status),
+            statusUpdatedAt: new Date(),
+            asaasPaymentId: stagedFee.asaasPaymentId,
+            asaasStatus: stagedFee.status,
+            asaasValue: stagedFee.value,
+            value: stagedFee.value,
+            dueDate: new Date(`${stagedFee.dueDate}T12:00:00.000Z`),
+            invoiceUrl: stagedFee.invoiceUrl,
+            billingType: input.preprovisionedBilling?.enrollmentFeeBillingType ?? null,
+          },
+        });
+      }
     }
 
     await persistInitialEnrollmentFinancialAllocations(tx, {
@@ -926,6 +1239,101 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       matriculaId: matricula.id,
       preco,
     });
+
+    const contrato = await createPendingEnrollmentContract(tx, {
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      modeloId: input.modeloId,
+      actorId: input.createdById,
+    });
+
+    const staged = stagedBilling;
+    if (staged) {
+      const firstPayment = staged.subscription.firstPayment;
+      cobrancas.mensalidade = await tx.cobranca.create({
+        data: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          tipo: TipoCobranca.MENSALIDADE,
+          descricao: plano?.id || combo?.id ? 'Primeira mensalidade' : 'Mensalidade',
+          competenciaInicio: input.dataInicio,
+          competenciaFim: input.dataFimContrato,
+          valor: firstPayment.value,
+          vencimento: new Date(`${firstPayment.dueDate}T12:00:00.000Z`),
+          formaPagamento: input.formaPagamento ?? FormaPagamento.BOLETO,
+          status: mapAsaasPaymentStatusToCobranca(firstPayment.status, {
+            dueDate: firstPayment.dueDate,
+          }),
+          asaasId: firstPayment.asaasPaymentId,
+          asaasPaymentId: firstPayment.asaasPaymentId,
+          asaasStatus: firstPayment.status,
+          asaasValue: firstPayment.value,
+        },
+      });
+
+      const localSubscription = await tx.subscription.create({
+        data: {
+          contaId: input.contaId,
+          contratoId: contrato.id,
+          matriculaId: matricula.id,
+          externalReference: staged.subscription.externalReference,
+          asaasSubscriptionId: staged.subscription.asaasSubscriptionId,
+          status: 'ACTIVE',
+          statusUpdatedAt: new Date(),
+        },
+      });
+
+      const firstCharge = await tx.charge.create({
+        data: {
+          contaId: input.contaId,
+          cobrancaId: cobrancas.mensalidade.id,
+          externalReference: `${staged.subscription.externalReference}:payment:${firstPayment.asaasPaymentId}`,
+          status: mapAsaasPaymentStatusToCharge(firstPayment.status),
+          statusUpdatedAt: new Date(),
+          asaasPaymentId: firstPayment.asaasPaymentId,
+          asaasStatus: firstPayment.status,
+          asaasValue: firstPayment.value,
+          value: firstPayment.value,
+          dueDate: new Date(`${firstPayment.dueDate}T12:00:00.000Z`),
+          invoiceUrl: firstPayment.invoiceUrl,
+          billingType: staged.billingType,
+          customerId: staged.customer.localCustomerId,
+        },
+      });
+
+      await materializeBillingAgreement(
+        {
+          kind: 'INDIVIDUAL',
+          contaId: input.contaId,
+          subscriptionId: localSubscription.id,
+          actorId: input.createdById,
+          value: firstPayment.value,
+          billingType: staged.billingType,
+          cycle: staged.cycle,
+          nextDueDate: staged.nextDueDate,
+          validUntil: staged.endDate,
+        },
+        { tx },
+      );
+
+      await tx.matricula.updateMany({
+        where: { id: matricula.id, contaId: input.contaId },
+        data: {
+          asaasSubscriptionId: staged.subscription.asaasSubscriptionId,
+          billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
+          billingProvisionError: null,
+          billingProvisionAt: new Date(),
+        },
+      });
+      await tx.familyFinancialAllocation.updateMany({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          chargeKind: 'MENSALIDADE',
+        },
+        data: { status: 'ACTIVE', sourceChargeId: firstCharge.id },
+      });
+    }
 
     let billingOutboxEventId: string | null = null;
 
@@ -958,12 +1366,17 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       billingOutboxEventId = billingOutboxEvent.id;
     }
 
+    const committedMatricula = input.preprovisionedBilling
+      ? await tx.matricula.findUniqueOrThrow({ where: { id: matricula.id } })
+      : matricula;
+
     return {
-      matricula,
+      matricula: committedMatricula,
       cobrancas,
       descontosAplicaveis,
       preco,
       billingOutboxEventId,
+      contratoId: contrato.id,
     };
     });
   } catch (error) {
@@ -990,6 +1403,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     responsavelFinanceiro: null,
     primeiroVencimento,
     billingOutboxEventId: result.billingOutboxEventId,
+    contratoId: result.contratoId,
   };
 }
 
@@ -1160,9 +1574,14 @@ export async function editarMatricula(input: {
         comboId: true,
         planoId: true,
         dataInicio: true,
+        dataFimContrato: true,
       },
     });
     if (!verify) throw new Error('Matrícula não encontrada');
+
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${verify.alunoId}))
+    `;
 
     const targetTurmaId = input.turmaId !== undefined ? input.turmaId : verify.turmaId;
     const targetComboId = input.comboId !== undefined ? input.comboId : verify.comboId;
@@ -1188,6 +1607,7 @@ export async function editarMatricula(input: {
 
       const ocupadas = await tx.matricula.count({
         where: {
+          contaId: input.contaId,
           turmaId: turma.id,
           ...buildSeatOccupancyWhereClause(verify.dataInicio),
           NOT: { id: input.matriculaId },
@@ -1255,6 +1675,7 @@ export async function editarMatricula(input: {
       if (combo.vagasLimite != null) {
         const ocupadasCombo = await tx.matricula.count({
           where: {
+            contaId: input.contaId,
             comboId: combo.id,
             ...buildSeatOccupancyWhereClause(verify.dataInicio),
             NOT: { id: input.matriculaId },
@@ -1277,11 +1698,13 @@ export async function editarMatricula(input: {
 
     if (turmaChanged || comboChanged) {
       await assertNoDuplicateEnrollment(tx, {
+        contaId: input.contaId,
         alunoId: verify.alunoId,
         turmaId: turmaChanged ? targetTurmaId : null,
         comboId: comboChanged ? targetComboId : null,
         excludeMatriculaId: input.matriculaId,
-        referenceDate: verify.dataInicio,
+        dataInicio: verify.dataInicio,
+        dataFimContrato: verify.dataFimContrato,
       });
     }
 

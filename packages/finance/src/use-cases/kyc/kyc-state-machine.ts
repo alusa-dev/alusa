@@ -43,7 +43,13 @@ const KYC_PROCESS_TRANSITIONS: Record<KycProcessStatus, Set<KycProcessStatus>> =
 const AUTHORITATIVE_EVENTS: ReadonlySet<string> = new Set([
   'ACCOUNT_STATUS_GENERAL_APPROVAL_APPROVED',
   'ACCOUNT_STATUS_GENERAL_APPROVAL_REJECTED',
+  'ACCOUNT_STATUS_GENERAL_APPROVAL_PENDING',
+  'ACCOUNT_STATUS_GENERAL_APPROVAL_AWAITING_APPROVAL',
 ]);
+
+export function isGeneralAccountStatusEvent(event: string): boolean {
+  return event.startsWith('ACCOUNT_STATUS_GENERAL_APPROVAL_');
+}
 
 // ── Eventos oficiais do Asaas para account status ────────────────────────
 

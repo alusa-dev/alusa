@@ -23,6 +23,8 @@ const {
   mockSyncRegulatoryState,
 } = vi.hoisted(() => {
   const mockUpdateAccount = vi.fn().mockResolvedValue({ id: 'acc-1' });
+  const mockUpdateManyAccount = vi.fn().mockResolvedValue({ count: 1 });
+  const mockUpdateProfile = vi.fn().mockResolvedValue({ id: 'prof-1' });
   const mockUpdateConta = vi.fn().mockResolvedValue({ id: 'conta-1' });
   const mockCreateHistory = vi.fn().mockResolvedValue({ id: 'hist-1' });
 
@@ -34,8 +36,10 @@ const {
     mockCreateHistory,
     mockTransaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => {
       await fn({
-        asaasAccount: { update: mockUpdateAccount },
+        asaasAccount: { update: mockUpdateAccount, updateMany: mockUpdateManyAccount },
         asaasAccountStatusHistory: { create: mockCreateHistory },
+        financeProfile: { update: mockUpdateProfile },
+        kycProcess: { upsert: mockKycProcessUpsert },
         conta: { update: mockUpdateConta },
       });
     }),
@@ -86,13 +90,14 @@ import { handleAccountWebhook } from '../account-webhook-handler';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1' });
+  mockFindUniqueProfile.mockResolvedValue({ id: 'prof-1', onboardingCompletedAt: null });
   mockFindUniqueAccount.mockResolvedValue({
     id: 'acc-1',
     status: 'CREATED',
     asaasAccountId: 'ext-acc-1',
     commercialInfoStatus: null,
     commercialInfoScheduledDate: null,
+    lastAccountStatusEventAt: null,
   });
 });
 
@@ -120,18 +125,12 @@ describe('handleAccountWebhook — event contract validation', () => {
       expect(mockGetMyAccountDocuments).toHaveBeenCalled();
     });
 
-    it('ACCOUNT_STATUS_DOCUMENT_REJECTED atualiza KycProcess para REJECTED', async () => {
+    it('ACCOUNT_STATUS_DOCUMENT_REJECTED não rebaixa a aprovação geral', async () => {
       await handleAccountWebhook('conta-1', {
         event: 'ACCOUNT_STATUS_DOCUMENT_REJECTED',
         payloadId: 'evt-doc-3',
       });
-      // updateKycProcessStatus é chamado com status REJECTED
-      expect(mockKycProcessUpsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          create: expect.objectContaining({ status: 'REJECTED' }),
-          update: expect.objectContaining({ status: 'REJECTED' }),
-        }),
-      );
+      expect(mockTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -164,8 +163,8 @@ describe('handleAccountWebhook — event contract validation', () => {
         event: 'ACCOUNT_STATUS_GENERAL_APPROVAL_APPROVED',
         payloadId: 'evt-gen-1',
       });
-      expect(mockSyncRegulatoryState).toHaveBeenCalledWith(
-        expect.objectContaining({ generalStatus: 'APPROVED' }),
+      expect(mockKycProcessUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ status: 'APPROVED' }) }),
       );
     });
 
@@ -174,8 +173,8 @@ describe('handleAccountWebhook — event contract validation', () => {
         event: 'ACCOUNT_STATUS_GENERAL_APPROVAL_REJECTED',
         payloadId: 'evt-gen-2',
       });
-      expect(mockSyncRegulatoryState).toHaveBeenCalledWith(
-        expect.objectContaining({ generalStatus: 'REJECTED' }),
+      expect(mockKycProcessUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ status: 'REJECTED' }) }),
       );
     });
   });

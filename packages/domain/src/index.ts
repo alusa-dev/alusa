@@ -81,6 +81,14 @@ export {
   validateReativacao,
 } from './rules/matricula-state-machine.js';
 
+export { decideEnrollmentActivationAfterFee } from './rules/enrollment-activation-policy.js';
+export type {
+  EnrollmentActivationDecision,
+  EnrollmentActivationPolicy,
+  EnrollmentActivationStatus,
+  EnrollmentFeeStatus,
+} from './rules/enrollment-activation-policy.js';
+
 export type {
   TransitionResult,
   PausaValidationResult,
@@ -120,3 +128,6 @@ export * from './privacy/consent-rules.js';
 
 // Nova engine decoplada do mapa de eventos
 export * from './map-engine/index.js';
+
+// Composição financeira pura de matrículas e acordos recorrentes
+export * from './billing-agreement/index.js';

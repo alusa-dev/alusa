@@ -7,6 +7,8 @@ export * from './core';
 export * from './billing';
 export * from './policies';
 export * from './payment-history';
+export * from './billing-agreements';
+export * from './reports/financial-reports';
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,6 +16,12 @@ export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider
 // @see docs/adr-asaas-layer-boundaries.md
 // ─────────────────────────────────────────────────────────────────────────────
 export type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
+export {
+  projectAcademicEnrollmentFeeState,
+  projectFamilyEnrollmentFeeState,
+  reconcileEnrollmentFeeProjections,
+} from './projections/enrollment-fee-projection.service.js';
+
 export {
   parseExternalReference as parseExternalReferenceV1,
   buildExternalReference as buildExternalReferenceV1,
@@ -191,7 +199,6 @@ export {
 } from './mappers/standalone-installments.mapper';
 
 export {
-  mapCreateInvoiceDTOToInput,
   mapCreateInvoiceOutputToDTO,
   mapInvoiceToListItemDTO,
   mapListInvoicesOutputToDTO,
@@ -709,6 +716,7 @@ export {
   getBillingInfo,
   reenviarCobranca,
   refundCobranca,
+  requestBankSlipRefund,
   getSubscription,
   getInstallment,
   listSubscriptionPayments,
@@ -746,6 +754,7 @@ export {
   markStalePaymentCommandsForReconciliation,
 } from './use-cases/payment-command-ledger';
 export { reconcilePendingPaymentCommands } from './use-cases/reconcile-pending-payment-commands';
+export { reconcileOutboundFinancialOperations } from './use-cases/reconcile-outbound-financial-operations';
 export type {
   PaymentCommandEntityType,
   PaymentCommandJobType,
@@ -840,6 +849,19 @@ export type {
 
 // Fase 6 (subscriptions)
 export { createSubscription } from './use-cases/create-subscription';
+export {
+  compensateStagedEnrollmentFinancialResources,
+  stageEnrollmentFinancialResources,
+} from './use-cases/stage-enrollment-financial-resources';
+export type {
+  EnrollmentFeeStageInput,
+  EnrollmentFinancialCompensationResult,
+  EnrollmentSubscriptionStageInput,
+  StageEnrollmentFinancialResourcesInput,
+  StageEnrollmentFinancialResourcesResult,
+  StagedEnrollmentFinancialResources,
+  StagedPayment,
+} from './use-cases/stage-enrollment-financial-resources';
 export type {
   CreateSubscriptionInput,
   CreateSubscriptionOutput,
@@ -890,13 +912,7 @@ export type {
   ListInstallmentPlansFinanceOutput,
 } from './use-cases/list-installment-plans';
 
-// Fase 8 (invoices)
-export { createInvoice } from './use-cases/create-invoice';
-export type {
-  CreateInvoiceInput,
-  CreateInvoiceOutput,
-  CreateInvoiceError,
-} from './use-cases/create-invoice';
+// Invoices: the canonical emission path resolves all fiscal data server-side.
 export { cancelInvoice } from './use-cases/cancel-invoice';
 export type {
   CancelInvoiceInput,

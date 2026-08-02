@@ -55,6 +55,7 @@ export type {
   AsaasInvoiceTaxes,
   AsaasInvoiceTaxesRequest,
   AsaasInvoiceTaxesResponse,
+  AsaasInvoiceIbsCbsRequest,
   CreateInvoiceInput,
   PaymentStatus,
   SubscriptionStatus,
@@ -258,6 +259,8 @@ export { deletePayment } from './payments/deletePayment';
 export type { DeletePaymentParams } from './payments/deletePayment';
 export { refundPayment } from './payments/refundPayment';
 export type { RefundPaymentParams } from './payments/refundPayment';
+export { refundBankSlip } from './payments/refundBankSlip';
+export type { RefundBankSlipParams, RefundBankSlipResponse } from './payments/refundBankSlip';
 export { getPixQrCode } from './payments/getPixQrCode';
 export type { GetPixQrCodeParams } from './payments/getPixQrCode';
 export { decodePixQrCode } from './pix/decodePixQrCode';

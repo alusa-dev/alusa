@@ -8,6 +8,8 @@ import {
   deletePayment,
   getPayment,
   updatePayment,
+  commitBillingAgreementChange,
+  previewBillingAgreementChange,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import { validatePausa, validateReativacao, validarCapacidade } from '@alusa/domain';
@@ -349,6 +351,9 @@ async function reconcileMatriculaPendingSynchronization(input: {
           manterVaga: pausePayload?.manterVaga ?? matricula.manterVaga,
           cobrarDurantePausa: pausePayload?.cobrarDurantePausa ?? matricula.cobrarDurantePausa,
           motivoPausa: pausePayload?.motivoPausa ?? matricula.motivoPausa,
+          ...((pausePayload?.cobrarDurantePausa ?? matricula.cobrarDurantePausa)
+            ? {}
+            : { statusFinanceiro: 'SUSPENSO' as const }),
           integrationStatus: 'SINCRONIZADO',
           warningCode: null,
           version: { increment: 1 },
@@ -575,9 +580,53 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
     canceled: 0,
     pending: 0,
   };
+  const canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+    where: {
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      kind: 'TUITION',
+      status: { in: ['ACTIVE', 'SCHEDULED'] },
+    },
+    orderBy: { validFrom: 'desc' },
+    select: { id: true, agreementId: true, agreement: { select: { version: true } } },
+  });
+  let canonicalApplied = false;
+
+  if (canonicalAllocation && !input.cobrarDurantePausa) {
+    try {
+      const change = {
+        kind: 'PAUSE_ALLOCATION' as const,
+        contaId: input.contaId,
+        agreementId: canonicalAllocation.agreementId,
+        actorId: input.actorId,
+        reason: input.motivoPausa,
+        effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
+        effectiveDate: input.dataInicioPausa,
+        allocationIds: [canonicalAllocation.id],
+      };
+      const preview = await previewBillingAgreementChange(change);
+      const committed = await commitBillingAgreementChange({
+        ...change,
+        uiRequestId: `pause:${operacao.id}`,
+        previewHash: preview.previewHash,
+        previewExpiresAt: preview.expiresAt,
+        expectedAgreementVersion: canonicalAllocation.agreement.version,
+      });
+      canonicalApplied = true;
+      asaasAction = 'SUBSCRIPTION_INACTIVATED';
+      integrationStatus = committed.status === 'COMPLETED' ? 'SINCRONIZADO' : 'DIVERGENTE';
+      warningCode = committed.status === 'COMPLETED' ? null : 'OPERACAO_FINANCEIRA_REQUER_RECONCILIACAO';
+    } catch (error) {
+      await input.prisma.matriculaOperacao.update({
+        where: { id: operacao.id },
+        data: { status: 'ERRO', erro: error instanceof Error ? error.message : String(error), processedAt: new Date() },
+      });
+      throw buildFinancialError('pausar', matricula.asaasSubscriptionId ?? canonicalAllocation.agreementId, error);
+    }
+  }
 
   // Sincronizar com Asaas se houver assinatura e política de não cobrar
-  if (matricula.asaasSubscriptionId) {
+  if (!canonicalApplied && matricula.asaasSubscriptionId) {
     if (input.cobrarDurantePausa) {
       asaasAction = 'SKIPPED_COBRAR_DURANTE_PAUSA';
     } else {
@@ -676,6 +725,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
         manterVaga: input.manterVaga,
         cobrarDurantePausa: input.cobrarDurantePausa,
         motivoPausa: input.motivoPausa,
+        ...(input.cobrarDurantePausa ? {} : { statusFinanceiro: 'SUSPENSO' as const }),
         integrationStatus: finalIntegrationStatus,
         warningCode: finalWarningCode,
         version: { increment: 1 },
@@ -874,8 +924,53 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
   let integrationStatus: ReativarMatriculaResult['integrationStatus'] = 'SINCRONIZADO';
   let warningCode: string | null = null;
   let updatedPaymentId: string | null = null;
+  const pausedCanonicalAllocation = await input.prisma.billingAllocation.findFirst({
+    where: {
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      kind: 'TUITION',
+      status: 'PAUSED',
+    },
+    orderBy: { validUntil: 'desc' },
+    select: { id: true, agreementId: true, agreement: { select: { version: true } } },
+  });
+  let canonicalApplied = false;
 
-  if (matricula.asaasSubscriptionId && !matricula.cobrarDurantePausa) {
+  if (pausedCanonicalAllocation && !matricula.cobrarDurantePausa) {
+    try {
+      const change = {
+        kind: 'RESUME_ALLOCATION' as const,
+        contaId: input.contaId,
+        agreementId: pausedCanonicalAllocation.agreementId,
+        actorId: input.actorId,
+        reason: input.observacao?.trim() || 'Reativação da matrícula',
+        effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
+        effectiveDate: input.dataRetornoEfetiva,
+        allocationIds: [pausedCanonicalAllocation.id],
+        nextDueDate: input.nextDueDate,
+      };
+      const preview = await previewBillingAgreementChange(change);
+      const committed = await commitBillingAgreementChange({
+        ...change,
+        uiRequestId: `resume:${operacao.id}`,
+        previewHash: preview.previewHash,
+        previewExpiresAt: preview.expiresAt,
+        expectedAgreementVersion: pausedCanonicalAllocation.agreement.version,
+      });
+      canonicalApplied = true;
+      asaasAction = 'SUBSCRIPTION_UPDATED';
+      integrationStatus = committed.status === 'COMPLETED' ? 'SINCRONIZADO' : 'DIVERGENTE';
+      warningCode = committed.status === 'COMPLETED' ? null : 'OPERACAO_FINANCEIRA_REQUER_RECONCILIACAO';
+    } catch (error) {
+      await input.prisma.matriculaOperacao.update({
+        where: { id: operacao.id },
+        data: { status: 'ERRO', erro: error instanceof Error ? error.message : String(error), processedAt: new Date() },
+      });
+      throw buildFinancialError('reativar', matricula.asaasSubscriptionId ?? pausedCanonicalAllocation.agreementId, error);
+    }
+  }
+
+  if (!canonicalApplied && matricula.asaasSubscriptionId && !matricula.cobrarDurantePausa) {
     try {
       await ativarAssinatura({
         subscriptionId: matricula.asaasSubscriptionId,
@@ -934,6 +1029,30 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       operation: 'matricula.pause.reactivate',
     });
 
+    const [overdueCharges, openEnrollmentFee] = await Promise.all([
+      tx.cobranca.count({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          status: 'ATRASADO',
+        },
+      }),
+      tx.cobranca.count({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          tipo: 'TAXA_MATRICULA',
+          status: { in: ['A_VENCER', 'PENDENTE', 'PROCESSANDO', 'ATRASADO'] },
+        },
+      }),
+    ]);
+
+    const restoredFinancialStatus = overdueCharges > 0
+      ? 'INADIMPLENTE' as const
+      : openEnrollmentFee > 0
+        ? 'PENDENTE_TAXA' as const
+        : 'ADIMPLENTE' as const;
+
     await tx.matricula.update({
       where: { id: matricula.id, version: matricula.version },
       data: {
@@ -944,6 +1063,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
         manterVaga: true,
         cobrarDurantePausa: false,
         motivoPausa: null,
+        statusFinanceiro: restoredFinancialStatus,
         integrationStatus,
         warningCode,
         version: { increment: 1 },

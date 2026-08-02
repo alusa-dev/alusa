@@ -37,7 +37,6 @@ const { getMyAccountStatus } = await import('@alusa/asaas');
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?? '0'.repeat(64);
 process.env.ASAAS_BASE_URL = process.env.ASAAS_BASE_URL ?? 'https://api-sandbox.asaas.com/v3';
 process.env.ASAAS_API_KEY = process.env.ASAAS_API_KEY ?? '$aact_master_test';
-process.env.FEATURE_ASAAS = 'true';
 process.env.NEXT_PUBLIC_APP_URL = 'https://x.ngrok-free.dev';
 process.env.ASAAS_WEBHOOK_PUBLIC_BASE_URL = 'https://x.ngrok-free.dev';
 process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET = 'test-webhook-secret';
@@ -61,7 +60,6 @@ describe('testarConexaoAsaas', () => {
   });
 
   it('retorna sucesso quando env + auth + subconta + webhook estão OK', async () => {
-    process.env.FEATURE_ASAAS = 'true';
     process.env.ASAAS_BASE_URL = 'https://api-sandbox.asaas.com/v3';
     process.env.ASAAS_API_KEY = '$aact_master_test';
     process.env.NEXT_PUBLIC_APP_URL = 'https://x.ngrok-free.dev';

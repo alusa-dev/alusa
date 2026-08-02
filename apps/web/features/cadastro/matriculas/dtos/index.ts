@@ -122,6 +122,10 @@ export type EnrollmentBillingStrategyDTO = z.infer<typeof enrollmentBillingStrat
 
 export const initialEnrollmentBillingPreviewInputDTOSchema = z.object({
   contaId: z.string().trim().optional(),
+  enrollmentMode: z.enum(['INDIVIDUAL', 'FAMILY']).optional(),
+  familyPricingMode: z.enum(['AGGREGATE_PLAN', 'ITEMIZED_COMBOS']).optional(),
+  aggregateMonthlyAmount: z.number().nonnegative().optional(),
+  aggregateEnrollmentFeeAmount: z.number().nonnegative().optional(),
   strategy: initialEnrollmentBillingStrategyDTOSchema.default('CREATE_SEPARATE'),
   billingStrategy: enrollmentBillingStrategyDTOSchema.optional(),
   responsavelFinanceiroId: z.string().trim().min(1).nullable().optional(),
@@ -180,6 +184,27 @@ export const initialEnrollmentBillingPreviewResultDTOSchema = z.object({
     enrollmentFeeAmount: z.number(),
     application: z.enum(['SEPARATE', 'CURRENT_CYCLE', 'NEXT_CYCLE']),
     updatesPendingPayments: z.boolean(),
+    currentCycleAction: z.enum([
+      'CREATE_SEPARATE',
+      'CREATE_ONE_TIME_CHARGE',
+      'UPDATE_SUBSCRIPTION',
+      'UPDATE_PENDING',
+      'CREATE_COMPLEMENT',
+      'MANUAL_REVIEW',
+      'SCHEDULE_NEXT_CYCLE',
+    ]),
+    currentChargeState: z.enum([
+      'NOT_GENERATED',
+      'PENDING',
+      'PAID',
+      'OVERDUE',
+      'PROCESSING',
+      'CANCELLED',
+    ]),
+    currentChargeId: nullableStringDTOSchema.default(null),
+    currentChargeDueDate: dateStringDTOSchema.nullable().default(null),
+    nextCycleDate: dateStringDTOSchema.nullable().default(null),
+    operationalMessage: z.string(),
     targetLabel: nullableStringDTOSchema.default(null),
   }),
   groups: z.array(
@@ -250,6 +275,7 @@ export const createMatriculaInputDTOSchema = z.object({
   turmaId: z.string().trim().min(1).optional().nullable(),
   comboId: z.string().trim().min(1).optional().nullable(),
   responsavelFinanceiroId: z.string().trim().min(1).optional().nullable(),
+  modeloId: z.string().trim().min(1, 'Modelo de contrato é obrigatório'),
   dataInicio: dateLikeDTOSchema.optional(),
   dataFimContrato: dateLikeDTOSchema,
   vencimento: dateLikeDTOSchema.optional().nullable(),
@@ -552,6 +578,19 @@ export const matriculaResumoDTOSchema = z.object({
       deleted: z.boolean().default(false),
       syncError: nullableStringDTOSchema.default(null),
       syncedAt: nullableDateStringDTOSchema.default(null),
+    })
+    .nullable()
+    .default(null)
+    .optional(),
+  billingAgreement: z
+    .object({
+      id: z.string(),
+      allocationId: z.string(),
+      allocationValue: z.number().nonnegative(),
+      desiredValue: z.number().nonnegative(),
+      confirmedValue: z.number().nonnegative(),
+      status: z.string(),
+      reconciliationError: nullableStringDTOSchema.default(null),
     })
     .nullable()
     .default(null)

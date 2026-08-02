@@ -81,12 +81,22 @@ function createPrismaMock(overrides?: {
   turmaCount?: number;
   pendingOperations?: unknown[];
   localCharges?: unknown[];
+  overdueCharges?: number;
+  openEnrollmentFee?: number;
 }) {
   const tx = {
+    aluno: {
+      findFirst: vi.fn(async () => null),
+    },
     matricula: {
+      findFirst: vi.fn(async () => null),
       update: vi.fn(async () => ({ id: 'mat-1' })),
     },
     cobranca: {
+      count: vi.fn(async (args: { where?: { tipo?: string } }) =>
+        args.where?.tipo === 'TAXA_MATRICULA'
+          ? overrides?.openEnrollmentFee ?? 0
+          : overrides?.overdueCharges ?? 0),
       findMany: vi.fn(async () => overrides?.localCharges ?? []),
       update: vi.fn(async () => ({ id: 'cob-1' })),
       updateMany: vi.fn(async () => ({ count: 0 })),
@@ -103,6 +113,9 @@ function createPrismaMock(overrides?: {
   };
 
   const root = {
+    billingAllocation: {
+      findFirst: vi.fn(async () => null),
+    },
     matricula: {
       findFirst: vi.fn().mockResolvedValue(overrides?.findFirst ?? null),
     },
@@ -255,6 +268,11 @@ describe('matricula-pausa.service', () => {
           status: 'CANCELED',
         }),
       });
+      expect(tx.matricula.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'PAUSADA', statusFinanceiro: 'SUSPENSO' }),
+        }),
+      );
     });
 
     it('pausa matrícula sem assinatura (LOCAL_ONLY)', async () => {
@@ -329,7 +347,7 @@ describe('matricula-pausa.service', () => {
   // -----------------------------------------------------------------------
   describe('reativarMatricula', () => {
     it('reativa matrícula pausada com assinatura', async () => {
-      const { root } = createPrismaMock({ findFirst: pausadaMatricula() });
+      const { root, tx } = createPrismaMock({ findFirst: pausadaMatricula() });
 
       listSubscriptionPaymentsMock.mockResolvedValueOnce({
         data: [
@@ -358,6 +376,26 @@ describe('matricula-pausa.service', () => {
           dueDate: '2025-08-01',
         }),
         { contaId: 'conta-1' },
+      );
+      expect(tx.matricula.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'ATIVA', statusFinanceiro: 'ADIMPLENTE' }),
+        }),
+      );
+    });
+
+    it('restaura como inadimplente quando há cobrança vencida na reativação', async () => {
+      const { root, tx } = createPrismaMock({
+        findFirst: pausadaMatricula({ asaasSubscriptionId: null }),
+        overdueCharges: 1,
+      });
+
+      await reativarMatricula({ prisma: root, ...baseReativarInput });
+
+      expect(tx.matricula.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ statusFinanceiro: 'INADIMPLENTE' }),
+        }),
       );
     });
 

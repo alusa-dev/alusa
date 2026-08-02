@@ -3,6 +3,7 @@ import {
   doesMatriculaOccupySeat,
   getSeatOccupyingStatuses,
   buildSeatOccupancyWhereClause,
+  buildSeatOccupancyOverlapWhereClause,
   calcularVagasDisponiveis,
   SEAT_OCCUPYING_STATUSES,
   NON_SEAT_OCCUPYING_STATUSES,
@@ -94,6 +95,17 @@ describe('matricula-occupancy', () => {
 
       expect(where.AND[1]).toEqual({ dataInicio: { lte: referenceDate } });
       expect(where.AND[2]).toEqual({ dataFimContrato: { gte: referenceDate } });
+    });
+  });
+
+  describe('buildSeatOccupancyOverlapWhereClause', () => {
+    it('detecta qualquer interseção entre o período existente e o novo contrato', () => {
+      const start = new Date('2027-01-10T12:00:00.000Z');
+      const end = new Date('2027-12-10T12:00:00.000Z');
+      const where = buildSeatOccupancyOverlapWhereClause(start, end);
+
+      expect(where.AND[1]).toEqual({ dataInicio: { lte: end } });
+      expect(where.AND[2]).toEqual({ dataFimContrato: { gte: start } });
     });
   });
 

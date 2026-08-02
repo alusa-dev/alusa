@@ -5,7 +5,6 @@ import { FORMA_PAGAMENTO_TO_ASAAS } from '@alusa/finance';
 import {
   AsaasEnvError,
   KycNotApprovedError,
-  isAsaasEnabled,
   normalizeAsaasPaymentSnapshotStatus,
   readPaymentFullPreflight,
   updatePayment,
@@ -154,16 +153,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         );
       }
 
-      if (!isAsaasEnabled()) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Integração com Asaas desabilitada. Ative FEATURE_ASAAS para sincronizar.',
-          },
-          { status: 503 },
-        );
-      }
-
       const billingType =
         FORMA_PAGAMENTO_TO_ASAAS[formaPagamento as keyof typeof FORMA_PAGAMENTO_TO_ASAAS] as AsaasCreatePaymentInput['billingType'] | undefined;
 
@@ -284,17 +273,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           error: 'Cobrança não possui ID do Asaas. Não é possível sincronizar.',
         },
         { status: 400 },
-      );
-    }
-
-    if (!isAsaasEnabled()) {
-      console.warn('[PUT forma-pagamento] Integração Asaas desabilitada');
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Integração com Asaas desabilitada. Ative FEATURE_ASAAS para sincronizar.',
-        },
-        { status: 503 },
       );
     }
 

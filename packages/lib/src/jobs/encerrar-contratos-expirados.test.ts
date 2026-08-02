@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock do prisma
-vi.mock('@/prisma/client', () => ({
+vi.mock('../prisma', () => ({
   prisma: {
     matricula: {
       findMany: vi.fn(),
@@ -12,13 +12,13 @@ vi.mock('@/prisma/client', () => ({
       create: vi.fn(),
     },
     $transaction: vi.fn((fn) => fn({
-      matricula: { update: vi.fn().mockResolvedValue({}) },
+      matricula: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       matriculaLog: { create: vi.fn().mockResolvedValue({}) },
     })),
   },
 }));
 
-import { prisma } from '@/prisma/client';
+import { prisma } from '../prisma';
 
 const { encerrarContratosExpirados, listarContratosProximosDeExpirar } = await import('./encerrar-contratos-expirados');
 
@@ -74,7 +74,8 @@ describe('encerrar-contratos-expirados job', () => {
       expect(prisma.matricula.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            aluno: { contaId: 'conta-123' },
+            contaId: 'conta-123',
+            NOT: expect.any(Array),
           }),
         }),
       );

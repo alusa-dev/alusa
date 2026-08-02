@@ -10,6 +10,15 @@ import { ensureCustomer } from './ensure-customer';
 import { auditLogService } from '../foundation/audit-log.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { isPastDate } from '../foundation/date-guard';
+import { deriveDeterministicId, hashPayload } from '../core';
+import { getPayment, listPayments } from './asaas-ops';
+import {
+  markOutboundAwaitingWebhook,
+  markOutboundRemoteConfirmed,
+  markOutboundRemoteRequested,
+  markOutboundResultUnknown,
+  reserveOutboundFinancialOperation,
+} from './outbound-financial-operation';
 
 export type CreateChargeInput = {
   contaId: string;
@@ -211,13 +220,113 @@ export async function createCharge(
       discount,
     };
 
-    const payment = await createAsaasPayment(paymentInput);
+    const chargeId = existingCharge?.id ?? deriveDeterministicId('ch', `${input.contaId}:${cobranca.id}`);
+    if (!existingCharge) {
+      await prisma.charge.create({
+        data: {
+          id: chargeId,
+          contaId: input.contaId,
+          cobrancaId: cobranca.id,
+          externalReference,
+          status: 'PENDING_SYNC',
+          statusUpdatedAt: new Date(),
+          description: cobranca.descricao,
+          value: cobranca.valor,
+          dueDate: new Date(`${dueDateIso}T00:00:00.000Z`),
+          billingType,
+          customerId: customer.data.localCustomerId,
+        },
+      }).catch(async (reserveError) => {
+        const concurrent = await prisma.charge.findFirst({
+          where: { contaId: input.contaId, cobrancaId: cobranca.id, externalReference },
+          select: { id: true },
+        });
+        if (!concurrent) throw reserveError;
+      });
+    }
 
-    if (!payment.success) {
-      if (payment.error === 'KYC_NAO_APROVADO') return err('KYC_NAO_APROVADO');
-      if (payment.error === 'Credenciais Asaas não configuradas') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+    const operation = await reserveOutboundFinancialOperation({
+      contaId: input.contaId,
+      type: 'CREATE_PAYMENT',
+      idempotencyKey: externalReference,
+      resource: 'PAYMENT',
+      entityId: cobranca.id,
+      externalReference,
+      requestFingerprint: hashPayload(paymentInput),
+      links: { chargeId, cobrancaId: cobranca.id },
+    });
+
+    let remotePayment = operation.payload.remoteId
+      ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+      : null;
+    if (!remotePayment) {
+      const matches = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+        .then((result) => result.data)
+        .catch(() => []);
+      if (matches.length > 1) {
+        await markOutboundResultUnknown({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'PAYMENT',
+          entityId: cobranca.id,
+          externalReference,
+          error: 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE',
+        });
+        return err('ERRO_AO_CRIAR_PAGAMENTO');
+      }
+      remotePayment = matches[0] ?? null;
+    }
+    if (!remotePayment) {
+      const claimed = await markOutboundRemoteRequested(operation.job.id);
+      if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
+      const payment = await createAsaasPayment(paymentInput);
+      if (payment.success) {
+        remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(() => ({
+          ...payment.data,
+          status: 'PENDING',
+        } as Awaited<ReturnType<typeof getPayment>>));
+      } else {
+        const recovered = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+          .then((result) => result.data)
+          .catch(() => []);
+        if (recovered.length === 1) remotePayment = recovered[0]!;
+        else {
+          await markOutboundResultUnknown({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'PAYMENT',
+            entityId: cobranca.id,
+            externalReference,
+            error: payment.error,
+          });
+          if (payment.error === 'KYC_NAO_APROVADO') return err('KYC_NAO_APROVADO');
+          if (payment.error === 'Credenciais Asaas não configuradas') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+      }
+    }
+    const paymentMismatch = !remotePayment?.id
+      || remotePayment.externalReference !== externalReference
+      || (remotePayment.customer != null && remotePayment.customer !== customer.data.customerId)
+      || (remotePayment.value != null && Math.abs(remotePayment.value - Number(cobranca.valor)) > 0.001)
+      || (remotePayment.dueDate != null && remotePayment.dueDate !== dueDateIso);
+    if (paymentMismatch) {
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'PAYMENT',
+        entityId: cobranca.id,
+        externalReference,
+        error: 'REMOTE_PAYMENT_CONFIRMATION_MISMATCH',
+      });
       return err('ERRO_AO_CRIAR_PAGAMENTO');
     }
+    await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
+    await prisma.charge.updateMany({
+      where: { id: chargeId, contaId: input.contaId },
+      data: { asaasPaymentId: remotePayment.id, invoiceUrl: remotePayment.invoiceUrl ?? null },
+    });
+    await markOutboundAwaitingWebhook(operation.job.id, remotePayment.id);
 
     await auditLogService.record({
       contaId: input.contaId,
@@ -226,8 +335,8 @@ export async function createCharge(
       entity: { type: 'Cobranca', id: cobranca.id },
       metadata: {
         cobrancaId: cobranca.id,
-        chargeId: existingCharge?.id ?? cobranca.id,
-        asaasPaymentId: payment.data.id,
+        chargeId,
+        asaasPaymentId: remotePayment.id,
         externalReference,
         awaitingOfficialMaterialization: true,
       },
@@ -235,8 +344,8 @@ export async function createCharge(
 
     return ok({
       cobrancaId: cobranca.id,
-      chargeId: existingCharge?.id ?? cobranca.id,
-      asaasPaymentId: payment.data.id,
+      chargeId,
+      asaasPaymentId: remotePayment.id,
       externalReference,
     });
   } catch (error) {

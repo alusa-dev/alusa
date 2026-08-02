@@ -64,9 +64,7 @@ export async function POST(req: NextRequest) {
 
     if (!result.success) {
       const status =
-        result.error === 'FEATURE_DISABLED'
-          ? 403
-          : result.error === 'KYC_NAO_APROVADO'
+        result.error === 'KYC_NAO_APROVADO'
             ? 409
           : result.error === 'MATRICULA_NAO_ENCONTRADA' || result.error === 'CONTRATO_NAO_ENCONTRADO'
             ? 404

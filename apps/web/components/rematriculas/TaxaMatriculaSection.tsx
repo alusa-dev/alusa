@@ -180,6 +180,7 @@ const normalizePixQrCodeUrl = (value?: string | null): string | null => {
 };
 
 export function TaxaMatriculaSection({
+  matriculaId,
   taxaMatricula,
   taxaIsenta,
   cobrancas,
@@ -188,6 +189,9 @@ export function TaxaMatriculaSection({
   const [loadingLinks, setLoadingLinks] = useState(false);
   const [taxaLinks, setTaxaLinks] = useState<ResendCobrancaData | null>(null);
   const [copyingPix, setCopyingPix] = useState(false);
+  const [editingValue, setEditingValue] = useState(false);
+  const [feeValue, setFeeValue] = useState(String(taxaMatricula));
+  const [savingValue, setSavingValue] = useState(false);
 
   const taxaCobranca = useMemo(() => {
     return cobrancas.find((c) => c.tipo === 'TAXA_MATRICULA') ?? null;
@@ -218,6 +222,31 @@ export function TaxaMatriculaSection({
           isStandaloneTaxa),
     ) &&
     !canOpenReceipt;
+
+  const handleSaveValue = async () => {
+    const value = Number(feeValue.replace(',', '.'));
+    if (!Number.isFinite(value) || value <= 0) {
+      pushToast({ title: 'Valor inválido', description: 'Informe um valor maior que zero.', variant: 'warning' });
+      return;
+    }
+    setSavingValue(true);
+    try {
+      const response = await fetch(`/api/matriculas/${matriculaId}/taxa`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error?.message ?? 'Não foi possível alterar a taxa.');
+      pushToast({ title: 'Taxa atualizada', description: result.message, variant: 'success' });
+      setEditingValue(false);
+      onRefresh();
+    } catch (error) {
+      pushToast({ title: 'Erro ao alterar taxa', description: error instanceof Error ? error.message : String(error), variant: 'error' });
+    } finally {
+      setSavingValue(false);
+    }
+  };
 
   const handleCopyPix = useCallback(async (pixValue: string) => {
     if (!pixValue) return;
@@ -309,13 +338,23 @@ export function TaxaMatriculaSection({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1">
-            <label className={labelClass}>Valor da Taxa</label>
-            <Input
-              value={currency.format(displayedTaxaValue)}
-              disabled
-              className={controlClass}
-              readOnly
-            />
+            <div className="flex items-center justify-between gap-2">
+              <label className={labelClass}>Valor da Taxa</label>
+              {taxaCobranca?.status && openTaxaStatuses.has(taxaCobranca.status) ? (
+                <button type="button" className="text-xs font-medium text-brand-accent" onClick={() => {
+                  setFeeValue(String(displayedTaxaValue));
+                  setEditingValue((current) => !current);
+                }}>Alterar</button>
+              ) : null}
+            </div>
+            {editingValue ? (
+              <div className="flex gap-2">
+                <Input value={feeValue} onChange={(event) => setFeeValue(event.target.value)} inputMode="decimal" disabled={savingValue} />
+                <Button size="sm" onClick={handleSaveValue} disabled={savingValue}>{savingValue ? 'Salvando…' : 'Salvar'}</Button>
+              </div>
+            ) : (
+              <Input value={currency.format(displayedTaxaValue)} disabled className={controlClass} readOnly />
+            )}
           </div>
           <div className="space-y-1">
             <label className={labelClass}>Status da Taxa</label>

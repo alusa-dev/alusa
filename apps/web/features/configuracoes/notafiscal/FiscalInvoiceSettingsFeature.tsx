@@ -369,18 +369,25 @@ export function FiscalInvoiceSettingsFeature() {
 
     try {
       setFieldErrors({});
-      await saveSettings(form);
+      const saved = await saveSettings(form) as {
+        saveResult?: { subscriptionSync?: { failed?: number } };
+      } | null;
       await fetchSettings();
       if (contaId) {
         clearFiscalWizardDraft(contaId);
         setHasLocalDraft(false);
       }
       setWizardOpen(false);
+      const subscriptionSyncFailures = saved?.saveResult?.subscriptionSync?.failed ?? 0;
       toast.custom((t) => (
         <CustomToast
-          variant="success"
-          title="Configuração salva"
-          description="As informações fiscais da escola foram atualizadas."
+          variant={subscriptionSyncFailures > 0 ? 'warning' : 'success'}
+          title={subscriptionSyncFailures > 0 ? 'Configuração salva com pendências' : 'Configuração salva'}
+          description={
+            subscriptionSyncFailures > 0
+              ? `${subscriptionSyncFailures} assinatura(s) mantiveram o estado anterior e serão reprocessadas pela reconciliação fiscal.`
+              : 'As informações fiscais da escola foram atualizadas.'
+          }
           onClose={() => toast.dismiss(t)}
         />
       ));

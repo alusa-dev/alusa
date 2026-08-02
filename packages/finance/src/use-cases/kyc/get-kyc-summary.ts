@@ -175,6 +175,7 @@ async function getKycSummaryInternal(
       asaasAccountId: asaasAccount?.asaasAccountId ?? null,
       generalStatus: myAccountStatus.general,
       syncedAt: new Date(),
+      source: 'READ_MODEL',
     });
   }
 

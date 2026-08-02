@@ -70,6 +70,7 @@ describe('serviço de matrícula', () => {
     let planoId: string;
     let ownerId: string;
     let responsavelId: string;
+    let modeloId: string;
 
     async function ensureData() {
       // Garante a existência de uma conta com owner usando o fluxo oficial
@@ -161,6 +162,29 @@ describe('serviço de matrícula', () => {
         },
       } as unknown as Parameters<typeof prisma.plano.upsert>[0]);
 
+      const modelo = await prisma.contratoModelo.upsert({
+        where: {
+          uq_contrato_modelo_conta_nome_versao: {
+            contaId: conta.id,
+            nome: 'Contrato Matrícula Teste',
+            versao: 1,
+          },
+        },
+        update: {
+          status: Status.ATIVO,
+          arquivoPdfUrl: 'https://example.test/contrato-matricula.pdf',
+          hashSha256: 'a'.repeat(64),
+        },
+        create: {
+          contaId: conta.id,
+          nome: 'Contrato Matrícula Teste',
+          versao: 1,
+          status: Status.ATIVO,
+          arquivoPdfUrl: 'https://example.test/contrato-matricula.pdf',
+          hashSha256: 'a'.repeat(64),
+        },
+      });
+
       // Aluno
       const uniqueEmail = `aluno.test+${Date.now()}@example.com`;
       const aluno = await prisma.aluno.create({
@@ -199,6 +223,7 @@ describe('serviço de matrícula', () => {
       if (!vinculo) {
         await prisma.alunoResponsavel.create({
           data: {
+            contaId: conta.id,
             alunoId: aluno.id,
             responsavelId: responsavel.id,
             tipoVinculo: 'RESPONSAVEL_FINANCEIRO',
@@ -206,23 +231,41 @@ describe('serviço de matrícula', () => {
         });
       }
 
-      return { conta, aluno, turma, plano, owner, responsavel };
+      return { conta, aluno, turma, plano, owner, responsavel, modelo };
     }
 
     beforeAll(async () => {
-      const { conta, aluno, turma, plano, owner, responsavel } = await ensureData();
+      const { conta, aluno, turma, plano, owner, responsavel, modelo } = await ensureData();
       contaId = conta.id;
       alunoId = aluno.id;
       turmaId = turma.id;
       planoId = plano.id;
       ownerId = owner.id;
       responsavelId = responsavel.id;
+      modeloId = modelo.id;
     });
 
     afterEach(async () => {
       if (!alunoId) return;
-      await prisma.cobranca.deleteMany({ where: { matricula: { alunoId } } });
-      await prisma.matricula.deleteMany({ where: { alunoId } });
+      const matriculas = await prisma.matricula.findMany({
+        where: { alunoId },
+        select: { id: true },
+      });
+      const matriculaIds = matriculas.map(({ id }) => id);
+      if (matriculaIds.length === 0) return;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.cobranca.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+        await tx.matriculaBillingOutbox.deleteMany({
+          where: { matriculaId: { in: matriculaIds } },
+        });
+        await tx.matricula.updateMany({
+          where: { id: { in: matriculaIds } },
+          data: { contratoAtualId: null },
+        });
+        await tx.contrato.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+        await tx.matricula.deleteMany({ where: { id: { in: matriculaIds } } });
+      });
     });
 
     it('criarMatricula mantém taxa pendente sem gerar cobrança imediata por padrão', async () => {
@@ -247,9 +290,12 @@ describe('serviço de matrícula', () => {
           dataFimContrato,
           vencimentoDia: 5,
           createdById: ownerId,
+          modeloId,
         });
       const m = matricula as { id: string; taxaStatus?: string };
       expect(m.id).toBeTruthy();
+      expect(matricula.status).toBe('AGUARDANDO_CONFIRMACAO');
+      expect(matricula.billingProvisionStatus).toBe('PENDENTE');
       expect(cobrancas.taxa).toBeNull();
       expect(preco.total).toBeGreaterThan(0);
       expect(primeiroVencimento instanceof Date).toBe(true);
@@ -276,6 +322,7 @@ describe('serviço de matrícula', () => {
         dataFimContrato,
         vencimentoDia: 5,
         createdById: ownerId,
+        modeloId,
       });
 
       const taxa = cobrancas.taxa as { id: string; status: string } | null;
@@ -316,8 +363,44 @@ describe('serviço de matrícula', () => {
           dataFimContrato,
           vencimentoDia: 5,
           createdById: ownerId,
+          modeloId,
         })
       ).rejects.toThrow('Responsável financeiro é obrigatório para alunos menores de 18 anos.');
+    });
+
+    it('serializa tentativas concorrentes e cria somente uma matrícula sobreposta', async () => {
+      const dataInicio = new Date();
+      const dataFimContrato = new Date(dataInicio);
+      dataFimContrato.setMonth(dataFimContrato.getMonth() + 12);
+      const baseInput = {
+        contaId,
+        alunoId,
+        responsavelFinanceiroId: responsavelId,
+        turmaId,
+        planoId,
+        taxaMatricula: 0,
+        taxaIsenta: true,
+        formaPagamento: FormaPagamento.PIX,
+        criarCobranca: false,
+        gerarCobrancaTaxa: false,
+        pagarTaxaAgora: false,
+        dataInicio,
+        dataFimContrato,
+        vencimentoDia: 10,
+        createdById: ownerId,
+        modeloId,
+      };
+
+      const results = await Promise.allSettled([
+        criarMatricula({ ...baseInput, uiRequestId: `concurrent-a-${Date.now()}` }),
+        criarMatricula({ ...baseInput, uiRequestId: `concurrent-b-${Date.now()}` }),
+      ]);
+
+      expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+      await expect(
+        prisma.matricula.count({ where: { contaId, alunoId, turmaId } }),
+      ).resolves.toBe(1);
     });
 
     it('listarMatriculas da turma inclui matrícula futura já confirmada', async () => {
@@ -326,7 +409,7 @@ describe('serviço de matrícula', () => {
       const dataFimContrato = new Date(dataInicio);
       dataFimContrato.setMonth(dataFimContrato.getMonth() + 12);
 
-      await criarMatricula({
+      const { matricula } = await criarMatricula({
         contaId,
         alunoId,
         turmaId,
@@ -341,6 +424,12 @@ describe('serviço de matrícula', () => {
         dataFimContrato,
         vencimentoDia: 10,
         createdById: ownerId,
+        modeloId,
+      });
+
+      await prisma.matricula.update({
+        where: { id: matricula.id },
+        data: { status: 'ATIVA' },
       });
 
       const { data: list } = await listarMatriculas({

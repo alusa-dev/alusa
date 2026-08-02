@@ -3,6 +3,7 @@ import type { AsaasInvoice } from '@alusa/asaas';
 import {
   createInvoice as asaasCreateInvoice,
   getPayment as asaasGetPayment,
+  getMunicipalOptions as asaasGetMunicipalOptions,
   listAsaasInvoices,
   AsaasHttpError,
   CircuitOpenError,
@@ -17,6 +18,7 @@ import { requireKycApproved } from '../foundation/kyc-guard';
 import { buildChargeInvoiceTexts, resolveChargeInvoiceContext } from '../fiscal/charge-invoice-context';
 import { evaluateChargeInvoiceEligibility } from '../fiscal/charge-invoice-eligibility';
 import { getFiscalPrisma } from '../fiscal/fiscal-prisma';
+import { buildAsaasInvoiceIbsCbs, validateFiscalIbsCbs } from '../fiscal/ibs-cbs';
 import {
   buildAsaasInvoiceTaxes,
   validateAsaasInvoiceTaxesInput,
@@ -517,14 +519,19 @@ export async function scheduleChargeInvoice(
     const kyc = await requireKycApproved(input.contaId);
     if (!kyc.success) return err('KYC_NAO_APROVADO');
 
-    const [settings, services] = await Promise.all([
+    const credentials = await loadAsaasCredentials(input.contaId);
+    if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+
+    const [settings, services, municipalOptions] = await Promise.all([
       prisma.contaFiscalSettings.findUnique({ where: { contaId: input.contaId } }),
       prisma.fiscalService.findMany({ where: { contaId: input.contaId } }),
+      asaasGetMunicipalOptions({ apiKey: credentials.apiKey }).catch(() => null),
     ]);
 
     const readiness = computeFiscalReadiness({
       settings,
       services,
+      municipalOptions,
       kycApproved: true,
       invoicesEnabled: true,
     });
@@ -532,6 +539,13 @@ export async function scheduleChargeInvoice(
 
     const defaultService = services.find((service) => service.isDefault);
     if (!settings || !defaultService) return err('FISCAL_NOT_READY');
+
+    if (!settings.simplesNacional) {
+      const issues = validateFiscalIbsCbs(defaultService);
+      if (issues.length > 0) {
+        return err({ kind: 'VALIDATION', message: issues[0]!.message });
+      }
+    }
 
     const retainedPis = Number(defaultService.pis);
     const retainedCofins = Number(defaultService.cofins);
@@ -618,9 +632,6 @@ export async function scheduleChargeInvoice(
       });
     }
 
-    const credentials = await loadAsaasCredentials(input.contaId);
-    if (!credentials) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
-
     await ensureWebhookConfigOperational(input.contaId);
 
     const asaasPayment = await asaasGetPayment({
@@ -704,6 +715,9 @@ export async function scheduleChargeInvoice(
     const municipalServiceCode = usesProviderMunicipalService
       ? null
       : defaultService.municipalServiceCode;
+    const ibsCbs = !settings.simplesNacional
+      ? buildAsaasInvoiceIbsCbs(defaultService) ?? undefined
+      : undefined;
 
     if (existing && !existing.asaasInvoiceId) {
       const recovered = await recoverInvoiceByExternalReference({
@@ -785,6 +799,7 @@ export async function scheduleChargeInvoice(
           municipalServiceCode,
           municipalServiceName: defaultService.name,
           taxes,
+          ibsCbs,
         },
       });
 

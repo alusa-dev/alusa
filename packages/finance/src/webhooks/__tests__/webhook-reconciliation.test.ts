@@ -11,6 +11,9 @@ vi.mock('@alusa/database', () => ({
     subscription: {
       findMany: vi.fn(),
     },
+    billingAgreement: {
+      findMany: vi.fn(),
+    },
     installmentPlan: {
       findMany: vi.fn(),
     },
@@ -65,6 +68,7 @@ describe('webhook-reconciliation.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.billingAgreement.findMany).mockResolvedValue([]);
     vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([]);
     vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([]);
     vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'test-key' } as never);
@@ -192,6 +196,7 @@ describe('webhook-reconciliation.service', () => {
           id: 'ch-1',
           asaasPaymentId: 'pay_1',
           status: 'OPEN',
+          asaasStatus: 'PENDING',
           externalReference: null,
         },
       ] as never);

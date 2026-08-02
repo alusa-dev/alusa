@@ -17,7 +17,12 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { cn } from '@/lib/cn';
-import { Check, Download, ExternalLink } from '@/components/icons/icons';
+import { Check, ChevronRight, Download, ExternalLink } from '@/components/icons/icons';
+import {
+  platformBillingSummaryDTOSchema,
+  type PlatformBillingSummaryDTO,
+  type PublicPlatformPlanDTO,
+} from './dtos/platform-billing-summary';
 
 type PlanCode = 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM';
 type BillingStatus =
@@ -33,17 +38,7 @@ type BillingStatus =
   | 'PAUSED'
   | 'UNKNOWN';
 
-type PublicPlan = {
-  code: Exclude<PlanCode, 'CUSTOM'>;
-  name: string;
-  amountCents: number;
-  currency: 'brl';
-  interval: 'month';
-  trialDays: number;
-  maxActiveStudents: number;
-  publicCheckoutEnabled: true;
-  includedFeatures: string[];
-};
+type PublicPlan = PublicPlatformPlanDTO;
 
 type BillingAccount = {
   id: string;
@@ -100,55 +95,7 @@ type PaymentMethodSummary =
   | { status: 'missing' }
   | { status: 'unknown' };
 
-type BillingSummary = {
-  environment: 'TEST' | 'LIVE';
-  canManage: boolean;
-  billingInfo: {
-    contaName: string;
-    email: string | null;
-  };
-  activeStudents: number;
-  account: BillingAccount | null;
-  paymentMethod: PaymentMethodSummary;
-  plans: PublicPlan[];
-  invoices: BillingInvoice[];
-  health: {
-    contaId: string;
-    stripeCustomerId: string | null;
-    stripeSubscriptionId: string | null;
-    lastWebhook: {
-      id: string;
-      eventId: string;
-      eventType: string;
-      status: string;
-      receivedAt: string;
-      processedAt: string | null;
-      lastErrorCode: string | null;
-    } | null;
-    webhookStats: Record<string, number>;
-    lastReconciliation: string | null;
-    pendingChanges: number;
-    openIssues: number;
-  };
-  planChanges: Array<{
-    id: string;
-    type: 'UPGRADE' | 'DOWNGRADE' | 'CANCEL_AT_PERIOD_END' | 'UNDO_CANCEL' | 'REACTIVATE' | 'PAYMENT_RECOVERY';
-    status: 'PENDING_PAYMENT' | 'PENDING_EFFECTIVE_DATE' | 'APPLIED' | 'CANCELED' | 'FAILED' | 'SUPERSEDED';
-    fromPlanCode: PlanCode | null;
-    toPlanCode: PlanCode | null;
-    effectiveAt: string | null;
-    requestedAt: string;
-    lastError: string | null;
-  }>;
-  issues: Array<{
-    id: string;
-    severity: 'INFO' | 'WARNING' | 'CRITICAL';
-    code: string;
-    title: string;
-    message: string;
-    detectedAt: string;
-  }>;
-};
+type BillingSummary = PlatformBillingSummaryDTO;
 
 type CheckoutState = 'success' | 'cancel' | null;
 
@@ -187,7 +134,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         cache: 'no-store',
       });
       if (!response.ok) throw new Error('Falha ao carregar plano e faturamento.');
-      setSummary((await response.json()) as BillingSummary);
+      const parsed = platformBillingSummaryDTOSchema.safeParse(await response.json());
+      if (!parsed.success) throw new Error('Os dados de plano e faturamento estão incompletos.');
+      setSummary(parsed.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao carregar plano e faturamento.');
     } finally {
@@ -1017,37 +966,26 @@ function PlanChangeDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[min(860px,calc(100vh-48px))] w-[calc(100vw-56px)] max-w-none overflow-y-auto rounded-3xl border-[#d1d1d1] bg-white px-6 py-12 shadow-2xl alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] sm:px-10 md:px-16 lg:px-24 xl:px-32">
-        <DialogHeader className="items-center space-y-4 text-center">
-          <div className="mx-auto space-y-2 text-center">
-            <DialogTitle className="text-[30px] font-medium leading-none text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)] md:text-[36px]">
+      <DialogContent className="h-[calc(100dvh-32px)] max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] max-w-[1120px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden rounded-[24px] border-0 bg-[#26113f] p-0 text-white shadow-2xl will-change-[transform,opacity] data-[state=open]:animate-modal-expand-in data-[state=closed]:animate-modal-shrink-out motion-reduce:animate-none md:h-[calc(100dvh-48px)] md:max-h-[calc(100dvh-48px)] md:w-[calc(100vw-48px)]">
+        <div
+          className="h-full min-h-0 overflow-y-scroll px-5 py-8 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#9b6bc8] [&::-webkit-scrollbar-thumb:hover]:bg-[#b184dc] [&::-webkit-scrollbar-track]:bg-[#32164e] sm:px-8 md:px-12 md:py-10 lg:px-16"
+          style={{ scrollbarWidth: 'thin', scrollbarColor: '#9b6bc8 #32164e' }}
+        >
+          <DialogHeader className="max-w-[620px] space-y-3 text-left">
+            <DialogTitle className="text-[36px] font-normal leading-none tracking-[-0.03em] text-white md:text-[44px]">
               Escolha seu plano
             </DialogTitle>
-            <p className="mx-auto max-w-[560px] text-center text-sm leading-5 text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
+            <DialogDescription className="text-sm leading-6 text-[#ded0ec]">
               Selecione a capacidade ideal para sua escola. Você pode mudar de plano conforme sua base de alunos cresce.
-            </p>
-          </div>
-          <div className="grid h-[38px] w-[169px] grid-cols-2 rounded-[7px] bg-[#f3f3f3] p-1 text-sm font-medium text-[#3d3a3f] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-secondary)]">
-            <button
-              type="button"
-              className="rounded-[7px] bg-white text-xs shadow-sm alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-text-primary)]"
-            >
-              Mensal
-            </button>
-            <button type="button" className="rounded-[7px] text-xs" disabled>
-              Anual
-            </button>
-          </div>
-        </DialogHeader>
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="mt-7 space-y-6">
-          <div className="mx-auto grid w-full max-w-[1074px] gap-4 lg:grid-cols-3 xl:gap-[15px]">
+          <div className="mt-10 space-y-5">
             {summary.plans.map((plan) => {
               const current = summary.account?.planCode === plan.code;
               const exceeds = summary.activeStudents > plan.maxActiveStudents;
               const currentBlocked = current && !isReactivationFlow;
               const disabled = !summary.canManage || currentBlocked || exceeds || actionLoading !== null || pendingChange;
-              const theme = getPlanCardTheme(plan.code);
               const displayName = getPlanMarketingName(plan.code);
               const benefits = plan.includedFeatures.length > 0
                 ? plan.includedFeatures
@@ -1060,47 +998,34 @@ function PlanChangeDialog({
                 ];
 
               return (
-                <div
+                <section
                   key={plan.code}
                   className={cn(
-                    'flex min-h-[412px] flex-col rounded-[24px] p-[7px] pt-0 text-[#3d3a3f]',
-                    theme.shell,
-                    current && 'ring-2 ring-[#512a82]/35',
+                    'grid gap-8 rounded-[18px] bg-[#fbf9fd] px-6 py-6 text-[#2d2038] md:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] md:px-8 md:py-7',
+                    current && 'bg-[#dcbcff]',
                   )}
                 >
-                  <div className="flex h-[55px] items-center justify-between gap-4 px-5 text-[#3d3a3f]">
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-2xl font-medium">{displayName}</h4>
-                      {current ? <Badge variant={isReactivationFlow ? 'neutral' : 'success'}>{isReactivationFlow ? 'Anterior' : 'Atual'}</Badge> : null}
+                  <div className="flex min-w-0 flex-col items-start">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-base font-medium">{displayName}</h4>
+                      {current ? (
+                        <Badge variant={isReactivationFlow ? 'neutral' : 'success'}>
+                          {isReactivationFlow ? 'Anterior' : 'Atual'}
+                        </Badge>
+                      ) : null}
                     </div>
-                    <p className="shrink-0 whitespace-nowrap text-lg font-medium">
-                      {formatMoney(plan.amountCents, plan.currency)}
-                      <span className="text-sm">/mês</span>
+                    <p className="mt-5 flex flex-wrap items-end gap-x-3 gap-y-1">
+                      <span className="text-[42px] font-normal leading-none tracking-[-0.04em] md:text-[48px]">
+                        {formatMoney(plan.amountCents, plan.currency)}
+                      </span>
+                      <span className="pb-1 text-sm text-[#66576f]">por mês</span>
                     </p>
-                  </div>
-
-                  <div className="flex flex-1 flex-col justify-between rounded-[21px] bg-white px-[26px] py-7 alusa-dark:bg-[color:var(--color-bg-card)]">
-                    <div>
-                      <h5 className="text-xl font-medium text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
-                        Até {plan.maxActiveStudents} alunos
-                      </h5>
-                      <p className="mt-2 min-h-10 max-w-[250px] text-sm leading-5 text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
-                        {getPlanDescription(plan.code)}
-                      </p>
-                      <ul className="mt-7 space-y-2.5">
-                        {benefits.slice(0, 5).map((benefit) => (
-                          <li key={benefit} className="flex items-start gap-2 text-xs leading-4 text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
-                            <span className="mt-0.5 flex size-[15px] shrink-0 items-center justify-center rounded-full border border-current">
-                              <Check className="size-3" aria-hidden="true" strokeWidth={2.5} />
-                            </span>
-                            <span>{benefit}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    <p className="mt-5 max-w-[390px] text-sm leading-5 text-[#43364c]">
+                      Até {plan.maxActiveStudents} alunos. {getPlanDescription(plan.code)}
+                    </p>
 
                     {exceeds ? (
-                      <p className="mt-5 text-xs text-red-700 alusa-dark:text-red-300">
+                      <p className="mt-4 text-xs font-medium text-[#8f1f52]">
                         A conta possui {summary.activeStudents} alunos ativos.
                       </p>
                     ) : null}
@@ -1110,46 +1035,65 @@ function PlanChangeDialog({
                       disabled={disabled}
                       onClick={() => onPlanChange(plan.code)}
                       className={cn(
-                        'mt-8 h-[45px] w-full rounded-full px-6 text-base font-medium shadow-none hover:opacity-90 disabled:opacity-60',
-                        theme.button,
+                        'mt-6 h-11 w-auto rounded-full border px-5 text-sm font-medium shadow-none disabled:opacity-100',
+                        current
+                          ? 'border-[#2d1744] bg-[#2d1744] text-white hover:bg-[#3b1f58]'
+                          : 'border-[#3d2b4f] bg-transparent text-[#2d2038] hover:bg-[#eee7f4]',
                       )}
                     >
-                      {exceeds
-                        ? 'Plano incompatível'
-                        : currentBlocked
-                        ? 'Plano atual'
-                        : actionLoading?.endsWith(`:${plan.code}`)
-                          ? 'Processando...'
-                          : isReactivationFlow
-                            ? 'Reativar assinatura'
-                            : canStartTrial
-                            ? `Testar ${displayName} por ${plan.trialDays} dias`
-                            : summary.account?.status === 'TRIALING'
-                              ? 'Trocar plano'
-                              : 'Alterar plano'}
+                      <span>
+                        {exceeds
+                          ? 'Plano incompatível'
+                          : currentBlocked
+                            ? 'Plano atual'
+                            : actionLoading?.endsWith(`:${plan.code}`)
+                              ? 'Processando...'
+                              : isReactivationFlow
+                                ? 'Reativar assinatura'
+                                : canStartTrial
+                                  ? getTrialCtaLabel(displayName, plan.trialDays)
+                                  : summary.account?.status === 'TRIALING'
+                                    ? 'Trocar plano'
+                                    : 'Alterar plano'}
+                      </span>
+                      {!disabled ? <ChevronRight className="ml-2 size-4" aria-hidden="true" /> : null}
                     </Button>
                   </div>
-                </div>
+
+                  <div>
+                    <h5 className="text-base font-medium">O que está incluído</h5>
+                    <ul className="mt-5 space-y-3">
+                      {benefits.slice(0, 5).map((benefit) => (
+                        <li key={benefit} className="flex items-start gap-3 text-sm leading-5 text-[#43364c]">
+                          <span className="mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[#512a82] text-white">
+                            <Check className="size-3" aria-hidden="true" strokeWidth={2.5} />
+                          </span>
+                          <span>{benefit}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </section>
               );
             })}
-          </div>
 
-          <div className="flex flex-col items-center gap-5 pt-0 text-center">
-            <p className="text-sm font-medium text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
-              <span className="text-[#1e1c1f] alusa-dark:text-[color:var(--color-text-primary)]">Sua escola precisa de mais capacidade?</span>{' '}
-              <button type="button" className="underline underline-offset-2" onClick={onOpenPortal}>
+            <div className="flex flex-col items-start gap-4 pt-2 text-left">
+              <p className="text-sm text-[#ded0ec]">
+                <span>Sua escola precisa de mais capacidade?</span>{' '}
+                <button type="button" className="font-medium text-white underline underline-offset-4" onClick={onOpenPortal}>
                 Solicite um plano personalizado.
-              </button>
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onOpenPortal}
-              disabled={!summary.account?.id || actionLoading !== null || !summary.canManage}
-              className="self-center border-gray-200 text-gray-500 shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-text-secondary)]"
-            >
-              Gerenciar pagamento
-            </Button>
+                </button>
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onOpenPortal}
+                disabled={!summary.account?.id || actionLoading !== null || !summary.canManage}
+                className="border-white/35 bg-transparent text-white shadow-none hover:bg-white/10 hover:text-white disabled:border-white/15 disabled:text-white/45"
+              >
+                Gerenciar pagamento
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
@@ -1194,25 +1138,6 @@ function getPlanDescription(code: PublicPlan['code']) {
   return 'Para escolas com maior volume de alunos e uma rotina mais completa.';
 }
 
-function getPlanCardTheme(code: PublicPlan['code']) {
-  if (code === 'STARTER') {
-    return {
-      shell: 'bg-[#e7e5ea]',
-      button: 'bg-[#3d3a3f] text-[#f3f3f3]',
-    };
-  }
-  if (code === 'PREMIUM') {
-    return {
-      shell: 'bg-[#e2d1f8]',
-      button: 'bg-[#40384a] text-[#e2d1f8]',
-    };
-  }
-  return {
-    shell: 'bg-[#e7e5ea]',
-    button: 'bg-[#3d3a3f] text-[#f3f3f3]',
-  };
-}
-
 function formatMoney(amountCents: number, currency: string) {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
@@ -1235,6 +1160,14 @@ function getPaymentMethodDescription(paymentMethod: PaymentMethodSummary) {
 
   const expiry = formatCardExpiry(paymentMethod.expMonth, paymentMethod.expYear);
   return expiry ? `Validade ${expiry}` : null;
+}
+
+function getTrialCtaLabel(displayName: string, trialDays: number | null | undefined) {
+  if (!Number.isInteger(trialDays) || !trialDays || trialDays <= 0) {
+    return 'Começar teste grátis';
+  }
+
+  return `Testar ${displayName} por ${trialDays} dias`;
 }
 
 function getPlanActionLabel(input: {

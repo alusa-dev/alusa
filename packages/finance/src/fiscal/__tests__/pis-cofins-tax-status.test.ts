@@ -138,7 +138,7 @@ describe('pis-cofins-tax-status', () => {
     expect('pisCofinsRetentionType' in taxes).toBe(false);
   });
 
-  it('mantém payload mínimo para Simples Nacional', () => {
+  it('envia payload tributário completo e explícito para Simples Nacional', () => {
     const taxes = buildAsaasInvoiceTaxes({
       simplesNacional: true,
       retainIss: false,
@@ -153,9 +153,10 @@ describe('pis-cofins-tax-status', () => {
       operationCofins: 3,
     });
 
-    expect(taxes.pisCofinsTaxStatus).toBeUndefined();
-    expect(taxes.operationPis).toBeUndefined();
-    expect(taxes.operationCofins).toBeUndefined();
-    expect(taxes.useTaxSystemReformNT007).toBeUndefined();
+    expect(taxes.pisCofinsTaxStatus).toBeNull();
+    expect(taxes.operationPis).toBeNull();
+    expect(taxes.operationCofins).toBeNull();
+    expect(taxes.nbsCode).toBeNull();
+    expect(taxes.useTaxSystemReformNT007).toBe(false);
   });
 });

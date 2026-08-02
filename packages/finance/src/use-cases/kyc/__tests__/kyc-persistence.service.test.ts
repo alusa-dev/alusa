@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoisted mocks (vi.mock factories can only reference hoisted vars) ────
 
-const { mockUpsert, mockKycRequirementUpsert, mockKycSlotUpsert } = vi.hoisted(() => ({
+const { mockFindUnique, mockUpdate, mockUpsert, mockKycRequirementUpsert, mockKycSlotUpsert } = vi.hoisted(() => ({
+  mockFindUnique: vi.fn().mockResolvedValue(null),
+  mockUpdate: vi.fn().mockResolvedValue({ id: 'proc-1' }),
   mockUpsert: vi.fn().mockResolvedValue({ id: 'proc-1' }),
   mockKycRequirementUpsert: vi.fn().mockResolvedValue({ id: 'req-1' }),
   mockKycSlotUpsert: vi.fn().mockResolvedValue({ id: 'slot-1' }),
@@ -10,7 +12,7 @@ const { mockUpsert, mockKycRequirementUpsert, mockKycSlotUpsert } = vi.hoisted((
 
 vi.mock('@alusa/database', () => ({
   prisma: {
-    kycProcess: { upsert: mockUpsert },
+    kycProcess: { findUnique: mockFindUnique, update: mockUpdate, upsert: mockUpsert },
     kycRequirement: { upsert: mockKycRequirementUpsert },
     kycSlot: { upsert: mockKycSlotUpsert },
   },
@@ -48,6 +50,8 @@ const BASE_DOCS: AsaasMyAccountDocumentsResponse = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockFindUnique.mockResolvedValue(null);
+  mockUpdate.mockResolvedValue({ id: 'proc-1' });
   mockUpsert.mockResolvedValue({ id: 'proc-1' });
   mockKycRequirementUpsert.mockResolvedValue({ id: 'req-1' });
   mockKycSlotUpsert.mockResolvedValue({ id: 'slot-1' });
@@ -165,6 +169,26 @@ describe('syncKycModels', () => {
     const call = mockUpsert.mock.calls[0][0];
     expect(call.create.lastWebhookEventId).toBe('evt-123');
     expect(call.update.lastWebhookEventId).toBe('evt-123');
+  });
+
+  it('não regride aprovação por leitura eventual do Asaas', async () => {
+    mockFindUnique.mockResolvedValue({ id: 'proc-1', status: 'APPROVED' });
+
+    await syncKycModels({
+      asaasAccountId: 'acc-1',
+      myAccountStatus: BASE_STATUS,
+      documents: BASE_DOCS,
+      source: 'READ_MODEL',
+    });
+
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: 'proc-1' },
+      data: { lastAsaasSyncAt: expect.any(Date) },
+      select: { id: true },
+    });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockKycRequirementUpsert).not.toHaveBeenCalled();
+    expect(mockKycSlotUpsert).not.toHaveBeenCalled();
   });
 });
 

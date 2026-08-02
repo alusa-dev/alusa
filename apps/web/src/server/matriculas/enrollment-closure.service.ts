@@ -63,6 +63,7 @@ export async function closeExpiredEnrollmentsWithoutSuccessor(
       id: true,
       status: true,
       dataFimContrato: true,
+      contratoAtualId: true,
     },
     orderBy: { dataFimContrato: 'asc' },
     take: limit,
@@ -84,6 +85,17 @@ export async function closeExpiredEnrollmentsWithoutSuccessor(
       });
 
       if (update.count === 0) return null;
+
+      if (candidate.contratoAtualId) {
+        await tx.contrato.updateMany({
+          where: {
+            id: candidate.contratoAtualId,
+            contaId: input.contaId,
+            status: { notIn: ['EXPIRADO', 'CANCELADO'] },
+          },
+          data: { status: 'EXPIRADO' },
+        });
+      }
 
       await tx.matriculaLog.create({
         data: {

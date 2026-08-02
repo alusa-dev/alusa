@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
-import { FamilyBillingStatus, SubscriptionStatus } from '@prisma/client';
+import {
+  FamilyBillingStatus,
+  MatriculaBillingProvisionStatus,
+  SubscriptionStatus,
+} from '@prisma/client';
 
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
@@ -60,6 +64,8 @@ export async function GET(request: Request) {
           where: {
             contaId,
             responsavelId: payerId,
+            billingProvisionStatus: MatriculaBillingProvisionStatus.PROVISIONADO,
+            standaloneSubscriptionId: { not: null },
             status: {
               in: [
                 FamilyBillingStatus.PENDENTE,

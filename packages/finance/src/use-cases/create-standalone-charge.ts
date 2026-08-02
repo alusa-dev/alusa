@@ -7,7 +7,7 @@ import crypto from 'crypto';
 
 import { createAsaasPayment } from './create-payment';
 import { ensureCustomer } from './ensure-customer';
-import { listPayments } from './asaas-ops';
+import { getPayment, getSubscription, listPayments, listSubscriptions } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
 import { createStandaloneInstallmentPlan } from './create-standalone-installment-plan';
 import { syncSubscriptionFiscalSettings } from './sync-subscription-fiscal-settings';
@@ -18,14 +18,23 @@ import { isPastDate } from '../foundation/date-guard';
 import {
   createStandaloneSubscriptionRecord,
   findStandaloneSubscription,
+  updateStandaloneSubscriptionRemoteLink,
 } from '../foundation/standalone-subscription-store';
 import {
   buildStandaloneExternalReference,
   buildSafeAsaasIdempotencyKey,
   deriveDeterministicId,
+  hashPayload,
   isPrismaUniqueViolation,
   withIdempotencyGuard,
 } from '../core';
+import {
+  markOutboundAwaitingWebhook,
+  markOutboundRemoteConfirmed,
+  markOutboundRemoteRequested,
+  markOutboundResultUnknown,
+  reserveOutboundFinancialOperation,
+} from './outbound-financial-operation';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import type { CustomerPayerType } from '@prisma/client';
 import type {
@@ -394,10 +403,16 @@ export async function createStandaloneCharge(
     const idempotencyKey = input.uiRequestId ?? computeIdempotencyKey(input);
     const chargeId = deriveDeterministicId('ch', idempotencyKey);
     const externalReference = buildStandaloneExternalReference({ chargeId });
+    let existingOneTimeCharge: {
+      id: string;
+      asaasPaymentId: string | null;
+      externalReference: string;
+      status: string;
+    } | null = null;
 
     if (input.chargeType === 'ONE_TIME') {
       // 4. Verificar duplicidade (idempotência local) - Suporta V1 e V2
-      const existingCharge = await prisma.charge.findFirst({
+      existingOneTimeCharge = await prisma.charge.findFirst({
         where: {
           contaId: input.contaId,
           OR: [
@@ -414,16 +429,15 @@ export async function createStandaloneCharge(
         },
       });
 
-      if (existingCharge) {
-        if (existingCharge.asaasPaymentId) {
+      if (existingOneTimeCharge) {
+        if (existingOneTimeCharge.asaasPaymentId) {
           return ok({
-            chargeId: existingCharge.id,
-            asaasPaymentId: existingCharge.asaasPaymentId ?? undefined,
-            externalReference: existingCharge.externalReference,
-            status: existingCharge.status ?? 'OPEN',
+            chargeId: existingOneTimeCharge.id,
+            asaasPaymentId: existingOneTimeCharge.asaasPaymentId ?? undefined,
+            externalReference: existingOneTimeCharge.externalReference,
+            status: existingOneTimeCharge.status ?? 'OPEN',
           });
         }
-        return err('COBRANCA_DUPLICADA');
       }
     }
 
@@ -514,62 +528,94 @@ export async function createStandaloneCharge(
         fine: input.fine,
       };
 
-      const payment = await createAsaasPayment(paymentInput);
-      if (!payment.success) {
-        if (payment.error === 'Credenciais Asaas não configuradas')
-          return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
-        return err('ERRO_AO_CRIAR_PAGAMENTO');
+      if (!existingOneTimeCharge) {
+        await prisma.charge.create({
+          data: {
+            id: chargeId,
+            contaId: input.contaId,
+            externalReference,
+            status: 'PENDING_SYNC',
+            statusUpdatedAt: new Date(),
+            payerName: displayName,
+            description: input.description ?? 'Cobrança avulsa',
+            value: input.value!,
+            dueDate: vencimentoDate,
+            billingType: input.billingType,
+            customerId: customerResult.data.localCustomerId,
+          },
+        }).catch(async (reserveError) => {
+          const concurrent = await prisma.charge.findFirst({
+            where: { contaId: input.contaId, externalReference },
+            select: { id: true },
+          });
+          if (!concurrent) throw reserveError;
+        });
       }
 
-      const persistedCharge = await withIdempotencyGuard({
+      const operation = await reserveOutboundFinancialOperation({
         contaId: input.contaId,
-        scope: 'charge-create',
-        key: idempotencyKey,
-        fn: async (tx) => {
-          const existingByIdempotency = await tx.charge.findFirst({
-            where: {
-              contaId: input.contaId,
-              OR: [{ externalReference }, { asaasPaymentId: payment.data.id }],
-            },
-            select: { id: true, status: true, asaasPaymentId: true },
-          });
-
-          if (existingByIdempotency) return existingByIdempotency;
-
-          try {
-            return await tx.charge.create({
-              data: {
-                id: chargeId,
-                contaId: input.contaId,
-                externalReference,
-                status: 'OPEN',
-                statusUpdatedAt: new Date(),
-                asaasPaymentId: payment.data.id,
-                payerName: displayName,
-                description: input.description ?? 'Cobrança avulsa',
-                value: input.value!,
-                dueDate: vencimentoDate,
-                billingType: input.billingType,
-                customerId: customerResult.data.localCustomerId,
-                invoiceUrl: payment.data.invoiceUrl ?? null,
-              },
-              select: { id: true, status: true, asaasPaymentId: true },
-            });
-          } catch (createError) {
-            if (isPrismaUniqueViolation(createError)) {
-              const existingAfterConflict = await tx.charge.findFirst({
-                where: {
-                  contaId: input.contaId,
-                  OR: [{ externalReference }, { asaasPaymentId: payment.data.id }],
-                },
-                select: { id: true, status: true, asaasPaymentId: true },
-              });
-              if (existingAfterConflict) return existingAfterConflict;
-            }
-            throw createError;
+        type: 'CREATE_PAYMENT',
+        idempotencyKey,
+        resource: 'PAYMENT',
+        entityId: chargeId,
+        externalReference,
+        requestFingerprint: hashPayload(paymentInput),
+        links: { chargeId },
+      });
+      let remotePayment = operation.payload.remoteId
+        ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+        : null;
+      if (!remotePayment) {
+        const matches = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+          .then((result) => result.data)
+          .catch(() => []);
+        if (matches.length > 1) {
+          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE' });
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        remotePayment = matches[0] ?? null;
+      }
+      if (!remotePayment) {
+        const claimed = await markOutboundRemoteRequested(operation.job.id);
+        if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
+        const payment = await createAsaasPayment(paymentInput);
+        if (payment.success) {
+          remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(() => ({ ...payment.data, status: 'PENDING' } as Awaited<ReturnType<typeof getPayment>>));
+        } else {
+          const recovered = await listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId: input.contaId })
+            .then((result) => result.data)
+            .catch(() => []);
+          if (recovered.length === 1) remotePayment = recovered[0]!;
+          else {
+            await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: payment.error });
+            if (payment.error === 'Credenciais Asaas não configuradas') return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
           }
+        }
+      }
+      const paymentMismatch = !remotePayment?.id
+        || remotePayment.externalReference !== externalReference
+        || (remotePayment.customer != null && remotePayment.customer !== asaasCustomerId)
+        || (remotePayment.value != null && Math.abs(remotePayment.value - input.value!) > 0.001)
+        || (remotePayment.dueDate != null && remotePayment.dueDate !== input.dueDate);
+      if (paymentMismatch) {
+        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId, externalReference, error: 'REMOTE_PAYMENT_CONFIRMATION_MISMATCH' });
+        return err('ERRO_AO_CRIAR_PAGAMENTO');
+      }
+      await markOutboundRemoteConfirmed(operation.job.id, remotePayment.id, { providerStatus: remotePayment.status });
+
+      await prisma.charge.updateMany({
+        where: { id: chargeId, contaId: input.contaId, externalReference },
+        data: {
+          asaasPaymentId: remotePayment.id,
+          invoiceUrl: remotePayment.invoiceUrl ?? null,
+          status: 'OPEN',
+          statusUpdatedAt: new Date(),
         },
       });
+      const persistedCharge = { id: chargeId, status: 'OPEN' as const, asaasPaymentId: remotePayment.id };
+
+      await markOutboundAwaitingWebhook(operation.job.id, remotePayment.id);
 
       await chargeReadModelService.projectChargeReadModelByChargeId(persistedCharge.id);
 
@@ -580,7 +626,7 @@ export async function createStandaloneCharge(
         entity: { type: 'Charge', id: persistedCharge.id },
         metadata: {
           chargeType: input.chargeType,
-          asaasPaymentId: payment.data.id,
+          asaasPaymentId: remotePayment.id,
           externalReference,
           payerType,
           payerId,
@@ -591,7 +637,7 @@ export async function createStandaloneCharge(
 
       return ok({
         chargeId: persistedCharge.id,
-        asaasPaymentId: payment.data.id,
+        asaasPaymentId: remotePayment.id,
         externalReference,
         status: persistedCharge.status ?? 'OPEN',
         notificationSync,
@@ -666,7 +712,7 @@ export async function createStandaloneCharge(
         idempotencyKey,
       });
 
-      if (existingSubscription) {
+      if (existingSubscription?.asaasSubscriptionId) {
         return ok({
           chargeId: existingSubscription.id,
           asaasSubscriptionId: existingSubscription.asaasSubscriptionId ?? undefined,
@@ -686,31 +732,103 @@ export async function createStandaloneCharge(
       const creds = await loadAsaasCredentials(input.contaId);
       if (!creds) return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
 
-      const subscription = await createSubscription({
-        apiKey: creds.apiKey,
-        idempotencyKey: asaasIdempotencyKey,
-        data: {
-          customer: asaasCustomerId,
+      const subscriptionPayload = {
+        customer: asaasCustomerId,
+        billingType: input.billingType,
+        value: input.value!,
+        nextDueDate: input.nextDueDate!,
+        cycle: input.cycle!,
+        endDate: input.endDate,
+        description: input.description,
+        externalReference: subscriptionExternalReference,
+        discount: input.discount,
+        interest: input.interest,
+        fine: input.fine,
+      };
+      const nextDueDateParsed = new Date(`${input.nextDueDate}T00:00:00`);
+      const endDateParsed = input.endDate ? new Date(`${input.endDate}T00:00:00`) : null;
+
+      if (!existingSubscription) {
+        await createStandaloneSubscriptionRecord(prisma, {
+          id: subscriptionId,
+          contaId: input.contaId,
+          customerId: customerResult.data.localCustomerId,
+          externalReference: subscriptionExternalReference,
+          idempotencyKey,
+          status: 'REQUESTED',
+          asaasSubscriptionId: null,
+          cycle: input.cycle!,
           billingType: input.billingType,
           value: input.value!,
-          nextDueDate: input.nextDueDate!,
-          cycle: input.cycle!,
-          endDate: input.endDate,
+          nextDueDate: nextDueDateParsed,
+          endDate: endDateParsed,
           description: input.description,
-          externalReference: subscriptionExternalReference,
-          discount: input.discount,
-          interest: input.interest,
-          fine: input.fine,
-        },
+        }).catch(async (reserveError) => {
+          const concurrent = await findStandaloneSubscription(prisma, {
+            contaId: input.contaId,
+            id: subscriptionId,
+            externalReference: subscriptionExternalReference,
+          });
+          if (!concurrent) throw reserveError;
+        });
+      }
+
+      const operation = await reserveOutboundFinancialOperation({
+        contaId: input.contaId,
+        type: 'CREATE_SUBSCRIPTION',
+        idempotencyKey: asaasIdempotencyKey,
+        resource: 'SUBSCRIPTION',
+        entityId: subscriptionId,
+        externalReference: subscriptionExternalReference,
+        requestFingerprint: hashPayload(subscriptionPayload),
       });
+      let subscription = operation.payload.remoteId
+        ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+        : null;
+      if (!subscription) {
+        const matches = await listSubscriptions(
+          { externalReference: subscriptionExternalReference, limit: 10, includeDeleted: true },
+          { contaId: input.contaId },
+        ).then((result) => result.data).catch(() => []);
+        if (matches.length > 1) {
+          await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE' });
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        subscription = matches[0] ?? null;
+      }
+      if (!subscription) {
+        const claimed = await markOutboundRemoteRequested(operation.job.id);
+        if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
+        try {
+          const created = await createSubscription({ apiKey: creds.apiKey, idempotencyKey: asaasIdempotencyKey, data: subscriptionPayload });
+          subscription = await getSubscription(created.id, { contaId: input.contaId });
+        } catch (remoteError) {
+          const recovered = await listSubscriptions(
+            { externalReference: subscriptionExternalReference, limit: 10, includeDeleted: true },
+            { contaId: input.contaId },
+          ).then((result) => result.data).catch(() => []);
+          if (recovered.length === 1) subscription = recovered[0]!;
+          else {
+            await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: remoteError });
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
+          }
+        }
+      }
+      const subscriptionMismatch = !subscription?.id
+        || subscription.externalReference !== subscriptionExternalReference
+        || (subscription.customer != null && subscription.customer !== asaasCustomerId)
+        || (subscription.value != null && Math.abs(subscription.value - input.value!) > 0.001)
+        || (subscription.nextDueDate != null && subscription.nextDueDate !== input.nextDueDate);
+      if (subscriptionMismatch) {
+        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: 'REMOTE_SUBSCRIPTION_CONFIRMATION_MISMATCH' });
+        return err('ERRO_AO_CRIAR_PAGAMENTO');
+      }
+      await markOutboundRemoteConfirmed(operation.job.id, subscription.id, { providerStatus: subscription.status });
 
       const nextStatus = mapAsaasSubscriptionStatus({
         status: subscription.status,
         deleted: subscription.deleted,
       });
-
-      const nextDueDateParsed = new Date(`${input.nextDueDate}T00:00:00`);
-      const endDateParsed = input.endDate ? new Date(`${input.endDate}T00:00:00`) : null;
 
       const persisted = await withIdempotencyGuard({
         contaId: input.contaId,
@@ -723,7 +841,14 @@ export async function createStandaloneCharge(
             asaasSubscriptionId: subscription.id,
           });
 
-          if (existingByIdempotency) return existingByIdempotency;
+          if (existingByIdempotency) {
+            return updateStandaloneSubscriptionRemoteLink(tx as typeof prisma, {
+              id: existingByIdempotency.id,
+              contaId: input.contaId,
+              asaasSubscriptionId: subscription.id,
+              status: nextStatus,
+            });
+          }
 
           try {
             return await createStandaloneSubscriptionRecord(tx as typeof prisma, {
@@ -760,6 +885,8 @@ export async function createStandaloneCharge(
           }
         },
       });
+
+      await markOutboundAwaitingWebhook(operation.job.id, subscription.id);
 
       await auditLogService.record({
         contaId: input.contaId,

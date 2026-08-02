@@ -4,7 +4,6 @@ import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import type { WizardState } from '@/components/matriculas/wizard/types';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
-import { createContrato } from '@/features/contratos/services/contratos-service';
 import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
 import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
 import type { EnrollmentBillingStrategyDTO } from '@/features/cadastro/matriculas/dtos';
@@ -258,23 +257,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         );
       }
 
-      // Gera contrato automaticamente usando o modelo escolhido
-      let contratoResult: unknown = null;
-      let contratoWarning: string | null = null;
-      if (wizardState.modeloId) {
-        try {
-          contratoResult = await createContrato({
-            matriculaId: result.matricula.id,
-            modeloId: wizardState.modeloId,
-          });
-        } catch (contratoError) {
-          contratoWarning = `O contrato não foi gerado automaticamente: ${(contratoError as Error).message}`;
-        }
-      } else {
-        contratoWarning = 'O modelo de contrato não foi selecionado para esta matrícula.';
-      }
-
-      const contratoComSync = contratoResult as { subscriptionSync?: { success: boolean; error?: string } } | null;
       if (result.asaasSync?.subscription && !result.asaasSync.subscription.success) {
         const syncError = result.asaasSync.subscription.error;
         toast.custom(
@@ -293,49 +275,13 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
           { duration: 7000 },
         );
       }
-      if (contratoComSync?.subscriptionSync && !contratoComSync.subscriptionSync.success) {
-        const syncError = contratoComSync.subscriptionSync.error;
-        toast.custom(
-          (t) => (
-            <CustomToast
-              variant="warning"
-              title="Matrícula criada"
-              description={
-                syncError
-                  ? `A cobrança recorrente ainda está em processamento. Detalhe: ${sanitizeMessage(syncError)}`
-                  : 'A cobrança recorrente ainda está em processamento. Acompanhe os detalhes da matrícula em instantes.'
-              }
-              onClose={() => toast.dismiss(t)}
-            />
-          ),
-          { duration: 7000 },
-        );
-      }
-      if (contratoWarning) {
-        toast.custom(
-          (t) => (
-            <CustomToast
-              variant="warning"
-              title="Matrícula criada"
-              description={sanitizeMessage(contratoWarning)}
-              onClose={() => toast.dismiss(t)}
-            />
-          ),
-          { duration: 7000 },
-        );
-      }
-
       // Toast de sucesso
       toast.custom(
         (t) => (
           <CustomToast
             variant="success"
             title="Matrícula criada com sucesso"
-            description={
-              contratoWarning
-                ? 'Os dados da matrícula foram salvos. O contrato poderá ser gerado depois, sem impactar a cobrança recorrente.'
-                : 'Os dados da matrícula foram salvos e o contrato já está disponível para acompanhamento.'
-            }
+            description="Os dados da matrícula e o contrato foram salvos juntos e já estão disponíveis para acompanhamento."
             onClose={() => toast.dismiss(t)}
           />
         ),
@@ -413,8 +359,10 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
       // Callback de erro
       options.onError?.(error);
-
-      throw error;
+      // Falhas esperadas de validação ou confirmação já foram apresentadas no toast.
+      // Não relançar evita que o overlay de desenvolvimento trate uma resposta 4xx/503
+      // como erro de aplicação e esconda a mensagem útil do usuário.
+      return null;
     } finally {
       setLoading(false);
     }

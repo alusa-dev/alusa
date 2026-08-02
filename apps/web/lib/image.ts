@@ -16,6 +16,14 @@ export interface GenerateCroppedOptions {
   exportSize?: number; // maior lado resultante
 }
 
+export type CroppedImageResult = {
+  dataUrl: string;
+  blob: Blob;
+  width: number;
+  height: number;
+  wasUpscaled: boolean;
+};
+
 type HighQualityCtx = CanvasRenderingContext2D & {
   imageSmoothingQuality: 'low' | 'medium' | 'high';
 };
@@ -24,45 +32,55 @@ export async function generateCroppedImage(
   imageSrc: string,
   areaPixels: import('react-easy-crop').Area,
   opts: GenerateCroppedOptions = {},
-): Promise<{ dataUrl: string; blob: Blob; width: number; height: number }> {
-  const { mimeType = 'image/jpeg', quality = 0.9, exportSize } = opts;
+): Promise<CroppedImageResult> {
+  const { mimeType = 'image/jpeg', exportSize } = opts;
+  const quality = Math.min(Math.max(opts.quality ?? 0.9, 0), 1);
   const image = await createImage(imageSrc);
-  const { width, height, x, y } = areaPixels;
+  const width = Math.max(1, Math.round(areaPixels.width));
+  const height = Math.max(1, Math.round(areaPixels.height));
+  const x = Math.max(0, Math.round(areaPixels.x));
+  const y = Math.max(0, Math.round(areaPixels.y));
+  const longest = Math.max(width, height);
+  const normalizedExportSize = exportSize && exportSize > 0 ? Math.round(exportSize) : longest;
+  const scale = normalizedExportSize / longest;
+  const targetWidth = Math.max(1, Math.round(width * scale));
+  const targetHeight = Math.max(1, Math.round(height * scale));
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d') as HighQualityCtx | null;
   if (!ctx) throw new Error('Canvas 2D context not available');
 
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
 
   ctx.imageSmoothingEnabled = true;
   if (ctx.imageSmoothingQuality !== undefined) ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, x, y, width, height, 0, 0, targetWidth, targetHeight);
 
-  ctx.drawImage(image, x, y, width, height, 0, 0, width, height);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (result) => result ? resolve(result) : reject(new Error('Não foi possível codificar a imagem.')),
+      mimeType,
+      mimeType === 'image/png' ? undefined : quality,
+    );
+  });
+  const dataUrl = await blobToDataUrl(blob);
 
-  // Optional scale pass
-  if (exportSize && exportSize > 0) {
-    const longest = Math.max(width, height);
-    if (longest !== exportSize) {
-      const scale = exportSize / longest;
-      const targetW = Math.round(width * scale);
-      const targetH = Math.round(height * scale);
-      const scaled = document.createElement('canvas');
-      scaled.width = targetW;
-      scaled.height = targetH;
-      const sctx = scaled.getContext('2d') as HighQualityCtx | null;
-      if (!sctx) throw new Error('Canvas 2D context not available (scale)');
-      sctx.imageSmoothingEnabled = true;
-      if (sctx.imageSmoothingQuality !== undefined) sctx.imageSmoothingQuality = 'high';
-      sctx.drawImage(canvas, 0, 0, targetW, targetH);
-      canvas.width = targetW;
-      canvas.height = targetH;
-      ctx.clearRect(0, 0, targetW, targetH);
-      ctx.drawImage(scaled, 0, 0);
-    }
-  }
+  return {
+    dataUrl,
+    blob,
+    width: targetWidth,
+    height: targetHeight,
+    wasUpscaled: normalizedExportSize > longest,
+  };
+}
 
-  const dataUrl = canvas.toDataURL(mimeType, mimeType === 'image/png' ? undefined : quality);
-  const blob = await (await fetch(dataUrl)).blob();
-  return { dataUrl, blob, width: canvas.width, height: canvas.height };
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error('Não foi possível ler a imagem processada.'));
+    reader.onerror = () => reject(reader.error ?? new Error('Não foi possível ler a imagem processada.'));
+    reader.readAsDataURL(blob);
+  });
 }

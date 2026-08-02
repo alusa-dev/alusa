@@ -1,7 +1,11 @@
 import { createHash } from 'crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { PeriodicidadePlano, Prisma, type PrismaClient } from '@prisma/client';
 
 import { calcularPrecoMatricula } from './matricula-pricing';
+import {
+  mapPeriodicidadeToCycle,
+  resolveChargeableFirstDueDate,
+} from './recurring-billing';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 
@@ -19,6 +23,32 @@ type FinancialGroupTarget =
   | { kind: 'FAMILY_GROUP'; id: string }
   | { kind: 'SUBSCRIPTION'; id: string };
 
+type CurrentCycleChargeState =
+  | 'NOT_GENERATED'
+  | 'PENDING'
+  | 'PAID'
+  | 'OVERDUE'
+  | 'PROCESSING'
+  | 'CANCELLED';
+
+type InitialEnrollmentBillingAction =
+  | 'CREATE_SEPARATE'
+  | 'CREATE_ONE_TIME_CHARGE'
+  | 'UPDATE_SUBSCRIPTION'
+  | 'UPDATE_PENDING'
+  | 'CREATE_COMPLEMENT'
+  | 'MANUAL_REVIEW'
+  | 'SCHEDULE_NEXT_CYCLE';
+
+type LocalChargeSnapshot = {
+  id: string;
+  status: string;
+  asaasStatus: string | null;
+  dueDate: Date;
+  competenceStart: Date | null;
+  competenceEnd: Date | null;
+};
+
 export type InitialEnrollmentBillingPreviewItem = {
   alunoId: string;
   matriculaId?: string | null;
@@ -31,6 +61,10 @@ export type InitialEnrollmentBillingPreviewItem = {
 
 export type InitialEnrollmentBillingPreviewInput = {
   contaId: string;
+  enrollmentMode?: 'INDIVIDUAL' | 'FAMILY';
+  familyPricingMode?: 'AGGREGATE_PLAN' | 'ITEMIZED_COMBOS';
+  aggregateMonthlyAmount?: number;
+  aggregateEnrollmentFeeAmount?: number;
   strategy?: InitialEnrollmentBillingStrategy;
   billingStrategy?: CanonicalEnrollmentBillingStrategy;
   responsavelFinanceiroId?: string | null;
@@ -66,6 +100,57 @@ function money(value: unknown) {
 
 function dateOnly(value: Date) {
   return value.toISOString().slice(0, 10);
+}
+
+function chargeState(charge: LocalChargeSnapshot | null): CurrentCycleChargeState {
+  if (!charge) return 'NOT_GENERATED';
+  const status = (charge.asaasStatus ?? charge.status).trim().toUpperCase();
+  if (['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED', 'PAGO', 'PAID'].includes(status)) {
+    return 'PAID';
+  }
+  if (['OVERDUE', 'ATRASADO', 'VENCIDO', 'DUNNING_REQUESTED'].includes(status)) return 'OVERDUE';
+  if (['PROCESSING', 'PROCESSANDO', 'AWAITING_RISK_ANALYSIS'].includes(status)) return 'PROCESSING';
+  if (['CANCELLED', 'CANCELED', 'CANCELADO', 'DELETED', 'REFUNDED', 'ESTORNADO'].includes(status)) {
+    return 'CANCELLED';
+  }
+  return 'PENDING';
+}
+
+function currentChargeForDate(charges: LocalChargeSnapshot[], effectiveAt: Date) {
+  const effectiveDate = dateOnly(effectiveAt);
+  const ordered = [...charges].sort((left, right) => left.dueDate.getTime() - right.dueDate.getTime());
+  return (
+    ordered.find(
+      (charge) =>
+        charge.competenceStart &&
+        charge.competenceEnd &&
+        dateOnly(charge.competenceStart) <= effectiveDate &&
+        dateOnly(charge.competenceEnd) >= effectiveDate,
+    ) ??
+    ordered.find((charge) => dateOnly(charge.dueDate) >= effectiveDate) ??
+    ordered.at(-1) ??
+    null
+  );
+}
+
+function subscriptionIsUnavailable(input: {
+  localStatus: string | null | undefined;
+  agreementStatus?: string | null;
+  remoteStatus?: string | null;
+}) {
+  const unavailable = new Set([
+    'EXPIRED',
+    'INACTIVE',
+    'DELETED',
+    'FAILED',
+    'CANCELLED',
+    'CANCELED',
+    'CANCELLATION_PENDING',
+    'REQUIRES_RECONCILIATION',
+  ]);
+  return [input.localStatus, input.agreementStatus, input.remoteStatus]
+    .filter((status): status is string => Boolean(status))
+    .some((status) => unavailable.has(status.trim().toUpperCase()));
 }
 
 function toLegacyStrategy(
@@ -120,7 +205,13 @@ function parseFinancialGroupTarget(id: string | null | undefined): FinancialGrou
 
 export async function previewInitialEnrollmentBilling(
   input: InitialEnrollmentBillingPreviewInput,
-  deps: { prisma: PrismaLike },
+  deps: {
+    prisma: PrismaLike;
+    getRemoteSubscription?: (_input: { contaId: string; subscriptionId: string }) => Promise<{
+      status?: string | null;
+      deleted?: boolean;
+    }>;
+  },
 ) {
   const blockers: Array<{ code: string; message: string; itemId?: string | null }> = [];
   const warnings: string[] = [];
@@ -187,6 +278,10 @@ export async function previewInitialEnrollmentBilling(
             dataInicio: true,
             dataFimContrato: true,
             valorMensalidadeTotal: true,
+            ciclo: true,
+            billingProvisionStatus: true,
+            standaloneSubscriptionId: true,
+            billingVersion: true,
             status: true,
             updatedAt: true,
           },
@@ -200,6 +295,14 @@ export async function previewInitialEnrollmentBilling(
             asaasSubscriptionId: true,
             status: true,
             updatedAt: true,
+            billingAgreement: {
+              select: {
+                status: true,
+                remoteStatus: true,
+                nextDueDate: true,
+                validUntil: true,
+              },
+            },
             matricula: {
               select: {
                 id: true,
@@ -212,12 +315,91 @@ export async function previewInitialEnrollmentBilling(
                 aluno: { select: { id: true, nome: true } },
                 plano: { select: { valor: true, periodicidade: true } },
                 combo: { select: { valor: true, periodicidade: true } },
+                cobrancas: {
+                  select: {
+                    id: true,
+                    status: true,
+                    asaasStatus: true,
+                    vencimento: true,
+                    competenciaInicio: true,
+                    competenciaFim: true,
+                  },
+                  orderBy: { vencimento: 'asc' },
+                },
               },
             },
           },
         })
       : null,
   ]);
+  const existingFamilySubscription = existingFamilyGroup?.standaloneSubscriptionId
+    ? await deps.prisma.standaloneSubscription.findFirst({
+        where: {
+          id: existingFamilyGroup.standaloneSubscriptionId,
+          contaId: input.contaId,
+          familyGroupId: existingFamilyGroup.id,
+        },
+        select: {
+          id: true,
+          status: true,
+          asaasSubscriptionId: true,
+          value: true,
+          nextDueDate: true,
+          endDate: true,
+          remoteStatus: true,
+          version: true,
+          updatedAt: true,
+          billingAgreement: {
+            select: {
+              status: true,
+              remoteStatus: true,
+              nextDueDate: true,
+              validUntil: true,
+            },
+          },
+          charges: {
+            select: {
+              id: true,
+              status: true,
+              asaasStatus: true,
+              dueDate: true,
+              cobranca: {
+                select: {
+                  vencimento: true,
+                  competenciaInicio: true,
+                  competenciaFim: true,
+                },
+              },
+            },
+            orderBy: { dueDate: 'asc' },
+          },
+        },
+      })
+    : null;
+  const remoteSubscriptionId =
+    existingSubscription?.asaasSubscriptionId ?? existingFamilySubscription?.asaasSubscriptionId ?? null;
+  if (deps.getRemoteSubscription && remoteSubscriptionId) {
+    try {
+      const official = await deps.getRemoteSubscription({
+        contaId: input.contaId,
+        subscriptionId: remoteSubscriptionId,
+      });
+      if (
+        official.deleted ||
+        ['EXPIRED', 'DELETED', 'INACTIVE', 'CANCELLED'].includes(String(official.status ?? '').toUpperCase())
+      ) {
+        blockers.push({
+          code: 'ASSINATURA_REMOTA_INDISPONIVEL',
+          message: 'A assinatura está expirada, inativa ou removida no Asaas. Regularize-a antes de unificar.',
+        });
+      }
+    } catch {
+      blockers.push({
+        code: 'ASSINATURA_REMOTA_NAO_VERIFICADA',
+        message: 'Não foi possível confirmar a assinatura no Asaas. Tente novamente antes de concluir a matrícula.',
+      });
+    }
+  }
 
   const alunosById = new Map(alunos.map((aluno) => [aluno.id, aluno]));
   const planosById = new Map(planos.map((plano) => [plano.id, plano]));
@@ -241,16 +423,14 @@ export async function previewInitialEnrollmentBilling(
       message: 'O agrupamento financeiro existente não foi encontrado nesta conta.',
     });
   }
-  if (strategy === 'INCLUDE_EXISTING' && existingFamilyGroup) {
+  if (
+    strategy === 'INCLUDE_EXISTING' &&
+    existingFamilyGroup &&
+    input.enrollmentMode !== 'FAMILY'
+  ) {
     blockers.push({
       code: 'AGRUPAMENTO_FAMILIAR_NAO_SUPORTADO',
       message: 'A matrícula individual só pode ser incluída em uma assinatura existente.',
-    });
-  }
-  if (strategy === 'UNIFY_NEXT_CYCLE') {
-    blockers.push({
-      code: 'UNIFICACAO_PROXIMO_CICLO_NAO_SUPORTADA',
-      message: 'A unificação no próximo ciclo ainda não possui processador financeiro para matrícula inicial.',
     });
   }
   if (strategy !== 'CREATE_SEPARATE' && !existingFamilyGroupId) {
@@ -282,6 +462,20 @@ export async function previewInitialEnrollmentBilling(
         message: 'A assinatura existente ainda nao esta pronta para receber outra matricula.',
       });
     }
+    if (
+      subscriptionIsUnavailable({
+        localStatus: existingSubscription.status,
+        agreementStatus: existingSubscription.billingAgreement?.status,
+        remoteStatus:
+          existingSubscription.billingAgreement?.remoteStatus ?? existingSubscription.status,
+      })
+    ) {
+      blockers.push({
+        code: 'ASSINATURA_EXISTENTE_INDISPONIVEL',
+        message:
+          'A assinatura existente está expirada, inativa ou exige reconciliação. Crie uma cobrança separada ou regularize a assinatura antes de unificar.',
+      });
+    }
   }
   if (existingFamilyGroup?.formaPagamento && existingFamilyGroup.formaPagamento !== input.formaPagamento) {
     blockers.push({
@@ -294,6 +488,54 @@ export async function previewInitialEnrollmentBilling(
       code: 'VENCIMENTO_INCOMPATIVEL',
       message: 'O dia de vencimento não é compatível com o agrupamento existente.',
     });
+  }
+  if (
+    (strategy === 'INCLUDE_EXISTING' || strategy === 'UNIFY_NEXT_CYCLE') &&
+    input.enrollmentMode === 'FAMILY' &&
+    existingFamilyGroup &&
+    (!existingFamilyGroup.standaloneSubscriptionId ||
+      existingFamilyGroup.billingProvisionStatus !== 'PROVISIONADO' ||
+      !existingFamilySubscription?.asaasSubscriptionId ||
+      existingFamilySubscription.status !== 'ACTIVE')
+  ) {
+    blockers.push({
+      code: 'ASSINATURA_FAMILIAR_NAO_PROVISIONADA',
+      message: 'O agrupamento familiar ainda não está pronto para receber novos alunos.',
+    });
+  }
+  if (
+    existingFamilySubscription &&
+    subscriptionIsUnavailable({
+      localStatus: existingFamilySubscription.status,
+      agreementStatus: existingFamilySubscription.billingAgreement?.status,
+      remoteStatus:
+        existingFamilySubscription.billingAgreement?.remoteStatus ??
+        existingFamilySubscription.remoteStatus,
+    })
+  ) {
+    blockers.push({
+      code: 'ASSINATURA_EXISTENTE_INDISPONIVEL',
+      message:
+        'A assinatura familiar está expirada, inativa ou exige reconciliação. Regularize-a antes de incluir novas matrículas.',
+    });
+  }
+  if (
+    existingFamilyGroup &&
+    existingFamilySubscription &&
+    money(existingFamilySubscription.value) !== money(existingFamilyGroup.valorMensalidadeTotal)
+  ) {
+    blockers.push({
+      code: 'VALOR_ASSINATURA_FAMILIAR_DIVERGENTE',
+      message: 'O valor financeiro local do agrupamento precisa ser reconciliado antes da inclusão.',
+    });
+  }
+  if (
+    existingFamilyGroup?.dataFimContrato &&
+    dateOnly(existingFamilyGroup.dataFimContrato) !== dateOnly(input.dataFimContrato)
+  ) {
+    warnings.push(
+      'A nova matrícula terá vigência própria; o agrupamento financeiro seguirá a vigência agregada das matrículas ativas.',
+    );
   }
   if (
     existingSubscription?.matricula.formaPagamento &&
@@ -317,10 +559,9 @@ export async function previewInitialEnrollmentBilling(
     existingSubscription &&
     dateOnly(existingSubscription.matricula.dataFimContrato) !== dateOnly(input.dataFimContrato)
   ) {
-    blockers.push({
-      code: 'VIGENCIA_INCOMPATIVEL',
-      message: 'A data final precisa ser igual à vigência da assinatura existente.',
-    });
+    warnings.push(
+      'A nova matrícula terá vigência própria; a assinatura não usará a data final de outra matrícula como limite global.',
+    );
   }
 
   const allocations = input.items.map((item) => {
@@ -378,7 +619,7 @@ export async function previewInitialEnrollmentBilling(
       .map((item) =>
         item.comboId ? combosById.get(item.comboId)?.periodicidade : item.planoId ? planosById.get(item.planoId)?.periodicidade : null,
       )
-      .filter(Boolean),
+      .filter((value): value is PeriodicidadePlano => Boolean(value)),
   );
   if (periodicities.size > 1) {
     blockers.push({
@@ -395,6 +636,17 @@ export async function previewInitialEnrollmentBilling(
       blockers.push({
         code: 'PERIODICIDADE_INCOMPATIVEL',
         message: 'A periodicidade nao e compativel com a assinatura existente.',
+      });
+    }
+  }
+  if (existingFamilyGroup?.ciclo && periodicities.size > 0) {
+    const requestedCycles = new Set<string>(
+      Array.from(periodicities).map((periodicity) => mapPeriodicidadeToCycle(periodicity)),
+    );
+    if (!requestedCycles.has(existingFamilyGroup.ciclo)) {
+      blockers.push({
+        code: 'PERIODICIDADE_INCOMPATIVEL',
+        message: 'A periodicidade não é compatível com o agrupamento familiar existente.',
       });
     }
   }
@@ -425,11 +677,109 @@ export async function previewInitialEnrollmentBilling(
   const currentMonthlyAmount = money(
     existingBaseAmount + Number(existingActiveAllocations?._sum.amount ?? 0),
   );
-  const addedMonthlyAmount = money(allocations.reduce((sum, item) => sum + item.amount, 0));
+  const calculatedAddedMonthlyAmount = money(
+    allocations.reduce((sum, item) => sum + item.amount, 0),
+  );
+  const addedMonthlyAmount =
+    input.enrollmentMode === 'FAMILY' && input.aggregateMonthlyAmount !== undefined
+      ? money(input.aggregateMonthlyAmount)
+      : calculatedAddedMonthlyAmount;
   const resultingMonthlyAmount =
     strategy === 'CREATE_SEPARATE'
       ? addedMonthlyAmount
       : money(currentMonthlyAmount + addedMonthlyAmount);
+
+  const targetCharges: LocalChargeSnapshot[] = existingSubscription
+    ? existingSubscription.matricula.cobrancas.map((charge) => ({
+        id: charge.id,
+        status: charge.status,
+        asaasStatus: charge.asaasStatus,
+        dueDate: charge.vencimento,
+        competenceStart: charge.competenciaInicio,
+        competenceEnd: charge.competenciaFim,
+      }))
+    : existingFamilySubscription
+      ? (existingFamilySubscription.charges ?? []).flatMap((charge): LocalChargeSnapshot[] => {
+          const dueDate = charge.dueDate ?? charge.cobranca?.vencimento ?? null;
+          if (!dueDate) return [];
+          return [{
+            id: charge.id,
+            status: charge.status,
+            asaasStatus: charge.asaasStatus,
+            dueDate,
+            competenceStart: charge.cobranca?.competenciaInicio ?? null,
+            competenceEnd: charge.cobranca?.competenciaFim ?? null,
+          }];
+        })
+      : [];
+  const currentCharge = currentChargeForDate(targetCharges, input.dataInicio);
+  const currentChargeState = chargeState(currentCharge);
+  const firstSeparateDueDate = resolveChargeableFirstDueDate(input.dataInicio, input.vencimentoDia);
+  const targetNextDueDate =
+    existingSubscription?.billingAgreement?.nextDueDate ??
+    existingFamilySubscription?.billingAgreement?.nextDueDate ??
+    existingFamilySubscription?.nextDueDate ??
+    currentCharge?.dueDate ??
+    (strategy === 'CREATE_SEPARATE' ? firstSeparateDueDate : null);
+  const contractEndsBeforeApplication = Boolean(
+    targetNextDueDate && dateOnly(input.dataFimContrato) < dateOnly(targetNextDueDate),
+  );
+
+  let currentCycleAction: InitialEnrollmentBillingAction;
+  let operationalMessage: string;
+  if (strategy === 'CREATE_SEPARATE') {
+    if (contractEndsBeforeApplication) {
+      currentCycleAction = 'CREATE_ONE_TIME_CHARGE';
+      operationalMessage =
+        'O contrato termina antes da primeira recorrência. A mensalidade deve ser emitida como cobrança avulsa, sem criar uma assinatura recorrente.';
+      warnings.push(operationalMessage);
+    } else {
+      currentCycleAction = 'CREATE_SEPARATE';
+      operationalMessage = 'Será criada uma cobrança recorrente separada para esta matrícula.';
+    }
+  } else if (strategy === 'UNIFY_NEXT_CYCLE') {
+    currentCycleAction = 'SCHEDULE_NEXT_CYCLE';
+    operationalMessage =
+      'A cobrança atual será preservada e o novo valor será aplicado somente no próximo ciclo.';
+    if (contractEndsBeforeApplication) {
+      blockers.push({
+        code: 'CONTRATO_TERMINA_ANTES_PROXIMO_CICLO',
+        message:
+          'O contrato termina antes do próximo ciclo da assinatura. Use cobrança separada ou inclusão no ciclo atual.',
+      });
+    }
+    if (currentChargeState === 'OVERDUE') {
+      warnings.push(
+        'Há cobrança vencida no ciclo atual. Ela será preservada e deverá ser tratada separadamente pela operação financeira.',
+      );
+    }
+  } else if (currentChargeState === 'PAID') {
+    currentCycleAction = 'CREATE_COMPLEMENT';
+    operationalMessage =
+      'A cobrança do ciclo atual já foi paga e não será alterada. Será criada uma cobrança complementar para a nova matrícula.';
+    warnings.push(operationalMessage);
+  } else if (currentChargeState === 'OVERDUE' || currentChargeState === 'PROCESSING' || currentChargeState === 'CANCELLED') {
+    currentCycleAction = 'MANUAL_REVIEW';
+    operationalMessage =
+      currentChargeState === 'OVERDUE'
+        ? 'A cobrança do ciclo atual está vencida e não será alterada automaticamente.'
+        : 'A cobrança do ciclo atual não pode ser alterada automaticamente neste estado.';
+    blockers.push({
+      code:
+        currentChargeState === 'OVERDUE'
+          ? 'COBRANCA_ATUAL_VENCIDA_REQUER_REVISAO'
+          : 'COBRANCA_ATUAL_REQUER_REVISAO',
+      message: `${operationalMessage} Escolha o próximo ciclo ou encaminhe para revisão financeira.`,
+    });
+  } else if (currentChargeState === 'PENDING') {
+    currentCycleAction = 'UPDATE_PENDING';
+    operationalMessage =
+      'A cobrança pendente do ciclo atual poderá ser atualizada para o novo valor após confirmação do preflight.';
+  } else {
+    currentCycleAction = 'UPDATE_SUBSCRIPTION';
+    operationalMessage =
+      'Ainda não há cobrança emitida para o ciclo; o valor da assinatura será atualizado antes da emissão.';
+  }
 
   const sourceSnapshot = {
     alunos: alunos.map((aluno) => ({ id: aluno.id, updatedAt: aluno.updatedAt.toISOString() })),
@@ -447,7 +797,28 @@ export async function previewInitialEnrollmentBilling(
         }
       : null,
     existingFamilyGroup: existingFamilyGroup
-      ? { id: existingFamilyGroup.id, updatedAt: existingFamilyGroup.updatedAt.toISOString() }
+      ? {
+          id: existingFamilyGroup.id,
+          updatedAt: existingFamilyGroup.updatedAt.toISOString(),
+          billingVersion: existingFamilyGroup.billingVersion,
+          standaloneSubscriptionId: existingFamilyGroup.standaloneSubscriptionId,
+          standaloneSubscription: existingFamilySubscription
+            ? {
+                id: existingFamilySubscription.id,
+                status: existingFamilySubscription.status,
+                asaasSubscriptionId: existingFamilySubscription.asaasSubscriptionId,
+                value: money(existingFamilySubscription.value),
+                nextDueDate: existingFamilySubscription.nextDueDate?.toISOString() ?? null,
+                endDate: existingFamilySubscription.endDate?.toISOString() ?? null,
+                remoteStatus: existingFamilySubscription.remoteStatus,
+                version: existingFamilySubscription.version,
+                updatedAt: existingFamilySubscription.updatedAt.toISOString(),
+                agreementStatus: existingFamilySubscription.billingAgreement?.status ?? null,
+                agreementRemoteStatus:
+                  existingFamilySubscription.billingAgreement?.remoteStatus ?? null,
+              }
+            : null,
+        }
       : null,
     existingSubscription: existingSubscription
       ? {
@@ -457,6 +828,18 @@ export async function previewInitialEnrollmentBilling(
           matriculaId: existingSubscription.matricula.id,
           alunoId: existingSubscription.matricula.alunoId,
           currentMonthlyAmount,
+          status: existingSubscription.status,
+          agreementStatus: existingSubscription.billingAgreement?.status ?? null,
+          agreementRemoteStatus: existingSubscription.billingAgreement?.remoteStatus ?? null,
+          nextDueDate: existingSubscription.billingAgreement?.nextDueDate?.toISOString() ?? null,
+        }
+      : null,
+    currentCharge: currentCharge
+      ? {
+          id: currentCharge.id,
+          status: currentCharge.status,
+          asaasStatus: currentCharge.asaasStatus,
+          dueDate: currentCharge.dueDate.toISOString(),
         }
       : null,
   };
@@ -464,6 +847,14 @@ export async function previewInitialEnrollmentBilling(
   const snapshot = {
     version: 1,
     contaId: input.contaId,
+    enrollmentMode: input.enrollmentMode ?? 'INDIVIDUAL',
+    familyPricingMode: input.familyPricingMode ?? null,
+    aggregateMonthlyAmount:
+      input.aggregateMonthlyAmount === undefined ? null : money(input.aggregateMonthlyAmount),
+    aggregateEnrollmentFeeAmount:
+      input.aggregateEnrollmentFeeAmount === undefined
+        ? null
+        : money(input.aggregateEnrollmentFeeAmount),
     strategy,
     billingStrategy,
     responsavelFinanceiroId: input.responsavelFinanceiroId ?? null,
@@ -490,7 +881,10 @@ export async function previewInitialEnrollmentBilling(
     },
     totals: {
       monthlyTotal: addedMonthlyAmount,
-      enrollmentFeeTotal: money(allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0)),
+      enrollmentFeeTotal:
+        input.enrollmentMode === 'FAMILY' && input.aggregateEnrollmentFeeAmount !== undefined
+          ? money(input.aggregateEnrollmentFeeAmount)
+          : money(allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0)),
       itemCount: allocations.length,
     },
     billingImpact: {
@@ -498,7 +892,9 @@ export async function previewInitialEnrollmentBilling(
       addedMonthlyAmount,
       resultingMonthlyAmount,
       enrollmentFeeAmount: money(
-        allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0),
+        input.enrollmentMode === 'FAMILY' && input.aggregateEnrollmentFeeAmount !== undefined
+          ? input.aggregateEnrollmentFeeAmount
+          : allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0),
       ),
       application:
         strategy === 'INCLUDE_EXISTING'
@@ -506,7 +902,13 @@ export async function previewInitialEnrollmentBilling(
           : strategy === 'UNIFY_NEXT_CYCLE'
             ? ('NEXT_CYCLE' as const)
             : ('SEPARATE' as const),
-      updatesPendingPayments: strategy === 'INCLUDE_EXISTING',
+      updatesPendingPayments: currentCycleAction === 'UPDATE_PENDING',
+      currentCycleAction,
+      currentChargeState,
+      currentChargeId: currentCharge?.id ?? null,
+      currentChargeDueDate: currentCharge?.dueDate.toISOString() ?? null,
+      nextCycleDate: targetNextDueDate?.toISOString() ?? null,
+      operationalMessage,
       targetLabel: existingSubscription
         ? `Assinatura de ${existingSubscription.matricula.aluno.nome}`
         : existingFamilyGroup

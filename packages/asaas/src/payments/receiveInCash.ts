@@ -5,6 +5,7 @@
  */
 
 import { AsaasHttp } from '../client/AsaasHttp';
+import type { AsaasPayment } from '../types/asaas';
 
 export interface ReceiveInCashParams {
   apiKey: string;
@@ -14,9 +15,7 @@ export interface ReceiveInCashParams {
   notifyCustomer?: boolean;
 }
 
-export interface ReceiveInCashResponse {
-  success: boolean;
-}
+export type ReceiveInCashResponse = AsaasPayment;
 
 export async function receiveInCash(params: ReceiveInCashParams): Promise<ReceiveInCashResponse> {
   const client = new AsaasHttp({ apiKey: params.apiKey });

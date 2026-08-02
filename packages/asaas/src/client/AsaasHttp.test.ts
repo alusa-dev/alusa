@@ -79,6 +79,30 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 
+  it('remove cartão e CVV do log de falha do provedor', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = new AsaasHttp({ apiKey: 'k' });
+
+    mockFetchOnce(400, { message: 'payment refused' });
+
+    await expect(
+      client.post('/payments/pay_1/payWithCreditCard', {
+        creditCard: { number: '4444444444444444', ccv: '123', holderName: 'Test Holder' },
+        creditCardHolderInfo: { name: 'Test Holder' },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[asaas.http] Resposta de erro',
+      expect.objectContaining({
+        requestBodyPreview: expect.not.stringContaining('4444444444444444'),
+      }),
+    );
+    const details = warnSpy.mock.calls[0]?.[1] as { requestBodyPreview?: string };
+    expect(details.requestBodyPreview).not.toContain('"ccv":"123"');
+    expect(details.requestBodyPreview).toContain('[REDACTED]');
+  });
+
   it('404 esperado não emite log de erro nem success=false no hook', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const hookSpy = vi.spyOn(globalAsaasHooks, 'emitApiCall');

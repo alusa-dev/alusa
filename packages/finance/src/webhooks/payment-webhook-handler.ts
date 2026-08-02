@@ -47,6 +47,10 @@ import type {
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
 import { normalizeAsaasPaymentSnapshotStatus as normalizeAsaasPaymentSnapshotStatusInput } from '../mappers/asaas-payment-snapshot-status';
+import {
+  projectAcademicEnrollmentFeeState,
+  projectFamilyEnrollmentFeeState,
+} from '../projections/enrollment-fee-projection.service';
 
 export type PaymentWebhookPayload = {
   event: string;
@@ -646,6 +650,11 @@ async function handleStandaloneChargeWebhook(
       providerStatus: p.status,
       asaasPaymentSubscription: p.subscription,
     });
+    await projectFamilyEnrollmentFeeState({
+      contaId,
+      chargeId: charge.id,
+      eventName: payload.event,
+    });
     await auditLogService.record({
       contaId,
       action: 'finance.webhook.standalone_charge_skipped',
@@ -733,6 +742,11 @@ async function handleStandaloneChargeWebhook(
     event: payload.event,
     providerStatus: p.status,
     asaasPaymentSubscription: p.subscription,
+  });
+  await projectFamilyEnrollmentFeeState({
+    contaId,
+    chargeId: charge.id,
+    eventName: payload.event,
   });
 
   await auditLogService.record({
@@ -1745,6 +1759,49 @@ async function handlePaymentWebhookCore(
     }
 
     if (!cobranca) {
+      const stagedReference = paymentExternalReference?.match(
+        /^enrollment-op:([^:]+):(subscription|fee)$/,
+      );
+      if (stagedReference) {
+        const [, operationId, kind] = stagedReference;
+        const operation = await prisma.enrollmentCreationOperation.findFirst({
+          where: { id: operationId, contaId },
+          select: { id: true, status: true },
+        });
+        if (
+          operation &&
+          ['PROCESSING', 'REMOTE_PROVISIONED', 'REQUIRES_RECONCILIATION'].includes(
+            operation.status,
+          )
+        ) {
+          await prisma.enrollmentCreationOperation.updateMany({
+            where: { id: operation.id, contaId },
+            data:
+              kind === 'fee'
+                ? { asaasEnrollmentFeePaymentId: payload.payment.id }
+                : { asaasFirstPaymentId: payload.payment.id },
+          });
+          await auditLogService.record({
+            contaId,
+            action: 'finance.webhook.enrollment_creation_payment_staged',
+            entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+            metadata: {
+              event: payload.event,
+              kind,
+              asaasPaymentId: payload.payment.id,
+              subscription: payload.payment.subscription ?? null,
+            },
+          });
+          return {
+            success: false,
+            error: 'ENROLLMENT_CREATION_IN_PROGRESS',
+          };
+        }
+        if (operation && ['COMPENSATING', 'COMPENSATED'].includes(operation.status)) {
+          return { success: true };
+        }
+      }
+
       const rawStatus = typeof payload.payment.status === 'string' ? payload.payment.status : '';
       const normalizedStatus = rawStatus.trim().toUpperCase();
       const placeholderExternalReference =
@@ -2179,11 +2236,11 @@ async function handlePaymentWebhookCore(
       });
     }
 
-    // Atualizar taxaStatus quando a cobrança da taxa é confirmada
-    if (cobranca.tipo === 'TAXA_MATRICULA' && nextStatusCobranca === 'PAGO') {
-      await prisma.matricula.updateMany({
-        where: { id: cobranca.matriculaId, taxaStatus: { not: 'PAGO' } },
-        data: { taxaStatus: 'PAGO' },
+    if (cobranca.tipo === 'TAXA_MATRICULA') {
+      await projectAcademicEnrollmentFeeState({
+        contaId,
+        cobrancaId: cobranca.id,
+        eventName: payload.event,
       });
     }
 
@@ -2192,7 +2249,7 @@ async function handlePaymentWebhookCore(
       nextChargeStatus: nextStatusCobranca,
     });
 
-    if (nextFinanceStatus) {
+    if (nextFinanceStatus && cobranca.tipo !== 'TAXA_MATRICULA') {
       await updateFinanceStatusFromPayment({
         matriculaId: cobranca.matriculaId,
         newStatus: nextFinanceStatus,
