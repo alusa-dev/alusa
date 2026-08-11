@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 
 interface DangerActionDialogProps {
   open: boolean;
@@ -94,12 +94,7 @@ export function DangerActionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-100">
-              <ExclamationTriangleIcon className="h-6 w-6 text-red-600" />
-            </div>
-            <DialogTitle className="text-xl text-red-900">{title}</DialogTitle>
-          </div>
+          <DialogTitle className="text-xl text-red-900">{title}</DialogTitle>
           <DialogDescription className="text-slate-700">{description}</DialogDescription>
         </DialogHeader>
 
@@ -121,12 +116,12 @@ export function DangerActionDialog({
           </div>
 
           {/* Aviso de ação perigosa */}
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-sm text-red-800">
-              <strong>⚠️ Atenção:</strong> Esta é uma ação irreversível e permanente. Todos os
-              dados serão removidos do sistema.
-            </p>
-          </div>
+          <InfoCallout variant="warning" size="sm" showIcon={false}>
+            <InfoCalloutItem label="Atenção" labelTone="danger">
+              Esta é uma ação irreversível e permanente. O cadastro será removido; registros
+              obrigatórios de auditoria poderão ser preservados.
+            </InfoCalloutItem>
+          </InfoCallout>
 
           {/* Campo de confirmação por digitação */}
           <div className="space-y-2">
@@ -155,15 +150,17 @@ export function DangerActionDialog({
               </p>
             )}
             {typedConfirmation === confirmationText && (
-              <p className="text-xs text-green-600">✓ Confirmação aceita</p>
+              <p className="text-xs text-green-600">Confirmação aceita</p>
             )}
           </div>
 
           {/* Mensagem de erro */}
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-800">{error}</p>
-            </div>
+            <InfoCallout variant="warning" size="sm" showIcon={false}>
+              <InfoCalloutItem label="Não foi possível concluir" labelTone="danger">
+                {error}
+              </InfoCalloutItem>
+            </InfoCallout>
           )}
         </div>
 
@@ -188,5 +185,4 @@ export function DangerActionDialog({
     </Dialog>
   );
 }
-
 

@@ -2563,7 +2563,7 @@ svg:hover,
 .calendar-scheduler-wrapper .fc-event {
 	border: none !important;
 	box-shadow: none !important;
-	outline: none !important;
+	outline: none;
 	background: transparent !important;
 	/* Era 1px no mês/outras vistas — aparecia halo branco em volta dos cards React. */
 	padding: 0;
@@ -2587,7 +2587,22 @@ svg:hover,
 .calendar-scheduler-wrapper .fc-h-event {
 	border: none !important;
 	box-shadow: none !important;
-	outline: none !important;
+	outline: none;
+}
+
+.calendar-scheduler-wrapper .fc-event:focus-visible {
+	outline: 2px solid var(--brand-accent) !important;
+	outline-offset: 2px;
+	border-radius: 10px;
+}
+
+.calendar-scheduler-wrapper .fc-event:hover .fc-event-main {
+	filter: brightness(0.98);
+}
+
+.calendar-scheduler-wrapper .fc-event[aria-label] {
+	/* Preserve the visual focus ring while keeping the event card itself clean. */
+	-webkit-tap-highlight-color: transparent;
 }
 
 .calendar-scheduler-wrapper .fc-event .fc-event-main,
@@ -2674,20 +2689,8 @@ svg:hover,
 	min-height: 148px;
 }
 
-.calendar-scheduler-wrapper--month-compact .fc-daygrid-day-frame {
-	min-height: 108px;
-}
-
-.calendar-scheduler-wrapper--month-compact .fc-daygrid-event-harness {
-	margin-top: 2px;
-}
-
 .calendar-scheduler-wrapper .calendar-scheduler-day-detailed {
 	background: linear-gradient(180deg, rgba(248, 250, 252, 0.7) 0%, rgba(255, 255, 255, 1) 100%);
-}
-
-.calendar-scheduler-wrapper .calendar-scheduler-day-compact {
-	background: #fcfcfd;
 }
 
 .calendar-scheduler-wrapper {
@@ -2716,6 +2719,16 @@ svg:hover,
 	justify-content: center;
 	padding: 0;
 	margin: 4px;
+}
+
+@media (max-width: 767px) {
+	.calendar-scheduler-wrapper--mobile {
+		min-height: 0;
+	}
+
+	.calendar-scheduler-wrapper--mobile .calendar-scheduler-wrapper {
+		min-height: 0;
+	}
 }
 
 /* ─── Dark: corrige regras Radix/cmdk herdadas (uso de !important no light) ─── */
@@ -2973,10 +2986,6 @@ svg:hover,
 
 [data-theme="dark"] .calendar-scheduler-wrapper .calendar-scheduler-day-detailed {
 	background: linear-gradient(180deg, rgba(28, 27, 41, 0.85) 0%, rgba(21, 22, 30, 1) 100%) !important;
-}
-
-[data-theme="dark"] .calendar-scheduler-wrapper .calendar-scheduler-day-compact {
-	background: var(--color-bg-card) !important;
 }
 
 [data-theme="dark"] .calendar-scheduler-wrapper .fc,

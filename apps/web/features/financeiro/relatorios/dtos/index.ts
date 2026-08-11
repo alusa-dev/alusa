@@ -3,6 +3,7 @@ import { z } from 'zod';
 export type {
   DelinquencyGroupItem,
   FinancialClassOccupancyItem,
+  FinancialCancellationRankingItem,
   FinancialEnrollmentSeriesItem,
   FinancialEnrollmentHealth,
   DelinquencyReport,
@@ -123,6 +124,12 @@ const classOccupancyItemSchema = z.object({
   occupancyRate: z.number().nonnegative(),
 });
 
+const cancellationRankingItemSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  cancellations: z.number().int().nonnegative(),
+});
+
 const pageSchema = <T extends z.ZodTypeAny>(item: T) =>
   z.object({
     items: z.array(item),
@@ -151,6 +158,7 @@ export const financialOverviewReportDTOSchema = z.object({
   paymentMethodBreakdown: z.array(breakdownItemSchema),
   rankingByClass: z.array(rankingItemSchema),
   rankingByPlan: z.array(rankingItemSchema),
+  cancellationsByClass: z.array(cancellationRankingItemSchema),
   classOccupancy: z.array(classOccupancyItemSchema),
   details: pageSchema(financialReportDetailDTOSchema),
   dataQuality: dataQualitySchema,

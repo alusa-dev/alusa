@@ -28,6 +28,7 @@ export type DashboardAlunoRecenteDTO = z.infer<typeof dashboardAlunoRecenteDTOSc
 export const dashboardAniversarianteDTOSchema = z.object({
   id: z.string(),
   nome: z.string(),
+  tipo: z.enum(['ALUNO', 'COLABORADOR']).default('ALUNO'),
   foto: z.string().nullable().optional(),
   avatarUrl: z.string().nullable().optional(),
   dia: z.number().int().min(1).max(31),

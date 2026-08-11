@@ -20,6 +20,7 @@ interface AcoesMatriculaProps {
       nome: string;
     };
   };
+  isSharedSubscription?: boolean;
   onRefresh: () => void;
   onNavigateToList: () => void;
 }
@@ -39,6 +40,7 @@ type ApiErrorPayload = {
         subscriptions?: number;
         installmentPlans?: number;
         contratoComAceite?: number;
+        grupoFamiliar?: boolean;
       };
     } | null;
   };
@@ -63,6 +65,7 @@ type BlockedByDetails = {
   subscriptions?: number;
   installmentPlans?: number;
   contratoComAceite?: number;
+  grupoFamiliar?: boolean;
 };
 
 function getErrorCode(payload: ApiErrorPayload): string | null {
@@ -103,6 +106,7 @@ function buildHardDeleteBlockedMessage(blockedBy?: BlockedByDetails) {
   if ((blockedBy.subscriptions ?? 0) > 0) parts.push(`${blockedBy.subscriptions} assinatura(s)`);
   if ((blockedBy.installmentPlans ?? 0) > 0) parts.push(`${blockedBy.installmentPlans} parcelamento(s)`);
   if ((blockedBy.contratoComAceite ?? 0) > 0) parts.push(`${blockedBy.contratoComAceite} contrato(s) aceito(s)`);
+  if (blockedBy.grupoFamiliar) parts.push('vínculo familiar ativo');
 
   if (!parts.length && (blockedBy.cobrancas ?? 0) > 0) {
     parts.push(`${blockedBy.cobrancas} cobrança(s)`);
@@ -132,7 +136,8 @@ function getApiErrorMessage(payload: ApiErrorPayload, fallback: string): string 
   return fallback;
 }
 
-export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: AcoesMatriculaProps) {
+export function AcoesMatricula({ matricula, isSharedSubscription, onRefresh, onNavigateToList }: AcoesMatriculaProps) {
+    const sharedSubscription = Boolean(isSharedSubscription);
     const handleExcluir = useCallback(async (motivo: string) => {
       try {
         const res = await fetch(`/api/matriculas/${matricula.id}?hard=true`, {
@@ -192,7 +197,10 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
         throw new Error(getApiErrorMessage(errorData, 'Não foi possível pausar a matrícula.'));
       }
 
-      const result = await res.json() as { warning?: string };
+      const result = await res.json() as {
+        warning?: string;
+        familyImpact?: { remainingStudents: number; newMonthlyValue: number; valueChanged: boolean } | null;
+      };
 
       if (result.warning) {
         pushToast({
@@ -201,11 +209,14 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
           variant: 'warning',
         });
       } else {
+        const familyImpact = result.familyImpact;
         pushToast({
           title: 'Matrícula pausada com sucesso',
-          description: payload.manterVaga
-            ? 'Matrícula pausada com vaga reservada.'
-            : 'Matrícula pausada e vaga liberada.',
+          description: familyImpact?.valueChanged
+            ? `Matrícula pausada. A cobrança familiar foi recalculada para R$ ${familyImpact.newMonthlyValue.toFixed(2).replace('.', ',')}. ${payload.manterVaga ? 'A vaga foi reservada.' : 'A vaga foi liberada.'}`
+            : payload.manterVaga
+              ? 'Matrícula pausada com vaga reservada.'
+              : 'Matrícula pausada e vaga liberada.',
           variant: 'success',
         });
       }
@@ -234,7 +245,10 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
         throw new Error(getApiErrorMessage(errorData, 'Não foi possível reativar a matrícula.'));
       }
 
-      const result = await res.json() as { warning?: string };
+      const result = await res.json() as {
+        warning?: string;
+        familyImpact?: { remainingStudents: number; newMonthlyValue: number; valueChanged: boolean } | null;
+      };
 
       if (result.warning) {
         pushToast({
@@ -245,7 +259,9 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
       } else {
         pushToast({
           title: 'Matrícula reativada com sucesso',
-          description: 'A matrícula foi reativada. Uma nova cobrança será gerada e o responsável será notificado.',
+          description: result.familyImpact?.valueChanged
+            ? `A matrícula foi reativada. A cobrança familiar foi recalculada para R$ ${result.familyImpact.newMonthlyValue.toFixed(2).replace('.', ',')}.`
+            : 'A matrícula foi reativada. Uma nova cobrança será gerada e o responsável será notificado.',
           variant: 'success',
         });
       }
@@ -274,10 +290,27 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
 
       if (!res.ok) {
         const errorData = (await res.json()) as ApiErrorPayload;
+        if (getErrorCode(errorData) === 'INCONSISTENCIA_FINANCEIRA') {
+          pushToast({
+            title: 'Não foi possível encerrar a matrícula',
+            description: 'Há uma inconsistência financeira. Nada foi alterado. Aguarde a sincronização e tente novamente.',
+            variant: 'error',
+          });
+          return;
+        }
         throw new Error(getApiErrorMessage(errorData, 'Não foi possível cancelar a matrícula.'));
       }
 
-      const result = await res.json();
+      const result = await res.json() as {
+        warning?: string;
+        data?: {
+          familyImpact?: {
+            remainingStudents: number;
+            newMonthlyValue: number;
+            valueChanged: boolean;
+          } | null;
+        };
+      };
 
       if (result.warning) {
         pushToast({
@@ -286,9 +319,19 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
           variant: 'warning',
         });
       } else {
+        const impact = result.data?.familyImpact;
+        const familyDescription = impact
+          ? impact.remainingStudents === 0
+            ? 'Era o último aluno do grupo; a cobrança familiar foi encerrada.'
+            : impact.valueChanged
+              ? `As próximas cobranças foram recalculadas para R$ ${impact.newMonthlyValue.toFixed(2).replace('.', ',')}, preservando as matrículas restantes.`
+              : 'As matrículas restantes permanecem na cobrança familiar, com o histórico preservado.'
+          : null;
         pushToast({
-          title: 'Matrícula cancelada com sucesso',
-          description: 'A matrícula foi cancelada. O responsável será notificado automaticamente.',
+          title: 'Matrícula encerrada com sucesso',
+          description: familyDescription ?? (sharedSubscription
+            ? 'A matrícula foi removida da cobrança compartilhada. As demais matrículas permanecem ativas.'
+            : 'A matrícula foi encerrada e as cobranças abertas foram canceladas quando permitido.'),
           variant: 'success',
         });
       }
@@ -302,7 +345,7 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
       });
       throw error;
     }
-    }, [matricula.id, onRefresh]);
+    }, [sharedSubscription, matricula.id, onRefresh]);
 
   return (
     <>
@@ -346,7 +389,7 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
               className="border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:border-orange-400 px-3 py-1.5"
             >
               <XMarkIcon className="h-4 w-4 mr-1.5" />
-              Cancelar Matrícula
+              Encerrar Matrícula
             </Button>
           )}
 
@@ -361,21 +404,19 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
           </Button>
         </div>
 
-        <p className="text-xs text-amber-700 mb-3">
-          Atenção: exclusão é permanente e só é permitida quando não existe histórico financeiro ou contratual relevante.
-        </p>
-
         {/* Card informativo simplificado */}
         <InfoCallout title="Importante:" size="sm" showIcon={false}>
           <InfoCalloutItem label="Pausar" labelTone="warning">
             Suspende novas cobranças. Cobranças existentes permanecem ativas. Pode ser retomada.
           </InfoCalloutItem>
           <InfoCalloutItem label="Cancelar" labelTone="caution">
-            Encerra a matrícula e cancela a cobrança recorrente. Mantém histórico. <strong>Irreversível.</strong>
+            {sharedSubscription
+              ? 'Remove esta matrícula da cobrança compartilhada, recalculando as próximas cobranças. Mantém o histórico.'
+              : 'Encerra a matrícula e cancela cobranças abertas quando permitido. Mantém o histórico financeiro e contratual.'}{' '}
+            <strong>Irreversível.</strong>
           </InfoCalloutItem>
           <InfoCalloutItem label="Excluir" labelTone="danger">
-            Remove completamente do sistema. Use apenas para erros ou duplicatas.{' '}
-            <strong>Requer cobranças finalizadas.</strong>
+            Remove completamente o cadastro. Use apenas para erros ou duplicatas sem cobranças, pagamentos ou contratos relevantes.
           </InfoCalloutItem>
           <InfoCalloutItem label="Controle" labelTone="muted">
             Sempre informe o motivo ao cancelar para análises e melhorias.
@@ -388,6 +429,7 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
         open={pausarDialogOpen}
         onOpenChange={setPausarDialogOpen}
         alunoNome={matricula.aluno.nome}
+        isSharedSubscription={sharedSubscription}
         onConfirm={handlePausar}
       />
 
@@ -397,6 +439,7 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
         onOpenChange={setRetomarDialogOpen}
         alunoNome={matricula.aluno.nome}
         vencimentoDia={matricula.vencimentoDia}
+        isSharedSubscription={sharedSubscription}
         onConfirm={handleRetomar}
       />
 
@@ -404,9 +447,13 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
       <ActionDialog
         open={cancelDialogOpen}
         onOpenChange={setCancelDialogOpen}
-        title="Cancelar matrícula"
-        description={`Deseja cancelar a matrícula de ${matricula.aluno.nome}? A cobrança recorrente será encerrada e as cobranças abertas vinculadas serão ajustadas automaticamente quando permitido. Esta ação não pode ser desfeita.`}
-        confirmLabel="Cancelar matrícula"
+        title="Encerrar matrícula"
+        description={
+          sharedSubscription
+            ? `Deseja encerrar a matrícula de ${matricula.aluno.nome}? Ela será removida da cobrança compartilhada e o valor das próximas cobranças será recalculado para as matrículas restantes. O histórico será preservado.`
+            : `Deseja encerrar a matrícula de ${matricula.aluno.nome}? A recorrência será encerrada e as cobranças abertas serão canceladas quando permitido. Pagamentos e histórico serão preservados.`
+        }
+        confirmLabel="Encerrar matrícula"
         cancelLabel="Manter ativa"
         loadingLabel="Cancelando..."
         onConfirm={handleCancelar}
@@ -420,9 +467,9 @@ export function AcoesMatricula({ matricula, onRefresh, onNavigateToList }: Acoes
       <DangerActionDialog
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
-        title="Excluir matrícula"
-        description={`Você está prestes a solicitar a exclusão permanente da matrícula de ${matricula.aluno.nome}. A ação só será concluída se não existir histórico financeiro ou contratual relevante. Se houver bloqueios, mostraremos o motivo e orientaremos o cancelamento correto.`}
-        confirmLabel="Confirmar exclusão"
+        title="Excluir cadastro"
+        description={`Você está prestes a excluir definitivamente o cadastro de ${matricula.aluno.nome}. Esta ação só é permitida para duplicidades ou erros sem cobranças, pagamentos ou contratos relevantes. Para uma matrícula existente, use “Encerrar matrícula”.`}
+        confirmLabel="Excluir cadastro"
         cancelLabel="Cancelar"
         loadingLabel="Excluindo..."
         onConfirm={handleExcluir}

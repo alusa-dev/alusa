@@ -179,23 +179,106 @@ async function resolveFamilyPricing(input: {
     };
   }
 
-  const totalValue =
-    resolvedPricing[0]?.kind === 'PLAN'
-      ? Number(input.editedPricing.value.toFixed(2))
-      : Number(resolvedPricing.reduce((sum, item) => sum + item.value, 0).toFixed(2));
-  const totalCents = Math.round(totalValue * 100);
-  const equalBase = Math.floor(totalCents / resolvedPricing.length);
-  const equalRemainder = totalCents % resolvedPricing.length;
+  // Planos familiares são precificados por matrícula. A assinatura consolidada
+  // deve representar a soma dos valores de todos os alunos, e não apenas o
+  // valor do plano que está sendo editado. Combos continuam usando o valor
+  // próprio de cada matrícula.
+  const totalValue = Number(
+    resolvedPricing.reduce((sum, item) => sum + item.value, 0).toFixed(2),
+  );
   return {
     ok: true as const,
     value: totalValue,
     cycle: resolvedPricing[0]?.cycle ?? input.editedPricing.cycle,
-    allocationValues: resolvedPricing.map((item, index) => ({
+    allocationValues: resolvedPricing.map((item) => ({
       matriculaId: item.matriculaId,
-      value: item.kind === 'PLAN'
-        ? Number(((equalBase + (index < equalRemainder ? 1 : 0)) / 100).toFixed(2))
-        : Number(item.value.toFixed(2)),
+      value: Number(item.value.toFixed(2)),
     })),
+  };
+}
+
+/**
+ * Uma assinatura canônica pode representar mais de uma matrícula individual.
+ * O valor enviado ao Asaas é sempre a soma das alocações, nunca o valor isolado
+ * da matrícula que está sendo editada.
+ */
+async function resolveSharedAgreementPricing(input: {
+  contaId: string;
+  agreementId: string;
+  editedMatriculaId: string;
+  editedPricing: ProductPricing;
+}) {
+  const allocations = await prisma.billingAllocation.findMany({
+    where: {
+      contaId: input.contaId,
+      agreementId: input.agreementId,
+      kind: 'TUITION',
+      status: { in: ['ACTIVE', 'SCHEDULED'] },
+      recurring: true,
+    },
+    select: { matriculaId: true, netAmount: true },
+  });
+
+  if (!allocations.some((allocation) => allocation.matriculaId === input.editedMatriculaId)) {
+    return {
+      ok: false as const,
+      code: 'ALOCACAO_CANONICA_AUSENTE',
+      message: 'A matrícula não possui uma alocação recorrente ativa no acordo financeiro.',
+    };
+  }
+
+  const relatedMatriculas = await prisma.matricula.findMany({
+    where: { contaId: input.contaId, id: { in: allocations.map((item) => item.matriculaId) } },
+    select: {
+      id: true,
+      plano: { select: { periodicidade: true } },
+      combo: { select: { periodicidade: true } },
+    },
+  });
+  if (relatedMatriculas.length !== allocations.length) {
+    return {
+      ok: false as const,
+      code: 'ACORDO_CANONICO_INCOMPLETO',
+      message: 'Não foi possível carregar todas as matrículas vinculadas à assinatura compartilhada.',
+    };
+  }
+
+  const cycles = new Set<string>();
+  for (const matricula of relatedMatriculas) {
+    if (matricula.id === input.editedMatriculaId) {
+      cycles.add(input.editedPricing.cycle);
+      continue;
+    }
+    const product = matricula.combo ?? matricula.plano;
+    if (!product) {
+      return {
+        ok: false as const,
+        code: 'PRODUTO_ASSINATURA_COMPARTILHADA_INCOMPLETO',
+        message: 'Todas as matrículas na assinatura compartilhada precisam possuir plano ou combo.',
+      };
+    }
+    cycles.add(mapPeriodicidadeToCycle(product.periodicidade));
+  }
+  if (cycles.size !== 1 || !cycles.has(input.editedPricing.cycle)) {
+    return {
+      ok: false as const,
+      code: 'PERIODICIDADE_ASSINATURA_COMPARTILHADA_DIVERGENTE',
+      message: 'Matrículas na mesma assinatura devem possuir a mesma periodicidade.',
+    };
+  }
+
+  const allocationValues = allocations.map((allocation) => ({
+    matriculaId: allocation.matriculaId,
+    value:
+      allocation.matriculaId === input.editedMatriculaId
+        ? input.editedPricing.value
+        : Number(allocation.netAmount),
+  }));
+  return {
+    ok: true as const,
+    cycle: input.editedPricing.cycle,
+    allocationValues,
+    value: Number(allocationValues.reduce((sum, item) => sum + item.value, 0).toFixed(2)),
   };
 }
 
@@ -357,6 +440,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           cycle: familyPricing.cycle,
         };
         pendingCanonicalAllocationValues = familyPricing.allocationValues;
+      } else if (financialContext.sharedAgreement) {
+        const sharedPricing = await resolveSharedAgreementPricing({
+          contaId: contaCtx.contaId,
+          agreementId: financialContext.sharedAgreement.id,
+          editedMatriculaId: currentMatricula.id,
+          editedPricing: nextPricing,
+        });
+        if (!sharedPricing.ok) {
+          return jsonError(422, sharedPricing.code, sharedPricing.message);
+        }
+        nextSubscriptionValue = sharedPricing.value;
+        nextSubscriptionCycle = sharedPricing.cycle;
+        pendingCanonicalAllocationValues = sharedPricing.allocationValues;
       } else {
         nextSubscriptionValue = nextPricing.value;
         nextSubscriptionCycle = nextPricing.cycle;
@@ -418,7 +514,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           kind: 'PRODUCT_RECURRING_TERMS_UPDATED',
           mode: financialContext.mode,
           familyGroupId: financialContext.family?.id ?? null,
-          affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [currentMatricula.id],
+          affectedMatriculaIds:
+            financialContext.family?.affectedMatriculaIds ??
+            financialContext.sharedAgreement?.affectedMatriculaIds ??
+            [currentMatricula.id],
           asaasSubscriptionId: targetSubscriptionId,
           productKind: nextPricing.kind,
           productId: nextPricing.id,
@@ -465,13 +564,21 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
             value: pendingFamilyLocalUpdate.value,
             cycle: pendingFamilyLocalUpdate.cycle,
           })
-        : financialMetadata && nextSubscriptionValue !== null
-          ? await alignLocalPendingEnrollmentCharges({
-              db: prisma,
-              matriculaId: currentMatricula.id,
-              contaId: contaCtx.contaId,
-              value: nextSubscriptionValue,
-            })
+        : financialMetadata && pendingCanonicalAllocationValues
+          ? await Promise.all(
+              pendingCanonicalAllocationValues.map((allocation) =>
+                alignLocalPendingEnrollmentCharges({
+                  db: prisma,
+                  matriculaId: allocation.matriculaId,
+                  contaId: contaCtx.contaId!,
+                  value: allocation.value,
+                }),
+              ),
+            ).then((results) => ({
+              cobrancasUpdated: results.reduce((sum, result) => sum + result.cobrancasUpdated, 0),
+              chargesUpdated: results.reduce((sum, result) => sum + result.chargesUpdated, 0),
+              matriculasUpdated: results.length,
+            }))
           : null;
 
     return NextResponse.json(

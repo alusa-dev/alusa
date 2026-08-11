@@ -100,6 +100,7 @@ type MatriculaDetalhes = {
     valor?: number;
     periodicidade?: string;
   } | null;
+  isSharedSubscription?: boolean;
   plano?: {
     id: string;
     nome: string;
@@ -110,8 +111,8 @@ type MatriculaDetalhes = {
     id: string;
     nome: string;
     cpf: string;
-    email: string;
-    telefone: string;
+    email?: string | null;
+    telefone?: string | null;
   } | null;
   cobrancas: Array<{
     id: string;
@@ -315,7 +316,10 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
 
         <div className={cn('space-y-8', DETAIL_SECTION_MAX)}>
           {/* Dados do Aluno */}
-          <DadosAluno aluno={matricula.aluno} />
+          <DadosAluno
+            aluno={matricula.aluno}
+            responsavelFinanceiro={matricula.responsavelFinanceiro}
+          />
 
           {/* Dados da Matrícula */}
           <DadosMatricula
@@ -332,12 +336,10 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
           <DadosPlano
             matriculaId={matricula.id}
             onRefresh={loadMatricula}
-            asaasSubscriptionId={matricula.asaasSubscriptionId}
             plano={matricula.plano}
             turma={matricula.turma}
             combo={matricula.combo}
-            billingAgreement={matricula.billingAgreement}
-            familyMode={matricula.financialContext?.mode === 'FAMILY'}
+            isSharedSubscription={matricula.isSharedSubscription}
           />
 
           {/* Taxa de Matrícula */}
@@ -355,6 +357,7 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
             asaasSubscriptionId={matricula.asaasSubscriptionId}
             assinaturaSnapshot={matricula.assinaturaSnapshot}
             financialContext={matricula.financialContext}
+            isSharedSubscription={matricula.isSharedSubscription}
             jurosAtual={matricula.jurosMensal || undefined}
             jurosTipoAtual={matricula.jurosTipo || undefined}
             multaAtual={matricula.multaPercentual || undefined}
@@ -368,6 +371,7 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
           {/* Ações da Matrícula */}
           <AcoesMatricula
             matricula={matricula}
+            isSharedSubscription={matricula.isSharedSubscription}
             onRefresh={loadMatricula}
             onNavigateToList={() => router.push('/matriculas')}
           />

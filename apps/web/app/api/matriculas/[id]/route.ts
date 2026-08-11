@@ -149,6 +149,22 @@ function compareAsaasDates(left: string, right: string) {
   return new Date(`${left}T12:00:00.000Z`).getTime() - new Date(`${right}T12:00:00.000Z`).getTime();
 }
 
+function maxAsaasDate(...values: Array<string | Date | null | undefined>) {
+  const valid = values
+    .filter((value): value is string | Date => Boolean(value))
+    .map((value) => formatAsaasDate(value));
+  if (valid.length === 0) return null;
+  return valid.reduce((latest, value) => (compareAsaasDates(value, latest) > 0 ? value : latest));
+}
+
+/** O Asaas usa fim inclusivo; BillingAllocation/BillingAgreement usa fim exclusivo. */
+function exclusiveValidUntil(providerEndDate: string) {
+  const date = new Date(`${providerEndDate}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) throw new Error('Data inválida para vigência financeira.');
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function formatPtBrDateOnly(value: string) {
   return new Date(`${value}T12:00:00.000Z`).toLocaleDateString('pt-BR');
 }
@@ -179,6 +195,7 @@ type HardDeleteCheck = {
     subscriptions: number;
     installmentPlans: number;
     contratos: number;
+    grupoFamiliar: boolean;
     asaasSubscriptionId: string | null;
   };
 };
@@ -189,7 +206,7 @@ async function canHardDeleteMatricula(
 ): Promise<HardDeleteCheck | null> {
   const matricula = await prisma.matricula.findFirst({
     where: { id: matriculaId, aluno: { contaId } },
-    select: { id: true, asaasSubscriptionId: true },
+    select: { id: true, asaasSubscriptionId: true, matriculaFamiliarId: true },
   });
   if (!matricula) return null;
 
@@ -220,6 +237,7 @@ async function canHardDeleteMatricula(
     subscriptions,
     installmentPlans,
     contratos,
+    grupoFamiliar: Boolean(matricula.matriculaFamiliarId),
     asaasSubscriptionId: matricula.asaasSubscriptionId ?? null,
   };
 
@@ -229,6 +247,7 @@ async function canHardDeleteMatricula(
     subscriptions === 0 &&
     installmentPlans === 0 &&
     contratos === 0 &&
+    !matricula.matriculaFamiliarId &&
     !matricula.asaasSubscriptionId;
 
   return { ok, details };
@@ -277,7 +296,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         localSubscription,
       );
       const resolvedLocalSnapshot =
-        financialContext?.mode === 'FAMILY'
+        financialContext?.mode === 'FAMILY' || financialContext?.sharedAgreement
           ? financialContext.localSnapshot
           : localSnapshot;
 
@@ -358,6 +377,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             reconciliationError: canonicalAllocation.agreement.reconciliationError,
           }
         : null,
+      isSharedSubscription: Boolean(
+        financialContext?.sharedAgreement &&
+          financialContext.sharedAgreement.affectedMatriculaIds.length > 1,
+      ),
       financialContext: financialContext
         ? {
             mode: financialContext.mode,
@@ -365,7 +388,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
             targetMatriculaId: financialContext.targetMatriculaId,
             familyGroupId: financialContext.family?.id ?? null,
             responsavelFinanceiro: financialContext.family?.responsavel ?? null,
-            affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [matricula.id],
+            affectedMatriculaIds:
+              financialContext.family?.affectedMatriculaIds ??
+              financialContext.sharedAgreement?.affectedMatriculaIds ??
+              [matricula.id],
             alunos: financialContext.family?.alunos ?? [
               {
                 matriculaId: matricula.id,
@@ -489,6 +515,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           endDate?: string;
         }
       | null = null;
+    let pendingSharedDueDate: string | null = null;
     const billingDayChanged =
       typeof parsedBody.data.vencimentoDia === 'number' &&
       parsedBody.data.vencimentoDia !== before.vencimentoDia;
@@ -503,6 +530,31 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     });
     const targetSubscriptionId =
       financialContext?.asaasSubscriptionId ?? before.asaasSubscriptionId ?? null;
+    const sharedAgreement = financialContext?.sharedAgreement ?? null;
+    const sharedMatriculaIds = sharedAgreement?.affectedMatriculaIds ?? [];
+    let sharedEffectiveEndDate: string | null = null;
+
+    if (contractEndDateChanged && parsedBody.data.dataFimContrato && sharedAgreement) {
+      const sharedMatriculas = await prisma.matricula.findMany({
+        where: {
+          contaId: contaCtx.contaId,
+          id: { in: sharedMatriculaIds },
+        },
+        select: { id: true, dataFimContrato: true },
+      });
+      if (sharedMatriculas.length !== sharedMatriculaIds.length) {
+        return jsonError(
+          409,
+          'ACORDO_CANONICO_INCOMPLETO',
+          'Não foi possível recalcular a vigência porque o acordo financeiro não contém todas as matrículas vinculadas.',
+        );
+      }
+      sharedEffectiveEndDate = maxAsaasDate(
+        ...sharedMatriculas.map((item) =>
+          item.id === before.id ? parsedBody.data.dataFimContrato : item.dataFimContrato,
+        ),
+      );
+    }
 
     if (
       contractEndDateChanged &&
@@ -600,7 +652,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           : currentNextDueDate;
       const effectiveEndDate =
         contractEndDateChanged && parsedBody.data.dataFimContrato
-          ? formatAsaasDate(parsedBody.data.dataFimContrato)
+          ? sharedEffectiveEndDate ?? formatAsaasDate(parsedBody.data.dataFimContrato)
           : remoteSubscription.endDate
             ? formatAsaasDate(remoteSubscription.endDate)
             : formatAsaasDate(before.dataFimContrato);
@@ -623,16 +675,25 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         subscriptionUpdatePayload.updatePendingPayments = true;
       }
 
-      if (contractEndDateChanged && parsedBody.data.dataFimContrato) {
+      if (
+        contractEndDateChanged &&
+        parsedBody.data.dataFimContrato &&
+        (!remoteSubscription.endDate || compareAsaasDates(effectiveEndDate, formatAsaasDate(remoteSubscription.endDate)) !== 0)
+      ) {
         subscriptionUpdatePayload.endDate = formatAsaasDate(parsedBody.data.dataFimContrato);
+        if (sharedAgreement) {
+          subscriptionUpdatePayload.endDate = effectiveEndDate;
+        }
       }
 
       try {
-        await updateSubscription(
-          targetSubscriptionId,
-          subscriptionUpdatePayload,
-          { contaId: contaCtx.contaId },
-        );
+        if (Object.keys(subscriptionUpdatePayload).length > 0) {
+          await updateSubscription(
+            targetSubscriptionId,
+            subscriptionUpdatePayload,
+            { contaId: contaCtx.contaId },
+          );
+        }
       } catch (error) {
         const classified = classifyAsaasSubscriptionMutationError(error);
         if (classified.kind === 'not_found' || classified.kind === 'not_editable') {
@@ -662,7 +723,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
               nextDueDate,
             }
           : {}),
-        ...(contractEndDateChanged ? { validUntil: effectiveEndDate } : {}),
+        ...(contractEndDateChanged && effectiveEndDate
+          ? { validUntil: exclusiveValidUntil(effectiveEndDate) }
+          : {}),
       });
 
       subscriptionMetadata = {
@@ -670,7 +733,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         subscriptionSync: {
           mode: financialContext?.mode ?? 'INDIVIDUAL',
           familyGroupId: financialContext?.family?.id ?? null,
-          affectedMatriculaIds: financialContext?.family?.affectedMatriculaIds ?? [before.id],
+          affectedMatriculaIds:
+            financialContext?.family?.affectedMatriculaIds ??
+            (sharedAgreement?.affectedMatriculaIds ?? [before.id]),
           kind:
             billingDayChanged && contractEndDateChanged
               ? 'BILLING_DAY_AND_END_DATE_UPDATED'
@@ -683,18 +748,23 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           nextBillingDay: parsedBody.data.vencimentoDia ?? before.vencimentoDia,
           previousEndDate: formatAsaasDate(before.dataFimContrato),
           nextEndDate: parsedBody.data.dataFimContrato
-            ? formatAsaasDate(parsedBody.data.dataFimContrato)
+            ? effectiveEndDate
             : formatAsaasDate(before.dataFimContrato),
+          sharedAgreementId: sharedAgreement?.id ?? null,
+          sharedMatriculaIds,
         },
       };
       pendingLocalAlignment =
-        financialContext?.mode !== 'FAMILY' && billingDayChanged && nextDueDate
+        financialContext?.mode !== 'FAMILY' && billingDayChanged && nextDueDate && !sharedAgreement
           ? {
               matriculaId: before.id,
               contaId: contaCtx.contaId,
               dueDate: nextDueDate,
             }
           : null;
+      if (sharedAgreement && billingDayChanged && nextDueDate) {
+        pendingSharedDueDate = nextDueDate;
+      }
       pendingFamilyLocalUpdate =
         financialContext?.mode === 'FAMILY'
           ? {
@@ -720,6 +790,59 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada');
     }
 
+    // A data do contrato é inclusiva; a alocação canônica encerra no início
+    // do dia seguinte. Alterar uma matrícula compartilhada não encurta as outras.
+    if (contractEndDateChanged && parsedBody.data.dataFimContrato && sharedAgreement) {
+      const allocationResult = await prisma.billingAllocation.updateMany({
+        where: {
+          contaId: contaCtx.contaId,
+          agreementId: sharedAgreement.id,
+          matriculaId: before.id,
+          kind: 'TUITION',
+          recurring: true,
+          status: { in: ['ACTIVE', 'SCHEDULED'] },
+        },
+        data: { validUntil: new Date(`${exclusiveValidUntil(formatAsaasDate(parsedBody.data.dataFimContrato))}T00:00:00.000Z`) },
+      });
+      if (allocationResult.count !== 1) {
+        await prisma.billingAgreement.updateMany({
+          where: { id: sharedAgreement.id, contaId: contaCtx.contaId },
+          data: {
+            status: 'REQUIRES_RECONCILIATION',
+            reconciliationError: 'A vigência do contrato foi alterada, mas a alocação recorrente não pôde ser atualizada.',
+          },
+        });
+        return jsonError(
+          409,
+          'ALOCACAO_CANONICA_INCONSISTENTE',
+          'A matrícula foi atualizada, mas sua alocação financeira requer reconciliação antes de novas alterações.',
+        );
+      }
+    }
+
+    if (sharedAgreement && billingDayChanged && pendingSharedDueDate) {
+      await prisma.matricula.updateMany({
+        where: {
+          contaId: contaCtx.contaId,
+          id: { in: sharedMatriculaIds },
+        },
+        data: { vencimentoDia: parsedBody.data.vencimentoDia as number },
+      });
+    }
+
+    const sharedDueDate = pendingSharedDueDate;
+    const sharedLocalAlignment = sharedAgreement && billingDayChanged && sharedDueDate
+      ? await Promise.all(
+          sharedMatriculaIds.map((matriculaId) =>
+            alignLocalPendingEnrollmentCharges({
+              db: prisma,
+              matriculaId,
+              contaId: contaCtx.contaId as string,
+              dueDate: sharedDueDate,
+            }),
+          ),
+        )
+      : null;
     const localAlignment = pendingFamilyLocalUpdate && financialContext
       ? await updateFamilyFinancialLocalState({
           db: prisma,
@@ -727,7 +850,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           nextDueDate: pendingFamilyLocalUpdate.nextDueDate,
           endDate: pendingFamilyLocalUpdate.endDate,
         })
-      : pendingLocalAlignment
+      : sharedLocalAlignment
+        ? {
+            cobrancasUpdated: sharedLocalAlignment.reduce((total, item) => total + item.cobrancasUpdated, 0),
+            chargesUpdated: sharedLocalAlignment.reduce((total, item) => total + item.chargesUpdated, 0),
+            matriculasUpdated: sharedLocalAlignment.length,
+          }
+        : pendingLocalAlignment
         ? await alignLocalPendingEnrollmentCharges({
             db: prisma,
             matriculaId: pendingLocalAlignment.matriculaId,
@@ -825,12 +954,12 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
       return jsonError(
         409,
         'MATRICULA_HARD_DELETE_BLOCKED',
-        'A exclusão permanente foi bloqueada porque a matrícula possui histórico financeiro ou contratual. Use cancelar matrícula para encerrar o vínculo sem apagar a trilha de auditoria.',
+        'A exclusão permanente foi bloqueada porque a matrícula possui histórico financeiro, contratual ou pertence a um grupo familiar. Use cancelar matrícula para encerrar o vínculo sem apagar a trilha de auditoria.',
         {
           blockedBy: eligibility.details,
           guidance: [
             'Use cancelar matrícula para encerrar o fluxo sem perder histórico.',
-            'Exclusão permanente só é permitida para rascunhos sem cobranças, pagamentos, assinatura, parcelamento ou contrato.',
+            'Exclusão permanente só é permitida para rascunhos sem cobranças, pagamentos, assinatura, parcelamento, contrato ou vínculo familiar.',
           ],
         },
       );

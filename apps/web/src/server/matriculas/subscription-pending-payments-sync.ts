@@ -1,4 +1,4 @@
-import { listSubscriptionPayments, updatePayment } from '@alusa/finance';
+import { getPayment, listSubscriptionPayments, updatePayment } from '@alusa/finance';
 
 type PaymentTerms = {
   interest?: { value: number } | null;
@@ -14,6 +14,10 @@ type SyncablePayment = {
   deleted?: boolean | null;
 };
 
+// Asaas documents updates for charges that have not been paid or confirmed.
+// OVERDUE is intentionally included: the provider is the final authority and
+// its response is confirmed below before any local projection is considered
+// successful.
 const EDITABLE_ASAAS_PAYMENT_STATUSES = ['PENDING', 'OVERDUE'] as const;
 
 function isSupportedBillingType(value?: string | null): value is 'BOLETO' | 'PIX' | 'CREDIT_CARD' | 'UNDEFINED' {
@@ -79,16 +83,34 @@ export async function syncEditableSubscriptionPayments(input: {
     }
 
     try {
+      const fresh = await getPayment(payment.id, { contaId: input.contaId });
+      if (!EDITABLE_ASAAS_PAYMENT_STATUSES.includes(fresh.status as (typeof EDITABLE_ASAAS_PAYMENT_STATUSES)[number])) {
+        failures.push({
+          paymentId: payment.id,
+          message: `A cobrança deixou de ser editável no Asaas (${fresh.status}).`,
+        });
+        continue;
+      }
+
       await updatePayment(
         payment.id,
         {
-          billingType: payment.billingType,
-          value: payment.value,
-          dueDate: payment.dueDate,
+          billingType: fresh.billingType,
+          value: fresh.value,
+          dueDate: fresh.dueDate,
           ...termsPayload,
         },
         { contaId: input.contaId },
       );
+
+      const confirmed = await getPayment(payment.id, { contaId: input.contaId });
+      if (!EDITABLE_ASAAS_PAYMENT_STATUSES.includes(confirmed.status as (typeof EDITABLE_ASAAS_PAYMENT_STATUSES)[number])) {
+        failures.push({
+          paymentId: payment.id,
+          message: `A atualização foi aceita, mas a cobrança mudou para ${confirmed.status}.`,
+        });
+        continue;
+      }
       updated += 1;
     } catch (error) {
       failures.push({

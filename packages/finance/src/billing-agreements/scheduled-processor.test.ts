@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   operationFindMany: vi.fn(),
   operationUpdateMany: vi.fn(),
   agreementFindMany: vi.fn(),
+  directAgreementUpdateMany: vi.fn(),
   allocationUpdateMany: vi.fn(),
   agreementUpdateMany: vi.fn(),
   transactionOperationUpdateMany: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('@alusa/database', () => ({
     },
     billingAgreement: {
       findMany: mocks.agreementFindMany,
-      updateMany: vi.fn(),
+      updateMany: mocks.directAgreementUpdateMany,
     },
     $transaction: vi.fn(async (run) =>
       run({
@@ -40,7 +41,7 @@ vi.mock('./asaas-subscription.adapter', () => ({
   }),
 }));
 
-import { processDueBillingAgreementChanges } from './scheduled-processor';
+import { processDueBillingAgreementChanges, processExpiredBillingAllocations } from './scheduled-processor';
 
 describe('processDueBillingAgreementChanges', () => {
   beforeEach(() => {
@@ -48,6 +49,7 @@ describe('processDueBillingAgreementChanges', () => {
     mocks.operationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.allocationUpdateMany.mockResolvedValue({ count: 1 });
     mocks.agreementUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.directAgreementUpdateMany.mockResolvedValue({ count: 1 });
     mocks.transactionOperationUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -141,6 +143,39 @@ describe('processDueBillingAgreementChanges', () => {
     expect(mocks.updateSubscription.mock.calls.every(([payload]) => payload.nextDueDate === undefined)).toBe(true);
     expect(mocks.transactionOperationUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ scheduledAppliedAt: effectiveAt }) }),
+    );
+  });
+
+  it('reduz a assinatura antes de encerrar localmente uma alocação expirada', async () => {
+    const now = new Date('2026-11-01T12:00:00.000Z');
+    mocks.agreementFindMany.mockResolvedValue([
+      {
+        id: 'agreement-1',
+        contaId: 'conta-1',
+        version: 3,
+        status: 'ACTIVE',
+        asaasSubscriptionId: 'sub-shared',
+        allocations: [
+          { id: 'allocation-jazz', recurring: true, kind: 'TUITION', status: 'ACTIVE', validFrom: new Date('2026-01-01'), validUntil: new Date('2026-11-01'), netAmount: 150 },
+          { id: 'allocation-ballet', recurring: true, kind: 'TUITION', status: 'ACTIVE', validFrom: new Date('2026-01-01'), validUntil: new Date('2026-12-06'), netAmount: 150 },
+        ],
+      },
+    ]);
+    const remote = { status: 'ACTIVE', valueCents: 30_000, endDate: '2026-12-05' };
+    mocks.getSubscription.mockImplementation(async () => ({ id: 'sub-shared', deleted: false, ...remote }));
+    mocks.updateSubscription.mockImplementation(async ({ valueCents, status }) => {
+      remote.valueCents = valueCents;
+      remote.status = status;
+    });
+
+    const result = await processExpiredBillingAllocations({ contaId: 'conta-1', now });
+
+    expect(result).toEqual({ found: 1, applied: 1, uncertain: 0 });
+    expect(mocks.updateSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub-shared', valueCents: 15_000, status: 'ACTIVE' }),
+    );
+    expect(mocks.allocationUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'ENDED' } }),
     );
   });
 });

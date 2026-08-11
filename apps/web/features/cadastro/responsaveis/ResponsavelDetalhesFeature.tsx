@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -23,6 +23,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Eye,
   Trash,
   Users,
 } from '@/components/icons/icons';
@@ -71,6 +72,12 @@ type ResponsavelEnrollmentHistory = ResponsavelOverview['enrollmentHistory'][num
 function formatDate(value: string | null | undefined) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('pt-BR');
+}
+
+function formatShortPersonName(value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 2) return parts.join(' ');
+  return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
@@ -628,6 +635,7 @@ function HistoricoMatriculasResponsavelSection({
 }: {
   historico: ResponsavelEnrollmentHistory[];
 }) {
+  const router = useRouter();
   const sorted = [...historico].sort((a, b) => {
     const aTime = new Date(a.dataInicio ?? a.createdAt).getTime();
     const bTime = new Date(b.dataInicio ?? b.createdAt).getTime();
@@ -648,11 +656,10 @@ function HistoricoMatriculasResponsavelSection({
 
       {sorted.length ? (
         <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full min-w-[860px] border-collapse text-sm">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
             <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <tr>
                 <th className="px-4 py-3 text-left">Aluno</th>
-                <th className="px-4 py-3 text-left">Tipo</th>
                 <th className="px-4 py-3 text-left">Curso/turma</th>
                 <th className="px-4 py-3 text-left">Início</th>
                 <th className="px-4 py-3 text-left">Fim</th>
@@ -662,32 +669,43 @@ function HistoricoMatriculasResponsavelSection({
             </thead>
             <tbody>
               {sorted.map((item) => (
-                <tr key={`${item.kind}-${item.id}`} className="border-t border-slate-200">
+                <tr
+                  key={`${item.kind}-${item.id}`}
+                  className="cursor-pointer border-t border-slate-200 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50"
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`Abrir matrícula de ${formatShortPersonName(item.alunoNome)}`}
+                  onClick={() => router.push(`/matriculas/${item.id}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      router.push(`/matriculas/${item.id}`);
+                    }
+                  }}
+                >
                   <td className="max-w-[180px] px-4 py-3">
                     <Link href={`/alunos/${item.alunoId}`} className="block truncate font-medium text-slate-900 hover:text-brand-accent">
-                      {item.alunoNome}
+                      {formatShortPersonName(item.alunoNome)}
                     </Link>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <span className={cn('rounded-full px-2 py-1 text-xs font-medium', item.kind === 'REMATRICULA' ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-700')}>
-                      {item.kind === 'REMATRICULA' ? 'Rematrícula' : 'Matrícula'}
-                    </span>
                   </td>
                   <td className="max-w-[280px] px-4 py-3">
                     <span className="block truncate font-medium text-slate-900">
-                      {item.planoNome ?? item.comboNome ?? 'Matrícula'} · {item.turmaNome ?? 'Turma não informada'}
+                      {item.turmaNome ?? 'Turma não informada'}
                     </span>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataInicio)}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(item.dataFimContrato)}</td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <span className={cn('rounded-full px-2 py-1 text-xs font-medium', getHistoryStatusClass(item.status))}>
-                      {getHistoryStatusLabel(item.status, item.dataInicio)}
-                    </span>
+                    <HistoryStatusBadge status={item.status} dataInicio={item.dataInicio} />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <Link href={`/matriculas/${item.id}`} className="text-sm font-medium text-brand-accent hover:underline">
-                      Abrir
+                    <Link
+                      href={`/matriculas/${item.id}`}
+                      className="inline-flex text-slate-400 transition-colors hover:text-brand-accent"
+                      aria-label={`Abrir matrícula de ${item.alunoNome}`}
+                      title="Abrir matrícula"
+                    >
+                      <Eye className="h-4 w-4" aria-hidden="true" />
                     </Link>
                   </td>
                 </tr>
@@ -718,12 +736,23 @@ function getHistoryStatusLabel(status: string, dataInicio: string | null | undef
   return labels[status] ?? status;
 }
 
-function getHistoryStatusClass(status: string) {
-  if (status === 'ATIVA') return 'bg-emerald-50 text-emerald-700';
-  if (status === 'ENCERRADA') return 'bg-slate-100 text-slate-600';
-  if (status === 'CANCELADA') return 'bg-red-50 text-red-700';
-  if (status === 'PAUSADA') return 'bg-amber-50 text-amber-700';
-  return 'bg-blue-50 text-blue-700';
+function HistoryStatusBadge({
+  status,
+  dataInicio,
+}: {
+  status: string;
+  dataInicio: string | null | undefined;
+}) {
+  const label = getHistoryStatusLabel(status, dataInicio);
+  if (label === 'Próxima') {
+    return (
+      <Badge variant="info" size="sm">
+        {label}
+      </Badge>
+    );
+  }
+
+  return <Badge status={status as StatusType} size="sm" />;
 }
 
 function Field({
@@ -829,7 +858,7 @@ function CobrancasTable({ cobrancas }: { cobrancas: ResponsavelCharge[] }) {
             <tr key={cobranca.id} className="border-b border-slate-200 last:border-b-0">
               <td className="px-5 py-3 font-semibold text-blue-700">{formatCurrency(cobranca.value)}</td>
               <td className="px-5 py-3 text-slate-800">
-                {cobranca.description || 'Cobrança'}
+                {getChargeDisplayDescription(cobranca.description, cobranca.origin)}
                 <div className="text-xs text-slate-500">
                   {cobranca.origin === 'EVENT'
                     ? 'Evento'
@@ -838,7 +867,7 @@ function CobrancasTable({ cobrancas }: { cobrancas: ResponsavelCharge[] }) {
                       : 'Avulsa'}
                 </div>
               </td>
-              <td className="px-5 py-3 text-slate-700">{cobranca.billingType ?? '—'}</td>
+              <td className="px-5 py-3 text-slate-700">{getBillingTypeDisplayLabel(cobranca.billingType)}</td>
               <td className="px-5 py-3 text-slate-700">{formatDate(cobranca.dueDate)}</td>
               <td className="px-5 py-3">
                 <Badge status={chargeStatusMap[cobranca.status] ?? 'PENDING'} size="sm" />
@@ -905,26 +934,74 @@ function getFinancialBadgeLabel(status: string, labels: Record<string, string>) 
   return labels[status] ?? status;
 }
 
+function getSubscriptionDisplayDescription(description: string | null) {
+  if (description?.trim().toLowerCase().startsWith('plano familiar')) {
+    return 'Plano Familiar';
+  }
+  return description || 'Assinatura';
+}
+
+function getChargeDisplayDescription(description: string | null, origin?: string | null) {
+  if (description?.trim().toLowerCase().startsWith('[needs_review] payment sem vínculo local')) {
+    return origin === 'FAMILY' ? 'Mensalidade' : 'Cobrança pendente de reconciliação';
+  }
+  if (description?.trim().toLowerCase().startsWith('taxa de matrícula familiar')) {
+    return 'Taxa de matrícula';
+  }
+  if (description?.trim().toLowerCase().startsWith('plano familiar')) {
+    return 'Plano Familiar';
+  }
+  return description || 'Cobrança';
+}
+
+function getBillingTypeDisplayLabel(billingType: string | null | undefined) {
+  const normalized = billingType?.trim().toUpperCase();
+  if (!normalized) return 'Não informado';
+
+  return (
+    {
+      BOLETO: 'Boleto',
+      PIX: 'Pix',
+      CREDIT_CARD: 'Cartão de crédito',
+      CARTAO: 'Cartão',
+      CARTAO_CREDITO: 'Cartão de crédito',
+      UNDEFINED: 'Não definido',
+      UNKNOWN: 'Não informado',
+    } as Record<string, string>
+  )[normalized] ?? billingType;
+}
+
 function AssinaturasTable({ assinaturas }: { assinaturas: ResponsavelSubscription[] }) {
   if (!assinaturas.length) return <EmptyPanel message="Nenhuma assinatura vinculada." />;
 
   return (
-    <div className="divide-y divide-slate-200">
-      {assinaturas.map((assinatura) => (
-        <div key={assinatura.id} className="grid grid-cols-1 gap-3 px-5 py-3 text-sm md:grid-cols-5 md:items-center">
-          <div className="md:col-span-2">
-            <p className="font-medium text-slate-900">{assinatura.description || 'Assinatura'}</p>
-            <p className="text-xs text-slate-500">{assinatura.asaasSubscriptionId || assinatura.id}</p>
-          </div>
-          <div className="text-slate-600">{formatDate(assinatura.createdAt)}</div>
-          <div><Badge variant={assinatura.status === 'ACTIVE' ? 'success' : 'neutral'} size="sm">{getFinancialBadgeLabel(assinatura.status, assinaturaStatusLabels)}</Badge></div>
-          <div className="text-right">
-            <Link href={`/cobrancas/assinaturas/${assinatura.id}`} className="text-sm text-brand-accent hover:underline">
-              Abrir
-            </Link>
-          </div>
-        </div>
-      ))}
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm">
+        <tbody>
+          {assinaturas.map((assinatura) => (
+            <tr key={assinatura.id} className="border-b border-slate-200 last:border-b-0">
+              <td className="px-5 py-3 text-slate-800">
+                <p className="font-medium text-slate-900">
+                  {getSubscriptionDisplayDescription(assinatura.description)}
+                </p>
+                <p className="text-xs text-slate-500">{assinatura.asaasSubscriptionId || assinatura.id}</p>
+              </td>
+              <td className="px-5 py-3 text-slate-700">{getBillingTypeDisplayLabel(assinatura.billingType)}</td>
+              <td className="px-5 py-3 text-slate-700">{formatDate(assinatura.createdAt)}</td>
+              <td className="px-5 py-3">
+                <Badge variant={assinatura.status === 'ACTIVE' ? 'success' : 'neutral'} size="sm">
+                  {getFinancialBadgeLabel(assinatura.status, assinaturaStatusLabels)}
+                </Badge>
+              </td>
+              <td className="px-5 py-3 text-right">
+                <Link href={`/cobrancas/assinaturas/${assinatura.id}`} className="text-sm text-brand-accent hover:underline">
+                  Abrir
+                </Link>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

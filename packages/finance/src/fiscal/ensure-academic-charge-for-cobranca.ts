@@ -12,6 +12,8 @@ export type EnsureAcademicChargeForCobrancaInput = {
   subscriptionExternalReference?: string | null;
   payment?: {
     status?: string | null;
+    /** Alguns eventos de exclusão chegam com status não-terminal, mas deleted=true. */
+    deleted?: boolean | null;
     value?: number | null;
     dueDate?: string | null;
     billingType?: string | null;
@@ -92,7 +94,12 @@ export async function ensureAcademicChargeForCobranca(
 
   const externalReference = resolveExternalReference(input);
   const paymentStatus = input.payment?.status ?? cobranca.asaasStatus;
-  const chargeStatus = resolveChargeStatus(paymentStatus);
+  // O sinal `deleted` é terminal e prevalece sobre um status eventualmente
+  // atrasado/inconsistente no payload do provedor. Isso evita recriar uma
+  // cobrança local como aberta depois que o pagamento já foi excluído.
+  const chargeStatus = input.payment?.deleted
+    ? 'CANCELED'
+    : resolveChargeStatus(paymentStatus);
   const value =
     input.payment?.value != null
       ? input.payment.value

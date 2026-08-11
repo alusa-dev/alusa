@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   getServerSessionMock,
   getSubscriptionMock,
+  getPaymentMock,
+  projectConfirmedBillingAgreementSnapshotMock,
   listSubscriptionPaymentsMock,
   updateSubscriptionMock,
   updatePaymentMock,
@@ -17,6 +19,8 @@ const {
 } = vi.hoisted(() => ({
   getServerSessionMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
+  getPaymentMock: vi.fn(),
+  projectConfirmedBillingAgreementSnapshotMock: vi.fn(),
   listSubscriptionPaymentsMock: vi.fn(),
   updateSubscriptionMock: vi.fn(),
   updatePaymentMock: vi.fn(),
@@ -48,6 +52,8 @@ vi.mock('@/lib/auth-options', () => ({
 
 vi.mock('@alusa/finance', () => ({
   getSubscription: getSubscriptionMock,
+  getPayment: getPaymentMock,
+  projectConfirmedBillingAgreementSnapshot: projectConfirmedBillingAgreementSnapshotMock,
   listSubscriptionPayments: listSubscriptionPaymentsMock,
   updateSubscription: updateSubscriptionMock,
   updatePayment: updatePaymentMock,
@@ -66,6 +72,7 @@ vi.mock('@/src/server/matriculas/financial-context.service', () => ({
 
 vi.mock('@/src/server/matriculas/enrollment-finance-consistency.service', () => ({
   alignLocalPendingEnrollmentCharges: alignLocalPendingEnrollmentChargesMock,
+  markEnrollmentFinanceDivergence: vi.fn(),
 }));
 
 const { PUT } = await import('../route');
@@ -124,19 +131,14 @@ describe('PUT /api/matriculas/[id]/juros-multa', () => {
         ],
         hasMore: false,
       })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            id: 'pay_overdue',
-            value: 150,
-            dueDate: '2026-05-10',
-            billingType: 'BOLETO',
-            deleted: false,
-          },
-        ],
-        hasMore: false,
-      });
+      .mockResolvedValueOnce({ data: [], hasMore: false });
     updatePaymentMock.mockResolvedValue({});
+    getPaymentMock.mockResolvedValue({
+      status: 'PENDING',
+      value: 150,
+      dueDate: '2026-06-10',
+      billingType: 'BOLETO',
+    });
   });
 
   it('envia juros, multa, desconto e updatePendingPayments no PUT da assinatura Asaas', async () => {
@@ -174,30 +176,12 @@ describe('PUT /api/matriculas/[id]/juros-multa', () => {
       limit: 100,
       offset: 0,
     });
-    expect(listSubscriptionPaymentsMock).toHaveBeenCalledWith('sub_123', {
-      contaId: 'conta-1',
-      status: 'OVERDUE',
-      limit: 100,
-      offset: 0,
-    });
     expect(updatePaymentMock).toHaveBeenCalledWith(
       'pay_pending',
       {
         billingType: 'BOLETO',
         value: 150,
         dueDate: '2026-06-10',
-        interest: { value: 0 },
-        fine: { value: 0, type: 'PERCENTAGE' },
-        discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },
-      },
-      { contaId: 'conta-1' },
-    );
-    expect(updatePaymentMock).toHaveBeenCalledWith(
-      'pay_overdue',
-      {
-        billingType: 'BOLETO',
-        value: 150,
-        dueDate: '2026-05-10',
         interest: { value: 0 },
         fine: { value: 0, type: 'PERCENTAGE' },
         discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 5 },

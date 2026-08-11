@@ -56,6 +56,7 @@ interface ConfiguracoesPagamentoProps {
       nome: string;
     }>;
   } | null;
+  isSharedSubscription?: boolean;
   jurosAtual?: number;
   jurosTipoAtual?: 'FIXED' | 'PERCENTAGE';
   multaAtual?: number;
@@ -120,6 +121,7 @@ export function ConfiguracoesPagamento({
   asaasSubscriptionId,
   assinaturaSnapshot,
   financialContext,
+  isSharedSubscription,
   jurosAtual,
   multaAtual,
   multaTipoAtual,
@@ -167,6 +169,7 @@ export function ConfiguracoesPagamento({
   const LIMITE_MULTA_MAX = 10; // 10% (máximo técnico)
   const editButtonClass = 'h-10 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50';
   const isFamilyBilling = financialContext?.mode === 'FAMILY';
+  const isSharedBilling = isFamilyBilling || Boolean(isSharedSubscription);
   const familyStudentNames = financialContext?.alunos.map((aluno) => aluno.nome).filter(Boolean) ?? [];
   const familyStudentSummary =
     familyStudentNames.length > 0
@@ -597,16 +600,20 @@ export function ConfiguracoesPagamento({
         {isFamilyBilling ? 'Configurações de Pagamento Familiar' : 'Configurações de Pagamento'}
       </span>
       <p className="text-xs text-slate-600 mb-4">
-        {isFamilyBilling
-          ? 'Esta matrícula participa de uma cobrança familiar. As alterações passam pela assinatura do responsável financeiro e valem para todo o grupo.'
+        {isSharedBilling
+          ? isFamilyBilling
+            ? 'Esta matrícula participa de uma cobrança familiar. As alterações passam pela assinatura do responsável financeiro e valem para todo o grupo.'
+            : 'Esta matrícula compartilha uma assinatura. As alterações valem para todas as matrículas vinculadas.'
           : 'Configure os campos editáveis do vínculo recorrente. As alterações passam pela integração financeira da Alusa e valem para os próximos ciclos e para pendências que ainda possam ser ajustadas.'}
       </p>
 
       <div className="space-y-6">
-        {isFamilyBilling ? (
+        {isSharedBilling ? (
           <InfoCallout size="sm">
-            <InfoCalloutItem label="Cobrança familiar" labelTone="default">
-              {`Responsável: ${financialContext?.responsavelFinanceiro?.nome ?? 'não informado'}. Alunos vinculados: ${familyStudentSummary}. Edições nesta seção afetam a assinatura familiar consolidada.`}
+            <InfoCalloutItem label={isFamilyBilling ? 'Cobrança familiar' : 'Assinatura compartilhada'} labelTone="default">
+              {isFamilyBilling
+                ? `Responsável: ${financialContext?.responsavelFinanceiro?.nome ?? 'não informado'}. Alunos vinculados: ${familyStudentSummary}. Edições nesta seção afetam a assinatura familiar consolidada.`
+                : `Esta alteração afeta as ${financialContext?.affectedMatriculaIds.length ?? 2} matrículas vinculadas à mesma assinatura.`}
             </InfoCalloutItem>
           </InfoCallout>
         ) : null}
@@ -662,8 +669,10 @@ export function ConfiguracoesPagamento({
                 Alterar Forma de Pagamento
               </label>
               <p className="text-xs text-slate-600 mt-1">
-                {isFamilyBilling
-                  ? 'Altera a forma de pagamento da assinatura familiar do responsável. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.'
+                {isSharedBilling
+                  ? isFamilyBilling
+                    ? 'Altera a forma de pagamento da assinatura familiar do responsável. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.'
+                    : 'Altera a forma de pagamento da assinatura compartilhada. Todas as matrículas vinculadas usarão o mesmo método nos próximos ciclos.'
                   : 'Altera a forma de pagamento do vínculo recorrente. O reflexo financeiro é assíncrono e pode alcançar cobranças pendentes editáveis.'}
               </p>
             </div>
@@ -726,7 +735,7 @@ export function ConfiguracoesPagamento({
               <InfoCalloutItem label="Importante" labelTone="default">
                 {isFamilyBilling
                   ? 'esta alteração será aplicada à assinatura familiar consolidada e pode impactar todas as matrículas vinculadas ao responsável. Cartões salvos usam um fluxo seguro separado.'
-                  : 'esta alteração usa a atualização da assinatura no Asaas e tenta aplicar a mudança também em cobranças pendentes editáveis. Cartões salvos usam um fluxo seguro separado.'}
+                  : 'esta alteração atualiza a assinatura e tenta aplicar a mudança também em cobranças pendentes editáveis. Cartões salvos usam um fluxo seguro separado.'}
               </InfoCalloutItem>
             </InfoCallout>
           ) : null}

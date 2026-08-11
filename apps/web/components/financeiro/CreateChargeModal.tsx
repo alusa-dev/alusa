@@ -426,10 +426,13 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
         });
       }
 
+      const pending = result.pending === true || res.status === 202;
       pushToast({
-        title: labels.toast,
-        description: 'Aguardando confirmação de pagamento',
-        variant: 'success',
+        title: pending ? 'Solicitação recebida' : labels.toast,
+        description: pending
+          ? 'A confirmação está em andamento. Atualize a página em instantes; não envie novamente.'
+          : 'Aguardando confirmação de pagamento',
+        variant: pending ? 'info' : 'success',
       });
 
       handleClose();

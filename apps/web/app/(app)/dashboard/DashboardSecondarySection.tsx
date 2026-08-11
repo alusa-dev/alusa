@@ -18,7 +18,7 @@ const AulaExperimentalCard = dynamic(
     })),
   {
     loading: () => (
-      <div className="h-[260px]">
+      <div className="h-[258px]">
         <Skeleton className="h-full w-full rounded-2xl" />
       </div>
     ),
@@ -33,7 +33,7 @@ const AniversariantesMesCard = dynamic(
     })),
   {
     loading: () => (
-      <div className="h-[260px]">
+      <div className="h-[258px]">
         <Skeleton className="h-full w-full rounded-2xl" />
       </div>
     ),
@@ -68,16 +68,16 @@ export default function DashboardSecondarySection({
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-        <div className="h-[260px]">
+      <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <div className="h-[258px]">
           <AulaExperimentalCard aulasExperimentais={metrics?.aulasExperimentais ?? []} />
         </div>
 
-        <div className="h-[260px]">
+        <div className="h-[258px]">
           <AniversariantesMesCard aniversariantes={metrics?.aniversariantesDoMes ?? []} />
         </div>
 
-        <div className="h-[260px]">
+        <div className="h-[258px]">
           <div
             className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
           >
@@ -183,7 +183,7 @@ export default function DashboardSecondarySection({
           </div>
         </div>
 
-        <div className="h-[260px]">
+        <div className="h-[258px]">
           <div
             className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex h-full flex-col overflow-hidden rounded-2xl bg-white alusa-dark:bg-[color:var(--color-bg-card)]`}
           >

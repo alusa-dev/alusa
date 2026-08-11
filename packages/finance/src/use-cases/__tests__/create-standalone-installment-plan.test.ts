@@ -194,5 +194,9 @@ describe('createStandaloneInstallmentPlan', () => {
         }),
       })
     );
+
+    // Standalone parcelamentos must not be written to the academic
+    // AsaasIntegrationJob.installmentPlanId foreign key.
+    expect(prisma.asaasIntegrationJob.update).not.toHaveBeenCalled();
   });
 });

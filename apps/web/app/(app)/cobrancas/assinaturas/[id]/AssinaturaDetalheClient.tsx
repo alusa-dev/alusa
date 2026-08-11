@@ -14,11 +14,9 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { pushToast } from '@/components/ui/toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ChevronLeft as ArrowLeft } from '@/components/icons/icons';
+import { ChevronLeft as ArrowLeft, ExternalLink as ArrowTopRightOnSquareIcon } from '@/components/icons/icons';
 import {
-  ArrowTopRightOnSquareIcon,
   CalendarDaysIcon,
   CreditCardIcon,
   UserIcon,
@@ -64,6 +62,14 @@ type AssinaturaDetalhes = {
     id: string;
     nome: string;
     matriculaId: string;
+  }>;
+  linkedMatriculas?: Array<{
+    matriculaId: string;
+    alunoId: string;
+    nome: string;
+    turmaNome: string | null;
+    valor: number;
+    status: string;
   }>;
   valor: number;
   cycle: string;
@@ -167,14 +173,23 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
   }
 
   const familyStudents = assinatura.familyStudents ?? [];
-  const isFamilySubscription = familyStudents.length > 0;
-  const studentNamesLabel = isFamilySubscription
-    ? familyStudents.map((student) => student.nome).join(', ')
-    : assinatura.alunoNome;
+  const linkedMatriculas = assinatura.linkedMatriculas ?? [];
+  const isSharedSubscription = linkedMatriculas.length > 1;
+  const isFamilySubscription = familyStudents.length > 0 && !isSharedSubscription;
+  const participants = isSharedSubscription
+    ? linkedMatriculas
+    : familyStudents;
+  const studentNamesLabel = isSharedSubscription
+    ? assinatura.alunoNome
+    : participants.length > 0
+      ? participants.map((student) => student.nome).join(', ')
+      : assinatura.alunoNome;
 
   const subtitlePrimary = assinatura.description ?? assinatura.cycleLabel;
   const subtitleSecondary =
-    studentNamesLabel && subtitlePrimary !== studentNamesLabel ? studentNamesLabel : null;
+    !isSharedSubscription && studentNamesLabel && subtitlePrimary !== studentNamesLabel
+      ? studentNamesLabel
+      : null;
 
   return (
     <div className="container mx-auto max-w-5xl min-w-0 overflow-x-clip px-3 py-4 pb-8 sm:px-4 sm:py-6">
@@ -191,10 +206,18 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
 
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
           <div className="min-w-0 flex-1">
-            <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-gray-900 md:text-2xl md:font-bold">
-              Detalhes da Assinatura
-            </h1>
-            <p className="mt-1 text-sm leading-snug text-gray-600">{subtitlePrimary}</p>
+            <div className="flex flex-wrap items-center justify-start gap-3">
+              <h1 className="text-[22px] font-semibold leading-tight tracking-tight text-gray-900 md:text-2xl md:font-bold">
+                Detalhes da Assinatura
+              </h1>
+            </div>
+            {!isSharedSubscription ? (
+              <p className="mt-1 text-sm leading-snug text-gray-600">{subtitlePrimary}</p>
+            ) : (
+              <p className="mt-1 text-sm leading-snug text-gray-600">
+                Cobrança recorrente compartilhada entre matrículas deste aluno
+              </p>
+            )}
             {subtitleSecondary ? (
               <p className="mt-1 text-sm leading-snug text-gray-500">{subtitleSecondary}</p>
             ) : null}
@@ -234,8 +257,13 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
 
       {/* Card Dados da Assinatura */}
       <div className="mb-5 rounded-xl border border-gray-200 bg-white shadow-sm sm:mb-6">
-        <div className="border-b border-gray-100 px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 sm:px-6 sm:py-4">
           <h2 className="text-base font-semibold text-gray-900 sm:text-lg">Dados da Assinatura</h2>
+          {isSharedSubscription ? (
+            <span className="inline-flex shrink-0 items-center rounded-full bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">
+              Assinatura compartilhada
+            </span>
+          ) : null}
         </div>
         <div className="px-4 py-4 sm:px-6 sm:py-5">
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
@@ -243,7 +271,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
             <div>
               <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
                 <UserIcon className="h-4 w-4" />
-                {isFamilySubscription ? 'Alunos' : 'Aluno'}
+                {isSharedSubscription ? 'Aluno' : isFamilySubscription ? 'Alunos' : 'Aluno'}
               </div>
               {isFamilySubscription ? (
                 <button
@@ -264,12 +292,11 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
             <div>
               <div className="flex items-center gap-2 text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">
                 <BanknotesIcon className="h-4 w-4" />
-                Valor
+                Valor / {assinatura.cycleLabel}
               </div>
               <div className="text-sm font-semibold text-gray-900">
                 {formatCurrency(assinatura.valor)}
               </div>
-              <div className="text-xs text-gray-500">{assinatura.cycleLabel}</div>
             </div>
 
             {/* Forma de Pagamento */}
@@ -278,7 +305,7 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                 <CreditCardIcon className="h-4 w-4" />
                 Forma de Pagamento
               </div>
-              <div className="text-sm text-gray-900">
+              <div className="text-sm font-semibold text-gray-900">
                 {formatFormaPagamentoLabel(assinatura.billingType)}
               </div>
             </div>
@@ -289,9 +316,33 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
                 <CalendarDaysIcon className="h-4 w-4" />
                 Próximo Vencimento
               </div>
-              <div className="text-sm text-gray-900">{formatDate(assinatura.nextDueDate)}</div>
+              <div className="text-sm font-semibold text-gray-900">{formatDate(assinatura.nextDueDate)}</div>
             </div>
           </div>
+
+          {isSharedSubscription ? (
+            <div className="mt-5 rounded-lg border border-violet-100 bg-violet-50/60 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-gray-900">Matrículas vinculadas</p>
+                <span className="text-xs text-gray-500">Composição do total</span>
+              </div>
+              <div className="mt-2 divide-y divide-violet-100">
+                {linkedMatriculas.map((student, index) => (
+                  <div key={student.matriculaId} className="flex items-center justify-between gap-3 py-2">
+                    <Link
+                      href={`/matriculas/${student.matriculaId}`}
+                      className="min-w-0 truncate text-sm text-brand-accent hover:underline"
+                    >
+                      {student.turmaNome ?? `Matrícula ${index + 1}`}
+                    </Link>
+                    <span className="shrink-0 text-sm font-medium text-gray-900">
+                      {formatCurrency(student.valor)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {/* Links */}
           {(assinatura.matriculaId || assinatura.contratoId) && (
@@ -325,11 +376,13 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
           <div className="min-w-0">
             <h2 className="text-base font-semibold text-gray-900 sm:text-lg">Cobranças Geradas</h2>
             <p className="mt-0.5 text-xs text-gray-500">
-              Todas as cobranças vinculadas a esta assinatura
+              {isSharedSubscription
+                ? 'Cobranças do total compartilhado entre as matrículas vinculadas'
+                : 'Todas as cobranças vinculadas a esta assinatura'}
             </p>
           </div>
-          <div className="flex shrink-0 items-start gap-2 text-left text-xs text-gray-500 sm:max-w-[min(100%,280px)] sm:text-right">
-            <ClockIcon className="mt-0.5 h-4 w-4 shrink-0 sm:mt-0" />
+          <div className="flex shrink-0 items-center gap-2 text-left text-xs leading-snug text-gray-500 sm:max-w-[min(100%,280px)] sm:justify-end sm:text-right">
+            <ClockIcon className="h-4 w-4 shrink-0" />
             <span>Ordenado por vencimento (mais recente primeiro)</span>
           </div>
         </div>
@@ -453,32 +506,37 @@ export function AssinaturaDetalheClient({ id }: { id: string }) {
 
       {isFamilySubscription && (
         <Dialog open={studentsDialogOpen} onOpenChange={setStudentsDialogOpen}>
-          <DialogContent className="max-w-lg overflow-hidden rounded-2xl p-0">
+          <DialogContent className="max-w-lg gap-0 overflow-hidden rounded-2xl p-0">
             <DialogHeader className="border-b border-gray-100 px-6 py-5">
               <DialogTitle className="text-lg font-semibold text-gray-900">
-                Alunos da assinatura familiar
+                {isSharedSubscription ? 'Matrículas do aluno' : 'Alunos da assinatura familiar'}
               </DialogTitle>
               <p className="text-sm text-gray-500">
-                {familyStudents.length} aluno{familyStudents.length === 1 ? '' : 's'} vinculado{familyStudents.length === 1 ? '' : 's'} a esta cobrança recorrente.
+                {participants.length} aluno{participants.length === 1 ? '' : 's'} vinculado{participants.length === 1 ? '' : 's'} a esta cobrança recorrente.
               </p>
             </DialogHeader>
 
             <div className="divide-y divide-gray-100">
-              {familyStudents.map((student) => (
-                <div key={student.matriculaId} className="flex items-center justify-between gap-4 px-6 py-4">
+              {participants.map((student, index) => (
+                <Link
+                  key={student.matriculaId}
+                  href={`/matriculas/${student.matriculaId}`}
+                  className="group flex items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-accent/40"
+                  aria-label={`Ver matrícula de ${student.nome}`}
+                >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-gray-900">{student.nome}</p>
-                    <p className="mt-0.5 text-xs text-gray-500">Matrícula vinculada ao plano familiar</p>
+                    <p className="truncate text-sm font-medium text-gray-900">
+                      {isSharedSubscription ? `Matrícula ${index + 1}` : student.nome}
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      {isSharedSubscription ? student.nome : 'Matrícula vinculada ao plano familiar'}
+                    </p>
                   </div>
-                  <Link
-                    href={`/matriculas/${student.matriculaId}`}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-brand-accent/20 text-brand-accent transition-colors hover:bg-brand-accent hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/30"
-                    title={`Ver matrícula de ${student.nome}`}
-                    aria-label={`Ver matrícula de ${student.nome}`}
-                  >
-                    <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-                  </Link>
-                </div>
+                  <ArrowTopRightOnSquareIcon
+                    className="h-4 w-4 shrink-0 text-brand-accent transition-transform group-hover:translate-x-0.5"
+                    aria-hidden="true"
+                  />
+                </Link>
               ))}
             </div>
           </DialogContent>

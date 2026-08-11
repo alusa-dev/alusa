@@ -472,28 +472,15 @@ describe('matricula-pausa.service', () => {
         .rejects.toMatchObject({ code: 'DIVERGENCIA_INTEGRACAO' });
     });
 
-    it('marca divergência quando a assinatura é reativada mas a cobrança já gerada não pode ser atualizada', async () => {
+    it('não altera cobranças já geradas ao reativar a assinatura', async () => {
       const { root } = createPrismaMock({ findFirst: pausadaMatricula() });
-
-      listSubscriptionPaymentsMock.mockResolvedValueOnce({
-        data: [
-          { id: 'pay_1', status: 'PENDING', dueDate: '2025-07-10' },
-        ],
-        hasMore: false,
-        totalCount: 1,
-      });
-      updatePaymentMock.mockRejectedValueOnce(new Error('payment-update-failed'));
 
       const result = await reativarMatricula({ prisma: root, ...baseReativarInput });
 
       expect(result.newStatus).toBe('ATIVA');
-      expect(result.integrationStatus).toBe('DIVERGENTE');
-      expect(result.warningCode).toBe('COBRANCA_PENDENTE_NAO_ATUALIZADA');
-      expect(result.warnings).toContain(
-        'A assinatura foi reativada, mas a cobrança já gerada não pôde ser atualizada automaticamente. Revise o próximo vencimento no financeiro.',
-      );
+      expect(result.integrationStatus).toBe('PENDENTE_SINCRONISMO');
       expect(ativarAssinaturaMock).toHaveBeenCalled();
-      expect(updatePaymentMock).toHaveBeenCalled();
+      expect(updatePaymentMock).not.toHaveBeenCalled();
     });
 
     it('reconcilia reativação pendente travada quando o Asaas já confirma pausa e permite nova reativação', async () => {

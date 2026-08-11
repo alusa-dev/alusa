@@ -4,9 +4,9 @@ import { AgendaPage } from '@/features/aulas/agenda/AgendaPage';
 import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
 
 type AgendaRoutePageProps = {
-  searchParams?: {
+  searchParams: Promise<{
     turmaId?: string | string[];
-  };
+  }>;
 };
 
 function pickSingle(value?: string | string[]) {
@@ -20,5 +20,7 @@ export default async function AulasAgendaRoutePage({ searchParams }: AgendaRoute
     redirect('/dashboard');
   }
 
-  return <AgendaPage initialFilters={{ turmaId: pickSingle(searchParams?.turmaId) }} />;
+  const params = await searchParams;
+
+  return <AgendaPage initialFilters={{ turmaId: pickSingle(params.turmaId) }} />;
 }

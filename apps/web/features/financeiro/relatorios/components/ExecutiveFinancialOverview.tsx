@@ -189,7 +189,7 @@ export function ExecutiveFinancialOverview({
           />
           <ClassOccupancyCard data={data} loading={loading} />
           <AttentionPoints summary={summary} data={data} loading={loading} />
-          <div className="min-w-0 md:col-span-2 xl:col-span-2">
+          <div className="min-w-0 self-start">
             <AcademicContext data={data} loading={loading} />
           </div>
         </div>
@@ -385,13 +385,15 @@ function AcademicContext({
 }) {
   const classRanking = data?.rankingByClass ?? [];
   const planRanking = data?.rankingByPlan ?? [];
+  const cancellationRanking = data?.cancellationsByClass ?? [];
   const strongestClass = [...classRanking].sort((a, b) => b.received - a.received)[0];
   const riskClass = [...classRanking].sort((a, b) => b.delinquencyRate - a.delinquencyRate)[0];
   const strongestPlan = [...planRanking].sort((a, b) => b.received - a.received)[0];
+  const highestCancellationClass = cancellationRanking[0];
 
   return (
     <section
-      className={`${DASHBOARD_SECTION_CARD_CLASSNAME} h-full overflow-hidden rounded-2xl bg-white shadow-none alusa-dark:bg-[color:var(--color-bg-card)]`}
+      className={`${DASHBOARD_SECTION_CARD_CLASSNAME} flex flex-col overflow-hidden rounded-2xl bg-white shadow-none alusa-dark:bg-[color:var(--color-bg-card)]`}
       aria-labelledby="academic-context-title"
     >
       <DashboardCardHeader
@@ -399,36 +401,61 @@ function AcademicContext({
         title="Contexto educacional"
         description="Como turmas e planos participam do resultado financeiro."
       />
-      <div className="p-5">
+      <div className="flex flex-col p-5">
         {loading ? (
-          <div className="space-y-2.5">
+          <div className="space-y-3">
             {[1, 2, 3].map((item) => (
               <Skeleton key={item} className="h-14 w-full" />
             ))}
           </div>
-        ) : classRanking.length === 0 && planRanking.length === 0 ? (
+        ) :
+          classRanking.length === 0 &&
+          planRanking.length === 0 &&
+          cancellationRanking.length === 0 ? (
           <p className="grid min-h-32 place-items-center text-sm text-gray-500">
             Sem dados acadêmicos suficientes neste período.
           </p>
         ) : (
-          <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
+          <>
+            <div className="mb-4 flex h-1 gap-1" aria-hidden="true">
+              <span className="flex-1 rounded-full bg-blue-400" />
+              <span className="flex-1 rounded-full bg-violet-300" />
+              <span className="flex-1 rounded-full bg-amber-400" />
+              <span className="flex-1 rounded-full bg-red-400" />
+            </div>
+            <dl className="divide-y divide-slate-100 alusa-dark:divide-[color:var(--color-border-subtle)]">
             <AcademicItem
+              color="bg-blue-400"
               label="Turma com maior recebimento"
               name={strongestClass?.name}
               value={strongestClass ? formatReportMoney(strongestClass.received) : '—'}
             />
             <AcademicItem
+              color="bg-violet-300"
               label="Turma com maior inadimplência"
               name={riskClass?.name}
               value={riskClass ? `${riskClass.delinquencyRate.toLocaleString('pt-BR')}%` : '—'}
               danger={Boolean(riskClass?.delinquencyRate)}
             />
             <AcademicItem
+              color="bg-amber-400"
               label="Plano com maior recebimento"
               name={strongestPlan?.name}
               value={strongestPlan ? formatReportMoney(strongestPlan.received) : '—'}
             />
-          </dl>
+            <AcademicItem
+              color="bg-red-400"
+              label="Turma com maior desistência"
+              name={highestCancellationClass?.name}
+              value={
+                highestCancellationClass
+                  ? `${highestCancellationClass.cancellations} ${highestCancellationClass.cancellations === 1 ? 'desistência' : 'desistências'}`
+                  : '—'
+              }
+              danger={Boolean(highestCancellationClass?.cancellations)}
+            />
+            </dl>
+          </>
         )}
       </div>
     </section>
@@ -512,21 +539,26 @@ function ClassOccupancyCard({
 }
 
 function AcademicItem({
+  color,
   label,
   name,
   value,
   danger,
 }: {
+  color: string;
   label: string;
   name?: string;
   value: string;
   danger?: boolean;
 }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-6 py-3 first:pt-0 last:pb-0">
-      <div className="min-w-0">
-        <dt className="text-[11px] leading-4 text-gray-400">{label}</dt>
-        <dd className="mt-0.5 truncate text-sm font-medium leading-5 text-gray-800 alusa-dark:text-[color:var(--color-text-primary)]">
+    <div className="flex min-w-0 items-center gap-2.5 py-2 first:pt-0 last:pb-0">
+      <span className={cn('h-2 w-2 shrink-0 rounded-full', color)} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <dt className="truncate text-[11px] leading-4 text-gray-400 alusa-dark:text-[color:var(--color-text-secondary)]">
+          {label}
+        </dt>
+        <dd className="truncate text-sm font-medium leading-5 text-gray-800 alusa-dark:text-[color:var(--color-text-primary)]">
           {name ?? 'Não identificado'}
         </dd>
       </div>
@@ -568,13 +600,13 @@ function AttentionPoints({
       />
       <div className="flex flex-1 flex-col p-5">
         {loading ? (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {[1, 2, 3].map((item) => (
               <Skeleton key={item} className="h-16 w-full" />
             ))}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <AttentionItem
               tone={summary.overdue > 0 ? 'danger' : 'success'}
               title={
@@ -628,7 +660,7 @@ function AttentionItem({
   const content = (
     <div
       className={cn(
-        'flex min-h-[72px] items-start gap-3 rounded-xl border border-slate-100 p-4 alusa-dark:border-[color:var(--color-border-default)]',
+        'flex min-h-[64px] items-start gap-3 rounded-xl border border-slate-100 p-3 alusa-dark:border-[color:var(--color-border-default)]',
         href &&
           'transition-colors hover:bg-slate-50 alusa-dark:hover:bg-[color:var(--color-bg-card-soft)]',
       )}

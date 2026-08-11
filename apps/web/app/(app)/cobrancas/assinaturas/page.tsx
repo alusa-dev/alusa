@@ -67,7 +67,10 @@ export default function AssinaturasPage() {
   const [page, setPage] = useState<number>(1);
   const [pageSize] = useState<number>(6);
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const statusFilter = searchParams.get('status') || '';
+  const requestedStatus = searchParams.get('status');
+  // Por padrão, a operação diária mostra apenas assinaturas ativas.
+  // O valor ALL permite voltar explicitamente ao histórico completo.
+  const statusFilter = requestedStatus === 'ALL' ? '' : requestedStatus || 'ACTIVE';
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
@@ -110,7 +113,7 @@ export default function AssinaturasPage() {
       if (value && value !== 'all') {
         params.set('status', value);
       } else {
-        params.delete('status');
+        params.set('status', 'ALL');
       }
       router.replace(`/cobrancas/assinaturas?${params.toString()}`);
       setPage(1);

@@ -101,6 +101,14 @@ function extractSubscriptionKey(externalReference: string | null): string | null
   return externalReference.slice(0, paymentIndex);
 }
 
+function extractStandaloneSubscriptionId(externalReference: string | null): string | null {
+  if (!externalReference) return null;
+  const match = externalReference.match(
+    /(?:^|:)standalone-subscription:([^:]+)(?::payment:|:needs-review:|$)/,
+  );
+  return match?.[1] ?? null;
+}
+
 function inferAcademicChargeType(tipo: string | null): 'ONE_TIME' | 'INSTALLMENT' | 'SUBSCRIPTION' {
   if (tipo === 'PARCELADA') return 'INSTALLMENT';
   if (tipo === 'RECORRENTE' || tipo === 'MENSALIDADE') return 'SUBSCRIPTION';
@@ -410,15 +418,34 @@ async function buildOperationalChargesCollection(
         ],
       },
       {
-        NOT: [
-          { externalReference: { contains: ':needs-review:' } },
-          { payerName: 'NEEDS_REVIEW' },
+        OR: [
+          // Cobranças vinculadas a uma assinatura/grupo são confiáveis para
+          // a fila, mesmo que um webhook anterior tenha deixado o payerName
+          // no marcador transitório NEEDS_REVIEW.
+          { standaloneSubscriptionId: { not: null } },
+          { familyGroupId: { not: null } },
+          {
+            AND: [
+              { standaloneSubscriptionId: null },
+              { familyGroupId: null },
+              {
+                NOT: [
+                  { externalReference: { contains: ':needs-review:' } },
+                  { payerName: 'NEEDS_REVIEW' },
+                ],
+              },
+            ],
+          },
         ],
       },
       {
         OR: [
           { dueDate: { lte: endOfMonth } },
           { dueDate: null },
+          // A próxima cobrança de uma assinatura é a representação vigente
+          // da recorrência. Ela deve continuar visível mesmo quando o
+          // vencimento estiver no próximo mês; o agrupador só é fallback.
+          { standaloneSubscriptionId: { not: null } },
         ],
       },
     ],
@@ -436,9 +463,21 @@ async function buildOperationalChargesCollection(
         ],
       },
       {
-        NOT: [
-          { externalReference: { contains: ':needs-review:' } },
-          { payerName: 'NEEDS_REVIEW' },
+        OR: [
+          { standaloneSubscriptionId: { not: null } },
+          { familyGroupId: { not: null } },
+          {
+            AND: [
+              { standaloneSubscriptionId: null },
+              { familyGroupId: null },
+              {
+                NOT: [
+                  { externalReference: { contains: ':needs-review:' } },
+                  { payerName: 'NEEDS_REVIEW' },
+                ],
+              },
+            ],
+          },
         ],
       },
       { dueDate: { gt: endOfMonth } },
@@ -980,7 +1019,8 @@ async function buildOperationalChargesCollection(
       installmentCount: null,
       installmentsPaid: null,
       _planId: resolvedPlanId,
-      _subscriptionKey: extractSubscriptionKey(c.externalReference),
+      _subscriptionKey:
+        c.standaloneSubscriptionId ?? extractStandaloneSubscriptionId(c.externalReference),
     };
   });
 
@@ -989,12 +1029,25 @@ async function buildOperationalChargesCollection(
       .map((charge) => charge.standaloneSubscriptionId)
       .filter((id): id is string => typeof id === 'string' && id.length > 0),
   );
+  const materializedFamilyGroupIds = new Set(
+    effectiveStandaloneResult
+      .filter((charge) => typeof charge.familyGroupId === 'string' && charge.familyGroupId.length > 0)
+      .map((charge) => charge.familyGroupId as string),
+  );
 
   const standaloneSubscriptionItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] =
     standaloneSubscriptions
       .filter((subscription) => {
         if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
-        return !materializedSubscriptionIds.has(subscription.id);
+        // Uma cobrança vigente é sempre a representação principal. O item
+        // agrupador só pode aparecer como fallback quando não existe charge
+        // aberto materializado, inclusive em dados legados cujo vínculo foi
+        // preservado apenas pelo familyGroupId.
+        if (materializedSubscriptionIds.has(subscription.id)) return false;
+        if (subscription.familyGroupId && materializedFamilyGroupIds.has(subscription.familyGroupId)) {
+          return false;
+        }
+        return true;
       })
       .map((subscription) => {
         const resolvedPayerName = subscription.customer
@@ -1163,7 +1216,7 @@ async function buildOperationalChargesCollection(
   for (const item of allItemsWithMeta) {
     if (!item._subscriptionKey || !['PENDING', 'PROCESSING'].includes(item.status)) continue;
     const itemDueDate = item.dueDate ? new Date(item.dueDate) : null;
-    if (itemDueDate && itemDueDate > endOfMonth) continue;
+    if (itemDueDate && itemDueDate > endOfMonth && item.origin !== 'STANDALONE') continue;
     const bucket = subscriptionGroups.get(item._subscriptionKey) ?? [];
     bucket.push(item);
     subscriptionGroups.set(item._subscriptionKey, bucket);

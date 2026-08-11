@@ -150,6 +150,8 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
       id: String(aluno.id ?? ''),
       nome: aluno.nome ? String(aluno.nome) : null,
       cpf: aluno.cpf ? String(aluno.cpf) : null,
+      email: aluno.email ? String(aluno.email) : null,
+      telefone: aluno.telefone ? String(aluno.telefone) : null,
       foto: aluno.foto ? String(aluno.foto) : null,
     },
     plano: plano
@@ -167,6 +169,7 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
           telefone: responsavel.telefone ? String(responsavel.telefone) : null,
         }
       : null,
+    isSharedSubscription: Boolean(matricula.isSharedSubscription),
     turma: turma
       ? {
           id: String(turma.id ?? ''),
@@ -601,6 +604,7 @@ export function mapMatriculaStatusSyncResultToDTO(
       cobrancasAtualizadas: Number(result.cobrancasAtualizadas ?? 0),
       nextDueDate: toIsoString(result.nextDueDate as Nullable<Date | string>),
       paymentSync: result.paymentSync,
+      familyImpact: result.familyImpact ?? null,
     },
   });
 }

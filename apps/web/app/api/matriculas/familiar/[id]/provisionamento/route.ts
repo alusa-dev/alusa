@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
+import {
+  processFamilyBillingOutboxEvent,
+  reconcileFailedFamilyEnrollmentOutbox,
+} from '@alusa/finance/family-billing/processor';
 
 type IdParams = Promise<{ id: string }> | { id: string };
 
@@ -126,4 +130,75 @@ export async function GET(_request: Request, context: { params: IdParams }) {
     },
     { headers: { 'cache-control': 'no-store' } },
   );
+}
+
+/**
+ * Reprocessa com segurança a cobrança familiar pendente ou incerta.
+ * O processador é idempotente e reconcilia primeiro os artefatos remotos.
+ */
+export async function POST(_request: Request, context: { params: IdParams }) {
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ error: { message: 'Usuário não autenticado.' } }, { status: 401 });
+  }
+
+  const { id } = await Promise.resolve(context.params);
+  const family = await prisma.matriculaFamiliar.findFirst({
+    where: { id, contaId: user.contaId },
+    select: {
+      id: true,
+      items: { select: { id: true } },
+      enrollmentOperations: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { status: true },
+      },
+    },
+  });
+  if (!family) {
+    return NextResponse.json(
+      { error: { message: 'Matrícula familiar não encontrada.' } },
+      { status: 404 },
+    );
+  }
+
+  const event = await prisma.familyBillingOutbox.findFirst({
+    where: {
+      contaId: user.contaId,
+      matriculaFamiliarId: family.id,
+      status: { in: ['PENDING', 'FAILED', 'REQUIRES_RECONCILIATION'] },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  if (!event) {
+    return NextResponse.json(
+      { error: { message: 'Nenhum provisionamento financeiro pendente foi encontrado.' } },
+      { status: 409 },
+    );
+  }
+
+  try {
+    const latestOperation = family.enrollmentOperations[0];
+    if (latestOperation?.status === 'REQUIRES_RECONCILIATION' && family.items.length === 0) {
+      const result = await reconcileFailedFamilyEnrollmentOutbox(event.id);
+      return NextResponse.json(result, {
+        status: result.processed ? 200 : 202,
+        headers: { 'cache-control': 'no-store' },
+      });
+    }
+    const result = await processFamilyBillingOutboxEvent(event.id, {
+      allowReconciliation: true,
+    });
+    return NextResponse.json(result, {
+      status: result.processed ? 200 : 202,
+      headers: { 'cache-control': 'no-store' },
+    });
+  } catch (error) {
+    console.error('[POST /api/matriculas/familiar/:id/provisionamento]', error);
+    return NextResponse.json(
+      { error: { message: 'Não foi possível reconciliar o provisionamento financeiro.' } },
+      { status: 422 },
+    );
+  }
 }

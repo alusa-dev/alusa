@@ -1,5 +1,6 @@
 "use client";
 
+import Link from 'next/link';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { DashboardFinanceKpisDataDTO, DashboardMetricsDataDTO } from '@/features/dashboard/dtos';
 
@@ -11,6 +12,7 @@ interface KpiCardProps {
   descricao?: string;
   loading?: boolean;
   formato?: 'numero' | 'moeda';
+  action?: { label: string; href: string };
 }
 
 function formatCount(value: number) {
@@ -32,11 +34,12 @@ function KpiCard({
   descricao,
   loading,
   formato = 'numero',
+  action,
 }: KpiCardProps) {
   if (loading) {
     return (
       <div
-        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
+        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-[219px] flex-col justify-between rounded-2xl bg-[#f2e9fc] px-5 pb-[22px] pt-4 animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
       >
         <div>
           <Skeleton className="mb-2 h-4 w-24 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
@@ -48,21 +51,22 @@ function KpiCard({
 
   return (
     <div
-      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 min-h-[220px] h-full alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
+      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-[219px] flex-col justify-between rounded-2xl bg-[#f2e9fc] px-5 pb-[22px] pt-4 alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
     >
       <div>
-        <p className="mb-2 text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
+        <p className="text-xs font-normal text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
           {titulo}
         </p>
-        <span className="mb-1 block text-4xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
+        <span className="mt-5 block text-[37px] font-normal leading-none text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
           {formato === 'moeda' ? formatCurrency(valor) : formatCount(valor)}
         </span>
-        {descricao ? (
-          <span className="text-xs text-[#2b2634]/70 alusa-dark:text-[color:var(--color-text-muted)]">
-            {descricao}
-          </span>
-        ) : null}
+        {descricao ? <span className="sr-only">{descricao}</span> : null}
       </div>
+      {action ? (
+        <Link href={action.href} className="inline-flex h-6 w-fit items-center rounded-full bg-[#3d3a3f] px-3 text-xs font-normal text-[#f2e9fc] transition hover:bg-[#26222d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3d3a3f]/30">
+          {action.label}
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -84,6 +88,7 @@ export function ConfirmadasCard({ data, loading }: FinanceiroKpiCardProps) {
       titulo="Turmas ativas"
       valor={valor}
       descricao="Com status ativo"
+      action={{ label: 'Ver turmas', href: '/turmas' }}
       loading={loading}
     />
   );
@@ -97,6 +102,7 @@ export function VencidasCard({ data, loading }: FinanceiroKpiCardProps) {
       valor={valor}
       descricao="Arrecadado até hoje"
       formato="moeda"
+      action={{ label: 'Ver taxas', href: '/financeiro/relatorios' }}
       loading={loading}
     />
   );
@@ -110,6 +116,7 @@ export function AguardandoPagamentoCard({ data, loading }: DashboardFinanceKpiCa
       valor={valor}
       descricao="Mesmo total de Todas as Cobranças em aberto"
       formato="moeda"
+      action={{ label: 'Ver cobranças', href: '/cobrancas' }}
       loading={loading}
     />
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { TZDateMini } from '@date-fns/tz';
 import { addDays, addMonths } from 'date-fns';
@@ -26,8 +26,6 @@ export type AgendaFiltersState = {
   salaId?: string;
   type?: CalendarEventTypeDTO[];
 };
-
-const defaultWeekRange = buildZonedAgendaRangeIso(new Date(), 'week', DEFAULT_ACCOUNT_TIMEZONE);
 
 function normalizeAgendaViewMode(viewMode?: AgendaViewModeDTO) {
   if (viewMode === 'month-compact') {
@@ -74,10 +72,16 @@ function prefetchAdjacentAgendaRanges(filters: AgendaFiltersState, timeZone: str
 }
 
 export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAgendaOptions) {
+  const initialViewMode = normalizeAgendaViewMode(initial?.viewMode);
+  const initialRange = useRef(
+    initial?.start && initial?.end
+      ? { start: initial.start, end: initial.end }
+      : buildZonedAgendaRangeIso(new Date(), initialViewMode, DEFAULT_ACCOUNT_TIMEZONE),
+  ).current;
   const [filters, setFilters] = useState<AgendaFiltersState>({
-    start: initial?.start ?? defaultWeekRange.start,
-    end: initial?.end ?? defaultWeekRange.end,
-    viewMode: normalizeAgendaViewMode(initial?.viewMode),
+    start: initialRange.start,
+    end: initialRange.end,
+    viewMode: initialViewMode,
     turmaId: initial?.turmaId,
     professorId: initial?.professorId,
     salaId: initial?.salaId,
@@ -87,6 +91,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
   const [loading, setLoading] = useState(options?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const timezoneResolvedRef = useRef(Boolean(initial?.start && initial?.end));
 
   const enabled = options?.enabled ?? true;
   const requestKey = JSON.stringify(filters);
@@ -120,6 +125,21 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
         if (cancelled) return;
 
         setData(result);
+
+        // A conta can use another IANA timezone than the client fallback. Rebase
+        // only the untouched initial range so a quick manual navigation is preserved.
+        if (
+          !timezoneResolvedRef.current &&
+          filters.start === initialRange.start &&
+          filters.end === initialRange.end
+        ) {
+          timezoneResolvedRef.current = true;
+          const range = buildZonedAgendaRangeIso(new Date(), filters.viewMode, result.data.timeZone);
+          setFilters((current) => ({ ...current, ...range }));
+        } else {
+          timezoneResolvedRef.current = true;
+        }
+
         prefetchAdjacentAgendaRanges(filters, result.data.timeZone);
       } catch (err) {
         if (cancelled) return;
@@ -141,7 +161,7 @@ export function useAgenda(initial?: Partial<AgendaFiltersState>, options?: UseAg
       cancelled = true;
       controller.abort();
     };
-  }, [enabled, requestKey, refreshNonce]);
+  }, [enabled, filters, initialRange.end, initialRange.start, refreshNonce, requestKey]);
 
   const refresh = useCallback(() => {
     setRefreshNonce((n) => n + 1);

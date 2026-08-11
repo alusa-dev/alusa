@@ -11,6 +11,9 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { InfoCircle } from '@/components/icons/icons';
 
 export interface ReativarMatriculaPayload {
   dataRetornoEfetiva: string;
@@ -23,6 +26,7 @@ interface ReativarMatriculaDialogProps {
   onOpenChange: (_open: boolean) => void;
   alunoNome: string;
   vencimentoDia?: number | null;
+  isSharedSubscription?: boolean;
   onConfirm: (_payload: ReativarMatriculaPayload) => Promise<void>;
 }
 
@@ -69,6 +73,7 @@ export function ReativarMatriculaDialog({
   onOpenChange,
   alunoNome,
   vencimentoDia,
+  isSharedSubscription = false,
   onConfirm,
 }: ReativarMatriculaDialogProps) {
   const [dataRetornoEfetiva, setDataRetornoEfetiva] = useState(todayISO());
@@ -132,8 +137,9 @@ export function ReativarMatriculaDialog({
             Reativar matrícula
           </DialogTitle>
           <DialogDescription className="text-sm text-slate-600">
-            Reativar a matrícula de <strong>{alunoNome}</strong>. A assinatura será
-            reativada no sistema financeiro.
+            {isSharedSubscription
+              ? <>Reativar a matrícula de <strong>{alunoNome}</strong> e incluí-la novamente na cobrança compartilhada.</>
+              : <>Reativar a matrícula de <strong>{alunoNome}</strong> e retomar sua cobrança recorrente.</>}
           </DialogDescription>
         </DialogHeader>
 
@@ -141,9 +147,11 @@ export function ReativarMatriculaDialog({
           {/* Datas */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="reativarRetorno" className="text-xs font-medium text-slate-600">
-                Data de retorno <span className="text-red-500">*</span>
-              </Label>
+              <div className="flex h-5 items-center">
+                <Label htmlFor="reativarRetorno" className="text-xs font-medium leading-5 text-slate-600">
+                  Data de retorno <span className="text-red-500">*</span>
+                </Label>
+              </div>
               <input
                 id="reativarRetorno"
                 type="date"
@@ -154,9 +162,28 @@ export function ReativarMatriculaDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="reativarDueDate" className="text-xs font-medium text-slate-600">
-                Próximo vencimento <span className="text-red-500">*</span>
-              </Label>
+              <div className="flex h-5 items-center gap-1">
+                <Label htmlFor="reativarDueDate" className="text-xs font-medium leading-5 text-slate-600">
+                  Próximo vencimento <span className="text-red-500">*</span>
+                </Label>
+                <TooltipProvider delayDuration={250}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="Sobre o próximo vencimento"
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-slate-400 hover:text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/30"
+                        disabled={loading}
+                      >
+                        <InfoCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      Vencimento da próxima mensalidade a ser gerada.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <input
                 id="reativarDueDate"
                 type="date"
@@ -169,9 +196,6 @@ export function ReativarMatriculaDialog({
                 className={controlClass}
                 disabled={loading}
               />
-              <p className="text-xs text-slate-500">
-                Vencimento da próxima mensalidade a ser gerada.
-              </p>
             </div>
           </div>
 
@@ -192,13 +216,14 @@ export function ReativarMatriculaDialog({
           </div>
 
           {/* Info */}
-          <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-            <p className="text-xs text-green-800">
-              <strong>Importante:</strong> A assinatura será reativada e a próxima cobrança
-              gerada usará a data informada. Cobranças já geradas não têm o vencimento alterado
-              por esta ação.
-            </p>
-          </div>
+          <InfoCallout variant="info" size="sm" showIcon={false}>
+            <InfoCalloutItem label="Importante">
+              {isSharedSubscription
+                ? 'A matrícula voltará a participar da cobrança compartilhada. A data informada e o total das próximas mensalidades serão aplicados a todas as matrículas vinculadas.'
+                : 'A cobrança recorrente será retomada usando a data informada para a próxima mensalidade.'}{' '}
+              Cobranças já emitidas não terão o vencimento alterado.
+            </InfoCalloutItem>
+          </InfoCallout>
         </div>
 
         <DialogFooter className="gap-2">

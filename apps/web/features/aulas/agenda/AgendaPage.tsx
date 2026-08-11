@@ -34,6 +34,7 @@ import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agend
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
   buildZonedAgendaRangeIso,
+  formatAgendaPeriodLabel,
   startOfZonedDayClient,
 } from '@/lib/agenda-timezone';
 
@@ -83,6 +84,51 @@ const EMPTY_RESOURCES: AgendaResourcesResult = {
   salas: [],
 };
 
+function CalendarLoadingState() {
+  return (
+    <div
+      className="min-h-[520px] space-y-4 p-4 sm:p-6"
+      aria-busy="true"
+      aria-live="polite"
+      data-testid="agenda-calendar-loading"
+    >
+      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-slate-100 bg-slate-100">
+        {Array.from({ length: 7 }).map((_, index) => (
+          <div key={index} className="h-11 bg-slate-50/80" />
+        ))}
+      </div>
+      <div className="space-y-3">
+        {Array.from({ length: 8 }).map((_, index) => (
+          <div key={index} className="grid grid-cols-[42px_repeat(7,minmax(0,1fr))] gap-px">
+            <div className="h-10 rounded bg-slate-100/70" />
+            {Array.from({ length: 7 }).map((__, dayIndex) => (
+              <div key={dayIndex} className="h-10 bg-slate-50/50" />
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="text-center text-sm text-slate-500">Carregando calendário...</p>
+    </div>
+  );
+}
+
+function CalendarErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex min-h-[360px] flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="rounded-full bg-rose-50 p-3 text-rose-600">
+        <span aria-hidden className="text-xl">!</span>
+      </div>
+      <div>
+        <h3 className="text-sm font-semibold text-slate-900">Não foi possível carregar a agenda</h3>
+        <p className="mt-1 max-w-sm text-sm text-slate-500">Tente novamente para atualizar os eventos deste período.</p>
+      </div>
+      <Button type="button" variant="outline" className="rounded-xl" onClick={onRetry}>
+        Tentar novamente
+      </Button>
+    </div>
+  );
+}
+
 type AgendaPageProps = {
   initialFilters?: Partial<AgendaFiltersState>;
 };
@@ -111,16 +157,6 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
   const calendarError = calendarAgenda.error;
 
   const accountTimeZone = calendarAgenda.data?.data.timeZone ?? DEFAULT_ACCOUNT_TIMEZONE;
-
-  useEffect(() => {
-    const today = new Date();
-    const tz = DEFAULT_ACCOUNT_TIMEZONE;
-
-    calendarAgenda.setFilters((current) => ({
-      ...current,
-      ...buildZonedAgendaRangeIso(today, current.viewMode, tz),
-    }));
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -256,7 +292,7 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
         <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:shadow-none">
           <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 px-4 py-3 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] sm:px-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="inline-flex w-full max-w-full overflow-hidden rounded-xl shadow-sm alusa-dark:shadow-none sm:w-auto">
+              <div className="inline-flex w-full max-w-full overflow-hidden rounded-xl shadow-sm alusa-dark:shadow-none sm:w-auto">
                 <Button
                   className="min-w-0 flex-1 rounded-none rounded-l-xl bg-brand-accent text-white hover:bg-brand-accent/90 sm:flex-none"
                   onClick={() => setCreateOpen(true)}
@@ -310,6 +346,13 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
                   ))}
                 </TabsList>
               </Tabs>
+
+              <p
+                className="truncate text-sm font-semibold text-slate-900 sm:ml-2 alusa-dark:text-[color:var(--color-text-primary)]"
+                data-testid="agenda-period-label"
+              >
+                {formatAgendaPeriodLabel(filters.start, filters.end, filters.viewMode, accountTimeZone)}
+              </p>
             </div>
 
             <div className="flex flex-col gap-3 xl:items-end">
@@ -326,20 +369,32 @@ export function AgendaPage({ initialFilters }: AgendaPageProps) {
             </div>
           </div>
 
-          <div className="mt-0">
-            {calendarLoading ? (
-              <div className="px-6 py-12 text-sm text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-                Carregando calendário...
+          <div className="relative mt-0">
+            {!calendarAgenda.data && calendarLoading ? <CalendarLoadingState /> : null}
+            {!calendarAgenda.data && !calendarLoading && calendarError ? (
+              <CalendarErrorState onRetry={calendarAgenda.refresh} />
+            ) : null}
+            {calendarAgenda.data ? (
+              <div
+                className={calendarLoading ? 'opacity-60 transition-opacity' : undefined}
+                aria-busy={calendarLoading}
+              >
+                <CalendarScheduler
+                  events={calendarEvents}
+                  viewMode={calendarAgenda.filters.viewMode}
+                  anchorDate={calendarAgenda.filters.start}
+                  timeZone={accountTimeZone}
+                  onEventSelect={setSelectedEventId}
+                />
               </div>
-            ) : (
-              <CalendarScheduler
-                events={calendarEvents}
-                viewMode={calendarAgenda.filters.viewMode}
-                anchorDate={calendarAgenda.filters.start}
-                timeZone={accountTimeZone}
-                onEventSelect={setSelectedEventId}
-              />
-            )}
+            ) : null}
+            {calendarLoading && calendarAgenda.data ? (
+              <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center" aria-live="polite">
+                <span className="rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
+                  Atualizando agenda...
+                </span>
+              </div>
+            ) : null}
           </div>
         </Card>
       </div>

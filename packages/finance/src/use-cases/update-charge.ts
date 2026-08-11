@@ -19,6 +19,7 @@ import { readPaymentStatusPreflight } from './payment-command-preflight';
 const EDITABLE_STATUSES = new Set<StatusCobranca>([
   StatusCobranca.PENDENTE,
   StatusCobranca.A_VENCER,
+  StatusCobranca.ATRASADO,
 ]);
 
 // Status Asaas que permitem edição

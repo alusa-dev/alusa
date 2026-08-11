@@ -5,6 +5,7 @@ import { auditLogService } from '../foundation/audit-log.service';
 import { parseExternalReference } from '../core';
 import { isTerminalStatus, canTransition } from '@alusa/domain';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
+import { confirmOutboundCreateByProviderEvent } from '../use-cases/outbound-financial-operation';
 
 /**
  * Verifica se uma atualização de status de matrícula deve ser aplicada,
@@ -42,8 +43,55 @@ export type SubscriptionWebhookPayload = {
     status?: string;
     externalReference?: string;
     deleted?: boolean;
+    value?: number;
+    billingType?: string;
+    cycle?: string;
+    nextDueDate?: string | null;
+    endDate?: string | null;
   };
 };
+
+function exclusiveDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(`${value}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date;
+}
+
+async function projectCanonicalSubscriptionWebhook(input: {
+  contaId: string;
+  payload: SubscriptionWebhookPayload;
+  nextStatus: SubscriptionStatus | null;
+}) {
+  const nextDueDate = input.payload.subscription.nextDueDate
+    ? new Date(`${input.payload.subscription.nextDueDate}T00:00:00.000Z`)
+    : undefined;
+  const remoteEndExclusive = exclusiveDate(input.payload.subscription.endDate);
+  await prisma.billingAgreement.updateMany({
+    where: { contaId: input.contaId, asaasSubscriptionId: input.payload.subscription.id },
+    data: {
+      ...(typeof input.payload.subscription.value === 'number'
+        ? { confirmedValue: input.payload.subscription.value }
+        : {}),
+      ...(input.payload.subscription.billingType ? { billingType: input.payload.subscription.billingType } : {}),
+      ...(input.payload.subscription.cycle ? { cycle: input.payload.subscription.cycle } : {}),
+      ...(nextDueDate ? { nextDueDate, dueDay: nextDueDate.getUTCDate() } : {}),
+      ...(input.payload.subscription.endDate !== undefined ? { validUntil: remoteEndExclusive } : {}),
+      remoteStatus: input.nextStatus ?? input.payload.subscription.status ?? null,
+      remoteStatusUpdatedAt: new Date(),
+      lastReconciledAt: new Date(),
+      reconciliationError: null,
+      ...(input.nextStatus === 'DELETED'
+        ? { status: 'CANCELLED' as const }
+        : input.nextStatus === 'INACTIVE' || input.nextStatus === 'EXPIRED'
+          ? { status: 'INACTIVE' as const }
+          : input.nextStatus === 'ACTIVE'
+            ? { status: 'ACTIVE' as const }
+            : {}),
+    },
+  });
+}
 
 async function markMatriculaDivergence(params: {
   matriculaId: string;
@@ -109,6 +157,8 @@ export async function handleSubscriptionWebhook(
   payload: SubscriptionWebhookPayload
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const canonicalStatus = resolveNextStatus(payload);
+    await projectCanonicalSubscriptionWebhook({ contaId, payload, nextStatus: canonicalStatus });
     const externalReference = payload.subscription.externalReference;
 
     const stagedReference = externalReference?.match(/^enrollment-op:([^:]+):subscription$/);
@@ -189,6 +239,17 @@ export async function handleSubscriptionWebhook(
     });
 
     if (standaloneSubscription) {
+      // O webhook confirma a criação mesmo quando o POST que iniciou a
+      // operação expirou ou ficou em estado RESULT_UNKNOWN.
+      await confirmOutboundCreateByProviderEvent({
+        contaId,
+        resource: 'SUBSCRIPTION',
+        remoteId: payload.subscription.id,
+        externalReference:
+          payload.subscription.externalReference ?? standaloneSubscription.externalReference,
+        eventName: payload.event,
+      });
+
       const nextStatus = resolveNextStatus(payload);
       const updates: {
         status?: SubscriptionStatus;

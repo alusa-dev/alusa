@@ -69,7 +69,7 @@ describe('IntegracoesFeature', () => {
     expect(screen.queryByText('Abra para configurar a API key.')).not.toBeInTheDocument();
   });
 
-  it('mantém o card desabilitado quando a integração é gerenciada pela Alusa', async () => {
+  it('não exibe o card quando a integração é gerenciada pela Alusa', async () => {
     useSessionMock.mockReturnValue({
       data: {
         user: {
@@ -83,8 +83,7 @@ describe('IntegracoesFeature', () => {
 
     render(<IntegracoesFeature />);
 
-    const card = screen.getByRole('button', { name: /Plataforma de pagamento Asaas/i });
-    expect(card).toBeDisabled();
-    expect(screen.getByText('Gerenciado pela Alusa')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Plataforma de pagamento Asaas/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Gerenciado pela Alusa')).not.toBeInTheDocument();
   });
 });

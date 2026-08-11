@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantScope } from '@/lib/auth/tenant-scope';
 import { encerrarContratosExpirados } from '@alusa/lib';
 import { prisma } from '@/src/prisma';
+import { finalizeExpiredFamilyEnrollments } from '@/src/server/matriculas/enrollment-closure.service';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -21,8 +22,18 @@ async function listContasWithExpiredEnrollments(maxAccounts: number) {
 
   const candidates = await prisma.matricula.findMany({
     where: {
-      status: { in: ['ATIVA', 'PAUSADA'] },
-      dataFimContrato: { lt: today },
+      OR: [
+        {
+          status: { in: ['ATIVA', 'PAUSADA'] },
+          dataFimContrato: { lt: today },
+        },
+        {
+          matriculaFamiliar: {
+            status: { in: ['ATIVO', 'PARCIAL'] },
+            dataFimContrato: { lt: today },
+          },
+        },
+      ],
       conta: { status: 'ATIVO', deletedAt: null },
     },
     select: { contaId: true },
@@ -65,7 +76,9 @@ export async function POST(req: Request) {
 
     for (const contaId of contaIds) {
       try {
-        results.push({ contaId, ...(await encerrarContratosExpirados(contaId)) });
+        const contractResult = await encerrarContratosExpirados(contaId);
+        const familyResult = await finalizeExpiredFamilyEnrollments({ contaId });
+        results.push({ contaId, ...contractResult, familyClosure: familyResult });
       } catch (error) {
         errors.push({
           contaId,

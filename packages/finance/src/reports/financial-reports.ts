@@ -184,6 +184,12 @@ export type FinancialEnrollmentHealth = {
   retentionRate: number | null;
 };
 
+export type FinancialCancellationRankingItem = {
+  id: string;
+  name: string;
+  cancellations: number;
+};
+
 export type FinancialReportBreakdownItem = {
   key: string;
   label: string;
@@ -237,6 +243,7 @@ export type FinancialOverviewReport = {
   paymentMethodBreakdown: FinancialReportBreakdownItem[];
   rankingByClass: FinancialReportRankingItem[];
   rankingByPlan: FinancialReportRankingItem[];
+  cancellationsByClass: FinancialCancellationRankingItem[];
   classOccupancy: FinancialClassOccupancyItem[];
   details: FinancialReportPage<FinancialReportDetailItem>;
   dataQuality: FinancialReportDataQuality;
@@ -818,6 +825,7 @@ async function loadEnrollmentSeries(params: {
 }): Promise<{
   series: FinancialEnrollmentSeriesItem[];
   health: FinancialEnrollmentHealth;
+  cancellationsByClass: FinancialCancellationRankingItem[];
 }> {
   const start = zonedDayStart(params.query.startDate, params.timeZone);
   const end = zonedDayStart(nextDay(params.query.endDate), params.timeZone);
@@ -846,7 +854,16 @@ async function loadEnrollmentSeries(params: {
         },
       ],
     },
-    select: { id: true, status: true, createdAt: true, updatedAt: true },
+    select: {
+      id: true,
+      status: true,
+      createdAt: true,
+      updatedAt: true,
+      turma: { select: { id: true, nome: true } },
+      matriculaTurmas: {
+        select: { turma: { select: { id: true, nome: true } } },
+      },
+    },
   });
   const groups = new Map<string, FinancialEnrollmentSeriesItem>();
   const cursor = new Date(`${params.query.startDate.slice(0, 7)}-01T00:00:00.000Z`);
@@ -882,6 +899,31 @@ async function loadEnrollmentSeries(params: {
     }
   }
   const series = [...groups.values()];
+  const cancellationsByClassMap = new Map<string, FinancialCancellationRankingItem>();
+  for (const enrollment of enrollments) {
+    if (
+      enrollment.status !== 'CANCELADA' ||
+      enrollment.updatedAt < start ||
+      enrollment.updatedAt >= end
+    ) {
+      continue;
+    }
+
+    const classes = new Map<string, string>();
+    if (enrollment.turma) classes.set(enrollment.turma.id, enrollment.turma.nome);
+    for (const relation of enrollment.matriculaTurmas) {
+      classes.set(relation.turma.id, relation.turma.nome);
+    }
+    for (const [id, name] of classes) {
+      const current = cancellationsByClassMap.get(id) ?? { id, name, cancellations: 0 };
+      current.cancellations += 1;
+      cancellationsByClassMap.set(id, current);
+    }
+  }
+  const cancellationsByClass = [...cancellationsByClassMap.values()].sort(
+    (left, right) =>
+      right.cancellations - left.cancellations || left.name.localeCompare(right.name),
+  );
   const activeEnrollments = enrollments.filter((item) =>
     ['ATIVA', 'PAUSADA'].includes(item.status),
   ).length;
@@ -904,6 +946,7 @@ async function loadEnrollmentSeries(params: {
       openingActiveEnrollments,
       retentionRate,
     },
+    cancellationsByClass,
   };
 }
 
@@ -1748,6 +1791,7 @@ export async function getFinancialOverviewReport(params: {
     ),
     rankingByClass: ranking(sorted, 'class', loaded.nowStart),
     rankingByPlan: ranking(sorted, 'plan', loaded.nowStart),
+    cancellationsByClass: enrollment.cancellationsByClass,
     classOccupancy,
     details: paginate(sorted.map(serialize), params.query.page, params.query.pageSize),
     dataQuality: loaded.dataQuality,

@@ -456,6 +456,52 @@ describe('listOperationalCharges', () => {
     });
   });
 
+  it('prioriza a cobrança vigente sobre o agrupador da assinatura familiar', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    mockChargeFindMany(db, {
+      standalone: [
+        makeCharge({
+          id: 'ch_family_current',
+          externalReference: 'alusa:standalone-subscription:sub_family_1:payment:pay_current',
+          standaloneSubscriptionId: 'sub_family_1',
+          familyGroupId: 'fam_1',
+          payerName: 'NEEDS_REVIEW',
+          value: 150,
+          dueDate: new Date('2025-06-20T12:00:00.000Z'),
+        }),
+      ],
+    });
+    db.standaloneSubscription.findMany.mockResolvedValue([
+      {
+        id: 'sub_family_1',
+        status: 'ACTIVE',
+        customerId: 'cus_resp_1',
+        asaasSubscriptionId: 'sub_asaas_1',
+        cycle: 'MONTHLY',
+        billingType: 'PIX',
+        value: 300,
+        nextDueDate: new Date('2025-06-20T12:00:00.000Z'),
+        description: 'Plano familiar · 2 matrículas',
+        familyGroupId: 'fam_1',
+        createdAt: new Date('2025-06-01T12:00:00.000Z'),
+        customer: { payerType: 'RESPONSAVEL', payerId: 'resp_1' },
+      },
+    ]);
+    db.responsavel.findMany.mockResolvedValue([{ id: 'resp_1', nome: 'Maria Família' }]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'ch_family_current',
+      value: 150,
+      isGroup: false,
+      groupType: null,
+      groupId: null,
+    });
+  });
+
   it('inclui receita pendente de evento na fila operacional', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);

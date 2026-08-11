@@ -93,6 +93,8 @@ interface UseMatriculaSubmitOptions {
   redirectOnSuccess?: boolean;
 }
 
+type MatriculaApiError = Error & { code?: string };
+
 export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -131,6 +133,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
     setLoading(true);
     setError(null);
     setData(null);
+    const processingToast = toast.message('Criando matrícula e configurando as cobranças...');
 
     try {
       // Validar e preparar payload usando schema do resumo
@@ -230,11 +233,15 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         } else if (typeof errorData.error?.details === 'string') {
           messageParts.push(errorData.error.details);
         }
-        throw new Error(messageParts.filter(Boolean).join(' - '));
+        const apiError = new Error(messageParts.filter(Boolean).join(' - ')) as MatriculaApiError;
+        apiError.code = errorData.error?.code;
+        throw apiError;
       }
 
       const result: MatriculaResponse = await response.json();
       setData(result);
+
+      toast.dismiss(processingToast);
 
       if (result.notificationSync?.warnings?.length) {
         showNotificationSyncWarnings(result.notificationSync.warnings, {
@@ -242,51 +249,42 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         });
       }
 
-      if (result.operationalWarnings?.length) {
-        const warning = result.operationalWarnings[0];
-        toast.custom(
-          (t) => (
-            <CustomToast
-              variant="warning"
-              title="Matrícula criada"
-              description={sanitizeMessage(warning.message)}
-              onClose={() => toast.dismiss(t)}
-            />
-          ),
-          { duration: 7000 },
-        );
-      }
+      const warning = result.operationalWarnings?.[0];
+      const subscriptionSyncPending =
+        result.asaasSync?.subscription && !result.asaasSync.subscription.success;
 
-      if (result.asaasSync?.subscription && !result.asaasSync.subscription.success) {
-        const syncError = result.asaasSync.subscription.error;
+      if (warning || subscriptionSyncPending) {
+        const syncError = result.asaasSync?.subscription?.error;
+        const description = warning
+          ? sanitizeMessage(warning.message)
+          : syncError
+            ? `A cobrança recorrente ainda não foi confirmada pelo financeiro. Detalhe: ${sanitizeMessage(syncError)}`
+            : 'A matrícula foi criada, mas a confirmação financeira ainda está em processamento.';
+
         toast.custom(
           (t) => (
             <CustomToast
               variant="warning"
-              title="Matrícula criada"
-              description={
-                syncError
-                  ? `A cobrança recorrente não foi confirmada pelo financeiro ainda. Detalhe: ${sanitizeMessage(syncError)}`
-                  : 'A cobrança recorrente foi solicitada, mas ainda aguarda confirmação do financeiro.'
-              }
+              title="Matrícula criada — confirmação pendente"
+              description={description}
               onClose={() => toast.dismiss(t)}
             />
           ),
-          { duration: 7000 },
+          { duration: 8000 },
+        );
+      } else {
+        toast.custom(
+          (t) => (
+            <CustomToast
+              variant="success"
+              title="Matrícula criada com sucesso"
+              description="A matrícula e a cobrança recorrente foram configuradas e já estão disponíveis para acompanhamento."
+              onClose={() => toast.dismiss(t)}
+            />
+          ),
+          { duration: 5000 },
         );
       }
-      // Toast de sucesso
-      toast.custom(
-        (t) => (
-          <CustomToast
-            variant="success"
-            title="Matrícula criada com sucesso"
-            description="Os dados da matrícula e o contrato foram salvos juntos e já estão disponíveis para acompanhamento."
-            onClose={() => toast.dismiss(t)}
-          />
-        ),
-        { duration: 5000 },
-      );
 
       // Callback de sucesso
       options.onSuccess?.(result);
@@ -341,16 +339,21 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
 
       return result;
     } catch (err) {
-      const error = err instanceof Error ? err : new Error('Erro desconhecido');
+      const error = (err instanceof Error ? err : new Error('Erro desconhecido')) as MatriculaApiError;
       setError(error);
 
-      // Toast de erro
+      const message = error.code === 'CONTRATO_SEM_RECORRENCIA'
+        ? 'A data final do contrato precisa incluir pelo menos dois vencimentos. Ajuste a vigência e tente novamente.'
+        : error.code === 'DATA_FIM_INVALIDA'
+          ? 'A data final do contrato precisa ser igual ou posterior ao primeiro vencimento. Ajuste a vigência e tente novamente.'
+          : sanitizeMessage(error.message) || 'Não foi possível concluir a matrícula. Revise os dados e tente novamente.';
+
       toast.custom(
         (t) => (
           <CustomToast
             variant="error"
-            title="Erro ao criar matrícula"
-            description={sanitizeMessage(error.message) || 'Não foi possível concluir a matrícula. Revise os dados e tente novamente.'}
+            title="Não foi possível criar a matrícula"
+            description={message}
             onClose={() => toast.dismiss(t)}
           />
         ),
@@ -364,6 +367,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       // como erro de aplicação e esconda a mensagem útil do usuário.
       return null;
     } finally {
+      toast.dismiss(processingToast);
       setLoading(false);
     }
   };

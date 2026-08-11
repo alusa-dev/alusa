@@ -123,7 +123,6 @@ async function updateEligiblePendingPayments(input: {
   plan: BillingAgreementPlan;
   payments: AsaasSubscriptionPaymentSnapshot[];
 }): Promise<void> {
-  if (input.plan.updatePendingPayments) return;
   const targets = new Map(
     input.plan.chargeImpacts
       .filter(
@@ -136,12 +135,16 @@ async function updateEligiblePendingPayments(input: {
   );
   for (const payment of input.payments) {
     const impact = targets.get(payment.id);
-    if (!impact || payment.status !== 'PENDING' || impact.targetAmountCents === null) continue;
+    if (
+      !impact ||
+      (payment.status !== 'PENDING' && payment.status !== 'OVERDUE') ||
+      impact.targetAmountCents === null
+    ) continue;
     const fresh = await input.deps.asaas.getPayment({
       contaId: input.contaId,
       paymentId: payment.id,
     });
-    if (fresh.status !== 'PENDING') {
+    if (fresh.status !== 'PENDING' && fresh.status !== 'OVERDUE') {
       throw new BillingAgreementError(
         'REMOTE_STATE_DIVERGED',
         'A cobrança deixou de ser editável durante a operação.',
@@ -171,7 +174,10 @@ async function updateEligiblePendingPayments(input: {
       contaId: input.contaId,
       paymentId: payment.id,
     });
-    if (confirmed.valueCents !== impact.targetAmountCents || confirmed.status !== 'PENDING') {
+    if (
+      confirmed.valueCents !== impact.targetAmountCents ||
+      (confirmed.status !== 'PENDING' && confirmed.status !== 'OVERDUE')
+    ) {
       throw new BillingAgreementError(
         'REMOTE_OPERATION_UNCERTAIN',
         'Não foi possível confirmar a atualização da cobrança pendente.',
@@ -451,7 +457,8 @@ async function executeRemotePlan(input: {
       status,
       ...(targetEndDate ? { endDate: targetEndDate } : {}),
       nextDueDate:
-        plan.remoteAction === 'RESUME_SUBSCRIPTION' &&
+        (plan.remoteAction === 'RESUME_SUBSCRIPTION' ||
+          (input.change.kind === 'RESUME_ALLOCATION' && plan.remoteAction === 'UPDATE_SUBSCRIPTION')) &&
         (input.change.kind === 'RESUME_AGREEMENT' || input.change.kind === 'RESUME_ALLOCATION')
           ? input.change.nextDueDate
           : undefined,

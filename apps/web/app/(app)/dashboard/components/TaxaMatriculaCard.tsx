@@ -3,9 +3,16 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import useCurrentUser from '@/hooks/use-current-user';
-import { DASHBOARD_KPI_TILE_CLASSNAME, formatCurrency } from './utils';
+import { DASHBOARD_KPI_TILE_CLASSNAME } from './utils';
 
 export type PeriodoTaxaMatricula = "15d" | "30d" | "1a";
+
+function formatTaxaCurrency(value: number) {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  }).format(value);
+}
 
 type TaxaMatriculaData = {
   totalTaxas: number;
@@ -129,7 +136,7 @@ export function TaxaMatriculaCard({
   if (loading) {
     return (
       <div
-        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
+        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-[219px] flex-col justify-between rounded-2xl bg-[#f2e9fc] px-5 pb-[22px] pt-4 animate-pulse alusa-dark:bg-[color:var(--color-bg-card-soft)]`}
       >
         <div>
           <div>
@@ -146,21 +153,21 @@ export function TaxaMatriculaCard({
 
   return (
     <div
-      className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-full min-h-[220px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4 alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
+        className={`${DASHBOARD_KPI_TILE_CLASSNAME} flex h-[219px] flex-col justify-between rounded-2xl bg-[#f2e9fc] px-5 pb-[22px] pt-4 alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)]`}
     >
       <div>
         <div>
-          <p className="mb-2 text-left text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
+          <p className="text-left text-xs font-normal text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
             Taxa de matrícula
           </p>
-          <span className="mb-1 block text-4xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
-            {formatCurrency(valorPago)}
+          <span className="mt-5 block text-[37px] font-normal leading-none text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
+            {formatTaxaCurrency(valorPago)}
           </span>
         </div>
       </div>
 
-      <div className="mt-3 flex items-end">
-          <TaxaMatriculaToggle periodo={periodo} onPeriodoChange={onPeriodoChange} />
+      <div className="flex items-end">
+        <TaxaMatriculaToggle periodo={periodo} onPeriodoChange={onPeriodoChange} />
       </div>
     </div>
   );

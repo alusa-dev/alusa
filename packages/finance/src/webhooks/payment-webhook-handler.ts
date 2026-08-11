@@ -601,6 +601,33 @@ async function handleStandaloneChargeWebhook(
   charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null; asaasStatus?: string | null }
 ): Promise<PaymentWebhookResult> {
   const p = payload.payment;
+  const standaloneParentReference = p.externalReference?.match(
+    /^(alusa:standalone-subscription:[^:]+):/,
+  )?.[1] ?? p.externalReference;
+  const linkedStandaloneSubscription =
+    (p.subscription
+      ? await findStandaloneSubscription(prisma, {
+          contaId,
+          asaasSubscriptionId: p.subscription,
+        })
+      : null) ??
+    (standaloneParentReference?.startsWith('alusa:standalone-subscription:')
+      ? await findStandaloneSubscription(prisma, {
+          contaId,
+          externalReference: standaloneParentReference,
+        })
+      : null);
+  const standaloneLinkData = linkedStandaloneSubscription
+    ? {
+        standaloneSubscriptionId: linkedStandaloneSubscription.id,
+        externalReference: buildPaymentExternalReference(
+          linkedStandaloneSubscription.externalReference,
+          p.id,
+        ),
+        customerId: linkedStandaloneSubscription.customerId,
+        familyGroupId: linkedStandaloneSubscription.familyGroupId,
+      }
+    : {};
   const effectiveAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload) ?? p.status;
   const internalStatus = resolveInternalPaymentStatus({
     eventName: payload.event,
@@ -634,6 +661,7 @@ async function handleStandaloneChargeWebhook(
       where: { id: charge.id },
       data: {
         statusUpdatedAt: new Date(),
+        ...standaloneLinkData,
         ...buildChargeAsaasSnapshotUpdate(payload, {
           currentAsaasStatus: charge.asaasStatus,
           localChargeStatus: charge.status,
@@ -686,6 +714,7 @@ async function handleStandaloneChargeWebhook(
     status: nextStatusCharge,
     statusUpdatedAt: new Date(),
     value: p.value,
+    ...standaloneLinkData,
     ...buildChargeAsaasSnapshotUpdate(payload, {
       currentAsaasStatus: charge.asaasStatus,
       localChargeStatus: charge.status,
@@ -1242,10 +1271,25 @@ async function handlePaymentWebhookCore(
 
       if (!subscription) {
         // Buscar na tabela StandaloneSubscription
-        const standaloneSubRecord = await findStandaloneSubscription(prisma, {
+        let standaloneSubRecord = await findStandaloneSubscription(prisma, {
           contaId,
           asaasSubscriptionId: subscriptionId,
         });
+
+        // PAYMENT_CREATED pode chegar imediatamente após a criação remota,
+        // antes de a transação local da assinatura terminar. Aguarde uma
+        // janela curta e determinística antes de criar um placeholder sem
+        // vínculo; o webhook continua sendo idempotente.
+        if (!standaloneSubRecord) {
+          for (const delayMs of [150, 400, 900]) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            standaloneSubRecord = await findStandaloneSubscription(prisma, {
+              contaId,
+              asaasSubscriptionId: subscriptionId,
+            });
+            if (standaloneSubRecord) break;
+          }
+        }
 
         if (standaloneSubRecord) {
           const payerNameFromCustomer =

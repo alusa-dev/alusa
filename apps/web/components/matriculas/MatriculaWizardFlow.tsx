@@ -22,6 +22,7 @@ import { useMatriculaSubmit } from '@/hooks/use-matricula-submit';
 import { useMatriculaFamiliarSubmit } from '@/hooks/use-matricula-familiar-submit';
 import { MatriculaFamiliarWizardOutcome } from './MatriculaFamiliarWizardOutcome';
 import type { FamilyEnrollmentOutcome } from './wizard/types';
+import { toast, CustomToast } from '@/components/ui/toast';
 
 type WizardVariant = 'dialog' | 'page';
 
@@ -164,6 +165,14 @@ export function MatriculaWizardFlow({
     },
     onError: (error) => {
       console.error('[MatriculaWizardFlow] Erro ao criar matrículas familiares:', error);
+      toast.custom((t) => (
+        <CustomToast
+          variant="error"
+          title="Matrícula familiar não concluída"
+          description={error.message || 'Nenhuma matrícula ou cobrança foi criada.'}
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
     },
   });
 
@@ -282,11 +291,6 @@ export function MatriculaWizardFlow({
     const firstSuccess = familyOutcome.results.find((result) => result.status === 'success');
     return (
       <MatriculaFamiliarWizardOutcome
-        initialOutcome={familyOutcome}
-        onCreateAnother={() => {
-          setFamilyOutcome(null);
-          wizard.reset({ contaId: contaId ?? '' });
-        }}
         onClose={() => {
           if (firstSuccess) {
             onCompleted?.({ matricula: { id: firstSuccess.matriculaId ?? '' } } as unknown as MatriculaCreatedPayload);

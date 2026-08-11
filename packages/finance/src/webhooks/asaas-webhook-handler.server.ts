@@ -124,6 +124,11 @@ type AsaasWebhookBody = {
     status?: unknown;
     externalReference?: string;
     deleted?: unknown;
+    value?: number;
+    billingType?: string;
+    cycle?: string;
+    nextDueDate?: string | null;
+    endDate?: string | null;
   };
   invoice?: {
     id: string;
@@ -422,6 +427,11 @@ async function processAsaasWebhookForRecord(params: {
           status: payload.subscription?.status as never,
           externalReference: payload.subscription?.externalReference,
           deleted: payload.subscription?.deleted as never,
+          value: payload.subscription?.value,
+          billingType: payload.subscription?.billingType,
+          cycle: payload.subscription?.cycle,
+          nextDueDate: payload.subscription?.nextDueDate,
+          endDate: payload.subscription?.endDate,
         },
       });
 

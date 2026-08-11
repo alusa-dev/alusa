@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { getDefaultClassNames } from 'react-day-picker';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -57,14 +57,12 @@ function getBirthdayLabel(
   const age = viewYear - birthYear;
 
   const today = new Date();
-  const todayY = today.getFullYear();
-  const todayM = today.getMonth() + 1;
-  const todayD = today.getDate();
+  const occurrence = new Date(viewYear, mes - 1, dia, 12, 0, 0, 0);
+  const todayAtNoon = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 12, 0, 0, 0);
 
-  if (mes < todayM || (mes === todayM && dia < todayD)) return `Completou ${age} anos`;
-  if (mes === todayM && dia === todayD) return `Completando ${age} anos`;
-  // birthday is this year but hasn't happened yet — use next occurrence year if needed
-  return `Irá completar ${viewYear === todayY ? age : age} anos`;
+  if (occurrence.getTime() < todayAtNoon.getTime()) return `Completou ${age} anos`;
+  if (occurrence.getTime() === todayAtNoon.getTime()) return `Completando ${age} anos`;
+  return `Irá completar ${age} anos`;
 }
 
 function getBirthdaysForMonth(aniversariantes: DashboardAniversarianteDTO[], monthDate: Date) {
@@ -100,8 +98,8 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
     [viewedBirthdays, viewMonth],
   );
 
-  const visibleStudents = currentMonthBirthdays.slice(0, 3);
-  const remainingCount = Math.max(0, currentMonthBirthdays.length - visibleStudents.length);
+  const visibleBirthdays = currentMonthBirthdays.slice(0, 3);
+  const remainingCount = Math.max(0, currentMonthBirthdays.length - visibleBirthdays.length);
 
   return (
     <Dialog>
@@ -116,22 +114,22 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
           </div>
 
           <div className="mt-4 flex-1 space-y-2.5">
-            {visibleStudents.length === 0 ? (
+            {visibleBirthdays.length === 0 ? (
               <p className="text-sm leading-6 text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">Nenhum aniversariante ativo neste mês.</p>
             ) : (
-              visibleStudents.map((student) => (
-                <div key={student.id} className="flex items-center gap-2.5">
+              visibleBirthdays.map((birthday) => (
+                <div key={`${birthday.tipo ?? 'ALUNO'}-${birthday.id}`} className="flex items-center gap-2.5">
                   <PersonAvatar
-                    name={student.nome}
-                    src={student.avatarUrl ?? student.foto}
+                    name={birthday.nome}
+                    src={birthday.avatarUrl ?? birthday.foto}
                     size="sm"
                     fallbackClassName="bg-[#f4ecfd] text-[#383242] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-text-primary)]"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{student.nome}</p>
+                    <p className="truncate text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{birthday.nome}</p>
                   </div>
                   <span className="shrink-0 rounded-full bg-[#f4ecfd] px-2 py-0.5 text-[11px] font-medium text-[#383242] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]">
-                    {getBirthdayLabel(student.dataNascimento, student.dia, student.mes, todayMonth.getFullYear())}
+                    {getBirthdayLabel(birthday.dataNascimento, birthday.dia, birthday.mes, todayMonth.getFullYear())}
                   </span>
                 </div>
               ))
@@ -231,29 +229,29 @@ export function AniversariantesMesCard({ aniversariantes }: AniversariantesMesCa
                       Nenhum aniversariante cadastrado.
                     </div>
                   ) : (
-                    viewedBirthdays.map((student) => (
+                    viewedBirthdays.map((birthday) => (
                       <div
-                        key={student.id}
+                        key={`${birthday.tipo ?? 'ALUNO'}-${birthday.id}`}
                         className="alusa-dialog-list-row-slot flex items-center gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] max-md:flex-col max-md:items-stretch max-md:gap-2 alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:shadow-none"
                       >
                         <div className="flex min-w-0 flex-1 items-start gap-3 md:items-center">
                           <PersonAvatar
-                            name={student.nome}
-                            src={student.avatarUrl ?? student.foto}
+                            name={birthday.nome}
+                            src={birthday.avatarUrl ?? birthday.foto}
                             size="md"
                             fallbackClassName="bg-[#f4ecfd] text-[#4c1d95] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]"
                           />
 
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{student.nome}</p>
+                            <p className="text-sm font-medium leading-tight text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{birthday.nome}</p>
                             <p className="mt-0.5 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-                              Aniversário em {String(student.dia).padStart(2, '0')}/{String(student.mes).padStart(2, '0')}
+                              {birthday.tipo === 'COLABORADOR' ? 'Colaborador' : 'Aluno'} · Aniversário em {String(birthday.dia).padStart(2, '0')}/{String(birthday.mes).padStart(2, '0')}
                             </p>
                           </div>
                         </div>
 
                         <span className="inline-flex w-fit shrink-0 rounded-full bg-[#f4ecfd] px-2.5 py-1 text-xs font-medium text-[#4c1d95] max-md:self-start max-md:ml-[calc(2.5rem+0.75rem)] alusa-dark:bg-[color:rgba(169,77,255,0.16)] alusa-dark:text-[color:#c9a7ff]">
-                          {getBirthdayLabel(student.dataNascimento, student.dia, student.mes, viewMonth.getFullYear())}
+                          {getBirthdayLabel(birthday.dataNascimento, birthday.dia, birthday.mes, viewMonth.getFullYear())}
                         </span>
                       </div>
                     ))

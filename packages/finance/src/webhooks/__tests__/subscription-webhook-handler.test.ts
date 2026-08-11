@@ -13,6 +13,9 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         update: vi.fn(),
       },
+      billingAgreement: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+      },
       rematriculaFamiliar: {
         updateMany: vi.fn(async () => ({ count: 0 })),
       },

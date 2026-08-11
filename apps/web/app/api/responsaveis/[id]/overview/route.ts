@@ -219,7 +219,7 @@ export async function GET(
       ...(familyIds.length > 0 ? [{ familyGroupId: { in: familyIds } }] : []),
     ];
 
-    const [charges, standaloneSubscriptions, standaloneInstallmentPlans] = await Promise.all([
+    const [charges, standaloneSubscriptions, academicSubscriptions, standaloneInstallmentPlans] = await Promise.all([
       prisma.charge.findMany({
         where: {
           contaId: user.contaId,
@@ -267,6 +267,44 @@ export async function GET(
           description: true,
           familyGroupId: true,
           createdAt: true,
+        },
+      }),
+      prisma.subscription.findMany({
+        where: {
+          contaId: user.contaId,
+          OR: [
+            { matricula: { responsavelFinanceiroId: responsavelId } },
+            {
+              billingAgreement: {
+                payerType: 'RESPONSAVEL',
+                payerId: responsavelId,
+              },
+            },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: {
+          id: true,
+          status: true,
+          asaasSubscriptionId: true,
+          externalReference: true,
+          createdAt: true,
+          matricula: {
+            select: {
+              plano: { select: { nome: true } },
+              combo: { select: { nome: true } },
+            },
+          },
+          billingAgreement: {
+            select: {
+              cycle: true,
+              billingType: true,
+              confirmedValue: true,
+              desiredValue: true,
+              nextDueDate: true,
+            },
+          },
         },
       }),
       prisma.standaloneInstallmentPlan.findMany({
@@ -486,13 +524,40 @@ export async function GET(
           valorTaxaMatriculaTotal: Number(family.valorTaxaMatriculaTotal),
         })),
         charges: allCharges,
-        subscriptions: standaloneSubscriptions.map((subscription) => ({
-          ...subscription,
-          source: 'AVULSA',
-          value: Number(subscription.value ?? 0),
-          nextDueDate: subscription.nextDueDate.toISOString(),
-          createdAt: subscription.createdAt.toISOString(),
-        })),
+        subscriptions: [
+          ...academicSubscriptions.map((subscription) => ({
+            id: subscription.id,
+            source: 'MATRICULA' as const,
+            status: subscription.status,
+            asaasSubscriptionId: subscription.asaasSubscriptionId,
+            externalReference: subscription.externalReference,
+            cycle: subscription.billingAgreement?.cycle ?? 'MONTHLY',
+            billingType: subscription.billingAgreement?.billingType ?? 'UNKNOWN',
+            value: Number(
+              subscription.billingAgreement?.confirmedValue ??
+                subscription.billingAgreement?.desiredValue ??
+                0,
+            ),
+            nextDueDate: subscription.billingAgreement?.nextDueDate?.toISOString() ?? null,
+            description:
+              subscription.matricula.plano?.nome ??
+              subscription.matricula.combo?.nome ??
+              'Assinatura de matrícula',
+            familyGroupId: null,
+            createdAt: subscription.createdAt.toISOString(),
+          })),
+          ...standaloneSubscriptions.map((subscription) => ({
+            ...subscription,
+            source: 'AVULSA' as const,
+            value: Number(subscription.value ?? 0),
+            nextDueDate: subscription.nextDueDate.toISOString(),
+            createdAt: subscription.createdAt.toISOString(),
+          })),
+        ].sort((a, b) => {
+          const aTime = new Date(a.createdAt).getTime();
+          const bTime = new Date(b.createdAt).getTime();
+          return bTime - aTime;
+        }),
         installmentPlans: standaloneInstallmentPlans.map((plan) => ({
           ...plan,
           source: 'AVULSO',

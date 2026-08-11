@@ -130,6 +130,16 @@ function projectAllocations(input: {
       throw new BillingAgreementError('INVALID_INPUT', 'Informe alocações distintas para a operação.');
     }
   };
+  const closeAllocation = (allocation: BillingAllocation): void => {
+    // Uma alocação criada no mesmo dia da operação ainda não teve vigência.
+    // Remova-a da projeção em vez de criar o intervalo inválido [d, d).
+    if (allocation.validFrom >= change.effectiveDate) {
+      const index = sourceAllocations.indexOf(allocation);
+      if (index >= 0) sourceAllocations.splice(index, 1);
+      return;
+    }
+    allocation.validUntil = change.effectiveDate;
+  };
   const endAllocations = (ids: string[]) => {
     assertDistinctIds(ids);
     for (const id of ids) {
@@ -139,7 +149,7 @@ function projectAllocations(input: {
           allocationId: id,
         });
       }
-      allocation.validUntil = change.effectiveDate;
+      closeAllocation(allocation);
       if (allocation.recurring) sourceRemovedCents += allocation.netAmountCents;
     }
   };
@@ -188,7 +198,9 @@ function projectAllocations(input: {
         id: `resume:${id}:${index}`,
         status: 'ACTIVE',
         validFrom: change.effectiveDate,
-        validUntil: null,
+        // A pausa não encerra o contrato. Ao retomar, preserve a data de fim
+        // original para que a projeção não tente remover o término remoto.
+        validUntil: paused.validUntil,
       });
       if (paused.recurring) sourceAddedCents += paused.netAmountCents;
     }
@@ -203,7 +215,14 @@ function projectAllocations(input: {
           allocationId: id,
         });
       }
-      allocation.validUntil = change.effectiveDate;
+      // A pause effective exactly on the allocation start must not create the
+      // invalid empty interval [validFrom, validFrom). The PAUSED status is
+      // sufficient to remove it from the active recurring total; keep its
+      // open validity for the historical record in this boundary case.
+      const allocationStartDate = allocation.validFrom.slice(0, 10);
+      if (allocationStartDate !== change.effectiveDate) {
+        allocation.validUntil = change.effectiveDate;
+      }
       allocation.status = 'PAUSED';
       if (allocation.recurring) sourceRemovedCents += allocation.netAmountCents;
     }
@@ -247,7 +266,7 @@ function projectAllocations(input: {
           allocationId: update.allocationId,
         });
       }
-      current.validUntil = change.effectiveDate;
+      closeAllocation(current);
       const recurring = update.recurring ?? current.recurring;
       if (current.recurring) sourceRemovedCents += current.netAmountCents;
       if (recurring) sourceAddedCents += update.netAmountCents;
@@ -265,9 +284,9 @@ function projectAllocations(input: {
       });
     });
   } else if (change.kind === 'CANCEL_AGREEMENT') {
-    for (const allocation of sourceAllocations) {
+    for (const allocation of [...sourceAllocations]) {
       if (!isAllocationEffective(allocation, change.effectiveDate)) continue;
-      allocation.validUntil = change.effectiveDate;
+      closeAllocation(allocation);
       if (allocation.recurring) sourceRemovedCents += allocation.netAmountCents;
     }
   }
@@ -491,12 +510,17 @@ function buildPlan(input: {
     effectiveDate: input.change.effectiveDate,
     adjustment: desired.adjustment,
   });
+  const agreementValidUntil =
+    desired.agreementValidUntil?.slice(0, 10) ??
+    (input.change.kind === 'PAUSE_ALLOCATION' || input.change.kind === 'RESUME_ALLOCATION'
+      ? input.context.agreement.validUntil?.slice(0, 10) ?? null
+      : null);
   return {
     plan: {
       agreementId: input.context.agreement.id,
       sourceVersion: input.context.agreement.version,
       agreementValidFrom: desired.agreementValidFrom?.slice(0, 10) ?? null,
-      agreementValidUntil: desired.agreementValidUntil?.slice(0, 10) ?? null,
+      agreementValidUntil,
       previousAmountCents: activeTotal,
       resultingAmountCents: desired.desiredRecurringAmountCents,
       addedAmountCents: input.addedAmountCents,

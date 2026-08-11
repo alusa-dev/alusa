@@ -27,14 +27,11 @@ export function SubscriptionActionsMenu({
   asaasSubscriptionId,
   status,
   matriculaId,
-  onActionComplete,
 }: SubscriptionActionsMenuProps) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const normalizedStatus = String(status || '').toUpperCase();
-  const canDelete = Boolean(asaasSubscriptionId) && !['DELETED', 'EXPIRED'].includes(normalizedStatus);
+  const canDelete = !matriculaId && Boolean(asaasSubscriptionId) && !['DELETED', 'EXPIRED'].includes(String(status || '').toUpperCase());
 
   async function handleDelete() {
     setLoading(true);
@@ -44,18 +41,12 @@ export function SubscriptionActionsMenu({
       if (!response.ok) {
         throw new Error(payload?.error?.message || payload?.message || 'Falha ao excluir assinatura');
       }
-
-      pushToast({
-        title: 'Sucesso',
-        description: payload?.message || 'Assinatura excluída com sucesso.',
-        variant: 'success',
-      });
-      await onActionComplete?.();
+      pushToast({ title: 'Assinatura excluída', description: 'A assinatura manual foi removida.', variant: 'success' });
       router.refresh();
     } catch (error) {
       pushToast({
-        title: 'Erro',
-        description: error instanceof Error ? error.message : 'Falha ao excluir assinatura.',
+        title: 'Não foi possível excluir',
+        description: error instanceof Error ? error.message : 'Tente novamente.',
         variant: 'error',
       });
     } finally {
@@ -91,7 +82,7 @@ export function SubscriptionActionsMenu({
             <Eye className="mr-2 h-4 w-4" />
             Ver detalhes
           </DropdownMenuItem>
-          {canDelete && (
+          {canDelete ? (
             <DropdownMenuItem
               onClick={() => setConfirmOpen(true)}
               className="text-red-600 focus:text-red-600"
@@ -99,8 +90,7 @@ export function SubscriptionActionsMenu({
               <Trash2 className="mr-2 h-4 w-4" />
               Excluir assinatura
             </DropdownMenuItem>
-          )}
-
+          ) : null}
           {matriculaId && (
             <>
               <DropdownMenuSeparator />
@@ -113,20 +103,18 @@ export function SubscriptionActionsMenu({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title="Excluir assinatura?"
-        description="Esta ação usa a exclusão oficial da assinatura no Asaas. A Alusa atualiza o espelho local somente após confirmar o recurso externo."
+        title="Excluir assinatura manual?"
+        description="A assinatura manual e suas cobranças pendentes serão removidas conforme as regras financeiras. Assinaturas de matrículas devem ser encerradas na própria matrícula."
         confirmText="Excluir assinatura"
-        cancelText="Voltar"
+        cancelText="Cancelar"
         variant="destructive"
         loading={loading}
-        onConfirm={() => {
-          void handleDelete();
-        }}
+        onConfirm={() => void handleDelete()}
       />
+
     </>
   );
 }

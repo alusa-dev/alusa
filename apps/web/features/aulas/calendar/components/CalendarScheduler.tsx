@@ -10,10 +10,16 @@ import type { EventContentArg, EventInput, EventMountArg } from '@fullcalendar/c
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { AgendaViewModeDTO, CalendarEventListItemDTO } from '@/features/aulas/dtos';
+import { CALENDAR_EVENT_TYPE_OPTIONS } from '@/features/aulas/types';
 import {
   getCalendarEventCardTone,
   getCalendarEventTemporalBadge,
 } from '@/features/aulas/utils/calendar-event-state';
+import {
+  formatAgendaDayLabel,
+  formatAgendaTimeLabel,
+  getZonedMinutesFromMidnight,
+} from '@/lib/agenda-timezone';
 import { cn } from '@/lib/utils';
 
 type CalendarSchedulerProps = {
@@ -26,20 +32,36 @@ type CalendarSchedulerProps = {
 };
 
 /** Alinha ao slotMinTime / slotMaxTime do timeGridWeek */
-const TIME_GRID_DAY_START_MINUTES = 6 * 60;
-const TIME_GRID_DAY_END_MINUTES = 22 * 60;
+const DEFAULT_TIME_GRID_START_MINUTES = 6 * 60;
+const DEFAULT_TIME_GRID_END_MINUTES = 22 * 60;
+const MINUTES_PER_DAY = 24 * 60;
+
+const EVENT_TYPE_LABELS = Object.fromEntries(
+  CALENDAR_EVENT_TYPE_OPTIONS.map((option) => [option.value, option.label]),
+) as Record<CalendarEventListItemDTO['type'], string>;
+
+const EVENT_STATUS_LABELS: Record<CalendarEventListItemDTO['status'], string> = {
+  AGENDADO: 'Agendado',
+  CANCELADO: 'Cancelado',
+  REALIZADO: 'Realizado',
+};
 
 function clampRatio(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
-function roundedMinutesFromPointerY(relY: number, areaHeightPx: number) {
-  if (areaHeightPx <= 0) return TIME_GRID_DAY_START_MINUTES;
-  const total = TIME_GRID_DAY_END_MINUTES - TIME_GRID_DAY_START_MINUTES;
+function roundedMinutesFromPointerY(
+  relY: number,
+  areaHeightPx: number,
+  startMinutes: number,
+  endMinutes: number,
+) {
+  if (areaHeightPx <= 0) return startMinutes;
+  const total = endMinutes - startMinutes;
   const pct = clampRatio(relY / areaHeightPx);
-  const approx = TIME_GRID_DAY_START_MINUTES + pct * total;
+  const approx = startMinutes + pct * total;
   return Math.round(
-    Math.min(TIME_GRID_DAY_END_MINUTES, Math.max(TIME_GRID_DAY_START_MINUTES, approx)),
+    Math.min(endMinutes, Math.max(startMinutes, approx)),
   );
 }
 
@@ -57,6 +79,58 @@ type HoverGuideState = {
   /** Horário interpolado pela posição vertical nos slots */
   timeLabel: string;
 };
+
+type TimeGridBounds = {
+  startMinutes: number;
+  endMinutes: number;
+};
+
+function roundDownToHour(minutes: number) {
+  return Math.max(0, Math.floor(minutes / 60) * 60);
+}
+
+function roundUpToHour(minutes: number) {
+  return Math.min(MINUTES_PER_DAY, Math.ceil(minutes / 60) * 60);
+}
+
+function getTimeGridBounds(events: CalendarEventListItemDTO[], timeZone: string): TimeGridBounds {
+  let startMinutes = DEFAULT_TIME_GRID_START_MINUTES;
+  let endMinutes = DEFAULT_TIME_GRID_END_MINUTES;
+
+  for (const event of events) {
+    const start = getZonedMinutesFromMidnight(new Date(event.startAt), timeZone);
+    const end = getZonedMinutesFromMidnight(new Date(event.endAt), timeZone);
+    startMinutes = Math.min(startMinutes, roundDownToHour(start));
+    endMinutes = Math.max(endMinutes, roundUpToHour(end <= start ? MINUTES_PER_DAY : end));
+  }
+
+  return {
+    startMinutes,
+    endMinutes: Math.max(startMinutes + 60, endMinutes),
+  };
+}
+
+function formatTimeGridOption(minutes: number) {
+  if (minutes >= MINUTES_PER_DAY) return '24:00:00';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`;
+}
+
+function useIsMobileCalendar() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 767px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
+
+  return isMobile;
+}
 
 /** Tons violeta/indigo derivados dos tokens `--brand-accent`, `--brand-primary` (globals). Sem traço. */
 const COLOR_BY_TYPE: Record<CalendarEventListItemDTO['type'], string> = {
@@ -84,6 +158,7 @@ function toEventInput(event: CalendarEventListItemDTO): EventInput {
       startAt: event.startAt,
       endAt: event.endAt,
       sala: event.sala?.label ?? null,
+      turma: event.turma?.label ?? null,
       professor: event.professores[0]?.nome ?? null,
       conflicts: event.conflicts.length,
       compactTitle: event.title,
@@ -105,7 +180,16 @@ function WeekTimeGridEventContent({ arg }: { arg: EventContentArg }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const teacher = arg.event.extendedProps.professor as string | null;
   const room = arg.event.extendedProps.sala as string | null;
-  const meta = teacher ?? room ?? null;
+  const turma = arg.event.extendedProps.turma as string | null;
+  const conflicts = Number(arg.event.extendedProps.conflicts ?? 0);
+  const status = arg.event.extendedProps.status as CalendarEventListItemDTO['status'];
+  const eventState = {
+    status,
+    startAt: arg.event.extendedProps.startAt as string,
+    endAt: arg.event.extendedProps.endAt as string,
+  };
+  const temporalBadge = getCalendarEventTemporalBadge(eventState);
+  const meta = [teacher, room].filter(Boolean).join(' · ') || turma;
   const [showMetaLine, setShowMetaLine] = useState(false);
 
   useLayoutEffect(() => {
@@ -146,8 +230,22 @@ function WeekTimeGridEventContent({ arg }: { arg: EventContentArg }) {
       <div className="flex min-h-0 shrink-0 items-center gap-1.5 overflow-hidden">
         <span className="shrink-0 font-semibold opacity-80">{formatWeekEventTimeLabel(arg.timeText)}</span>
         <span className="min-w-0 truncate">{arg.event.title}</span>
+        {conflicts > 0 ? (
+          <span
+            className="shrink-0 rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-4 text-white"
+            title={`${conflicts} conflito(s) de agenda`}
+            aria-label={`${conflicts} conflito(s) de agenda`}
+          >
+            !
+          </span>
+        ) : null}
       </div>
-      {showMetaLine && meta ? <div className="min-h-0 shrink-0 truncate text-[10px] opacity-80">{meta}</div> : null}
+      {showMetaLine && meta ? (
+        <div className="flex min-h-0 shrink-0 items-center gap-1 truncate text-[10px] opacity-80">
+          <span className="truncate">{meta}</span>
+          {temporalBadge ? <span className="shrink-0">· {temporalBadge.label}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -155,8 +253,13 @@ function WeekTimeGridEventContent({ arg }: { arg: EventContentArg }) {
 function buildEventTooltip(arg: EventMountArg) {
   const teacher = arg.event.extendedProps.professor as string | null;
   const room = arg.event.extendedProps.sala as string | null;
+  const turma = arg.event.extendedProps.turma as string | null;
   const conflicts = Number(arg.event.extendedProps.conflicts ?? 0);
   const lines = [arg.event.title, arg.timeText].filter(Boolean);
+
+  if (turma) {
+    lines.push(`Turma: ${turma}`);
+  }
 
   if (teacher) {
     lines.push(`Professor: ${teacher}`);
@@ -173,11 +276,12 @@ function buildEventTooltip(arg: EventMountArg) {
   return lines.join('\n');
 }
 
-function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
+function renderEventContent(isWeekView: boolean) {
   return function EventContent(arg: EventContentArg) {
     const type = arg.event.extendedProps.type as CalendarEventListItemDTO['type'];
     const teacher = arg.event.extendedProps.professor as string | null;
     const room = arg.event.extendedProps.sala as string | null;
+    const turma = arg.event.extendedProps.turma as string | null;
     const conflicts = Number(arg.event.extendedProps.conflicts ?? 0);
     const eventState = {
       status: arg.event.extendedProps.status as CalendarEventListItemDTO['status'],
@@ -193,33 +297,157 @@ function renderEventContent(isCompactMonth: boolean, isWeekView: boolean) {
         data-event-id={arg.event.id}
         data-event-title={arg.event.title}
         className={cn(
-          isCompactMonth
-            ? 'h-full rounded-full border-0 px-2.5 py-1 text-[10px] leading-4'
-            : 'h-full rounded-lg border-0 px-2 py-1.5 text-[11px] leading-4',
+          'h-full rounded-lg border-0 px-2 py-1.5 text-[11px] leading-4',
           COLOR_BY_TYPE[type] ?? COLOR_BY_TYPE.AULA,
           cardTone === 'in_progress' && 'shadow-[inset_0_0_0_1px_rgba(92,47,145,0.28)]',
           cardTone === 'past' && 'border-0 bg-[#EDE9F7]/85 text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(255,255,255,0.06)] alusa-dark:text-[color:var(--color-text-muted)]',
           cardTone === 'completed' && 'border-0 bg-[#E8EAF3] text-[#3f4c66] alusa-dark:bg-[color:rgba(34,197,94,0.13)] alusa-dark:text-emerald-100',
           cardTone === 'cancelled' && 'border-0 bg-[#EDE9EF] text-brand-muted opacity-95 alusa-dark:bg-[color:rgba(239,68,68,0.12)] alusa-dark:text-red-200',
         )}
+        data-event-status={eventState.status}
+        data-event-type={type}
+        aria-label={`${arg.event.title}, ${arg.timeText}, ${EVENT_TYPE_LABELS[type]}, ${EVENT_STATUS_LABELS[eventState.status]}`}
       >
-        {isCompactMonth ? (
-          <div className="truncate font-medium">{arg.event.title}</div>
-        ) : isWeekView ? (
+        {isWeekView ? (
           <WeekTimeGridEventContent arg={arg} />
         ) : (
           <>
-            <div className="truncate font-medium">{`${arg.timeText} ${arg.event.title}`.trim()}</div>
+            <div className="flex min-w-0 items-center gap-1.5 truncate font-medium">
+              <span className="truncate">{`${arg.timeText} ${arg.event.title}`.trim()}</span>
+            </div>
             <div className="mt-1 flex items-center gap-2 text-[10px] opacity-80">
-              <span className="truncate">{teacher || room || 'Sem recurso'}</span>
-              {temporalBadge && temporalBadge.tone !== 'warning' ? <span>{temporalBadge.label}</span> : null}
-              {conflicts > 0 ? <span>{conflicts} conflito(s)</span> : null}
+              <span className="truncate">{[turma, teacher, room].filter(Boolean).join(' · ') || 'Sem recurso'}</span>
+              {temporalBadge ? <span className="shrink-0">{temporalBadge.label}</span> : null}
+              {eventState.status !== 'AGENDADO' ? (
+                <span className="shrink-0">{EVENT_STATUS_LABELS[eventState.status]}</span>
+              ) : null}
+              {conflicts > 0 ? <span className="shrink-0 font-semibold text-amber-700">! {conflicts}</span> : null}
             </div>
           </>
         )}
       </div>
     );
   };
+}
+
+function CalendarEmptyState() {
+  return (
+    <div className="pointer-events-none absolute inset-x-4 top-24 z-10 flex justify-center">
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-white/95 px-5 py-4 text-center shadow-sm">
+        <p className="text-sm font-semibold text-slate-700">Nenhum evento neste período</p>
+        <p className="mt-1 text-xs text-slate-500">Ajuste os filtros ou crie um novo evento para começar.</p>
+      </div>
+    </div>
+  );
+}
+
+function MobileAgendaList({
+  events,
+  timeZone,
+  onEventSelect,
+}: {
+  events: CalendarEventListItemDTO[];
+  timeZone: string;
+  onEventSelect: (_eventId: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const grouped = new Map<string, CalendarEventListItemDTO[]>();
+
+    for (const event of events.slice().sort((a, b) => a.startAt.localeCompare(b.startAt))) {
+      const dayKey = formatAgendaDayLabel(event.startAt, timeZone);
+      const current = grouped.get(dayKey) ?? [];
+      current.push(event);
+      grouped.set(dayKey, current);
+    }
+
+    return Array.from(grouped.entries());
+  }, [events, timeZone]);
+
+  if (groups.length === 0) {
+    return (
+      <div className="flex min-h-[360px] items-center justify-center px-6">
+        <div className="max-w-xs text-center">
+          <p className="text-sm font-semibold text-slate-700">Nenhum evento neste período</p>
+          <p className="mt-1 text-xs text-slate-500">Ajuste os filtros ou crie um novo evento para começar.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5 p-4" data-testid="agenda-mobile-list">
+      {groups.map(([dayLabel, dayEvents], groupIndex) => (
+        <section key={dayLabel} aria-labelledby={`agenda-day-${groupIndex}`}>
+          <h3
+            id={`agenda-day-${groupIndex}`}
+            className="mb-2 border-b border-slate-100 pb-2 text-xs font-semibold capitalize tracking-wide text-slate-500"
+          >
+            {dayLabel}
+          </h3>
+          <div className="space-y-2">
+            {dayEvents
+              .slice()
+              .sort((a, b) => a.startAt.localeCompare(b.startAt))
+              .map((event) => {
+                const tone = getCalendarEventCardTone({
+                  status: event.status,
+                  startAt: event.startAt,
+                  endAt: event.endAt,
+                });
+                const resources = [
+                  event.turma?.label,
+                  event.professores[0]?.nome,
+                  event.sala?.label,
+                ].filter(Boolean).join(' · ');
+                const temporalBadge = getCalendarEventTemporalBadge({
+                  status: event.status,
+                  startAt: event.startAt,
+                  endAt: event.endAt,
+                });
+
+                return (
+                  <button
+                    key={event.id}
+                    type="button"
+                    className={cn(
+                      'w-full rounded-xl border border-slate-200 border-l-4 bg-white px-3 py-3 text-left shadow-sm transition hover:border-brand-accent/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/40',
+                      tone === 'cancelled' && 'border-l-rose-400 bg-rose-50/40',
+                      tone === 'completed' && 'border-l-emerald-400 bg-emerald-50/40',
+                      tone === 'in_progress' && 'border-l-brand-accent bg-violet-50/50',
+                      tone === 'past' && 'border-l-slate-300 opacity-80',
+                    )}
+                    aria-label={`${event.title}, ${formatAgendaTimeLabel(event.startAt, timeZone)}, ${EVENT_TYPE_LABELS[event.type]}`}
+                    onClick={() => onEventSelect(event.id)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-slate-500">
+                          {formatAgendaTimeLabel(event.startAt, timeZone)}–{formatAgendaTimeLabel(event.endAt, timeZone)}
+                        </p>
+                        <p className="mt-1 truncate text-sm font-semibold text-slate-900">{event.title}</p>
+                        <p className="mt-1 truncate text-xs text-slate-500">{resources || 'Sem recurso vinculado'}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600">
+                        {EVENT_TYPE_LABELS[event.type]}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-medium">
+                      {temporalBadge ? <span className="text-brand-accent">{temporalBadge.label}</span> : null}
+                      {event.status !== 'AGENDADO' ? (
+                        <span className="text-slate-500">{EVENT_STATUS_LABELS[event.status]}</span>
+                      ) : null}
+                      {event.conflicts.length > 0 ? (
+                        <span className="text-amber-700">{event.conflicts.length} conflito(s)</span>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 export function CalendarScheduler({
@@ -233,14 +461,15 @@ export function CalendarScheduler({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const initialView = viewMode === 'week' ? 'timeGridWeek' : 'dayGridMonth';
   const isWeekView = viewMode === 'week';
-  const isCompactMonth = viewMode === 'month-compact';
-  const isDetailedMonth = viewMode === 'month-detailed';
+  const isDetailedMonth = !isWeekView;
+  const isMobile = useIsMobileCalendar();
+  const timeGridBounds = useMemo(() => getTimeGridBounds(events, timeZone), [events, timeZone]);
 
   const fullCalendarEvents = useMemo(() => events.map(toEventInput), [events]);
 
   const eventContentRenderer = useMemo(
-    () => renderEventContent(isCompactMonth, isWeekView),
-    [isCompactMonth, isWeekView],
+    () => renderEventContent(isWeekView),
+    [isWeekView],
   );
 
   /** timeGrid + height:auto: garantir medida estável dos slats após paint (sub-hora / :30). */
@@ -293,7 +522,7 @@ export function CalendarScheduler({
   }, [calendarPaintKey]);
 
   useEffect(() => {
-    if (!isWeekView) {
+    if (!isWeekView || isMobile) {
       setHoverGuide(null);
       return;
     }
@@ -354,7 +583,12 @@ export function CalendarScheduler({
 
       const lineCenterY = Math.min(srSlots.bottom - 2, Math.max(srSlots.top + 2, y));
       const relY = lineCenterY - srSlots.top;
-      const minsRounded = roundedMinutesFromPointerY(relY, srSlots.height);
+      const minsRounded = roundedMinutesFromPointerY(
+        relY,
+        srSlots.height,
+        timeGridBounds.startMinutes,
+        timeGridBounds.endMinutes,
+      );
       const timeLabel = formatHoverClockLabel(minsRounded);
 
       const badgeLeftViewport = axisRect
@@ -380,16 +614,16 @@ export function CalendarScheduler({
       root.removeEventListener('pointerleave', hideGuide);
       root.removeEventListener('pointercancel', hideGuide);
     };
-  }, [isWeekView]);
+  }, [isMobile, isWeekView, timeGridBounds]);
 
   return (
     <div
       ref={wrapperRef}
       className={cn(
-        'calendar-scheduler-wrapper bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
+        'calendar-scheduler-wrapper relative bg-white alusa-dark:bg-[color:var(--color-bg-card)]',
         isWeekView && 'calendar-scheduler-wrapper--week',
-        isCompactMonth && 'calendar-scheduler-wrapper--month-compact',
         isDetailedMonth && 'calendar-scheduler-wrapper--month-detailed',
+        isMobile && 'calendar-scheduler-wrapper--mobile',
       )}
     >
       {hoverGuide && isWeekView ? (
@@ -401,7 +635,7 @@ export function CalendarScheduler({
               width: hoverGuide.lineRight - hoverGuide.lineLeft,
               top: hoverGuide.lineCenterY - 1,
             }}
-          />
+        />
           <div
             aria-hidden
             className="fixed z-[61] box-border size-2 shrink-0 rounded-full bg-[color:var(--brand-accent)] shadow-[0_1px_3px_rgba(25,20,58,0.35)]"
@@ -432,7 +666,9 @@ export function CalendarScheduler({
           </div>
         </div>
       ) : null}
-      {calendarPaintReady ? (
+      {isMobile ? (
+        <MobileAgendaList events={events} timeZone={timeZone} onEventSelect={onEventSelect} />
+      ) : calendarPaintReady ? (
         <FullCalendar
           ref={calendarRef}
           key={`${viewMode}:${anchorDate}:${timeZone}`}
@@ -441,12 +677,13 @@ export function CalendarScheduler({
           initialDate={anchorDate}
           locale="pt-br"
           timeZone={timeZone}
+          firstDay={0}
           headerToolbar={false}
-          dayMaxEventRows={viewMode === 'month-detailed' ? 4 : viewMode === 'month-compact' ? 6 : 3}
+          dayMaxEventRows={isWeekView ? 3 : 4}
           eventMaxStack={isWeekView ? 2 : undefined}
           allDaySlot={false}
-          slotMinTime="06:00:00"
-          slotMaxTime="22:00:00"
+          slotMinTime={formatTimeGridOption(timeGridBounds.startMinutes)}
+          slotMaxTime={formatTimeGridOption(timeGridBounds.endMinutes)}
           slotDuration={isWeekView ? '00:30:00' : undefined}
           slotLabelInterval={isWeekView ? '01:00:00' : undefined}
           expandRows={isWeekView}
@@ -465,13 +702,10 @@ export function CalendarScheduler({
           eventContent={eventContentRenderer}
           eventDidMount={(arg) => {
             arg.el.title = buildEventTooltip(arg);
+            arg.el.setAttribute('aria-label', buildEventTooltip(arg).replaceAll('\n', ', '));
           }}
           dayCellClassNames={() =>
-            isCompactMonth
-              ? ['calendar-scheduler-day-compact']
-              : isDetailedMonth
-                ? ['calendar-scheduler-day-detailed']
-                : []
+            isDetailedMonth ? ['calendar-scheduler-day-detailed'] : []
           }
           eventClick={(info) => {
             info.jsEvent.preventDefault();
@@ -479,6 +713,7 @@ export function CalendarScheduler({
           }}
         />
       ) : null}
+      {!isMobile && events.length === 0 ? <CalendarEmptyState /> : null}
     </div>
   );
 }

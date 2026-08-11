@@ -105,6 +105,29 @@ describe('payment-command-preflight consumers', () => {
     expect(updatePayment).toHaveBeenCalledWith('pay_1', { value: 125 }, { contaId: 'conta-1' });
   });
 
+  it('updateCharge aceita cobrança local atrasada quando o Asaas ainda está OVERDUE', async () => {
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-overdue',
+      status: 'ATRASADO',
+      asaasPaymentId: 'pay_overdue',
+      valor: 100,
+      vencimento: new Date('2026-01-01T00:00:00.000Z'),
+      matricula: { aluno: { contaId: 'conta-1' } },
+    } as never);
+    vi.mocked(readPaymentStatusPreflight).mockResolvedValueOnce({ status: 'OVERDUE' } as never);
+    vi.mocked(prisma.cobranca.update).mockResolvedValueOnce({ id: 'cob-overdue' } as never);
+
+    const result = await updateCharge({
+      chargeId: 'cob-overdue',
+      contaId: 'conta-1',
+      userId: 'user-1',
+      changes: { valor: 125 },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(updatePayment).toHaveBeenCalledWith('pay_overdue', { value: 125 }, { contaId: 'conta-1' });
+  });
+
   it('markChargeAsPaid usa preflight status-only antes de confirmar pagamento', async () => {
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
       id: 'cob-1',

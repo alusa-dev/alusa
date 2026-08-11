@@ -121,7 +121,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     const localSnapshot =
-      financialContext.mode === 'FAMILY'
+      financialContext.mode === 'FAMILY' || financialContext.sharedAgreement
         ? financialContext.localSnapshot
         : deriveLocalAssinaturaSnapshot(
             matricula as unknown as Record<string, unknown>,
@@ -196,7 +196,10 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           asaasSubscriptionId: targetSubscriptionId,
           mode: financialContext.mode,
           familyGroupId: financialContext.family?.id ?? null,
-          affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [matriculaId],
+          affectedMatriculaIds:
+            financialContext.family?.affectedMatriculaIds ??
+            financialContext.sharedAgreement?.affectedMatriculaIds ??
+            [matriculaId],
           previousBillingType: localSnapshot?.billingType ?? null,
           nextBillingType: billingType,
           updatePendingPayments: true,
@@ -213,17 +216,28 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         billingType,
       });
     } else if (nextFormaPagamento) {
-      await prisma.matricula.update({
-        where: { id: matriculaId },
+      const affectedMatriculaIds =
+        financialContext.sharedAgreement?.affectedMatriculaIds ?? [matriculaId];
+      await prisma.matricula.updateMany({
+        where: { contaId: contaCtx.contaId, id: { in: affectedMatriculaIds } },
         data: { formaPagamento: nextFormaPagamento },
       });
-      localAlignment = await alignLocalPendingEnrollmentCharges({
-        db: prisma,
-        matriculaId,
-        contaId: contaCtx.contaId,
-        billingType: nextFormaPagamento,
-        chargeBillingType: billingType,
-      });
+      const alignments = await Promise.all(
+        affectedMatriculaIds.map((affectedMatriculaId) =>
+          alignLocalPendingEnrollmentCharges({
+            db: prisma,
+            matriculaId: affectedMatriculaId,
+            contaId: contaCtx.contaId!,
+            billingType: nextFormaPagamento,
+            chargeBillingType: billingType,
+          }),
+        ),
+      );
+      localAlignment = {
+        cobrancasUpdated: alignments.reduce((sum, item) => sum + item.cobrancasUpdated, 0),
+        chargesUpdated: alignments.reduce((sum, item) => sum + item.chargesUpdated, 0),
+        matriculasUpdated: alignments.length,
+      };
     }
 
     return NextResponse.json(

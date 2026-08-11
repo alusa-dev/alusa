@@ -483,6 +483,8 @@ export type CriarMatriculaInput = {
   pagarTaxaAgora: boolean;
   gerarCobrancaTaxa: boolean;
   criarCobranca: boolean;
+  /** Mantém a matrícula pendente até uma operação financeira externa ser confirmada. */
+  requiresFinancialProvisioning?: boolean;
   billingMode?: BillingMode | null;
   matriculaFamiliarId?: string | null;
   familyOrderIndex?: number | null;
@@ -1024,7 +1026,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
     const policy = conta?.matriculaActivationPolicy ?? 'IMMEDIATE';
 
     const requiresDeferredBillingConfirmation =
-      input.criarCobranca && !input.preprovisionedBilling;
+      (input.criarCobranca || input.requiresFinancialProvisioning === true) &&
+      !input.preprovisionedBilling;
 
     let statusInicial: StatusMatricula;
     if (requiresDeferredBillingConfirmation) {
@@ -1072,6 +1075,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       billingStrategy.kind === 'SEPARATE' ? (input.billingMode ?? BillingMode.INDIVIDUAL) : BillingMode.SHARED_PLAN;
     const billingProvisionStatus = input.preprovisionedBilling
       ? MatriculaBillingProvisionStatus.PROVISIONADO
+      : input.requiresFinancialProvisioning === true
+        ? MatriculaBillingProvisionStatus.PENDENTE
       : subscriptionTargetId && input.criarCobranca && preco.planoLiquido > 0
         ? MatriculaBillingProvisionStatus.PENDENTE
         : resolveInitialBillingProvisionStatus({

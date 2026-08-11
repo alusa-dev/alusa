@@ -79,10 +79,19 @@ async function convergeAcademicSubscriptionDeletion(params: {
       },
     });
     if (params.billingAgreementId) {
-      await tx.billingAllocation.updateMany({
+      const allocations = await tx.billingAllocation.findMany({
         where: { contaId: params.contaId, agreementId: params.billingAgreementId, status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] } },
-        data: { status: 'CANCELLED', validUntil: params.now },
+        select: { id: true, validFrom: true },
       });
+      for (const allocation of allocations) {
+        await tx.billingAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            status: 'CANCELLED',
+            ...(allocation.validFrom < params.now ? { validUntil: params.now } : {}),
+          },
+        });
+      }
       await tx.billingAgreement.updateMany({
         where: { id: params.billingAgreementId, contaId: params.contaId },
         data: {
@@ -131,10 +140,19 @@ async function convergeStandaloneSubscriptionDeletion(params: {
       },
     });
     if (params.billingAgreementId) {
-      await tx.billingAllocation.updateMany({
+      const allocations = await tx.billingAllocation.findMany({
         where: { contaId: params.contaId, agreementId: params.billingAgreementId, status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] } },
-        data: { status: 'CANCELLED', validUntil: params.now },
+        select: { id: true, validFrom: true },
       });
+      for (const allocation of allocations) {
+        await tx.billingAllocation.update({
+          where: { id: allocation.id },
+          data: {
+            status: 'CANCELLED',
+            ...(allocation.validFrom < params.now ? { validUntil: params.now } : {}),
+          },
+        });
+      }
       await tx.billingAgreement.updateMany({
         where: { id: params.billingAgreementId, contaId: params.contaId },
         data: {
@@ -228,8 +246,34 @@ export async function DELETE(
       return err(404, 'NAO_ENCONTRADO', 'Assinatura não encontrada');
     }
 
+    const isAcademicSubscription = Boolean(academicSubscription);
+    if (isAcademicSubscription) {
+      return err(
+        409,
+        'ASSINATURA_ORIGINADA_MATRICULA',
+        'Esta assinatura deve ser encerrada ou cancelada pela página da matrícula.',
+      );
+    }
+
     if (!subscription.asaasSubscriptionId) {
       return err(400, 'SEM_VINCULO_ASAAS', 'Assinatura sem vínculo com a plataforma financeira');
+    }
+
+    if (subscription.billingAgreementId) {
+      const linkedAllocations = await prisma.billingAllocation.count({
+        where: {
+          contaId: user.contaId,
+          agreementId: subscription.billingAgreementId,
+          status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] },
+        },
+      });
+      if (linkedAllocations > 1) {
+        return err(
+          409,
+          'ASSINATURA_COMPARTILHADA',
+          'Esta assinatura é compartilhada. Remova ou encerre as matrículas individualmente antes de excluir a assinatura.',
+        );
+      }
     }
 
     const now = new Date();

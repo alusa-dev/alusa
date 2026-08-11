@@ -1,4 +1,5 @@
 import { cachedDashboardBlockWithTenant, resolveAlunoPublicAvatar, requireDashboardBlockContaId } from '../_blocks';
+import { avatarVersionFromFoto, resolvePublicAvatarUrl } from '@/lib/media/avatar-url';
 
 export async function GET() {
   const auth = await requireDashboardBlockContaId();
@@ -6,12 +7,29 @@ export async function GET() {
 
   return cachedDashboardBlockWithTenant(auth.contaId, 'birthdays', async (tx) => {
     const now = new Date();
-    const rows = await tx.aluno.findMany({
+    const [alunos, colaboradores] = await Promise.all([
+      tx.aluno.findMany({
       where: { contaId: auth.contaId, status: 'ATIVO' },
       select: { id: true, nome: true, foto: true, dataNasc: true },
-    });
+      }),
+      tx.colaborador.findMany({
+        where: { contaId: auth.contaId, status: 'ATIVO', dataNasc: { not: null } },
+        select: { id: true, nome: true, nomeSocial: true, foto: true, dataNasc: true },
+      }),
+    ]);
 
-    const aniversariantesDoMes = rows
+    const aniversariantesDoMes = [
+      ...alunos.map((aluno) => ({ ...aluno, tipo: 'ALUNO' as const })),
+      ...colaboradores
+        .filter((colaborador) => colaborador.dataNasc !== null)
+        .map((colaborador) => ({
+          id: colaborador.id,
+          nome: colaborador.nomeSocial || colaborador.nome,
+          foto: colaborador.foto,
+          dataNasc: colaborador.dataNasc as Date,
+          tipo: 'COLABORADOR' as const,
+        })),
+    ]
       .sort((a, b) => {
         const monthDiff = a.dataNasc.getMonth() - b.dataNasc.getMonth();
         if (monthDiff !== 0) return monthDiff;
@@ -19,16 +37,24 @@ export async function GET() {
         if (dayDiff !== 0) return dayDiff;
         return a.nome.localeCompare(b.nome, 'pt-BR');
       })
-      .map((aluno) => {
-        const avatarUrl = resolveAlunoPublicAvatar(aluno);
+      .map((aniversariante) => {
+        const avatarUrl = aniversariante.tipo === 'ALUNO'
+          ? resolveAlunoPublicAvatar(aniversariante)
+          : resolvePublicAvatarUrl({
+              entity: 'colaborador',
+              id: aniversariante.id,
+              foto: aniversariante.foto,
+              version: avatarVersionFromFoto(aniversariante.foto),
+            });
         return {
-          id: aluno.id,
-          nome: aluno.nome,
+          id: aniversariante.id,
+          nome: aniversariante.nome,
+          tipo: aniversariante.tipo,
           foto: avatarUrl,
           avatarUrl,
-          dia: aluno.dataNasc.getDate(),
-          mes: aluno.dataNasc.getMonth() + 1,
-          dataNascimento: aluno.dataNasc.toISOString(),
+          dia: aniversariante.dataNasc.getDate(),
+          mes: aniversariante.dataNasc.getMonth() + 1,
+          dataNascimento: aniversariante.dataNasc.toISOString(),
         };
       });
 

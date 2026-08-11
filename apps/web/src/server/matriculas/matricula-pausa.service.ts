@@ -6,10 +6,9 @@ import {
   getSubscription,
   listSubscriptionPayments,
   deletePayment,
-  getPayment,
-  updatePayment,
   commitBillingAgreementChange,
   previewBillingAgreementChange,
+  materializeBillingAgreement,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import { validatePausa, validateReativacao, validarCapacidade } from '@alusa/domain';
@@ -22,6 +21,10 @@ import {
   assertStudentCapacity,
   countAdditionalActiveStudentsForEnrollment,
 } from '@/src/server/platform-billing/capacity';
+import {
+  syncFamilyLifecycleAggregate,
+  type FamilyLifecycleImpact,
+} from './family-lifecycle.service';
 
 // ============================================================================
 // ERRORS
@@ -71,6 +74,7 @@ export type PausarMatriculaResult = {
   asaasAction: 'SUBSCRIPTION_INACTIVATED' | 'LOCAL_ONLY' | 'SKIPPED_COBRAR_DURANTE_PAUSA';
   cobrancasFuturasRemovidas: number;
   warnings: string[];
+  familyImpact?: FamilyLifecycleImpact | null;
 };
 
 export type ReativarMatriculaInput = {
@@ -93,9 +97,8 @@ export type ReativarMatriculaResult = {
   warningCode: string | null;
   asaasAction: 'SUBSCRIPTION_UPDATED' | 'LOCAL_ONLY';
   warnings: string[];
+  familyImpact?: FamilyLifecycleImpact | null;
 };
-
-const EDITABLE_SUBSCRIPTION_PAYMENT_STATUSES = new Set(['PENDING', 'OVERDUE']);
 
 // ============================================================================
 // HELPER: Build financial error
@@ -196,80 +199,6 @@ function parsePausePayload(payload: unknown): {
   };
 }
 
-function parseIsoDateAtNoon(date: string): Date {
-  return new Date(`${date}T12:00:00.000Z`);
-}
-
-function pickNextGeneratedPaymentForReactivation(
-  payments: Array<{ id: string; status: string; dueDate: string }>,
-  dataRetornoEfetiva: string,
-): { id: string; status: string; dueDate: string } | null {
-  const candidate = payments
-    .filter(
-      (payment) =>
-        EDITABLE_SUBSCRIPTION_PAYMENT_STATUSES.has(payment.status) &&
-        payment.dueDate >= dataRetornoEfetiva,
-    )
-    .sort((left, right) => left.dueDate.localeCompare(right.dueDate))[0];
-
-  return candidate ?? null;
-}
-
-async function alignPendingPaymentAfterReactivation(input: {
-  prisma: PrismaClient;
-  matriculaId: string;
-  contaId: string;
-  subscriptionId: string;
-  dataRetornoEfetiva: string;
-  nextDueDate: string;
-}): Promise<{ updatedPaymentId: string | null }> {
-  const subscriptionPayments = await listSubscriptionPayments(input.subscriptionId, {
-    contaId: input.contaId,
-    limit: 100,
-  });
-
-  const nextGeneratedPayment = pickNextGeneratedPaymentForReactivation(
-    subscriptionPayments.data,
-    input.dataRetornoEfetiva,
-  );
-
-  if (!nextGeneratedPayment || nextGeneratedPayment.dueDate === input.nextDueDate) {
-    return { updatedPaymentId: null };
-  }
-
-  const currentPayment = await getPayment(nextGeneratedPayment.id, {
-    contaId: input.contaId,
-  });
-
-  if (!EDITABLE_SUBSCRIPTION_PAYMENT_STATUSES.has(currentPayment.status)) {
-    return { updatedPaymentId: null };
-  }
-
-  await updatePayment(
-    currentPayment.id,
-    {
-      billingType: currentPayment.billingType,
-      value: Number(currentPayment.value),
-      dueDate: input.nextDueDate,
-      description: currentPayment.description ?? undefined,
-      externalReference: currentPayment.externalReference ?? undefined,
-    },
-    { contaId: input.contaId },
-  );
-
-  await input.prisma.cobranca.updateMany({
-    where: {
-      matriculaId: input.matriculaId,
-      asaasPaymentId: currentPayment.id,
-    },
-    data: {
-      vencimento: parseIsoDateAtNoon(input.nextDueDate),
-    },
-  });
-
-  return { updatedPaymentId: currentPayment.id };
-}
-
 async function reconcileMatriculaPendingSynchronization(input: {
   prisma: PrismaClient;
   matriculaId: string;
@@ -290,6 +219,7 @@ async function reconcileMatriculaPendingSynchronization(input: {
       integrationStatus: true,
       warningCode: true,
       asaasSubscriptionId: true,
+      matriculaFamiliarId: true,
       version: true,
     },
   });
@@ -528,6 +458,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
       status: true,
       pausaAtiva: true,
       asaasSubscriptionId: true,
+      matriculaFamiliarId: true,
       version: true,
       turmaId: true,
     },
@@ -535,6 +466,17 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
 
   if (!matricula) {
     throw new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404);
+  }
+
+  if (
+    input.dataRetornoPrevista &&
+    input.dataRetornoPrevista <= input.dataInicioPausa
+  ) {
+    throw new PausaBusinessError(
+      'RETORNO_INVALIDO',
+      'A data de retorno deve ser posterior ao início da pausa.',
+      422,
+    );
   }
 
   // Validação de domínio
@@ -580,7 +522,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
     canceled: 0,
     pending: 0,
   };
-  const canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+  let canonicalAllocation = await input.prisma.billingAllocation.findFirst({
     where: {
       contaId: input.contaId,
       matriculaId: matricula.id,
@@ -590,6 +532,30 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
     orderBy: { validFrom: 'desc' },
     select: { id: true, agreementId: true, agreement: { select: { version: true } } },
   });
+  // Matrículas familiares antigas podem ainda não ter o acordo canônico
+  // materializado. Materializá-lo antes da pausa garante que a alteração
+  // afete a assinatura consolidada, não apenas o status local do aluno.
+  if (!canonicalAllocation && matricula.matriculaFamiliarId) {
+    const familySubscription = await input.prisma.standaloneSubscription.findFirst({
+      where: { contaId: input.contaId, familyGroupId: matricula.matriculaFamiliarId },
+      select: { id: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (familySubscription) {
+      await materializeBillingAgreement({
+        kind: 'FAMILY',
+        contaId: input.contaId,
+        standaloneSubscriptionId: familySubscription.id,
+        familyGroupId: matricula.matriculaFamiliarId,
+        actorId: input.actorId,
+      });
+      canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+        where: { contaId: input.contaId, matriculaId: matricula.id, kind: 'TUITION', status: { in: ['ACTIVE', 'SCHEDULED'] } },
+        orderBy: { validFrom: 'desc' },
+        select: { id: true, agreementId: true, agreement: { select: { version: true } } },
+      });
+    }
+  }
   let canonicalApplied = false;
 
   if (canonicalAllocation && !input.cobrarDurantePausa) {
@@ -758,6 +724,14 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
   integrationStatus = finalIntegrationStatus;
   warningCode = finalWarningCode;
 
+  const familyImpact = matricula.matriculaFamiliarId
+    ? await syncFamilyLifecycleAggregate({
+        prisma: input.prisma,
+        contaId: input.contaId,
+        familyId: matricula.matriculaFamiliarId,
+      })
+    : null;
+
   if (integrationStatus === 'DIVERGENTE') {
     try {
       await markEnrollmentFinanceDivergence({
@@ -809,6 +783,7 @@ export async function pausarMatricula(input: PausarMatriculaInput): Promise<Paus
     asaasAction,
     cobrancasFuturasRemovidas,
     warnings,
+    familyImpact,
   };
 }
 
@@ -821,6 +796,13 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     throw new PausaBusinessError(
       'NEXT_DUE_DATE_OBRIGATORIO_PARA_REATIVAR',
       'É obrigatório informar a data da próxima cobrança ao reativar a matrícula.',
+    );
+  }
+
+  if (input.nextDueDate < input.dataRetornoEfetiva) {
+    throw new PausaBusinessError(
+      'NEXT_DUE_DATE_INVALIDA',
+      'A próxima cobrança deve vencer na data de retorno ou depois dela.',
     );
   }
 
@@ -862,6 +844,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       manterVaga: true,
       cobrarDurantePausa: true,
       asaasSubscriptionId: true,
+      matriculaFamiliarId: true,
       version: true,
       turmaId: true,
       turma: {
@@ -923,8 +906,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
   let asaasAction: ReativarMatriculaResult['asaasAction'] = 'LOCAL_ONLY';
   let integrationStatus: ReativarMatriculaResult['integrationStatus'] = 'SINCRONIZADO';
   let warningCode: string | null = null;
-  let updatedPaymentId: string | null = null;
-  const pausedCanonicalAllocation = await input.prisma.billingAllocation.findFirst({
+  let pausedCanonicalAllocation = await input.prisma.billingAllocation.findFirst({
     where: {
       contaId: input.contaId,
       matriculaId: matricula.id,
@@ -934,6 +916,24 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     orderBy: { validUntil: 'desc' },
     select: { id: true, agreementId: true, agreement: { select: { version: true } } },
   });
+  if (!pausedCanonicalAllocation && matricula.matriculaFamiliarId) {
+    const familySubscription = await input.prisma.standaloneSubscription.findFirst({
+      where: { contaId: input.contaId, familyGroupId: matricula.matriculaFamiliarId },
+      select: { id: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (familySubscription) {
+      await materializeBillingAgreement({
+        kind: 'FAMILY', contaId: input.contaId, standaloneSubscriptionId: familySubscription.id,
+        familyGroupId: matricula.matriculaFamiliarId, actorId: input.actorId,
+      });
+      pausedCanonicalAllocation = await input.prisma.billingAllocation.findFirst({
+        where: { contaId: input.contaId, matriculaId: matricula.id, kind: 'TUITION', status: 'PAUSED' },
+        orderBy: { validUntil: 'desc' },
+        select: { id: true, agreementId: true, agreement: { select: { version: true } } },
+      });
+    }
+  }
   let canonicalApplied = false;
 
   if (pausedCanonicalAllocation && !matricula.cobrarDurantePausa) {
@@ -980,27 +980,6 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       asaasAction = 'SUBSCRIPTION_UPDATED';
       integrationStatus = 'PENDENTE_SINCRONISMO'; // Aguardamos webhook de confirmação
 
-      try {
-        const paymentAlignment = await alignPendingPaymentAfterReactivation({
-          prisma: input.prisma,
-          matriculaId: matricula.id,
-          contaId: input.contaId,
-          subscriptionId: matricula.asaasSubscriptionId,
-          dataRetornoEfetiva: input.dataRetornoEfetiva,
-          nextDueDate: input.nextDueDate,
-        });
-
-        updatedPaymentId = paymentAlignment.updatedPaymentId;
-        if (updatedPaymentId) {
-          warnings.push('A cobrança já gerada da assinatura teve o vencimento atualizado para a data informada.');
-        }
-      } catch {
-        integrationStatus = 'DIVERGENTE';
-        warningCode = 'COBRANCA_PENDENTE_NAO_ATUALIZADA';
-        warnings.push(
-          'A assinatura foi reativada, mas a cobrança já gerada não pôde ser atualizada automaticamente. Revise o próximo vencimento no financeiro.',
-        );
-      }
     } catch (error) {
       await input.prisma.matriculaOperacao.update({
         where: { id: operacao.id },
@@ -1081,7 +1060,6 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
           nextDueDate: input.nextDueDate,
           asaasAction,
           warningCode,
-          updatedPaymentId,
           warnings,
           manterVagaAnterior: matricula.manterVaga,
         },
@@ -1107,6 +1085,14 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     },
   });
 
+  const familyImpact = matricula.matriculaFamiliarId
+    ? await syncFamilyLifecycleAggregate({
+        prisma: input.prisma,
+        contaId: input.contaId,
+        familyId: matricula.matriculaFamiliarId,
+      })
+    : null;
+
   return {
     matriculaId: matricula.id,
     operacaoId: operacao.id,
@@ -1117,6 +1103,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     warningCode,
     asaasAction,
     warnings,
+    familyImpact,
   };
 }
 

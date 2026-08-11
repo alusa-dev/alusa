@@ -1,4 +1,11 @@
 import { Prisma, type PrismaClient, StatusMatricula } from '@prisma/client';
+import { prisma as appPrisma } from '@/src/prisma';
+
+const FAMILY_TERMINAL_STATUSES: readonly StatusMatricula[] = [
+  StatusMatricula.ENCERRADA,
+  StatusMatricula.CANCELADA,
+  StatusMatricula.RECUSADA,
+] as const;
 
 type CloseExpiredEnrollmentsResult = {
   processed: number;
@@ -124,5 +131,97 @@ export async function closeExpiredEnrollmentsWithoutSuccessor(
   return {
     processed: candidates.length,
     closed,
+  };
+}
+
+/**
+ * Finaliza o agregado acadêmico familiar depois que os seus membros foram
+ * encerrados. As relações com turma são preservadas para histórico; a vaga é
+ * liberada pela regra canônica de ocupação baseada em status e período.
+ *
+ * A assinatura financeira é encaminhada por outbox para que o encerramento
+ * remoto seja idempotente e possa ser reprocessado sem bloquear o job acadêmico.
+ */
+export async function finalizeExpiredFamilyEnrollments(input: {
+  contaId: string;
+  now?: Date;
+  limit?: number;
+}, deps: { prisma: PrismaClient } = { prisma: appPrisma }) {
+  const now = input.now ?? new Date();
+  const limit = Math.max(1, Math.min(100, input.limit ?? 100));
+  const families = await deps.prisma.matriculaFamiliar.findMany({
+    where: {
+      contaId: input.contaId,
+      status: { in: ['ATIVO', 'PARCIAL'] },
+      dataFimContrato: { lt: now },
+    },
+    orderBy: { dataFimContrato: 'asc' },
+    take: limit,
+    select: {
+      id: true,
+      dataFimContrato: true,
+      standaloneSubscriptionId: true,
+      matriculas: {
+        select: {
+          id: true,
+          status: true,
+          rematriculasDerivadas: {
+            where: { status: { in: ['PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO', 'ATIVA', 'PAUSADA'] } },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+
+  const finalized: string[] = [];
+  const pendingFinancialClosure: string[] = [];
+
+  for (const family of families) {
+    if (!family.matriculas.length) continue;
+    if (family.matriculas.some((item) => !FAMILY_TERMINAL_STATUSES.includes(item.status))) continue;
+    if (family.matriculas.some((item) => item.rematriculasDerivadas.length > 0)) continue;
+
+    const dedupeKey = `MATRICULA_FAMILIAR:${family.id}:CLOSE_SUBSCRIPTION`;
+    if (family.standaloneSubscriptionId) {
+      try {
+        await deps.prisma.familyBillingOutbox.create({
+          data: {
+            contaId: input.contaId,
+            aggregateType: 'MATRICULA_FAMILIAR',
+            aggregateId: family.id,
+            eventType: 'CLOSE_MATRICULA_FAMILIAR_SUBSCRIPTION',
+            dedupeKey,
+            matriculaFamiliarId: family.id,
+            payload: {
+              contaId: input.contaId,
+              aggregateId: family.id,
+              aggregateType: 'MATRICULA_FAMILIAR',
+              sourceFinancialAgreementId: family.standaloneSubscriptionId,
+              effectiveDate: now.toISOString().slice(0, 10),
+            },
+          },
+        });
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+      }
+      pendingFinancialClosure.push(family.id);
+      continue;
+    }
+
+    const updated = await deps.prisma.matriculaFamiliar.updateMany({
+      where: { id: family.id, contaId: input.contaId, status: { in: ['ATIVO', 'PARCIAL'] } },
+      data: { status: 'CANCELADO', academicStatus: 'COMPLETO' },
+    });
+    if (updated.count > 0) finalized.push(family.id);
+  }
+
+  return {
+    inspected: families.length,
+    finalized,
+    pendingFinancialClosure,
   };
 }

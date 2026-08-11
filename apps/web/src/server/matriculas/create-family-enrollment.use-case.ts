@@ -31,6 +31,7 @@ import {
   enqueueFamilyBillingOutbox,
   markFamilyBillingFailed,
   parseFamilyBillingPayload,
+  processFamilyBillingOutboxEvent,
   type FamilyBillingPayload,
 } from '@alusa/finance/family-billing/processor';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
@@ -144,15 +145,19 @@ async function resolveFamilyPricing(params: {
       taxaMatricula: 0,
       descontos,
     });
+    const itemMonthlyValue = Number(calculo.planoLiquido.toFixed(2));
+    const itemBaseMonthlyValue = Number(plano.valor);
 
     return {
-      totalMensalidade: Number(calculo.planoLiquido.toFixed(2)),
-      totalBaseMensalidade: Number(plano.valor),
+      // No modo familiar, o valor do plano é por matrícula. A assinatura
+      // unificada recebe a soma das alocações individuais.
+      totalMensalidade: Number((itemMonthlyValue * params.alunos.length).toFixed(2)),
+      totalBaseMensalidade: Number((itemBaseMonthlyValue * params.alunos.length).toFixed(2)),
       cycle: mapPeriodicidadeToCycle(plano.periodicidade),
       descricao: `Plano familiar ${plano.nome} · ${params.alunos.length} matrícula(s)`,
       allocationMethod: 'EQUAL_SPLIT' as const,
-      itemWeights: params.alunos.map(() => 1),
-      itemBaseWeights: params.alunos.map(() => 1),
+      itemWeights: params.alunos.map(() => itemMonthlyValue),
+      itemBaseWeights: params.alunos.map(() => itemBaseMonthlyValue),
     };
   }
 
@@ -230,6 +235,140 @@ type FamilyResultItem = {
   errorMessage?: string;
 };
 
+/**
+ * Remove somente os artefatos de uma tentativa familiar que ainda não foi
+ * confirmada. A operação financeira permanece como trilha de auditoria, mas
+ * nenhum rascunho acadêmico deve continuar visível como matrícula.
+ *
+ * Esta rotina é deliberadamente conservadora: ela só alcança matrículas cujo
+ * identificador de idempotência pertence ao lote informado e nunca remove
+ * membros preexistentes de um agrupamento ao qual o lote tentou aderir.
+ */
+async function rollbackFamilyEnrollmentDraft(params: {
+  contaId: string;
+  familyId: string;
+  operationId: string;
+  uiRequestId: string;
+  message: string;
+  preserveOutbox?: boolean;
+  preserveFamilyState?: boolean;
+}) {
+  const matriculaRequestPrefix = `${params.uiRequestId}:aluno:`;
+
+  await prisma.$transaction(async (tx) => {
+    const draftMatriculas = await tx.matricula.findMany({
+      where: {
+        contaId: params.contaId,
+        matriculaFamiliarId: params.familyId,
+        uiRequestId: { startsWith: matriculaRequestPrefix },
+      },
+      select: { id: true },
+    });
+    const matriculaIds = draftMatriculas.map((item) => item.id);
+
+    if (matriculaIds.length > 0) {
+      // ContratoAtual aponta para Contrato; limpe a referência antes de
+      // remover os contratos gerados durante a tentativa.
+      await tx.matricula.updateMany({
+        where: { contaId: params.contaId, id: { in: matriculaIds } },
+        data: { contratoAtualId: null },
+      });
+      await tx.contrato.deleteMany({
+        where: { contaId: params.contaId, matriculaId: { in: matriculaIds } },
+      });
+      await tx.descontoMatricula.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+      await tx.matriculaOperacao.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+      await tx.matriculaLog.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+      await tx.matriculaTurma.deleteMany({
+        where: { contaId: params.contaId, matriculaId: { in: matriculaIds } },
+      });
+      await tx.matriculaFamiliarItem.deleteMany({ where: { matriculaId: { in: matriculaIds } } });
+
+      // Uma tentativa familiar não cria cobranças individuais. Ainda assim,
+      // remova cobranças sem pagamento caso um legado tenha sido associado ao
+      // draft; cobranças pagas nunca são apagadas por esta compensação.
+      const draftCharges = await tx.cobranca.findMany({
+        where: {
+          contaId: params.contaId,
+          matriculaId: { in: matriculaIds },
+          pagamentos: { none: {} },
+        },
+        select: { id: true },
+      });
+      if (draftCharges.length > 0) {
+        await tx.cobranca.deleteMany({
+          where: { contaId: params.contaId, id: { in: draftCharges.map((item) => item.id) } },
+        });
+      }
+      await tx.matricula.deleteMany({
+        where: { contaId: params.contaId, id: { in: matriculaIds } },
+      });
+    }
+
+    await tx.familyFinancialAllocation.deleteMany({
+      where: {
+        contaId: params.contaId,
+        familyGroupId: params.familyId,
+        familyEnrollmentOperationId: params.operationId,
+        billingAllocationId: null,
+      },
+    });
+
+    if (!params.preserveOutbox) {
+      await tx.familyBillingOutbox.deleteMany({
+        where: {
+          contaId: params.contaId,
+          matriculaFamiliarId: params.familyId,
+          payload: { path: ['operationId'], equals: params.operationId },
+        },
+      });
+    } else {
+      await tx.familyBillingOutbox.updateMany({
+        where: {
+          contaId: params.contaId,
+          matriculaFamiliarId: params.familyId,
+          payload: { path: ['operationId'], equals: params.operationId },
+        },
+        data: { lastError: params.message.slice(0, 2000) },
+      });
+    }
+
+    await tx.familyEnrollmentOperation.updateMany({
+      where: { id: params.operationId, contaId: params.contaId },
+      data: {
+        status: params.preserveOutbox ? 'REQUIRES_RECONCILIATION' : 'FAILED',
+        lastError: params.message.slice(0, 2000),
+        result: {
+          familyId: params.familyId,
+          rollback: 'LOCAL_DRAFT_REMOVED',
+          message: params.message,
+        } as Prisma.InputJsonValue,
+        completedAt: params.preserveOutbox ? null : new Date(),
+      },
+    });
+
+    if (!params.preserveFamilyState) {
+      await tx.matriculaFamiliar.updateMany({
+        where: { id: params.familyId, contaId: params.contaId },
+        data: {
+          status: FamilyBillingStatus.FALHO,
+          academicStatus: FamilyAcademicStatus.FALHO,
+          billingProvisionStatus: params.preserveOutbox
+            ? MatriculaBillingProvisionStatus.RESULTADO_INCERTO
+            : MatriculaBillingProvisionStatus.FALHO,
+          totalAlunos: 0,
+          valorMensalidadeTotal: 0,
+          valorTaxaMatriculaTotal: 0,
+          ...(params.preserveOutbox
+            ? {}
+            : { standaloneSubscriptionId: null, standaloneEnrollmentChargeId: null }),
+          ultimoErro: params.message.slice(0, 2000),
+        },
+      });
+    }
+  });
+}
+
 export async function executeCreateFamilyEnrollment(params: {
   body: CreateMatriculaFamiliarBody;
   actor: CreateFamilyEnrollmentActor;
@@ -287,6 +426,27 @@ export async function executeCreateFamilyEnrollment(params: {
       'A mesma solicitação já foi iniciada com outros dados financeiros.',
     );
   }
+  if (resumableOperation) {
+    return jsonError(
+      202,
+      'OPERACAO_FAMILIAR_EM_ANDAMENTO',
+      'Esta matrícula familiar já está sendo processada. Aguarde a confirmação antes de tentar novamente.',
+      { operationId: resumableOperation.id, familyId: resumableOperation.familyGroupId },
+    );
+  }
+  if (
+    existingOperation &&
+    ['FAILED', 'REQUIRES_RECONCILIATION', 'CANCELLED'].includes(existingOperation.status)
+  ) {
+    return jsonError(
+      409,
+      'NOVA_TENTATIVA_NECESSARIA',
+      existingOperation.status === 'REQUIRES_RECONCILIATION'
+        ? 'A tentativa anterior exige reconciliação técnica antes de uma nova matrícula familiar.'
+        : 'A tentativa anterior não foi concluída. Gere uma nova confirmação para tentar novamente.',
+      { operationId: existingOperation.id, familyId: existingOperation.familyGroupId },
+    );
+  }
   if (existingOperation && !resumableOperation) {
     const stored =
       existingOperation.result && typeof existingOperation.result === 'object'
@@ -308,6 +468,10 @@ export async function executeCreateFamilyEnrollment(params: {
     where: { contaId, uiRequestId: body.uiRequestId },
     select: { id: true },
   });
+
+  let rollbackContext: { familyId: string; operationId: string } | null = null;
+  let financialAttempted = false;
+  let financialConfirmed = false;
 
   try {
     const responsavel = await prisma.responsavel.findFirst({
@@ -569,13 +733,6 @@ export async function executeCreateFamilyEnrollment(params: {
         throw error;
       }
     }
-    if (resumableOperation && resumableOperation.familyGroupId !== family.id) {
-      return jsonError(
-        409,
-        'IDEMPOTENCY_CONFLICT',
-        'A solicitação em andamento pertence a outro agrupamento familiar.',
-      );
-    }
     const reservedPreviousMonthlyAmount = Number(family.valorMensalidadeTotal);
     const reservedAddedMonthlyAmount = body.criarCobranca ? pricing.totalMensalidade : 0;
     const operation = resumableOperation
@@ -603,6 +760,7 @@ export async function executeCreateFamilyEnrollment(params: {
             actorId: user.id,
           },
         });
+    rollbackContext = { familyId: family.id, operationId: operation.id };
 
     // 4) Criar matrículas individuais (sem cobrança/taxa em cada uma — a cobrança
     //    é consolidada no responsável via createStandaloneCharge).
@@ -621,6 +779,8 @@ export async function executeCreateFamilyEnrollment(params: {
       pagarTaxaAgora: false,
       gerarCobrancaTaxa: false,
       criarCobranca: false,
+      requiresFinancialProvisioning:
+        willCreateSubscriptionPlanned || willCreateEnrollmentFeePlanned,
       billingMode: BillingMode.SHARED_PLAN,
       matriculaFamiliarId: family.id,
       valorMensalidadeOverride: null,
@@ -678,37 +838,34 @@ export async function executeCreateFamilyEnrollment(params: {
     const successCount = results.filter((result) => result.status === 'success').length;
     const failureCount = results.length - successCount;
 
-    if (successCount === 0) {
-      const failureMessage = 'Nenhuma matrícula pôde ser criada no lote familiar.';
-      await prisma.$transaction([
-        prisma.familyEnrollmentOperation.updateMany({
-          where: { id: operation.id, contaId, status: 'PROCESSING' },
-          data: {
-            status: 'FAILED',
-            lastError: failureMessage,
-            result: { familyId: family.id, results } as Prisma.InputJsonValue,
-          },
-        }),
-        ...(!joinExisting
-          ? [
-              prisma.matriculaFamiliar.updateMany({
-                where: { id: family.id, contaId },
-                data: {
-                  status: FamilyBillingStatus.FALHO,
-                  academicStatus: FamilyAcademicStatus.FALHO,
-                  billingProvisionStatus: MatriculaBillingProvisionStatus.FALHO,
-                  ultimoErro: failureMessage,
-                },
-              }),
-            ]
-          : []),
-      ]);
+    // O lote familiar é indivisível: um erro em qualquer aluno invalida toda a
+    // tentativa, inclusive os alunos que já foram persistidos neste request.
+    if (failureCount > 0) {
+      const failedStudents = results
+        .filter((result) => result.status === 'error')
+        .map((result) => `${result.alunoNome}: ${result.errorMessage ?? 'falha desconhecida'}`)
+        .join('; ');
+      const failureMessage = `A matrícula familiar não foi concluída porque um ou mais alunos falharam. ${failedStudents}`;
+      await rollbackFamilyEnrollmentDraft({
+        contaId,
+        familyId: family.id,
+        operationId: operation.id,
+        uiRequestId: body.uiRequestId,
+        message: failureMessage,
+        preserveFamilyState: joinExisting,
+      });
 
       return NextResponse.json(
         {
           familyId: family.id,
           status: FamilyBillingStatus.FALHO,
           results,
+          operationId: operation.id,
+          operationStatus: 'FAILED',
+          error: {
+            code: 'FALHA_CRIACAO_MATRICULAS_FAMILIARES',
+            message: failureMessage,
+          },
         },
         { status: 409, headers: { 'cache-control': 'no-store' } },
       );
@@ -849,9 +1006,9 @@ export async function executeCreateFamilyEnrollment(params: {
     const shouldCreateSubscription = subscriptionValue > 0;
     const shouldCreateEnrollmentFee = enrollmentFeeTotal > 0;
 
-    let financialStatus: FamilyBillingStatus =
-      failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.PENDENTE;
+    let financialStatus: FamilyBillingStatus = FamilyBillingStatus.PENDENTE;
     let financialError: string | null = null;
+    let financialProvisioned = false;
 
     if (shouldCreateSubscription || shouldCreateEnrollmentFee) {
       const nextDueDate = resolveChargeableFirstDueDate(dataInicio, body.vencimentoDia);
@@ -902,6 +1059,13 @@ export async function executeCreateFamilyEnrollment(params: {
           },
           message,
         );
+        await rollbackFamilyEnrollmentDraft({
+          contaId,
+          familyId: family.id,
+          operationId: operation.id,
+          uiRequestId: body.uiRequestId,
+          message: `Payload financeiro inválido: ${message}`,
+        });
         console.error('[POST /api/matriculas/familiar] Payload financeiro inválido', {
           familyId: family.id,
           message,
@@ -918,7 +1082,8 @@ export async function executeCreateFamilyEnrollment(params: {
       }
 
       try {
-        await enqueueFamilyBillingOutbox({
+        financialAttempted = true;
+        const outbox = await enqueueFamilyBillingOutbox({
           contaId,
           aggregateType: 'MATRICULA_FAMILIAR',
           aggregateId: family.id,
@@ -930,7 +1095,17 @@ export async function executeCreateFamilyEnrollment(params: {
               ? `SCHEDULE_FAMILY_UNIFICATION_NEXT_CYCLE:${operation.id}`
               : `SYNC_FAMILY_BILLING:${operation.id}`,
         });
-        financialStatus = failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.PENDENTE;
+        const processingResult = await processFamilyBillingOutboxEvent(outbox.id);
+        if (processingResult.processed) {
+          financialProvisioned = true;
+          financialConfirmed = true;
+          financialStatus = FamilyBillingStatus.ATIVO;
+        } else if (processingResult.reason === 'REQUIRES_RECONCILIATION') {
+          financialError = 'RESULTADO_INCERTO: cobrança familiar requer reconciliação.';
+          financialStatus = FamilyBillingStatus.PARCIAL;
+        } else {
+          financialStatus = FamilyBillingStatus.PENDENTE;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         financialError = message;
@@ -942,29 +1117,62 @@ export async function executeCreateFamilyEnrollment(params: {
         });
       }
     } else {
-      financialStatus = failureCount > 0 ? FamilyBillingStatus.PARCIAL : FamilyBillingStatus.ATIVO;
+      financialStatus = FamilyBillingStatus.ATIVO;
     }
 
-    const academicStatus =
-      failureCount > 0 ? FamilyAcademicStatus.PARCIAL : FamilyAcademicStatus.COMPLETO;
+    // Falha financeira também invalida o lote. Em resultado incerto, os
+    // artefatos da operação permanecem apenas para reconciliação técnica; eles
+    // não são ativados nem ficam disponíveis como matrícula normal.
+    if (financialError) {
+      const requiresReconciliation = financialError.startsWith('RESULTADO_INCERTO:');
+      await rollbackFamilyEnrollmentDraft({
+        contaId,
+        familyId: family.id,
+        operationId: operation.id,
+        uiRequestId: body.uiRequestId,
+        message: `O financeiro não confirmou a matrícula familiar: ${financialError}`,
+        preserveOutbox: requiresReconciliation || joinExisting,
+        preserveFamilyState: joinExisting,
+      });
+      return NextResponse.json(
+        {
+          familyId: family.id,
+          status: FamilyBillingStatus.FALHO,
+          operationId: operation.id,
+          operationStatus: requiresReconciliation ? 'REQUIRES_RECONCILIATION' : 'FAILED',
+          results,
+          financialError: requiresReconciliation
+            ? 'A confirmação financeira ficou pendente de reconciliação. Nenhuma matrícula foi ativada.'
+            : 'Não foi possível confirmar as cobranças. Nenhuma matrícula foi criada.',
+        },
+        {
+          status: requiresReconciliation ? 503 : 422,
+          headers: { 'cache-control': 'no-store' },
+        },
+      );
+    }
+
+    const academicStatus = FamilyAcademicStatus.COMPLETO;
     const billingProvisionStatus =
       shouldCreateSubscription || shouldCreateEnrollmentFee
         ? financialError
-          ? joinExisting
-            ? MatriculaBillingProvisionStatus.PARCIAL
+          ? financialError.startsWith('RESULTADO_INCERTO:')
+            ? MatriculaBillingProvisionStatus.RESULTADO_INCERTO
             : MatriculaBillingProvisionStatus.FALHO
-          : joinExisting
-            ? MatriculaBillingProvisionStatus.PARCIAL
+          : financialProvisioned
+            ? MatriculaBillingProvisionStatus.PROVISIONADO
             : MatriculaBillingProvisionStatus.PENDENTE
         : MatriculaBillingProvisionStatus.NAO_APLICAVEL;
     const operationStatus =
       shouldCreateSubscription || shouldCreateEnrollmentFee
-        ? financialError
-          ? 'FAILED'
-          : 'PENDING'
-        : failureCount > 0
-          ? 'PARTIAL'
-          : 'COMPLETED';
+          ? financialError
+            ? financialError.startsWith('RESULTADO_INCERTO:')
+              ? 'REQUIRES_RECONCILIATION'
+              : 'FAILED'
+          : financialProvisioned
+            ? 'COMPLETED'
+            : 'PENDING'
+        : 'COMPLETED';
     const responsePayload = {
       familyId: family.id,
       status: joinExisting ? family.status : financialStatus,
@@ -1020,18 +1228,67 @@ export async function executeCreateFamilyEnrollment(params: {
           status: operationStatus,
           result: responsePayload as Prisma.InputJsonValue,
           lastError: financialError,
-          completedAt:
-            !shouldCreateSubscription && !shouldCreateEnrollmentFee ? new Date() : null,
+          completedAt: operationStatus === 'COMPLETED' ? new Date() : null,
+        },
+      }),
+      prisma.auditLog.create({
+        data: {
+          contaId,
+          actorType: 'USER',
+          actorId: user.id,
+          action: 'MATRICULA_FAMILIAR_BILLING_DECISION',
+          entityType: 'MATRICULA_FAMILIAR',
+          entityId: family.id,
+          correlationId: operation.id,
+          metadata: {
+            operationId: operation.id,
+            strategy: body.billingStrategy.kind,
+            alunoIds: successfulItems.map((item) => item.alunoId),
+            alunoCount: successfulItems.length,
+            previousMonthlyAmount,
+            addedMonthlyAmount: subscriptionValue,
+            resultingMonthlyAmount,
+            enrollmentFeeAmount: enrollmentFeeTotal,
+            dataInicio: dataInicio.toISOString(),
+            dataFimContrato: dataFimContrato.toISOString(),
+            operationStatus,
+            billingProvisionStatus,
+          } as Prisma.InputJsonValue,
         },
       }),
     ]);
 
-    return NextResponse.json(
-      responsePayload,
-      { status: 202, headers: { 'cache-control': 'no-store' } },
-    );
+    const responseStatus =
+      operationStatus === 'COMPLETED'
+        ? 200
+        : operationStatus === 'REQUIRES_RECONCILIATION'
+          ? 503
+          : financialError
+            ? 422
+            : 202;
+    return NextResponse.json(responsePayload, {
+      status: responseStatus,
+      headers: { 'cache-control': 'no-store' },
+    });
   } catch (error) {
     console.error('[POST /api/matriculas/familiar]', error);
+    if (rollbackContext && !financialConfirmed) {
+      await rollbackFamilyEnrollmentDraft({
+        contaId,
+        familyId: rollbackContext.familyId,
+        operationId: rollbackContext.operationId,
+        uiRequestId: body.uiRequestId,
+        message: `Falha inesperada na criação familiar: ${error instanceof Error ? error.message : String(error)}`,
+        preserveOutbox: financialAttempted,
+        preserveFamilyState: body.billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE',
+      }).catch((rollbackError) => {
+        console.error('[POST /api/matriculas/familiar] Falha ao compensar draft local', {
+          familyId: rollbackContext?.familyId,
+          operationId: rollbackContext?.operationId,
+          error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        });
+      });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const concurrentOperation = await prisma.familyEnrollmentOperation.findFirst({
         where: { contaId, uiRequestId: body.uiRequestId },

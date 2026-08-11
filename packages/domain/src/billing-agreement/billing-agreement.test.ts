@@ -435,7 +435,7 @@ describe('calculateBillingAgreementDesiredState', () => {
     });
   });
 
-  it('requires manual review for an overdue current-cycle difference', () => {
+  it('allows updating an overdue current-cycle charge before payment confirmation', () => {
     const result = calculateBillingAgreementDesiredState({
       calculatedAt: '2026-01-10',
       effectiveAt: '2026-01-10',
@@ -454,12 +454,8 @@ describe('calculateBillingAgreementDesiredState', () => {
     expect(result).toMatchObject({
       success: true,
       value: {
-        updatePendingPayments: false,
-        adjustment: {
-          type: 'MANUAL_REVIEW',
-          amountCents: 2_500,
-          reason: 'OVERDUE_CHARGE_REQUIRES_REVIEW',
-        },
+        updatePendingPayments: true,
+        adjustment: { type: 'NONE', amountCents: 0, reason: 'OVERDUE_CHARGE_CAN_BE_UPDATED' },
       },
     });
   });

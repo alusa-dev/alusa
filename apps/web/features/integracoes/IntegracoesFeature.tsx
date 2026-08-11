@@ -59,6 +59,11 @@ function resolveAsaasIntegrationCard(user: {
 export function IntegracoesFeature() {
   const router = useRouter();
   const { data: session } = useSession();
+
+  if (session?.user?.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
+    return null;
+  }
+
   const asaasCard = resolveAsaasIntegrationCard(session?.user);
 
   return (

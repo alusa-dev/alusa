@@ -1,7 +1,7 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
-import { type BillingType, createSubscription } from '@alusa/asaas';
+import { AsaasHttpError, type BillingType, createSubscription } from '@alusa/asaas';
 import { resolvePayer } from '@alusa/domain';
 import crypto from 'crypto';
 
@@ -49,19 +49,24 @@ async function materializeFirstSubscriptionPayment(params: {
   expectedDueDate?: string;
 }) {
   try {
-    const payments = await listPayments(
-      {
-        subscription: params.subscriptionId,
-        limit: 10,
-        offset: 0,
-      },
-      { contaId: params.contaId },
-    );
+    // O Asaas pode publicar o PAYMENT_CREATED antes de disponibilizar o
+    // payment no GET da assinatura. Faça uma pequena janela de convergência
+    // antes de desistir; isso evita deixar a cobrança fora da assinatura
+    // quando o webhook vence a persistência local por poucos milissegundos.
+    let payments: Awaited<ReturnType<typeof listPayments>> | null = null;
+    for (const delayMs of [0, 250, 750, 1500]) {
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      payments = await listPayments(
+        { subscription: params.subscriptionId, limit: 10, offset: 0 },
+        { contaId: params.contaId },
+      ).catch(() => null);
+      if (payments?.data.some((payment) => payment?.id)) break;
+    }
 
     const candidate =
-      payments.data.find((payment) => payment.dueDate === params.expectedDueDate) ??
-      payments.data.find((payment) => payment.status === 'PENDING') ??
-      payments.data[0];
+      payments?.data.find((payment) => payment.dueDate === params.expectedDueDate) ??
+      payments?.data.find((payment) => payment.status === 'PENDING') ??
+      payments?.data[0];
 
     if (!candidate?.id) {
       console.info('[createStandaloneCharge] Assinatura criada sem payment listável imediatamente', {
@@ -91,6 +96,22 @@ async function materializeFirstSubscriptionPayment(params: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function findRemoteSubscriptionWithRetry(params: {
+  contaId: string;
+  externalReference: string;
+}) {
+  for (const delayMs of [0, 250, 750, 1500]) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const result = await listSubscriptions(
+      { externalReference: params.externalReference, limit: 10, includeDeleted: true },
+      { contaId: params.contaId },
+    ).catch(() => null);
+    const matches = result?.data ?? [];
+    if (matches.length > 0) return matches;
+  }
+  return [];
 }
 
 // =============================================================================
@@ -234,6 +255,15 @@ function computeIdempotencyKey(input: CreateStandaloneChargeInput): string {
 
 function buildStandaloneSubscriptionExternalReference(subscriptionId: string): string {
   return `alusa:standalone-subscription:${subscriptionId}`;
+}
+
+/**
+ * O Asaas devolve datas ISO, mas alguns endpoints podem incluir hora/timezone.
+ * A regra da assinatura usa apenas a data civil informada no wizard.
+ */
+function sameAsaasDate(actual: string | null | undefined, expected: string): boolean {
+  if (!actual) return true;
+  return actual.slice(0, 10) === expected;
 }
 
 const allowedBillingTypesByChargeType: Record<ChargeType, ReadonlyArray<BillingType>> = {
@@ -786,10 +816,10 @@ export async function createStandaloneCharge(
         ? await getSubscription(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
         : null;
       if (!subscription) {
-        const matches = await listSubscriptions(
-          { externalReference: subscriptionExternalReference, limit: 10, includeDeleted: true },
-          { contaId: input.contaId },
-        ).then((result) => result.data).catch(() => []);
+        const matches = await findRemoteSubscriptionWithRetry({
+          contaId: input.contaId,
+          externalReference: subscriptionExternalReference,
+        });
         if (matches.length > 1) {
           await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE' });
           return err('ERRO_AO_CRIAR_PAGAMENTO');
@@ -798,29 +828,122 @@ export async function createStandaloneCharge(
       }
       if (!subscription) {
         const claimed = await markOutboundRemoteRequested(operation.job.id);
-        if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
-        try {
-          const created = await createSubscription({ apiKey: creds.apiKey, idempotencyKey: asaasIdempotencyKey, data: subscriptionPayload });
-          subscription = await getSubscription(created.id, { contaId: input.contaId });
+        if (!claimed) {
+          // Outro request pode estar concluindo o mesmo POST. Reconcile antes
+          // de responder erro para não transformar uma operação já aceita em
+          // falsa falha na tela.
+          subscription = (await findRemoteSubscriptionWithRetry({
+            contaId: input.contaId,
+            externalReference: subscriptionExternalReference,
+          }))[0] ?? null;
+          if (!subscription) {
+            return ok({
+              chargeId: subscriptionId,
+              externalReference: subscriptionExternalReference,
+              status: 'PENDING_RECONCILIATION',
+              expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+              notificationSync,
+            });
+          }
+        } else try {
+          const created = await createSubscription({
+            apiKey: creds.apiKey,
+            idempotencyKey: asaasIdempotencyKey,
+            data: subscriptionPayload,
+          });
+          // A criação já devolve o recurso confirmado. A consulta seguinte é
+          // apenas uma verificação eventual: o Asaas pode ainda não ter
+          // indexado a assinatura, embora ela já exista e já possa gerar o
+          // primeiro pagamento. Nunca transforme essa janela de consistência
+          // em erro depois de uma criação remota bem-sucedida.
+          subscription = created;
+          try {
+            subscription = await getSubscription(created.id, { contaId: input.contaId });
+          } catch (readError) {
+            console.warn('[createStandaloneCharge] Assinatura criada; leitura de confirmação adiada', {
+              contaId: input.contaId,
+              asaasSubscriptionId: created.id,
+              error: readError instanceof Error ? readError.message : String(readError),
+            });
+          }
         } catch (remoteError) {
-          const recovered = await listSubscriptions(
-            { externalReference: subscriptionExternalReference, limit: 10, includeDeleted: true },
-            { contaId: input.contaId },
-          ).then((result) => result.data).catch(() => []);
+          // Respostas 4xx são rejeições determinísticas do provedor: não há
+          // recurso remoto a reconciliar e a intenção local permanece sem
+          // assinatura ativa. Somente timeout/5xx seguem como resultado
+          // incerto, pois o POST pode ter sido aceito antes da falha.
+          // Mesmo uma resposta 4xx pode ser uma resposta tardia/duplicada
+          // depois de o POST ter sido aceito (por exemplo, retry semântico do
+          // provedor). Sempre faça a reconciliação por externalReference antes
+          // de informar falha ao usuário.
+          const recovered = await findRemoteSubscriptionWithRetry({
+            contaId: input.contaId,
+            externalReference: subscriptionExternalReference,
+          });
           if (recovered.length === 1) subscription = recovered[0]!;
           else {
+            if (remoteError instanceof AsaasHttpError && remoteError.status >= 400 && remoteError.status < 500) {
+              return err('ERRO_AO_CRIAR_PAGAMENTO');
+            }
             await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: remoteError });
-            return err('ERRO_AO_CRIAR_PAGAMENTO');
+            return ok({
+              chargeId: subscriptionId,
+              externalReference: subscriptionExternalReference,
+              status: 'PENDING_RECONCILIATION',
+              expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+              notificationSync,
+            });
           }
         }
       }
       const subscriptionMismatch = !subscription?.id
-        || subscription.externalReference !== subscriptionExternalReference
+        || (subscription.externalReference != null && subscription.externalReference !== subscriptionExternalReference)
         || (subscription.customer != null && subscription.customer !== asaasCustomerId)
         || (subscription.value != null && Math.abs(subscription.value - input.value!) > 0.001)
-        || (subscription.nextDueDate != null && subscription.nextDueDate !== input.nextDueDate);
+        || !sameAsaasDate(subscription.nextDueDate, input.nextDueDate!);
       if (subscriptionMismatch) {
-        await markOutboundResultUnknown({ jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId, externalReference: subscriptionExternalReference, error: 'REMOTE_SUBSCRIPTION_CONFIRMATION_MISMATCH' });
+        const identityMismatch = !subscription?.id
+          || (subscription.externalReference != null && subscription.externalReference !== subscriptionExternalReference)
+          || (subscription.customer != null && subscription.customer !== asaasCustomerId);
+
+        console.warn('[createStandaloneCharge] Divergência na confirmação da assinatura', {
+          contaId: input.contaId,
+          subscriptionId,
+          asaasSubscriptionId: subscription?.id,
+          identityMismatch,
+          providerValue: subscription?.value,
+          requestedValue: input.value,
+          providerNextDueDate: subscription?.nextDueDate,
+          requestedNextDueDate: input.nextDueDate,
+        });
+
+        // Se o identificador e o pagador são compatíveis, o recurso remoto
+        // existe. Datas/valores podem chegar normalizados pelo provedor e
+        // devem ser reconciliados pelo webhook sem bloquear o wizard.
+        if (!identityMismatch) {
+          await markOutboundRemoteConfirmed(operation.job.id, subscription.id, {
+            confirmationMismatch: true,
+            providerValue: subscription.value,
+            providerNextDueDate: subscription.nextDueDate,
+          });
+          return ok({
+            chargeId: subscriptionId,
+            asaasSubscriptionId: subscription.id,
+            externalReference: subscriptionExternalReference,
+            status: 'PENDING_RECONCILIATION',
+            expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'],
+            notificationSync,
+          });
+        }
+
+        await markOutboundResultUnknown({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'SUBSCRIPTION',
+          entityId: subscriptionId,
+          externalReference: subscriptionExternalReference,
+          error: 'REMOTE_SUBSCRIPTION_CONFIRMATION_MISMATCH',
+        });
+
         return err('ERRO_AO_CRIAR_PAGAMENTO');
       }
       await markOutboundRemoteConfirmed(operation.job.id, subscription.id, { providerStatus: subscription.status });

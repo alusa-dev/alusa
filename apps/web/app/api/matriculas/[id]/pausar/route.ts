@@ -18,6 +18,14 @@ const pausarInputSchema = z.object({
   manterVaga: z.boolean(),
   cobrarDurantePausa: z.boolean(),
   observacao: z.string().trim().optional(),
+}).superRefine((value, ctx) => {
+  if (value.dataRetornoPrevista && value.dataRetornoPrevista <= value.dataInicioPausa) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['dataRetornoPrevista'],
+      message: 'A data de retorno deve ser posterior ao início da pausa.',
+    });
+  }
 });
 
 export async function POST(

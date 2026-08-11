@@ -324,10 +324,12 @@ export async function createStandaloneInstallmentPlan(
       },
     });
 
-    await prisma.asaasIntegrationJob.update({
-      where: { id: operation.job.id },
-      data: { installmentPlanId: updated.id },
-    });
+    // `AsaasIntegrationJob.installmentPlanId` references the academic
+    // `InstallmentPlan` model. Standalone parcelamentos belong to
+    // `StandaloneInstallmentPlan` and must be correlated by the durable
+    // operation payload/externalReference instead of writing an incompatible
+    // id into that foreign key. The webhook resolver uses this correlation
+    // to project each payment locally.
     await markOutboundAwaitingWebhook(operation.job.id, asaasInstallment.id);
 
     await syncInstallmentPayments({

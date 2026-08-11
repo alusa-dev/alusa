@@ -203,7 +203,7 @@ export function normalizeAgendaRange(
 ) {
   const tz = normalizeAccountTimeZone(timeZone);
   const now = new Date();
-  const safeStart = start ? new Date(start) : startOfZonedWeek(now, tz, 1);
+  const safeStart = start ? new Date(start) : startOfZonedWeek(now, tz, 0);
   const safeEnd = end ? new Date(end) : endOfZonedDay(addDays(safeStart, 6), tz);
 
   return {

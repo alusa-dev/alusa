@@ -232,3 +232,135 @@ export async function processDueBillingAgreementChanges(input?: {
   }
   return { found: rows.length, applied, uncertain };
 }
+
+/**
+ * Encerra alocações cuja vigência terminou e reduz a assinatura consolidada.
+ * `validUntil` é exclusivo: uma matrícula com fim em 31/10 deixa de compor a
+ * cobrança a partir de 01/11. A alteração remota é confirmada antes da projeção
+ * local, para que uma falha nunca reduza somente o banco da Alusa.
+ */
+export async function processExpiredBillingAllocations(input?: {
+  contaId?: string;
+  limit?: number;
+  now?: Date;
+}) {
+  const now = input?.now ?? new Date();
+  const limit = Math.min(Math.max(input?.limit ?? 25, 1), 100);
+  const agreements = await prisma.billingAgreement.findMany({
+    where: {
+      ...(input?.contaId ? { contaId: input.contaId } : {}),
+      status: { in: ['ACTIVE', 'REQUIRES_RECONCILIATION'] },
+      allocations: {
+        some: {
+          recurring: true,
+          kind: 'TUITION',
+          status: { in: ['ACTIVE', 'SCHEDULED'] },
+          validUntil: { lte: now },
+        },
+      },
+    },
+    include: { allocations: true },
+    take: limit,
+    orderBy: { updatedAt: 'asc' },
+  });
+  const asaas = createAsaasBillingAgreementPort();
+  let applied = 0;
+  let uncertain = 0;
+
+  for (const agreement of agreements) {
+    try {
+      const expired = agreement.allocations.filter(
+        (allocation) =>
+          allocation.recurring &&
+          allocation.kind === 'TUITION' &&
+          ['ACTIVE', 'SCHEDULED'].includes(allocation.status) &&
+          allocation.validUntil !== null &&
+          allocation.validUntil <= now,
+      );
+      if (expired.length === 0) continue;
+      const remaining = agreement.allocations.filter(
+        (allocation) =>
+          allocation.recurring &&
+          allocation.kind === 'TUITION' &&
+          ['ACTIVE', 'SCHEDULED'].includes(allocation.status) &&
+          allocation.validFrom <= now &&
+          (allocation.validUntil === null || allocation.validUntil > now),
+      );
+      const targetCents = remaining.reduce(
+        (sum, allocation) => sum + Math.round(Number(allocation.netAmount) * 100),
+        0,
+      );
+      const targetValidUntil =
+        remaining.length === 0 || remaining.some((allocation) => allocation.validUntil === null)
+          ? null
+          : new Date(Math.max(...remaining.map((allocation) => allocation.validUntil!.getTime())));
+
+      if (!agreement.asaasSubscriptionId) {
+        throw new Error('ASSINATURA_REMOTA_AUSENTE_PARA_ENCERRAMENTO_DE_ALOCACAO');
+      }
+      const remote = await asaas.getSubscription({
+        contaId: agreement.contaId,
+        subscriptionId: agreement.asaasSubscriptionId,
+      });
+      if (remote.deleted) throw new Error('ASSINATURA_REMOTA_REMOVIDA');
+      const nextStatus = targetCents === 0 ? 'INACTIVE' : 'ACTIVE';
+      const endDate = providerEndDate(targetValidUntil);
+      if (!endDate && remote.endDate) {
+        // A assinatura com término no Asaas não pode ser reaberta implicitamente.
+        // Mantemos o fim remoto e apenas reduzimos/inativamos o total.
+      }
+      await asaas.updateSubscription({
+        contaId: agreement.contaId,
+        subscriptionId: agreement.asaasSubscriptionId,
+        valueCents: targetCents === 0 ? remote.valueCents : targetCents,
+        status: nextStatus,
+        updatePendingPayments: true,
+        ...(endDate ? { endDate } : {}),
+      });
+      const confirmed = await asaas.getSubscription({
+        contaId: agreement.contaId,
+        subscriptionId: agreement.asaasSubscriptionId,
+      });
+      if (
+        confirmed.deleted ||
+        confirmed.status !== nextStatus ||
+        (targetCents > 0 && confirmed.valueCents !== targetCents) ||
+        (endDate && confirmed.endDate !== endDate)
+      ) {
+        throw new Error('RESULTADO_REMOTO_DE_ENCERRAMENTO_NAO_CONFIRMADO');
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.billingAllocation.updateMany({
+          where: { contaId: agreement.contaId, id: { in: expired.map((item) => item.id) } },
+          data: { status: 'ENDED' },
+        });
+        await tx.billingAgreement.updateMany({
+          where: { id: agreement.id, contaId: agreement.contaId, version: agreement.version },
+          data: {
+            desiredValue: money(targetCents),
+            confirmedValue: money(targetCents),
+            validUntil: targetValidUntil,
+            remoteStatus: confirmed.status,
+            remoteStatusUpdatedAt: now,
+            lastReconciledAt: now,
+            reconciliationError: null,
+            status: nextStatus,
+            version: { increment: 1 },
+          },
+        });
+      });
+      applied += 1;
+    } catch (error) {
+      await prisma.billingAgreement.updateMany({
+        where: { id: agreement.id, contaId: agreement.contaId },
+        data: {
+          status: 'REQUIRES_RECONCILIATION',
+          reconciliationError: `Falha ao encerrar alocação vencida: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000),
+        },
+      });
+      uncertain += 1;
+    }
+  }
+  return { found: agreements.length, applied, uncertain };
+}

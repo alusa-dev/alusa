@@ -1,6 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { AulasLookupItemDTO, CalendarEventTypeDTO } from '@/features/aulas/dtos';
@@ -9,7 +10,7 @@ import type { AgendaFiltersState } from '@/features/aulas/agenda/hooks/use-agend
 import { ChevronLeft, ChevronRight, Filter } from '@/components/icons/icons';
 import {
   DEFAULT_ACCOUNT_TIMEZONE,
-  formatInstantInAccountZone,
+  formatAgendaPeriodLabel,
 } from '@/lib/agenda-timezone';
 
 type AgendaFiltersProps = {
@@ -38,11 +39,7 @@ export function AgendaFilters({
   embedded = false,
   showCurrentLabel = true,
 }: AgendaFiltersProps) {
-  const currentLabel = `${formatInstantInAccountZone(filters.start, 'dd/MM', timeZone)} - ${formatInstantInAccountZone(
-    filters.end,
-    'dd/MM',
-    timeZone,
-  )}`;
+  const currentLabel = formatAgendaPeriodLabel(filters.start, filters.end, filters.viewMode, timeZone);
   const activeSecondaryFilters =
     (filters.turmaId ? 1 : 0) +
     (filters.professorId ? 1 : 0) +
@@ -74,7 +71,7 @@ export function AgendaFilters({
                   {activeSecondaryFilters > 0 ? `Filtros (${activeSecondaryFilters})` : 'Filtros'}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-[320px] rounded-2xl border-slate-200 p-4">
+              <PopoverContent align="end" className="w-[320px] max-w-[calc(100vw-2rem)] rounded-2xl border-slate-200 p-4">
                 <div className="space-y-4">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">Filtros adicionais</div>
@@ -156,31 +153,38 @@ export function AgendaFilters({
                       </Select>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                    <fieldset className="space-y-2">
+                      <legend className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                         Tipo
-                      </label>
-                      <Select
-                        value={filters.type?.[0] ?? ALL}
-                        onValueChange={(value) =>
-                          onFiltersChange({
-                            type: value === ALL ? undefined : [value as CalendarEventTypeDTO],
-                          })
-                        }
-                      >
-                        <SelectTrigger className="h-9 rounded-xl border-slate-200 bg-white">
-                          <SelectValue placeholder="Tipo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ALL}>Todos os tipos</SelectItem>
-                          {CALENDAR_EVENT_TYPE_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                      </legend>
+                      <div className="grid max-h-44 grid-cols-2 gap-2 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/60 p-2">
+                        {CALENDAR_EVENT_TYPE_OPTIONS.map((option) => {
+                          const id = `agenda-type-${option.value.toLowerCase()}`;
+                          const checked = filters.type?.includes(option.value as CalendarEventTypeDTO) ?? false;
+
+                          return (
+                            <label
+                              key={option.value}
+                              htmlFor={id}
+                              className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-slate-700 transition-colors hover:bg-white"
+                            >
+                              <Checkbox
+                                id={id}
+                                checked={checked}
+                                aria-label={option.label}
+                                onCheckedChange={(nextChecked) => {
+                                  const nextTypes = nextChecked
+                                    ? [...(filters.type ?? []), option.value]
+                                    : (filters.type ?? []).filter((type) => type !== option.value);
+                                  onFiltersChange({ type: nextTypes.length > 0 ? nextTypes : undefined });
+                                }}
+                              />
+                              <span className="truncate">{option.label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
                   </div>
 
                   {activeSecondaryFilters > 0 ? (
@@ -207,10 +211,24 @@ export function AgendaFilters({
             <Button variant="outline" className="h-9 rounded-xl border-slate-200" onClick={() => onNavigatePeriod('today')}>
               Hoje
             </Button>
-            <Button variant="outline" size="icon" className="h-9 w-9 rounded-xl border-slate-200" onClick={() => onNavigatePeriod('prev')}>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 rounded-xl border-slate-200"
+              aria-label="Período anterior"
+              title="Período anterior"
+              onClick={() => onNavigatePeriod('prev')}
+            >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Button variant="outline" size="icon" className="h-9 w-9 rounded-xl border-slate-200" onClick={() => onNavigatePeriod('next')}>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 rounded-xl border-slate-200"
+              aria-label="Próximo período"
+              title="Próximo período"
+              onClick={() => onNavigatePeriod('next')}
+            >
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

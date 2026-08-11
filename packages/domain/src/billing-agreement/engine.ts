@@ -154,12 +154,8 @@ function decideCurrentCycleEffect(input: {
   }
   if (charge.state === 'OVERDUE') {
     return {
-      updatePendingPayments: false,
-      adjustment: {
-        type: 'MANUAL_REVIEW',
-        amountCents: Math.abs(deltaCents),
-        reason: 'OVERDUE_CHARGE_REQUIRES_REVIEW',
-      },
+      updatePendingPayments: true,
+      adjustment: noAdjustment('OVERDUE_CHARGE_CAN_BE_UPDATED'),
     };
   }
   if (charge.state === 'PAID') {

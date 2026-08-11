@@ -38,14 +38,16 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
   fullScreenMobile?: boolean;
   /** Impede fechar pelo botão enquanto uma operação crítica está em andamento. */
   closeDisabled?: boolean;
+  /** Classes visuais específicas para o overlay deste diálogo. */
+  overlayClass?: string;
 };
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, fullScreenMobile, closeDisabled = false, ...props }, ref) => (
+>(({ className, children, fullScreenMobile, closeDisabled = false, overlayClass, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay className={cn(fullScreenMobile && 'max-md:p-0')} />
+    <DialogOverlay className={cn(fullScreenMobile && 'max-md:p-0', overlayClass)} />
     {/* Wrapper flex para centralização perfeita e suportar scroll em telas baixas */}
     <div
       className={cn(

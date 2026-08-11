@@ -140,6 +140,12 @@ async function loadFinanceSubscriptionSources(params: {
       where,
       orderBy: { createdAt: 'desc' },
       include: {
+        billingAgreement: {
+          select: {
+            desiredValue: true,
+            confirmedValue: true,
+          },
+        },
         matricula: {
           select: {
             id: true,
@@ -341,7 +347,9 @@ export async function listSubscriptionsForFinance(
         ? responsavel?.nome ?? 'Sem responsável vinculado'
         : aluno.nome;
 
-      const valor = plano?.valor ?? combo?.valor ?? 0;
+      // Para acordos compartilhados, exibir o total da assinatura (soma das
+      // matrículas vinculadas), e não apenas o valor do plano desta matrícula.
+      const valor = sub.billingAgreement?.desiredValue ?? plano?.valor ?? combo?.valor ?? 0;
       const periodicidade = plano?.periodicidade ?? 'MENSAL';
       const cycleLabel = CYCLE_LABELS[periodicidade] ?? periodicidade;
       const description = plano?.descricao ?? plano?.nome ?? combo?.nome ?? null;

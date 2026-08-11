@@ -1,6 +1,10 @@
 import { dashboardMetricsResultDTOSchema } from '@/features/dashboard/dtos';
 import { mapDashboardMetricsResultToDTO } from '@/features/dashboard/mappers';
-import { resolveAlunoPublicAvatar } from '@/lib/media/avatar-url';
+import {
+  avatarVersionFromFoto,
+  resolveAlunoPublicAvatar,
+  resolvePublicAvatarUrl,
+} from '@/lib/media/avatar-url';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { withPerfTimer } from '@/lib/perf-logger';
 
@@ -79,11 +83,23 @@ function toNumber(value: unknown): number {
   return Number(value);
 }
 
+function resolveBirthdayAvatar(birthday: BirthdayRow) {
+  if (birthday.tipo === 'ALUNO') return resolveAlunoPublicAvatar(birthday);
+
+  return resolvePublicAvatarUrl({
+    entity: 'colaborador',
+    id: birthday.id,
+    foto: birthday.foto,
+    version: avatarVersionFromFoto(birthday.foto),
+  });
+}
+
 type BirthdayRow = {
   id: string;
   nome: string;
   foto: string | null;
   dataNasc: Date;
+  tipo: 'ALUNO' | 'COLABORADOR';
 };
 
 export async function loadDashboardMetricsBody(contaId: string) {
@@ -116,7 +132,6 @@ export async function loadDashboardMetricsBody(contaId: string) {
     return { inicioDia, fimDia };
   });
   const startOfWeeklyWindow = weeklyWindows[0]?.inicioDia ?? startOfToday;
-  const currentMonth = now.getMonth() + 1;
 
   const [
     totalAlunos,
@@ -124,6 +139,7 @@ export async function loadDashboardMetricsBody(contaId: string) {
     turmasAtivas,
     lessonEvents,
     aniversariantesDoMesData,
+    colaboradoresAniversariantesData,
     aulasExperimentaisData,
     totalMatriculas,
     matriculasAtivas,
@@ -164,14 +180,27 @@ export async function loadDashboardMetricsBody(contaId: string) {
           },
         }),
         tx.$queryRaw<BirthdayRow[]>`
-          SELECT id, nome, foto, "dataNasc"
+          SELECT id, nome, foto, "dataNasc", 'ALUNO' AS tipo
           FROM "Aluno"
           WHERE "contaId" = ${contaId}
             AND status = 'ATIVO'
             AND "dataNasc" IS NOT NULL
-            AND EXTRACT(MONTH FROM "dataNasc") = ${currentMonth}
-          ORDER BY EXTRACT(DAY FROM "dataNasc"), nome
+          ORDER BY EXTRACT(MONTH FROM "dataNasc"), EXTRACT(DAY FROM "dataNasc"), nome
         `,
+        tx.colaborador.findMany({
+          where: {
+            contaId,
+            status: 'ATIVO',
+            dataNasc: { not: null },
+          },
+          select: {
+            id: true,
+            nome: true,
+            nomeSocial: true,
+            foto: true,
+            dataNasc: true,
+          },
+        }),
         tx.aulaExperimental.findMany({
           where: {
             contaId,
@@ -317,20 +346,38 @@ export async function loadDashboardMetricsBody(contaId: string) {
 
   const { aulasHoje, pendencias } = buildTodayLessonSummary(lessonEvents);
 
-  const aniversariantesDoMes = aniversariantesDoMesData.map((aluno) => {
-    const avatarUrl = resolveAlunoPublicAvatar(aluno);
+  const aniversariantesDoMes = [
+    ...aniversariantesDoMesData,
+    ...colaboradoresAniversariantesData.map((colaborador) => ({
+        id: colaborador.id,
+        nome: colaborador.nomeSocial || colaborador.nome,
+        foto: colaborador.foto,
+        dataNasc: colaborador.dataNasc as Date,
+        tipo: 'COLABORADOR' as const,
+      })),
+  ]
+    .sort((first, second) => {
+      const dayDiff = first.dataNasc.getDate() - second.dataNasc.getDate();
+      if (dayDiff !== 0) return dayDiff;
+      return first.nome.localeCompare(second.nome, 'pt-BR');
+    })
+    .map((aniversariante) => {
+    const avatarUrl = resolveBirthdayAvatar(aniversariante);
     return {
-      id: aluno.id,
-      nome: aluno.nome,
+      id: aniversariante.id,
+      nome: aniversariante.nome,
+      tipo: aniversariante.tipo,
       foto: avatarUrl,
       avatarUrl,
-      dia: aluno.dataNasc.getDate(),
-      mes: aluno.dataNasc.getMonth() + 1,
-      dataNascimento: aluno.dataNasc.toISOString(),
+      dia: aniversariante.dataNasc.getDate(),
+      mes: aniversariante.dataNasc.getMonth() + 1,
+      dataNascimento: aniversariante.dataNasc.toISOString(),
     };
-  });
+    });
 
-  const aniversariantesDoMesAtivos = aniversariantesDoMes.length;
+  const aniversariantesDoMesAtivos = aniversariantesDoMes.filter(
+    (aniversariante) => aniversariante.mes === now.getMonth() + 1,
+  ).length;
 
   const aulasExperimentais = aulasExperimentaisData.map((aula) => {
     const avatarUrl = resolveAlunoPublicAvatar({ id: aula.alunoId, foto: aula.aluno.foto });

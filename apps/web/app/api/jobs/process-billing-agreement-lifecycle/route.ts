@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
   processDueBillingAgreementChanges,
+  processExpiredBillingAllocations,
   processPendingBillingAdjustments,
 } from '@alusa/finance';
 
@@ -24,11 +25,15 @@ async function run(req: Request) {
       contaId: scope.contaId ?? undefined,
       limit,
     });
+    const expiredAllocations = await processExpiredBillingAllocations({
+      contaId: scope.contaId ?? undefined,
+      limit,
+    });
     const adjustments = await processPendingBillingAdjustments({
       contaId: scope.contaId ?? undefined,
       limit,
     });
-    return NextResponse.json({ success: true, scheduled, adjustments });
+    return NextResponse.json({ success: true, scheduled, expiredAllocations, adjustments });
   } catch (error) {
     console.error('[jobs/process-billing-agreement-lifecycle]', error);
     return NextResponse.json(

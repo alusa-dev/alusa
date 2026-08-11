@@ -61,8 +61,8 @@ describe('PUT /api/matriculas/[id]/taxa', () => {
     mocks.getSessionUser.mockResolvedValue({ id: 'user-1', contaId: 'conta-1', role: 'FINANCEIRO' });
     mocks.allocationFindFirst.mockResolvedValue(allocation);
     mocks.allocationFindMany.mockResolvedValue([
-      { id: 'allocation-1', netAmount: 100 },
-      { id: 'allocation-2', netAmount: 80 },
+      { id: 'allocation-1', matriculaId: 'matricula-1', netAmount: 100 },
+      { id: 'allocation-2', matriculaId: 'matricula-2', netAmount: 80 },
     ]);
     mocks.getPayment.mockResolvedValue({
       id: 'payment-1',
@@ -95,6 +95,13 @@ describe('PUT /api/matriculas/[id]/taxa', () => {
         data: expect.objectContaining({ netAmount: 120 }),
       }),
     );
+    expect(mocks.matriculaUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['matricula-1', 'matricula-2'] },
+        contaId: 'conta-1',
+      },
+      data: { taxaMatricula: 200 },
+    });
   });
 
   it('não altera taxa já paga', async () => {

@@ -46,6 +46,7 @@ export const matriculaStatusFinanceiroDTOSchema = z.enum([
   'ADIMPLENTE',
   'INADIMPLENTE',
   'PENDENTE_FINANCEIRO',
+  'SUSPENSO',
 ]);
 export type MatriculaStatusFinanceiroDTO = z.infer<typeof matriculaStatusFinanceiroDTOSchema>;
 
@@ -176,6 +177,13 @@ export const initialEnrollmentBillingPreviewResultDTOSchema = z.object({
     monthlyTotal: z.number(),
     enrollmentFeeTotal: z.number(),
     itemCount: z.number().int().nonnegative(),
+  }),
+  validityImpact: z.object({
+    existingEndDate: dateStringDTOSchema.nullable().default(null),
+    addedEndDate: dateStringDTOSchema,
+    resultingEndDate: dateStringDTOSchema,
+    isDifferent: z.boolean(),
+    rule: z.string(),
   }),
   billingImpact: z.object({
     currentMonthlyAmount: z.number(),
@@ -465,6 +473,8 @@ export const matriculaAlunoResumoDTOSchema = z.object({
   id: z.string(),
   nome: nullableStringDTOSchema.default(null),
   cpf: nullableStringDTOSchema.default(null),
+  email: nullableStringDTOSchema.default(null),
+  telefone: nullableStringDTOSchema.default(null),
   foto: nullableStringDTOSchema.default(null).optional(),
 });
 export type MatriculaAlunoResumoDTO = z.infer<typeof matriculaAlunoResumoDTOSchema>;
@@ -545,6 +555,7 @@ export const matriculaResumoDTOSchema = z.object({
   aluno: matriculaAlunoResumoDTOSchema,
   plano: matriculaPlanoResumoDTOSchema.nullable().default(null),
   responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable().default(null),
+  isSharedSubscription: z.boolean().default(false).optional(),
   turma: matriculaTurmaResumoDTOSchema.nullable().default(null),
   turmas: z.array(matriculaTurmaResumoDTOSchema).default([]),
   combo: matriculaComboResumoDTOSchema.nullable().default(null),
@@ -823,6 +834,18 @@ export const matriculaStatusSyncDataDTOSchema = z.object({
   cobrancasAtualizadas: z.number().int().nonnegative(),
   nextDueDate: nullableDateStringDTOSchema.default(null),
   paymentSync: matriculaPaymentSyncInfoDTOSchema,
+  familyImpact: z
+    .object({
+      familyId: z.string(),
+      previousStatus: z.string(),
+      newStatus: z.string(),
+      remainingStudents: z.number().int().nonnegative(),
+      previousMonthlyValue: z.number().nonnegative(),
+      newMonthlyValue: z.number().nonnegative(),
+      valueChanged: z.boolean(),
+    })
+    .nullable()
+    .optional(),
 });
 export type MatriculaStatusSyncDataDTO = z.infer<typeof matriculaStatusSyncDataDTOSchema>;
 

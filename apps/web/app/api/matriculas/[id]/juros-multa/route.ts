@@ -18,6 +18,7 @@ import {
   updateFamilyFinancialLocalState,
 } from '@/src/server/matriculas/financial-context.service';
 import { syncEditableSubscriptionPayments } from '@/src/server/matriculas/subscription-pending-payments-sync';
+import { markEnrollmentFinanceDivergence } from '@/src/server/matriculas/enrollment-finance-consistency.service';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -266,6 +267,31 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       },
     });
 
+    if (remotePaymentsAlignment.failed > 0) {
+      await markEnrollmentFinanceDivergence({
+        contaId: contaCtx.contaId,
+        matriculaId,
+        asaasSubscriptionId: targetSubscriptionId,
+        issue: 'PAYMENT_STATUS_DRIFT',
+        severity: 'HIGH',
+        localStatus: 'PENDING_SYNC',
+        remoteStatus: 'PARTIAL_FAILURE',
+        metadata: {
+          operation: 'SUBSCRIPTION_TERMS_UPDATE',
+          mode: financialContext.mode,
+          familyGroupId: financialContext.family?.id ?? null,
+          remotePaymentsAlignment,
+        },
+      });
+
+      return jsonError(
+        502,
+        'COBRANCAS_PENDENTES_NAO_ALINHADAS',
+        'A assinatura foi atualizada, mas uma ou mais cobranças pendentes não puderam ser alinhadas. A operação foi registrada para reconciliação.',
+        { remotePaymentsAlignment },
+      );
+    }
+
     const updateData = {
       jurosMensal: interest?.value ?? null,
       jurosTipo: interest ? 'PERCENTAGE' : null,
@@ -275,22 +301,23 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       descontoTipo: discount && discount.value > 0 ? discount.type ?? null : null,
       prazoDesconto: discount && discount.value > 0 ? discount.dueDateLimitDays ?? null : null,
     };
-    const updatedMatricula =
-      financialContext.mode === 'FAMILY'
-        ? await prisma.matricula.update({
-            where: { id: financialContext.sourceMatriculaId },
-            data: updateData,
-          })
-        : await prisma.matricula.update({
-            where: { id: matriculaId },
-            data: updateData,
-          });
+    const updatedMatricula = await prisma.matricula.update({
+      where: {
+        id: financialContext.mode === 'FAMILY' ? financialContext.sourceMatriculaId : matriculaId,
+      },
+      data: updateData,
+    });
 
-    if (financialContext.mode === 'FAMILY' && financialContext.family) {
+    const affectedMatriculaIds =
+      financialContext.mode === 'FAMILY'
+        ? financialContext.family?.affectedMatriculaIds ?? []
+        : financialContext.sharedAgreement?.affectedMatriculaIds ?? [];
+
+    if (affectedMatriculaIds.length > 0) {
       await prisma.matricula.updateMany({
         where: {
           contaId: contaCtx.contaId,
-          id: { in: financialContext.family.affectedMatriculaIds },
+          id: { in: affectedMatriculaIds },
         },
         data: updateData,
       });
@@ -305,7 +332,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
           asaasSubscriptionId: targetSubscriptionId,
           mode: financialContext.mode,
           familyGroupId: financialContext.family?.id ?? null,
-          affectedMatriculaIds: financialContext.family?.affectedMatriculaIds ?? [matriculaId],
+          affectedMatriculaIds: affectedMatriculaIds.length > 0 ? affectedMatriculaIds : [matriculaId],
           previousSubscriptionStatus: localSubscription?.status ?? 'UNKNOWN',
           interest: asaasInterest ? { ...asaasInterest, type: 'PERCENTAGE' } : null,
           fine,

@@ -124,7 +124,7 @@ export const responsavelFamilyChargeDTOSchema = z.object({
 
 export const responsavelSubscriptionDTOSchema = z.object({
   id: z.string().min(1),
-  source: z.literal('AVULSA'),
+  source: z.enum(['AVULSA', 'MATRICULA']),
   status: z.string().min(1),
   asaasSubscriptionId: z.string().nullable(),
   externalReference: z.string().nullable(),

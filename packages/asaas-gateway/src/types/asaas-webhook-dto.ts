@@ -54,6 +54,7 @@ export interface AsaasWebhookSubscription {
   value: number;
   status: AsaasSubscriptionStatus;
   nextDueDate?: string | null;
+  endDate?: string | null;
   cycle?: string;
   description?: string | null;
   externalReference?: string | null;

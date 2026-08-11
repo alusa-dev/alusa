@@ -126,10 +126,17 @@ async function transition(input: {
 }) {
   const current = await prisma.asaasIntegrationJob.findUnique({
     where: { id: input.jobId },
-    select: { payload: true },
+    select: { payload: true, status: true },
   });
   const payload = current ? parseOutboundFinancialOperation(current.payload) : null;
-  if (!payload) throw new Error('OUTBOUND_OPERATION_NOT_FOUND');
+  if (!current || !payload) throw new Error('OUTBOUND_OPERATION_NOT_FOUND');
+
+  // Um webhook pode confirmar a operação enquanto a requisição original
+  // ainda está encerrando. Nunca regrida uma operação terminal para
+  // PROCESSING/FAILED por causa dessa corrida.
+  if (current.status === 'DONE' && input.state !== 'SYNCHRONIZED') {
+    return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
+  }
   const now = new Date();
   const message = input.error instanceof Error ? input.error.message : input.error ? String(input.error) : undefined;
   const next: OutboundFinancialOperationPayload = {

@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { useModelos } from '@/features/contratos/hooks/use-modelos';
 import type { WizardContextValue } from '../types';
 import { calcularValorLiquidoComBeneficio } from '../beneficios';
+import { calculateFamilyMonthlyTotal } from '../family-pricing';
 import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR');
@@ -151,20 +152,17 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     null;
 
   const recurringChargeTotal = useMemo(() => {
-    if (state.modoTurmas === 'COMBO') {
-      if (state.modoMatricula === 'FAMILIAR') {
-        return state.alunosFamiliares.reduce(
-          (total, aluno) =>
-            total + calcularValorLiquidoComBeneficio(aluno.comboValor ?? 0, state.beneficioSelecionado),
-          0,
-        );
-      }
+    if (state.modoMatricula === 'FAMILIAR') {
+      return calculateFamilyMonthlyTotal(state);
+    }
 
+    if (state.modoTurmas === 'COMBO') {
       return calcularValorLiquidoComBeneficio(state.comboValor ?? 0, state.beneficioSelecionado);
     }
 
-    return calcularValorLiquidoComBeneficio(state.planoValor ?? 0, state.beneficioSelecionado);
-  }, [state.alunosFamiliares, state.beneficioSelecionado, state.comboValor, state.modoMatricula, state.modoTurmas, state.planoValor]);
+    const value = calcularValorLiquidoComBeneficio(state.planoValor ?? 0, state.beneficioSelecionado);
+    return value;
+  }, [state]);
 
   const normalizedStartDate = dataInicio ? normalizeDate(dataInicio) : undefined;
   const normalizedEndDate = dataFimContrato ? normalizeDate(dataFimContrato) : undefined;

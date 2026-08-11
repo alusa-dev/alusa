@@ -73,6 +73,64 @@ export function formatInstantInAccountZone(
   return format(z, fmt, options?.locale ? { locale: options.locale } : undefined);
 }
 
+function getAgendaDateParts(instant: string | Date, timeZone: string) {
+  const value = typeof instant === 'string' ? new Date(instant) : instant;
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    timeZone: normalizeAccountTimeZoneClient(timeZone),
+  }).formatToParts(value);
+
+  return Object.fromEntries(parts.map((part) => [part.type, part.value])) as {
+    day: string;
+    month: string;
+    year: string;
+  };
+}
+
+export function formatAgendaPeriodLabel(
+  start: string | Date,
+  end: string | Date,
+  viewMode: AgendaCalendarViewMode,
+  timeZone: string,
+) {
+  const startParts = getAgendaDateParts(start, timeZone);
+  const endParts = getAgendaDateParts(end, timeZone);
+
+  if (viewMode !== 'week') {
+    return `${startParts.month} de ${startParts.year}`;
+  }
+
+  if (startParts.month === endParts.month && startParts.year === endParts.year) {
+    return `${startParts.day}–${endParts.day} de ${startParts.month} de ${startParts.year}`;
+  }
+
+  if (startParts.year === endParts.year) {
+    return `${startParts.day} de ${startParts.month} – ${endParts.day} de ${endParts.month} de ${endParts.year}`;
+  }
+
+  return `${startParts.day} de ${startParts.month} de ${startParts.year} – ${endParts.day} de ${endParts.month} de ${endParts.year}`;
+}
+
+export function formatAgendaDayLabel(instant: string | Date, timeZone: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    timeZone: normalizeAccountTimeZoneClient(timeZone),
+  }).format(typeof instant === 'string' ? new Date(instant) : instant);
+}
+
+export function formatAgendaTimeLabel(instant: string | Date, timeZone: string) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: normalizeAccountTimeZoneClient(timeZone),
+  }).format(typeof instant === 'string' ? new Date(instant) : instant);
+}
+
 /** Naive `YYYY-MM-DDTHH:mm` interpreted as wall time in the account zone → UTC ISO. */
 export function zonedNaiveToUtcIso(naive: string, timeZone: string): string {
   const [datePart, timePart = ''] = naive.split('T');
@@ -109,8 +167,8 @@ export function buildZonedAgendaRangeIso(
   const zAnchor = new TZDateMini(anchor.getTime(), tz);
 
   if (viewMode === 'week') {
-    const wStart = startOfWeek(zAnchor, { weekStartsOn: 1 });
-    const wEnd = endOfWeek(zAnchor, { weekStartsOn: 1 });
+    const wStart = startOfWeek(zAnchor, { weekStartsOn: 0 });
+    const wEnd = endOfWeek(zAnchor, { weekStartsOn: 0 });
     return {
       start: new Date(wStart.getTime()).toISOString(),
       end: new Date(wEnd.getTime()).toISOString(),

@@ -77,4 +77,27 @@ describe('REQUEST_SOURCE_SUBSCRIPTION_CLOSURE', () => {
     expect(mocks.preview).toHaveBeenCalledTimes(1);
     expect(mocks.commit).toHaveBeenCalledTimes(1);
   });
+
+  it('permite reconciliação explícita de evento que teve resultado incerto', async () => {
+    mocks.outboxFindUnique.mockResolvedValue({
+      id: 'outbox-1',
+      contaId: 'conta-1',
+      aggregateId: 'renewal-1',
+      eventType: 'REQUEST_SOURCE_SUBSCRIPTION_CLOSURE',
+      status: 'REQUIRES_RECONCILIATION',
+      attempts: 1,
+      payload: {
+        contaId: 'conta-1',
+        aggregateId: 'renewal-1',
+        sourceFinancialAgreementId: 'standalone-1',
+        sourceAsaasSubscriptionId: 'asaas-1',
+        effectiveDate: '2026-08-31',
+      },
+    });
+
+    await expect(
+      processFamilyBillingOutboxEvent('outbox-1', { allowReconciliation: true }),
+    ).resolves.toEqual({ processed: true });
+    expect(mocks.outboxUpdateMany).toHaveBeenCalled();
+  });
 });

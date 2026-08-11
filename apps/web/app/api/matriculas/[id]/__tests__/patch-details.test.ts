@@ -25,6 +25,8 @@ const {
   prismaMock: {
     matricula: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
     },
     cobranca: {
       updateMany: vi.fn(),
@@ -34,6 +36,10 @@ const {
     },
     subscription: {
       findFirst: vi.fn(),
+    },
+    billingAllocation: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -77,6 +83,8 @@ describe('PATCH /api/matriculas/[id]', () => {
     getServerSessionMock.mockResolvedValue({ user: { id: 'user-1', contaId: 'conta-1' } });
     prismaMock.cobranca.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.charge.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.billingAllocation.findFirst.mockResolvedValue(null);
+    prismaMock.billingAllocation.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('sincroniza o novo dia de vencimento com o vínculo financeiro antes de salvar localmente', async () => {
@@ -136,7 +144,7 @@ describe('PATCH /api/matriculas/[id]', () => {
     expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
       where: {
         matriculaId: 'mat-1',
-        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+        status: { in: ['PENDENTE', 'A_VENCER'] },
       },
       data: {
         vencimento: new Date('2026-03-10T12:00:00.000Z'),
@@ -147,7 +155,7 @@ describe('PATCH /api/matriculas/[id]', () => {
         contaId: 'conta-1',
         cobranca: {
           matriculaId: 'mat-1',
-          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+          status: { in: ['PENDENTE', 'A_VENCER'] },
         },
       },
       data: {
@@ -266,5 +274,82 @@ describe('PATCH /api/matriculas/[id]', () => {
     expect(data.error.code).toBe('PAYLOAD_INVALIDO');
     expect(updateSubscriptionMock).not.toHaveBeenCalled();
     expect(atualizarStatusMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('mantém a assinatura compartilhada até a maior data de fim das matrículas', async () => {
+    prismaMock.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1',
+      asaasSubscriptionId: null,
+      dataFimContrato: new Date('2026-12-31T00:00:00.000Z'),
+      vencimentoDia: 5,
+      subscriptions: [],
+    });
+    prismaMock.matricula.findMany.mockResolvedValue([
+      { id: 'mat-1', dataFimContrato: new Date('2026-12-31T00:00:00.000Z') },
+      { id: 'mat-2', dataFimContrato: new Date('2026-12-31T00:00:00.000Z') },
+    ]);
+    prismaMock.billingAllocation.findFirst.mockResolvedValue({
+      agreement: {
+        id: 'agreement-1',
+        asaasSubscriptionId: 'sub_shared',
+        status: 'ACTIVE',
+        remoteStatus: 'ACTIVE',
+        confirmedValue: 300,
+        nextDueDate: new Date('2026-09-05T00:00:00.000Z'),
+        dueDay: 5,
+        validUntil: new Date('2026-12-31T00:00:00.000Z'),
+        allocations: [{ matriculaId: 'mat-1' }, { matriculaId: 'mat-2' }],
+      },
+    });
+    prismaMock.subscription.findFirst.mockResolvedValue({
+      status: 'ACTIVE',
+      updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    getSubscriptionMock.mockResolvedValue({
+      id: 'sub_shared',
+      status: 'ACTIVE',
+      deleted: false,
+      nextDueDate: '2026-09-05',
+      endDate: '2026-12-31',
+    });
+    atualizarDetalhesMatriculaMock.mockResolvedValue({
+      id: 'mat-1',
+      alunoId: 'aluno-1',
+      status: 'ATIVA',
+      vencimentoDia: 5,
+      dataInicio: new Date('2026-03-01T00:00:00.000Z'),
+      dataFimContrato: new Date('2026-11-30T00:00:00.000Z'),
+      taxaMatricula: 0,
+      taxaStatus: 'PENDENTE',
+      taxaIsenta: false,
+      createdAt: new Date('2026-03-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-08-09T00:00:00.000Z'),
+    });
+
+    const response = await PATCH(
+      buildRequest({ dataFimContrato: '2026-11-30T00:00:00.000Z' }),
+      { params: Promise.resolve({ id: 'mat-1' }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(updateSubscriptionMock).not.toHaveBeenCalled();
+    expect(projectConfirmedBillingAgreementSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        asaasSubscriptionId: 'sub_shared',
+        validUntil: '2027-01-01',
+      }),
+    );
+    expect(atualizarDetalhesMatriculaMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'mat-1',
+        dataFimContrato: '2026-11-30T00:00:00.000Z',
+      }),
+    );
+    expect(prismaMock.billingAllocation.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ agreementId: 'agreement-1', matriculaId: 'mat-1' }),
+        data: { validUntil: new Date('2026-12-01T00:00:00.000Z') },
+      }),
+    );
   });
 });

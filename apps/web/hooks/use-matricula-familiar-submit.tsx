@@ -5,6 +5,7 @@ import type {
   WizardState,
 } from '@/components/matriculas/wizard/types';
 import { previewInitialEnrollmentBillingRequest } from '@/features/cadastro/matriculas/services/matriculas-service';
+import { calculateFamilyMonthlyTotal } from '@/components/matriculas/wizard/family-pricing';
 
 interface UseMatriculaFamiliarSubmitOptions {
   onSuccess?: (_outcome: FamilyEnrollmentOutcome) => void;
@@ -25,25 +26,6 @@ function generateRequestId() {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function applyBenefit(value: number, state: WizardState) {
-  const benefit = state.beneficioSelecionado;
-  if (!benefit) return value;
-  return benefit.tipo === 'PERCENTUAL'
-    ? Math.max(0, value - (value * benefit.valor) / 100)
-    : Math.max(0, value - benefit.valor);
-}
-
-function familyMonthlyAmount(state: WizardState) {
-  const total =
-    state.modoTurmas === 'TURMAS'
-      ? applyBenefit(state.planoValor ?? 0, state)
-      : state.alunosFamiliares.reduce(
-          (sum, aluno) => sum + applyBenefit(aluno.comboValor ?? 0, state),
-          0,
-        );
-  return Math.round((total + Number.EPSILON) * 100) / 100;
 }
 
 function buildPayload(
@@ -137,7 +119,7 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
         enrollmentMode: 'FAMILY',
         familyPricingMode:
           state.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
-        aggregateMonthlyAmount: familyMonthlyAmount(state),
+        aggregateMonthlyAmount: calculateFamilyMonthlyTotal(state),
         aggregateEnrollmentFeeAmount: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
         billingStrategy,
         strategy:
@@ -190,26 +172,30 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
               }]
             : [];
 
-        setResults(errorResults);
-        if (
-          typeof payload.familyId === 'string' &&
-          errorResults.some((result) => result.status === 'success')
-        ) {
-          const partialOutcome: FamilyEnrollmentOutcome = {
-            familyId: payload.familyId,
-            operationId:
-              typeof payload.operationId === 'string' ? payload.operationId : undefined,
-            operationStatus: payload.operationStatus ?? 'FAILED',
-            academicStatus: payload.academicStatus ?? 'PARCIAL',
-            billingProvisionStatus: payload.billingProvisionStatus ?? 'FALHO',
-            paymentStatus: payload.paymentStatus ?? 'PENDENTE',
-            financialError: sanitizeMessage(message),
-            results: errorResults,
-          };
-          setOutcome(partialOutcome);
-          options.onSuccess?.(partialOutcome);
+        const rolledBackMessage =
+          payload.error?.code === 'FALHA_CRIACAO_MATRICULAS_FAMILIARES' ||
+          payload.operationStatus === 'FAILED' ||
+          payload.operationStatus === 'REQUIRES_RECONCILIATION'
+            ? 'Nenhuma matrícula foi criada: o lote familiar inteiro foi desfeito.'
+            : null;
+        const normalizedResults = rolledBackMessage
+          ? errorResults.map((result) =>
+              result.status === 'success'
+                ? {
+                    ...result,
+                    status: 'error' as const,
+                    matriculaId: undefined,
+                    contratoId: undefined,
+                    errorMessage: rolledBackMessage,
+                  }
+                : result,
+            )
+            : errorResults;
+        setResults(normalizedResults);
+        // Uma falha global não pode reutilizar a mesma confirmação. O backend
+        // mantém a operação como trilha de auditoria e exige novo preview/id.
+        if (payload.operationStatus !== 'REQUIRES_RECONCILIATION') {
           requestIdRef.current = null;
-          return partialOutcome;
         }
         throw new Error(sanitizeMessage(message));
       }

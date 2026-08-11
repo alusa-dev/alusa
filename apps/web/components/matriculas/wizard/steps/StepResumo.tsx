@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { SectionCard, StepHeader } from '@/components/alunos/wizard/ui';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
 import type { WizardContextValue } from '../types';
 import {
   previewInitialEnrollmentBillingRequest,
@@ -12,6 +13,10 @@ import {
   calcularValorLiquidoComBeneficio,
   descreverBeneficioSelecionado,
 } from '../beneficios';
+import {
+  calculateFamilyBenefitTotal,
+  calculateFamilyMonthlyTotal,
+} from '../family-pricing';
 
 interface StepResumoProps {
   ctx: WizardContextValue;
@@ -30,51 +35,73 @@ function BillingOperationalSummary({
   const nextCycleDate = preview.billingImpact.nextCycleDate
     ? new Date(preview.billingImpact.nextCycleDate).toLocaleDateString('pt-BR')
     : null;
+  const friendlyMessage =
+    preview.billingImpact.currentCycleAction === 'UPDATE_PENDING'
+      ? 'A cobrança atual está pendente e será atualizada com o novo valor após a confirmação dos dados.'
+      : preview.billingImpact.currentCycleAction === 'SCHEDULE_NEXT_CYCLE'
+        ? 'A cobrança atual será mantida. A mudança será aplicada a partir do próximo ciclo.'
+        : preview.billingImpact.currentCycleAction === 'CREATE_COMPLEMENT'
+          ? 'A cobrança atual já foi paga. O valor deste aluno será gerado em uma cobrança complementar.'
+          : preview.billingImpact.currentCycleAction === 'MANUAL_REVIEW'
+            ? 'A cobrança atual precisa ser revisada antes de incluir este aluno no agrupamento.'
+            : preview.billingImpact.operationalMessage;
 
   return (
-    <div
-      className={
-        blocked
-          ? 'rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800'
-          : requiresAttention
-            ? 'rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900'
-            : 'rounded-md border border-violet-200 bg-white/70 p-3 text-xs text-violet-900'
-      }
+    <InfoCallout
+      variant={blocked || requiresAttention ? 'warning' : 'info'}
+      size="sm"
+      showIcon
       role={blocked ? 'alert' : 'status'}
+      title={blocked ? 'Revise antes de continuar' : 'Como ficará a cobrança'}
     >
-      <p className="font-semibold">Decisão operacional</p>
-      <p className="mt-1">{preview.billingImpact.operationalMessage}</p>
+      <InfoCalloutItem label="Próximo passo">{friendlyMessage}</InfoCalloutItem>
       {preview.billingImpact.currentChargeDueDate && (
-        <p className="mt-1">
-          Cobrança analisada:{' '}
-          {new Date(preview.billingImpact.currentChargeDueDate).toLocaleDateString('pt-BR')} ·{' '}
+        <InfoCalloutItem label="Cobrança atual">
           {preview.billingImpact.currentChargeState === 'PAID'
-            ? 'paga'
+            ? 'Paga'
             : preview.billingImpact.currentChargeState === 'OVERDUE'
-              ? 'vencida'
+              ? 'Vencida'
               : preview.billingImpact.currentChargeState === 'PENDING'
-                ? 'pendente'
-                : preview.billingImpact.currentChargeState.toLowerCase()}
-        </p>
+                ? 'Pendente'
+                : preview.billingImpact.currentChargeState.toLowerCase()}{' '}
+          — vencimento em{' '}
+          {new Date(preview.billingImpact.currentChargeDueDate).toLocaleDateString('pt-BR')}.
+        </InfoCalloutItem>
       )}
       {preview.billingImpact.application === 'NEXT_CYCLE' && nextCycleDate && (
-        <p className="mt-1">Aplicação prevista: {nextCycleDate}.</p>
+        <InfoCalloutItem label="Quando será aplicado">A partir de {nextCycleDate}.</InfoCalloutItem>
+      )}
+      {preview.validityImpact && (
+        <div>
+          <InfoCalloutItem label="Fim da nova matrícula">
+            {new Date(preview.validityImpact.addedEndDate).toLocaleDateString('pt-BR')}
+          </InfoCalloutItem>
+          {preview.validityImpact.existingEndDate && (
+            <InfoCalloutItem label="Fim da cobrança compartilhada">
+              {new Date(preview.validityImpact.resultingEndDate).toLocaleDateString('pt-BR')}
+            </InfoCalloutItem>
+          )}
+        </div>
       )}
       {preview.compatibility.blockers.length > 0 && (
-        <ul className="mt-2 list-disc space-y-1 pl-4">
+        <div>
           {preview.compatibility.blockers.map((blocker) => (
-            <li key={`${blocker.code}:${blocker.itemId ?? ''}`}>{blocker.message}</li>
+            <InfoCalloutItem key={`${blocker.code}:${blocker.itemId ?? ''}`} label="Atenção">
+              {blocker.message}
+            </InfoCalloutItem>
           ))}
-        </ul>
+        </div>
       )}
       {preview.compatibility.warnings.length > 0 && (
-        <ul className="mt-2 list-disc space-y-1 pl-4">
+        <div>
           {preview.compatibility.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
+            <InfoCalloutItem key={warning} label="Importante">
+              {warning}
+            </InfoCalloutItem>
           ))}
-        </ul>
+        </div>
       )}
-    </div>
+    </InfoCallout>
   );
 }
 
@@ -104,23 +131,8 @@ function StepResumoFamiliar({ ctx }: StepResumoProps) {
 
   const calcularLiquido = (valorBase: number) =>
     calcularValorLiquidoComBeneficio(valorBase, state.beneficioSelecionado);
-  const calcularDesconto = (valorBase: number) =>
-    calcularValorDescontoBeneficio(valorBase, state.beneficioSelecionado);
-  const planoValorBase = state.planoValor ?? 0;
-  const valorBeneficio =
-    state.modoTurmas === 'COMBO'
-      ? state.alunosFamiliares.reduce(
-          (total, aluno) => total + calcularDesconto(aluno.comboValor ?? 0),
-          0,
-        )
-      : calcularDesconto(planoValorBase);
-  const totalMensalidades =
-    state.modoTurmas === 'COMBO'
-      ? state.alunosFamiliares.reduce(
-          (total, aluno) => total + calcularLiquido(aluno.comboValor ?? 0),
-          0,
-        )
-      : calcularLiquido(planoValorBase);
+  const valorBeneficio = calculateFamilyBenefitTotal(state);
+  const totalMensalidades = calculateFamilyMonthlyTotal(state);
   const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
 
   const totalTaxas = state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0);

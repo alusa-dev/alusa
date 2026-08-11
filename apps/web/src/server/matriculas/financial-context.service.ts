@@ -29,6 +29,19 @@ export type MatriculaFinancialContext = {
     affectedMatriculaIds: string[];
     alunos: Array<{ matriculaId: string; alunoId: string; nome: string }>;
   } | null;
+  /**
+   * Canonical agreement shared by multiple individual enrollments. This is
+   * intentionally kept out of the page DTO: it is used to apply agreement
+   * level mutations without changing the matrícula detail UI.
+   */
+  sharedAgreement: {
+    id: string;
+    asaasSubscriptionId: string;
+    affectedMatriculaIds: string[];
+    nextDueDate: string | null;
+    dueDay: number | null;
+    validUntil: string | null;
+  } | null;
 };
 
 const EDITABLE_STANDALONE_CHARGE_STATUSES: ChargeStatus[] = [
@@ -219,6 +232,7 @@ export async function resolveMatriculaFinancialContext(input: {
         affectedMatriculaIds: alunos.map((item) => item.matriculaId),
         alunos,
       },
+      sharedAgreement: null,
     };
   }
 
@@ -226,17 +240,68 @@ export async function resolveMatriculaFinancialContext(input: {
   const customerId =
     matricula.responsavelFinanceiro?.asaasCustomerId ?? matricula.aluno?.asaasCustomerId ?? null;
 
+  const canonicalAllocation = await input.db.billingAllocation.findFirst({
+    where: {
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      kind: 'TUITION',
+      status: { in: ['ACTIVE', 'SCHEDULED'] },
+      agreement: {
+        contaId: input.contaId,
+        asaasSubscriptionId: { not: null },
+        status: { in: ['ACTIVE', 'REQUIRES_RECONCILIATION'] },
+      },
+    },
+    select: {
+      agreement: {
+        select: {
+          id: true,
+          asaasSubscriptionId: true,
+          status: true,
+          remoteStatus: true,
+          confirmedValue: true,
+          nextDueDate: true,
+          dueDay: true,
+          billingType: true,
+          validUntil: true,
+          allocations: {
+            where: {
+              contaId: input.contaId,
+              kind: 'TUITION',
+              status: { in: ['ACTIVE', 'SCHEDULED'] },
+            },
+            select: { matriculaId: true },
+          },
+        },
+      },
+    },
+  });
+  const canonicalAgreement = canonicalAllocation?.agreement;
+  const canonicalSubscriptionId = canonicalAgreement?.asaasSubscriptionId ?? null;
+  const canonicalSnapshot = canonicalSubscriptionId
+    ? {
+        asaasSubscriptionId: canonicalSubscriptionId,
+        status: mapLocalSubscriptionStatus(canonicalAgreement?.remoteStatus ?? canonicalAgreement?.status),
+        billingType: normalizeBillingType(canonicalAgreement?.billingType),
+        value: canonicalAgreement?.confirmedValue == null ? null : Number(canonicalAgreement.confirmedValue),
+        nextDueDate: toDateOnly(canonicalAgreement?.nextDueDate),
+        deleted: false,
+        syncError: null,
+        syncedAt: new Date().toISOString(),
+      }
+    : null;
+
   return {
     mode: 'INDIVIDUAL',
     sourceMatriculaId: matricula.id,
     targetMatriculaId: matricula.id,
     contaId: input.contaId,
-    asaasSubscriptionId: matricula.asaasSubscriptionId ?? null,
+    asaasSubscriptionId: canonicalSubscriptionId ?? matricula.asaasSubscriptionId ?? null,
     localSubscriptionId: localSubscription?.id ?? null,
     localSubscriptionKind: localSubscription ? 'ACADEMIC' : null,
     customerId,
     payerName: matricula.responsavelFinanceiro?.nome ?? matricula.aluno?.nome ?? 'Aluno',
-    localSnapshot: matricula.asaasSubscriptionId
+    localSnapshot: canonicalSnapshot ?? (matricula.asaasSubscriptionId
       ? {
           asaasSubscriptionId: matricula.asaasSubscriptionId,
           status: mapLocalSubscriptionStatus(localSubscription?.status),
@@ -247,8 +312,18 @@ export async function resolveMatriculaFinancialContext(input: {
           syncError: null,
           syncedAt: (localSubscription?.updatedAt ?? new Date()).toISOString(),
         }
-      : null,
+      : null),
     family: null,
+    sharedAgreement: canonicalSubscriptionId && canonicalAgreement
+      ? {
+          id: canonicalAgreement.id,
+          asaasSubscriptionId: canonicalSubscriptionId,
+          affectedMatriculaIds: canonicalAgreement.allocations.map((allocation) => allocation.matriculaId),
+          nextDueDate: toDateOnly(canonicalAgreement.nextDueDate),
+          dueDay: canonicalAgreement.dueDay,
+          validUntil: toDateOnly(canonicalAgreement.validUntil),
+        }
+      : null,
   };
 }
 

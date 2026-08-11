@@ -512,20 +512,26 @@ export function createPrismaBillingAgreementRepository(
         const effectiveAt = new Date(`${input.change.effectiveDate}T00:00:00.000Z`);
         const isEffectiveNow = effectiveAt.getTime() <= Date.now();
         const endAllocations = async (ids: string[], status: 'ENDED' | 'PAUSED' | 'CANCELLED') => {
-          const updated = await tx.billingAllocation.updateMany({
+          const selected = await tx.billingAllocation.findMany({
             where: {
               contaId: input.contaId,
               agreementId: input.change.agreementId,
               id: { in: ids },
               status: { in: ['ACTIVE', 'SCHEDULED'] },
             },
-            data: {
-              validUntil: effectiveAt,
-              ...(isEffectiveNow ? { status } : {}),
-            },
+            select: { id: true, validFrom: true },
           });
-          if (updated.count !== ids.length) {
+          if (selected.length !== ids.length) {
             throw new BillingAgreementError('LOCAL_COMMIT_CONFLICT', 'Uma alocação mudou durante a confirmação.');
+          }
+          for (const allocation of selected) {
+            await tx.billingAllocation.update({
+              where: { id: allocation.id },
+              data: {
+                ...(allocation.validFrom < effectiveAt ? { validUntil: effectiveAt } : {}),
+                ...(isEffectiveNow ? { status } : {}),
+              },
+            });
           }
         };
         const createDraft = async (agreementId: string, draft: BillingAllocationDraft) => {
@@ -693,7 +699,17 @@ export function createPrismaBillingAgreementRepository(
                     ? undefined
                     : amountDecimal(plan.resultingAmountCents),
                 asaasSubscriptionId: progress?.resultingSubscriptionId,
-                remoteStatus: status === 'INACTIVE' ? 'INACTIVE' : status === 'ACTIVE' ? 'ACTIVE' : undefined,
+                // Remoção confirmada no provedor é um estado remoto terminal.
+                // Não deixar undefined aqui: no Prisma isso preserva o snapshot
+                // anterior (por exemplo ACTIVE), fazendo a tela divergir do Asaas.
+                remoteStatus:
+                  status === 'INACTIVE'
+                    ? 'INACTIVE'
+                    : status === 'ACTIVE'
+                      ? 'ACTIVE'
+                      : status === 'CANCELLED'
+                        ? 'DELETED'
+                        : undefined,
                 remoteStatusUpdatedAt: new Date(),
               } : {}),
               ...(status ? { status } : {}),

@@ -249,8 +249,12 @@ export async function POST(req: NextRequest) {
       return json(errInfo.status, { error: result.error, message: errInfo.message });
     }
 
-    return json(201, {
+    const pendingReconciliation = result.data.status === 'PENDING_RECONCILIATION';
+    return json(pendingReconciliation ? 202 : 201, {
       success: true,
+      ...(pendingReconciliation
+        ? { pending: true, message: 'Solicitação recebida. A confirmação financeira será concluída automaticamente.' }
+        : {}),
       data: {
         chargeId: result.data.chargeId,
         asaasPaymentId: result.data.asaasPaymentId,

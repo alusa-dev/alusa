@@ -57,9 +57,16 @@ export async function PUT(req: Request, context: { params: Promise<{ id: string 
           kind: 'ENROLLMENT_FEE',
           status: { in: ['ACTIVE', 'SCHEDULED'] },
         },
-        select: { id: true, netAmount: true },
+        select: { id: true, matriculaId: true, netAmount: true },
       })
-    : [allocation];
+    : [{ id: allocation.id, matriculaId: allocation.matriculaId, netAmount: allocation.netAmount }];
+  const affectedMatriculaIds = Array.from(
+    new Set(
+      [matriculaId, ...siblings.map((item) => item.matriculaId)].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  );
   const resultingValue = siblings.reduce(
     (sum, item) => sum + (item.id === allocation.id ? parsed.data.value : Number(item.netAmount)),
     0,
@@ -99,8 +106,8 @@ export async function PUT(req: Request, context: { params: Promise<{ id: string 
       }
     }
     await tx.matricula.updateMany({
-      where: { id: matriculaId, contaId: user.contaId },
-      data: { taxaMatricula: parsed.data.value },
+      where: { id: { in: affectedMatriculaIds }, contaId: user.contaId },
+      data: { taxaMatricula: resultingValue },
     });
     await tx.matriculaLog.create({
       data: {

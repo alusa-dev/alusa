@@ -26,6 +26,7 @@ interface PausarMatriculaDialogProps {
   open: boolean;
   onOpenChange: (_open: boolean) => void;
   alunoNome: string;
+  isSharedSubscription?: boolean;
   onConfirm: (_payload: PausarMatriculaPayload) => Promise<void>;
 }
 
@@ -36,10 +37,19 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function nextDayISO(value: string) {
+  if (!value) return undefined;
+  const date = new Date(`${value}T12:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return undefined;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 export function PausarMatriculaDialog({
   open,
   onOpenChange,
   alunoNome,
+  isSharedSubscription = false,
   onConfirm,
 }: PausarMatriculaDialogProps) {
   const [motivoPausa, setMotivoPausa] = useState('');
@@ -50,7 +60,8 @@ export function PausarMatriculaDialog({
   const [observacao, setObservacao] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const canSubmit = motivoPausa.trim().length > 0 && dataInicioPausa.length > 0;
+  const retornoInvalido = Boolean(dataRetornoPrevista && dataRetornoPrevista <= dataInicioPausa);
+  const canSubmit = motivoPausa.trim().length > 0 && dataInicioPausa.length > 0 && !retornoInvalido;
 
   const reset = () => {
     setMotivoPausa('');
@@ -95,8 +106,9 @@ export function PausarMatriculaDialog({
             Pausar matrícula
           </DialogTitle>
           <DialogDescription className="text-sm text-slate-600">
-            Pausar a matrícula de <strong>{alunoNome}</strong>. A assinatura será
-            inativada no sistema financeiro.
+            {isSharedSubscription
+              ? `Pausar a matrícula de ${alunoNome}. Ela será removida da cobrança compartilhada conforme a opção escolhida; as demais matrículas não serão interrompidas.`
+              : `Pausar a matrícula de ${alunoNome}. A recorrência será suspensa somente quando a cobrança também for pausada.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -134,19 +146,24 @@ export function PausarMatriculaDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="pausaRetorno" className="text-xs font-medium text-slate-600">
-                Retorno previsto
+                Retorno previsto (opcional)
               </Label>
               <input
                 id="pausaRetorno"
                 type="date"
                 value={dataRetornoPrevista}
                 onChange={(e) => setDataRetornoPrevista(e.target.value)}
-                min={dataInicioPausa}
+                min={nextDayISO(dataInicioPausa)}
                 className={controlClass}
                 disabled={loading}
               />
             </div>
           </div>
+          {retornoInvalido && (
+            <p className="text-xs text-red-600">
+              O retorno previsto deve ser posterior ao início da pausa.
+            </p>
+          )}
 
           {/* Switches */}
           <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -163,7 +180,9 @@ export function PausarMatriculaDialog({
               <div>
                 <p className="text-sm font-medium text-slate-700">Cobrar durante a pausa</p>
                 <p className="text-xs text-slate-500">
-                  Se ligado, as cobranças continuam sendo geradas normalmente.
+                  {isSharedSubscription
+                    ? 'Se ligado, esta matrícula continua participando da cobrança compartilhada durante a pausa.'
+                    : 'Se ligado, a recorrência permanece ativa e as cobranças continuam sendo geradas normalmente.'}
                 </p>
               </div>
               <Switch

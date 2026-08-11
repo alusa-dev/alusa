@@ -24,7 +24,7 @@ type TotalAlunosCardProps = {
   loading?: boolean;
 };
 
-const cardSurface = `${DASHBOARD_KPI_TILE_CLASSNAME} flex flex-col min-h-[220px] rounded-2xl bg-[#e6d6fb] px-5 py-4 text-[#2b2634] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]`;
+const cardSurface = `${DASHBOARD_KPI_TILE_CLASSNAME} flex h-[219px] flex-col rounded-2xl bg-[#e2d1f8] px-5 pb-[22px] pt-4 text-[#3d3a3f] alusa-dark:bg-[linear-gradient(165deg,var(--color-card-bg-purple)_0%,var(--color-bg-card-soft)_55%)] alusa-dark:text-[color:var(--color-text-primary)]`;
 
 export function TotalAlunosCard({
   total,
@@ -79,23 +79,23 @@ export function TotalAlunosCard({
       data-testid="total-alunos-card"
       aria-label="Resumo do total de alunos"
     >
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <span className="text-[13px] font-normal tracking-wide text-[#2b2634] alusa-dark:text-[color:var(--color-text-secondary)]">
+      <div className="flex items-start justify-between">
+        <div>
+          <span className="text-xs font-normal text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-secondary)]">
             Alunos ativos
           </span>
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full bg-[#2b2634]/5 px-3 py-1 text-xs font-medium text-[#2b2634] alusa-dark:bg-[color:rgba(195,163,235,0.16)] alusa-dark:text-[color:var(--color-text-secondary)]">
+        <span className="inline-flex h-6 items-center gap-1 rounded-full bg-black/5 px-3 text-xs font-normal text-[#3d3a3f] alusa-dark:bg-[color:rgba(195,163,235,0.16)] alusa-dark:text-[color:var(--color-text-secondary)]">
           <span className="h-2 w-2 rounded-full bg-[#38C256]" aria-hidden />
           Atualizado
         </span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
-        <span className="text-5xl font-medium leading-none text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
+        <span className="text-[48px] font-normal leading-none text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
           {total}
         </span>
       </div>
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           {hasRecentStudents ? (
             <AvatarGroup
@@ -115,7 +115,7 @@ export function TotalAlunosCard({
           onClick={disableAddAluno ? undefined : onAddAluno}
           disabled={disableAddAluno}
           title={disableAddAluno ? 'Conclua seu cadastro para cadastrar alunos.' : undefined}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border-2 border-current text-xl font-semibold text-black transition focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-40 alusa-dark:border-[color:var(--color-brand-400)] alusa-dark:text-[color:var(--color-brand-300)] alusa-dark:focus-visible:ring-[color:var(--color-brand-400)]"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-[20px] border-2 border-[#26222d] text-xl font-normal text-[#26222d] transition hover:bg-black/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-accent/35 disabled:cursor-not-allowed disabled:opacity-40 alusa-dark:border-[color:var(--color-brand-400)] alusa-dark:text-[color:var(--color-brand-300)]"
           aria-label="Cadastrar novo aluno"
           data-testid="add-student-btn"
         >

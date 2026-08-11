@@ -9,12 +9,17 @@ import {
   pauseAssinatura,
   commitBillingAgreementChange,
   previewBillingAgreementChange,
+  materializeBillingAgreement,
 } from '@alusa/finance';
 import { AsaasHttpError } from '@alusa/finance';
 import {
   assertStudentCapacity,
   countAdditionalActiveStudentsForEnrollment,
 } from '@/src/server/platform-billing/capacity';
+import {
+  syncFamilyLifecycleAggregate,
+  type FamilyLifecycleImpact,
+} from './family-lifecycle.service';
 
 export class ManualSyncError extends Error {
   readonly statusCode: number;
@@ -55,6 +60,7 @@ export type SyncMatriculaStatusResult = {
   };
   asaasResponse?: unknown;
   nextDueDate?: string | null;
+  familyImpact?: FamilyLifecycleImpact | null;
 };
 
 const OPEN_CHARGE_STATUSES = new Set<StatusCobranca>([
@@ -234,6 +240,37 @@ async function syncOpenChargesForCancellation(params: {
     }
   }
 
+  // Reconcilia cobranças acadêmicas que já estavam canceladas antes desta
+  // operação. Isso cobre a corrida em que o webhook exclui o pagamento ou a
+  // cobrança local é cancelada antes de o Charge read-model ser projetado.
+  // Nunca toca em cobranças liquidadas/estornadas: o histórico financeiro é
+  // imutável.
+  const alreadyCanceled = await params.prisma.cobranca.findMany({
+    where: {
+      contaId: params.contaId,
+      matriculaId: params.matriculaId,
+      status: StatusCobranca.CANCELADO,
+    },
+    select: { id: true },
+  });
+  if (alreadyCanceled.length > 0) {
+    const repaired = await params.prisma.charge.updateMany({
+      where: {
+        contaId: params.contaId,
+        cobrancaId: { in: alreadyCanceled.map((item) => item.id) },
+        status: { in: ['CREATED', 'PENDING_SYNC', 'OPEN', 'OVERDUE'] },
+      },
+      data: { status: 'CANCELED', statusUpdatedAt: new Date() },
+    });
+    if (repaired.count > 0) {
+      updated += repaired.count;
+      details.push({
+        cobrancasReconciliadas: repaired.count,
+        source: 'LOCAL_RECONCILIATION',
+      });
+    }
+  }
+
   return {
     totalFromAsaas,
     matched,
@@ -288,6 +325,16 @@ function buildFinancialSyncError(
     : targetStatus === 'ATIVA'
       ? 'reativar'
       : 'cancelar';
+
+  const rawErrorMessage = error instanceof Error ? error.message : String(error);
+  if (targetStatus === 'CANCELADA' && rawErrorMessage.includes('Allocation validity must be a non-empty semiopen interval')) {
+    return new ManualSyncError(
+      409,
+      'INCONSISTENCIA_FINANCEIRA',
+      'Não foi possível encerrar a matrícula porque existe uma inconsistência financeira. Nenhuma alteração foi realizada.',
+      { subscriptionId },
+    );
+  }
 
   if (error instanceof AsaasHttpError) {
     const providerMessage = extractFinancialErrorMessage(error);
@@ -413,7 +460,7 @@ async function getOrCreateCancellationOperation(input: {
 export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Promise<SyncMatriculaStatusResult> {
   const matricula = await input.prisma.matricula.findFirst({
     where: { id: input.matriculaId, aluno: { contaId: input.contaId } },
-    select: { id: true, status: true, asaasSubscriptionId: true },
+    select: { id: true, status: true, asaasSubscriptionId: true, matriculaFamiliarId: true },
   });
 
   if (!matricula) {
@@ -422,6 +469,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
 
   const previousStatus = matricula.status;
   const newStatus = input.targetStatus as StatusMatricula;
+  const wasAlreadyCanceled = matricula.status === StatusMatricula.CANCELADA;
 
   let cancellationOperation: { id: string; correlationId: string } | null = null;
   if (input.targetStatus === 'CANCELADA') {
@@ -436,24 +484,9 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
         orderBy: { createdAt: 'desc' },
         select: { id: true, correlationId: true },
       });
-      if (!cancellationOperation) {
-        return {
-          matriculaId: matricula.id,
-          previousStatus,
-          newStatus,
-          asaasAction: 'LOCAL_ONLY',
-          cobrancasAtualizadas: 0,
-          paymentSync: {
-            totalFromAsaas: 0,
-            matched: 0,
-            updated: 0,
-            warnings: [],
-            details: [],
-            expectedWebhooks: [],
-          },
-          nextDueDate: null,
-        };
-      }
+      // Mesmo já cancelada, a matrícula pode ter um Charge read-model
+      // divergente. Prosseguimos para reconciliar cobranças locais sem
+      // repetir a operação remota nem criar uma nova operação de auditoria.
     } else {
       cancellationOperation = await getOrCreateCancellationOperation({
         prisma: input.prisma,
@@ -476,7 +509,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     details: [],
     expectedWebhooks: [],
   };
-  const canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+  let canonicalAllocation = await input.prisma.billingAllocation.findFirst({
     where: {
       contaId: input.contaId,
       matriculaId: matricula.id,
@@ -486,6 +519,34 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
     select: { id: true, agreementId: true, agreement: { select: { version: true, nextDueDate: true } } },
   });
+  // Garante paridade para grupos familiares criados antes da camada canônica:
+  // cancelar uma matrícula deve remover sua alocação da assinatura compartilhada.
+  if (!canonicalAllocation && matricula.matriculaFamiliarId) {
+    const familySubscription = await input.prisma.standaloneSubscription.findFirst({
+      where: { contaId: input.contaId, familyGroupId: matricula.matriculaFamiliarId },
+      select: { id: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (familySubscription) {
+      await materializeBillingAgreement({
+        kind: 'FAMILY',
+        contaId: input.contaId,
+        standaloneSubscriptionId: familySubscription.id,
+        familyGroupId: matricula.matriculaFamiliarId,
+        actorId: input.actorId,
+      });
+      canonicalAllocation = await input.prisma.billingAllocation.findFirst({
+        where: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          kind: 'TUITION',
+          status: input.targetStatus === 'ATIVA' ? 'PAUSED' : { in: ['ACTIVE', 'SCHEDULED'] },
+        },
+        orderBy: input.targetStatus === 'ATIVA' ? { validUntil: 'desc' } : { validFrom: 'desc' },
+        select: { id: true, agreementId: true, agreement: { select: { version: true, nextDueDate: true } } },
+      });
+    }
+  }
   let canonicalHandled = false;
 
   if (canonicalAllocation) {
@@ -545,7 +606,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     }
   }
 
-  if (!canonicalHandled && matricula.asaasSubscriptionId) {
+  if (!canonicalHandled && matricula.asaasSubscriptionId && !wasAlreadyCanceled) {
     try {
       if (input.targetStatus === 'PAUSADA') {
         asaasAction = 'SUSPEND';
@@ -698,6 +759,14 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     });
   });
 
+  const familyImpact = matricula.matriculaFamiliarId
+    ? await syncFamilyLifecycleAggregate({
+        prisma: input.prisma,
+        contaId: input.contaId,
+        familyId: matricula.matriculaFamiliarId,
+      })
+    : null;
+
   return {
     matriculaId: matricula.id,
     previousStatus,
@@ -710,6 +779,7 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
     },
     asaasResponse,
     nextDueDate: null,
+    familyImpact,
   };
 }
 

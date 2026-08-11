@@ -149,6 +149,13 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
       },
       { contaId: 'conta-1' },
     );
+    expect(projectConfirmedBillingAllocationValuesMock).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasSubscriptionId: 'sub_123',
+      totalValue: 299.9,
+      cycle: 'MONTHLY',
+      allocations: [{ matriculaId: 'mat-1', value: 299.9 }],
+    });
     expect(editarMatriculaMock).toHaveBeenCalledWith(
       expect.objectContaining({
         matriculaId: 'mat-1',
@@ -170,7 +177,7 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
     expect(prismaMock.cobranca.updateMany).toHaveBeenCalledWith({
       where: {
         matriculaId: 'mat-1',
-        status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+        status: { in: ['PENDENTE', 'A_VENCER'] },
       },
       data: {
         valor: 299.9,
@@ -182,14 +189,18 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
         contaId: 'conta-1',
         cobranca: {
           matriculaId: 'mat-1',
-          status: { in: ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO', 'CANCELAMENTO_PENDENTE'] },
+          status: { in: ['PENDENTE', 'A_VENCER'] },
         },
       },
       data: {
         value: 299.9,
       },
     });
-    expect(data.asyncSync.localAlignment).toEqual({ cobrancasUpdated: 2, chargesUpdated: 2 });
+    expect(data.asyncSync.localAlignment).toEqual({
+      cobrancasUpdated: 2,
+      chargesUpdated: 2,
+      matriculasUpdated: 1,
+    });
     expect(data.asyncSync.message).toMatch(/plano ou combo/i);
   });
 
@@ -294,13 +305,23 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
       'sub_family',
       {
         updatePendingPayments: true,
-        value: 250,
+        value: 400,
       },
       { contaId: 'conta-1' },
     );
+    expect(projectConfirmedBillingAllocationValuesMock).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasSubscriptionId: 'sub_family',
+      totalValue: 400,
+      cycle: 'MONTHLY',
+      allocations: [
+        { matriculaId: 'mat-1', value: 250 },
+        { matriculaId: 'mat-2', value: 150 },
+      ],
+    });
     expect(updateFamilyFinancialLocalStateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        value: 250,
+        value: 400,
         cycle: 'MONTHLY',
       }),
     );

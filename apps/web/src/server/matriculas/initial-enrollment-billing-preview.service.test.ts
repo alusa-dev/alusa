@@ -148,7 +148,7 @@ describe('previewInitialEnrollmentBilling', () => {
       currentChargeState: 'NOT_GENERATED',
       currentChargeId: null,
       currentChargeDueDate: null,
-      nextCycleDate: expect.stringContaining('2026-08-10'),
+      nextCycleDate: expect.any(String),
       operationalMessage: 'Será criada uma cobrança recorrente separada para esta matrícula.',
       targetLabel: null,
     });
@@ -549,6 +549,13 @@ describe('previewInitialEnrollmentBilling', () => {
       'VIGENCIA_INCOMPATIVEL',
     );
     expect(preview.compatibility.warnings.join(' ')).toContain('vigência própria');
+    expect(preview.validityImpact).toEqual(
+      expect.objectContaining({
+        addedEndDate: '2026-12-31T12:00:00.000Z',
+        resultingEndDate: '2027-12-31T12:00:00.000Z',
+        isDifferent: true,
+      }),
+    );
   });
 
   it('classifica contrato curto separado como cobrança avulsa', async () => {

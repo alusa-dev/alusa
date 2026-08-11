@@ -10,7 +10,6 @@
 
 import { prisma } from '@alusa/database';
 import type { SubscriptionStatus } from '@prisma/client';
-import { buildPaymentReferencePrefix } from '../core';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
 import { resolveChargeDisplayStatus, type ChargeDisplayStatus } from '../mappers/asaas-display-status';
 
@@ -84,6 +83,15 @@ export interface SubscriptionStudentDTO {
   matriculaId: string;
 }
 
+export interface SubscriptionLinkedMatriculaDTO {
+  matriculaId: string;
+  alunoId: string;
+  nome: string;
+  turmaNome: string | null;
+  valor: number;
+  status: string;
+}
+
 export interface SubscriptionDetailsDTO {
   id: string;
   asaasSubscriptionId: string | null;
@@ -96,6 +104,7 @@ export interface SubscriptionDetailsDTO {
   alunoNome: string;
   alunoId: string;
   familyStudents?: SubscriptionStudentDTO[];
+  linkedMatriculas?: SubscriptionLinkedMatriculaDTO[];
   valor: number;
   cycle: string;
   cycleLabel: string;
@@ -240,6 +249,9 @@ export async function getSubscriptionWithCharges(
           },
         },
       },
+      billingAgreement: {
+        select: { desiredValue: true, confirmedValue: true },
+      },
     },
   });
 
@@ -268,13 +280,33 @@ export async function getSubscriptionWithCharges(
       : null;
 
     if (standaloneSub) {
+      // Reparação idempotente de cobranças recebidas durante a corrida entre
+      // PAYMENT_CREATED e a persistência da assinatura local. O external
+      // reference pai é determinístico e nunca mistura outra assinatura.
+      await prisma.charge.updateMany({
+        where: {
+          contaId,
+          standaloneSubscriptionId: null,
+          externalReference: { startsWith: `${standaloneSub.externalReference}:` },
+        },
+        data: {
+          standaloneSubscriptionId: standaloneSub.id,
+          customerId: standaloneSub.customerId,
+          familyGroupId: standaloneSub.familyGroupId,
+        },
+      });
+
       const charges = await prisma.charge.findMany({
         where: {
           contaId,
           OR: [
             { standaloneSubscriptionId: standaloneSub.id },
             { externalReference: standaloneSub.externalReference },
-            { externalReference: { startsWith: buildPaymentReferencePrefix(standaloneSub.externalReference) } },
+            // Inclui cobranças recebidas no intervalo entre o webhook e a
+            // persistência local. Elas podem ter recebido um sufixo de
+            // reconciliação, mas continuam pertencendo deterministicamente a
+            // esta assinatura pelo externalReference pai.
+            { externalReference: { startsWith: `${standaloneSub.externalReference}:` } },
           ],
         },
         orderBy: { dueDate: 'desc' },
@@ -357,10 +389,25 @@ export async function getSubscriptionWithCharges(
               })),
             )
         : [];
+      const localCustomer = await prisma.customer.findFirst({
+        where: { id: standaloneSub.customerId, contaId },
+        select: { payerType: true, payerId: true },
+      });
+      const individualPayer = localCustomer
+        ? localCustomer.payerType === 'ALUNO'
+          ? await prisma.aluno.findFirst({
+              where: { id: localCustomer.payerId, contaId },
+              select: { id: true, nome: true, email: true, telefone: true },
+            })
+          : await prisma.responsavel.findFirst({
+              where: { id: localCustomer.payerId, contaId },
+              select: { id: true, nome: true, email: true, telefone: true },
+            })
+        : null;
       const standaloneAlunoNome =
         familyStudents.length > 0
           ? familyStudents.map((student) => student.nome).join(', ')
-          : 'Cliente';
+          : individualPayer?.nome ?? 'Cliente';
 
       const data: SubscriptionDetailsDTO = {
         id: standaloneSub.id,
@@ -368,11 +415,11 @@ export async function getSubscriptionWithCharges(
         externalReference: standaloneSub.externalReference,
         status: standaloneSub.status,
         statusLabel,
-        clienteNome: 'Cliente',
-        clienteEmail: null,
-        clienteTelefone: null,
+        clienteNome: individualPayer?.nome ?? 'Cliente',
+        clienteEmail: individualPayer?.email ?? null,
+        clienteTelefone: individualPayer?.telefone ?? null,
         alunoNome: standaloneAlunoNome,
-        alunoId: familyStudents[0]?.id ?? standaloneSub.customerId,
+        alunoId: familyStudents[0]?.id ?? individualPayer?.id ?? standaloneSub.customerId,
         familyStudents,
         valor: Number(standaloneSub.value),
         cycle: standaloneSub.cycle,
@@ -428,7 +475,7 @@ export async function getSubscriptionWithCharges(
         contaId,
         OR: [
           { externalReference },
-          { externalReference: { startsWith: buildPaymentReferencePrefix(externalReference) } },
+          { externalReference: { startsWith: `${externalReference}:` } },
         ],
       },
       orderBy: { dueDate: 'desc' },
@@ -559,8 +606,50 @@ export async function getSubscriptionWithCharges(
     ? responsavel?.telefone ?? aluno.telefone ?? null
     : aluno.telefone ?? null;
 
-  // Valor e periodicidade
-  const valor = plano?.valor ?? combo?.valor ?? 0;
+  // Matrículas atuais que compõem o mesmo acordo recorrente. O acordo pode
+  // manter versões históricas das alocações; por isso só estados vigentes são
+  // considerados e cada matrícula aparece uma única vez.
+  const linkedMatriculas: SubscriptionLinkedMatriculaDTO[] = [];
+  if (sub.billingAgreementId) {
+    const allocations = await prisma.billingAllocation.findMany({
+      where: {
+        contaId,
+        agreementId: sub.billingAgreementId,
+        status: { in: ['ACTIVE', 'SCHEDULED', 'PAUSED'] },
+      },
+      orderBy: [{ validFrom: 'desc' }, { createdAt: 'desc' }],
+      select: {
+        matriculaId: true,
+        alunoId: true,
+        netAmount: true,
+        status: true,
+        matricula: {
+          select: {
+            aluno: { select: { nome: true } },
+            turma: { select: { nome: true } },
+          },
+        },
+      },
+    });
+    const seen = new Set<string>();
+    for (const allocation of allocations) {
+      if (seen.has(allocation.matriculaId)) continue;
+      seen.add(allocation.matriculaId);
+      linkedMatriculas.push({
+        matriculaId: allocation.matriculaId,
+        alunoId: allocation.alunoId,
+        nome: allocation.matricula.aluno.nome,
+        turmaNome: allocation.matricula.turma?.nome ?? null,
+        valor: Number(allocation.netAmount),
+        status: allocation.status,
+      });
+    }
+  }
+
+  // Para acordo compartilhado, o total vem do próprio acordo, nunca do plano
+  // isolado da matrícula exibida.
+  const agreementValue = sub.billingAgreement?.desiredValue ?? sub.billingAgreement?.confirmedValue;
+  const valor = agreementValue ?? plano?.valor ?? combo?.valor ?? 0;
   const periodicidade = plano?.periodicidade ?? 'MENSAL';
   const cycleLabel = CYCLE_LABELS[periodicidade] ?? periodicidade;
   const description = plano?.descricao ?? plano?.nome ?? combo?.nome ?? null;
@@ -578,7 +667,7 @@ export async function getSubscriptionWithCharges(
       contaId,
       OR: [
         { externalReference: sub.externalReference },
-        { externalReference: { startsWith: buildPaymentReferencePrefix(sub.externalReference) } },
+        { externalReference: { startsWith: `${sub.externalReference}:` } },
       ],
     },
     orderBy: { dueDate: 'desc' },
@@ -748,7 +837,9 @@ export async function getSubscriptionWithCharges(
   const valorRecebido = cobrancas
     .filter((c) => PAID_STATUSES.has(c.status))
     .reduce((acc, c) => acc + c.valor, 0);
-  const valorOficial = proxima?.valor ?? allCobrancas[0]?.valor ?? Number(valor);
+  const valorOficial = linkedMatriculas.length > 1
+    ? Number(valor)
+    : proxima?.valor ?? allCobrancas[0]?.valor ?? Number(valor);
 
   const data: SubscriptionDetailsDTO = {
     id: sub.id,
@@ -761,6 +852,7 @@ export async function getSubscriptionWithCharges(
     clienteTelefone,
     alunoNome: aluno.nome,
     alunoId: aluno.id,
+    linkedMatriculas,
     valor: Number(valorOficial),
     cycle: periodicidade,
     cycleLabel,

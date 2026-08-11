@@ -169,7 +169,7 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
       <section
         aria-label="Conteúdo do Dashboard"
         aria-busy={isMetricsLoading}
-        className="alusa-dashboard-page flex flex-col gap-6 pb-8"
+        className="alusa-dashboard-page flex flex-col gap-7 pb-8"
       >
         <header>
           <h1 className="text-2xl font-semibold text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
@@ -180,7 +180,7 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
           </p>
         </header>
 
-        <div className="grid auto-rows-fr grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid auto-rows-fr grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
           {showKycCard ? (
             <div className="md:col-span-2 xl:col-span-2">
               <KycDashboardCard onDismiss={() => setKycCardDismissed(true)} />

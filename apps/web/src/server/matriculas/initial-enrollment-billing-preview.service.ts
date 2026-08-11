@@ -534,7 +534,7 @@ export async function previewInitialEnrollmentBilling(
     dateOnly(existingFamilyGroup.dataFimContrato) !== dateOnly(input.dataFimContrato)
   ) {
     warnings.push(
-      'A nova matrícula terá vigência própria; o agrupamento financeiro seguirá a vigência agregada das matrículas ativas.',
+      `A nova matrícula terá vigência própria até ${dateOnly(input.dataFimContrato)}; a assinatura compartilhada seguirá a maior data final entre as matrículas ativas.`,
     );
   }
   if (
@@ -560,7 +560,7 @@ export async function previewInitialEnrollmentBilling(
     dateOnly(existingSubscription.matricula.dataFimContrato) !== dateOnly(input.dataFimContrato)
   ) {
     warnings.push(
-      'A nova matrícula terá vigência própria; a assinatura não usará a data final de outra matrícula como limite global.',
+      `A nova matrícula terá vigência própria até ${dateOnly(input.dataFimContrato)}; a assinatura compartilhada não usará a data final de outra matrícula como limite individual.`,
     );
   }
 
@@ -655,7 +655,9 @@ export async function previewInitialEnrollmentBilling(
     warnings.push('A cobrança separada criará uma trilha financeira por matrícula.');
   }
   if (strategy !== 'CREATE_SEPARATE' && input.items.length < 2) {
-    warnings.push('Agrupamento financeiro costuma fazer sentido a partir de duas matrículas.');
+    warnings.push(
+      'Você está adicionando apenas um aluno ao agrupamento. Ele será vinculado normalmente e compartilhará a cobrança existente.',
+    );
   }
 
   const existingActiveAllocations = existingSubscription
@@ -667,6 +669,7 @@ export async function previewInitialEnrollmentBilling(
           status: 'ACTIVE',
         },
         _sum: { amount: true },
+        _max: { competenceEnd: true },
       })
     : null;
   const existingBaseAmount = existingSubscription
@@ -688,6 +691,16 @@ export async function previewInitialEnrollmentBilling(
     strategy === 'CREATE_SEPARATE'
       ? addedMonthlyAmount
       : money(currentMonthlyAmount + addedMonthlyAmount);
+
+  const existingValidityEnd =
+    existingActiveAllocations?._max?.competenceEnd ??
+    existingFamilyGroup?.dataFimContrato ??
+    existingSubscription?.matricula.dataFimContrato ??
+    null;
+  const resultingValidityEnd =
+    existingValidityEnd && existingValidityEnd > input.dataFimContrato
+      ? existingValidityEnd
+      : input.dataFimContrato;
 
   const targetCharges: LocalChargeSnapshot[] = existingSubscription
     ? existingSubscription.matricula.cobrancas.map((charge) => ({
@@ -886,6 +899,19 @@ export async function previewInitialEnrollmentBilling(
           ? money(input.aggregateEnrollmentFeeAmount)
           : money(allocations.reduce((sum, item) => sum + item.enrollmentFeeAmount, 0)),
       itemCount: allocations.length,
+    },
+    validityImpact: {
+      existingEndDate: existingValidityEnd?.toISOString() ?? null,
+      addedEndDate: input.dataFimContrato.toISOString(),
+      resultingEndDate:
+        strategy === 'CREATE_SEPARATE' ? input.dataFimContrato.toISOString() : resultingValidityEnd.toISOString(),
+      isDifferent: Boolean(
+        existingValidityEnd && dateOnly(existingValidityEnd) !== dateOnly(input.dataFimContrato),
+      ),
+      rule:
+        strategy === 'CREATE_SEPARATE'
+          ? 'A matrícula terá vigência e cobrança próprias.'
+          : 'Cada matrícula mantém sua vigência; a assinatura compartilhada considera a maior data final das matrículas ativas.',
     },
     billingImpact: {
       currentMonthlyAmount,

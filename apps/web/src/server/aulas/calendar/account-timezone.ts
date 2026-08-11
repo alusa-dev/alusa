@@ -46,7 +46,7 @@ export function endOfZonedDay(instant: Date, timeZone: string): Date {
   return new Date(end.getTime());
 }
 
-export function startOfZonedWeek(instant: Date, timeZone: string, weekStartsOn: 0 | 1 = 1): Date {
+export function startOfZonedWeek(instant: Date, timeZone: string, weekStartsOn: 0 | 1 = 0): Date {
   const tz = normalizeAccountTimeZone(timeZone);
   const anchor = new TZDateMini(instant.getTime(), tz);
   const weekStart = startOfWeek(anchor, { weekStartsOn });
