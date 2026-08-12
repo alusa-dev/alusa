@@ -939,8 +939,8 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
         }
       : null,
     operator: {
-      id: record.operador.id,
-      name: record.operador.nome,
+      id: record.operador?.id ?? 'deleted-user',
+      name: record.operador?.nome ?? 'Usuário removido',
     },
     items: record.items.map((item) => {
       const snapshotItem = item as typeof item & SaleItemSnapshotShape;

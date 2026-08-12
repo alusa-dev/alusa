@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+import { isPasswordPolicyValid } from '@/lib/password-policy';
 
 const passwordMinLength = Number(process.env.PASSWORD_MIN_LENGTH || 8);
 const passwordMessage = 'Senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e caractere especial.';
@@ -29,5 +30,9 @@ describe('Política de Senha', () => {
   });
   it('rejeita sem especial', () => {
     expect(validate('Teste1234')).toBe(passwordMessage);
+  });
+  it('compartilha a política com o módulo de autenticação', () => {
+    expect(isPasswordPolicyValid('Teste@123')).toBe(true);
+    expect(isPasswordPolicyValid('teste@123')).toBe(false);
   });
 });

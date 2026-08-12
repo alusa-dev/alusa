@@ -21,7 +21,10 @@ export async function POST(req: Request) {
   const rounds = Number(process.env.BCRYPT_ROUNDS || 10);
   const pepper = process.env.BCRYPT_PEPPER || '';
   const senhaHash = await bcrypt.hash(password + pepper, rounds);
-  await prisma.usuario.update({ where: { id: user.id }, data: { senhaHash } });
+  await prisma.usuario.update({
+    where: { id: user.id },
+    data: { senhaHash, passwordChangedAt: new Date() },
+  });
   return NextResponse.json(
     devSetPasswordResultDTOSchema.parse(
       mapDevSetPasswordResultToDTO({ ok: true, id: user.id }),

@@ -992,6 +992,17 @@ export interface AsaasSubaccount {
   name: string;
   email: string;
   cpfCnpj: string;
+  // A resposta oficial de POST /accounts entrega a chave neste objeto.
+  accessToken?: {
+    id?: string;
+    name?: string;
+    apiKey?: string | null;
+    enabled?: boolean;
+    expirationDate?: string | null;
+    dateCreated?: string | null;
+    projectedExpirationDateByLackOfUse?: string | null;
+  } | null;
+  // Compatibilidade com respostas/fixtures legados que usam apiKey na raiz.
   apiKey?: string | null;
   walletId?: string | null;
 }

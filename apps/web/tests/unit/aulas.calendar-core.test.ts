@@ -54,4 +54,34 @@ describe('calendar-core.service', () => {
       ]),
     );
   });
+
+  it('ignora a sobreposição esperada entre aula experimental e aula recorrente da mesma turma', () => {
+    const events = [
+      {
+        id: 'recurring-class',
+        tipo: 'AULA',
+        source: 'TURMA_RECORRENTE',
+        turmaId: 'turma-1',
+        startAt: new Date('2026-08-12T11:00:00.000Z'),
+        endAt: new Date('2026-08-12T12:00:00.000Z'),
+        salaId: 'sala-1',
+        professores: [{ professorId: 'prof-1' }],
+      },
+      {
+        id: 'experimental-class',
+        tipo: 'AULA_EXPERIMENTAL',
+        source: 'AULA_EXPERIMENTAL',
+        turmaId: 'turma-1',
+        startAt: new Date('2026-08-12T11:00:00.000Z'),
+        endAt: new Date('2026-08-12T12:00:00.000Z'),
+        salaId: 'sala-1',
+        professores: [{ professorId: 'prof-1' }],
+      },
+    ] as unknown as Parameters<typeof buildConflictMap>[0];
+
+    const conflictMap = buildConflictMap(events);
+
+    expect(conflictMap.get('recurring-class')).toEqual([]);
+    expect(conflictMap.get('experimental-class')).toEqual([]);
+  });
 });

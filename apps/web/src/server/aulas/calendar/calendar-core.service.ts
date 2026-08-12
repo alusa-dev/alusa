@@ -181,6 +181,18 @@ function uniqueConflicts(conflicts: CalendarEventConflictDTO[]) {
   });
 }
 
+function isExpectedExperimentalOverlap(
+  current: CalendarEventListWithRelations,
+  next: CalendarEventListWithRelations,
+) {
+  if (!current.turmaId || current.turmaId !== next.turmaId) return false;
+
+  return (
+    (current.tipo === 'AULA_EXPERIMENTAL' && next.source === 'TURMA_RECORRENTE' && next.tipo === 'AULA') ||
+    (next.tipo === 'AULA_EXPERIMENTAL' && current.source === 'TURMA_RECORRENTE' && current.tipo === 'AULA')
+  );
+}
+
 export function buildAttendanceSummary(
   totalEligible: number,
   statuses: AttendanceStatus[],
@@ -877,6 +889,7 @@ export function buildConflictMap(events: CalendarEventListWithRelations[]) {
       const next = events[cursor];
 
       if (!overlaps(current.startAt, current.endAt, next.startAt, next.endAt)) continue;
+      if (isExpectedExperimentalOverlap(current, next)) continue;
 
       if (current.salaId && next.salaId && current.salaId === next.salaId) {
         map.get(current.id)?.push({

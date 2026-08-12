@@ -24,6 +24,7 @@ import { auditLogService } from '../../foundation/audit-log.service';
 import { syncKycModels, deriveProcessStatus } from './kyc-persistence.service';
 import { buildCacheV2 } from './kyc-cache-utils';
 import { getMyAccountDocumentsCached, getMyAccountStatusCached } from './kyc-asaas-read-cache';
+import { getDocumentsReadiness } from './kyc-document-group-resolver';
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -216,6 +217,12 @@ async function reconcileSingleAccount(
   contaId: string,
   issues: string[],
 ): Promise<boolean> {
+  const asaasAccount = await prisma.asaasAccount.findUnique({
+    where: { id: asaasAccountId },
+    select: { provisionedAt: true },
+  });
+  if (!getDocumentsReadiness(asaasAccount?.provisionedAt ?? null).ready) return false;
+
   const creds = await loadAsaasCredentials(contaId);
   if (!creds) return false;
 

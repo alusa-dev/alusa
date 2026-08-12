@@ -35,7 +35,15 @@ vi.mock('@alusa/asaas', async () => {
       name: 'Conta Teste',
       email: 'owner@teste.com',
       cpfCnpj: VALID_CNPJ,
-      apiKey: '$aact_sub_123',
+      accessToken: {
+        id: 'access-token-created-1',
+        name: 'Alusa - API Key',
+        apiKey: '$aact_sub_123',
+        enabled: true,
+        dateCreated: '2026-08-11T00:00:00.000Z',
+        expirationDate: '2027-08-11T00:00:00.000Z',
+        projectedExpirationDateByLackOfUse: '2027-02-11',
+      },
       walletId: 'wallet-1',
     })),
     getMyAccountStatus: vi.fn(async () => ({ general: 'PENDING' })),
@@ -179,13 +187,23 @@ describe('createAsaasAccount', () => {
 
       const storedAccount = await prisma.asaasAccount.findUnique({
         where: { financeProfileId: profile!.id },
-        select: { webhookStatus: true, operationalStatus: true, apiKeyStatus: true },
+        select: {
+          webhookStatus: true,
+          operationalStatus: true,
+          apiKeyStatus: true,
+          walletId: true,
+          apiKeyId: true,
+          apiKeyExpiresAt: true,
+        },
       });
       expect(storedAccount).toMatchObject({
         apiKeyStatus: 'CONNECTED',
         webhookStatus: 'ACTIVE',
         operationalStatus: 'OPERATIONAL',
+        walletId: 'wallet-1',
+        apiKeyId: 'access-token-created-1',
       });
+      expect(storedAccount?.apiKeyExpiresAt?.toISOString()).toBe('2027-08-11T00:00:00.000Z');
 
       const credential = await prisma.asaasCredential.findUnique({ where: { financeProfileId: profile!.id } });
       expect(credential).not.toBeNull();

@@ -222,6 +222,11 @@ export function MakeupClassDialog({
 
   const sourceEvent = sourceEvents.find((event) => event.id === values.eventoOrigemId);
   const destinationEvent = sourceEvents.find((event) => event.id === values.eventoDestinoId);
+  const destinationEvents = sourceEvents.filter(
+    (event) =>
+      event.id !== values.eventoOrigemId &&
+      (!values.turmaDestinoId || event.turma?.id === values.turmaDestinoId),
+  );
   const canSubmit =
     !submitting &&
     Boolean(values.eventoOrigemId && values.turmaOrigemId && values.turmaDestinoId) &&
@@ -282,10 +287,12 @@ export function MakeupClassDialog({
                     disabled={values.scope !== 'INDIVIDUAL'}
                   >
                     <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-aluno">
-                      <SelectValue placeholder="Aluno" />
+                      <SelectValue placeholder="Selecione um aluno" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value={EMPTY_VALUE}>Sem aluno específico</SelectItem>
+                      {values.scope === 'COLETIVA' ? (
+                        <SelectItem value={EMPTY_VALUE}>Sem aluno específico</SelectItem>
+                      ) : null}
                       {resources.alunos.map((aluno) => (
                         <SelectItem key={aluno.id} value={aluno.id}>
                           {aluno.label}
@@ -341,6 +348,7 @@ export function MakeupClassDialog({
                   <FieldLabel>Turma origem</FieldLabel>
                   <Select
                     value={values.turmaOrigemId || EMPTY_VALUE}
+                    disabled={Boolean(values.eventoOrigemId)}
                     onValueChange={(value) =>
                       setValues((current) => ({ ...current, turmaOrigemId: value === EMPTY_VALUE ? '' : value }))
                     }
@@ -364,7 +372,11 @@ export function MakeupClassDialog({
                   <Select
                     value={values.turmaDestinoId || EMPTY_VALUE}
                     onValueChange={(value) =>
-                      setValues((current) => ({ ...current, turmaDestinoId: value === EMPTY_VALUE ? '' : value }))
+                      setValues((current) => ({
+                        ...current,
+                        turmaDestinoId: value === EMPTY_VALUE ? '' : value,
+                        eventoDestinoId: '',
+                      }))
                     }
                   >
                     <SelectTrigger className={CONTROL_CLASS} data-testid="makeup-turma-destino">
@@ -437,7 +449,7 @@ export function MakeupClassDialog({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={EMPTY_VALUE}>Selecione</SelectItem>
-                        {sourceEvents.map((event) => (
+                        {destinationEvents.map((event) => (
                           <SelectItem key={event.id} value={event.id}>
                             {event.title} • {new Date(event.startAt).toLocaleDateString('pt-BR')}
                           </SelectItem>

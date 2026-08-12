@@ -342,7 +342,7 @@ export async function resetPasswordByToken(input: { token: string; password: str
   await prisma.$transaction(async (tx) => {
     await tx.usuario.update({
       where: { id: consumed.user.id },
-      data: { senhaHash },
+      data: { senhaHash, passwordChangedAt: new Date() },
     });
 
     await invalidateAuthActionTokens(consumed.user.id, 'RESET_PASSWORD', tx);

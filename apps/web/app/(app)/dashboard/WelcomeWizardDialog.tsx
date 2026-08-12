@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -23,7 +22,6 @@ type WelcomeStep = {
   title: string;
   description: string;
   imageHint: string;
-  imageSrc?: string;
 };
 
 const WELCOME_STEPS: WelcomeStep[] = [
@@ -31,8 +29,7 @@ const WELCOME_STEPS: WelcomeStep[] = [
     title: 'Sua operação começa aqui',
     description:
       'A Alusa reúne a rotina acadêmica e financeira da sua escola em um painel único, claro e pronto para o dia a dia.',
-    imageHint: 'Espaço para imagem de boas-vindas',
-    imageSrc: '/images/welcome-wizard/welcome-dashboard.jpg',
+    imageHint: '(adicione uma imagem em dev)',
   },
 ];
 
@@ -67,28 +64,15 @@ export function WelcomeWizardDialog({ open, userName: _userName, onComplete }: W
         <div className="flex min-h-[500px] select-none flex-col">
           <div className="relative overflow-hidden">
             <div className="relative aspect-[1600/880] w-full overflow-hidden bg-[radial-gradient(circle_at_top,rgba(123,86,184,0.18),transparent_52%),linear-gradient(135deg,#f8f4ff_0%,#f2ebff_52%,#efe8ff_100%)]">
-              {step.imageSrc ? (
-                <Image
-                  src={step.imageSrc}
-                  alt={step.title}
-                  fill
-                  priority
-                  className="scale-[1.003] object-cover object-center"
-                  sizes="(max-width: 640px) 100vw, 640px"
-                />
-              ) : (
-                <>
-                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0)_40%,rgba(91,47,167,0.06)_100%)]" />
-                  <div className="absolute inset-0 flex items-center justify-center text-center">
-                    <div className="space-y-1 px-6">
-                      <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-[#7b56b8]">
-                        imagem
-                      </p>
-                      <p className="text-sm text-slate-500/90">{step.imageHint}</p>
-                    </div>
-                  </div>
-                </>
-              )}
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06)_0%,rgba(255,255,255,0)_40%,rgba(91,47,167,0.06)_100%)]" />
+              <div className="absolute inset-0 flex items-center justify-center text-center">
+                <div className="space-y-1 px-6">
+                  <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-[#7b56b8]">
+                    imagem
+                  </p>
+                  <p className="text-sm text-slate-500/90">{step.imageHint}</p>
+                </div>
+              </div>
             </div>
 
             <DialogHeader className="items-center space-y-0 bg-white px-6 pt-5 text-center sm:px-7 sm:pt-6">

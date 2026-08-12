@@ -39,6 +39,8 @@ describe('AccountSettingsNav', () => {
     expect(labels).toEqual([
       'Perfil',
       'Segurança',
+      'Situação cadastral',
+      'Plano e faturamento',
       'Desativar conta',
     ]);
 
@@ -60,7 +62,7 @@ describe('AccountSettingsNav', () => {
     expect(screen.queryByRole('link', { name: 'Notificações' })).not.toBeInTheDocument();
   });
 
-  it('oculta "Verificação da conta" quando a conta usa Asaas externo', async () => {
+  it('oculta "Situação cadastral" quando a conta usa Asaas externo', async () => {
     useSessionMock.mockReturnValue({
       data: {
         user: {
@@ -76,10 +78,10 @@ describe('AccountSettingsNav', () => {
 
     render(<AccountSettingsNav />);
 
-    expect(screen.queryByRole('link', { name: 'Verificação da conta' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Situação cadastral' })).not.toBeInTheDocument();
   });
 
-  it('mostra "Verificação da conta" para ADMIN em whitelabel com fluxo financeiro iniciado', async () => {
+  it('mostra "Situação cadastral" para ADMIN em whitelabel com fluxo financeiro iniciado', async () => {
     useSessionMock.mockReturnValue({
       data: {
         user: {
@@ -95,7 +97,7 @@ describe('AccountSettingsNav', () => {
 
     render(<AccountSettingsNav />);
 
-    expect(screen.getByRole('link', { name: 'Verificação da conta' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Verificação da conta' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Situação cadastral' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Situação cadastral' })).toHaveAttribute('aria-current', 'page');
   });
 });

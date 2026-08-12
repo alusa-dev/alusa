@@ -697,6 +697,7 @@ async function buildOperationalChargesCollection(
     linkedCharges,
     standaloneSubscriptionsMain,
     standaloneSubscriptionsRecent,
+    standaloneInstallmentPlans,
     eventFinancialEntriesMain,
     eventFinancialEntriesRecent,
     eventTicketSales,
@@ -737,6 +738,16 @@ async function buildOperationalChargesCollection(
       where: standaloneSubscriptionRecentWhere,
       orderBy: { nextDueDate: 'asc' },
       select: standaloneSubscriptionSelect,
+    }),
+    _db.standaloneInstallmentPlan.findMany({
+      where: {
+        contaId,
+        status: { in: ['ACTIVE', 'COMPLETED'] },
+      },
+      select: {
+        id: true,
+        asaasInstallmentId: true,
+      },
     }),
     _db.eventFinancialEntry.findMany({
       where: eventFinancialEntryWhere,
@@ -834,9 +845,20 @@ async function buildOperationalChargesCollection(
     standaloneSubscriptionsMain,
     standaloneSubscriptionsRecent,
   );
+  const standaloneInstallmentPlanReferences = new Set(
+    standaloneInstallmentPlans.flatMap((plan) =>
+      [plan.id, plan.asaasInstallmentId].filter(
+        (reference): reference is string => Boolean(reference),
+      ),
+    ),
+  );
   const eventFinancialEntries = mergeRecordsById(
     eventFinancialEntriesMain,
     eventFinancialEntriesRecent,
+  ).filter(
+    (entry) =>
+      !entry.asaasPaymentId ||
+      !standaloneInstallmentPlanReferences.has(entry.asaasPaymentId),
   );
   const eventMapOrders = mergeRecordsById(eventMapOrdersMain, eventMapOrdersRecent);
 

@@ -236,7 +236,8 @@ export const createWebhookPayloadDto = z.object({
   enabled: z.boolean().default(true),
   interrupted: z.boolean().optional(),
   apiVersion: z.number().int().optional(),
-  authToken: z.string().min(8),
+  // O contrato oficial de POST /v3/webhooks exige no mínimo 32 caracteres.
+  authToken: z.string().min(32),
   sendType: z.enum(['SEQUENTIALLY', 'NON_SEQUENTIALLY']).optional(),
   events: z.array(z.string().min(1)).min(1),
 });

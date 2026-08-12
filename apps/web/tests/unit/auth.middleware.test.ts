@@ -19,7 +19,7 @@ vi.mock('@/features/global-admin/auth/session', () => ({
   verifyGlobalAdminSessionToken: verifyGlobalAdminSessionTokenMock,
 }));
 
-import middleware from '@/middleware';
+import proxy from '@/proxy';
 
 describe('auth middleware', () => {
   beforeEach(() => {
@@ -42,7 +42,7 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await middleware(
+    const response = await proxy(
       new NextRequest('http://localhost:3000/dashboard', {
         headers: { cookie: 'next-auth.session-token=session-token' },
       }),
@@ -68,7 +68,7 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await middleware(new NextRequest('http://localhost:3000/dashboard'));
+    const response = await proxy(new NextRequest('http://localhost:3000/dashboard'));
 
     expect(response.headers.get('location')).toBeNull();
   });
@@ -87,7 +87,7 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await middleware(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+    const response = await proxy(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toBe('http://localhost:3000/dashboard');
@@ -107,13 +107,13 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await middleware(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
+    const response = await proxy(new NextRequest('http://localhost:3000/financeiro/pagamentos'));
 
     expect(response.headers.get('location')).toBeNull();
   });
 
   it('não redireciona POST /api/auth/login/validate sem sessão', async () => {
-    const response = await middleware(
+    const response = await proxy(
       new NextRequest('http://localhost:3000/api/auth/login/validate', {
         method: 'POST',
         headers: {
@@ -129,7 +129,7 @@ describe('auth middleware', () => {
   });
 
   it('permite webhooks sem sessão', async () => {
-    const response = await middleware(
+    const response = await proxy(
       new NextRequest('http://localhost:3000/api/webhooks/asaas', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -143,7 +143,7 @@ describe('auth middleware', () => {
   it('redireciona páginas protegidas sem sessão para login', async () => {
     getTokenMock.mockResolvedValueOnce(null);
 
-    const response = await middleware(new NextRequest('http://localhost:3000/dashboard'));
+    const response = await proxy(new NextRequest('http://localhost:3000/dashboard'));
 
     expect(response.status).toBe(307);
     expect(response.headers.get('location')).toContain('/auth/login');
@@ -165,7 +165,7 @@ describe('auth middleware', () => {
       }),
     );
 
-    const response = await middleware(new NextRequest('http://localhost:3000/dashboard'));
+    const response = await proxy(new NextRequest('http://localhost:3000/dashboard'));
 
     expect(response.headers.get('location')).toBeNull();
   });

@@ -19,7 +19,8 @@ export function registerAsaasHooksIntegration(): void {
     logAsaasApiCall({
       method: payload.method,
       endpoint: payload.endpoint,
-      contaId: payload.accountKey,
+      contaId: payload.accountScope ?? payload.accountKey,
+      accountKey: payload.accountKey,
       httpStatus: payload.httpStatus,
       durationMs: payload.durationMs,
       success: payload.success,
@@ -27,6 +28,8 @@ export function registerAsaasHooksIntegration(): void {
       circuitState: payload.circuitState,
       rateLimitRemaining: payload.rateLimitRemaining,
       quotaRemaining: payload.quotaRemaining,
+      attempts: payload.attempts,
+      backoffMs: payload.backoffMs,
     });
   });
 

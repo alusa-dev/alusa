@@ -2,13 +2,15 @@ import {
   updateMyAccountDocumentFile,
   type UploadMyAccountDocumentResponse,
 } from '@alusa/asaas';
-import { loadAsaasCredentials } from '@alusa/database';
+import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-error';
+import { DocumentsNotReadyError } from '../../errors/documents-not-ready-error';
 import { getMyAccountDocumentsCached } from './kyc-asaas-read-cache';
 import { refreshKycReadModel } from './refresh-kyc-read-model';
+import { getDocumentsReadiness } from './kyc-document-group-resolver';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -29,6 +31,15 @@ export async function updateKycDocumentFile(
   const creds = await loadAsaasCredentials(params.contaId);
   if (!creds) {
     throw new MissingAsaasApiKeyError('Credenciais Asaas não encontradas para o tenant');
+  }
+
+  const asaasAccount = await prisma.asaasAccount.findFirst({
+    where: { financeProfile: { contaId: params.contaId } },
+    select: { provisionedAt: true },
+  });
+  const documentsReadiness = getDocumentsReadiness(asaasAccount?.provisionedAt ?? null);
+  if (!documentsReadiness.ready) {
+    throw new DocumentsNotReadyError({ retryAfterMs: documentsReadiness.retryAfterMs });
   }
 
   // Read-before-write: garantir que o arquivo pertence à conta antes de atualizar

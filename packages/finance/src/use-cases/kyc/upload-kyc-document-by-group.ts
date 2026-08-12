@@ -12,11 +12,13 @@ import { createAsaasAccount } from '../asaas-account/create-asaas-account';
 import { getKycSummary, type GetKycSummaryResult } from './get-kyc-summary';
 import { DocumentsNotReadyError } from '../../errors/documents-not-ready-error';
 import { OnboardingUrlRequiredError } from '../../errors/onboarding-url-required-error';
+import { ProviderPortalRequiredError } from '../../errors/provider-portal-required-error';
 import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-error';
 import { getMyAccountDocumentsCached } from './kyc-asaas-read-cache';
 import { InvalidKycGroupIdError } from '../../errors/invalid-kyc-group-id-error';
 import { DOCUMENTS_READY_DELAY_MS, isZeroUuid } from './kyc-document-group-resolver';
 import { refreshKycReadModel } from './refresh-kyc-read-model';
+import { isAsaasInterfaceOnlyDescription } from '../../dtos/kyc/kyc-snapshot.dto';
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
@@ -114,6 +116,13 @@ export async function uploadKycDocumentByGroup(params: {
 
   if (group.onboardingUrl) {
     throw new OnboardingUrlRequiredError({ onboardingUrl: group.onboardingUrl });
+  }
+
+  // Subcontas fora do fluxo BaaS podem retornar este grupo sem onboardingUrl.
+  // A ausência do link, isoladamente, não autoriza POST: o marcador oficial
+  // da descrição determina que a etapa deve ser concluída no ambiente Asaas.
+  if (isAsaasInterfaceOnlyDescription(group.description)) {
+    throw new ProviderPortalRequiredError({ groupId: group.id });
   }
 
   const providedType = normalizeDocumentType(params.type);

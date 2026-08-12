@@ -1,4 +1,3 @@
-import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import prisma from '@/lib/prisma';
 
@@ -16,12 +15,6 @@ export function isRemovedUserEmail(email: string | null | undefined) {
     normalizedEmail.startsWith(REMOVED_USER_EMAIL_PREFIX) &&
     normalizedEmail.endsWith(REMOVED_USER_EMAIL_DOMAIN)
   );
-}
-
-async function buildRemovedUserPasswordHash(userId: string) {
-  const rounds = Number(process.env.BCRYPT_ROUNDS || 10);
-  const pepper = process.env.BCRYPT_PEPPER || '';
-  return bcrypt.hash(`removed-user:${userId}:${randomUUID()}:${pepper}`, rounds);
 }
 
 export async function removeManagedUserAccess(input: {
@@ -48,6 +41,7 @@ export async function removeManagedUserAccess(input: {
       } | null>;
       count: (_args: unknown) => Promise<number>;
       updateMany: (_args: unknown) => Promise<{ count: number }>;
+      deleteMany: (_args: unknown) => Promise<{ count: number }>;
     };
   }).usuarioConta;
 
@@ -99,9 +93,8 @@ export async function removeManagedUserAccess(input: {
         tx.aluno.updateMany({ where: { contaId: input.contaId, usuarioId: user.id }, data: { usuarioId: null } }),
       ]);
 
-      await tx.usuarioConta.updateMany({
+      await tx.usuarioConta.deleteMany({
         where: { usuarioId: user.id, contaId: input.contaId },
-        data: { status: 'INATIVO' },
       });
 
       await tx.auditLog.create({
@@ -131,38 +124,16 @@ export async function removeManagedUserAccess(input: {
     };
   }
 
-  if (isRemovedUserEmail(user.email)) {
-    return {
-      id: user.id,
-      hard: true,
-      alreadyRemoved: true,
-    };
-  }
-
   const removedAt = new Date();
-  const removedEmail = buildRemovedUserEmail(user.id);
-  const removedPasswordHash = await buildRemovedUserPasswordHash(user.id);
   const correlationId = randomUUID();
 
   await prisma.$transaction(async (tx) => {
     await Promise.all([
-      tx.authActionToken.deleteMany({ where: { userId: user.id } }),
       tx.colaborador.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
       tx.responsavel.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
       tx.aluno.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
+      tx.usuarioConta.deleteMany({ where: { usuarioId: user.id } }),
     ]);
-
-    await tx.usuario.update({
-      where: { id: user.id },
-      data: {
-        email: removedEmail,
-        senhaHash: removedPasswordHash,
-        emailVerifiedAt: null,
-        status: 'INATIVO',
-        telefone: null,
-        foto: null,
-      },
-    });
 
     await tx.auditLog.create({
       data: {
@@ -182,6 +153,8 @@ export async function removeManagedUserAccess(input: {
         },
       },
     });
+
+    await tx.usuario.delete({ where: { id: user.id } });
   });
 
   return {

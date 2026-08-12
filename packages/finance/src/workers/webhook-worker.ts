@@ -172,7 +172,7 @@ export function stopWorker(): void {
 // ── Auto-start se executado diretamente ─────────────────────────────────
 
 const isDirectExecution =
-  typeof require !== 'undefined'
+  typeof require !== 'undefined' && typeof module !== 'undefined'
     ? require.main === module
     : import.meta.url === `file://${process.argv[1]}`;
 

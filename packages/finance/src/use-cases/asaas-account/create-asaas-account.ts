@@ -88,6 +88,118 @@ function extractErrorInfo(error: unknown): { message: string; code?: string; sta
   };
 }
 
+type AsaasAccessTokenMetadata = {
+  id?: string | null;
+  apiKey?: string | null;
+  expirationDate?: string | null;
+  dateCreated?: string | null;
+  projectedExpirationDateByLackOfUse?: string | null;
+};
+
+function parseProviderDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function buildApiKeyMetadataPatch(accessToken: AsaasAccessTokenMetadata | null | undefined) {
+  if (!accessToken) return {};
+
+  return {
+    apiKeyId: accessToken.id ?? null,
+    apiKeyCreatedAt: parseProviderDate(accessToken.dateCreated),
+    apiKeyExpiresAt: parseProviderDate(accessToken.expirationDate),
+    apiKeyProjectedExpirationAt: parseProviderDate(accessToken.projectedExpirationDateByLackOfUse),
+  };
+}
+
+function resolveSubaccountApiKey(subaccount: {
+  apiKey?: string | null;
+  accessToken?: AsaasAccessTokenMetadata | null;
+}): string | null {
+  return subaccount.accessToken?.apiKey ?? subaccount.apiKey ?? null;
+}
+
+function extractProviderErrorDetails(error: unknown): { text: string; code: string | null; description: string | null } {
+  if (!error || typeof error !== 'object') {
+    return { text: String(error ?? '').toLowerCase(), code: null, description: String(error ?? '') || null };
+  }
+
+  const value = error as {
+    message?: unknown;
+    code?: unknown;
+    response?: unknown;
+    responseBody?: unknown;
+  };
+  const codes: string[] = [];
+  const descriptions: string[] = [];
+  const parts = [
+    typeof value.message === 'string' ? value.message : '',
+    typeof value.code === 'string' ? value.code : '',
+  ];
+  if (typeof value.code === 'string') codes.push(value.code);
+
+  for (const candidate of [value.response, value.responseBody]) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const errors = (candidate as { errors?: unknown }).errors;
+    if (!Array.isArray(errors)) continue;
+
+    for (const item of errors) {
+      if (!item || typeof item !== 'object') continue;
+      const errorItem = item as { code?: unknown; description?: unknown };
+      if (typeof errorItem.code === 'string') {
+        parts.push(errorItem.code);
+        codes.push(errorItem.code);
+      }
+      if (typeof errorItem.description === 'string') {
+        parts.push(errorItem.description);
+        descriptions.push(errorItem.description);
+      }
+    }
+  }
+
+  return {
+    text: parts.filter(Boolean).join(' ').toLowerCase(),
+    code: codes.find(Boolean) ?? null,
+    description: descriptions.find(Boolean) ?? (typeof value.message === 'string' ? value.message : null),
+  };
+}
+
+function extractProviderErrorText(error: unknown): string {
+  return extractProviderErrorDetails(error).text;
+}
+
+/**
+ * O Asaas documenta limites e avaliação regulatória no ambiente de produção.
+ * Só marcamos bloqueio quando a própria mensagem do provedor contém um marcador
+ * explícito; erros genéricos de rede/400 continuam seguindo o recovery normal.
+ */
+function isLikelyRegulatoryEvaluationBlock(error: unknown): boolean {
+  if (!isProductionAsaasEnvironment()) return false;
+
+  const text = extractProviderErrorText(error);
+  return [
+    'regulat',
+    'regulator',
+    'homolog',
+    '60 dias',
+    'subcontas distintas',
+    'limite de subcontas',
+    'r$ 2.000',
+    'r$ 2000',
+    'r\\$ 2.000',
+  ].some((marker) => text.includes(marker));
+}
+
+function isProductionAsaasEnvironment(): boolean {
+  // O ambiente efetivo é determinado pela chave/base URL do cliente Asaas.
+  // api-sandbox não casa com api.asaas.com, portanto não há ambiguidade.
+  return (
+    process.env.ASAAS_API_KEY?.startsWith('$aact_prod_') === true ||
+    process.env.ASAAS_BASE_URL?.includes('api.asaas.com') === true
+  );
+}
+
 // ============================================================================
 // Idempotência: statuses que indicam subconta já criada/conectada
 // ============================================================================
@@ -315,6 +427,7 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
       create: {
         financeProfileId: params.financeProfileId,
         asaasAccountId: params.recoveredAccount.id,
+        walletId: 'walletId' in params.recoveredAccount ? params.recoveredAccount.walletId ?? null : null,
         asaasAccountEmail: params.recoveredAccount.email ?? null,
         externalReference: params.externalReference,
         status: 'PROVISIONING_FAILED',
@@ -322,6 +435,10 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
         provisionedAt: null,
         apiKeyEncrypted: null,
         apiKeyStatus: 'MISSING',
+        apiKeyId: null,
+        apiKeyCreatedAt: null,
+        apiKeyExpiresAt: null,
+        apiKeyProjectedExpirationAt: null,
         webhookStatus: 'PENDING',
         operationalStatus: 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
@@ -329,6 +446,9 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
       },
       update: {
         asaasAccountId: params.recoveredAccount.id,
+        ...('walletId' in params.recoveredAccount
+          ? { walletId: params.recoveredAccount.walletId ?? null }
+          : {}),
         asaasAccountEmail: params.recoveredAccount.email ?? null,
         externalReference: params.externalReference,
         status: 'PROVISIONING_FAILED',
@@ -336,6 +456,10 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
         provisionedAt: null,
         apiKeyEncrypted: null,
         apiKeyStatus: 'MISSING',
+        apiKeyId: null,
+        apiKeyCreatedAt: null,
+        apiKeyExpiresAt: null,
+        apiKeyProjectedExpirationAt: null,
         webhookStatus: 'PENDING',
         operationalStatus: 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
@@ -421,6 +545,7 @@ async function persistRecoveredSubaccount(params: {
       create: {
         financeProfileId: params.financeProfileId,
         asaasAccountId: params.recoveredAccount.id,
+        walletId: params.recoveredAccount.walletId ?? null,
         asaasAccountEmail: params.recoveredAccount.email,
         externalReference: params.externalReference,
         status: 'CREATED',
@@ -428,6 +553,7 @@ async function persistRecoveredSubaccount(params: {
         provisionedAt: now,
         apiKeyEncrypted: encryptedApiKey,
         apiKeyStatus,
+        ...buildApiKeyMetadataPatch(accessToken),
         webhookStatus: 'PENDING',
         operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
@@ -435,12 +561,14 @@ async function persistRecoveredSubaccount(params: {
       },
       update: {
         asaasAccountId: params.recoveredAccount.id,
+        walletId: params.recoveredAccount.walletId ?? undefined,
         asaasAccountEmail: params.recoveredAccount.email,
         status: 'CREATED',
         statusUpdatedAt: now,
         provisionedAt: { set: now },
         apiKeyEncrypted: encryptedApiKey,
         apiKeyStatus,
+        ...buildApiKeyMetadataPatch(accessToken),
         webhookStatus: 'PENDING',
         operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
         webhookAuthTokenHash: params.webhookAuthTokenHash,
@@ -1083,6 +1211,7 @@ async function createAsaasAccountInternal(params: {
           data: {
             apiKeyEncrypted: encryptedApiKey,
             apiKeyStatus,
+            ...buildApiKeyMetadataPatch(accessToken),
           },
           select: { id: true },
         });
@@ -1359,6 +1488,27 @@ async function createAsaasAccountInternal(params: {
       });
     }
 
+    if (isLikelyRegulatoryEvaluationBlock(error)) {
+      if (existing) {
+        const providerError = extractProviderErrorDetails(error);
+        await prisma.asaasAccount.update({
+          where: { id: existing.id },
+          data: {
+            status: 'PROVISIONING_FAILED',
+            statusUpdatedAt: new Date(),
+            operationalStatus: 'BLOCKED',
+            regulatoryBlockedAt: new Date(),
+            regulatoryBlockCode: providerError.code,
+            regulatoryBlockReason: (providerError.description ?? errorInfo.message).slice(0, 500),
+          },
+          select: { id: true },
+        });
+      }
+
+      // Limites/avaliação regulatória não são erros recuperáveis por retry.
+      throw error;
+    }
+
     // Erros específicos do sandbox
     if (
       error &&
@@ -1414,11 +1564,13 @@ async function createAsaasAccountInternal(params: {
     throw error;
   }
 
-  if (!subaccount.apiKey) {
+  const subaccountApiKey = resolveSubaccountApiKey(subaccount);
+
+  if (!subaccountApiKey) {
     return markRemoteSubaccountRequiresApiKeyRecovery({
       contaId: params.contaId,
       financeProfileId: financeProfile.id,
-      recoveredAccount: { id: subaccount.id, email: subaccount.email ?? identity.email },
+      recoveredAccount: subaccount,
       externalReference,
       webhookAuthTokenHash,
       actor: params.actor,
@@ -1430,8 +1582,8 @@ async function createAsaasAccountInternal(params: {
     });
   }
 
-  const encryptedApiKey = credentialVault.encrypt(subaccount.apiKey);
-  const apiKeyStatus = await validateSubaccountApiKey(subaccount.apiKey);
+  const encryptedApiKey = credentialVault.encrypt(subaccountApiKey);
+  const apiKeyStatus = await validateSubaccountApiKey(subaccountApiKey);
 
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -1441,6 +1593,7 @@ async function createAsaasAccountInternal(params: {
         create: {
           financeProfileId: financeProfile.id,
           asaasAccountId: subaccount.id,
+          walletId: subaccount.walletId ?? null,
           asaasAccountEmail: subaccount.email ?? identity.email,
           externalReference,
           status: 'CREATED',
@@ -1448,6 +1601,8 @@ async function createAsaasAccountInternal(params: {
           provisionedAt: now,
           apiKeyEncrypted: encryptedApiKey,
           apiKeyStatus,
+          ...buildApiKeyMetadataPatch(subaccount.accessToken),
+          regulatoryEvaluationStartedAt: isProductionAsaasEnvironment() ? now : null,
           webhookStatus: 'PENDING',
           operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
           documentsCache: Prisma.DbNull,
@@ -1457,6 +1612,7 @@ async function createAsaasAccountInternal(params: {
         },
         update: {
           asaasAccountId: subaccount.id,
+          walletId: subaccount.walletId ?? undefined,
           asaasAccountEmail: subaccount.email ?? identity.email,
           externalReference,
           status: 'CREATED',
@@ -1464,6 +1620,10 @@ async function createAsaasAccountInternal(params: {
           provisionedAt: { set: now },
           apiKeyEncrypted: encryptedApiKey,
           apiKeyStatus,
+          ...buildApiKeyMetadataPatch(subaccount.accessToken),
+          ...(isProductionAsaasEnvironment() && !existing?.regulatoryEvaluationStartedAt
+            ? { regulatoryEvaluationStartedAt: now }
+            : {}),
           webhookStatus: 'PENDING',
           operationalStatus: apiKeyStatus === 'CONNECTED' ? 'WEBHOOK_REQUIRED' : 'API_KEY_REQUIRED',
           documentsCache: Prisma.DbNull,

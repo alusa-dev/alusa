@@ -85,7 +85,7 @@ function buildActions(
     isOnboardingUrlExpired?: boolean;
     slots?: Array<{ id: string; label: string; status: string }>;
     responsible?: { name?: string; type?: string } | null;
-    submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD';
+    submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD' | 'PROVIDER_PORTAL';
   }>,
 ): VerificationAction[] {
   return nextActions.map((action) => {

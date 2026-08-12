@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -9,7 +10,7 @@ import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabiliti
 type Item = { href: string; label: string; requiresFinance?: boolean };
 
 const KYC_ITEMS: Item[] = [
-  { href: '/conta/verificacao', label: 'Verificação da conta', requiresFinance: true },
+  { href: '/conta/verificacao', label: 'Situação cadastral', requiresFinance: true },
 ];
 
 const PAYMENT_ALLOWED_ROLES = new Set(['RESPONSAVEL', 'ALUNO']);
@@ -27,17 +28,11 @@ export default function AccountSettingsNav() {
 
   const role = user?.role;
   const normalizedRole = role?.toUpperCase() ?? '';
-  const financeStatus = user?.financeStatus;
   const financialCapabilities = resolveFinancialCapabilities(user?.financeIntegrationMode);
   const showPaymentSection = role ? PAYMENT_ALLOWED_ROLES.has(role) : false;
   const isAdmin = normalizedRole === 'ADMIN';
   const canDeleteAccount = isAdmin;
   const showPlatformBilling = PLATFORM_BILLING_ALLOWED_ROLES.has(normalizedRole);
-
-  const hasFinanceFlow = useMemo(() => {
-    if (!financeStatus) return false;
-    return financeStatus !== 'FINANCE_NOT_STARTED';
-  }, [financeStatus]);
 
   const items = useMemo(() => {
     const result: Item[] = [
@@ -49,7 +44,10 @@ export default function AccountSettingsNav() {
       result.push({ href: '/conta/assinaturas', label: 'Assinaturas' });
     }
 
-    if (isAdmin && hasFinanceFlow && financialCapabilities.canUseKyc) {
+    // A situação cadastral deve continuar acessível mesmo enquanto a sessão
+    // ainda carrega o financeStatus atualizado após o onboarding. A página
+    // própria resolve o estado (aguardando, pendente ou aprovado).
+    if (isAdmin && financialCapabilities.canUseKyc) {
       result.push(...KYC_ITEMS);
     }
 
@@ -65,7 +63,6 @@ export default function AccountSettingsNav() {
   }, [
     canDeleteAccount,
     financialCapabilities.canUseKyc,
-    hasFinanceFlow,
     isAdmin,
     showPaymentSection,
     showPlatformBilling,

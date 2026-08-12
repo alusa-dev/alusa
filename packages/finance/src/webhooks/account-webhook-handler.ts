@@ -6,7 +6,12 @@ import { loadAsaasCredentials } from '@alusa/database';
 import { auditLogService } from '../foundation/audit-log.service';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { buildWebhookCacheV2, resolveCommercialInfoState } from '../use-cases/kyc/kyc-cache-utils';
-import { getMyAccountDocumentsCached, getMyAccountStatusCached } from '../use-cases/kyc/kyc-asaas-read-cache';
+import {
+  getMyAccountDocumentsCached,
+  getMyAccountStatusCached,
+  invalidateKycAsaasReadCache,
+} from '../use-cases/kyc/kyc-asaas-read-cache';
+import { getDocumentsReadiness } from '../use-cases/kyc/kyc-document-group-resolver';
 import { syncKycModels } from '../use-cases/kyc/kyc-persistence.service';
 import {
   isDocumentEvent,
@@ -72,6 +77,7 @@ export async function handleAccountWebhook(
       asaasAccountId: true,
       commercialInfoStatus: true,
       commercialInfoScheduledDate: true,
+      provisionedAt: true,
       lastAccountStatusEventAt: true,
     },
   });
@@ -285,8 +291,16 @@ async function refreshDocumentsCacheV2(
       select: {
         commercialInfoStatus: true,
         commercialInfoScheduledDate: true,
+        provisionedAt: true,
       },
     });
+
+    if (!getDocumentsReadiness(currentAccount?.provisionedAt ?? null).ready) return;
+
+    // Eventos de reprovação podem gerar um novo onboardingUrl. Invalida o
+    // cache de processo antes da reconciliação para que a nova URL não fique
+    // escondida por uma leitura anterior.
+    invalidateKycAsaasReadCache(creds.apiKey);
 
     const [status, docs] = await Promise.all([
       getMyAccountStatusCached({ apiKey: creds.apiKey }, { forceRefresh: true, intent: 'RECONCILIATION' }),

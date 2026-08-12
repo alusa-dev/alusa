@@ -464,8 +464,8 @@ function formatRestockOrder(record: RestockOrderRecord): RestockOrderDTO {
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     createdBy: {
-      id: record.createdBy.id,
-      name: record.createdBy.nome,
+      id: record.createdBy?.id ?? 'deleted-user',
+      name: record.createdBy?.nome ?? 'Usuário removido',
     },
     items: record.items.map((item) => ({
       id: item.id,

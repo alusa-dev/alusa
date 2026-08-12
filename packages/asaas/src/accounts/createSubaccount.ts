@@ -18,7 +18,7 @@ export interface CreateSubaccountParams {
  * 
  * @param params.apiKey - API key da conta master
  * @param params.data - Dados da subconta
- * @returns Subconta criada com apiKey e walletId
+ * @returns Subconta criada com accessToken.apiKey e walletId
  */
 export async function createSubaccount(
   params: CreateSubaccountParams,

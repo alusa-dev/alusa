@@ -374,8 +374,17 @@ describe('getKycSnapshot', () => {
 
   // ── Cache v2 válido: não chama Asaas ──
 
-  it('usa cache v2 válido sem chamar Asaas', async () => {
+  it('não usa cache v2 externo sem URL e busca o onboarding atual no Asaas', async () => {
     const { prisma } = await import('@alusa/database');
+    mockGetMyAccountStatus.mockResolvedValue(makeStatus());
+    mockGetMyAccountDocuments.mockResolvedValue(makeDocs([
+      makeGroup({
+        id: 'grp_cached_ext',
+        status: 'NOT_SENT',
+        type: 'IDENTIFICATION',
+        onboardingUrl: 'https://asaas.com/onboarding/current',
+      }),
+    ]));
     vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({
       id: 'aa_001',
       asaasAccountId: ASAAS_ACCOUNT_ID,
@@ -403,18 +412,16 @@ describe('getKycSnapshot', () => {
 
     const snapshot = await getKycSnapshot(FP_ID);
     expect(snapshot).not.toBeNull();
-    expect(snapshot!.hasBlockingPending).toBe(false);
+    expect(snapshot!.hasBlockingPending).toBe(true);
     expect(snapshot!.nextActions).toHaveLength(1);
     expect(snapshot!.nextActions[0]).toMatchObject({
       kind: 'EXTERNAL_ONBOARDING',
       groupId: 'grp_cached_ext',
       type: 'IDENTIFICATION',
     });
-    expect(snapshot!.nextActions[0].onboardingUrl).toBeUndefined();
-    expect(snapshot!.nextActions[0].onboardingUrlExpirationDate).toBeUndefined();
-    expect(snapshot!.nextActions[0].isOnboardingUrlExpired).toBeUndefined();
-    expect(mockGetMyAccountStatus).not.toHaveBeenCalled();
-    expect(mockGetMyAccountDocuments).not.toHaveBeenCalled();
+    expect(snapshot!.nextActions[0].onboardingUrl).toBe('https://asaas.com/onboarding/current');
+    expect(mockGetMyAccountStatus).toHaveBeenCalled();
+    expect(mockGetMyAccountDocuments).toHaveBeenCalled();
   });
 
   // ── Cache v1 (legado) é ignorado → busca fresh ──

@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import bcrypt from 'bcryptjs';
 import { InviteUserService } from '@alusa/lib';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { hashPassword, passwordPolicyMessage } from '@/lib/auth-password';
@@ -73,31 +72,10 @@ export async function POST(req: Request) {
     }
 
     const finalEmail = (invite.email ?? parsed.data.email)?.trim().toLowerCase();
-    const existingUser = finalEmail
-      ? await prisma.usuario.findFirst({
-          where: { email: { equals: finalEmail, mode: 'insensitive' } },
-          select: { id: true, senhaHash: true },
-        })
-      : null;
-
-    if (existingUser) {
-      const pepper = process.env.BCRYPT_PEPPER || '';
-      let passwordMatches = await bcrypt.compare(finalPassword + pepper, existingUser.senhaHash);
-      if (!passwordMatches && process.env.NODE_ENV !== 'production') {
-        passwordMatches = await bcrypt.compare(finalPassword, existingUser.senhaHash);
-      }
-      if (!passwordMatches) {
-        return NextResponse.json(
-          { error: 'Este e-mail já possui acesso. Informe a senha atual para aceitar o convite.' },
-          { status: 403 },
-        );
-      }
-    }
-
     let senhaHash: string;
 
     try {
-      senhaHash = existingUser ? existingUser.senhaHash : await hashPassword(finalPassword);
+      senhaHash = await hashPassword(finalPassword);
     } catch (error) {
       const message = error instanceof Error ? error.message : passwordPolicyMessage;
       return NextResponse.json({ error: message }, { status: 400 });
@@ -105,18 +83,14 @@ export async function POST(req: Request) {
 
     try {
       // Passa o email do usuário (se fornecido) para o acceptInvite
-      const user = existingUser
-        ? await InviteUserService.acceptInvite(token, finalName, senhaHash, parsed.data.email, {
-            reuseExistingUserId: existingUser.id,
-          })
-        : await InviteUserService.acceptInvite(token, finalName, senhaHash, parsed.data.email);
+      const user = await InviteUserService.acceptInvite(token, finalName, senhaHash, parsed.data.email);
 
       if (!user.emailVerifiedAt) {
         await sendEmailVerificationForUser(user.id, {
           ip,
           userAgent: req.headers.get('user-agent'),
         }, {
-          callbackUrl: user.role === 'ADMIN' ? '/finance/wizard' : '/dashboard',
+          callbackUrl: '/dashboard',
         });
       }
 

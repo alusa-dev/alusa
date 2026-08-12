@@ -933,7 +933,14 @@ async function updateEventFinancialEntryFromWebhook(
   });
 
   const participant = await prisma.eventParticipant.findFirst({
-    where: { revenueEntryId: entry.id, contaId },
+    where: {
+      contaId,
+      OR: [
+        { revenueEntryId: entry.id },
+        { asaasPaymentId: paymentId },
+        ...(p.installment ? [{ asaasInstallmentId: p.installment }] : []),
+      ],
+    },
     select: { id: true },
   });
 

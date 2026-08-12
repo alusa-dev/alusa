@@ -4,6 +4,7 @@ import { MissingAsaasApiKeyError } from '../../errors/missing-asaas-api-key-erro
 import { buildCacheV2 } from './kyc-cache-utils';
 import { getMyAccountDocumentsCached, getMyAccountStatusCached } from './kyc-asaas-read-cache';
 import { syncKycModels } from './kyc-persistence.service';
+import { getDocumentsReadiness } from './kyc-document-group-resolver';
 
 export async function refreshKycReadModel(contaId: string): Promise<void> {
   const creds = await loadAsaasCredentials(contaId);
@@ -13,10 +14,12 @@ export async function refreshKycReadModel(contaId: string): Promise<void> {
 
   const asaasAccount = await prisma.asaasAccount.findFirst({
     where: { financeProfile: { contaId } },
-    select: { id: true },
+    select: { id: true, provisionedAt: true },
   });
 
   if (!asaasAccount?.id) return;
+
+  if (!getDocumentsReadiness(asaasAccount.provisionedAt).ready) return;
 
   const [documents, myAccountStatus] = await Promise.all([
     getMyAccountDocumentsCached({ apiKey: creds.apiKey }, { forceRefresh: true, intent: 'READ_MODEL' }),

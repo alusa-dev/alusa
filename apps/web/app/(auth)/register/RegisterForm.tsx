@@ -91,10 +91,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
   });
   const termsAccepted = watch('termos');
 
-  const targetAfterVerification =
-    mode === 'first' || inviteData?.role?.toUpperCase() === 'ADMIN'
-      ? '/finance/wizard'
-      : '/dashboard';
+  // Convites dão acesso a uma conta já configurada; somente o primeiro cadastro
+  // deve iniciar o onboarding financeiro da nova escola.
+  const targetAfterVerification = mode === 'first' ? '/finance/wizard' : '/dashboard';
   const postRegisterRedirect = `/auth/confirm-email?callbackUrl=${encodeURIComponent(targetAfterVerification)}`;
 
   /* helpers removed */

@@ -67,6 +67,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const isFeePaid = body.billingMethod === 'MANUAL_RECEIVED';
     const feePaymentMethod = isFeePaid ? body.feePaymentMethod : body.billingMethod;
     let asaasPaymentId: string | null = null;
+    let asaasInstallmentId: string | null = null;
+    let standaloneChargeId: string | null = null;
 
     if (body.registrationFeeCharged > 0 && !isFeePaid) {
       if (!participant.alunoId) {
@@ -94,6 +96,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
 
       asaasPaymentId = billingResult.data.asaasPaymentId || billingResult.data.asaasInstallmentId || null;
+      asaasInstallmentId = billingResult.data.asaasInstallmentId ?? null;
+      standaloneChargeId = billingResult.data.chargeId;
     }
 
     const input = reactivateEventParticipantSchema.parse({
@@ -104,6 +108,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       dueDate: parseDueDate(body.dueDate),
       paymentProvider: asaasPaymentId ? 'ASAAS' : null,
       asaasPaymentId,
+      asaasInstallmentId,
+      standaloneChargeId,
       paymentStatus: asaasPaymentId ? 'PENDING' : null,
       billingMethod: body.billingMethod,
       chargeType: body.chargeType,

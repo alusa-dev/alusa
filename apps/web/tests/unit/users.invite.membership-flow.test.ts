@@ -23,9 +23,8 @@ import { getServerSession } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/auth-password';
 import { POST as invitePost } from '@/app/api/users/invite/route';
-import { POST as acceptPost } from '@/app/api/users/accept/route';
 
-describe('convite multi-tenant com identidade existente', () => {
+describe('convite com identidade global existente', () => {
   const createdContaIds: string[] = [];
   const createdEmails: string[] = [];
 
@@ -42,7 +41,7 @@ describe('convite multi-tenant com identidade existente', () => {
     createdEmails.length = 0;
   });
 
-  it('permite convidar email que ja existe como dono de outra escola e cria apenas novo vinculo', async () => {
+  it('bloqueia convidar email que ja existe como dono de outra escola', async () => {
     const password = 'Abcdef1!';
     const suffix = randomUUID();
     const contaOrigemId = `conta-origem-${suffix}`;
@@ -108,30 +107,8 @@ describe('convite multi-tenant com identidade existente', () => {
     );
     const inviteJson = await inviteResponse.json();
 
-    expect(inviteResponse.status).toBe(201);
-    expect(inviteJson.invite.email).toBe(existingOwnerEmail);
-
-    const acceptResponse = await acceptPost(
-      new Request('http://x/api/users/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: inviteJson.invite.token,
-          name: 'Owner Existente',
-          password,
-          email: existingOwnerEmail,
-        }),
-      }),
-    );
-    const acceptJson = await acceptResponse.json();
-
-    expect(acceptResponse.status).toBe(200);
-    expect(acceptJson.user).toMatchObject({
-      id: existingOwner.id,
-      email: existingOwnerEmail,
-      role: 'FINANCEIRO',
-      contaId: contaOrigemId,
-    });
+    expect(inviteResponse.status).toBe(409);
+    expect(inviteJson.error).toContain('Usuário já cadastrado');
 
     await expect(
       prisma.usuario.count({ where: { email: existingOwnerEmail } }),
@@ -140,8 +117,8 @@ describe('convite multi-tenant com identidade existente', () => {
     await expect(
       prisma.usuarioConta.findUnique({
         where: { usuarioId_contaId: { usuarioId: existingOwner.id, contaId: contaOrigemId } },
-        select: { role: true, status: true },
+        select: { id: true },
       }),
-    ).resolves.toMatchObject({ role: 'FINANCEIRO', status: 'ATIVO' });
+    ).resolves.toBeNull();
   });
 });

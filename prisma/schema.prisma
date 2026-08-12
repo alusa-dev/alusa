@@ -1517,6 +1517,7 @@ model Usuario {
   notifySms            Boolean   @default(false)
   welcomeWizardSeenAt  DateTime?
   senhaHash            String
+  passwordChangedAt    DateTime?
   emailVerifiedAt      DateTime?
   role                 Role      @default(RESPONSAVEL)
   status               Status    @default(ATIVO)
@@ -3271,12 +3272,12 @@ model CheckoutLink {
   token       String    @unique
   expiresAt   DateTime
   usedAt      DateTime?
-  createdById String
+  createdById String?
   channel     String    @default("PORTAL")
   createdAt   DateTime  @default(now())
 
   matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Cascade)
-  createdBy Usuario   @relation(fields: [createdById], references: [id])
+  createdBy Usuario?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([matriculaId], name: "idx_checkoutlink_matricula")
   @@index([expiresAt], name: "idx_checkoutlink_expiration")
@@ -3643,14 +3644,14 @@ model FinanceWebhookSideEffectOutbox {
 model LogFinanceiro {
   id         String   @id @default(cuid())
   contaId    String
-  usuarioId  String
+  usuarioId  String?
   cobrancaId String?
   acao       String // DELETAR, PAUSAR, REENVIAR, SEGUNDA_VIA, CONFIRMAR_MANUAL, REFUND, REATIVAR
   detalhes   Json?
   createdAt  DateTime @default(now())
 
   conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  usuario  Usuario   @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  usuario  Usuario?  @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
   cobranca Cobranca? @relation(fields: [cobrancaId], references: [id], onDelete: SetNull)
 
   @@index([contaId], name: "idx_logfinanceiro_conta")
@@ -4780,6 +4781,9 @@ model EventParticipant {
   financialStatusSnapshot String?
   feePaidAmount           Decimal              @default(0) @db.Decimal(12, 2)
   feeRefundedAmount       Decimal              @default(0) @db.Decimal(12, 2)
+  standaloneChargeId      String?
+  asaasPaymentId          String?
+  asaasInstallmentId      String?
   cancelledAt             DateTime?
   cancelledReason         String?
   createdAt               DateTime             @default(now())
@@ -5237,6 +5241,8 @@ model AsaasAccount {
 
   // Pode começar como placeholder (antes da criação remota no Asaas)
   asaasAccountId    String? @unique
+  // Carteira retornada pelo Asaas; usada em split e transferências entre contas.
+  walletId          String?
   externalReference String? @unique
 
   status          FinancialOnboardingStatus @default(NOT_STARTED)
@@ -5250,6 +5256,11 @@ model AsaasAccount {
   provisionLastAttemptAt  DateTime?
   provisionLastError      String?
   provisionLastHttpStatus Int?
+  // Avaliação regulatória do provedor; não é inferida como aprovada localmente.
+  regulatoryEvaluationStartedAt DateTime?
+  regulatoryBlockedAt            DateTime?
+  regulatoryBlockCode            String?
+  regulatoryBlockReason          String?
 
   // Status da confirmação anual de dados comerciais (webhooks COMMERCIAL_INFO_*).
   commercialInfoStatus        AsaasCommercialInfoStatus?
@@ -5258,6 +5269,11 @@ model AsaasAccount {
   // API key da subconta (criptografada). Usada para autenticação com /myAccount.
   apiKeyEncrypted String?
   apiKeyStatus    AsaasApiKeyStatus @default(MISSING)
+  // Metadados não secretos da chave emitida pelo Asaas.
+  apiKeyId                         String?
+  apiKeyCreatedAt                  DateTime?
+  apiKeyExpiresAt                  DateTime?
+  apiKeyProjectedExpirationAt      DateTime?
 
   // Estado operacional local. CREATED significa apenas "subconta remota existe";
   // operationalStatus=OPERATIONAL é o que libera mutações financeiras externas.
@@ -6624,13 +6640,13 @@ model PayerChangeOperacao {
 
   // Auditoria
   reason      String?
-  createdById String
+  createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   conta     Conta     @relation(fields: [contaId], references: [id])
   matricula Matricula @relation(fields: [matriculaId], references: [id])
-  createdBy Usuario   @relation(fields: [createdById], references: [id])
+  createdBy Usuario?  @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([contaId])
   @@index([contaId, status], name: "idx_payer_change_operacao_conta_status")
@@ -6789,7 +6805,7 @@ model Sale {
   matriculaId                 String?
 
   // Operador
-  operadorId String
+  operadorId String?
 
   // Cancelamento
   canceledAt   DateTime?
@@ -6805,7 +6821,7 @@ model Sale {
   charge                    Charge?                    @relation(fields: [chargeId], references: [id], onDelete: SetNull)
   standaloneInstallmentPlan StandaloneInstallmentPlan? @relation(fields: [standaloneInstallmentPlanId], references: [id], onDelete: SetNull)
   matricula                 Matricula?                 @relation(fields: [matriculaId], references: [id], onDelete: SetNull)
-  operador                  Usuario                    @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: Restrict)
+  operador                  Usuario?                   @relation("SalesOperated", fields: [operadorId], references: [id], onDelete: SetNull)
   items                     SaleItem[]
 
   @@unique([contaId, uiRequestId])
@@ -6926,14 +6942,14 @@ model RestockOrder {
   supplierName   String?
   expectedAt     DateTime?
   notes          String?
-  createdById    String
+  createdById    String?
   canceledAt     DateTime?
   canceledReason String?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
 
   conta     Conta              @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  createdBy Usuario            @relation("RestockOrderCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdBy Usuario?           @relation("RestockOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   items     RestockOrderItem[]
 
   @@index([contaId])

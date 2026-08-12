@@ -82,6 +82,21 @@ function drawVerticalText(
   doc.text(text, x, y, { angle: 90, align: options?.align ?? 'left' });
 }
 
+function fitFontSize(
+  doc: jsPDF,
+  text: string,
+  preferredSize: number,
+  minimumSize: number,
+  maxWidth: number,
+  bold = false,
+) {
+  doc.setFont('helvetica', bold ? 'bold' : 'normal');
+  doc.setFontSize(preferredSize);
+  const textWidth = doc.getTextWidth(text);
+  if (textWidth <= maxWidth) return preferredSize;
+  return Math.max(minimumSize, preferredSize * (maxWidth / textWidth));
+}
+
 function getVerticalTextY(doc: jsPDF, text: string, centerY: number, bottomY: number, options?: { fontSize?: number; bold?: boolean; topY?: number }) {
   doc.setFont('helvetica', options?.bold ? 'bold' : 'normal');
   doc.setFontSize(options?.fontSize ?? 8);
@@ -213,8 +228,9 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     doc.setLineDashPattern([], 0);
 
     doc.setTextColor(15, 23, 42); // slate-900
+    const titleFontSize = fitFontSize(doc, order.event.name, 14.8, 8.5, bodyWidth, true);
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14.8);
+    doc.setFontSize(titleFontSize);
     doc.text(order.event.name, bodyContentX, y + 28, { maxWidth: bodyWidth });
 
     doc.setDrawColor(241, 245, 249); // slate-100
@@ -278,8 +294,9 @@ export function createEventTicketsPdf(order: EventTicketPdfOrder): Buffer {
     const checkInX = stubX + stubWidth * 0.87;
     const eventLabel = order.event.name;
     const detailsLabel = `${item.sectionName} - ${item.seatLabel} • ${eventTime} • ${formatCurrency(item.unitPrice)}`;
-    const eventFontSize = 9.2;
-    const detailsFontSize = 7.4;
+    const stubTextHeight = stubBottomY - stubTopY;
+    const eventFontSize = fitFontSize(doc, eventLabel, 9.2, 5.8, stubTextHeight, true);
+    const detailsFontSize = fitFontSize(doc, detailsLabel, 7.4, 5.4, stubTextHeight, true);
     const checkInFontSize = 6.5;
     const checkInLabelY = getVerticalTextY(doc, checkInCode, stubCenterY, stubBottomY, { fontSize: checkInFontSize, bold: true, topY: stubTopY });
 

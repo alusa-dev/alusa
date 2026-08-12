@@ -23,6 +23,7 @@ export interface AsaasApiLogEntry {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   endpoint: string;
   contaId: string;
+  accountKey?: string;
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
@@ -31,6 +32,8 @@ export interface AsaasApiLogEntry {
   circuitState?: string;
   rateLimitRemaining?: number;
   quotaRemaining?: number;
+  attempts?: number;
+  backoffMs?: number;
 }
 
 export interface ApiCallStats {
@@ -68,6 +71,7 @@ export function logAsaasApiCall(params: {
   method: AsaasApiLogEntry['method'];
   endpoint: string;
   contaId: string;
+  accountKey?: string;
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
@@ -76,6 +80,8 @@ export function logAsaasApiCall(params: {
   circuitState?: string;
   rateLimitRemaining?: number;
   quotaRemaining?: number;
+  attempts?: number;
+  backoffMs?: number;
 }): void {
   const entry: AsaasApiLogEntry = {
     timestamp: new Date().toISOString(),

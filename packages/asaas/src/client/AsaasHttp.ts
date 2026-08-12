@@ -13,14 +13,17 @@
  */
 
 import { getAsaasBaseUrlForApiKeyOrThrow } from './asaasBaseUrl';
-import { globalGetLimiter } from './concurrency-limiter';
+import { AsaasConcurrencyLimitError, globalGetLimiter } from './concurrency-limiter';
 import { extractRateLimitHeaders, globalRateLimitTracker } from './rate-limit-tracker';
 import { globalCircuitBreaker, CircuitOpenError } from './circuit-breaker';
-import { globalQuotaTracker } from './quota-tracker';
+import { AsaasQuotaExceededError, globalQuotaTracker, type QuotaStatus } from './quota-tracker';
 import { globalAsaasHooks } from './asaas-hooks';
+import { createAsaasAccountKey } from './account-key';
 
 export interface AsaasHttpConfig {
   apiKey: string;
+  /** Identificador opcional do tenant para observabilidade; nunca é usado como segredo. */
+  accountScope?: string;
 }
 
 export interface AsaasHttpOptions {
@@ -47,9 +50,13 @@ export class AsaasHttpError extends Error {
 export class AsaasHttp {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly accountKey: string;
+  private readonly accountScope?: string;
 
   constructor(config: AsaasHttpConfig) {
     this.apiKey = config.apiKey;
+    this.accountKey = createAsaasAccountKey(config.apiKey);
+    this.accountScope = config.accountScope;
     // A API key define o ambiente efetivo para evitar validar chaves de produção em sandbox e vice-versa.
     this.baseUrl = getAsaasBaseUrlForApiKeyOrThrow(config.apiKey);
   }
@@ -78,15 +85,12 @@ export class AsaasHttp {
   ): Promise<T> {
     const startedAt = Date.now();
 
-    // Circuit breaker check (keyed por apiKey hash parcial)
-    const circuitKey = this.apiKey.slice(-12);
+    // Todos os controles usam a mesma chave estável, sem expor fragmentos da API key.
+    const circuitKey = this.accountKey;
     const circuitCheck = globalCircuitBreaker.canExecute(circuitKey);
     if (!circuitCheck.allowed) {
       throw new CircuitOpenError(circuitKey, circuitCheck.waitMs ?? 0);
     }
-
-    // Quota tracking distribuído quando Redis estiver configurado.
-    const quotaStatus = await globalQuotaTracker.incrementAsync(circuitKey);
 
     // Garantir que base termina com / para que new URL() não "coma" o /v3
     const base = this.baseUrl.endsWith('/') ? this.baseUrl : `${this.baseUrl}/`;
@@ -116,21 +120,58 @@ export class AsaasHttp {
       headers['Content-Type'] = 'application/json';
     }
 
+    const endpointClass = url.pathname.split('/').slice(0, 4).join('/');
+    let latestQuotaStatus: QuotaStatus | null = null;
+
     const fetchFn = () => requestWithRetry(url.toString(), {
       method,
       headers,
       body: body ? (isFormData ? (body as FormData) : JSON.stringify(body)) : undefined,
+    }, {
+      accountKey: circuitKey,
+      endpointClass,
+      onAttempt: async () => {
+        const rateBackoff = globalRateLimitTracker.shouldBackoff(circuitKey, endpointClass);
+        if (rateBackoff.backoff) await sleep(rateBackoff.waitMs);
+
+        const quotaStatus = await globalQuotaTracker.reserveAsync(circuitKey);
+        latestQuotaStatus = quotaStatus;
+        if (quotaStatus.allowed === false) {
+          throw new AsaasQuotaExceededError(quotaStatus.retryAfterMs ?? 0);
+        }
+      },
+      onResponse: (response) => {
+        const info = extractRateLimitHeaders(response.headers);
+        globalRateLimitTracker.update(circuitKey, endpointClass, info);
+      },
     });
 
     // Semáforo de concorrência para GETs (Asaas limita a 50 concorrentes)
-    const response = method === 'GET'
-      ? await globalGetLimiter.run(fetchFn)
-      : await fetchFn();
+    let retryResult: RetryResult;
+    try {
+      retryResult = method === 'GET'
+        ? await globalGetLimiter.run(circuitKey, fetchFn)
+        : await fetchFn();
+    } catch (error) {
+      if (error instanceof AsaasQuotaExceededError || error instanceof AsaasConcurrencyLimitError) {
+        globalAsaasHooks.emitApiCall({
+          method: method as 'GET' | 'POST' | 'PUT' | 'DELETE',
+          endpoint: url.pathname,
+          accountKey: circuitKey,
+          accountScope: this.accountScope,
+          httpStatus: error.status,
+          durationMs: Date.now() - startedAt,
+          success: false,
+          error: error.code,
+          quotaRemaining: 0,
+        });
+      }
+      throw error;
+    }
 
-    // Capturar e registrar headers de rate limit do Asaas
+    const { response, attempts, backoffMs } = retryResult;
     const rateLimitInfo = extractRateLimitHeaders(response.headers);
-    const endpointClass = url.pathname.split('/').slice(0, 4).join('/');
-    globalRateLimitTracker.update(endpointClass, rateLimitInfo);
+    const quotaStatus = latestQuotaStatus ?? globalQuotaTracker.getStatus(circuitKey);
 
     if (process.env.ASAAS_HTTP_LOG === 'true') {
       const elapsedMs = Date.now() - startedAt;
@@ -209,6 +250,10 @@ export class AsaasHttp {
           circuitState: globalCircuitBreaker.getState(circuitKey),
           rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
           quotaRemaining: quotaStatus.remaining,
+          accountScope: this.accountScope,
+          attempts,
+          retryCount: Math.max(0, attempts - 1),
+          backoffMs,
         });
       } else {
         globalAsaasHooks.emitApiCall({
@@ -221,6 +266,10 @@ export class AsaasHttp {
           circuitState: globalCircuitBreaker.getState(circuitKey),
           rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
           quotaRemaining: quotaStatus.remaining,
+          accountScope: this.accountScope,
+          attempts,
+          retryCount: Math.max(0, attempts - 1),
+          backoffMs,
         });
       }
 
@@ -247,6 +296,10 @@ export class AsaasHttp {
       circuitState: globalCircuitBreaker.getState(circuitKey),
       rateLimitRemaining: rateLimitInfo.remaining ?? undefined,
       quotaRemaining: quotaStatus.remaining,
+      accountScope: this.accountScope,
+      attempts,
+      retryCount: Math.max(0, attempts - 1),
+      backoffMs,
     });
 
     return data as T;
@@ -397,17 +450,34 @@ function isRetryableFetchFailure(error: unknown): boolean {
   return false;
 }
 
+interface RetryContext {
+  accountKey: string;
+  endpointClass: string;
+  onAttempt: () => Promise<void>;
+  onResponse: (response: Response) => void;
+}
+
+interface RetryResult {
+  response: Response;
+  attempts: number;
+  backoffMs: number;
+}
+
 async function requestWithRetry(
   url: string,
   init: RequestInit,
-): Promise<Response> {
+  context: RetryContext,
+): Promise<RetryResult> {
   const maxAttempts = 3;
   const baseDelaysMs = [200, 500, 1000];
   const timeoutMs = resolveRequestTimeoutMs(init.method);
 
   let lastResponse: Response | null = null;
+  let totalBackoffMs = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await context.onAttempt();
+
     let response: Response;
     try {
       response = await fetch(url, withTimeoutSignal(init, timeoutMs));
@@ -416,24 +486,45 @@ async function requestWithRetry(
         throw error;
       }
 
-      await sleep(jitter(baseDelaysMs[attempt - 1] ?? 1000));
+      const delayMs = jitter(baseDelaysMs[attempt - 1] ?? 1000);
+      totalBackoffMs += delayMs;
+      await sleep(delayMs);
       continue;
     }
     lastResponse = response;
+    context.onResponse(response);
 
     const status = response.status;
-    // 408 (Read Timed Out) é retryable — doc Asaas: endpoint de webhook com > 10s
-    const shouldRetry = status === 408 || status === 429 || (status >= 500 && status <= 599);
-    if (!shouldRetry) return response;
+    const method = (init.method ?? 'GET').toUpperCase();
+    const canRetryUnsafeMethod = method === 'GET' || hasIdempotencyKey(init.headers);
+    // POST/PUT/DELETE só são repetidos quando o caller declarou idempotência.
+    const shouldRetry = canRetryUnsafeMethod && (status === 408 || status === 429 || (status >= 500 && status <= 599));
+    if (!shouldRetry) return { response, attempts: attempt, backoffMs: totalBackoffMs };
 
-    if (attempt === maxAttempts) return response;
+    if (attempt === maxAttempts) return { response, attempts: attempt, backoffMs: totalBackoffMs };
 
     const retryAfterHeader = response.headers?.get?.('retry-after') ?? null;
     const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
-    const delayMs = retryAfterMs ?? jitter(baseDelaysMs[attempt - 1] ?? 1000);
+    const trackedBackoff = globalRateLimitTracker.shouldBackoff(context.accountKey, context.endpointClass);
+    const retryDelay = retryAfterMs ?? 0;
+    const rateLimitDelay = trackedBackoff.backoff ? trackedBackoff.waitMs : 0;
+    const delayMs = Math.max(retryDelay, rateLimitDelay) || jitter(baseDelaysMs[attempt - 1] ?? 1000);
+    totalBackoffMs += delayMs;
     await sleep(delayMs);
   }
 
   // fallback (nunca deve acontecer)
-  return lastResponse as Response;
+  return { response: lastResponse as Response, attempts: maxAttempts, backoffMs: totalBackoffMs };
+}
+
+function hasIdempotencyKey(headers: HeadersInit | undefined): boolean {
+  if (!headers) return false;
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    return Boolean(headers.get('Idempotency-Key'));
+  }
+  if (Array.isArray(headers)) {
+    return headers.some(([name, value]) => name.toLowerCase() === 'idempotency-key' && Boolean(value));
+  }
+  return Object.entries(headers as Record<string, string>)
+    .some(([name, value]) => name.toLowerCase() === 'idempotency-key' && Boolean(value));
 }

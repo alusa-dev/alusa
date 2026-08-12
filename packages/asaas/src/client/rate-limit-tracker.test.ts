@@ -108,6 +108,15 @@ describe('RateLimitTracker', () => {
     });
   });
 
+  it('isola rate limit entre contas para o mesmo endpoint', () => {
+    const info = { limit: 100, remaining: 0, resetSeconds: 60, capturedAt: Date.now() };
+    tracker.update('account-a', '/v3/payments', info);
+    tracker.update('account-b', '/v3/payments', { ...info, remaining: 20 });
+
+    expect(tracker.shouldBackoff('account-a', '/v3/payments').backoff).toBe(true);
+    expect(tracker.shouldBackoff('account-b', '/v3/payments').backoff).toBe(false);
+  });
+
   describe('clear', () => {
     it('deve limpar todos os dados', () => {
       tracker.update('/v3/payments', { limit: 100, remaining: 50, resetSeconds: 30, capturedAt: Date.now() });

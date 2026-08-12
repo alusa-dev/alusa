@@ -26,6 +26,8 @@ import {
 import { pushToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { formatCpfCnpjBR, formatPhoneBR } from '@/lib/formatters';
+import { InfoCallout, InfoCalloutItem } from '@/components/ui/info-callout';
+import { Search } from '@/components/icons/icons';
 import type { GetTransferFeesOutput } from '@alusa/finance/client';
 import {
   estimateTransferDebitAmount,
@@ -71,6 +73,14 @@ export type TransferRecipient = {
         bankAccountType?: BankAccountType;
         ispb?: string;
       };
+};
+
+type PixLookupResult = {
+  ownerName: string | null;
+  ownerDocumentMasked: string | null;
+  institutionName: string | null;
+  bankName: string | null;
+  bankCode: string | null;
 };
 
 
@@ -148,6 +158,10 @@ function mapTransferErrorMessage(message: string) {
       return 'A subconta financeira está com credenciais inválidas ou expiradas. Reconecte a conta antes de tentar novamente.';
     case 'PIX_KEY_NAO_ENCONTRADA':
       return 'A chave Pix informada não foi encontrada. Se estiver em sandbox, use uma chave fictícia do BACEN ou uma chave válida de outra conta sandbox.';
+    case 'CHAVE_PIX_NAO_ENCONTRADA':
+      return 'Não encontramos um titular para esta chave Pix. Confira os dados e tente novamente.';
+    case 'CONSULTA_CHAVE_PIX_INDISPONIVEL':
+      return 'Não foi possível consultar o titular agora. Tente novamente em instantes.';
     case 'TRANSFERENCIA_DUPLICADA':
       return 'Já existe uma transferência idêntica em processamento recente. Aguarde alguns minutos antes de tentar novamente.';
     case 'IDEMPOTENCY_PAYLOAD_CONFLICT':
@@ -843,6 +857,9 @@ export function TransferWizardDialog({
   const [currentPassword, setCurrentPassword] = useState('');
   const [currentPasswordError, setCurrentPasswordError] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState(() => makeIdempotencyKey());
+  const [pixLookup, setPixLookup] = useState<PixLookupResult | null>(null);
+  const [pixLookupLoading, setPixLookupLoading] = useState(false);
+  const [pixLookupError, setPixLookupError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -854,6 +871,8 @@ export function TransferWizardDialog({
       setCurrentPassword('');
       setCurrentPasswordError(null);
       setIdempotencyKey(makeIdempotencyKey());
+      setPixLookup(null);
+      setPixLookupError(null);
       setForm({ ...TRANSFER_INITIAL_STATE, type: getWizardDefaultType(canPix, canTed) });
       return;
     }
@@ -880,13 +899,10 @@ export function TransferWizardDialog({
     return destination?.type === 'PIX' ? destination : null;
   }, [selectedPixRecipient]);
   const resolvedPixKey = selectedPixDestination?.pixAddressKey ?? form.pixAddressKey;
-  const manualPixKeyDigits = normalizeDigits(form.pixAddressKey);
-  const isAmbiguousManualPixKey =
-    !selectedPixDestination && manualPixKeyDigits.length === 11 && !form.pixAddressKey.includes('@');
   const detectedPixKeyType = useMemo(() => detectPixKeyType(form.pixAddressKey), [form.pixAddressKey]);
   const effectivePixKeyType =
     selectedPixDestination?.pixAddressKeyType
-    ?? (isAmbiguousManualPixKey ? form.pixAddressKeyType : detectedPixKeyType)
+    ?? detectedPixKeyType
     ?? (form.pixAddressKeyType ?? null);
   const validation = useMemo(
     () =>
@@ -919,6 +935,7 @@ export function TransferWizardDialog({
   const estimatedDebit =
     amountNumber != null ? estimateTransferDebitAmount(amountNumber, fees, estimatedOperation) : null;
   const estimatedFeeConfig = estimatedOperation === 'PIX' ? fees?.pix : fees?.ted;
+  const hasFeeEstimate = fees !== null;
   const feeMayUseMonthlyFreeQuota = Boolean(
     fees?.monthlyTransfersWithoutFee &&
       fees.monthlyTransfersWithoutFee > 0 &&
@@ -947,9 +964,10 @@ export function TransferWizardDialog({
     if (step === 2) {
       if (form.type === 'PIX') {
         if (!resolvedPixKey.trim() || !effectivePixKeyType) return false;
-        return effectivePixKeyType === 'PHONE'
+        const validKey = effectivePixKeyType === 'PHONE'
           ? isValidPixPhoneKey(resolvedPixKey)
           : isPixKeyValid(resolvedPixKey, effectivePixKeyType);
+        return validKey && (recipientId !== 'manual' || pixLookup !== null);
       }
 
       return Boolean(
@@ -974,7 +992,7 @@ export function TransferWizardDialog({
     }
 
     return validation.valid && !submitting;
-  }, [canPix, canTed, effectivePixKeyType, estimatedOperation, fees, form, maxAmount, requiresBirthDate, resolvedPixKey, step, submitting, validation.valid]);
+  }, [canPix, canTed, effectivePixKeyType, estimatedOperation, fees, form, maxAmount, pixLookup, recipientId, requiresBirthDate, resolvedPixKey, step, submitting, validation.valid]);
 
   const nextLabel = useMemo(() => {
     if (step !== 5) return 'Próxima etapa';
@@ -1041,7 +1059,44 @@ export function TransferWizardDialog({
       scheduleDate: current.scheduleDate,
     }));
     setRecipientId('manual');
+    setPixLookup(null);
+    setPixLookupError(null);
 
+  }
+
+  async function handlePixLookup() {
+    if (pixLookupLoading || form.type !== 'PIX' || !effectivePixKeyType) return;
+    const normalizedDestination = normalizeWithdrawDestinationForAsaas({
+      type: 'PIX',
+      pixAddressKey: form.pixAddressKey,
+      pixAddressKeyType: effectivePixKeyType,
+    });
+    if (normalizedDestination.type !== 'PIX') return;
+    const key = normalizedDestination.pixAddressKey;
+    const valid = effectivePixKeyType === 'PHONE'
+      ? isValidPixPhoneKey(key)
+      : isPixKeyValid(key, effectivePixKeyType);
+    if (!valid) {
+      setPixLookup(null);
+      setPixLookupError('Informe uma chave Pix válida antes de buscar o titular.');
+      return;
+    }
+
+    setPixLookupLoading(true);
+    setPixLookupError(null);
+    try {
+      const result = await readJson<PixLookupResult>('/api/finance/transfers/pix-key', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: effectivePixKeyType, key }),
+      });
+      setPixLookup(result);
+    } catch (error) {
+      setPixLookup(null);
+      setPixLookupError(mapTransferErrorMessage(sanitizeErrorMessage(error)));
+    } finally {
+      setPixLookupLoading(false);
+    }
   }
 
   async function handleDeleteRecipient(recipient: TransferRecipient) {
@@ -1227,7 +1282,7 @@ export function TransferWizardDialog({
               selected={form.type === 'BANK_ACCOUNT'}
               disabled={!canTed}
               title="Transferência bancária"
-              description="Informe banco, agência e conta. O Asaas pode liquidar via Pix ou TED conforme a instituição."
+              description="Informe banco, agência e conta. A transferência será processada conforme a instituição de destino."
               onClick={() => handleTypeChange('BANK_ACCOUNT')}
             />
           </div>
@@ -1244,22 +1299,36 @@ export function TransferWizardDialog({
                   <Label htmlFor="transfer-pix-key" className="text-xs font-medium uppercase tracking-wide text-slate-500">
                     Chave Pix
                   </Label>
-                  <Input
-                    id="transfer-pix-key"
-                    value={form.pixAddressKey}
-                    onChange={(event) => {
-                      const value = formatPixKeyInput(event.target.value);
-                      setRecipientId('manual');
-                      setForm((current) => ({
-                        ...current,
-                        pixAddressKey: value,
-                        pixAddressKeyType: detectPixKeyType(value) ?? current.pixAddressKeyType,
-                      }));
-                    }}
-                    placeholder={selectedPixRecipient ? 'Chave salva selecionada. Digite para informar outra chave.' : 'CPF, CNPJ, e-mail, telefone ou chave aleatoria'}
-                    aria-label="Chave Pix"
-                    className="h-11"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="transfer-pix-key"
+                      value={form.pixAddressKey}
+                      onChange={(event) => {
+                        const value = formatPixKeyInput(event.target.value);
+                        setRecipientId('manual');
+                        setPixLookup(null);
+                        setPixLookupError(null);
+                        setForm((current) => ({
+                          ...current,
+                          pixAddressKey: value,
+                          pixAddressKeyType: detectPixKeyType(value) ?? current.pixAddressKeyType,
+                        }));
+                      }}
+                      placeholder={selectedPixRecipient ? 'Chave salva selecionada. Digite para informar outra chave.' : 'CPF, CNPJ, e-mail, celular ou chave aleatória'}
+                      aria-label="Chave Pix"
+                      className="h-11"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 shrink-0"
+                      disabled={pixLookupLoading || !effectivePixKeyType || (effectivePixKeyType === 'PHONE' ? !isValidPixPhoneKey(form.pixAddressKey) : !isPixKeyValid(form.pixAddressKey, effectivePixKeyType))}
+                      onClick={() => void handlePixLookup()}
+                    >
+                      <Search className="mr-2 h-4 w-4" aria-hidden="true" />
+                      {pixLookupLoading ? 'Buscando...' : 'Buscar'}
+                    </Button>
+                  </div>
                   {selectedPixRecipient ? (
                     <p className="text-xs text-brand-accent">
                       Chave salva selecionada. Clique nela novamente para desmarcar ou digite outra chave manualmente.
@@ -1270,29 +1339,22 @@ export function TransferWizardDialog({
                       Chave reconhecida como <span className="font-medium text-slate-700">{formatPixKeyType(detectedPixKeyType)}</span>. Confira com o destinatário.
                     </p>
                   ) : null}
-                  {isAmbiguousManualPixKey ? (
-                    <div className="space-y-1.5 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                      <Label className="text-xs font-medium text-amber-900">Tipo da chave</Label>
-                      <Select
-                        value={form.pixAddressKeyType === 'PHONE' ? 'PHONE' : 'CPF'}
-                        onValueChange={(value) =>
-                          setForm((current) => ({ ...current, pixAddressKeyType: value as PixKeyType }))
-                        }
-                      >
-                        <SelectTrigger className="h-9 border-amber-200 bg-white">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="CPF">CPF</SelectItem>
-                          <SelectItem value="PHONE">Telefone</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-amber-800">
-                        Onze dígitos podem representar CPF ou telefone Pix. Escolha como o Asaas deve validar a chave.
-                      </p>
-                    </div>
-                  ) : null}
                 </div>
+
+                {pixLookupError ? (
+                  <InfoCallout variant="warning" size="sm" title="Não foi possível consultar a chave">
+                    {pixLookupError}
+                  </InfoCallout>
+                ) : null}
+
+                {pixLookup ? (
+                  <InfoCallout variant="info" size="sm" title="Titular encontrado">
+                    {pixLookup.ownerName ? <InfoCalloutItem label="Nome">{pixLookup.ownerName}</InfoCalloutItem> : null}
+                    {pixLookup.ownerDocumentMasked ? <InfoCalloutItem label="CPF/CNPJ">{pixLookup.ownerDocumentMasked}</InfoCalloutItem> : null}
+                    {pixLookup.institutionName ? <InfoCalloutItem label="Instituição">{pixLookup.institutionName}</InfoCalloutItem> : null}
+                    {pixLookup.bankName ? <InfoCalloutItem label="Banco">{pixLookup.bankName}{pixLookup.bankCode ? ` (${pixLookup.bankCode})` : ''}</InfoCalloutItem> : null}
+                  </InfoCallout>
+                ) : null}
 
                 {/* Separador */}
                 {(recipients.some((r) => r.type === 'PIX') || filteredRecipients.length > 0) ? (
@@ -1423,7 +1485,7 @@ export function TransferWizardDialog({
                       onChange={(event) => setForm((current) => ({ ...current, ownerBirthDate: event.target.value }))}
                     />
                     <p className="text-xs text-slate-500">
-                      Obrigatório pelo Asaas quando o favorecido é pessoa física com CPF diferente da conta financeira.
+                      Necessário quando o favorecido é pessoa física com CPF diferente da conta financeira.
                     </p>
                   </div>
                 ) : null}
@@ -1578,23 +1640,20 @@ export function TransferWizardDialog({
                 label="Valor enviado"
                 value={amountNumber != null ? formatCurrency(amountNumber) : '—'}
               />
-              {estimatedFee > 0 ? (
+              {hasFeeEstimate ? (
                 <SummaryRow
-                  label={feeMayUseMonthlyFreeQuota ? 'Taxa máxima informada' : 'Taxa estimada'}
+                  label={feeMayUseMonthlyFreeQuota ? 'Taxa de referência' : 'Taxa estimada'}
                   value={formatCurrency(estimatedFee)}
                 />
               ) : null}
               {estimatedDebit != null ? (
-                <SummaryRow
-                  label={feeMayUseMonthlyFreeQuota ? 'Total máximo estimado' : 'Total debitado (estimado)'}
-                  value={formatCurrency(estimatedDebit)}
-                />
+                <SummaryRow label="Total estimado" value={formatCurrency(estimatedDebit)} />
               ) : null}
-              {estimatedFee > 0 ? (
+              {hasFeeEstimate ? (
                 <p className="pt-2 text-xs leading-relaxed text-slate-500">
                   {feeMayUseMonthlyFreeQuota
-                    ? 'O Asaas informa essa tarifa como referência da conta, mas a transferência pode usar a cota mensal sem taxa. Depois do processamento, a Alusa usa a taxa e o valor líquido oficiais retornados pelo Asaas.'
-                    : 'A taxa é uma estimativa antes do envio. Depois do processamento, a Alusa usa a taxa e o valor líquido oficiais retornados pelo Asaas.'}
+                    ? 'A taxa de referência vem das tarifas atuais da conta. A transferência pode ser gratuita se houver cota mensal disponível. Após o processamento, a Alusa confirmará a taxa e o valor efetivamente debitado.'
+                    : 'A taxa é uma estimativa antes do envio. Após o processamento, a Alusa confirmará a taxa e o valor efetivamente debitado.'}
                 </p>
               ) : null}
               {form.scheduleDate ? (
@@ -1634,7 +1693,7 @@ export function TransferWizardDialog({
                   </span>
                 </button>
                 <p className="text-[11px] text-slate-400">
-                  Quando o Asaas retornar os dados oficiais do titular, a chave Pix será salva automaticamente com nome, documento e banco.
+                  Quando os dados oficiais do titular forem confirmados, a chave Pix será salva automaticamente com nome, documento e banco.
                 </p>
               </div>
             ) : null}

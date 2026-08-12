@@ -204,7 +204,8 @@ export async function getKycSnapshot(
     if (!isCacheV2(cached)) return null;
 
     const cacheHasZeroUuids = cached.groups.length > 0 && cached.groups.every((g) => isZeroUuid(g.id));
-    if (cacheHasZeroUuids) return null;
+    const cacheHasExternalOnboarding = cached.groups.some((group) => group.hasOnboardingUrl === true);
+    if (cacheHasZeroUuids || cacheHasExternalOnboarding) return null;
 
     const cacheAgeMs = asaasAccount.documentsCacheUpdatedAt
       ? nowMs - asaasAccount.documentsCacheUpdatedAt.getTime()
@@ -248,7 +249,8 @@ export async function getKycSnapshot(
     if (isCacheV2(cached)) {
       // Cache com zero UUID = Asaas não havia provisionado ainda; força fresh.
       const cacheHasZeroUuids = cached.groups.length > 0 && cached.groups.every((g) => isZeroUuid(g.id));
-      if (!cacheHasZeroUuids) {
+      const cacheHasExternalOnboarding = cached.groups.some((group) => group.hasOnboardingUrl === true);
+      if (!cacheHasZeroUuids && !cacheHasExternalOnboarding) {
         const cacheAgeMs = asaasAccount.documentsCacheUpdatedAt
           ? nowMs - asaasAccount.documentsCacheUpdatedAt.getTime()
           : null;

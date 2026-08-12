@@ -3,6 +3,8 @@ import { fileURLToPath } from 'url';
 import { withSentryConfig } from '@sentry/nextjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const packageDistPath = (packageName, relativePath) =>
+  `../../packages/${packageName}/dist/${relativePath}`;
 
 const scriptSrc = [
   "script-src 'self'",
@@ -58,10 +60,6 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
-  eslint: {
-    // Evita falhas no build devido à configuração ESLint da raiz (fora do workspace)
-    ignoreDuringBuilds: true,
-  },
   // Sentry no servidor via require() real — evita vendor-chunks webpack desencontrados após mudanças de deps / cache .next
   serverExternalPackages: [
     '@sentry/nextjs',
@@ -81,6 +79,34 @@ const nextConfig = {
     '@alusa/shared',
     'konva',
   ],
+  turbopack: {
+    resolveAlias: {
+      '@alusa/asaas': packageDistPath('asaas', 'index.js'),
+      '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
+      '@alusa/database': packageDistPath('database', 'index.js'),
+      '@alusa/database/*': packageDistPath('database', '*.js'),
+      '@alusa/domain': packageDistPath('domain', 'index.js'),
+      '@alusa/domain/*': packageDistPath('domain', '*.js'),
+      '@alusa/finance': {
+        browser: './lib/stubs/server-only-finance.ts',
+        default: packageDistPath('finance', 'index.js'),
+      },
+      '@alusa/finance/*': packageDistPath('finance', '*.js'),
+      '@alusa/lib': packageDistPath('lib', 'index.js'),
+      '@alusa/lib/*': packageDistPath('lib', '*.js'),
+      '@alusa/platform-billing': packageDistPath('platform-billing', 'index.js'),
+      '@alusa/platform-billing/*': packageDistPath('platform-billing', '*.js'),
+      '@alusa/shared': packageDistPath('shared', 'index.js'),
+      '@alusa/shared/*': packageDistPath('shared', '*.js'),
+      '@alusa/stripe': packageDistPath('stripe', 'index.js'),
+      '@alusa/stripe/*': packageDistPath('stripe', '*.js'),
+      // O build do pacote UI produz artefatos aninhados por causa dos paths
+      // herdados do tsconfig raiz; o código-fonte é a resolução canônica para
+      // os subpaths usados pelo app e já está em transpilePackages.
+      '@alusa/ui': '../../packages/ui/src/index.ts',
+      '@alusa/ui/*': '../../packages/ui/src/*',
+    },
+  },
   experimental: {
     optimizePackageImports: [
       'lucide-react',

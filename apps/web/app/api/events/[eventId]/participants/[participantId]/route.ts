@@ -192,15 +192,24 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     let charges: any[] = [];
     let asaasInstallmentId: string | null = null;
     const planIdsByAsaasPaymentId = new Map<string, string[]>();
-    const asaasPaymentIds = financialEntries
+    const asaasPaymentIds = [
+      ...financialEntries
       .map((e) => e.asaasPaymentId)
-      .filter((id): id is string => Boolean(id));
+      .filter((id): id is string => Boolean(id)),
+      participant.asaasPaymentId,
+    ].filter((id): id is string => Boolean(id));
+    const asaasInstallmentIds = [
+      ...financialEntries
+        .map((e) => e.asaasPaymentId)
+        .filter((id): id is string => Boolean(id)),
+      participant.asaasInstallmentId,
+    ].filter((id): id is string => Boolean(id));
 
-    if (asaasPaymentIds.length > 0) {
+    if (asaasPaymentIds.length > 0 || asaasInstallmentIds.length > 0) {
       const plans = await prisma.standaloneInstallmentPlan.findMany({
         where: {
           contaId: ctx.contaId,
-          asaasInstallmentId: { in: asaasPaymentIds },
+          asaasInstallmentId: { in: asaasInstallmentIds },
         },
         include: {
           charges: {
@@ -292,8 +301,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       : null;
 
     let participantCharges: any[] = [];
-    if (feeEntry?.asaasPaymentId) {
-      const entryAsaasId = feeEntry.asaasPaymentId;
+    if (feeEntry?.asaasPaymentId || participant.asaasPaymentId || participant.asaasInstallmentId) {
+      const entryAsaasId = feeEntry?.asaasPaymentId ?? participant.asaasInstallmentId ?? participant.asaasPaymentId;
       const feePlanIds = planIdsByAsaasPaymentId.get(entryAsaasId) ?? [];
       participantCharges = charges.filter((c: any) =>
         c.asaasPaymentId === entryAsaasId ||

@@ -131,7 +131,7 @@ export function EventFormDialog({
                 <Field label="Início">
                   <DateTimeField name="startsAt" defaultValue={event?.startsAt} required />
                 </Field>
-                <Field label="Fim">
+                <Field label="Fim (opcional)">
                   <DateTimeField name="endsAt" defaultValue={event?.endsAt} />
                 </Field>
                 <Field label="Capacidade estimada">
@@ -143,7 +143,7 @@ export function EventFormDialog({
                 <Field label="Endereço">
                   <Input name="locationAddress" defaultValue={event?.locationAddress ?? ''} className={FILTER_INPUT_CLASS} />
                 </Field>
-                <Field label="Responsável interno">
+                <Field label="Responsável interno (opcional)">
                   <NativeSelect
                     name="responsibleUserId"
                     defaultValue={event?.responsibleUserId}
@@ -162,8 +162,8 @@ export function EventFormDialog({
               <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações</span>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 {[
-                  ['hasTickets', 'Terá ingressos?', event?.hasTickets ?? false],
-                  ['hasCostumes', 'Terá figurinos?', event?.hasCostumes ?? false],
+                  ['hasTickets', 'Terá ingressos?', event?.hasTickets ?? true],
+                  ['hasCostumes', 'Terá figurinos?', event?.hasCostumes ?? true],
                   ['hasFinancialControl', 'Controle financeiro?', event?.hasFinancialControl ?? true],
                 ].map(([name, label, checked]) => (
                   <label key={String(name)} className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-700">
@@ -177,7 +177,7 @@ export function EventFormDialog({
                 <Field label="Tipo de ingresso">
                   <NativeSelect
                     name="ticketMode"
-                    defaultValue={event?.ticketMode ?? (event?.hasTickets ? 'SIMPLE' : 'NONE')}
+                    defaultValue={event?.ticketMode ?? (event ? (event.hasTickets ? 'SIMPLE' : 'NONE') : 'SIMPLE')}
                     options={EVENT_TICKET_MODES.map((mode) => ({ value: mode, label: EVENT_TICKET_MODE_LABELS[mode] }))}
                   />
                 </Field>

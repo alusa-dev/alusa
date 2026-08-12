@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import bcrypt from 'bcryptjs';
 
 import { authOptions } from '@/lib/auth-options';
 import prisma from '@/lib/prisma';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { resolveUserId } from '../helpers';
 import { changeEmailInputDTOSchema, changeEmailResultDTOSchema } from '@/features/users/dtos';
+import { comparePassword } from '@/lib/auth-password';
 
 export async function PATCH(req: Request) {
   try {
@@ -55,8 +55,7 @@ export async function PATCH(req: Request) {
       );
     }
 
-    const pepper = process.env.BCRYPT_PEPPER || '';
-    const validPassword = await bcrypt.compare(currentPassword + pepper, user.senhaHash);
+    const validPassword = await comparePassword(currentPassword, user.senhaHash);
     if (!validPassword) {
       return NextResponse.json(
         { error: { fieldErrors: { currentPassword: ['Senha atual incorreta'] } } },

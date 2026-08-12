@@ -44,6 +44,7 @@ export interface AsaasSubaccountListItem {
   birthDate?: string | null;
   site?: string | null;
   loginEmail?: string | null;
+  walletId?: string | null;
 }
 
 export interface ListSubaccountsResponse {

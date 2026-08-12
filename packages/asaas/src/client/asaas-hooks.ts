@@ -15,6 +15,7 @@ export interface ApiCallHookPayload {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   endpoint: string;
   accountKey: string;
+  accountScope?: string;
   httpStatus: number | null;
   durationMs: number;
   success: boolean;
@@ -22,6 +23,9 @@ export interface ApiCallHookPayload {
   circuitState?: string;
   rateLimitRemaining?: number;
   quotaRemaining?: number;
+  attempts?: number;
+  retryCount?: number;
+  backoffMs?: number;
 }
 
 export interface CircuitOpenHookPayload {
@@ -36,6 +40,7 @@ export interface QuotaWarningHookPayload {
   limit: number;
   percentUsed: number;
   exceeded: boolean;
+  retryAfterMs?: number;
 }
 
 export interface RateLimitHitHookPayload {

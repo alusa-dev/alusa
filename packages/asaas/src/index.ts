@@ -21,7 +21,12 @@ export {
 export type { AsaasEnvironment } from './client/asaasBaseUrl';
 
 // Concurrency & Rate Limit
-export { ConcurrencyLimiter, globalGetLimiter } from './client/concurrency-limiter';
+export {
+  ConcurrencyLimiter,
+  AccountScopedConcurrencyLimiter,
+  AsaasConcurrencyLimitError,
+  globalGetLimiter,
+} from './client/concurrency-limiter';
 export {
   extractRateLimitHeaders,
   RateLimitTracker,
@@ -34,7 +39,7 @@ export { CircuitBreaker, CircuitOpenError, globalCircuitBreaker } from './client
 export type { CircuitBreakerConfig, CircuitState } from './client/circuit-breaker';
 
 // Quota Tracker
-export { QuotaTracker, globalQuotaTracker } from './client/quota-tracker';
+export { AsaasQuotaExceededError, QuotaTracker, globalQuotaTracker } from './client/quota-tracker';
 export type { QuotaStatus } from './client/quota-tracker';
 
 // Hooks (observer pattern para consumers)
@@ -267,6 +272,12 @@ export { decodePixQrCode } from './pix/decodePixQrCode';
 export type { DecodePixQrCodeParams } from './pix/decodePixQrCode';
 export { payPixQrCode } from './pix/payPixQrCode';
 export type { PayPixQrCodeParams } from './pix/payPixQrCode';
+export { getExternalPixKey } from './pix/getExternalPixKey';
+export type {
+  ExternalPixKeyResponse,
+  ExternalPixKeyType,
+  GetExternalPixKeyParams,
+} from './pix/getExternalPixKey';
 export { receiveInCash } from './payments/receiveInCash';
 export type { ReceiveInCashParams, ReceiveInCashResponse } from './payments/receiveInCash';
 export { undoReceivedInCash } from './payments/undoReceivedInCash';

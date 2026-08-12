@@ -826,7 +826,7 @@ export function CreateSaleFeature() {
                   ) : (
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-2 sm:col-span-2">
-                        <label className={labelClass}>Nome *</label>
+                        <label className={cn(labelClass, 'block')}>Nome *</label>
                         <Input
                           value={walkInName}
                           onChange={(event) => setWalkInName(event.target.value)}
@@ -834,8 +834,8 @@ export function CreateSaleFeature() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <label className={labelClass}>CPF/CNPJ</label>
+                        <div className="flex min-h-4 items-center gap-2">
+                          <label className={cn(labelClass, 'block')}>CPF/CNPJ</label>
                           {walkInDocumentError ? (
                             <span className="text-xs font-medium text-red-600">
                               {walkInDocumentError}
@@ -851,7 +851,7 @@ export function CreateSaleFeature() {
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className={labelClass}>Telefone</label>
+                        <label className={cn(labelClass, 'block')}>Telefone</label>
                         <Input
                           value={walkInPhone}
                           onChange={(event) => setWalkInPhone(formatPhoneBR(event.target.value))}
@@ -859,7 +859,7 @@ export function CreateSaleFeature() {
                         />
                       </div>
                       <div className="space-y-2 sm:col-span-2">
-                        <label className={labelClass}>E-mail</label>
+                        <label className={cn(labelClass, 'block')}>E-mail</label>
                         <Input
                           type="email"
                           value={walkInEmail}
@@ -868,7 +868,7 @@ export function CreateSaleFeature() {
                         />
                       </div>
                       <div className="space-y-2 sm:col-span-2">
-                        <label className={labelClass}>Observação</label>
+                        <label className={cn(labelClass, 'block')}>Observação</label>
                         <Textarea
                           value={walkInNotes}
                           onChange={(event) => setWalkInNotes(event.target.value)}

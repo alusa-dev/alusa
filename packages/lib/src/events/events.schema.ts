@@ -283,6 +283,8 @@ export const reactivateEventParticipantSchema = createEventParticipantSchema.omi
   dueDate: optionalDate,
   paymentProvider: optionalText,
   asaasPaymentId: optionalText,
+  asaasInstallmentId: optionalText,
+  standaloneChargeId: optionalText,
   paymentStatus: optionalText,
   billingMethod: z.enum(['MANUAL_RECEIVED', 'BOLETO', 'PIX', 'CREDIT_CARD']).optional(),
   chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),

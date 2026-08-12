@@ -61,8 +61,8 @@ export type VerificationAction = {
   isRedirectExpired?: boolean;
   /** Obrigatório quando mode === 'UPLOAD' */
   uploadGroupId?: string;
-  /** Indica qual método de submissão foi derivado pelo backend: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD'. */
-  submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD';
+  /** Indica qual método de submissão foi derivado pelo backend a partir do payload do provedor. */
+  submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD' | 'PROVIDER_PORTAL';
   /** Documentos já enviados neste grupo (status de cada arquivo). */
   slots?: VerificationSlotInfo[];
   /** Responsável pelo envio (nome + tipo), conforme retornado pelo Asaas. */
@@ -144,8 +144,8 @@ export type KycNextAction = {
   onboardingUrlExpirationDate?: string | null;
   /** Derivado de onboardingUrlExpirationDate (fresh-only). */
   isOnboardingUrlExpired?: boolean;
-  /** Modo de submissão derivado: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD'. */
-  submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD';
+  /** Modo de submissão derivado do payload real do provedor. */
+  submissionMethod?: 'EXTERNAL_ONBOARDING_URL' | 'INTERNAL_UPLOAD' | 'PROVIDER_PORTAL';
   /** Slots individuais do grupo (ex.: Frente/Verso para IDENTIFICATION com 2 docs). */
   slots?: KycSlotInfo[];
   /** Responsável pelo envio (do payload do Asaas). */

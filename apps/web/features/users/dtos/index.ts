@@ -1,5 +1,4 @@
 import { z } from 'zod';
-
 import { authRegisterInputSchema } from '@/lib/dtos/auth-register.dto';
 import { isValidIanaTimeZone } from '@/lib/brazil-iana-timezones';
 import { PROFILE_LOCALE_VALUES, PROFILE_THEME_VALUES } from '@/lib/profile-preferences';
@@ -115,19 +114,8 @@ export const changeEmailResultDTOSchema = z.object({
 
 export type ChangeEmailResultDTO = z.infer<typeof changeEmailResultDTOSchema>;
 
-const passwordMinLength = Number(process.env.PASSWORD_MIN_LENGTH || 8);
-const passwordMessage =
-  'Senha deve ter no minimo 8 caracteres, com maiuscula, minuscula, numero e simbolo.';
-const passwordRegex = new RegExp(
-  `^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[!@#$%^&*]).{${String(passwordMinLength)},}$`,
-);
-
-export const changePasswordInputDTOSchema = z.object({
-  currentPassword: z.string().min(passwordMinLength, 'Senha atual invalida'),
-  newPassword: z.string().regex(passwordRegex, passwordMessage),
-});
-
-export type ChangePasswordInputDTO = z.input<typeof changePasswordInputDTOSchema>;
+export { changePasswordInputDTOSchema } from './password';
+export type { ChangePasswordInputDTO } from './password';
 
 export const simpleSuccessResultDTOSchema = z.object({
   success: z.literal(true),

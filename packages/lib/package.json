@@ -49,14 +49,14 @@
     "@alusa/asaas": "workspace:*",
     "@alusa/domain": "workspace:*",
     "@alusa/shared": "workspace:*",
-    "@aws-sdk/client-s3": "^3.1040.0",
+    "@aws-sdk/client-s3": "^3.1107.0",
     "axios": "^1.12.2",
     "jose": "^4.15.9",
     "pdf-lib": "1.17.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/react": "18.2.74",
+    "@types/react": "19.2.18",
     "react": "18.2.0",
     "typescript": "5.6.3",
     "vitest": "^4.0.18"

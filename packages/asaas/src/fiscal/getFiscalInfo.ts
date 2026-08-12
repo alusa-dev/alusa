@@ -7,5 +7,7 @@ export interface GetFiscalInfoParams {
 
 export async function getFiscalInfo(params: GetFiscalInfoParams): Promise<AsaasFiscalInfo> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
-  return client.get<AsaasFiscalInfo>('/fiscalInfo');
+  // O endpoint oficial possui uma barra final. Mantê-la evita que o Sandbox
+  // trate a consulta como uma rota diferente e retorne 404.
+  return client.get<AsaasFiscalInfo>('/fiscalInfo/');
 }

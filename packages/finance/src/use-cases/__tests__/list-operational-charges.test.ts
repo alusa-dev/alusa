@@ -536,6 +536,49 @@ describe('listOperationalCharges', () => {
     });
   });
 
+  it('não duplica a entrada-pai do evento quando ela representa um parcelamento Asaas', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    mockChargeFindMany(db, {
+      standalone: [
+        makeCharge({
+          id: 'charge_installment_3',
+          value: 260,
+          dueDate: new Date('2025-06-18T12:00:00.000Z'),
+          standaloneInstallmentPlanId: 'plan_1',
+          externalReference: 'alusa:installment:plan_1:payment:pay_3',
+        }),
+      ],
+    });
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      { id: 'plan_1', asaasInstallmentId: 'asaas_plan_1' },
+    ]);
+    db.eventFinancialEntry.findMany.mockResolvedValue([
+      {
+        id: 'entry_parent',
+        eventId: 'evt_1',
+        category: 'Taxa de inscrição',
+        description: 'Taxa de inscrição',
+        expectedAmount: 780,
+        dueDate: new Date('2025-06-18T12:00:00.000Z'),
+        status: 'PENDING',
+        paymentMethod: 'BOLETO',
+        asaasPaymentId: 'asaas_plan_1',
+        createdAt: new Date('2025-06-10T12:00:00.000Z'),
+        event: { name: 'Festival de Dança' },
+      },
+    ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: 'charge_installment_3',
+      value: 260,
+      chargeType: 'INSTALLMENT',
+    });
+  });
+
   it('inclui venda de ingresso pendente de evento na fila operacional', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
@@ -647,7 +690,7 @@ describe('listOperationalCharges', () => {
     expect(result.items.every((item) => item.isGroup === false)).toBe(true);
     expect(result.items.every((item) => item.groupType === null)).toBe(true);
     expect(result.items.every((item) => item.tipo === 'PARCELADA')).toBe(true);
-    expect(db.standaloneInstallmentPlan.findMany).not.toHaveBeenCalled();
+    expect(db.standaloneInstallmentPlan.findMany).toHaveBeenCalled();
     expect(db.aluno.findMany).not.toHaveBeenCalled();
   });
 

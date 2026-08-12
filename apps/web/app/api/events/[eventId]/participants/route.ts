@@ -99,7 +99,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           return NextResponse.json({ error: { code: billingResult.error, message: errInfo.message } }, { status: errInfo.status });
         }
 
-        // Vincular o ID de pagamento gerado na nossa entrada financeira
+        // Vincular a inscrição diretamente ao recurso financeiro do Asaas.
         if (participant.revenueEntryId) {
           await prisma.eventFinancialEntry.update({
             where: { id: participant.revenueEntryId },
@@ -110,6 +110,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             },
           });
         }
+
+        await prisma.eventParticipant.update({
+          where: { id: participant.id },
+          data: {
+            standaloneChargeId: billingResult.data.chargeId,
+            asaasPaymentId: billingResult.data.asaasPaymentId ?? null,
+            asaasInstallmentId: billingResult.data.asaasInstallmentId ?? null,
+          },
+        });
       } catch (billingError) {
         // Rollback caso ocorra exceção
         await prisma.eventParticipant.delete({

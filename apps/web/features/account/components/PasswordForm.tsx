@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
+import { signOut } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -12,18 +13,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ProfileUpdateError } from '@/features/account/services/profile-service';
 import { changePassword } from '@/features/account/services/security-service';
-
-const passwordMinLength = Number(process.env.NEXT_PUBLIC_PASSWORD_MIN_LENGTH || 8);
-const passwordMessage =
-  'Senha deve ter no minimo 8 caracteres, com maiuscula, minuscula, numero e simbolo.';
-const passwordRegex = new RegExp(
-  '^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[!@#$%^&*]).{' + String(passwordMinLength) + ',}$',
-);
+import { passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
 
 const schema = z
   .object({
     currentPassword: z.string().min(1, 'Informe a senha atual'),
-    newPassword: z.string().regex(passwordRegex, passwordMessage),
+    newPassword: z.string().regex(passwordPolicyRegex, passwordPolicyMessage),
     confirmPassword: z.string().min(1, 'Confirme a nova senha'),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
@@ -65,6 +60,7 @@ export function PasswordForm() {
             onClose={() => toast.dismiss(t)}
           />
         ));
+        await signOut({ callbackUrl: '/auth/login?password=changed' });
       } catch (error) {
         if (error instanceof ProfileUpdateError) {
           if (error.fieldErrors) {
@@ -139,7 +135,7 @@ export function PasswordForm() {
             aria-describedby={errors.newPassword ? 'newPassword-error' : undefined}
             disabled={isSubmitting}
           />
-          <p className="text-xs text-muted-foreground">{passwordMessage}</p>
+          <p className="text-xs text-muted-foreground">{passwordPolicyMessage}</p>
           {errors.newPassword ? (
             <p id="newPassword-error" className="text-xs text-destructive">
               {errors.newPassword.message}

@@ -7,6 +7,7 @@
  */
 
 import { globalAsaasHooks } from './asaas-hooks';
+import { asaasRedisEval, getAsaasRedisConfig, sanitizeAsaasRedisKeyPart } from './redis-rest';
 
 const DEFAULT_QUOTA_LIMIT = 25_000;
 const WINDOW_MS = 12 * 60 * 60 * 1000; // 12 horas
@@ -27,10 +28,25 @@ export interface QuotaStatus {
   windowEndsIn: string;
   warning: boolean;
   exceeded: boolean;
+  allowed?: boolean;
+  retryAfterMs?: number;
+}
+
+export class AsaasQuotaExceededError extends Error {
+  readonly code = 'ASAAS_QUOTA_EXCEEDED' as const;
+  readonly status = 429;
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number) {
+    super(`Quota da API Asaas atingida. Aguarde aproximadamente ${Math.ceil(retryAfterMs / 1000)}s.`);
+    this.name = 'AsaasQuotaExceededError';
+    this.retryAfterMs = retryAfterMs;
+  }
 }
 
 export class QuotaTracker {
   private readonly entries = new Map<string, QuotaEntry>();
+  private readonly exceededAlerts = new Set<string>();
   readonly limit: number;
 
   constructor(limit = DEFAULT_QUOTA_LIMIT) {
@@ -42,6 +58,7 @@ export class QuotaTracker {
     const now = Date.now();
 
     if (!entry || now >= entry.windowEndsAt) {
+      this.exceededAlerts.delete(accountKey);
       entry = {
         count: 0,
         windowStartedAt: now,
@@ -63,35 +80,82 @@ export class QuotaTracker {
     return status;
   }
 
-  async incrementAsync(accountKey: string): Promise<QuotaStatus> {
-    const redisConfig = getRedisConfig();
-    if (!redisConfig) {
-      return this.increment(accountKey);
+  /** Reserva uma chamada real. Ao atingir o limite, não incrementa nem permite outra chamada. */
+  reserve(accountKey: string): QuotaStatus {
+    const entry = this.getOrCreate(accountKey);
+    if (entry.count >= this.limit) {
+      return {
+        ...this.buildStatus(entry),
+        allowed: false,
+        retryAfterMs: Math.max(0, entry.windowEndsAt - Date.now()),
+      };
     }
 
+    entry.count += 1;
+    const status = { ...this.buildStatus(entry), allowed: true, retryAfterMs: 0 };
+    this.emitWarnings(accountKey, status, entry.count);
+    return status;
+  }
+
+  async incrementAsync(accountKey: string): Promise<QuotaStatus> {
+    // Compatibilidade com consumidores antigos; a reserva rolling-window é a operação correta.
+    return this.reserveAsync(accountKey);
+  }
+
+  async reserveAsync(accountKey: string): Promise<QuotaStatus> {
+    const redisConfig = getAsaasRedisConfig();
+    if (!redisConfig) return this.reserve(accountKey);
+
     const now = Date.now();
-    const windowStartedAt = Math.floor(now / WINDOW_MS) * WINDOW_MS;
-    const windowEndsAt = windowStartedAt + WINDOW_MS;
-    const key = `${REDIS_KEY_PREFIX}:${sanitizeKeyPart(accountKey)}:${windowStartedAt}`;
+    const windowMs = WINDOW_MS;
+    const baseKey = `${REDIS_KEY_PREFIX}:${sanitizeAsaasRedisKeyPart(accountKey)}`;
+    const script = `
+local count = redis.call('GET', KEYS[1])
+local limit = tonumber(ARGV[2])
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[3])
+if not count then
+  redis.call('SET', KEYS[1], '1', 'PX', windowMs)
+  redis.call('SET', KEYS[2], tostring(now), 'PX', windowMs)
+  return {1, 1, now, windowMs}
+end
+local numericCount = tonumber(count)
+local start = tonumber(redis.call('GET', KEYS[2]) or now)
+if numericCount >= limit then
+  return {0, numericCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
+end
+local nextCount = redis.call('INCR', KEYS[1])
+return {1, nextCount, start, math.max(0, redis.call('PTTL', KEYS[1]))}
+`;
 
     try {
-      const count = await redisCommand<number>(redisConfig, ['INCR', key]);
-      if (count === 1) {
-        await redisCommand(redisConfig, ['EXPIRE', key, String(Math.ceil(WINDOW_MS / 1000) + 300)]);
-      }
-
+      const result = await asaasRedisEval<Array<number | string>>(
+        redisConfig,
+        script,
+        [`${baseKey}:count`, `${baseKey}:started-at`],
+        [String(now), String(this.limit), String(windowMs)],
+      );
+      const allowed = Number(result?.[0]) === 1;
+      const count = Number(result?.[1] ?? 0);
+      const windowStartedAt = Number(result?.[2] ?? now);
+      const ttlMs = Math.max(0, Number(result?.[3] ?? windowMs));
       const status = this.buildStatus({
         count,
         windowStartedAt,
-        windowEndsAt,
+        windowEndsAt: windowStartedAt + windowMs,
       });
-      this.emitWarnings(accountKey, status, count);
-      return status;
+      const enriched = {
+        ...status,
+        allowed,
+        retryAfterMs: allowed ? 0 : ttlMs,
+      };
+      this.emitWarnings(accountKey, enriched, count);
+      return enriched;
     } catch (error) {
-      console.warn('[quota-tracker] Redis indisponível para quota; usando fallback em memória', {
+      console.warn('[quota-tracker] Redis indisponível para reserva de quota; usando fallback em memória', {
         error: error instanceof Error ? error.message : 'unknown',
       });
-      return this.increment(accountKey);
+      return this.reserve(accountKey);
     }
   }
 
@@ -116,7 +180,8 @@ export class QuotaTracker {
       });
     }
 
-    if (status.exceeded && currentCount === this.limit + 1) {
+    if (status.exceeded && !this.exceededAlerts.has(accountKey)) {
+      this.exceededAlerts.add(accountKey);
       console.error('[quota-tracker] Quota API excedida', {
         accountKey: accountKey.slice(0, 12),
         count: status.count,
@@ -153,6 +218,8 @@ export class QuotaTracker {
       windowEndsIn: endsInMin > 60 ? `${Math.round(endsInMin / 60)}h` : `${endsInMin}min`,
       warning: percentUsed >= 80,
       exceeded: entry.count >= this.limit,
+      allowed: entry.count < this.limit,
+      retryAfterMs: entry.count >= this.limit ? endsInMs : 0,
     };
   }
 
@@ -167,52 +234,13 @@ export class QuotaTracker {
 
   reset(accountKey: string): void {
     this.entries.delete(accountKey);
+    this.exceededAlerts.delete(accountKey);
   }
 
   resetAll(): void {
     this.entries.clear();
+    this.exceededAlerts.clear();
   }
-}
-
-interface RedisRestConfig {
-  url: string;
-  token: string;
-}
-
-function getRedisConfig(): RedisRestConfig | null {
-  if (process.env.ASAAS_QUOTA_REDIS_ENABLED === 'false') return null;
-
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-
-  return { url: url.replace(/\/+$/, ''), token };
-}
-
-async function redisCommand<T = unknown>(config: RedisRestConfig, command: string[]): Promise<T> {
-  const response = await fetch(config.url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Redis REST ${response.status}`);
-  }
-
-  const body = await response.json() as { result?: T; error?: string };
-  if (body.error) {
-    throw new Error(body.error);
-  }
-
-  return body.result as T;
-}
-
-function sanitizeKeyPart(value: string): string {
-  return value.replace(/[^a-zA-Z0-9:_-]/g, '_');
 }
 
 const envLimit = Number(process.env.ASAAS_QUOTA_LIMIT ?? DEFAULT_QUOTA_LIMIT);

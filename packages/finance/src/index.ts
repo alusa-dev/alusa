@@ -443,6 +443,12 @@ export type {
   GetTransferFeesOutput,
   GetTransferFeesError,
 } from './use-cases/get-transfer-fees';
+export {
+  lookupExternalPixKey,
+  type LookupExternalPixKeyInput,
+  type LookupExternalPixKeyOutput,
+  type LookupExternalPixKeyError,
+} from './use-cases/lookup-external-pix-key';
 export { getTransferDetail } from './use-cases/get-transfer-detail';
 export type {
   GetTransferDetailInput,

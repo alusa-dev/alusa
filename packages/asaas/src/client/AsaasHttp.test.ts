@@ -79,6 +79,18 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 
+  it('não repete mutação em 429 sem Idempotency-Key', async () => {
+    const client = new AsaasHttp({ apiKey: 'k' });
+
+    mockFetchOnce(429, { error: 'rate_limit' }, { 'Retry-After': '0' });
+
+    await expect(client.post('/payments', { value: 10 })).rejects.toMatchObject({
+      name: 'AsaasHttpError',
+      status: 429,
+    });
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
   it('remove cartão e CVV do log de falha do provedor', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const client = new AsaasHttp({ apiKey: 'k' });

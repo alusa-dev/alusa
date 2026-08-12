@@ -2381,7 +2381,9 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
     let revenueEntryId: string | null = null;
     const feeCharged = input.registrationFeeCharged ?? 0;
 
-    if (feeCharged > 0) {
+    // A digital charge is persisted by the financial/Asaas flow. Creating a
+    // local entry here would duplicate the installment in the billing list.
+    if (feeCharged > 0 && input.isFeePaid) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -2448,15 +2450,22 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       })
     : null;
 
-  const linkedCharges = entry?.asaasPaymentId
+  const linkedChargeFilters: Prisma.ChargeWhereInput[] = [];
+  if (entry?.asaasPaymentId) linkedChargeFilters.push({ asaasPaymentId: entry.asaasPaymentId });
+  if (participant.asaasPaymentId) linkedChargeFilters.push({ asaasPaymentId: participant.asaasPaymentId });
+  if (participant.asaasInstallmentId) {
+    linkedChargeFilters.push({
+      standaloneInstallmentPlan: { asaasInstallmentId: participant.asaasInstallmentId },
+    });
+  }
+  if (participant.standaloneChargeId) {
+    linkedChargeFilters.push({ standaloneInstallmentPlanId: participant.standaloneChargeId });
+    linkedChargeFilters.push({ id: participant.standaloneChargeId });
+  }
+
+  const linkedCharges = linkedChargeFilters.length > 0
     ? await prisma.charge.findMany({
-        where: {
-          contaId: ctx.contaId,
-          OR: [
-            { asaasPaymentId: entry.asaasPaymentId },
-            { standaloneInstallmentPlan: { asaasInstallmentId: entry.asaasPaymentId } },
-          ],
-        },
+        where: { contaId: ctx.contaId, OR: linkedChargeFilters },
       })
     : [];
 
@@ -2625,7 +2634,7 @@ export async function reactivateEventParticipant(
     const dueDate = input.dueDate ?? new Date();
     let revenueEntryId: string | null = null;
 
-    if (feeCharged > 0) {
+    if (feeCharged > 0 && isFeePaid) {
       const entry = await tx.eventFinancialEntry.create({
         data: {
           contaId: ctx.contaId,
@@ -2655,6 +2664,9 @@ export async function reactivateEventParticipant(
         isFeePaid,
         feePaymentMethod: feeCharged > 0 ? (input.feePaymentMethod ?? null) : null,
         revenueEntryId,
+        standaloneChargeId: input.standaloneChargeId ?? null,
+        asaasPaymentId: input.asaasPaymentId ?? null,
+        asaasInstallmentId: input.asaasInstallmentId ?? null,
         financialStatusSnapshot: feeCharged <= 0 ? 'ISENTO' : isFeePaid ? 'QUITADO' : 'PENDENTE',
         feePaidAmount: isFeePaid ? decimal(feeCharged) : decimal(0),
         feeRefundedAmount: decimal(0),
@@ -3010,6 +3022,11 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
   const asaasPaymentIds = financialEntries
     .map((e) => e.asaasPaymentId)
     .filter((id): id is string => Boolean(id));
+  asaasPaymentIds.push(
+    ...participants
+      .flatMap((participant) => [participant.asaasPaymentId, participant.asaasInstallmentId])
+      .filter((id): id is string => Boolean(id)),
+  );
 
   let plans: any[] = [];
   let directCharges: any[] = [];
@@ -3069,7 +3086,7 @@ export async function listEventParticipants(ctx: Pick<EventsContext, 'contaId'>,
 
     // Resolve charges for this participant
     const entry = financialEntries.find((e) => e.id === part.revenueEntryId);
-    const asaasPaymentId = entry?.asaasPaymentId;
+    const asaasPaymentId = entry?.asaasPaymentId ?? part.asaasInstallmentId ?? part.asaasPaymentId;
     let participantCharges: any[] = [];
 
     if (asaasPaymentId) {

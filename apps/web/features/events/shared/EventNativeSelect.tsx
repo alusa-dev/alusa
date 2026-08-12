@@ -29,14 +29,14 @@ export function EventNativeSelect({
   placeholder?: string;
   onValueChange?: (value: string) => void;
 }) {
-  const [value, setValue] = useState(defaultValue ?? '');
+  const [value, setValue] = useState<string>(defaultValue ?? '');
   return (
     <>
-      <input type="hidden" name={name} value={value} required={required} />
+      <input type="hidden" name={name} value={value ?? ''} required={required} />
       <Select
         value={value || undefined}
         onValueChange={(next) => {
-          const val = next === EMPTY_SELECT_VALUE ? '' : next;
+          const val = next === EMPTY_SELECT_VALUE ? '' : next ?? '';
           setValue(val);
           onValueChange?.(val);
         }}

@@ -220,7 +220,7 @@ describe('uploadKycDocumentByGroup', () => {
     }
   });
 
-  it('mantém upload via API quando o grupo não tem onboardingUrl mesmo com description padrão do Asaas', async () => {
+  it('bloqueia upload via API quando o Asaas marca o grupo como interface-only', async () => {
     const unique = randomUUID();
     const conta = await prisma.conta.create({
       data: {
@@ -294,7 +294,7 @@ describe('uploadKycDocumentByGroup', () => {
         data: { provisionedAt: new Date(Date.now() - 20_000) },
       });
 
-      await uploadKycDocumentByGroup({
+      await expect(uploadKycDocumentByGroup({
         contaId: conta.id,
         groupId: 'grp_desc',
         type: 'IDENTIFICATION',
@@ -304,13 +304,10 @@ describe('uploadKycDocumentByGroup', () => {
           mimeType: 'application/pdf',
         },
         actor: { type: 'USER', id: user.id },
-      });
+      })).rejects.toMatchObject({ code: 'PROVIDER_PORTAL_REQUIRED' });
 
-      expect(uploadMyAccountDocument).toHaveBeenCalledWith(
-        expect.objectContaining({
-          groupId: 'grp_desc',
-          type: 'IDENTIFICATION',
-        }),
+      expect(uploadMyAccountDocument).not.toHaveBeenCalledWith(
+        expect.objectContaining({ groupId: 'grp_desc' }),
       );
     } finally {
       await cleanup(conta.id);

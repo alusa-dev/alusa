@@ -41,5 +41,6 @@ function buildFiscalInfoFormData(data: UpsertFiscalInfoInput): FormData {
 export async function upsertFiscalInfo(params: UpsertFiscalInfoParams): Promise<AsaasFiscalInfo> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
   const form = buildFiscalInfoFormData(params.data);
-  return client.post<AsaasFiscalInfo>('/fiscalInfo', form);
+  // O endpoint oficial de criação/atualização possui uma barra final.
+  return client.post<AsaasFiscalInfo>('/fiscalInfo/', form);
 }

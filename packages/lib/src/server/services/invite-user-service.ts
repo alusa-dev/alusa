@@ -2,7 +2,7 @@ import { Prisma, Role } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { prisma } from '../../prisma';
 
-export class DuplicateInviteError extends Error { constructor(){ super('Já existe um convite pendente para este destino.'); } }
+export class DuplicateInviteError extends Error { constructor(){ super('Já existe um convite pendente para este e-mail.'); } }
 export class UserAlreadyExistsError extends Error { constructor(){ super('Usuário já cadastrado com este e-mail.'); } }
 export class UserAlreadyLinkedError extends Error { constructor(){ super('Usuário já vinculado a esta escola.'); } }
 export class ForbiddenRoleError extends Error { constructor(){ super('Convites para ADMIN não são permitidos.'); } }
@@ -74,30 +74,24 @@ export async function createInvite(
   // Para coerência multi-tenant e do índice único, novas criações DEVEM carregar contaId
   if (!targetContaId) throw new MissingContaError();
 
-  // O email é identidade global. Ele pode existir; o que não pode existir é acesso duplicado
-  // à mesma escola.
+  // O e-mail é uma identidade de acesso global e não pode ser reutilizado em outra escola.
   if (normalizedEmail) {
     const existingUser = await prisma.usuario.findFirst({
       where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
-      select: { id: true, contaId: true },
+      select: { id: true },
     });
 
-    if (existingUser) {
-      if (existingUser.contaId === targetContaId) {
-        throw new UserAlreadyLinkedError();
-      }
-
-      const existingMembership = await prisma.usuarioConta.findUnique({
-        where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: targetContaId } },
-        select: { id: true },
-      });
-      if (existingMembership) throw new UserAlreadyLinkedError();
-    }
+    if (existingUser) throw new UserAlreadyExistsError();
   }
 
-  // Evitar convite duplicado pendente por (contaId,email,status)
+  // Evitar convite duplicado pendente globalmente por (email,status).
   if (normalizedEmail) {
-    const dup = await prisma.invite.findFirst({ where: { contaId: targetContaId, email: normalizedEmail, status: 'PENDING' } });
+    const dup = await prisma.invite.findFirst({
+      where: {
+        email: { equals: normalizedEmail, mode: 'insensitive' },
+        status: 'PENDING',
+      },
+    });
     if (dup) throw new DuplicateInviteError();
   } else if (role === Role.RESPONSAVEL && metadata) {
     const pendingResponsavelInvites = await prisma.invite.findMany({
@@ -116,19 +110,27 @@ export async function createInvite(
   const expiresAt = new Date(now.getTime() + 72 * 60 * 60 * 1000);
   const token = randomUUID();
 
-  const created = await prisma.invite.create({
-    data: {
-      contaId: targetContaId,
-      email: normalizedEmail,
-      role,
-      token,
-      invitedById,
-      status: 'PENDING',
-      expiresAt,
-      metadata,
+  try {
+    const created = await prisma.invite.create({
+      data: {
+        contaId: targetContaId,
+        email: normalizedEmail,
+        role,
+        token,
+        invitedById,
+        status: 'PENDING',
+        expiresAt,
+        metadata,
+      }
+    });
+    return created;
+  } catch (error) {
+    // Protege contra duas criações concorrentes do mesmo convite.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new DuplicateInviteError();
     }
-  });
-  return created;
+    throw error;
+  }
 }
 
 export async function acceptInvite(
@@ -136,7 +138,6 @@ export async function acceptInvite(
   nome: string,
   senhaHash: string,
   email?: string | null,
-  options?: { reuseExistingUserId?: string },
 ) {
   const invite = await prisma.invite.findUnique({ where: { token } });
   if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
@@ -186,17 +187,9 @@ export async function acceptInvite(
     let user = existingUser;
 
     if (user) {
-      if (options?.reuseExistingUserId !== user.id) {
-        throw new UserAlreadyExistsError();
-      }
-
-      const existingMembership = await tx.usuarioConta.findUnique({
-        where: { usuarioId_contaId: { usuarioId: user.id, contaId } },
-        select: { id: true },
-      });
-      if (existingMembership || user.contaId === contaId) {
-        throw new UserAlreadyLinkedError();
-      }
+      // A identidade de acesso é globalmente única. Não compartilhar usuários
+      // entre escolas: um e-mail já cadastrado não pode aceitar outro convite.
+      throw new UserAlreadyExistsError();
     } else {
       user = await tx.usuario.create({ data: { contaId, nome, email: finalEmail, senhaHash, role } });
     }

@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { resetPasswordByToken } from '@/lib/auth-email-flow';
+import { passwordPolicyMessage, passwordPolicyRegex } from '@/lib/password-policy';
 
 const bodySchema = z
   .object({
     token: z.string().min(20),
-    password: z.string().min(8),
-    confirmPassword: z.string().min(8),
+    password: z.string().regex(passwordPolicyRegex, passwordPolicyMessage),
+    confirmPassword: z.string().regex(passwordPolicyRegex, passwordPolicyMessage),
   })
   .refine((value) => value.password === value.confirmPassword, {
     path: ['confirmPassword'],

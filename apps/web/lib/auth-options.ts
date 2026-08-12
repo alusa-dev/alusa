@@ -17,6 +17,7 @@ declare module 'next-auth/jwt' {
     asaasApiKeyStatus?: string;
     emailVerified?: boolean;
     accountActive?: boolean;
+    passwordChangedAt?: number;
   }
 }
 
@@ -147,11 +148,25 @@ export const authOptions: NextAuthOptions = {
 
       if (tokenUserId) {
         try {
+          const isInitialLogin = Boolean(user);
           const access = await resolveSessionAccess({ userId: tokenUserId, contaId: tokenContaId });
           (token as any).accountActive = access.ok;
 
+          const passwordState = await prisma.usuario.findUnique({
+            where: { id: tokenUserId },
+            select: { passwordChangedAt: true },
+          });
+          const passwordChangedAt = passwordState?.passwordChangedAt?.getTime() ?? 0;
+          const issuedAt = typeof (token as any).iat === 'number' ? (token as any).iat * 1000 : 0;
+          (token as any).passwordChangedAt = passwordChangedAt || undefined;
+
+          if (passwordChangedAt > 0 && issuedAt > 0 && passwordChangedAt >= issuedAt) {
+            delete (token as any).id;
+            (token as any).accountActive = false;
+          }
+
           // Sempre refletir o estado real do banco para emailVerified
-          if (access.ok) {
+          if (access.ok && (token as any).accountActive !== false) {
             (token as any).emailVerified = access.emailVerified;
             (token as any).contaId = access.contaId;
             (token as any).role = access.role;
@@ -163,7 +178,7 @@ export const authOptions: NextAuthOptions = {
             (token as any).asaasApiKeyStatus = contaState.asaasApiKeyStatus;
           }
 
-          if (!access.ok) {
+          if (!access.ok && !isInitialLogin) {
             delete (token as any).id;
             (token as any).contaId = null;
             (token as any).financeStatus = 'FINANCE_NOT_STARTED';

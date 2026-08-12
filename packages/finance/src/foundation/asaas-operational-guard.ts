@@ -40,7 +40,9 @@ function deriveOperationalStatus(params: {
   apiKeyStatus: string | null;
   webhookStatus: string | null;
   status: FinancialOnboardingStatus | null;
+  regulatoryBlockedAt: Date | null;
 }): string {
+  if (params.regulatoryBlockedAt) return 'BLOCKED';
   if (params.status === 'REJECTED') return 'REJECTED';
   if (!params.asaasAccountId) return 'NOT_READY';
   if (!params.apiKeyEncrypted || params.apiKeyStatus !== 'CONNECTED') return 'API_KEY_REQUIRED';
@@ -88,6 +90,7 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
           webhookStatus: true,
           operationalStatus: true,
           status: true,
+          regulatoryBlockedAt: true,
         },
       },
     },
@@ -100,6 +103,7 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
     apiKeyStatus: account?.apiKeyStatus ?? null,
     webhookStatus: account?.webhookStatus ?? null,
     status: account?.status ?? null,
+    regulatoryBlockedAt: account?.regulatoryBlockedAt ?? null,
   });
 
   const asaasAccountDelegate = (prisma as typeof prisma & {
@@ -134,7 +138,7 @@ export async function syncAsaasOperationalStatus(contaId: string): Promise<Asaas
     apiKeyConnected: account?.apiKeyStatus === 'CONNECTED',
     webhookActive: account?.webhookStatus === 'ACTIVE',
     kycRejected: account?.status === 'REJECTED',
-    regulatoryBlocked: false,
+    regulatoryBlocked: Boolean(account?.regulatoryBlockedAt),
   };
 }
 
@@ -173,6 +177,7 @@ export async function ensureWebhookReady(contaId: string): Promise<void> {
 export async function assertAsaasTenantOperational(contaId: string): Promise<AsaasTenantHealth> {
   let health = await getAsaasTenantHealth(contaId);
 
+  if (health.regulatoryBlocked) throw new FinanceBlockedError('REGULATORY_BLOCKED');
   if (!health.hasSubaccountId) throw new FinanceBlockedError('SUBACCOUNT_MISSING');
   if (!health.hasApiKey) throw new FinanceBlockedError('API_KEY_MISSING');
   if (!health.apiKeyConnected) throw new FinanceBlockedError('API_KEY_INVALID');
@@ -184,7 +189,6 @@ export async function assertAsaasTenantOperational(contaId: string): Promise<Asa
 
   if (!health.webhookActive) throw new FinanceBlockedError('WEBHOOK_NOT_READY');
   if (health.kycRejected) throw new FinanceBlockedError('KYC_REJECTED');
-  if (health.regulatoryBlocked) throw new FinanceBlockedError('REGULATORY_BLOCKED');
 
   return health;
 }

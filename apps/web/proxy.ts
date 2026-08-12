@@ -278,7 +278,7 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
 }
 
 /** Chamadas aqui influenciam TTFB das rotas cobertas. HTML autenticado tende a não ser cacheável por segurança de sessão — limitação de bfcache é esperada. */
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (isTest) {

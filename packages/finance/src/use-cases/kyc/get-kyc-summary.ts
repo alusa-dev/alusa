@@ -15,7 +15,7 @@ import {
 } from './kyc-cache-utils';
 import { getMyAccountDocumentsCached, getMyAccountStatusCached } from './kyc-asaas-read-cache';
 import type { AsaasConnectionDTO } from '../../dtos/asaas-connection.dto';
-import { DOCUMENTS_READY_DELAY_MS } from './kyc-document-group-resolver';
+import { getDocumentsReadiness } from './kyc-document-group-resolver';
 
 export type GetKycSummaryResult = {
   onboarding: Awaited<ReturnType<typeof getOnboardingStatus>>;
@@ -103,11 +103,9 @@ async function getKycSummaryInternal(
   });
 
   const nowMs = Date.now();
-  const provisionedAgeMs = asaasAccount?.provisionedAt ? nowMs - asaasAccount.provisionedAt.getTime() : null;
-  const shouldWaitForDocuments = typeof provisionedAgeMs === 'number' && provisionedAgeMs >= 0 && provisionedAgeMs < DOCUMENTS_READY_DELAY_MS;
+  const documentsReadiness = getDocumentsReadiness(asaasAccount?.provisionedAt ?? null, nowMs);
 
-  if (shouldWaitForDocuments) {
-    const retryAfterMs = Math.max(500, DOCUMENTS_READY_DELAY_MS - provisionedAgeMs!);
+  if (!documentsReadiness.ready) {
 
     // Regra 0: antes de 15s, não chamar o Asaas
     return {
@@ -117,7 +115,7 @@ async function getKycSummaryInternal(
       documents: null,
       documentsRequired: false,
       documentsNotReady: true,
-      retryAfterMs,
+      retryAfterMs: documentsReadiness.retryAfterMs,
     };
   }
 
@@ -125,10 +123,14 @@ async function getKycSummaryInternal(
   const cacheUpdatedAt = asaasAccount?.documentsCacheUpdatedAt ?? null;
   const cacheAgeMs = cacheUpdatedAt ? Date.now() - cacheUpdatedAt.getTime() : null;
   const hasCache = Boolean(asaasAccount?.documentsCache);
+  const cacheHasExternalOnboarding = (() => {
+    const cached = asaasAccount?.documentsCache as { version?: unknown; groups?: Array<{ hasOnboardingUrl?: unknown }> } | null;
+    return cached?.version === 2 && cached.groups?.some((group) => group.hasOnboardingUrl === true) === true;
+  })();
   const isCacheValid =
     !opts.bypassCache && hasCache && typeof cacheAgeMs === 'number' && cacheAgeMs >= 0 && cacheAgeMs < ttlMs;
 
-  if (isCacheValid) {
+  if (isCacheValid && !cacheHasExternalOnboarding) {
     const cached = asaasAccount?.documentsCache as unknown;
 
     if (isCacheV2(cached)) {

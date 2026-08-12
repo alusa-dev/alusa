@@ -7,6 +7,7 @@ import type {
 } from '@/features/aulas/dtos';
 import {
   assertNoCalendarConflicts,
+  buildEligibleMatriculaWhere,
   getCalendarEventOrThrow,
   loadAlunoResources,
   loadAulasResources,
@@ -196,7 +197,7 @@ export async function createMakeupClass(
     throw new AulasError('TURMA_ORIGEM_DESTINO_INVALIDA', 'Turma de origem ou destino não encontrada.');
   }
 
-  if (origemEvento.turmaId && origemEvento.turmaId !== input.turmaOrigemId) {
+  if (origemEvento.turmaId !== input.turmaOrigemId) {
     throw new AulasError('TURMA_ORIGEM_DESTINO_INVALIDA', 'O evento de origem não pertence à turma informada.');
   }
 
@@ -204,7 +205,49 @@ export async function createMakeupClass(
     throw new AulasError('REPOSICAO_INDIVIDUAL_SEM_ALUNO', 'Reposição individual exige aluno ou matrícula.');
   }
 
+  let alunoId = input.scope === 'INDIVIDUAL' ? input.alunoId ?? null : null;
+  let matriculaId = input.scope === 'INDIVIDUAL' ? input.matriculaId ?? null : null;
+
+  if (input.scope === 'INDIVIDUAL') {
+    const aluno = alunoId
+      ? await prisma.aluno.findFirst({
+          where: { id: alunoId, contaId, status: 'ATIVO' },
+          select: { id: true },
+        })
+      : null;
+
+    if (!aluno) {
+      throw new AulasError('ALUNO_NAO_ELEGIVEL', 'O aluno da reposição não pertence à conta ou não está ativo.');
+    }
+
+    const matricula = await prisma.matricula.findFirst({
+      where: {
+        ...buildEligibleMatriculaWhere(contaId, input.turmaOrigemId, origemEvento.startAt),
+        id: matriculaId ?? undefined,
+        alunoId: aluno.id,
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!matricula) {
+      throw new AulasError(
+        'ALUNO_NAO_ELEGIVEL',
+        'O aluno não possui matrícula ativa ou pausada elegível na turma de origem na data da aula.',
+      );
+    }
+
+    matriculaId = matricula.id;
+  }
+
   let destinoEventoId = input.eventoDestinoId ?? null;
+
+  if (destinoEventoId && destinoEventoId === origemEvento.id) {
+    throw new AulasError(
+      'OPERACAO_NAO_PERMITIDA',
+      'O evento de destino deve ser diferente do evento de origem.',
+    );
+  }
 
   if (!destinoEventoId) {
     if (!input.destinationEvent) {
@@ -260,7 +303,7 @@ export async function createMakeupClass(
   } else {
     const destinoEvento = await getCalendarEventOrThrow(destinoEventoId, contaId, prisma);
 
-    if (destinoEvento.turmaId && destinoEvento.turmaId !== input.turmaDestinoId) {
+    if (destinoEvento.turmaId !== input.turmaDestinoId) {
       throw new AulasError(
         'TURMA_ORIGEM_DESTINO_INVALIDA',
         'O evento de destino não pertence à turma de destino informada.',
@@ -282,25 +325,11 @@ export async function createMakeupClass(
     }
   }
 
-  let matriculaId = input.matriculaId ?? null;
-  if (!matriculaId && input.alunoId) {
-    const matricula = await prisma.matricula.findFirst({
-      where: {
-        alunoId: input.alunoId,
-        OR: [{ turmaId: input.turmaOrigemId }, { matriculaTurmas: { some: { turmaId: input.turmaOrigemId } } }],
-        status: { in: ['ATIVA', 'PAUSADA'] },
-      },
-      select: { id: true },
-      orderBy: { createdAt: 'desc' },
-    });
-    matriculaId = matricula?.id ?? null;
-  }
-
   const created = await prisma.makeupClass.create({
     data: {
       contaId,
       scope: input.scope,
-      alunoId: input.alunoId ?? null,
+      alunoId,
       matriculaId,
       eventoOrigemId: origemEvento.id,
       eventoDestinoId: destinoEventoId,

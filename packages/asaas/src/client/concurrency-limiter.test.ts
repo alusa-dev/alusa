@@ -1,7 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import { ConcurrencyLimiter } from './concurrency-limiter';
+import { describe, it, expect, vi } from 'vitest';
+import { AccountScopedConcurrencyLimiter, ConcurrencyLimiter } from './concurrency-limiter';
 
 describe('ConcurrencyLimiter', () => {
+  it('separa a concorrência por conta Asaas', async () => {
+    vi.stubEnv('ASAAS_REDIS_ENABLED', 'false');
+    const limiter = new AccountScopedConcurrencyLimiter(1);
+    let release!: () => void;
+    const first = limiter.run('account-a', () => new Promise<void>((resolve) => { release = resolve; }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const second = limiter.run('account-b', () => Promise.resolve('ok'));
+    await expect(second).resolves.toBe('ok');
+    expect(limiter.currentRunning).toBe(1);
+
+    release();
+    await first;
+    vi.unstubAllEnvs();
+  });
+
   describe('execução básica', () => {
     it('deve executar task e retornar resultado', async () => {
       const limiter = new ConcurrencyLimiter(5);

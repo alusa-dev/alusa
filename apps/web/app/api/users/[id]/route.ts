@@ -232,7 +232,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     }
 
     return NextResponse.json(
-      deleteManagedUserResultSchema.parse({ ok: true, id: removal.id, hard: true }),
+      deleteManagedUserResultSchema.parse({ ok: true, id: removal.id, hard: removal.hard }),
     );
   } catch (e) {
     console.error('Error deleting user:', e);

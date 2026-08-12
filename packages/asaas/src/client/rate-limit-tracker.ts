@@ -44,36 +44,59 @@ export function extractRateLimitHeaders(headers: {
 export class RateLimitTracker {
   private readonly state = new Map<string, RateLimitInfo>();
 
-  update(endpointClass: string, info: RateLimitInfo): void {
+  private key(accountKey: string, endpointClass?: string): string {
+    return endpointClass ? `${accountKey}::${endpointClass}` : accountKey;
+  }
+
+  update(accountKey: string, endpointClass: string, info: RateLimitInfo): void;
+  update(endpointClass: string, info: RateLimitInfo): void;
+  update(accountKeyOrEndpoint: string, endpointOrInfo: string | RateLimitInfo, maybeInfo?: RateLimitInfo): void {
+    const endpointClass = typeof endpointOrInfo === 'string' ? endpointOrInfo : accountKeyOrEndpoint;
+    const info = typeof endpointOrInfo === 'string' ? maybeInfo : endpointOrInfo;
+    if (!info) return;
     if (info.limit === null && info.remaining === null && info.resetSeconds === null) return;
-    this.state.set(endpointClass, info);
+    const stateKey = typeof endpointOrInfo === 'string'
+      ? this.key(accountKeyOrEndpoint, endpointClass)
+      : this.key(endpointClass);
+    this.state.set(stateKey, info);
 
     // Emitir hook quando remaining chega a 0
     if (info.remaining !== null && info.remaining <= 0) {
       globalAsaasHooks.emitRateLimitHit({
-        accountKey: endpointClass,
+        accountKey: typeof endpointOrInfo === 'string' ? accountKeyOrEndpoint : endpointClass,
         endpoint: endpointClass,
         resetSeconds: info.resetSeconds,
       });
     }
   }
 
-  get(endpointClass: string): RateLimitInfo | null {
-    return this.state.get(endpointClass) ?? null;
+  get(accountKey: string, endpointClass: string): RateLimitInfo | null;
+  get(endpointClass: string): RateLimitInfo | null;
+  get(accountKeyOrEndpoint: string, maybeEndpoint?: string): RateLimitInfo | null {
+    return this.state.get(this.key(accountKeyOrEndpoint, maybeEndpoint)) ?? null;
   }
 
-  isNearLimit(endpointClass: string, threshold = 5): boolean {
-    const info = this.state.get(endpointClass);
+  isNearLimit(accountKey: string, endpointClass: string, threshold?: number): boolean;
+  isNearLimit(endpointClass: string, threshold?: number): boolean;
+  isNearLimit(accountKeyOrEndpoint: string, endpointOrThreshold: string | number = 5, maybeThreshold = 5): boolean {
+    const endpointClass = typeof endpointOrThreshold === 'string' ? endpointOrThreshold : accountKeyOrEndpoint;
+    const threshold = typeof endpointOrThreshold === 'string' ? maybeThreshold : endpointOrThreshold;
+    const key = typeof endpointOrThreshold === 'string' ? this.key(accountKeyOrEndpoint, endpointClass) : this.key(endpointClass);
+    const info = this.state.get(key);
     if (!info || info.remaining === null) return false;
     return info.remaining <= threshold;
   }
 
-  shouldBackoff(endpointClass: string): { backoff: boolean; waitMs: number } {
-    const info = this.state.get(endpointClass);
+  shouldBackoff(accountKey: string, endpointClass: string): { backoff: boolean; waitMs: number };
+  shouldBackoff(endpointClass: string): { backoff: boolean; waitMs: number };
+  shouldBackoff(accountKeyOrEndpoint: string, maybeEndpoint?: string): { backoff: boolean; waitMs: number } {
+    const info = this.state.get(this.key(accountKeyOrEndpoint, maybeEndpoint));
     if (!info) return { backoff: false, waitMs: 0 };
 
     if (info.remaining !== null && info.remaining <= 0 && info.resetSeconds !== null) {
-      return { backoff: true, waitMs: info.resetSeconds * 1000 };
+      // Mantém a API legada determinística; o cliente usa a forma escopada por conta.
+      const elapsedMs = maybeEndpoint === undefined ? 0 : Math.max(0, Date.now() - info.capturedAt);
+      return { backoff: true, waitMs: Math.max(0, info.resetSeconds * 1000 - elapsedMs) };
     }
     return { backoff: false, waitMs: 0 };
   }

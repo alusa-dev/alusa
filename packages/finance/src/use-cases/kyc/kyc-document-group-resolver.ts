@@ -6,6 +6,7 @@ import {
 
 import {
   filterTemplateDescription,
+  isAsaasInterfaceOnlyDescription,
   type KycNextAction,
   type KycSlotInfo,
 } from '../../dtos/kyc/kyc-snapshot.dto';
@@ -36,6 +37,23 @@ function getProvisioningTimeoutMs(): number {
 
 export function isZeroUuid(id: string): boolean {
   return id === ZERO_UUID;
+}
+
+export function getDocumentsReadiness(provisionedAt: Date | null, now = Date.now()): {
+  ready: boolean;
+  retryAfterMs: number;
+} {
+  if (!provisionedAt) return { ready: true, retryAfterMs: 0 };
+
+  const ageMs = now - provisionedAt.getTime();
+  if (ageMs >= 0 && ageMs < DOCUMENTS_READY_DELAY_MS) {
+    return {
+      ready: false,
+      retryAfterMs: Math.max(500, DOCUMENTS_READY_DELAY_MS - ageMs),
+    };
+  }
+
+  return { ready: true, retryAfterMs: 0 };
 }
 
 export function isActionableDocumentGroupStatus(status: string | null | undefined): boolean {
@@ -158,6 +176,21 @@ export function resolveNextActionFromLiveGroup(
   }
 
   if (group.onboardingUrl) {
+    // Nunca devolvemos ao frontend um link que o Asaas já marcou como expirado.
+    // Uma nova consulta pode retornar o link regenerado após reprovação/expiração.
+    if (isOnboardingUrlExpired(group) === true) {
+      return {
+        kind: 'WAITING_PROVIDER',
+        groupId: group.id,
+        groupStatus,
+        type: group.type?.trim().toUpperCase() ?? null,
+        title: group.title?.trim() || 'Atualizando verificação',
+        description: description ?? 'O link de verificação expirou. Aguarde a atualização do provedor e tente novamente.',
+        responsible,
+        submissionMethod: 'EXTERNAL_ONBOARDING_URL',
+      };
+    }
+
     return {
       kind: 'EXTERNAL_ONBOARDING',
       groupId: group.id,
@@ -170,6 +203,19 @@ export function resolveNextActionFromLiveGroup(
       isOnboardingUrlExpired: isOnboardingUrlExpired(group) === true,
       responsible,
       submissionMethod: 'EXTERNAL_ONBOARDING_URL',
+    };
+  }
+
+  if (isAsaasInterfaceOnlyDescription(group.description)) {
+    return {
+      kind: 'PROVIDER_PORTAL_REQUIRED',
+      groupId: group.id,
+      groupStatus,
+      type: group.type?.trim().toUpperCase() ?? null,
+      title: group.title?.trim() || 'Continuar verificação',
+      description,
+      responsible,
+      submissionMethod: 'PROVIDER_PORTAL',
     };
   }
 
@@ -219,6 +265,19 @@ export function resolveNextActionFromCachedGroup(
       description,
       responsible,
       submissionMethod: 'EXTERNAL_ONBOARDING_URL',
+    };
+  }
+
+  if (group.isAsaasInterfaceOnly) {
+    return {
+      kind: 'PROVIDER_PORTAL_REQUIRED',
+      groupId: group.id,
+      groupStatus,
+      type: group.type?.trim().toUpperCase() ?? null,
+      title: group.title?.trim() || 'Continuar verificação',
+      description,
+      responsible,
+      submissionMethod: 'PROVIDER_PORTAL',
     };
   }
 

@@ -44,6 +44,17 @@ describe('QuotaTracker', () => {
     });
   });
 
+  describe('reserve', () => {
+    it('bloqueia antes de ultrapassar o limite da janela', () => {
+      const limited = new QuotaTracker(2);
+
+      expect(limited.reserve('acc1')).toMatchObject({ allowed: true, count: 1, remaining: 1 });
+      expect(limited.reserve('acc1')).toMatchObject({ allowed: true, count: 2, remaining: 0 });
+      expect(limited.reserve('acc1')).toMatchObject({ allowed: false, count: 2, remaining: 0 });
+      expect(limited.getStatus('acc1').count).toBe(2);
+    });
+  });
+
   describe('isolamento por chave', () => {
     it('deve isolar contagem entre contas', () => {
       tracker.increment('acc1');
