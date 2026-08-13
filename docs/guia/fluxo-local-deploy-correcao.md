@@ -236,4 +236,3 @@ Antes de encerrar uma correcao de deploy:
 - `/auth/login` responde `200 OK` no preview.
 - Nenhum secret foi impresso ou commitado.
 - Alteracoes nao relacionadas do usuario foram preservadas.
-
