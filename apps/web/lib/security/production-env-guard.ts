@@ -18,6 +18,10 @@ type ProductionSecurityEnv = {
   ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED?: string;
 };
 
+function isEnabled(value: string | undefined): boolean {
+  return value?.trim() === 'true';
+}
+
 export function isProductionDeployment(env: ProductionSecurityEnv = process.env): boolean {
   return env.NODE_ENV === 'production' || env.VERCEL_ENV === 'production';
 }
@@ -26,14 +30,14 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   if (!isProductionDeployment(env)) return;
 
   const missing: string[] = [];
-  if (env.RLS_RUNTIME_ENABLED !== 'true') {
+  if (!isEnabled(env.RLS_RUNTIME_ENABLED)) {
     missing.push('RLS_RUNTIME_ENABLED=true');
   }
   if (!env.DATABASE_RLS_URL?.trim()) {
     missing.push('DATABASE_RLS_URL');
   }
 
-  if (env.ASAAS_REDIS_ENABLED !== 'true') {
+  if (!isEnabled(env.ASAAS_REDIS_ENABLED)) {
     missing.push('ASAAS_REDIS_ENABLED=true');
   }
   if (!env.UPSTASH_REDIS_REST_URL?.trim()) {
@@ -42,13 +46,13 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   if (!env.UPSTASH_REDIS_REST_TOKEN?.trim()) {
     missing.push('UPSTASH_REDIS_REST_TOKEN');
   }
-  if (env.FIN_WEBHOOK_SYNC_OVERRIDE === 'true') {
+  if (isEnabled(env.FIN_WEBHOOK_SYNC_OVERRIDE)) {
     missing.push('FIN_WEBHOOK_SYNC_OVERRIDE=false ou ausente');
   }
-  if (env.FIN_WEBHOOK_INLINE_DRAIN === 'true') {
+  if (isEnabled(env.FIN_WEBHOOK_INLINE_DRAIN)) {
     missing.push('FIN_WEBHOOK_INLINE_DRAIN=false ou ausente');
   }
-  if (env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS !== 'true') {
+  if (!isEnabled(env.ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS)) {
     missing.push('ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS=true');
   }
   if (!env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET?.trim()) {
@@ -60,13 +64,13 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   if (!env.CRON_SECRET?.trim() && !env.CRON_SECRET_TOKEN?.trim()) {
     missing.push('CRON_SECRET ou CRON_SECRET_TOKEN');
   }
-  if (env.CACHE_LAYER_ENABLED !== 'true') {
+  if (!isEnabled(env.CACHE_LAYER_ENABLED)) {
     missing.push('CACHE_LAYER_ENABLED=true');
   }
-  if (env.REDIS_CACHE_ENABLED !== 'true') {
+  if (!isEnabled(env.REDIS_CACHE_ENABLED)) {
     missing.push('REDIS_CACHE_ENABLED=true');
   }
-  if (env.ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED === 'false') {
+  if (env.ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED?.trim() === 'false') {
     missing.push('ASAAS_DISTRIBUTED_GET_LIMIT_ENABLED=true ou ausente');
   }
 
