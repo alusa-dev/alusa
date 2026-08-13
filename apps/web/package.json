@@ -11,11 +11,11 @@
     "ios_saf >= 16"
   ],
   "scripts": {
-    "dev": "dotenv -o -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
-    "dev:raw": "dotenv -o -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
-    "dev:light": "dotenv -o -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p 3000",
-    "dev:clean": "dotenv -o -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && rimraf .next && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
-    "dev:webpack": "dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack",
+    "dev": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev:raw": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev:light": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p 3000",
+    "dev:clean": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev && rimraf .next && pnpm -C ../.. prisma:generate && pnpm -C ../.. exec turbo run build --filter=@alusa/web^... && dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev:webpack": "dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --webpack",
     "build": "next build",
     "build:webpack": "next build --webpack",
     "build:clean": "rimraf .next && pnpm -C ../.. exec turbo run build --filter=@alusa/web",
