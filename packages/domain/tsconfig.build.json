@@ -1,4 +1,10 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@alusa/shared": ["../shared/dist"],
+      "@alusa/shared/*": ["../shared/dist/*"]
+    }
+  },
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts", "test"]
 }

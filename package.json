@@ -14,7 +14,7 @@
     "audit:dtos": "node scripts/audit-dto-usage.mjs",
     "check:nul-bytes": "node scripts/check-nul-bytes.mjs",
     "lint": "pnpm -r exec eslint .",
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "turbo run typecheck",
     "typecheck:mobile": "pnpm --filter @alusa/mobile typecheck",
     "format": "prettier --write .",
     "build": "turbo run build",
