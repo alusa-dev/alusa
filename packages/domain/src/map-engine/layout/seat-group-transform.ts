@@ -258,7 +258,7 @@ export function applySeatGroupLayoutPatch(
     typeof patch.x === 'number' || typeof patch.y === 'number' || typeof patch.rotation === 'number';
 
   if (transformChanged) {
-    let resolvedNext = next;
+    const resolvedNext = next;
 
     nextMap.seats = nextMap.seats.map((seat) =>
       seat.groupId === groupId ? transformSeatInGroup(seat, prev, resolvedNext) : seat,
