@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@alusa/asaas', () => ({
+  checkAsaasDistributedRateLimit: vi.fn(async () => null),
+}));
 
 import { buildWebhookRateLimitKey, WebhookRateLimiter } from '../webhook-rate-limiter';
 
@@ -38,5 +42,15 @@ describe('webhook-rate-limiter', () => {
     expect(limiter.check('ip:1').allowed).toBe(true);
     expect(limiter.check('ip:1').allowed).toBe(true);
     expect(limiter.check('ip:1').allowed).toBe(false);
+  });
+
+  it('expõe fallback local como degradado quando Redis não está configurado', async () => {
+    const limiter = new WebhookRateLimiter({ maxRequests: 2, windowMs: 60_000 });
+
+    const result = await limiter.checkAsync('ip:1');
+
+    expect(result.backend).toBe('memory');
+    expect(result.degraded).toBe(true);
+    expect(result.allowed).toBe(true);
   });
 });

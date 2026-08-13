@@ -14,8 +14,15 @@
  * - ConcurrencyLimiter state
  */
 
-import { globalCircuitBreaker, globalQuotaTracker, globalRateLimitTracker, globalGetLimiter } from '@alusa/asaas';
+import {
+  globalCircuitBreaker,
+  globalQuotaTracker,
+  globalRateLimitTracker,
+  globalGetLimiter,
+  isAsaasRedisConfigured,
+} from '@alusa/asaas';
 import { getApiCallStats } from './asaas-api-logger';
+import { inspectWebhookProcessingRuntimeStatus } from '../webhooks/webhook-runtime-config';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -49,6 +56,15 @@ export interface OperationalMetricsSnapshot {
     byMethod: Record<string, number>;
     topEndpoints: Array<{ endpoint: string; count: number; errors: number }>;
   };
+
+  runtime: {
+    production: boolean;
+    webhookMode: 'QUEUE' | 'SYNC';
+    webhookAsyncQueue: boolean;
+    webhookInlineDrain: boolean;
+    redisConfigured: boolean;
+    warnings: string[];
+  };
 }
 
 // ── Snapshot Builder ─────────────────────────────────────────────────────
@@ -58,6 +74,7 @@ export function collectOperationalMetrics(windowMinutes = 60): OperationalMetric
   const quotaSnapshots = globalQuotaTracker.allSnapshots();
   const rlSnapshot = globalRateLimitTracker.snapshot();
   const apiStats = getApiCallStats(windowMinutes);
+  const runtime = inspectWebhookProcessingRuntimeStatus();
 
   // Circuit breaker summary
   const circuits: OperationalMetricsSnapshot['circuitBreaker']['circuits'] = {};
@@ -112,6 +129,15 @@ export function collectOperationalMetrics(windowMinutes = 60): OperationalMetric
       byMethod: apiStats.byMethod,
       topEndpoints,
     },
+
+    runtime: {
+      production: runtime.isProduction,
+      webhookMode: runtime.mode,
+      webhookAsyncQueue: runtime.useAsyncQueue,
+      webhookInlineDrain: runtime.inlineDrain,
+      redisConfigured: isAsaasRedisConfigured(),
+      warnings: runtime.warnings.map((warning) => warning.code),
+    },
   };
 }
 
@@ -149,6 +175,9 @@ export function toPrometheusText(metrics: OperationalMetricsSnapshot): string {
   g('asaas_api_calls_errors', 'Error API calls in window', metrics.apiCalls.errorCalls);
   g('asaas_api_calls_avg_duration_ms', 'Average call duration ms', metrics.apiCalls.avgDurationMs);
   g('asaas_api_calls_error_rate', 'Error rate', metrics.apiCalls.errorRate);
+  g('alusa_webhook_async_queue_enabled', 'Webhook async queue enabled', metrics.runtime.webhookAsyncQueue ? 1 : 0);
+  g('alusa_webhook_inline_drain_enabled', 'Webhook inline drain enabled', metrics.runtime.webhookInlineDrain ? 1 : 0);
+  g('alusa_asaas_redis_configured', 'Redis configured for distributed Asaas controls', metrics.runtime.redisConfigured ? 1 : 0);
 
   for (const [method, count] of Object.entries(metrics.apiCalls.byMethod)) {
     g('asaas_api_calls_by_method', 'API calls by method', count, { method });

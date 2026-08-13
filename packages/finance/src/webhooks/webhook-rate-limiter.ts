@@ -5,6 +5,8 @@
  * Protege contra flood/DDoS no endpoint público.
  */
 
+import { checkAsaasDistributedRateLimit } from '@alusa/asaas';
+
 interface WindowEntry {
   count: number;
   windowStart: number;
@@ -41,6 +43,34 @@ export class WebhookRateLimiter {
     }
 
     return { allowed: true, remaining, resetMs };
+  }
+
+  /**
+   * Usa a janela distribuída quando Redis está configurado. Em caso de falha,
+   * mantém o fallback local para não transformar uma indisponibilidade do
+   * mecanismo de proteção em perda silenciosa de webhooks legítimos.
+   */
+  async checkAsync(key: string): Promise<{
+    allowed: boolean;
+    remaining: number;
+    resetMs: number;
+    backend: 'redis' | 'memory';
+    degraded: boolean;
+  }> {
+    try {
+      const distributed = await checkAsaasDistributedRateLimit({
+        key,
+        maxRequests: this.maxRequests,
+        windowMs: this.windowMs,
+      });
+      if (distributed) return { ...distributed, degraded: false };
+    } catch (error) {
+      console.warn('[webhook-rate-limiter] Redis indisponível; fallback local ativado', {
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+
+    return { ...this.check(key), backend: 'memory', degraded: true };
   }
 
   /**

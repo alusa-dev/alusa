@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
-import { getAsaasBaseUrlFromEnvOrThrow, AsaasBaseUrlError } from '@alusa/finance';
+import {
+  getAsaasBaseUrlFromEnvOrThrow,
+  AsaasBaseUrlError,
+  checkAsaasRedisHealth,
+} from '@alusa/finance';
 
 import { prisma } from '@/src/prisma';
 import { internalHealthResultDTOSchema } from '@/features/system/dtos';
@@ -66,6 +70,15 @@ export async function GET(req: Request) {
       checks.push({ name: 'asaas.base_url', status: 'ERROR', message: 'UNKNOWN_ERROR' });
     }
   }
+
+  const redisHealth = await checkAsaasRedisHealth();
+  checks.push({
+    name: 'asaas.redis',
+    status: redisHealth.reachable ? 'OK' : process.env.NODE_ENV === 'production' ? 'ERROR' : 'WARNING',
+    message: redisHealth.reachable
+      ? `${redisHealth.latencyMs ?? 0}ms`
+      : 'Controles distribuídos do Asaas estão degradados.',
+  });
 
   if (process.env.ASAAS_WEBHOOK_AUTH_TOKEN_SECRET) {
     checks.push({ name: 'asaas.webhook_auth_token_secret', status: 'OK' });

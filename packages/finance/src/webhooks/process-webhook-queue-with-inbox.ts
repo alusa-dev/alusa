@@ -18,6 +18,7 @@ function groupCandidatesByConta(
     if (!payment.contaId) continue;
     const list = grouped.get(payment.contaId) ?? [];
     list.push({
+      contaId: payment.contaId,
       event: payment.event,
       eventId: payment.eventId,
       asaasPaymentId: payment.asaasPaymentId,

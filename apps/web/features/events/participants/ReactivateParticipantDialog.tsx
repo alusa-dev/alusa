@@ -19,7 +19,7 @@ import { reactivateEventParticipant, type EventParticipantDTO, type SchoolEventD
 import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { parseCurrencyInput } from '../shared/event-formatters';
-import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType } from './ParticipantBillingFields';
+import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
 
 export function ReactivateParticipantDialog({
   eventId,
@@ -39,6 +39,7 @@ export function ReactivateParticipantDialog({
   const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [notificationChannels, setNotificationChannels] = useState<ParticipantNotificationChannel[]>([]);
 
   useEffect(() => {
     if (open) {
@@ -51,6 +52,7 @@ export function ReactivateParticipantDialog({
     setChargeType('ONE_TIME');
     setFeeText('');
     setDueDate(undefined);
+    setNotificationChannels([]);
   }, [event.registrationFee, open, participant?.registrationFeeCharged]);
 
   const mutation = useMutation({
@@ -93,6 +95,8 @@ export function ReactivateParticipantDialog({
       chargeType: resolvedChargeType,
       dueDate: dueDateValue,
       installmentCount: resolvedChargeType === 'INSTALLMENT' ? Number(formData.get('installmentCount') || 2) : undefined,
+      notificationChannels,
+      notificationChannelsConfigured: true,
     });
   }
 
@@ -115,6 +119,8 @@ export function ReactivateParticipantDialog({
             onChargeTypeChange={setChargeType}
             onFeeTextChange={setFeeText}
             onDueDateChange={setDueDate}
+            notificationChannels={notificationChannels}
+            onNotificationChannelsChange={setNotificationChannels}
           />
           <Field label="Observações">
             <Textarea name="notes" className="min-h-16 rounded-lg border-slate-200" defaultValue={participant?.notes ?? ''} />

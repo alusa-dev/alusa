@@ -4,7 +4,13 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { listNotifications, markAllNotificationsAsRead, type NotificationFeedView } from '@alusa/lib';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
-import { PrivateMemoryCache, privateJson } from '@/lib/private-cache';
+import { privateJson } from '@/lib/private-cache';
+import {
+  buildNotificationFeedCacheKey,
+  clearNotificationCaches,
+  getNotificationCache,
+  setNotificationCache,
+} from '@/lib/notifications/notification-cache';
 
 type SessionUser = {
   id?: string;
@@ -21,11 +27,6 @@ const listQuerySchema = z.object({
 const bulkActionSchema = z.object({
   action: z.literal('markAllRead'),
 });
-const notificationsCache = new PrivateMemoryCache<unknown>({
-  maxAgeSeconds: 15,
-  staleWhileRevalidateSeconds: 45,
-});
-
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
 }
@@ -74,19 +75,19 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const cacheKey = [
-      user.contaId,
-      user.id,
-      parsed.data.view ?? 'active',
-      parsed.data.limit ?? 'default',
-      parsed.data.page ?? 'default',
-    ].join(':');
-    const cached = notificationsCache.get(cacheKey);
+    const cacheKey = buildNotificationFeedCacheKey({
+      contaId: user.contaId,
+      userId: user.id,
+      view: parsed.data.view ?? 'active',
+      limit: parsed.data.limit ?? 'default',
+      page: parsed.data.page ?? 'default',
+    });
+    const cached = await getNotificationCache<ReturnType<typeof serialize>>(cacheKey);
     if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
       timer.end('GET /notifications (cache hit)', { cacheState: cached.state });
       return privateJson(cached.body, {
-        maxAgeSeconds: 15,
-        staleWhileRevalidateSeconds: 45,
+        maxAgeSeconds: 30,
+        staleWhileRevalidateSeconds: 90,
         cacheState: cached.state,
       });
     }
@@ -105,11 +106,14 @@ export async function GET(req: NextRequest) {
     );
 
     const body = serialize(result);
-    notificationsCache.set(cacheKey, body);
+    await setNotificationCache(cacheKey, body, {
+      ttlSeconds: 30,
+      staleWhileRevalidateSeconds: 90,
+    });
     timer.end('GET /notifications (cache miss)');
     return privateJson(body, {
-      maxAgeSeconds: 15,
-      staleWhileRevalidateSeconds: 45,
+      maxAgeSeconds: 30,
+      staleWhileRevalidateSeconds: 90,
       cacheState: 'MISS',
     });
   } catch (error) {
@@ -148,7 +152,7 @@ export async function PATCH(req: NextRequest) {
       { contaId: user.contaId }
     );
 
-    notificationsCache.clear();
+    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true, updatedCount });
   } catch (error) {
     console.error('[Notifications][PATCH]', error);

@@ -56,6 +56,12 @@ type AsaasEntityReference = string | { id?: string | null } | null | undefined;
 
 const DEFAULT_MAX_REPROCESS_ATTEMPTS = 5;
 
+function parseProviderDate(value?: string | null): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function getMaxReprocessAttempts(): number {
   const parsed = Number(process.env.FINANCE_WEBHOOK_REPROCESS_MAX_ATTEMPTS ?? DEFAULT_MAX_REPROCESS_ATTEMPTS);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_REPROCESS_ATTEMPTS;
@@ -291,6 +297,9 @@ async function processAsaasWebhookForRecord(params: {
 
       const paymentResult = await handlePaymentWebhook(contaId, {
         event,
+        eventId: payload.id ?? null,
+        source: 'WEBHOOK',
+        providerOccurredAt: parseProviderDate(payload.dateCreated),
         payment: {
           id: payload.payment.id,
           status: payload.payment.status as never,

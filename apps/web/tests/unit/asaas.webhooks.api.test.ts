@@ -31,6 +31,7 @@ vi.mock('@alusa/finance', () => ({
   redactWebhookLogObject: vi.fn((value) => value),
   globalWebhookRateLimiter: {
     check: vi.fn(() => ({ allowed: true, resetMs: 0 })),
+    checkAsync: vi.fn(async () => ({ allowed: true, resetMs: 0, remaining: 199, backend: 'memory', degraded: false })),
   },
 }));
 
@@ -205,7 +206,13 @@ describe('POST /api/webhooks/asaas', () => {
   });
 
   it('não registra token bruto quando aplica rate limit', async () => {
-    vi.mocked(globalWebhookRateLimiter.check).mockReturnValueOnce({ allowed: false, remaining: 0, resetMs: 1000 });
+    vi.mocked(globalWebhookRateLimiter.checkAsync).mockResolvedValueOnce({
+      allowed: false,
+      remaining: 0,
+      resetMs: 1000,
+      backend: 'memory',
+      degraded: false,
+    });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     const req = createRequest({

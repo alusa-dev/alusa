@@ -4,6 +4,7 @@ import {
 } from '../services/notifications.service';
 
 export type BillingNotificationCandidate = {
+  contaId: string;
   event: string;
   eventId?: string | null;
   asaasPaymentId: string;
@@ -35,6 +36,7 @@ export async function emitBillingNotificationCandidate(
   }
 
   await createBillingWebhookNotification({
+    contaId: candidate.contaId,
     eventId: candidate.eventId ?? null,
     eventName: candidate.event,
     asaasPaymentId: candidate.asaasPaymentId,

@@ -36,7 +36,17 @@ describe('payment-command-ledger', () => {
   });
 
   it('registra comando de pagamento com chave idempotente por conta/tipo/correlationId', async () => {
-    vi.mocked(prisma.asaasIntegrationJob.upsert).mockResolvedValueOnce({ id: 'job-1' } as never);
+    vi.mocked(prisma.asaasIntegrationJob.upsert).mockResolvedValueOnce({
+      id: 'job-1',
+      payload: {
+        commandStatus: 'REQUESTED',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+      },
+    } as never);
 
     await registerPaymentCommand({
       contaId: 'conta-1',
@@ -96,6 +106,58 @@ describe('payment-command-ledger', () => {
         }),
       }),
     }));
+  });
+
+  it('repetição da mesma chave preserva comando já enviado', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      id: 'job-1',
+      status: 'PROCESSING',
+      payload: {
+        commandStatus: 'SENT_TO_ASAAS',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+      },
+    } as never);
+
+    const result = await registerPaymentCommand({
+      contaId: 'conta-1',
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: 'chg-1',
+      asaasPaymentId: 'pay-1',
+      expectedEvents: ['PAYMENT_REFUNDED'],
+      correlationId: 'corr-1',
+    });
+
+    expect(result).toMatchObject({ id: 'job-1', status: 'PROCESSING' });
+    expect(prisma.asaasIntegrationJob.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejeita reutilização da chave para payload diferente', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      id: 'job-1',
+      payload: {
+        commandStatus: 'REQUESTED',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+      },
+    } as never);
+
+    await expect(registerPaymentCommand({
+      contaId: 'conta-1',
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: 'chg-2',
+      asaasPaymentId: 'pay-1',
+      expectedEvents: ['PAYMENT_REFUNDED'],
+      correlationId: 'corr-1',
+    })).rejects.toThrow('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
   });
 
   it('confirma comandos pendentes quando webhook/sync traz evento esperado', async () => {

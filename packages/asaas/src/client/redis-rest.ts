@@ -3,6 +3,16 @@ export interface AsaasRedisConfig {
   token: string;
 }
 
+export interface AsaasRedisCommandOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+function resolveRedisTimeoutMs(): number {
+  const configured = Number(process.env.ASAAS_REDIS_TIMEOUT_MS ?? 1_500);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : 1_500;
+}
+
 export function getAsaasRedisConfig(): AsaasRedisConfig | null {
   if (process.env.ASAAS_REDIS_ENABLED === 'false') return null;
 
@@ -16,6 +26,7 @@ export function getAsaasRedisConfig(): AsaasRedisConfig | null {
 export async function asaasRedisCommand<T = unknown>(
   config: AsaasRedisConfig,
   command: string[],
+  options: AsaasRedisCommandOptions = {},
 ): Promise<T> {
   const response = await fetch(config.url, {
     method: 'POST',
@@ -24,6 +35,7 @@ export async function asaasRedisCommand<T = unknown>(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(command),
+    signal: options.signal ?? AbortSignal.timeout(options.timeoutMs ?? resolveRedisTimeoutMs()),
   });
 
   if (!response.ok) throw new Error(`Redis REST ${response.status}`);

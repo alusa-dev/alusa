@@ -104,6 +104,28 @@ export async function releaseWebhookJobLock(params: {
   });
 }
 
+export async function renewWebhookJobLock(params: {
+  jobName: string;
+  workerId: string;
+  ttlMs?: number;
+}): Promise<boolean> {
+  const now = new Date();
+  const lockedUntil = new Date(now.getTime() + resolveTtlMs(params.ttlMs));
+  const renewed = await prisma.webhookJobLock.updateMany({
+    where: {
+      jobName: params.jobName,
+      workerId: params.workerId,
+      lockedUntil: { gt: now },
+    },
+    data: {
+      lockedUntil,
+      lastHeartbeatAt: now,
+    },
+  });
+
+  return renewed.count === 1;
+}
+
 export async function withWebhookJobLock<T>(
   jobName: string,
   fn: () => Promise<T>,
@@ -117,6 +139,32 @@ export async function withWebhookJobLock<T>(
     return lock;
   }
 
+  const heartbeatEveryMs = Math.min(
+    Math.max(Math.floor(resolveTtlMs(options.ttlMs) / 3), 5_000),
+    60_000,
+  );
+  const heartbeat = setInterval(() => {
+    void renewWebhookJobLock({
+      jobName: lock.jobName,
+      workerId: lock.workerId,
+      ttlMs: options.ttlMs,
+    }).then((renewed) => {
+      if (!renewed) {
+        console.warn('[webhook-job-lock] Lease perdido durante heartbeat', {
+          jobName: lock.jobName,
+          workerId: lock.workerId,
+        });
+      }
+    }).catch((error: unknown) => {
+      console.warn('[webhook-job-lock] Falha no heartbeat', {
+        jobName: lock.jobName,
+        workerId: lock.workerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, heartbeatEveryMs);
+  heartbeat.unref?.();
+
   try {
     const result = await fn();
     return {
@@ -126,6 +174,7 @@ export async function withWebhookJobLock<T>(
       workerId: lock.workerId,
     };
   } finally {
+    clearInterval(heartbeat);
     await releaseWebhookJobLock({
       jobName: lock.jobName,
       workerId: lock.workerId,

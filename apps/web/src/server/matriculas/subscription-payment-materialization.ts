@@ -162,7 +162,7 @@ export async function syncInitialSubscriptionPaymentFromAsaas(input: {
   });
 
   const localCharge = await appPrisma.cobranca.findFirst({
-    where: { asaasPaymentId: payment.id },
+    where: { contaId: input.contaId, asaasPaymentId: payment.id },
   });
 
   return {
@@ -205,7 +205,7 @@ export async function materializeSubscriptionPaymentForCharge(
   }
 
   const existingCharge = await input.prisma.cobranca.findFirst({
-    where: { asaasPaymentId: payment.id },
+    where: { contaId: input.contaId, asaasPaymentId: payment.id },
     select: { id: true },
   });
 

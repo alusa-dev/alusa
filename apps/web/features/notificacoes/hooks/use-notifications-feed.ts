@@ -6,6 +6,7 @@ import type {
   NotificationAction,
   NotificationItem,
   NotificationListResponse,
+  NotificationUnreadCountResponse,
   NotificationView,
 } from '../types';
 
@@ -50,6 +51,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 const notificationListRequests = new Map<string, Promise<NotificationListResponse>>();
+const notificationCountRequests = new Map<string, Promise<NotificationUnreadCountResponse>>();
 
 export const NOTIFICATION_INBOX_ROLES = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -68,6 +70,84 @@ function fetchNotificationList(url: string) {
 
   notificationListRequests.set(url, request);
   return request;
+}
+
+function fetchUnreadNotificationCount() {
+  const url = '/api/notifications/unread-count';
+  const existing = notificationCountRequests.get(url);
+  if (existing) return existing;
+
+  const request = fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  })
+    .then((response) => parseResponse<NotificationUnreadCountResponse>(response))
+    .finally(() => {
+      notificationCountRequests.delete(url);
+    });
+
+  notificationCountRequests.set(url, request);
+  return request;
+}
+
+export function useNotificationUnreadCount(params?: {
+  enabled?: boolean;
+  minRefreshIntervalMs?: number;
+}) {
+  const enabled = params?.enabled ?? true;
+  const minRefreshIntervalMs = params?.minRefreshIntervalMs ?? 30_000;
+  const [count, setCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const lastLoadedAtRef = useRef(0);
+
+  const load = useCallback(async (force = false) => {
+    if (!enabled) {
+      setCount(0);
+      setLoading(false);
+      return;
+    }
+    if (!force && Date.now() - lastLoadedAtRef.current < minRefreshIntervalMs) {
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const data = await fetchUnreadNotificationCount();
+      lastLoadedAtRef.current = Date.now();
+      setCount(data.count);
+    } catch (error) {
+      if (isAuthNotificationError(error) || isTransientNotificationFetchError(error)) return;
+      console.error('[Notifications][unread-count]', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [enabled, minRefreshIntervalMs]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+
+    window.addEventListener('focus', refreshIfVisible);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    return () => {
+      window.removeEventListener('focus', refreshIfVisible);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+    };
+  }, [enabled, load]);
+
+  return {
+    count,
+    loading,
+    reload: () => load(true),
+  };
 }
 
 export function useNotificationsFeed(params?: {
@@ -195,6 +275,21 @@ export function useNotificationsFeed(params?: {
     }, autoRefreshMs);
     return () => window.clearInterval(interval);
   }, [autoRefreshMs, enabled, load]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+
+    window.addEventListener('focus', refreshIfVisible);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    return () => {
+      window.removeEventListener('focus', refreshIfVisible);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+    };
+  }, [enabled, load]);
 
   const updateNotification = useCallback(
     async (notificationId: string, action: NotificationAction) => {

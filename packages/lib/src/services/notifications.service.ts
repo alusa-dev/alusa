@@ -1,4 +1,4 @@
-import { prisma, type Prisma } from '../prisma';
+import { prisma } from '../prisma';
 import { logInboxMetric } from '../notifications/inbox-metrics';
 import {
   NotificationCategory,
@@ -8,6 +8,8 @@ import {
   Status,
   type AuditActorType,
 } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { isInternalNotificationTypeAllowed } from '../notifications/notification-policy';
 
 const DEFAULT_RECIPIENT_ROLES: Role[] = ['ADMIN', 'FINANCEIRO', 'RECEPCAO'];
 const ACTIVE_VIEW = 'active';
@@ -106,25 +108,30 @@ function buildRecipientWhere(view: NotificationFeedView): Prisma.NotificationRec
 async function resolveRecipientUserIds(
   tx: Prisma.TransactionClient,
   input: Pick<CreateNotificationInput, 'contaId' | 'recipientUserIds' | 'recipientRoles'>,
+  actor?: NotificationActor,
 ): Promise<string[]> {
-  if (input.recipientUserIds && input.recipientUserIds.length > 0) {
-    return uniq(input.recipientUserIds);
-  }
-
-  const roles = input.recipientRoles && input.recipientRoles.length > 0
-    ? input.recipientRoles
-    : DEFAULT_RECIPIENT_ROLES;
+  const requestedUserIds = uniq(input.recipientUserIds ?? []);
 
   const users = await tx.usuario.findMany({
     where: {
       contaId: input.contaId,
       status: Status.ATIVO,
-      role: { in: roles },
+      ...(requestedUserIds.length > 0
+        ? { id: { in: requestedUserIds } }
+        : {
+            role: {
+              in:
+                input.recipientRoles && input.recipientRoles.length > 0
+                  ? input.recipientRoles
+                  : DEFAULT_RECIPIENT_ROLES,
+            },
+          }),
     },
     select: { id: true },
   });
 
-  return users.map((user) => user.id);
+  const actorUserId = actor?.type === 'USER' ? actor.id?.trim() : null;
+  return users.map((user) => user.id).filter((userId) => userId !== actorUserId);
 }
 
 function serializeNotificationItem(
@@ -184,10 +191,23 @@ function extractWebhookEventName(metadata: Prisma.JsonValue | null): WebhookNoti
 }
 
 export async function createNotification(input: CreateNotificationInput): Promise<CreateNotificationResult> {
+  if (!isInternalNotificationTypeAllowed(input.type)) {
+    logInboxMetric('inbox.skipped.policy', {
+      contaId: input.contaId,
+      type: input.type,
+      dedupeKey: input.dedupeKey,
+    });
+    return {
+      notificationId: null,
+      created: false,
+      recipientCount: 0,
+    };
+  }
+
   return prisma.$transaction(async (tx) => {
-    const recipientUserIds = await resolveRecipientUserIds(tx, input);
+    const recipientUserIds = await resolveRecipientUserIds(tx, input, input.actor);
     if (recipientUserIds.length === 0) {
-      console.info('[Notifications] Criação ignorada: nenhum destinatário elegível.', {
+      logInboxMetric('inbox.skipped.no_recipients', {
         contaId: input.contaId,
         dedupeKey: input.dedupeKey,
         type: input.type,
@@ -213,7 +233,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
     });
 
     if (notification) {
-      console.warn('[Notifications] dedupeKey já existente; reaproveitando notificação.', {
+      logInboxMetric('inbox.deduped', {
         contaId: input.contaId,
         dedupeKey: input.dedupeKey,
         type: input.type,
@@ -254,7 +274,7 @@ export async function createNotification(input: CreateNotificationInput): Promis
       });
 
       if (!created) {
-        console.warn('[Notifications] dedupeKey já existente; reaproveitando notificação.', {
+        logInboxMetric('inbox.deduped', {
           contaId: input.contaId,
           dedupeKey: input.dedupeKey,
           type: input.type,
@@ -276,6 +296,12 @@ export async function createNotification(input: CreateNotificationInput): Promis
     });
 
     if (created) {
+      logInboxMetric('inbox.created', {
+        contaId: input.contaId,
+        type: input.type,
+        dedupeKey: input.dedupeKey,
+        recipientCount: recipientUserIds.length,
+      });
       await tx.auditLog.create({
         data: {
           contaId: input.contaId,
@@ -305,6 +331,273 @@ export async function createNotification(input: CreateNotificationInput): Promis
   });
 }
 
+type PaymentDigestEntry = {
+  asaasPaymentId: string;
+  subject: string;
+  value: number | null;
+  description: string | null;
+};
+
+const PAYMENT_DIGEST_EVENTS = new Set<WebhookNotificationEvent>([
+  'PAYMENT_CONFIRMED',
+  'PAYMENT_RECEIVED',
+  'PAYMENT_RECEIVED_IN_CASH',
+]);
+const PAYMENT_DIGEST_WINDOW_MS = 15 * 60 * 1000;
+const PAYMENT_DIGEST_MAX_ITEMS = 20;
+
+function buildPaymentDigestDedupeKey(eventName: WebhookNotificationEvent, occurredAt?: Date) {
+  const group = eventName === 'PAYMENT_RECEIVED_IN_CASH' ? 'cash' : 'confirmed';
+  const timestamp = occurredAt?.getTime() ?? Date.now();
+  const bucket = Math.floor(timestamp / PAYMENT_DIGEST_WINDOW_MS) * PAYMENT_DIGEST_WINDOW_MS;
+  return `payment:${group}:digest:${bucket}`;
+}
+
+function buildPaymentDigestEventKey(eventName: WebhookNotificationEvent, asaasPaymentId: string) {
+  const group = eventName === 'PAYMENT_RECEIVED_IN_CASH' ? 'cash' : 'confirmed';
+  return `payment:${group}:${asaasPaymentId}`;
+}
+
+function parsePaymentDigestEntries(metadata: Prisma.JsonValue | null | undefined): PaymentDigestEntry[] {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return [];
+  const payments = 'payments' in metadata ? metadata.payments : null;
+  if (!Array.isArray(payments)) return [];
+
+  return payments.filter((payment): payment is PaymentDigestEntry => {
+    if (!payment || typeof payment !== 'object' || Array.isArray(payment)) return false;
+    return (
+      typeof payment.asaasPaymentId === 'string'
+      && typeof payment.subject === 'string'
+      && (typeof payment.value === 'number' || payment.value === null)
+      && (typeof payment.description === 'string' || payment.description === null)
+    );
+  });
+}
+
+function buildPaymentDigestMessage(entries: PaymentDigestEntry[]) {
+  const names = entries.slice(0, 3).map((entry) => entry.subject);
+  const suffix = entries.length > 3 ? ` e mais ${entries.length - 3}` : '';
+  if (entries.length === 1) {
+    const entry = entries[0];
+    const value = formatCurrency(entry.value);
+    return `${entry.subject} pagou${value ? ` sua mensalidade no valor de ${value}` : ' uma mensalidade'}.`;
+  }
+
+  return `${entries.length} pagamentos recebidos: ${names.join(', ')}${suffix}.`;
+}
+
+async function createPaymentDigestNotification(params: {
+  input: CreateNotificationInput;
+  payment: PaymentDigestEntry;
+  eventKey: string;
+}): Promise<CreateNotificationResult> {
+  const { input, payment, eventKey } = params;
+  if (!isInternalNotificationTypeAllowed(input.type)) {
+    return { notificationId: null, created: false, recipientCount: 0 };
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const recipientUserIds = await resolveRecipientUserIds(tx, input, input.actor);
+    if (recipientUserIds.length === 0) {
+      logInboxMetric('inbox.skipped.no_recipients', {
+        contaId: input.contaId,
+        dedupeKey: input.dedupeKey,
+        type: input.type,
+      });
+      return { notificationId: null, created: false, recipientCount: 0 };
+    }
+
+    const alreadyProcessed = await tx.notificationDigestEvent.findUnique({
+      where: {
+        uq_notification_digest_event_conta_event: {
+          contaId: input.contaId,
+          eventKey,
+        },
+      },
+      select: { notificationId: true },
+    });
+
+    if (alreadyProcessed) {
+      await tx.notificationRecipient.createMany({
+        data: recipientUserIds.map((userId) => ({
+          notificationId: alreadyProcessed.notificationId,
+          contaId: input.contaId,
+          userId,
+        })),
+        skipDuplicates: true,
+      });
+      logInboxMetric('inbox.deduped', {
+        contaId: input.contaId,
+        dedupeKey: input.dedupeKey,
+        type: input.type,
+        grouped: true,
+      });
+      return {
+        notificationId: alreadyProcessed.notificationId,
+        created: false,
+        recipientCount: recipientUserIds.length,
+      };
+    }
+
+    const existing = await tx.notification.findUnique({
+      where: { contaId_dedupeKey: { contaId: input.contaId, dedupeKey: input.dedupeKey } },
+      select: { id: true, metadata: true },
+    });
+
+    let notification = existing;
+    let created = false;
+    if (!notification) {
+      const createResult = await tx.notification.createMany({
+        data: {
+          contaId: input.contaId,
+          type: input.type,
+          category: input.category,
+          severity: input.severity ?? NotificationSeverity.SUCCESS,
+          title: input.title,
+          message: buildPaymentDigestMessage([payment]),
+          dedupeKey: input.dedupeKey,
+          relatedPath: '/financeiro',
+          entityType: 'PaymentDigest',
+          entityId: input.dedupeKey,
+          sourceType: 'INBOX_DIGEST',
+          sourceId: null,
+          actorType: input.actor?.type,
+          actorId: input.actor?.id ?? null,
+          metadata: {
+            ...(typeof input.metadata === 'object' && input.metadata && !Array.isArray(input.metadata)
+              ? input.metadata
+              : {}),
+            grouped: true,
+            groupType: 'PAYMENT_CONFIRMATION',
+            paymentCount: 1,
+            payments: [payment],
+          },
+          triggeredAt: input.triggeredAt ?? new Date(),
+        },
+        skipDuplicates: true,
+      });
+      created = createResult.count > 0;
+      notification = await tx.notification.findUnique({
+        where: { contaId_dedupeKey: { contaId: input.contaId, dedupeKey: input.dedupeKey } },
+        select: { id: true, metadata: true },
+      });
+    }
+
+    if (!notification) {
+      // The key is unique per tenant; a failed resolution here means the transaction
+      // could not safely determine the notification recipient.
+      throw new Error(`Falha ao resolver digest de pagamento ${input.dedupeKey}`);
+    }
+
+    const digestEvent = await tx.notificationDigestEvent.createMany({
+      data: {
+        notificationId: notification.id,
+        contaId: input.contaId,
+        eventKey,
+      },
+      skipDuplicates: true,
+    });
+
+    if (digestEvent.count === 0) {
+      logInboxMetric('inbox.deduped', {
+        contaId: input.contaId,
+        dedupeKey: input.dedupeKey,
+        type: input.type,
+        grouped: true,
+      });
+      return {
+        notificationId: notification.id,
+        created: false,
+        recipientCount: recipientUserIds.length,
+      };
+    }
+
+    const previousEntries = parsePaymentDigestEntries(notification.metadata);
+    const alreadyIncluded = previousEntries.some((entry) => entry.asaasPaymentId === payment.asaasPaymentId);
+    const entries = alreadyIncluded
+      ? previousEntries
+      : [...previousEntries, payment].slice(-PAYMENT_DIGEST_MAX_ITEMS);
+
+    if (!created && !alreadyIncluded) {
+      await tx.notification.update({
+        where: { id: notification.id },
+        data: {
+          title: input.title,
+          message: buildPaymentDigestMessage(entries),
+          metadata: {
+            ...(typeof input.metadata === 'object' && input.metadata && !Array.isArray(input.metadata)
+              ? input.metadata
+              : {}),
+            grouped: true,
+            groupType: 'PAYMENT_CONFIRMATION',
+            paymentCount: previousEntries.length + 1,
+            payments: entries,
+          },
+          triggeredAt: input.triggeredAt ?? new Date(),
+        },
+      });
+      await tx.notificationRecipient.updateMany({
+        where: {
+          notificationId: notification.id,
+          contaId: input.contaId,
+          userId: { in: recipientUserIds },
+        },
+        data: { readAt: null, archivedAt: null },
+      });
+    }
+
+    await tx.notificationRecipient.createMany({
+      data: recipientUserIds.map((userId) => ({
+        notificationId: notification.id,
+        contaId: input.contaId,
+        userId,
+      })),
+      skipDuplicates: true,
+    });
+
+    if (created) {
+      logInboxMetric('inbox.created', {
+        contaId: input.contaId,
+        type: input.type,
+        dedupeKey: input.dedupeKey,
+        recipientCount: recipientUserIds.length,
+        grouped: true,
+      });
+      await tx.auditLog.create({
+        data: {
+          contaId: input.contaId,
+          actorType: input.actor?.type ?? 'SYSTEM',
+          actorId: input.actor?.id ?? null,
+          action: 'notification.created',
+          entityType: 'Notification',
+          entityId: notification.id,
+          metadata: {
+            type: input.type,
+            category: input.category,
+            severity: input.severity ?? NotificationSeverity.SUCCESS,
+            dedupeKey: input.dedupeKey,
+            recipientCount: recipientUserIds.length,
+            grouped: true,
+          },
+        },
+      });
+    } else if (alreadyIncluded) {
+      logInboxMetric('inbox.deduped', {
+        contaId: input.contaId,
+        dedupeKey: input.dedupeKey,
+        type: input.type,
+        grouped: true,
+      });
+    }
+
+    return {
+      notificationId: notification.id,
+      created,
+      recipientCount: recipientUserIds.length,
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function listNotifications(params: {
   contaId: string;
   userId: string;
@@ -324,8 +617,28 @@ export async function listNotifications(params: {
   const [recipients, unreadCount, totalCount] = await Promise.all([
     prisma.notificationRecipient.findMany({
       where,
-      include: {
-        notification: true,
+      select: {
+        readAt: true,
+        archivedAt: true,
+        createdAt: true,
+        notification: {
+          select: {
+            id: true,
+            type: true,
+            category: true,
+            severity: true,
+            title: true,
+            message: true,
+            relatedPath: true,
+            entityType: true,
+            entityId: true,
+            sourceType: true,
+            sourceId: true,
+            metadata: true,
+            triggeredAt: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: [
         { notification: { triggeredAt: 'desc' } },
@@ -346,10 +659,27 @@ export async function listNotifications(params: {
   ]);
 
   return {
-    items: await enrichFinancialNotificationItems(recipients.map(serializeNotificationItem)),
+    items: await enrichFinancialNotificationItems({
+      contaId: params.contaId,
+      items: recipients.map(serializeNotificationItem),
+    }),
     unreadCount,
     totalCount,
   };
+}
+
+export async function getUnreadNotificationCount(params: {
+  contaId: string;
+  userId: string;
+}): Promise<number> {
+  return prisma.notificationRecipient.count({
+    where: {
+      contaId: params.contaId,
+      userId: params.userId,
+      archivedAt: null,
+      readAt: null,
+    },
+  });
 }
 
 export async function updateNotificationRecipientState(params: {
@@ -486,79 +816,14 @@ export async function createEnrollmentCreatedNotification(params: {
   matriculaId: string;
   actorUserId?: string | null;
 }): Promise<CreateNotificationResult> {
-  const matricula = await prisma.matricula.findFirst({
-    where: {
-      id: params.matriculaId,
-      aluno: { contaId: params.contaId },
-    },
-    select: {
-      id: true,
-      alunoId: true,
-      turmaId: true,
-      planoId: true,
-      comboId: true,
-      aluno: {
-        select: {
-          nome: true,
-        },
-      },
-      turma: {
-        select: {
-          nome: true,
-        },
-      },
-      plano: {
-        select: {
-          nome: true,
-        },
-      },
-      combo: {
-        select: {
-          nome: true,
-        },
-      },
-    },
-  });
-
-  if (!matricula) {
-    return { notificationId: null, created: false, recipientCount: 0 };
-  }
-
-  const offerName = matricula.plano?.nome ?? matricula.combo?.nome ?? null;
-  const turmaName = matricula.turma?.nome ?? null;
-  const detailParts = [
-    offerName ? `plano ${offerName}` : null,
-    turmaName ? `turma ${turmaName}` : null,
-  ].filter(Boolean);
-  const detail = detailParts.length > 0 ? ` em ${detailParts.join(' · ')}` : '';
-
-  return createNotification({
+  // Criação de matrícula é feedback síncrono da própria tela (toast), não
+  // uma mudança assíncrona que deva entrar na inbox operacional.
+  logInboxMetric('inbox.skipped.policy', {
     contaId: params.contaId,
     type: NotificationType.ENROLLMENT_CREATED,
-    category: NotificationCategory.ENROLLMENT,
-    severity: NotificationSeverity.INFO,
-    title: 'Nova matrícula registrada',
-    message: `${matricula.aluno.nome} foi matriculado${detail}.`,
-    dedupeKey: `enrollment:created:${matricula.id}`,
-    relatedPath: `/matriculas/${matricula.id}`,
-    entityType: 'Matricula',
-    entityId: matricula.id,
-    sourceType: 'MATRICULA',
-    sourceId: matricula.id,
-    metadata: {
-      alunoId: matricula.alunoId,
-      planoId: matricula.planoId,
-      comboId: matricula.comboId,
-      turmaId: matricula.turmaId,
-      alunoNome: matricula.aluno.nome,
-      planoNome: offerName,
-      turmaNome: turmaName,
-    },
-    actor: {
-      type: params.actorUserId ? 'USER' : 'SYSTEM',
-      id: params.actorUserId ?? null,
-    },
+    dedupeKey: `enrollment:created:${params.matriculaId}`,
   });
+  return { notificationId: null, created: false, recipientCount: 0 };
 }
 
 export const BILLING_NOTIFICATION_EVENT_ALIASES = {
@@ -585,6 +850,17 @@ export type BillingNotificationEventInput =
   | WebhookNotificationEvent
   | keyof typeof BILLING_NOTIFICATION_EVENT_ALIASES;
 
+const BILLING_INBOX_EVENTS = new Set<WebhookNotificationEvent>([
+  'PAYMENT_OVERDUE',
+  'PAYMENT_CONFIRMED',
+  'PAYMENT_RECEIVED',
+  'PAYMENT_RECEIVED_IN_CASH',
+  'DUNNING_RECEIVED',
+  'PAYMENT_REFUNDED',
+  'PAYMENT_CHARGEBACK_REQUESTED',
+  'PAYMENT_DELETED',
+]);
+
 export function normalizeBillingNotificationEvent(eventName: string): WebhookNotificationEvent | null {
   const normalized = eventName in BILLING_NOTIFICATION_EVENT_ALIASES
     ? BILLING_NOTIFICATION_EVENT_ALIASES[eventName as keyof typeof BILLING_NOTIFICATION_EVENT_ALIASES]
@@ -603,7 +879,20 @@ export function buildBillingNotificationDedupeKey(
   eventName: WebhookNotificationEvent,
   asaasPaymentId: string,
 ): string {
-  return `billing:${eventName}:${asaasPaymentId}`;
+  const canonicalEvent = {
+    PAYMENT_CONFIRMED: 'payment:confirmed',
+    PAYMENT_RECEIVED: 'payment:confirmed',
+    PAYMENT_RECEIVED_IN_CASH: 'payment:confirmed',
+    DUNNING_RECEIVED: 'payment:recovered',
+    PAYMENT_OVERDUE: 'billing:overdue',
+    PAYMENT_REFUNDED: 'payment:refunded',
+    PAYMENT_CHARGEBACK_REQUESTED: 'payment:chargeback',
+    PAYMENT_DELETED: 'billing:cancelled',
+    PAYMENT_RESTORED: 'billing:restored',
+    PAYMENT_CREATED: 'billing:created',
+  }[eventName];
+
+  return `${canonicalEvent ?? `billing:${eventName}`}:${asaasPaymentId}`;
 }
 
 type BillingChannel = 'PIX' | 'BOLETO' | 'CREDIT_CARD' | 'CASH' | 'UNDEFINED';
@@ -858,9 +1147,11 @@ export function resolveBillingNotificationContent(params: {
   };
 }
 
-async function enrichFinancialNotificationItems(
-  items: NotificationListItem[],
-): Promise<NotificationListItem[]> {
+async function enrichFinancialNotificationItems(params: {
+  contaId: string;
+  items: NotificationListItem[];
+}): Promise<NotificationListItem[]> {
+  const { contaId, items } = params;
   const financialItems = items.filter(
     (item) =>
       (item.category === NotificationCategory.BILLING || item.category === NotificationCategory.PAYMENT)
@@ -877,7 +1168,10 @@ async function enrichFinancialNotificationItems(
 
   const [cobrancas, charges] = await Promise.all([
     prisma.cobranca.findMany({
-      where: { asaasPaymentId: { in: sourceIds } },
+      where: {
+        asaasPaymentId: { in: sourceIds },
+        matricula: { aluno: { contaId } },
+      },
       select: {
         asaasPaymentId: true,
         valor: true,
@@ -896,7 +1190,7 @@ async function enrichFinancialNotificationItems(
       },
     }),
     prisma.charge.findMany({
-      where: { asaasPaymentId: { in: sourceIds } },
+      where: { contaId, asaasPaymentId: { in: sourceIds } },
       select: {
         asaasPaymentId: true,
         value: true,
@@ -964,6 +1258,7 @@ async function enrichFinancialNotificationItems(
 }
 
 export async function createBillingWebhookNotification(params: {
+  contaId: string;
   eventId?: string | null;
   eventName: BillingNotificationEventInput;
   asaasPaymentId: string;
@@ -980,8 +1275,22 @@ export async function createBillingWebhookNotification(params: {
     return { notificationId: null, created: false, recipientCount: 0 };
   }
 
+  if (!BILLING_INBOX_EVENTS.has(normalizedEvent)) {
+    logInboxMetric('inbox.skipped.policy', {
+      eventName: normalizedEvent,
+      asaasPaymentId: params.asaasPaymentId,
+      sourceType: params.sourceType ?? 'ASAAS_WEBHOOK',
+    });
+    return { notificationId: null, created: false, recipientCount: 0 };
+  }
+
   const cobranca = await prisma.cobranca.findUnique({
-    where: { asaasPaymentId: params.asaasPaymentId },
+    where: {
+      uq_cobranca_conta_asaas_payment: {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+      },
+    },
     select: {
       id: true,
       matriculaId: true,
@@ -1013,14 +1322,16 @@ export async function createBillingWebhookNotification(params: {
       value: Number(cobranca.valor),
       description: cobranca.descricao,
     });
-    return createNotification({
+    const notificationInput: CreateNotificationInput = {
       contaId: cobranca.matricula.aluno.contaId,
       type: content.type,
       category: content.category,
       severity: content.severity,
       title: content.title,
       message: content.message,
-      dedupeKey: buildBillingNotificationDedupeKey(normalizedEvent, params.asaasPaymentId),
+      dedupeKey: PAYMENT_DIGEST_EVENTS.has(normalizedEvent)
+        ? buildPaymentDigestDedupeKey(normalizedEvent, params.occurredAt)
+        : buildBillingNotificationDedupeKey(normalizedEvent, params.asaasPaymentId),
       relatedPath: `/cobrancas/${cobranca.id}`,
       entityType: 'Cobranca',
       entityId: cobranca.id,
@@ -1041,11 +1352,31 @@ export async function createBillingWebhookNotification(params: {
       actor: {
         type: 'SYSTEM',
       },
-    });
+    };
+
+    if (PAYMENT_DIGEST_EVENTS.has(normalizedEvent)) {
+      return createPaymentDigestNotification({
+        input: notificationInput,
+        payment: {
+          asaasPaymentId: params.asaasPaymentId,
+          subject: cobranca.matricula.aluno.nome,
+          value: Number(cobranca.valor),
+          description: cobranca.descricao,
+        },
+        eventKey: buildPaymentDigestEventKey(normalizedEvent, params.asaasPaymentId),
+      });
+    }
+
+    return createNotification(notificationInput);
   }
 
   const charge = await prisma.charge.findUnique({
-    where: { asaasPaymentId: params.asaasPaymentId },
+    where: {
+      uq_charge_conta_asaas_payment: {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+      },
+    },
     select: {
       id: true,
       contaId: true,
@@ -1066,6 +1397,7 @@ export async function createBillingWebhookNotification(params: {
     });
     const pendingInbox = await import('../notifications/pending-inbox-notifications');
     await pendingInbox.enqueuePendingBillingWebhookNotification({
+      contaId: params.contaId,
       eventId: params.eventId ?? null,
       eventName: normalizedEvent,
       asaasPaymentId: params.asaasPaymentId,
@@ -1083,14 +1415,16 @@ export async function createBillingWebhookNotification(params: {
     value: charge.value ? Number(charge.value) : null,
     description: charge.description,
   });
-  return createNotification({
+  const notificationInput: CreateNotificationInput = {
     contaId: charge.contaId,
     type: content.type,
     category: content.category,
     severity: content.severity,
     title: content.title,
     message: content.message,
-    dedupeKey: buildBillingNotificationDedupeKey(normalizedEvent, params.asaasPaymentId),
+    dedupeKey: PAYMENT_DIGEST_EVENTS.has(normalizedEvent)
+      ? buildPaymentDigestDedupeKey(normalizedEvent, params.occurredAt)
+      : buildBillingNotificationDedupeKey(normalizedEvent, params.asaasPaymentId),
     relatedPath: charge.cobrancaId ? `/cobrancas/${charge.cobrancaId}` : '/cobrancas/avulsas',
     entityType: charge.cobrancaId ? 'Cobranca' : 'Charge',
     entityId: charge.cobrancaId ?? charge.id,
@@ -1110,5 +1444,20 @@ export async function createBillingWebhookNotification(params: {
     actor: {
       type: 'SYSTEM',
     },
-  });
+  };
+
+  if (PAYMENT_DIGEST_EVENTS.has(normalizedEvent)) {
+    return createPaymentDigestNotification({
+      input: notificationInput,
+        payment: {
+        asaasPaymentId: params.asaasPaymentId,
+        subject: charge.payerName ?? 'Responsável',
+        value: charge.value ? Number(charge.value) : null,
+          description: charge.description,
+        },
+        eventKey: buildPaymentDigestEventKey(normalizedEvent, params.asaasPaymentId),
+      });
+  }
+
+  return createNotification(notificationInput);
 }

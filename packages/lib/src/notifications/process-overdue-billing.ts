@@ -1,7 +1,11 @@
 import { ChargeStatus, StatusCobranca } from '@prisma/client';
 import { prisma } from '../prisma';
 import { logInboxMetric } from './inbox-metrics';
-import { createNotification, resolveBillingNotificationContent } from '../services/notifications.service';
+import {
+  buildBillingNotificationDedupeKey,
+  createNotification,
+  resolveBillingNotificationContent,
+} from '../services/notifications.service';
 
 const OVERDUE_STATUSES: StatusCobranca[] = [
   StatusCobranca.PENDENTE,
@@ -80,21 +84,7 @@ export async function processLocalOverdueBillingNotifications(params: {
       continue;
     }
 
-    const dedupeKey = `billing:local-overdue:${cobranca.id}:${dateKey}`;
-    const existing = await prisma.notification.findUnique({
-      where: {
-        contaId_dedupeKey: {
-          contaId: cobranca.matricula.aluno.contaId,
-          dedupeKey,
-        },
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      skipped += 1;
-      continue;
-    }
-
+    const dedupeKey = buildBillingNotificationDedupeKey('PAYMENT_OVERDUE', asaasPaymentId);
     const content = resolveBillingNotificationContent({
       eventName: 'PAYMENT_OVERDUE',
       formaPagamento: cobranca.formaPagamento,
@@ -129,7 +119,7 @@ export async function processLocalOverdueBillingNotifications(params: {
       actor: { type: 'SYSTEM' },
     });
 
-    if (result.notificationId) {
+    if (result.created) {
       emitted += 1;
       logInboxMetric('inbox.overdue.emitted', {
         cobrancaId: cobranca.id,
@@ -169,16 +159,7 @@ export async function processLocalOverdueBillingNotifications(params: {
       continue;
     }
 
-    const dedupeKey = `billing:local-overdue:charge:${charge.id}:${dateKey}`;
-    const existing = await prisma.notification.findUnique({
-      where: { contaId_dedupeKey: { contaId: params.contaId, dedupeKey } },
-      select: { id: true },
-    });
-    if (existing) {
-      skipped += 1;
-      continue;
-    }
-
+    const dedupeKey = buildBillingNotificationDedupeKey('PAYMENT_OVERDUE', charge.asaasPaymentId);
     const content = resolveBillingNotificationContent({
       eventName: 'PAYMENT_OVERDUE',
       billingType: charge.billingType,
@@ -211,7 +192,7 @@ export async function processLocalOverdueBillingNotifications(params: {
       actor: { type: 'SYSTEM' },
     });
 
-    if (result.notificationId) {
+    if (result.created) {
       emitted += 1;
     } else {
       skipped += 1;

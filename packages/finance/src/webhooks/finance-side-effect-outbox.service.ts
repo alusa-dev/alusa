@@ -1,10 +1,17 @@
+import { randomUUID } from 'node:crypto';
+
 import { prisma } from '@alusa/database';
 import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
-import type { BillingNotificationCandidate } from '@alusa/lib';
+import {
+  buildBillingNotificationDedupeKey,
+  normalizeBillingNotificationEvent,
+  type BillingNotificationCandidate,
+} from '@alusa/lib';
 import { emitBillingNotifications } from '@alusa/lib';
 
 const MAX_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 60_000;
+const SIDE_EFFECT_LEASE_MS = 10 * 60 * 1000;
 
 export type FinanceSideEffectType =
   | 'BILLING_NOTIFICATION'
@@ -60,6 +67,16 @@ function buildDedupeKey(params: {
   candidate: BillingNotificationCandidate;
   sourceType: Extract<FinanceSideEffectSourceType, 'ASAAS_WEBHOOK' | 'ASAAS_SYNC'>;
 }): string {
+  if (params.effectType === 'BILLING_NOTIFICATION') {
+    const normalizedEvent = normalizeBillingNotificationEvent(params.candidate.event);
+    if (normalizedEvent) {
+      return `${params.contaId}:${params.effectType}:${buildBillingNotificationDedupeKey(
+        normalizedEvent,
+        params.candidate.asaasPaymentId,
+      )}`;
+    }
+  }
+
   const eventKey = params.candidate.eventId?.trim() || `${params.candidate.event}:${params.candidate.asaasPaymentId}`;
   return `${params.contaId}:${params.effectType}:${params.sourceType}:${eventKey}`;
 }
@@ -323,16 +340,32 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     return { processed: false, reason: 'exhausted' };
   }
 
+  const now = new Date();
+  const lockToken = randomUUID();
+  const leaseExpiresAt = new Date(now.getTime() + SIDE_EFFECT_LEASE_MS);
   const claimed = await prisma.financeWebhookSideEffectOutbox.updateMany({
     where: {
       id: eventId,
-      status: FinanceWebhookSideEffectStatus.PENDING,
-      availableAt: { lte: new Date() },
+      OR: [
+        {
+          status: FinanceWebhookSideEffectStatus.PENDING,
+          availableAt: { lte: now },
+        },
+        {
+          status: FinanceWebhookSideEffectStatus.PROCESSING,
+          OR: [
+            { leaseExpiresAt: { lte: now } },
+            { leaseExpiresAt: null },
+          ],
+        },
+      ],
     },
     data: {
       status: FinanceWebhookSideEffectStatus.PROCESSING,
-      lockedAt: new Date(),
-      lastAttemptAt: new Date(),
+      lockedAt: now,
+      leaseExpiresAt,
+      lockToken,
+      lastAttemptAt: now,
       attempts: { increment: 1 },
     },
   });
@@ -354,15 +387,25 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       await sendEventPublicOrderCreatedEmail(event.payload as EventPublicOrderCreatedEmailPayload);
     }
 
-    await prisma.financeWebhookSideEffectOutbox.update({
-      where: { id: eventId },
+    const completed = await prisma.financeWebhookSideEffectOutbox.updateMany({
+      where: {
+        id: eventId,
+        status: FinanceWebhookSideEffectStatus.PROCESSING,
+        lockToken,
+      },
       data: {
         status: FinanceWebhookSideEffectStatus.PROCESSED,
         processedAt: new Date(),
         lockedAt: null,
+        leaseExpiresAt: null,
+        lockToken: null,
         lastError: null,
       },
     });
+
+    if (completed.count === 0) {
+      return { processed: false, reason: 'lease_lost' };
+    }
 
     return { processed: true };
   } catch (error) {
@@ -370,17 +413,27 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     const attempts = event.attempts + 1;
     const exhausted = attempts >= MAX_ATTEMPTS;
 
-    await prisma.financeWebhookSideEffectOutbox.update({
-      where: { id: eventId },
+    const failed = await prisma.financeWebhookSideEffectOutbox.updateMany({
+      where: {
+        id: eventId,
+        status: FinanceWebhookSideEffectStatus.PROCESSING,
+        lockToken,
+      },
       data: {
         status: exhausted
           ? FinanceWebhookSideEffectStatus.FAILED
           : FinanceWebhookSideEffectStatus.PENDING,
         lockedAt: null,
+        leaseExpiresAt: null,
+        lockToken: null,
         lastError: message,
         availableAt: exhausted ? event.availableAt : new Date(Date.now() + RETRY_DELAY_MS),
       },
     });
+
+    if (failed.count === 0) {
+      return { processed: false, reason: 'lease_lost' };
+    }
 
     return { processed: false, reason: message };
   }
@@ -394,8 +447,19 @@ export async function drainFinanceWebhookSideEffectOutbox(params?: {
 
   const events = await prisma.financeWebhookSideEffectOutbox.findMany({
     where: {
-      status: FinanceWebhookSideEffectStatus.PENDING,
-      availableAt: { lte: new Date() },
+      OR: [
+        {
+          status: FinanceWebhookSideEffectStatus.PENDING,
+          availableAt: { lte: new Date() },
+        },
+        {
+          status: FinanceWebhookSideEffectStatus.PROCESSING,
+          OR: [
+            { leaseExpiresAt: { lte: new Date() } },
+            { leaseExpiresAt: null },
+          ],
+        },
+      ],
       ...(params?.contaId ? { contaId: params.contaId } : {}),
     },
     orderBy: { availableAt: 'asc' },

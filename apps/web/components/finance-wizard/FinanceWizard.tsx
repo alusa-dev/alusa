@@ -666,8 +666,8 @@ export function FinanceWizard() {
       await updateSession().catch(() => undefined);
 
       if (isExternalAsaasMode) {
-        toast.success('Perfil confirmado. Agora conecte sua conta de pagamentos existente.');
-        router.replace('/finance/external-onboarding');
+        toast.success('Perfil confirmado. Conecte sua conta de pagamentos pelo dashboard.');
+        router.replace('/dashboard');
         return;
       }
 

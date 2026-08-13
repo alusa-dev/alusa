@@ -14,7 +14,6 @@ import {
   createImmediateEnrollment,
   ImmediateEnrollmentCreationError,
 } from '@/src/server/matriculas/create-immediate-enrollment.use-case';
-import { createEnrollmentCreatedNotification } from '@alusa/lib';
 import {
   createMatriculaInputDTOSchema,
   listMatriculasQueryDTOSchema,
@@ -469,17 +468,6 @@ export async function POST(req: Request) {
         }
       }
     }
-
-    void createEnrollmentCreatedNotification({
-      contaId: auth.contaId,
-      matriculaId: result.matricula.id,
-      actorUserId: auth.user.id,
-    }).catch((error) => {
-      console.error('[API MatrÃ­cula] Falha nÃ£o crÃ­tica ao criar notificaÃ§Ã£o interna de matrÃ­cula', {
-        matriculaId: result.matricula.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
 
     const notificationSync = null;
     const operationalWarnings: MatriculaOperationalWarningDTO[] = [];

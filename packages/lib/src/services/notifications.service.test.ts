@@ -3,6 +3,7 @@ import {
   NotificationCategory,
   NotificationSeverity,
   NotificationType,
+  Status,
 } from '@prisma/client';
 
 const txMock = {
@@ -12,7 +13,12 @@ const txMock = {
   notification: {
     findUnique: vi.fn(),
     createMany: vi.fn(),
+    update: vi.fn(),
     deleteMany: vi.fn(),
+  },
+  notificationDigestEvent: {
+    findUnique: vi.fn(),
+    createMany: vi.fn(),
   },
   notificationRecipient: {
     createMany: vi.fn(),
@@ -57,6 +63,7 @@ const {
   markAllNotificationsAsRead,
   updateNotificationRecipientState,
   normalizeBillingNotificationEvent,
+  buildBillingNotificationDedupeKey,
 } = await import('./notifications.service');
 
 describe('notifications.service', () => {
@@ -65,6 +72,9 @@ describe('notifications.service', () => {
     txMock.usuario.findMany.mockResolvedValue([]);
     txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValue({ id: 'notif-new' });
     txMock.notification.createMany.mockResolvedValue({ count: 1 });
+    txMock.notification.update.mockResolvedValue({ id: 'notif-new' });
+    txMock.notificationDigestEvent.findUnique.mockResolvedValue(null);
+    txMock.notificationDigestEvent.createMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.createMany.mockResolvedValue({ count: 0 });
     txMock.notification.deleteMany.mockResolvedValue({ count: 1 });
     txMock.notificationRecipient.deleteMany.mockResolvedValue({ count: 1 });
@@ -86,14 +96,14 @@ describe('notifications.service', () => {
 
     const result = await createNotification({
       contaId: 'conta-1',
-      type: NotificationType.ENROLLMENT_CREATED,
-      category: NotificationCategory.ENROLLMENT,
-      severity: NotificationSeverity.INFO,
-      title: 'Nova matrícula registrada',
-      message: 'Aluno matriculado com sucesso.',
-      dedupeKey: 'enrollment:created:mat-1',
+      type: NotificationType.PAYMENT_CONFIRMED,
+      category: NotificationCategory.PAYMENT,
+      severity: NotificationSeverity.SUCCESS,
+      title: 'Pagamento recebido',
+      message: 'A mensalidade foi recebida.',
+      dedupeKey: 'payment:confirmed:pay-1',
       sourceType: 'MATRICULA',
-      sourceId: 'mat-1',
+      sourceId: 'pay-1',
     });
 
     expect(txMock.usuario.findMany).toHaveBeenCalledWith(
@@ -108,9 +118,9 @@ describe('notifications.service', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           contaId: 'conta-1',
-          type: NotificationType.ENROLLMENT_CREATED,
-          category: NotificationCategory.ENROLLMENT,
-          dedupeKey: 'enrollment:created:mat-1',
+          type: NotificationType.PAYMENT_CONFIRMED,
+          category: NotificationCategory.PAYMENT,
+          dedupeKey: 'payment:confirmed:pay-1',
         }),
         skipDuplicates: true,
       }),
@@ -133,6 +143,7 @@ describe('notifications.service', () => {
   it('reaproveita notificacao existente quando a dedupeKey ja existe', async () => {
     txMock.notification.findUnique.mockReset();
     txMock.notification.findUnique.mockResolvedValueOnce({ id: 'notif-existing' });
+    txMock.usuario.findMany.mockResolvedValue([{ id: 'user-1' }, { id: 'user-2' }]);
 
     const result = await createNotification({
       contaId: 'conta-1',
@@ -178,6 +189,7 @@ describe('notifications.service', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'notif-raced' });
     txMock.notification.createMany.mockResolvedValueOnce({ count: 0 });
+    txMock.usuario.findMany.mockResolvedValue([{ id: 'user-1' }]);
 
     const result = await createNotification({
       contaId: 'conta-1',
@@ -226,6 +238,53 @@ describe('notifications.service', () => {
     });
   });
 
+  it('descarta eventos de baixo valor antes de abrir transacao', async () => {
+    const result = await createNotification({
+      contaId: 'conta-1',
+      type: NotificationType.ENROLLMENT_CREATED,
+      category: NotificationCategory.ENROLLMENT,
+      title: 'Matrícula criada',
+      message: 'A matrícula foi criada.',
+      dedupeKey: 'enrollment:created:mat-1',
+    });
+
+    expect(result).toEqual({ notificationId: null, created: false, recipientCount: 0 });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(txMock.usuario.findMany).not.toHaveBeenCalled();
+  });
+
+  it('valida destinatários explícitos dentro do tenant e exclui o ator', async () => {
+    txMock.usuario.findMany.mockResolvedValue([{ id: 'user-2' }]);
+    txMock.notification.findUnique.mockReset();
+    txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'notif-new' });
+    txMock.notification.createMany.mockResolvedValue({ count: 1 });
+
+    await createNotification({
+      contaId: 'conta-1',
+      type: NotificationType.SYSTEM_ATTENTION,
+      category: NotificationCategory.SYSTEM,
+      severity: NotificationSeverity.CRITICAL,
+      title: 'Ação necessária',
+      message: 'Falha operacional detectada.',
+      dedupeKey: 'system:attention:actor',
+      recipientUserIds: ['user-1', 'user-2'],
+      actor: { type: 'USER', id: 'user-1' },
+    });
+
+    expect(txMock.usuario.findMany).toHaveBeenCalledWith({
+      where: {
+        contaId: 'conta-1',
+        status: Status.ATIVO,
+        id: { in: ['user-1', 'user-2'] },
+      },
+      select: { id: true },
+    });
+    expect(txMock.notificationRecipient.createMany).toHaveBeenCalledWith({
+      data: [{ notificationId: 'notif-new', contaId: 'conta-1', userId: 'user-2' }],
+      skipDuplicates: true,
+    });
+  });
+
   it('normaliza alias de evento financeiro antes de criar a notificação', async () => {
     txMock.notification.findUnique.mockReset();
     txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'notif-billing' });
@@ -242,6 +301,7 @@ describe('notifications.service', () => {
     });
 
     await createBillingWebhookNotification({
+      contaId: 'conta-1',
       eventId: 'evt-1',
       eventName: 'PAYMENT_DUNNING_RECEIVED',
       asaasPaymentId: 'pay-1',
@@ -252,7 +312,7 @@ describe('notifications.service', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           contaId: 'conta-1',
-          dedupeKey: 'billing:DUNNING_RECEIVED:pay-1',
+          dedupeKey: 'payment:recovered:pay-1',
           sourceType: 'ASAAS_SYNC',
           metadata: expect.objectContaining({
             asaasPaymentId: 'pay-1',
@@ -262,6 +322,49 @@ describe('notifications.service', () => {
           }),
         }),
         skipDuplicates: true,
+      }),
+    );
+  });
+
+  it('agrupa confirmações de pagamento na mesma janela sem perder rastreabilidade', async () => {
+    txMock.notification.findUnique.mockReset();
+    txMock.notification.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'digest-1', metadata: null });
+    txMock.usuario.findMany.mockResolvedValue([{ id: 'user-1' }]);
+    prismaMock.charge.findUnique.mockResolvedValue({
+      id: 'charge-1',
+      contaId: 'conta-1',
+      value: 120,
+      dueDate: new Date('2026-03-13T12:00:00.000Z'),
+      description: 'Mensalidade março',
+      payerName: 'Ana Carolina',
+      cobrancaId: 'cobranca-1',
+      billingType: 'PIX',
+    });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-1',
+      eventId: 'evt-payment-1',
+      eventName: 'PAYMENT_CONFIRMED',
+      asaasPaymentId: 'pay-digest-1',
+      occurredAt: new Date('2026-03-13T12:01:00.000Z'),
+    });
+
+    expect(result).toEqual({ notificationId: 'digest-1', created: true, recipientCount: 1 });
+    expect(txMock.notification.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          dedupeKey: expect.stringMatching(/^payment:confirmed:digest:/),
+          entityType: 'PaymentDigest',
+          sourceType: 'INBOX_DIGEST',
+          message: expect.stringContaining('Ana Carolina pagou sua mensalidade no valor de'),
+          metadata: expect.objectContaining({
+            grouped: true,
+            paymentCount: 1,
+            payments: [expect.objectContaining({ asaasPaymentId: 'pay-digest-1' })],
+          }),
+        }),
       }),
     );
   });
@@ -338,5 +441,14 @@ describe('notifications.service', () => {
     expect(normalizeBillingNotificationEvent('PAYMENT_RECEIVED')).toBe('PAYMENT_RECEIVED');
     expect(normalizeBillingNotificationEvent('PAYMENT_DUNNING_RECEIVED')).toBe('DUNNING_RECEIVED');
     expect(normalizeBillingNotificationEvent('PAYMENT_REFUNDED')).toBe('PAYMENT_REFUNDED');
+  });
+
+  it('usa a mesma chave para eventos financeiros equivalentes', () => {
+    expect(buildBillingNotificationDedupeKey('PAYMENT_CONFIRMED', 'pay-1'))
+      .toBe('payment:confirmed:pay-1');
+    expect(buildBillingNotificationDedupeKey('PAYMENT_RECEIVED', 'pay-1'))
+      .toBe('payment:confirmed:pay-1');
+    expect(buildBillingNotificationDedupeKey('PAYMENT_OVERDUE', 'pay-1'))
+      .toBe('billing:overdue:pay-1');
   });
 });

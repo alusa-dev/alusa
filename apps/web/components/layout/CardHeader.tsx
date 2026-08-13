@@ -8,7 +8,11 @@ import { Bell } from '@/components/icons/icons';
 import NotificationsPanel from '@/components/notifications/NotificationsPanel';
 import UserMenu from './UserMenu';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
-import { useNotificationsFeed, NOTIFICATION_INBOX_ROLES } from '@/features/notificacoes/hooks/use-notifications-feed';
+import {
+  useNotificationUnreadCount,
+  useNotificationsFeed,
+  NOTIFICATION_INBOX_ROLES,
+} from '@/features/notificacoes/hooks/use-notifications-feed';
 import { HeaderSearch } from '@/features/global-search/components/HeaderSearch';
 import { useTheme } from '@/components/theme/ThemeProvider';
 
@@ -29,17 +33,20 @@ export default function CardHeader(): JSX.Element {
     sessionStatus === 'authenticated' &&
     !isPortalUser &&
     Boolean(userRole && NOTIFICATION_INBOX_ROLES.has(userRole));
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const {
+    count: unreadCount,
+    loading: unreadCountLoading,
+    reload: reloadUnreadCount,
+  } = useNotificationUnreadCount({ enabled: inboxNotificationsEnabled });
   const {
     items: inboxItems,
-    unreadCount,
     loading: inboxLoading,
-    reload: reloadInbox,
     updateNotification,
     markAllAsRead,
   } = useNotificationsFeed({
     limit: 5,
-    autoRefreshMs: 60000,
-    enabled: inboxNotificationsEnabled,
+    enabled: inboxNotificationsEnabled && notificationsOpen,
   });
 
   const initials = useMemo(() => {
@@ -50,21 +57,17 @@ export default function CardHeader(): JSX.Element {
     return (first + last).toUpperCase();
   }, [name]);
 
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notifAnchorRef = React.useRef<HTMLDivElement | null>(null);
   const toggleNotifications = useCallback(() => {
     setNotificationsOpen((prev) => {
       const next = !prev;
-      if (next && !isPortalUser) {
-        void reloadInbox();
-      }
       return next;
     });
-  }, [isPortalUser, reloadInbox]);
+  }, []);
   const closeNotifications = useCallback(() => setNotificationsOpen(false), []);
 
   const activeNotificationsCount = isPortalUser ? totalNotifications : unreadCount;
-  const notificationsLoading = isPortalUser ? portalNotificationsLoading : inboxLoading;
+  const notificationsLoading = isPortalUser ? portalNotificationsLoading : inboxLoading || unreadCountLoading;
 
   // Converter notificações em items para o painel
   const notificationItems = useMemo(() => {
@@ -130,12 +133,13 @@ export default function CardHeader(): JSX.Element {
 
       if (!item.readAt) {
         await updateNotification(id, 'read');
+        await reloadUnreadCount();
       }
 
       closeNotifications();
       router.push('/notificacoes');
     },
-    [closeNotifications, inboxItems, isPortalUser, router, updateNotification],
+    [closeNotifications, inboxItems, isPortalUser, reloadUnreadCount, router, updateNotification],
   );
 
   const handleViewAllNotifications = useCallback(() => {
@@ -187,7 +191,13 @@ export default function CardHeader(): JSX.Element {
             items={notificationItems}
             loading={notificationsLoading}
             onItemClick={(id) => void handleNotificationItemClick(id)}
-            onMarkAllAsRead={!isPortalUser ? () => void markAllAsRead() : undefined}
+            onMarkAllAsRead={
+              !isPortalUser
+                ? () => {
+                    void markAllAsRead().then(() => reloadUnreadCount());
+                  }
+                : undefined
+            }
             onViewAll={handleViewAllNotifications}
             anchorRef={notifAnchorRef}
           />

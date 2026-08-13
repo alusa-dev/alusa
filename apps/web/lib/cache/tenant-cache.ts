@@ -14,6 +14,7 @@ export type TenantCacheAdapter = {
     options: { ttlSeconds: number; staleWhileRevalidateSeconds?: number },
   ): Promise<void>;
   delete(key: string): Promise<void>;
+  deleteByPrefix?(prefix: string): Promise<void>;
   acquireLock?(key: string, ttlSeconds: number): Promise<string | null>;
   releaseLock?(key: string, token: string): Promise<void>;
 };
@@ -119,6 +120,12 @@ export class MemoryCacheAdapter implements TenantCacheAdapter {
     this.entries.delete(key);
   }
 
+  async deleteByPrefix(prefix: string): Promise<void> {
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
+    }
+  }
+
   async acquireLock(key: string, ttlSeconds: number): Promise<string | null> {
     const now = Date.now();
     const current = this.locks.get(key);
@@ -152,6 +159,8 @@ export class NoopCacheAdapter implements TenantCacheAdapter {
   async set<T>(_key: string, _body: T): Promise<void> {}
 
   async delete(_key: string): Promise<void> {}
+
+  async deleteByPrefix(_prefix: string): Promise<void> {}
 }
 
 type RedisStoredEntry<T> = CacheEntry<T>;
@@ -229,6 +238,24 @@ export class RedisRestCacheAdapter implements TenantCacheAdapter {
     await this.command(['DEL', key]);
   }
 
+  async deleteByPrefix(prefix: string): Promise<void> {
+    let cursor = '0';
+
+    do {
+      const result = await this.command<[string, string[]]>([
+        'SCAN',
+        cursor,
+        'MATCH',
+        `${prefix}*`,
+        'COUNT',
+        100,
+      ]);
+      cursor = String(result?.[0] ?? '0');
+      const keys = Array.isArray(result?.[1]) ? result[1] : [];
+      if (keys.length > 0) await this.command(['DEL', ...keys]);
+    } while (cursor !== '0');
+  }
+
   async acquireLock(key: string, ttlSeconds: number): Promise<string | null> {
     const token = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const result = await this.command<string | null>(['SET', key, token, 'NX', 'EX', ttlSeconds]);
@@ -287,6 +314,15 @@ export class ResilientCacheAdapter implements TenantCacheAdapter {
       this.warn('delete', error);
     }
     await this.fallback.delete(key);
+  }
+
+  async deleteByPrefix(prefix: string): Promise<void> {
+    try {
+      await this.primary.deleteByPrefix?.(prefix);
+    } catch (error) {
+      this.warn('deleteByPrefix', error);
+    }
+    await this.fallback.deleteByPrefix?.(prefix);
   }
 
   async acquireLock(key: string, ttlSeconds: number): Promise<string | null> {

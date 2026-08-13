@@ -161,7 +161,7 @@ export function NotificationsInboxPage() {
     deleteNotification,
     markAllAsRead,
   } =
-    useNotificationsFeed({ view, limit: 50, autoRefreshMs: 60000 });
+    useNotificationsFeed({ view, limit: 50 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openingContext, setOpeningContext] = useState(false);
 

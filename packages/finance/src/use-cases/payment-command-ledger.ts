@@ -102,33 +102,59 @@ export async function registerPaymentCommand(input: RegisterPaymentCommandInput)
     metadata: input.metadata,
   };
 
-  return prisma.asaasIntegrationJob.upsert({
-    where: {
-      uq_asaas_integration_job: {
-        contaId: input.contaId,
-        type: input.type as AsaasIntegrationJobType,
-        idempotencyKey: input.correlationId,
-      },
-    },
+  const key = {
+    contaId: input.contaId,
+    type: input.type as AsaasIntegrationJobType,
+    idempotencyKey: input.correlationId,
+  };
+  const existing = await prisma.asaasIntegrationJob.findUnique({
+    where: { uq_asaas_integration_job: key },
+  });
+  const existingPayload = existing ? parsePayload(existing.payload) : null;
+
+  if (existing) {
+    if (
+      !existingPayload ||
+      existingPayload.commandType !== input.type ||
+      existingPayload.entityType !== input.entityType ||
+      existingPayload.entityId !== input.entityId ||
+      existingPayload.asaasPaymentId !== input.asaasPaymentId ||
+      JSON.stringify(existingPayload.expectedEvents) !== JSON.stringify(input.expectedEvents)
+    ) {
+      throw new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+    }
+
+    // Uma repetição do mesmo comando reaproveita o estado atual. Nunca
+    // devolvemos um comando já enviado/confirmado para PENDING.
+    return existing;
+  }
+
+  const persisted = await prisma.asaasIntegrationJob.upsert({
+    where: { uq_asaas_integration_job: key },
     create: {
-      contaId: input.contaId,
-      type: input.type as AsaasIntegrationJobType,
+      ...key,
       status: 'PENDING',
-      idempotencyKey: input.correlationId,
       payload: toJsonPayload(payload),
       chargeId: input.chargeId ?? null,
       cobrancaId: input.cobrancaId ?? null,
     },
-    update: {
-      status: 'PENDING',
-      lastError: null,
-      lastErrorAt: null,
-      doneAt: null,
-      payload: toJsonPayload(payload),
-      chargeId: input.chargeId ?? undefined,
-      cobrancaId: input.cobrancaId ?? undefined,
-    },
+    // A unique constraint resolve a corrida; o update vazio preserva o
+    // estado do vencedor e evita reset de um comando em execução.
+    update: {},
   });
+  const persistedPayload = parsePayload(persisted.payload);
+  if (
+    !persistedPayload ||
+    persistedPayload.commandType !== input.type ||
+    persistedPayload.entityType !== input.entityType ||
+    persistedPayload.entityId !== input.entityId ||
+    persistedPayload.asaasPaymentId !== input.asaasPaymentId ||
+    JSON.stringify(persistedPayload.expectedEvents) !== JSON.stringify(input.expectedEvents)
+  ) {
+    throw new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+  }
+
+  return persisted;
 }
 
 export async function markPaymentCommandSent(input: {

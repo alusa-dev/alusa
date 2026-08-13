@@ -271,6 +271,8 @@ export const eventParticipantBillingRequestSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   chargeType: z.enum(['ONE_TIME', 'INSTALLMENT']).optional(),
   installmentCount: z.coerce.number().int().min(2).max(24).optional(),
+  notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).optional().default([]),
+  notificationChannelsConfigured: z.boolean().optional().default(false),
 });
 
 export const registerEventParticipantRequestSchema = eventParticipantBillingRequestSchema.extend({

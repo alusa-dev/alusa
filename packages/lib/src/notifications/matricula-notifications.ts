@@ -22,6 +22,13 @@ export async function notifyMatriculaAction(
   input: NotifyMatriculaActionInput,
 ): Promise<NotificationResult> {
   try {
+    if (input.action !== 'CANCELADA') {
+      return {
+        success: true,
+        message: 'Ação concluída; sem notificação interna por não exigir acompanhamento da equipe.',
+      };
+    }
+
     const matricula = await prisma.matricula.findFirst({
       where: {
         id: input.matriculaId,

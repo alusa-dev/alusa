@@ -61,6 +61,7 @@ export async function syncPaymentStateFromAsaas(
 
   void emitBillingNotificationCandidate(
     {
+      contaId: input.contaId,
       event: snapshotResult.appliedEvent,
       asaasPaymentId: payment.id,
     },

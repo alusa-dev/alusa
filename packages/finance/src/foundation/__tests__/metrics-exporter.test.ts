@@ -24,6 +24,7 @@ vi.mock('@alusa/asaas', () => {
       maxConcurrent: 50,
       queueLength: 0,
     },
+    isAsaasRedisConfigured: vi.fn(() => false),
   };
 });
 
@@ -63,6 +64,12 @@ describe('MetricsExporter', () => {
       expect(metrics.rateLimitTracker).toBeDefined();
       expect(metrics.concurrency).toBeDefined();
       expect(metrics.apiCalls).toBeDefined();
+      expect(metrics.runtime).toMatchObject({
+        webhookMode: expect.any(String),
+        webhookAsyncQueue: expect.any(Boolean),
+        webhookInlineDrain: expect.any(Boolean),
+        redisConfigured: false,
+      });
     });
 
     it('deve refletir concurrency state', () => {
@@ -124,6 +131,8 @@ describe('MetricsExporter', () => {
       expect(text).toContain('asaas_api_calls_total');
       expect(text).toContain('asaas_api_calls_errors');
       expect(text).toContain('asaas_api_calls_error_rate');
+      expect(text).toContain('alusa_webhook_async_queue_enabled');
+      expect(text).toContain('alusa_asaas_redis_configured');
     });
 
     it('deve incluir labels de métodos', () => {

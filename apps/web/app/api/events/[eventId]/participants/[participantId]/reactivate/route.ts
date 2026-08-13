@@ -88,6 +88,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         installmentValue: body.chargeType === 'INSTALLMENT' && body.installmentCount
           ? Number((body.registrationFeeCharged / body.installmentCount).toFixed(2))
           : undefined,
+        notificationChannels: body.notificationChannels,
+        notificationChannelsConfigured: body.notificationChannelsConfigured,
       });
 
       if (!billingResult.success) {

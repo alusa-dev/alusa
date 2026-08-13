@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth-options';
 import { deleteNotificationRecipient, updateNotificationRecipientState } from '@alusa/lib';
+import { clearNotificationCaches } from '@/lib/notifications/notification-cache';
 
 type SessionUser = {
   id?: string;
@@ -67,6 +68,7 @@ export async function PATCH(
       return json(404, { error: 'NOTIFICACAO_NAO_ENCONTRADA', message: 'Notificação não encontrada.' });
     }
 
+    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true });
   } catch (error) {
     console.error('[Notifications][Item][PATCH]', error);
@@ -106,6 +108,7 @@ export async function DELETE(
       return json(404, { error: 'NOTIFICACAO_NAO_ENCONTRADA', message: 'Notificação não encontrada.' });
     }
 
+    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
     return json(200, { success: true });
   } catch (error) {
     console.error('[Notifications][Item][DELETE]', error);

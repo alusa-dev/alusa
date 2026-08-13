@@ -72,6 +72,12 @@ export class PrivateMemoryCache<T> {
     this.entries.delete(key);
   }
 
+  deleteByPrefix(prefix: string) {
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
+    }
+  }
+
   clear() {
     this.entries.clear();
   }

@@ -38,6 +38,7 @@ async function cleanup() {
     prisma.aluno.deleteMany({ where }),
     prisma.modalidade.deleteMany({ where }),
     prisma.sala.deleteMany({ where }),
+    prisma.financePaymentStateTransition.deleteMany({ where: { contaId: { in: contaIds } } }),
     prisma.conta.deleteMany({ where: { id: { in: contaIds } } }),
   ]);
   contaIds.length = 0;

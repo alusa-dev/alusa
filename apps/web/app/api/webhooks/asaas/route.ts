@@ -19,6 +19,10 @@ import { invalidateChargesCache } from '@/lib/cache/invalidation';
 
 const MAX_BODY_BYTES = 512 * 1024;
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 function parseWebhookPayload(rawBody: string): AsaasWebhookPayload | null {
   try {
     return JSON.parse(rawBody) as AsaasWebhookPayload;
@@ -76,7 +80,13 @@ export async function POST(req: NextRequest) {
 
     // Rate limiting por IP
     const rateLimitKey = buildWebhookRateLimitKey({ ip: clientIp, tokenHashPrefix });
-    const rateCheck = globalWebhookRateLimiter.check(rateLimitKey);
+    const rateCheck = await globalWebhookRateLimiter.checkAsync(rateLimitKey);
+    if (rateCheck.degraded) {
+      console.error('[Asaas Webhook] Rate limit distribuído indisponível; fallback local', redactWebhookLogObject({
+        clientIp,
+        tokenHashPrefix,
+      }));
+    }
     if (!rateCheck.allowed) {
       console.warn('[Asaas Webhook] Rate limit aplicado', redactWebhookLogObject({
         clientIp,
@@ -147,10 +157,12 @@ export async function POST(req: NextRequest) {
       processedContaId = (result as { contaId?: string | null }).contaId ?? null;
 
       const payload = parseWebhookPayload(rawBody);
-      if (result.success && payload?.payment?.id) {
+      const notificationContaId = processedContaId ?? result.contaId ?? null;
+      if (result.success && notificationContaId && payload?.payment?.id) {
         try {
           await emitBillingNotificationCandidate(
             {
+              contaId: notificationContaId,
               event: payload.event,
               eventId: payload.id ?? null,
               asaasPaymentId: payload.payment.id,

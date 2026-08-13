@@ -9,6 +9,19 @@ export * from './policies';
 export * from './payment-history';
 export * from './billing-agreements';
 export * from './reports/financial-reports';
+export {
+  decideCobrancaPaymentTransition,
+  decideChargePaymentTransition,
+  buildPaymentStateTransitionDedupeKey,
+} from './state-machine/payment-state-machine';
+export type {
+  PaymentStateSource,
+  PaymentStateDecision,
+  ChargeStateDecision,
+  PaymentStateDecisionKind,
+  PaymentStateDecisionReason,
+} from './state-machine/payment-state-machine';
+export { recordPaymentStateTransition } from './state-machine/payment-state-transition.service';
 export { eventAsaasPaymentProvider } from './events/event-asaas-payment-provider';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +66,10 @@ export { AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
 export {
   getAsaasBaseUrlFromEnvOrThrow,
   getAsaasBaseUrlForApiKeyOrThrow,
+} from '@alusa/asaas';
+export {
+  checkAsaasRedisHealth,
+  isAsaasRedisConfigured,
 } from '@alusa/asaas';
 export {
   ensureAsaasCustomerForPayer,
@@ -1268,6 +1285,7 @@ export type {
 export {
   acquireWebhookJobLock,
   releaseWebhookJobLock,
+  renewWebhookJobLock,
   withWebhookJobLock,
 } from './foundation/webhook-job-lock.service';
 export type {

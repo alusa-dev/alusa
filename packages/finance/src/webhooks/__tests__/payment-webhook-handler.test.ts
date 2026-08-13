@@ -68,6 +68,10 @@ vi.mock('@alusa/database', () => ({
       update: vi.fn(),
       upsert: vi.fn(),
     },
+    financePaymentStateTransition: {
+      create: vi.fn(async () => ({ id: 'state-transition-1' })),
+      findUnique: vi.fn(),
+    },
     subscription: {
       findFirst: vi.fn(),
     },
@@ -97,6 +101,7 @@ vi.mock('@alusa/database', () => ({
     },
     lancamento: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
     },
@@ -125,6 +130,7 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
+    vi.mocked(prisma.financePaymentStateTransition.create).mockResolvedValue({ id: 'state-transition-1' } as never);
   });
 
   it('mantém payment da saga invisível quando webhook chega antes do commit', async () => {
@@ -223,6 +229,10 @@ describe('handlePaymentWebhook', () => {
 
     expect(result.success).toBe(true);
     expect(prisma.pagamento.create).toHaveBeenCalledTimes(1);
+    expect(prisma.pagamento.findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-1', asaasPaymentId: 'pay_1' },
+      select: { id: true },
+    });
     expect(prisma.lancamento.findFirst).not.toHaveBeenCalled();
     expect(prisma.lancamento.create).not.toHaveBeenCalled();
     expect(prisma.logIntegracao.create).toHaveBeenCalledTimes(1);
@@ -491,6 +501,12 @@ describe('handlePaymentWebhook', () => {
     expect(result.success).toBe(true);
     expect(prisma.charge.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: {
+          uq_charge_conta_asaas_payment: {
+            contaId: 'conta-1',
+            asaasPaymentId: 'pay_sub_standalone_1',
+          },
+        },
         update: expect.objectContaining({
           invoiceUrl: 'https://asaas.test/i/pay_sub_standalone_1',
         }),
@@ -767,6 +783,7 @@ describe('handlePaymentWebhook', () => {
         data: expect.objectContaining({
           valor: 20,
           externalRef: 'asaas:payment:pay_partial:partial-refund',
+          idempotencyKey: 'asaas:payment:pay_partial:partial-refund',
         }),
       }),
     );

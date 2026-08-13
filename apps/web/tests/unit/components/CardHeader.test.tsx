@@ -30,6 +30,11 @@ vi.mock('@/hooks/use-portal-notifications', () => ({
 }));
 
 vi.mock('@/features/notificacoes/hooks/use-notifications-feed', () => ({
+  useNotificationUnreadCount: () => ({
+    count: 0,
+    loading: false,
+    reload: vi.fn(),
+  }),
   useNotificationsFeed: () => ({
     items: [],
     unreadCount: 0,
@@ -52,6 +57,10 @@ vi.mock('@/components/layout/UserMenu', () => ({
 
 vi.mock('@/features/global-search/components/HeaderSearch', () => ({
   HeaderSearch: () => <div data-testid="header-search">search</div>,
+}));
+
+vi.mock('@/components/theme/ThemeProvider', () => ({
+  useTheme: () => ({ isDark: false }),
 }));
 
 describe('CardHeader', () => {

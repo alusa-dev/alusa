@@ -84,7 +84,7 @@ export async function createEnrollmentLifecycleNotification(params: {
         : NotificationSeverity.INFO,
     title: config.title,
     message: config.message,
-    dedupeKey: `enrollment:lifecycle:${params.action}:${params.matriculaId}:${new Date().toISOString().slice(0, 10)}`,
+    dedupeKey: `enrollment:lifecycle:${params.action}:${params.matriculaId}`,
     relatedPath: `/matriculas/${params.matriculaId}`,
     entityType: 'Matricula',
     entityId: params.matriculaId,

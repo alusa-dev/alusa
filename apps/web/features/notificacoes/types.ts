@@ -62,3 +62,7 @@ export interface NotificationListResponse {
   unreadCount: number;
   totalCount: number;
 }
+
+export interface NotificationUnreadCountResponse {
+  count: number;
+}

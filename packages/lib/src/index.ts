@@ -23,6 +23,8 @@ export * from './notifications/pending-inbox-notifications';
 export * from './notifications/process-overdue-billing';
 export * from './notifications/domain-notifications';
 export * from './notifications/inbox-metrics';
+export * from './notifications/notification-policy';
+export * from './notifications/retention';
 export * from './notifications/tenant-notification-preferences';
 export * from './prisma';
 // Planos

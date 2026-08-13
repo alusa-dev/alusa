@@ -17,6 +17,7 @@ import type { AsaasWebhookConfig } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { createNotification } from '@alusa/lib';
 import { NotificationType, NotificationCategory, NotificationSeverity, Role } from '@prisma/client';
+import { createHash } from 'node:crypto';
 
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { auditLogService } from '../foundation/audit-log.service';
@@ -110,6 +111,10 @@ export async function checkWebhookHealth(opts?: {
         });
 
       // Notificação interna para admins
+      const interruptedFingerprint = createHash('sha256')
+        .update(interrupted.map((webhook) => webhook.id).sort().join('|'))
+        .digest('hex')
+        .slice(0, 16);
       await createNotification({
         contaId,
         type: NotificationType.WEBHOOK_INTERRUPTED,
@@ -117,7 +122,7 @@ export async function checkWebhookHealth(opts?: {
         severity: NotificationSeverity.CRITICAL,
         title: 'Fila de webhook interrompida',
         message: `${interrupted.length} webhook(s) interrompido(s) no Asaas. Eventos financeiros podem não estar chegando. ${autoRecover ? 'Recuperação automática em andamento.' : 'Intervenção manual necessária.'}`,
-        dedupeKey: `webhook_interrupted:${contaId}:${new Date().toISOString().split('T')[0]}`,
+        dedupeKey: `webhook_interrupted:${contaId}:${interruptedFingerprint}`,
         sourceType: 'SYSTEM',
         sourceId: null,
         recipientRoles: [Role.ADMIN, Role.FINANCEIRO],

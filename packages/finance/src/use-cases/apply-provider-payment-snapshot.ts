@@ -5,6 +5,7 @@ import {
   type PaymentWebhookPayload,
 } from '../webhooks/payment-webhook-handler';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
+import type { PaymentStateSource } from '../state-machine/payment-state-machine';
 
 export type ProviderPaymentSnapshot = {
   id: string;
@@ -33,6 +34,9 @@ export type ApplyProviderPaymentSnapshotInput = {
   contaId: string;
   payment: ProviderPaymentSnapshot;
   eventName?: string;
+  eventId?: string | null;
+  source?: PaymentStateSource;
+  providerOccurredAt?: Date | null;
 };
 
 export type ApplyProviderPaymentSnapshotOutput =
@@ -106,6 +110,9 @@ export async function applyProviderPaymentSnapshot(
   const value = toNumber(payment.value);
   const webhookPayload: PaymentWebhookPayload = {
     event: appliedEvent,
+    eventId: input.eventId ?? null,
+    source: input.source ?? 'RECONCILIATION',
+    providerOccurredAt: input.providerOccurredAt ?? null,
     payment: {
       id: payment.id,
       status: effectiveAsaasStatus as AsaasRawPaymentStatus,

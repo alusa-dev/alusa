@@ -105,6 +105,7 @@ async function cleanupTestAccount(contaId: string) {
   }
 
   await prisma.usuario.deleteMany({ where: { contaId } });
+  await prisma.financePaymentStateTransition.deleteMany({ where: { contaId } });
   await prisma.conta.deleteMany({ where: { id: contaId } });
 }
 

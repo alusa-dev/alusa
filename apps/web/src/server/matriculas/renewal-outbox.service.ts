@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { createStandaloneCharge } from '@alusa/finance';
 
@@ -12,6 +14,9 @@ type RenewalOutboxResult = {
   status: 'PROCESSED' | 'FAILED' | 'SKIPPED';
   error?: string;
 };
+
+const RENEWAL_OUTBOX_MAX_ATTEMPTS = 8;
+const RENEWAL_OUTBOX_LEASE_MS = 10 * 60 * 1000;
 
 function toDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -416,12 +421,31 @@ export async function processRenewalOutbox(
   deps: { prisma: PrismaClient },
 ) {
   const now = input.now ?? new Date();
+  await deps.prisma.rematriculaOutbox.updateMany({
+    where: {
+      contaId: input.contaId,
+      status: 'PROCESSING',
+      OR: [
+        { leaseExpiresAt: { lte: now } },
+        { leaseExpiresAt: null },
+      ],
+    },
+    data: {
+      status: 'FAILED',
+      availableAt: now,
+      lockedAt: null,
+      leaseExpiresAt: null,
+      lockToken: null,
+      lastError: 'Lease de processamento expirado; evento recuperado para retry.',
+    },
+  });
+
   const events = await deps.prisma.rematriculaOutbox.findMany({
     where: {
       contaId: input.contaId,
       status: { in: ['PENDING', 'FAILED'] },
       availableAt: { lte: now },
-      attempts: { lt: 8 },
+      attempts: { lt: RENEWAL_OUTBOX_MAX_ATTEMPTS },
     },
     orderBy: { availableAt: 'asc' },
     take: input.limit ?? 25,
@@ -430,15 +454,21 @@ export async function processRenewalOutbox(
   const results: RenewalOutboxResult[] = [];
 
   for (const event of events) {
+    const lockToken = randomUUID();
+    const leaseExpiresAt = new Date(now.getTime() + RENEWAL_OUTBOX_LEASE_MS);
     const locked = await deps.prisma.rematriculaOutbox.updateMany({
       where: {
         id: event.id,
         contaId: input.contaId,
         status: event.status,
+        availableAt: { lte: now },
+        attempts: { lt: RENEWAL_OUTBOX_MAX_ATTEMPTS },
       },
       data: {
         status: 'PROCESSING',
         lockedAt: now,
+        leaseExpiresAt,
+        lockToken,
         attempts: { increment: 1 },
         lastError: null,
       },
@@ -457,28 +487,60 @@ export async function processRenewalOutbox(
         throw new Error(`Evento de rematrícula não suportado: ${event.eventType}`);
       }
 
-      await deps.prisma.rematriculaOutbox.update({
-        where: { id: event.id },
+      const completed = await deps.prisma.rematriculaOutbox.updateMany({
+        where: {
+          id: event.id,
+          contaId: input.contaId,
+          status: 'PROCESSING',
+          lockToken,
+        },
         data: {
           status: 'PROCESSED',
           processedAt: new Date(),
           lockedAt: null,
+          leaseExpiresAt: null,
+          lockToken: null,
           lastError: null,
         },
       });
+      if (completed.count === 0) {
+        results.push({
+          eventId: event.id,
+          eventType: event.eventType,
+          status: 'SKIPPED',
+          error: 'LEASE_LOST',
+        });
+        continue;
+      }
       results.push({ eventId: event.id, eventType: event.eventType, status: 'PROCESSED' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erro ao processar outbox.';
       const nextAttempts = event.attempts + 1;
-      await deps.prisma.rematriculaOutbox.update({
-        where: { id: event.id },
+      const failed = await deps.prisma.rematriculaOutbox.updateMany({
+        where: {
+          id: event.id,
+          contaId: input.contaId,
+          status: 'PROCESSING',
+          lockToken,
+        },
         data: {
           status: 'FAILED',
           lockedAt: null,
+          leaseExpiresAt: null,
+          lockToken: null,
           lastError: message,
           availableAt: retryDate(now, nextAttempts),
         },
       });
+      if (failed.count === 0) {
+        results.push({
+          eventId: event.id,
+          eventType: event.eventType,
+          status: 'SKIPPED',
+          error: 'LEASE_LOST',
+        });
+        continue;
+      }
       results.push({
         eventId: event.id,
         eventType: event.eventType,

@@ -14,7 +14,7 @@ vi.mock('@alusa/database', () => ({
   },
 }));
 
-import { acquireWebhookJobLock, withWebhookJobLock } from '../webhook-job-lock.service';
+import { acquireWebhookJobLock, renewWebhookJobLock, withWebhookJobLock } from '../webhook-job-lock.service';
 
 describe('webhookJobLockService', () => {
   beforeEach(() => {
@@ -96,6 +96,28 @@ describe('webhookJobLockService', () => {
       expect.objectContaining({
         where: { jobName: 'webhook-scheduler:global', workerId: 'worker_3' },
         data: expect.objectContaining({ lockedUntil: expect.any(Date) }),
+      }),
+    );
+  });
+
+  it('renova somente o lease ainda pertencente ao worker', async () => {
+    webhookJobLockMock.updateMany.mockResolvedValue({ count: 1 });
+
+    const renewed = await renewWebhookJobLock({
+      jobName: 'webhook-scheduler:global',
+      workerId: 'worker_4',
+      ttlMs: 60_000,
+    });
+
+    expect(renewed).toBe(true);
+    expect(webhookJobLockMock.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          jobName: 'webhook-scheduler:global',
+          workerId: 'worker_4',
+          lockedUntil: expect.objectContaining({ gt: expect.any(Date) }),
+        }),
+        data: expect.objectContaining({ lastHeartbeatAt: expect.any(Date) }),
       }),
     );
   });

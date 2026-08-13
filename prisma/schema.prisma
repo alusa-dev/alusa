@@ -1252,6 +1252,8 @@ model Conta {
   tenantFeatureFlags                TenantFeatureFlags?
   auditLogs                         AuditLog[]
   notifications                     Notification[]
+  notificationDigestEvents          NotificationDigestEvent[]
+  paymentStateTransitions           FinancePaymentStateTransition[]
   notificationRecipients            NotificationRecipient[]
   customers                         Customer[]
   charges                           Charge[]
@@ -2672,6 +2674,8 @@ model RematriculaOutbox {
   attempts    Int                     @default(0)
   availableAt DateTime                @default(now())
   lockedAt    DateTime?
+  leaseExpiresAt DateTime?
+  lockToken   String?
   processedAt DateTime?
   lastError   String?
   dedupeKey   String?
@@ -2682,7 +2686,7 @@ model RematriculaOutbox {
   processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
 
   @@unique([contaId, dedupeKey], name: "uq_rematricula_outbox_conta_dedupe")
-  @@index([contaId, status, availableAt], name: "idx_rematricula_outbox_conta_status_available")
+  @@index([contaId, status, availableAt, leaseExpiresAt], name: "idx_rematricula_outbox_conta_status_available")
   @@index([contaId, processoId], name: "idx_rematricula_outbox_conta_processo")
 }
 
@@ -3224,6 +3228,18 @@ model Cobranca {
   liquidacaoStatus LiquidacaoStatus @default(NAO_APLICAVEL)
   liquidadoEm      DateTime?
 
+  // Fase 4: dimensões separadas da máquina de estados financeira.
+  providerStatus       String?
+  processingStatus     String   @default("PENDING")
+  reconciliationStatus String   @default("UNKNOWN")
+  providerUpdatedAt    DateTime?
+  lastWebhookAt        DateTime?
+  lastProviderCheckAt  DateTime?
+  lastReconciledAt     DateTime?
+  lastAppliedEventId   String?
+  localStateUpdatedAt  DateTime?
+  version              Int      @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3244,7 +3260,7 @@ model Cobranca {
   @@index([contaId, tipo], name: "idx_cobranca_conta_tipo")
   @@index([contaId, formaPagamento], name: "idx_cobranca_conta_forma")
   @@index([contaId, liquidacaoStatus], name: "idx_cobranca_conta_liquidacao")
-  @@index([contaId, asaasPaymentId], name: "idx_cobranca_conta_asaas_payment")
+  @@unique([contaId, asaasPaymentId], name: "uq_cobranca_conta_asaas_payment")
   @@index([matriculaId], name: "idx_cobranca_matricula")
   @@index([status], name: "idx_cobranca_status")
   @@index([status, vencimento], name: "idx_cobranca_status_vencimento")
@@ -3354,7 +3370,7 @@ model Pagamento {
   @@index([contaId], name: "idx_pagamento_conta")
   @@index([contaId, status, dataPagamento], name: "idx_pagamento_conta_status_data")
   @@index([contaId, cobrancaId], name: "idx_pagamento_conta_cobranca")
-  @@index([contaId, asaasPaymentId], name: "idx_pagamento_conta_asaas_payment")
+  @@unique([contaId, asaasPaymentId], name: "uq_pagamento_conta_asaas_payment")
   @@index([contaId, createdAt], name: "idx_pagamento_conta_created")
   @@index([cobrancaId], name: "idx_pagamento_cobranca")
   @@index([status, dataPagamento], name: "idx_pagamento_status_data_pagamento")
@@ -3632,6 +3648,8 @@ model FinanceWebhookSideEffectOutbox {
   attempts      Int                            @default(0)
   availableAt   DateTime                       @default(now())
   lockedAt      DateTime?
+  leaseExpiresAt DateTime?
+  lockToken     String?
   processedAt   DateTime?
   lastAttemptAt DateTime?
   lastError     String?
@@ -3642,7 +3660,7 @@ model FinanceWebhookSideEffectOutbox {
 
   @@unique([contaId, dedupeKey], name: "uq_finance_side_effect_dedupe")
   @@index([status, availableAt], name: "idx_finance_side_effect_queue")
-  @@index([contaId, status, availableAt], name: "idx_finance_side_effect_conta_queue")
+  @@index([contaId, status, availableAt, leaseExpiresAt], name: "idx_finance_side_effect_conta_queue")
 }
 
 model LogFinanceiro {
@@ -3992,6 +4010,7 @@ model Lancamento {
   observacao     String?
   anexoUrl       String?
   externalRef    String?
+  idempotencyKey String?
   createdById    String?
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
@@ -4009,6 +4028,7 @@ model Lancamento {
   @@index([contaId, status, dataPrevista], name: "idx_lancamento_conta_status_prevista")
   @@index([contaId, createdAt], name: "idx_lancamento_conta_created")
   @@index([externalRef], name: "idx_lancamento_external_ref")
+  @@unique([contaId, idempotencyKey], name: "uq_lancamento_conta_idempotency")
 }
 
 model CentroCusto {
@@ -5561,6 +5581,18 @@ model Charge {
   liquidacaoStatus         LiquidacaoStatus @default(NAO_APLICAVEL)
   liquidadoEm              DateTime?
 
+  // Fase 4: dimensões separadas da máquina de estados financeira.
+  providerStatus       String?
+  processingStatus     String   @default("PENDING")
+  reconciliationStatus String   @default("UNKNOWN")
+  providerUpdatedAt    DateTime?
+  lastWebhookAt        DateTime?
+  lastProviderCheckAt  DateTime?
+  lastReconciledAt     DateTime?
+  lastAppliedEventId   String?
+  localStateUpdatedAt  DateTime?
+  version              Int      @default(0)
+
   // Campos para listagem de standalone charges (sem vínculo com Cobranca)
   // Preenchidos na criação para evitar consultas externas
   payerName     String? // Nome do pagador (aluno ou responsável)
@@ -5601,12 +5633,44 @@ model Charge {
   @@index([contaId, status, createdAt], name: "idx_charge_conta_status_created")
   @@index([contaId, asaasStatus], name: "idx_charge_conta_asaas_status")
   @@index([contaId, liquidacaoStatus], name: "idx_charge_conta_liquidacao")
-  @@index([contaId, asaasPaymentId], name: "idx_charge_conta_asaas_payment")
+  @@unique([contaId, asaasPaymentId], name: "uq_charge_conta_asaas_payment")
   @@index([asaasPaymentId])
   @@index([customerId])
   @@index([standaloneInstallmentPlanId])
   @@index([standaloneSubscriptionId])
   @@index([familyGroupId])
+}
+
+/// Histórico append-only das decisões da máquina de estados financeira.
+/// A chave composta torna replay e reprocessamento idempotentes por tenant.
+model FinancePaymentStateTransition {
+  id                   String   @id @default(cuid())
+  contaId              String
+  entityType           String
+  entityId             String
+  dedupeKey            String
+  sourceType           String
+  sourceId             String
+  eventName            String?
+  providerStatusBefore String?
+  providerStatusAfter  String?
+  localStatusBefore    String
+  localStatusAfter     String
+  decision             String
+  reason               String
+  providerOccurredAt   DateTime?
+  receivedAt           DateTime @default(now())
+  localVersion         Int?
+  correlationId        String?
+  metadata             Json?
+  createdAt            DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, dedupeKey], name: "uq_finance_payment_state_transition_dedupe")
+  @@index([contaId, entityType, entityId, createdAt], name: "idx_finance_payment_state_transition_entity")
+  @@index([contaId, decision, createdAt], name: "idx_finance_payment_state_transition_decision")
+  @@index([contaId, sourceType, createdAt], name: "idx_finance_payment_state_transition_source")
 }
 
 model ChargeReadModel {
@@ -6595,6 +6659,7 @@ model Notification {
 
   conta      Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
   recipients NotificationRecipient[]
+  digestEvents NotificationDigestEvent[]
 
   @@unique([contaId, dedupeKey])
   @@index([contaId, triggeredAt])
@@ -6625,7 +6690,22 @@ model NotificationRecipient {
   @@index([contaId, userId, archivedAt, readAt])
   @@index([contaId, userId, archivedAt, createdAt], name: "idx_notification_recipient_feed")
   @@index([contaId, userId, readAt], name: "idx_notification_recipient_read")
+  @@index([contaId, userId, archivedAt, readAt, createdAt], name: "idx_notification_recipient_unread_feed")
   @@index([userId, createdAt])
+}
+
+model NotificationDigestEvent {
+  id             String       @id @default(cuid())
+  notificationId String
+  contaId        String
+  eventKey       String
+  createdAt      DateTime     @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  conta        Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
+
+  @@unique([contaId, eventKey], name: "uq_notification_digest_event_conta_event")
+  @@index([contaId, notificationId], name: "idx_notification_digest_event_conta_notification")
 }
 
 /// Fila de retry para notificações internas quando a entidade local ainda não existe.

@@ -41,6 +41,10 @@ export type { CircuitBreakerConfig, CircuitState } from './client/circuit-breake
 // Quota Tracker
 export { AsaasQuotaExceededError, QuotaTracker, globalQuotaTracker } from './client/quota-tracker';
 export type { QuotaStatus } from './client/quota-tracker';
+export { checkAsaasRedisHealth, isAsaasRedisConfigured } from './client/redis-health';
+export type { AsaasRedisHealth } from './client/redis-health';
+export { checkAsaasDistributedRateLimit } from './client/distributed-rate-limiter';
+export type { DistributedRateLimitResult } from './client/distributed-rate-limiter';
 
 // Hooks (observer pattern para consumers)
 export { globalAsaasHooks } from './client/asaas-hooks';

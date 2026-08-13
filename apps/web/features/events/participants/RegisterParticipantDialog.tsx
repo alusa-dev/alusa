@@ -30,7 +30,7 @@ import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, PRIMARY_BUTTON_CLASS } from '../shared/event-form-utils';
 import { parseCurrencyInput } from '../shared/event-formatters';
-import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType } from './ParticipantBillingFields';
+import { ParticipantBillingFields, type ParticipantBillingMethod, type ParticipantChargeType, type ParticipantNotificationChannel } from './ParticipantBillingFields';
 import { useStudentAutocomplete } from './useStudentAutocomplete';
 
 type CancelledParticipantConflict = {
@@ -60,6 +60,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
   const [chargeType, setChargeType] = useState<ParticipantChargeType>('ONE_TIME');
   const [feeText, setFeeText] = useState('');
   const [dueDate, setDueDate] = useState<Date | undefined>(undefined);
+  const [notificationChannels, setNotificationChannels] = useState<ParticipantNotificationChannel[]>([]);
   const [lastPayload, setLastPayload] = useState<Record<string, unknown> | null>(null);
   const [cancelledParticipant, setCancelledParticipant] = useState<CancelledParticipantConflict | null>(null);
   const autocomplete = useStudentAutocomplete({ enabled: open });
@@ -87,6 +88,7 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       setChargeType('ONE_TIME');
       setFeeText('');
       setDueDate(undefined);
+      setNotificationChannels([]);
       setLastPayload(null);
       setCancelledParticipant(null);
     }
@@ -178,6 +180,8 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
       chargeType: resolvedChargeType,
       dueDate: dueDateValue,
       installmentCount,
+      notificationChannels,
+      notificationChannelsConfigured: true,
     };
 
     setLastPayload(payload);
@@ -290,6 +294,8 @@ export function RegisterParticipantDialog({ eventId, event, open, onOpenChange }
             onChargeTypeChange={setChargeType}
             onFeeTextChange={setFeeText}
             onDueDateChange={setDueDate}
+            notificationChannels={notificationChannels}
+            onNotificationChannelsChange={setNotificationChannels}
           />
           <Field label="Observações">
             <Textarea name="notes" className="min-h-16 rounded-lg border-slate-200" />

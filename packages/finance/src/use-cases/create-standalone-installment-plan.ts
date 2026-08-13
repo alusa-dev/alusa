@@ -510,7 +510,12 @@ async function syncInstallmentPayments(params: {
     };
 
     const syncedCharge = await prisma.charge.upsert({
-      where: { asaasPaymentId: payment.id },
+      where: {
+        uq_charge_conta_asaas_payment: {
+          contaId,
+          asaasPaymentId: payment.id,
+        },
+      },
       update: {
         externalReference: paymentExternalReference,
         status: mapAsaasToChargeStatus(effectivePaymentStatus),

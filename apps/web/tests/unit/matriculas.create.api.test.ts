@@ -12,7 +12,6 @@ const {
   processEnrollmentBillingOutboxEventMock,
   createChargeMock,
   createSubscriptionMock,
-  createEnrollmentCreatedNotificationMock,
   syncInitialSubscriptionPaymentFromAsaasMock,
   syncPaymentStateFromAsaasMock,
 } = vi.hoisted(() => ({
@@ -23,7 +22,6 @@ const {
   processEnrollmentBillingOutboxEventMock: vi.fn(),
   createChargeMock: vi.fn(),
   createSubscriptionMock: vi.fn(),
-  createEnrollmentCreatedNotificationMock: vi.fn(),
   syncInitialSubscriptionPaymentFromAsaasMock: vi.fn(),
   syncPaymentStateFromAsaasMock: vi.fn(),
 }));
@@ -72,7 +70,6 @@ vi.mock('@alusa/finance', () => ({
 }));
 
 vi.mock('@alusa/lib', () => ({
-  createEnrollmentCreatedNotification: createEnrollmentCreatedNotificationMock,
 }));
 
 vi.mock('@/src/server/matriculas/subscription-payment-materialization', () => ({
@@ -195,7 +192,6 @@ describe('POST /api/matriculas', () => {
         role: 'ADMIN',
       },
     });
-    createEnrollmentCreatedNotificationMock.mockResolvedValue(undefined);
   });
 
   it('só retorna sucesso depois de confirmar assinatura e primeira mensalidade', async () => {
@@ -235,11 +231,6 @@ describe('POST /api/matriculas', () => {
       }),
     );
     expect(data.operationalWarnings).toEqual([]);
-    expect(createEnrollmentCreatedNotificationMock).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      matriculaId: 'mat-1',
-      actorUserId: 'user-1',
-    });
   });
 
   it('confirma sincronamente a inclusão em assinatura existente antes de retornar sucesso', async () => {

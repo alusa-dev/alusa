@@ -54,6 +54,7 @@ async function cleanup(contaId: string) {
   await prisma.invoice.deleteMany({ where: { contaId } });
   await prisma.sale.deleteMany({ where: { contaId } });
   await prisma.chargeReadModel.deleteMany({ where: { contaId } });
+  await prisma.financePaymentStateTransition.deleteMany({ where: { contaId } });
   await prisma.charge.deleteMany({ where: { contaId } });
   await prisma.lancamento.deleteMany({ where: { contaId } });
   await prisma.pagamento.deleteMany({ where: { cobranca: { matricula: { aluno: { contaId } } } } });

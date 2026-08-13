@@ -1261,6 +1261,9 @@ export async function reconcileWithAsaas(
         const event = PAYMENT_EVENT_BY_STATUS[remoteStatus] ?? 'PAYMENT_UPDATED';
         await handlePaymentWebhook(options.contaId, {
           event,
+          eventId: `reconciliation:${remote.id}:${remoteStatus}`,
+          source: 'RECONCILIATION',
+          providerOccurredAt: remote.dateCreated ? new Date(remote.dateCreated) : null,
           payment: {
             id: remote.id,
             status: remoteStatus as never,
@@ -1746,6 +1749,9 @@ export async function reconcileBilateral(
               const event = PAYMENT_EVENT_BY_STATUS[paymentStatus] ?? 'PAYMENT_UPDATED';
               await handlePaymentWebhook(options.contaId, {
                 event,
+                eventId: `reconciliation:${payment.id}:${paymentStatus}`,
+                source: 'RECONCILIATION',
+                providerOccurredAt: payment.dateCreated ? new Date(payment.dateCreated) : null,
                 payment: {
                   id: payment.id,
                   status: paymentStatus as never,

@@ -11,10 +11,7 @@ import {
 import { isPaymentResolutionPolicyEnabled } from '../foundation/payment-resolution-policy';
 import { resolvePaymentToLocalEntity } from './payment-resolver';
 import {
-  canApplyChargeStatusTransition,
   getCobrancaPrecedence,
-  computeNextCobrancaStatus,
-  computeNextChargeStatus,
   resolveInternalPaymentStatus,
 } from '../mappers/status-precedence';
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
@@ -51,9 +48,19 @@ import {
   projectAcademicEnrollmentFeeState,
   projectFamilyEnrollmentFeeState,
 } from '../projections/enrollment-fee-projection.service';
+import {
+  decideCobrancaPaymentTransition,
+  decideChargePaymentTransition,
+  type ChargeStateDecision,
+  type PaymentStateSource,
+} from '../state-machine/payment-state-machine';
+import { recordPaymentStateTransition } from '../state-machine/payment-state-transition.service';
 
 export type PaymentWebhookPayload = {
   event: string;
+  eventId?: string | null;
+  source?: PaymentStateSource;
+  providerOccurredAt?: Date | null;
   payment: {
     id: string;
     status: PaymentStatus;
@@ -244,6 +251,47 @@ function mapBillingTypeToFormaPagamento(billingType: string): FormaPagamento | n
   }
 }
 
+type LedgerPrismaClient =
+  | Pick<typeof prisma, 'lancamento'>
+  | Pick<Prisma.TransactionClient, 'lancamento'>;
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2002',
+  );
+}
+
+/**
+ * Cria efeitos do ledger com a constraint como árbitro final da corrida.
+ * O primeiro check evita round-trip desnecessário; o P2002 cobre dois
+ * workers que atravessam o check simultaneamente.
+ */
+async function createLedgerEntryIdempotently(
+  client: LedgerPrismaClient,
+  data: Prisma.LancamentoUncheckedCreateInput,
+) {
+  try {
+    return await client.lancamento.create({ data });
+  } catch (error) {
+    if (!isUniqueConstraintError(error) || !data.idempotencyKey) throw error;
+
+    const existing = await client.lancamento.findUnique({
+      where: {
+        uq_lancamento_conta_idempotency: {
+          contaId: data.contaId,
+          idempotencyKey: data.idempotencyKey,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) return existing;
+    throw error;
+  }
+}
+
 function resolveChargeInvoiceUrlUpdate(invoiceUrl?: string | null): string | undefined {
   if (typeof invoiceUrl !== 'string') return undefined;
 
@@ -420,14 +468,16 @@ function buildChargeAsaasSnapshotUpdate(
   const p = payload.payment;
   const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
   const incomingAsaasStatus = normalizeAsaasPaymentSnapshotStatus(payload);
+  const providerStatus = resolveMonotonicAsaasPaymentStatus({
+    currentAsaasStatus: context?.currentAsaasStatus,
+    incoming: incomingAsaasStatus,
+    localChargeStatus: context?.localChargeStatus,
+    localCobrancaStatus: context?.localCobrancaStatus,
+  });
 
   return {
-    asaasStatus: resolveMonotonicAsaasPaymentStatus({
-      currentAsaasStatus: context?.currentAsaasStatus,
-      incoming: incomingAsaasStatus,
-      localChargeStatus: context?.localChargeStatus,
-      localCobrancaStatus: context?.localCobrancaStatus,
-    }),
+    asaasStatus: providerStatus,
+    providerStatus,
     asaasValue: p.value,
     asaasNetValue: p.netValue,
     asaasOriginalValue: p.originalValue ?? null,
@@ -440,6 +490,27 @@ function buildChargeAsaasSnapshotUpdate(
       liquidacaoStatus === 'DISPONIVEL'
         ? new Date(p.creditDate ?? p.paymentDate ?? p.clientPaymentDate ?? Date.now())
         : null,
+  };
+}
+
+function buildPaymentStateDimensionUpdate(params: {
+  payload: PaymentWebhookPayload;
+  decision: { kind: string };
+  now: Date;
+}): Record<string, unknown> {
+  const source = params.payload.source ?? 'WEBHOOK';
+  const isApply = params.decision.kind === 'APPLY';
+  const isReconcile = params.decision.kind === 'RECONCILE';
+
+  return {
+    processingStatus: 'PROCESSED',
+    reconciliationStatus: isReconcile ? 'DIVERGENT' : 'IN_SYNC',
+    providerUpdatedAt: params.payload.providerOccurredAt ?? params.now,
+    ...(source === 'WEBHOOK'
+      ? { lastWebhookAt: params.now }
+      : { lastProviderCheckAt: params.now, lastReconciledAt: params.now }),
+    ...(params.payload.eventId && isApply ? { lastAppliedEventId: params.payload.eventId } : {}),
+    ...(isApply ? { localStateUpdatedAt: params.now, version: { increment: 1 } } : {}),
   };
 }
 
@@ -467,6 +538,8 @@ type CobrancaSelect = {
   status: true;
   asaasPaymentId: true;
   asaasStatus: true;
+  providerStatus: true;
+  version: true;
   tipo: true;
   formaPagamento: true;
 };
@@ -477,6 +550,8 @@ const COBRANCA_SELECT: CobrancaSelect = {
   status: true,
   asaasPaymentId: true,
   asaasStatus: true,
+  providerStatus: true,
+  version: true,
   tipo: true,
   formaPagamento: true,
 };
@@ -501,7 +576,12 @@ async function upsertCobrancaByAsaasPaymentId(params: {
 }) {
   // Tentar encontrar existente primeiro (fast path)
   const existing = await prisma.cobranca.findUnique({
-    where: { asaasPaymentId: params.asaasPaymentId },
+    where: {
+      uq_cobranca_conta_asaas_payment: {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+      },
+    },
     select: COBRANCA_SELECT,
   });
   if (existing) {
@@ -538,6 +618,7 @@ async function upsertCobrancaByAsaasPaymentId(params: {
         competenciaFim,
         asaasPaymentId: params.asaasPaymentId,
         asaasStatus: params.asaasStatus,
+        providerStatus: params.asaasStatus,
         asaasValue: params.valor,
         asaasNetValue: params.asaasNetValue,
         formaPagamento: params.formaPagamento ?? 'INDEFINIDO',
@@ -549,7 +630,12 @@ async function upsertCobrancaByAsaasPaymentId(params: {
     // P2002 = unique constraint violation → outro processo já criou
     if (error && typeof error === 'object' && 'code' in error && (error as { code: string }).code === 'P2002') {
       const fallback = await prisma.cobranca.findUnique({
-        where: { asaasPaymentId: params.asaasPaymentId },
+        where: {
+          uq_cobranca_conta_asaas_payment: {
+            contaId: params.contaId,
+            asaasPaymentId: params.asaasPaymentId,
+          },
+        },
         select: COBRANCA_SELECT,
       });
       if (fallback) return { cobranca: fallback, created: false };
@@ -598,7 +684,13 @@ async function applyChargeInvoicePaymentSideEffect(params: {
 async function handleStandaloneChargeWebhook(
   contaId: string,
   payload: PaymentWebhookPayload,
-  charge: { id: string; status: ChargeStatus; asaasPaymentId: string | null; asaasStatus?: string | null }
+  charge: {
+    id: string;
+    status: ChargeStatus;
+    asaasPaymentId: string | null;
+    asaasStatus?: string | null;
+    providerStatus?: string | null;
+  }
 ): Promise<PaymentWebhookResult> {
   const p = payload.payment;
   const standaloneParentReference = p.externalReference?.match(
@@ -636,24 +728,31 @@ async function handleStandaloneChargeWebhook(
     deleted: p.deleted ?? null,
   });
 
-  // Usar computeNextChargeStatus para tratar PENDING corretamente
-  const nextStatusCharge = computeNextChargeStatus({
-    currentStatus: charge.status,
+  const stateDecision = decideChargePaymentTransition({
+    currentLocalStatus: charge.status,
+    currentProviderStatus: charge.providerStatus ?? charge.asaasStatus,
+    incomingProviderStatus: effectiveAsaasStatus,
     internalStatus,
     eventName: payload.event,
+    source: payload.source ?? 'WEBHOOK',
   });
-
-  // Verificar progressão monotônica
-  const canProgress = canApplyChargeStatusTransition({
-    current: charge.status,
-    next: nextStatusCharge,
-    eventName: payload.event,
+  const nextStatusCharge = stateDecision.nextLocalStatus;
+  // Mantém o contrato de resposta legado: o status tentado pelo evento pode
+  // ser reportado mesmo quando a máquina decide não aplicá-lo localmente.
+  const attemptedStatusCharge =
+    stateDecision.kind !== 'APPLY' && internalStatus === 'OVERDUE'
+      ? 'OVERDUE'
+      : nextStatusCharge;
+  const stateDimensionUpdate = buildPaymentStateDimensionUpdate({
+    payload,
+    decision: stateDecision,
+    now: new Date(),
   });
-  if (!canProgress) {
+  if (stateDecision.kind !== 'APPLY' && charge.status !== attemptedStatusCharge) {
     console.warn('⚠️ Regressão de status bloqueada (standalone charge):', {
       chargeId: charge.id,
       currentStatus: charge.status,
-      attemptedStatus: nextStatusCharge,
+      attemptedStatus: attemptedStatusCharge,
       event: payload.event,
       deleted: payload.payment.deleted ?? null,
     });
@@ -663,9 +762,10 @@ async function handleStandaloneChargeWebhook(
         statusUpdatedAt: new Date(),
         ...standaloneLinkData,
         ...buildChargeAsaasSnapshotUpdate(payload, {
-          currentAsaasStatus: charge.asaasStatus,
+          currentAsaasStatus: charge.providerStatus ?? charge.asaasStatus,
           localChargeStatus: charge.status,
         }),
+        ...stateDimensionUpdate,
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: p.id }),
       },
     });
@@ -693,10 +793,20 @@ async function handleStandaloneChargeWebhook(
         asaasStatus: effectiveAsaasStatus,
         billingType: p.billingType ?? null,
         previousStatus: charge.status,
-        attemptedStatus: nextStatusCharge,
+        attemptedStatus: attemptedStatusCharge,
         skipReason: 'STATUS_TRANSITION_BLOCKED',
         snapshotPersisted: true,
       },
+    });
+    await recordPaymentStateTransition({
+      contaId,
+      entityType: 'CHARGE',
+      entityId: charge.id,
+      source: payload.source ?? 'WEBHOOK',
+      sourceId: payload.eventId ?? `payment:${p.id}:${payload.event}`,
+      decision: stateDecision,
+      providerOccurredAt: payload.providerOccurredAt ?? null,
+      metadata: { asaasPaymentId: p.id },
     });
     return {
       success: true,
@@ -705,7 +815,7 @@ async function handleStandaloneChargeWebhook(
       localEntityType: 'Charge',
       localEntityId: charge.id,
       previousStatus: charge.status,
-      nextStatus: nextStatusCharge,
+      nextStatus: attemptedStatusCharge,
     };
   }
 
@@ -716,9 +826,10 @@ async function handleStandaloneChargeWebhook(
     value: p.value,
     ...standaloneLinkData,
     ...buildChargeAsaasSnapshotUpdate(payload, {
-      currentAsaasStatus: charge.asaasStatus,
+      currentAsaasStatus: charge.providerStatus ?? charge.asaasStatus,
       localChargeStatus: charge.status,
     }),
+    ...stateDimensionUpdate,
   };
 
   const dueDateUpdate = resolveChargeDueDateUpdate(p.dueDate);
@@ -790,6 +901,17 @@ async function handleStandaloneChargeWebhook(
       value: p.value,
       netValue: p.netValue,
     },
+  });
+
+  await recordPaymentStateTransition({
+    contaId,
+    entityType: 'CHARGE',
+    entityId: charge.id,
+    source: payload.source ?? 'WEBHOOK',
+    sourceId: payload.eventId ?? `payment:${p.id}:${payload.event}`,
+    decision: stateDecision,
+    providerOccurredAt: payload.providerOccurredAt ?? null,
+    metadata: { asaasPaymentId: p.id },
   });
 
   console.log('✅ Standalone charge atualizada via webhook:', {
@@ -1107,7 +1229,7 @@ async function handlePaymentWebhookCore(
         if (resolveResult.type === 'charge' && resolveResult.chargeId && !resolveResult.cobrancaId) {
           const charge = await prisma.charge.findUnique({
             where: { id: resolveResult.chargeId },
-            select: { id: true, status: true, asaasPaymentId: true, asaasStatus: true },
+            select: { id: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true },
           });
           if (charge) {
             return handleStandaloneChargeWebhook(contaId, payload, charge);
@@ -1156,7 +1278,7 @@ async function handlePaymentWebhookCore(
         contaId,
         OR: chargeLookupOr,
       },
-      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true },
+      select: { id: true, cobrancaId: true, status: true, asaasPaymentId: true, asaasStatus: true, providerStatus: true },
     });
 
     // Para cobranças standalone (sem cobrancaId), processar apenas o Charge
@@ -1187,6 +1309,8 @@ async function handlePaymentWebhookCore(
         status: true,
         asaasPaymentId: true,
         asaasStatus: true,
+        providerStatus: true,
+        version: true,
         tipo: true,
         formaPagamento: true,
       },
@@ -1221,6 +1345,8 @@ async function handlePaymentWebhookCore(
             status: true,
             asaasPaymentId: true,
             asaasStatus: true,
+            providerStatus: true,
+            version: true,
             tipo: true,
             formaPagamento: true,
           },
@@ -1308,7 +1434,12 @@ async function handlePaymentWebhookCore(
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
           const standaloneSubscriptionCharge = await prisma.charge.upsert({
-            where: { asaasPaymentId: payload.payment.id },
+            where: {
+              uq_charge_conta_asaas_payment: {
+                contaId,
+                asaasPaymentId: payload.payment.id,
+              },
+            },
             update: {
               externalReference: externalRef,
               status: chargeStatus,
@@ -1417,7 +1548,12 @@ async function handlePaymentWebhookCore(
               typeof metadata.localCustomerId === 'string' ? metadata.localCustomerId : null;
 
             const standaloneSubscriptionCharge = await prisma.charge.upsert({
-              where: { asaasPaymentId: payload.payment.id },
+              where: {
+                uq_charge_conta_asaas_payment: {
+                  contaId,
+                  asaasPaymentId: payload.payment.id,
+                },
+              },
               update: {
                 externalReference: externalRef,
                 status: chargeStatus,
@@ -1735,7 +1871,12 @@ async function handlePaymentWebhookCore(
           const vencimento = parsedDueDate ? new Date(parsedDueDate) : new Date();
 
           const standaloneInstallmentCharge = await prisma.charge.upsert({
-            where: { asaasPaymentId: payload.payment.id },
+            where: {
+              uq_charge_conta_asaas_payment: {
+                contaId,
+                asaasPaymentId: payload.payment.id,
+              },
+            },
             update: {
               externalReference: externalRef,
               status: chargeStatus,
@@ -1864,7 +2005,12 @@ async function handlePaymentWebhookCore(
       const placeholderDueDate = parsedDueDate ? new Date(parsedDueDate) : null;
 
       const placeholderCharge = await prisma.charge.upsert({
-        where: { asaasPaymentId: payload.payment.id },
+        where: {
+          uq_charge_conta_asaas_payment: {
+            contaId,
+            asaasPaymentId: payload.payment.id,
+          },
+        },
         update: {
           status: mapAsaasToChargeStatus(normalizedStatus),
           statusUpdatedAt: new Date(),
@@ -1978,18 +2124,19 @@ async function handlePaymentWebhookCore(
     const currentStatus = cobranca.status;
     const occurredAt = new Date();
 
-    const statusDecision = computeNextCobrancaStatus({
-      currentStatus,
+    const stateDecision = decideCobrancaPaymentTransition({
+      currentLocalStatus: currentStatus,
+      currentProviderStatus: cobranca.providerStatus ?? cobranca.asaasStatus,
+      incomingProviderStatus: effectiveAsaasStatus,
       eventName: payload.event,
-      asaasPaymentStatus: normalizedAsaasStatus as PaymentStatus,
       billingType: payload.payment.billingType ?? null,
       dueDate: (payload.payment as { dueDate?: string }).dueDate ?? null,
-      paymentDate: payload.payment.creditDate ?? null,
       now: new Date(),
+      source: payload.source ?? 'WEBHOOK',
     });
 
-    const nextStatusCobranca = statusDecision.nextStatus;
-    const decisionReason = statusDecision.decisionReason;
+    const nextStatusCobranca = stateDecision.nextLocalStatus;
+    const decisionReason = stateDecision.reason;
     const sensitivePaymentAuditMetadata = buildSensitivePaymentAuditMetadata({
       event: payload.event,
       internalStatus,
@@ -2110,7 +2257,7 @@ async function handlePaymentWebhookCore(
         ? chargeFromExternalRef
         : await prisma.charge.findFirst({
             where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
           });
 
       if (riskCharge) {
@@ -2146,6 +2293,11 @@ async function handlePaymentWebhookCore(
       if (canRestore && !isBlockedByHigherTerminal) {
         const restoredDueDate = payload.payment.dueDate ? new Date(payload.payment.dueDate) : null;
         const nowDate = new Date();
+        const restoreStateDimensionUpdate = buildPaymentStateDimensionUpdate({
+          payload,
+          decision: stateDecision,
+          now: nowDate,
+        });
         const restoredStatus: typeof currentStatus = restoredDueDate && restoredDueDate > nowDate
           ? 'A_VENCER'
           : 'PENDENTE';
@@ -2155,7 +2307,9 @@ async function handlePaymentWebhookCore(
           data: {
             status: restoredStatus,
             asaasStatus: effectiveAsaasStatus,
+            providerStatus: stateDecision.nextProviderStatus,
             lastAsaasFetchAt: nowDate,
+            ...restoreStateDimensionUpdate,
           },
         });
 
@@ -2163,13 +2317,40 @@ async function handlePaymentWebhookCore(
           ? chargeFromExternalRef
           : await prisma.charge.findFirst({
               where: { contaId, OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }] },
-              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
+              select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
             });
 
         if (restoredCharge && restoredCharge.status === 'CANCELED') {
+          const restoredChargeDecision = decideChargePaymentTransition({
+            currentLocalStatus: restoredCharge.status,
+            currentProviderStatus: restoredCharge.providerStatus ?? restoredCharge.asaasStatus,
+            incomingProviderStatus: effectiveAsaasStatus,
+            internalStatus,
+            eventName: payload.event,
+            source: payload.source ?? 'WEBHOOK',
+          });
           await prisma.charge.update({
             where: { id: restoredCharge.id },
-            data: { status: 'OPEN', statusUpdatedAt: nowDate },
+            data: {
+              status: 'OPEN',
+              statusUpdatedAt: nowDate,
+              providerStatus: restoredChargeDecision.nextProviderStatus,
+              ...buildPaymentStateDimensionUpdate({
+                payload,
+                decision: restoredChargeDecision,
+                now: nowDate,
+              }),
+            },
+          });
+          await recordPaymentStateTransition({
+            contaId,
+            entityType: 'CHARGE',
+            entityId: restoredCharge.id,
+            source: payload.source ?? 'WEBHOOK',
+            sourceId: payload.eventId ?? `payment:${payload.payment.id}:${payload.event}`,
+            decision: restoredChargeDecision,
+            providerOccurredAt: payload.providerOccurredAt ?? null,
+            metadata: { asaasPaymentId: payload.payment.id },
           });
         }
 
@@ -2191,9 +2372,30 @@ async function handlePaymentWebhookCore(
           cobrancaId: cobranca.id,
         });
 
+        await recordPaymentStateTransition({
+          contaId,
+          entityType: 'COBRANCA',
+          entityId: cobranca.id,
+          source: payload.source ?? 'WEBHOOK',
+          sourceId: payload.eventId ?? `payment:${payload.payment.id}:${payload.event}`,
+          decision: stateDecision,
+          providerOccurredAt: payload.providerOccurredAt ?? null,
+          localVersion: (cobranca.version ?? 0) + (stateDecision.kind === 'APPLY' ? 1 : 0),
+          metadata: { asaasPaymentId: payload.payment.id },
+        });
+
         return { success: true };
       }
 
+      await prisma.cobranca.update({
+        where: { id: cobranca.id },
+        data: {
+          asaasStatus: effectiveAsaasStatus,
+          providerStatus: stateDecision.nextProviderStatus,
+          lastAsaasFetchAt: new Date(),
+          ...buildPaymentStateDimensionUpdate({ payload, decision: stateDecision, now: new Date() }),
+        },
+      });
       await auditLogService.record({
         contaId,
         action: 'finance.webhook.payment_restored_blocked',
@@ -2206,6 +2408,17 @@ async function handlePaymentWebhookCore(
             : 'STATUS_NOT_RESTORABLE',
           matriculaId: cobranca.matriculaId,
         },
+      });
+      await recordPaymentStateTransition({
+        contaId,
+        entityType: 'COBRANCA',
+        entityId: cobranca.id,
+        source: payload.source ?? 'WEBHOOK',
+        sourceId: payload.eventId ?? `payment:${payload.payment.id}:${payload.event}`,
+        decision: stateDecision,
+        providerOccurredAt: payload.providerOccurredAt ?? null,
+        localVersion: cobranca.version ?? 0,
+        metadata: { asaasPaymentId: payload.payment.id },
       });
 
       return { success: true };
@@ -2237,10 +2450,15 @@ async function handlePaymentWebhookCore(
         : {};
 
     const resolvedCobrancaAsaasStatus = resolveCobrancaAsaasStatusFromPayload(payload, {
-      currentAsaasStatus: cobranca.asaasStatus,
+      currentAsaasStatus: cobranca.providerStatus ?? cobranca.asaasStatus,
       localCobrancaStatus: currentStatus,
       localChargeStatus:
         chargeFromExternalRef?.cobrancaId === cobranca.id ? chargeFromExternalRef.status : null,
+    });
+    const cobrancaStateDimensionUpdate = buildPaymentStateDimensionUpdate({
+      payload,
+      decision: stateDecision,
+      now: occurredAt,
     });
 
     if (currentStatus !== nextStatusCobranca) {
@@ -2250,6 +2468,7 @@ async function handlePaymentWebhookCore(
           status: nextStatusCobranca,
           // Campos asaas* (snapshot do Asaas - fonte da verdade)
           asaasStatus: resolvedCobrancaAsaasStatus,
+          providerStatus: stateDecision.nextProviderStatus,
           asaasValue: p.value,
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
@@ -2262,6 +2481,7 @@ async function handlePaymentWebhookCore(
           liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
+          ...cobrancaStateDimensionUpdate,
         },
       });
     } else {
@@ -2271,6 +2491,7 @@ async function handlePaymentWebhookCore(
         where: { id: cobranca.id },
         data: {
           asaasStatus: resolvedCobrancaAsaasStatus,
+          providerStatus: stateDecision.nextProviderStatus,
           asaasValue: p.value,
           asaasNetValue: p.netValue,
           asaasOriginalValue: p.originalValue ?? null,
@@ -2283,6 +2504,7 @@ async function handlePaymentWebhookCore(
           liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
           ...cobrancaSensitiveUpdate,
           ...cobrancaPaymentUpdate,
+          ...cobrancaStateDimensionUpdate,
         },
       });
     }
@@ -2318,32 +2540,37 @@ async function handlePaymentWebhookCore(
               contaId,
               OR: [{ asaasPaymentId: payload.payment.id }, { cobrancaId: cobranca.id }],
             },
-            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true },
+            select: { id: true, status: true, asaasPaymentId: true, cobrancaId: true, asaasStatus: true, providerStatus: true },
           });
 
+    let chargeStateDecision: ChargeStateDecision | null = null;
     if (charge) {
-      // Recalcular nextStatusCharge com base no status atual do Charge
-      const nextStatusChargeForThisCharge = computeNextChargeStatus({
-        currentStatus: charge.status,
+      chargeStateDecision = decideChargePaymentTransition({
+        currentLocalStatus: charge.status,
+        currentProviderStatus: charge.providerStatus ?? charge.asaasStatus,
+        incomingProviderStatus: effectiveAsaasStatus,
         internalStatus,
         eventName: payload.event,
+        source: payload.source ?? 'WEBHOOK',
+      });
+      const nextStatusChargeForThisCharge = chargeStateDecision.nextLocalStatus;
+      const chargeStateDimensionUpdate = buildPaymentStateDimensionUpdate({
+        payload,
+        decision: chargeStateDecision,
+        now: occurredAt,
       });
       const baseChargeUpdate = {
         ...buildChargeAsaasSnapshotUpdate(payload, {
-          currentAsaasStatus: charge.asaasStatus,
+          currentAsaasStatus: charge.providerStatus ?? charge.asaasStatus,
           localChargeStatus: charge.status,
           localCobrancaStatus: cobranca.status,
         }),
+        ...chargeStateDimensionUpdate,
         ...(charge.asaasPaymentId ? {} : { asaasPaymentId: payload.payment.id }),
       };
 
       if (charge.status !== nextStatusChargeForThisCharge) {
-        const canProgressCharge = canApplyChargeStatusTransition({
-          current: charge.status,
-          next: nextStatusChargeForThisCharge,
-          eventName: payload.event,
-        });
-        if (canProgressCharge) {
+        if (chargeStateDecision.kind === 'APPLY') {
           await prisma.charge.update({
             where: { id: charge.id },
             data: { ...baseChargeUpdate, status: nextStatusChargeForThisCharge, statusUpdatedAt: new Date() },
@@ -2397,7 +2624,7 @@ async function handlePaymentWebhookCore(
 
     if (shouldRecordPayment) {
       const existingPagamento = await prisma.pagamento.findFirst({
-        where: { asaasPaymentId: p.id },
+        where: { contaId, asaasPaymentId: p.id },
         select: { id: true },
       });
 
@@ -2429,31 +2656,33 @@ async function handlePaymentWebhookCore(
 
     if (shouldMaterializeLancamento) {
       const lancamentoExternalRef = `asaas:payment:${p.id}`;
+      const lancamentoIdempotencyKey = `${lancamentoExternalRef}:settlement`;
       const existingLancamento = await prisma.lancamento.findFirst({
         where: {
           contaId,
-          externalRef: lancamentoExternalRef,
-          isEstorno: false,
+          OR: [
+            { idempotencyKey: lancamentoIdempotencyKey },
+            { externalRef: lancamentoExternalRef, isEstorno: false },
+          ],
         },
         select: { id: true },
       });
 
       if (!existingLancamento) {
         const lancamentoValor = p.netValue > 0 ? p.netValue : p.value;
-        await prisma.lancamento.create({
-          data: {
-            contaId,
-            tipo: 'RECEITA' as TipoLancamento,
-            origem: 'SISTEMA' as OrigemLancamento,
-            status: 'RECEBIDO' as StatusLancamento,
-            valor: lancamentoValor,
-            descricao: `Pagamento confirmado (${cobranca.id})`,
-            referencia: `pagamento:${p.id}`,
-            formaPagamento: mapFormaPagamentoToLancamento(cobranca.formaPagamento as FormaPagamento),
-            dataEfetiva: paymentDate,
-            dataPrevista: paymentDate,
-            externalRef: lancamentoExternalRef,
-          },
+        await createLedgerEntryIdempotently(prisma, {
+          contaId,
+          tipo: 'RECEITA' as TipoLancamento,
+          origem: 'SISTEMA' as OrigemLancamento,
+          status: 'RECEBIDO' as StatusLancamento,
+          valor: lancamentoValor,
+          descricao: `Pagamento confirmado (${cobranca.id})`,
+          referencia: `pagamento:${p.id}`,
+          formaPagamento: mapFormaPagamentoToLancamento(cobranca.formaPagamento as FormaPagamento),
+          dataEfetiva: paymentDate,
+          dataPrevista: paymentDate,
+          externalRef: lancamentoExternalRef,
+          idempotencyKey: lancamentoIdempotencyKey,
         });
       }
     }
@@ -2479,7 +2708,7 @@ async function handlePaymentWebhookCore(
 
     if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
       const existingPagamento = await prisma.pagamento.findFirst({
-        where: { asaasPaymentId: p.id },
+        where: { contaId, asaasPaymentId: p.id },
         select: { id: true },
       });
 
@@ -2494,6 +2723,7 @@ async function handlePaymentWebhookCore(
       }
 
       const lancamentoExternalRef = `asaas:payment:${p.id}`;
+      const partialRefundIdempotencyKey = `${lancamentoExternalRef}:partial-refund`;
       const originalLancamento = await prisma.lancamento.findFirst({
         where: {
           contaId,
@@ -2511,9 +2741,14 @@ async function handlePaymentWebhookCore(
           const partialRefundEntry = await prisma.lancamento.findFirst({
             where: {
               contaId,
-              parentId: originalLancamento.id,
-              isEstorno: true,
-              externalRef: partialRefundExternalRef,
+              OR: [
+                { idempotencyKey: partialRefundIdempotencyKey },
+                {
+                  parentId: originalLancamento.id,
+                  isEstorno: true,
+                  externalRef: partialRefundExternalRef,
+                },
+              ],
             },
             select: { id: true },
           });
@@ -2528,31 +2763,30 @@ async function handlePaymentWebhookCore(
               },
             });
           } else {
-            await prisma.lancamento.create({
-              data: {
-                contaId,
-                tipo: originalLancamento.tipo as TipoLancamento,
-                origem: originalLancamento.origem as OrigemLancamento,
-                status: 'ESTORNADO' as StatusLancamento,
-                valor: refundedAmount,
-                descricao: `Estorno parcial de ${originalLancamento.descricao}`,
-                referencia: originalLancamento.referencia,
-                formaPagamento: originalLancamento.formaPagamento,
-                dataEfetiva: occurredAt,
-                dataPrevista: null,
-                isEstorno: true,
-                parentId: originalLancamento.id,
-                dataEstorno: occurredAt,
-                motivoEstorno: 'Webhook Asaas: estorno parcial',
-                externalRef: partialRefundExternalRef,
-              },
+            await createLedgerEntryIdempotently(prisma, {
+              contaId,
+              tipo: originalLancamento.tipo as TipoLancamento,
+              origem: originalLancamento.origem as OrigemLancamento,
+              status: 'ESTORNADO' as StatusLancamento,
+              valor: refundedAmount,
+              descricao: `Estorno parcial de ${originalLancamento.descricao}`,
+              referencia: originalLancamento.referencia,
+              formaPagamento: originalLancamento.formaPagamento,
+              dataEfetiva: occurredAt,
+              dataPrevista: null,
+              isEstorno: true,
+              parentId: originalLancamento.id,
+              dataEstorno: occurredAt,
+              motivoEstorno: 'Webhook Asaas: estorno parcial',
+              externalRef: partialRefundExternalRef,
+              idempotencyKey: partialRefundIdempotencyKey,
             });
           }
         }
       }
     } else if (internalStatus === 'REFUNDED' || internalStatus === 'CHARGEBACK') {
       const existingPagamento = await prisma.pagamento.findFirst({
-        where: { asaasPaymentId: p.id },
+        where: { contaId, asaasPaymentId: p.id },
         select: { id: true },
       });
 
@@ -2564,6 +2798,7 @@ async function handlePaymentWebhookCore(
       }
 
       const lancamentoExternalRef = `asaas:payment:${p.id}`;
+      const refundIdempotencyKey = `${lancamentoExternalRef}:refund`;
       const originalLancamento = await prisma.lancamento.findFirst({
         where: {
           contaId,
@@ -2587,31 +2822,36 @@ async function handlePaymentWebhookCore(
           });
 
           const estornoExists = await tx.lancamento.findFirst({
-            where: { parentId: originalLancamento.id, isEstorno: true },
+            where: {
+              contaId,
+              OR: [
+                { idempotencyKey: refundIdempotencyKey },
+                { parentId: originalLancamento.id, isEstorno: true },
+              ],
+            },
             select: { id: true },
           });
 
           if (!estornoExists) {
-            await tx.lancamento.create({
-              data: {
-                contaId,
-                tipo: originalLancamento.tipo as TipoLancamento,
-                origem: originalLancamento.origem as OrigemLancamento,
-                status: 'ESTORNADO' as StatusLancamento,
-                valor: originalLancamento.valor,
-                descricao: `Estorno de ${originalLancamento.descricao}`,
-                referencia: originalLancamento.referencia,
-                formaPagamento: originalLancamento.formaPagamento,
-                dataEfetiva: dataEstorno,
-                dataPrevista: null,
-                isEstorno: true,
-                parentId: originalLancamento.id,
-                dataEstorno,
-                motivoEstorno: internalStatus === 'CHARGEBACK'
-                  ? `Chargeback confirmado via ${payload.event}`
-                  : `Estorno confirmado via ${payload.event}`,
-                externalRef: originalLancamento.externalRef,
-              },
+            await createLedgerEntryIdempotently(tx, {
+              contaId,
+              tipo: originalLancamento.tipo as TipoLancamento,
+              origem: originalLancamento.origem as OrigemLancamento,
+              status: 'ESTORNADO' as StatusLancamento,
+              valor: originalLancamento.valor,
+              descricao: `Estorno de ${originalLancamento.descricao}`,
+              referencia: originalLancamento.referencia,
+              formaPagamento: originalLancamento.formaPagamento,
+              dataEfetiva: dataEstorno,
+              dataPrevista: null,
+              isEstorno: true,
+              parentId: originalLancamento.id,
+              dataEstorno,
+              motivoEstorno: internalStatus === 'CHARGEBACK'
+                ? `Chargeback confirmado via ${payload.event}`
+                : `Estorno confirmado via ${payload.event}`,
+              externalRef: originalLancamento.externalRef,
+              idempotencyKey: refundIdempotencyKey,
             });
           }
         });
@@ -2620,7 +2860,7 @@ async function handlePaymentWebhookCore(
 
     if (payload.event === 'PAYMENT_RECEIVED_IN_CASH_UNDONE') {
       const existingPagamento = await prisma.pagamento.findFirst({
-        where: { asaasPaymentId: p.id },
+        where: { contaId, asaasPaymentId: p.id },
         select: { id: true },
       });
 
@@ -2635,6 +2875,7 @@ async function handlePaymentWebhookCore(
       }
 
       const lancamentoExternalRef = `asaas:payment:${p.id}`;
+      const cashUndoIdempotencyKey = `${lancamentoExternalRef}:cash-undo`;
       const originalLancamento = await prisma.lancamento.findFirst({
         where: {
           contaId,
@@ -2656,28 +2897,33 @@ async function handlePaymentWebhookCore(
           });
 
           const estornoExists = await tx.lancamento.findFirst({
-            where: { parentId: originalLancamento.id, isEstorno: true },
+            where: {
+              contaId,
+              OR: [
+                { idempotencyKey: cashUndoIdempotencyKey },
+                { parentId: originalLancamento.id, isEstorno: true },
+              ],
+            },
             select: { id: true },
           });
 
           if (!estornoExists) {
-            await tx.lancamento.create({
-              data: {
-                contaId,
-                tipo: originalLancamento.tipo as TipoLancamento,
-                origem: originalLancamento.origem as OrigemLancamento,
-                status: 'ESTORNADO' as StatusLancamento,
-                valor: originalLancamento.valor,
-                descricao: `Reversão de ${originalLancamento.descricao}`,
-                referencia: originalLancamento.referencia,
-                formaPagamento: originalLancamento.formaPagamento,
-                dataEfetiva: dataEstorno,
-                dataPrevista: null,
-                isEstorno: true,
-                parentId: originalLancamento.id,
-                dataEstorno,
-                externalRef: originalLancamento.externalRef,
-              },
+            await createLedgerEntryIdempotently(tx, {
+              contaId,
+              tipo: originalLancamento.tipo as TipoLancamento,
+              origem: originalLancamento.origem as OrigemLancamento,
+              status: 'ESTORNADO' as StatusLancamento,
+              valor: originalLancamento.valor,
+              descricao: `Reversão de ${originalLancamento.descricao}`,
+              referencia: originalLancamento.referencia,
+              formaPagamento: originalLancamento.formaPagamento,
+              dataEfetiva: dataEstorno,
+              dataPrevista: null,
+              isEstorno: true,
+              parentId: originalLancamento.id,
+              dataEstorno,
+              externalRef: originalLancamento.externalRef,
+              idempotencyKey: cashUndoIdempotencyKey,
             });
           }
         });
@@ -2729,6 +2975,36 @@ async function handlePaymentWebhookCore(
       chargeId: charge?.id ?? null,
       cobrancaId: cobranca.id,
     });
+
+    const stateSource = payload.source ?? 'WEBHOOK';
+    const stateSourceId = payload.eventId ?? `payment:${p.id}:${payload.event}`;
+    await recordPaymentStateTransition({
+      contaId,
+      entityType: 'COBRANCA',
+      entityId: cobranca.id,
+      source: stateSource,
+      sourceId: stateSourceId,
+      decision: stateDecision,
+      providerOccurredAt: payload.providerOccurredAt ?? null,
+      localVersion: (cobranca.version ?? 0) + (stateDecision.kind === 'APPLY' ? 1 : 0),
+      metadata: {
+        asaasPaymentId: p.id,
+        internalStatus,
+        liquidacaoStatus,
+      },
+    });
+    if (charge && chargeStateDecision) {
+      await recordPaymentStateTransition({
+        contaId,
+        entityType: 'CHARGE',
+        entityId: charge.id,
+        source: stateSource,
+        sourceId: stateSourceId,
+        decision: chargeStateDecision,
+        providerOccurredAt: payload.providerOccurredAt ?? null,
+        metadata: { asaasPaymentId: p.id },
+      });
+    }
 
     await publishFinanceEvent({
       contaId,

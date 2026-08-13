@@ -8,6 +8,7 @@ import {
 export const PENDING_INBOX_KIND_BILLING_WEBHOOK = 'BILLING_WEBHOOK';
 
 export type PendingBillingWebhookPayload = {
+  contaId: string;
   eventId?: string | null;
   eventName: BillingNotificationEventInput;
   asaasPaymentId: string;
@@ -15,20 +16,20 @@ export type PendingBillingWebhookPayload = {
   sourceType?: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
 };
 
-function buildPendingDedupeKey(asaasPaymentId: string, eventName: string): string {
-  return `pending:billing:${eventName}:${asaasPaymentId}`;
+function buildPendingDedupeKey(contaId: string, asaasPaymentId: string, eventName: string): string {
+  return `pending:billing:${contaId}:${eventName}:${asaasPaymentId}`;
 }
 
 export async function enqueuePendingBillingWebhookNotification(
   params: PendingBillingWebhookPayload,
 ): Promise<void> {
-  const dedupeKey = buildPendingDedupeKey(params.asaasPaymentId, params.eventName);
+  const dedupeKey = buildPendingDedupeKey(params.contaId, params.asaasPaymentId, params.eventName);
 
   try {
     await prisma.pendingInboxNotification.upsert({
       where: { dedupeKey },
       create: {
-        contaId: null,
+        contaId: params.contaId,
         kind: PENDING_INBOX_KIND_BILLING_WEBHOOK,
         payload: params,
         dedupeKey,
@@ -101,6 +102,7 @@ export async function processPendingInboxNotifications(params?: {
 
     try {
       const result = await createBillingWebhookNotification({
+        contaId: payload.contaId,
         eventId: payload.eventId ?? null,
         eventName: payload.eventName,
         asaasPaymentId: payload.asaasPaymentId,

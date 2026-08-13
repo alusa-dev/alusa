@@ -13,6 +13,7 @@ import { formatCurrencyInput } from '../shared/event-formatters';
 
 export type ParticipantBillingMethod = '' | 'MANUAL_RECEIVED' | 'BOLETO' | 'PIX' | 'CREDIT_CARD';
 export type ParticipantChargeType = 'ONE_TIME' | 'INSTALLMENT';
+export type ParticipantNotificationChannel = 'EMAIL' | 'SMS' | 'WHATSAPP';
 
 export function ParticipantBillingFields({
   billingMethod,
@@ -23,6 +24,8 @@ export function ParticipantBillingFields({
   onChargeTypeChange,
   onFeeTextChange,
   onDueDateChange,
+  notificationChannels,
+  onNotificationChannelsChange,
 }: {
   billingMethod: ParticipantBillingMethod;
   chargeType: ParticipantChargeType;
@@ -32,6 +35,8 @@ export function ParticipantBillingFields({
   onChargeTypeChange: (value: ParticipantChargeType) => void;
   onFeeTextChange: (value: string) => void;
   onDueDateChange: (value: Date | undefined) => void;
+  notificationChannels: ParticipantNotificationChannel[];
+  onNotificationChannelsChange: (value: ParticipantNotificationChannel[]) => void;
 }) {
   const cleanFeeText = feeText.replace(/[^\d,]/g, '').replace(',', '.');
   const totalFeeVal = parseFloat(cleanFeeText) || 0;
@@ -142,6 +147,38 @@ export function ParticipantBillingFields({
                 </Field>
               )}
             </>
+          )}
+
+          {billingMethod !== 'MANUAL_RECEIVED' && (
+            <Field label="Canais de notificação">
+              <div className="flex flex-wrap gap-2">
+                {(['WHATSAPP', 'EMAIL', 'SMS'] as const).map((channel) => {
+                  const active = notificationChannels.includes(channel);
+                  return (
+                    <button
+                      key={channel}
+                      type="button"
+                      onClick={() =>
+                        onNotificationChannelsChange(
+                          active
+                            ? notificationChannels.filter((item) => item !== channel)
+                            : [...notificationChannels, channel],
+                        )
+                      }
+                      className={cn(
+                        'rounded-full border px-3 py-1.5 text-sm font-medium transition',
+                        active
+                          ? 'border-brand-accent bg-brand-accent text-white'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                      )}
+                    >
+                      {channel === 'WHATSAPP' ? 'WhatsApp' : channel === 'EMAIL' ? 'E-mail' : 'SMS'}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-xs text-slate-500">A seleção feita aqui prevalece sobre os padrões da conta.</p>
+            </Field>
           )}
         </div>
       )}
