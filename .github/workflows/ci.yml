@@ -45,12 +45,12 @@ jobs:
       - name: Install deps
         run: pnpm install --frozen-lockfile
 
-      # Prisma — verificar e aplicar migrations, e gerar client
-      - name: Prisma migrate status
-        run: npx prisma migrate status --schema prisma/schema.prisma
-
+      # Prisma — aplicar migrations e confirmar estado final
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy --schema prisma/schema.prisma
+
+      - name: Prisma migrate status
+        run: npx prisma migrate status --schema prisma/schema.prisma
 
       - name: Prisma generate
         run: npx prisma generate --schema prisma/schema.prisma
