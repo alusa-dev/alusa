@@ -46,11 +46,18 @@ export const rematriculaFamiliarItemSchema = z.object({
 
 const paymentMethodSchema = z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']);
 
+const futureBillingStrategySchema = z.object({
+  mode: z.enum(['SEPARATE', 'UNIFY_EXISTING']),
+  agreementId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
+});
+
 const rematriculaFamiliarBaseSchema = z.object({
   contaId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
   campaignId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   targetPeriodId: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
   responsavelId: z.string().trim().min(1),
+  novoResponsavelId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
+  futureBillingStrategy: futureBillingStrategySchema.optional(),
   itens: z.array(rematriculaFamiliarItemSchema).min(1),
   dataInicio: z.string().trim().min(1),
   dataFimContrato: z.string().trim().min(1),
@@ -145,10 +152,17 @@ export function formatRematriculaFamiliarValidationMessage(issues: z.ZodIssue[])
 
 export function parseRematriculaFamiliarDate(value: string) {
   const normalized = value.trim();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
-    ? new Date(`${normalized}T12:00:00.000Z`)
-    : new Date(normalized);
+  const dateOnly = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateOnly ? new Date(`${normalized}T12:00:00.000Z`) : new Date(normalized);
   if (Number.isNaN(date.getTime())) throw new Error('Data inválida.');
+  if (
+    dateOnly &&
+    (date.getUTCFullYear() !== Number(dateOnly[1]) ||
+      date.getUTCMonth() + 1 !== Number(dateOnly[2]) ||
+      date.getUTCDate() !== Number(dateOnly[3]))
+  ) {
+    throw new Error('Data inválida.');
+  }
   return date;
 }
 

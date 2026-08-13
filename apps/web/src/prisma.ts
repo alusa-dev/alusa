@@ -20,7 +20,8 @@ function hasRequiredDelegates(client: PrismaClient | undefined): client is Prism
     typeof (client as PrismaClient & Record<string, { findMany?: unknown }>).makeupClass?.findMany ===
       'function' &&
     typeof (client as PrismaClient & Record<string, { findMany?: unknown }>).aulasOperationLog?.findMany ===
-      'function'
+      'function' &&
+    typeof (client as PrismaClient & Record<string, unknown>).contratoModeloCampo === 'object'
   );
 }
 

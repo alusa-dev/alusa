@@ -21,6 +21,7 @@ import type {
 import {
   createRematriculaRequest,
   editRematriculaFutureLinkRequest,
+  previewIndividualRematriculaRequest,
   type CreateRematriculaInput,
   type RematriculaProcessSummary,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
@@ -29,6 +30,7 @@ import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
+import { RematriculaDiscountSelector } from './RematriculaDiscountSelector';
 
 const HERDAR_FORMA_VALUE = 'HERDAR';
 
@@ -223,6 +225,9 @@ export function RematriculaDialog({
   // Desconto antecipado
   const [descontoAntecipado, setDescontoAntecipado] = useState('');
   const [prazoDesconto, setPrazoDesconto] = useState('');
+  const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
+  const [futureBillingStrategy, setFutureBillingStrategy] = useState<CreateRematriculaInput['futureBillingStrategy']>();
+  const [futureAgreementCandidates, setFutureAgreementCandidates] = useState<NonNullable<Awaited<ReturnType<typeof previewIndividualRematriculaRequest>>['futureAgreementCandidates']>>([]);
 
   // Buscar turmas e planos disponíveis
   const { items: turmasDisponiveis, loading: turmasLoading } = useTurmas({ contaId });
@@ -342,6 +347,11 @@ export function RematriculaDialog({
     );
     setDiasTolerancia(financeiro?.diasTolerancia != null ? String(financeiro.diasTolerancia) : '');
     setOverrideReason('');
+    setFutureBillingStrategy(undefined);
+    setFutureAgreementCandidates([]);
+    // Descontos da matrícula atual não são herdados automaticamente.
+    // O usuário precisa selecionar explicitamente um desconto ativo para o novo ciclo.
+    setSelectedDiscountIds([]);
   }, [item, mode, process]);
 
   useEffect(() => {
@@ -399,7 +409,6 @@ export function RematriculaDialog({
     (mode === 'CREATE' && !contratoModeloId) ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim());
 
-  const descontosHerdados = useMemo(() => item?.financeiro.descontos ?? [], [item]);
 
   const parseDecimal = (value: string) => {
     if (!value || !value.trim()) return undefined;
@@ -496,6 +505,7 @@ export function RematriculaDialog({
       turmaId: turmaId || undefined,
       contractModelId: contratoModeloId,
       billingMode: 'INDIVIDUAL',
+      futureBillingStrategy,
     };
 
     if (vencimentoDia && typeof vencimentoDia === 'number') {
@@ -546,9 +556,7 @@ export function RematriculaDialog({
       payload.diasTolerancia = Math.min(30, Math.max(0, toleranciaValor));
     }
 
-    if (descontosHerdados.length) {
-      payload.descontos = descontosHerdados.map((desconto) => ({ id: desconto.id }));
-    }
+    payload.descontos = selectedDiscountIds.map((id) => ({ id }));
 
     if (needsOverride && overrideReason.trim()) {
       payload.overrideReason = overrideReason.trim();
@@ -556,6 +564,16 @@ export function RematriculaDialog({
 
     try {
       setSubmitting(true);
+      const billingPreview = await previewIndividualRematriculaRequest(payload);
+      if (billingPreview.blockers.length > 0) {
+        throw new Error(billingPreview.blockers[0]?.message ?? 'O preview possui bloqueios.');
+      }
+      const selectableFutureAgreements = billingPreview.futureAgreementCandidates.filter((candidate) => candidate.canUnify);
+      if (selectableFutureAgreements.length > 0 && !futureBillingStrategy) {
+        setFutureAgreementCandidates(billingPreview.futureAgreementCandidates);
+        return;
+      }
+      setFutureAgreementCandidates(billingPreview.futureAgreementCandidates);
       await createRematriculaRequest(payload);
       toast.custom((t) => (
         <CustomToast
@@ -927,21 +945,11 @@ export function RematriculaDialog({
                     <p className="text-xs text-slate-500">Entre 1 e 28.</p>
                   </div>
                 </div>
-                {descontosHerdados.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-600">
-                    <span className="font-medium">
-                      {descontosHerdados.length} desconto(s) serão herdados:
-                    </span>
-                    {descontosHerdados.map((d) => (
-                      <span
-                        key={d.id}
-                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-slate-700"
-                      >
-                        {d.nome}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <RematriculaDiscountSelector
+                  contaId={contaId}
+                  selectedIds={selectedDiscountIds}
+                  onChange={setSelectedDiscountIds}
+                />
               </div>
 
               {/* Taxa de Matrícula */}
@@ -1093,6 +1101,45 @@ export function RematriculaDialog({
                 </div>
               </div>
             </div>
+
+            {futureAgreementCandidates.length > 0 && !futureBillingStrategy && mode === 'CREATE' ? (
+              <div className="mx-4 mb-6 space-y-3 rounded-xl border border-violet-200 bg-violet-50/60 p-4 md:mx-8">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Cobrança futura já encontrada</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Escolha se esta rematrícula será adicionada à cobrança existente ou se terá uma cobrança separada.
+                  </p>
+                </div>
+                {futureAgreementCandidates.map((candidate) => (
+                  <div key={candidate.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-slate-800">
+                          {candidate.studentNames.join(', ') || 'Outro vínculo'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          R$ {candidate.monthlyTotal.toFixed(2).replace('.', ',')} · {candidate.periodicity ?? 'periodicidade não informada'}
+                        </p>
+                      </div>
+                      <span className="text-xs font-medium text-slate-600">
+                        {candidate.canUnify ? 'Unificação disponível' : 'Exige conferência'}
+                      </span>
+                    </div>
+                    {candidate.reason ? <p className="mt-2 text-xs text-amber-700">{candidate.reason}</p> : null}
+                    {candidate.canUnify ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => setFutureBillingStrategy({ mode: 'UNIFY_EXISTING', agreementId: candidate.id })}>
+                          Unificar nesta cobrança
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setFutureBillingStrategy({ mode: 'SEPARATE', agreementId: null })}>
+                          Cobrar separadamente
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             {/* Footer */}
             <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">

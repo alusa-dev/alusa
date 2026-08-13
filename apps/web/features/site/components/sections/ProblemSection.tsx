@@ -13,11 +13,11 @@ export function ProblemSection() {
       <div className="relative z-10 lg:grid lg:grid-cols-[1.2fr_0.9fr] lg:items-stretch">
         <div className="flex justify-end lg:items-center">
           <div className="w-full max-w-[calc(1280px*0.6)] px-6 py-20 sm:px-8 lg:py-32 xl:pr-16">
-            <ScrollReveal className="max-w-3xl">
-              <h2 className="mb-5 font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight text-alusa-purple-deeper">
+            <ScrollReveal className="max-w-[42rem]">
+              <h2 className="mb-5 whitespace-pre-line font-display text-[clamp(1.75rem,3.4vw,2.5rem)] font-normal leading-[1.2] tracking-tight text-alusa-purple-deeper">
                 {problem.title}
               </h2>
-              <p className="max-w-2xl text-lg leading-relaxed text-alusa-purple-muted sm:text-xl sm:leading-8">
+              <p className="max-w-[38rem] text-lg leading-relaxed text-alusa-purple-muted sm:text-xl sm:leading-8">
                 A Alusa centraliza gestão acadêmica, financeira e operacional para eliminar retrabalho,
                 reduzir atrasos e dar mais controle à rotina da sua escola.
               </p>

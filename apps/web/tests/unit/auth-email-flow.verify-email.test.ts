@@ -64,7 +64,7 @@ describe('verifyEmailByToken', () => {
     vi.clearAllMocks();
     prismaTransactionMock.mockImplementation(
       async (
-        callback: (tx: {
+        callback: (_tx: {
           usuario: { update: typeof usuarioUpdateMock };
           conta: { findUnique: typeof contaFindUniqueMock; update: typeof contaUpdateMock };
         }) => Promise<unknown>,
@@ -145,11 +145,14 @@ describe('verifyEmailByToken', () => {
       emailVerifiedAt: new Date('2026-03-25T10:00:00.000Z'),
     };
 
-    consumeAuthActionTokenMock.mockResolvedValueOnce({
-      tokenId: 'token_4',
-      user,
+    consumeAuthActionTokenMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ tokenId: 'token_4', user });
+    contaFindUniqueMock.mockResolvedValueOnce({
+      status: 'INATIVO',
+      deletedAt: new Date(),
+      ownerUserId: 'user_4',
     });
-    contaFindUniqueMock.mockResolvedValueOnce({ status: 'INATIVO', deletedAt: new Date() });
 
     const { verifyEmailByToken } = await import('@/lib/auth-email-flow');
     const result = await verifyEmailByToken('reactivate-token');
@@ -164,6 +167,32 @@ describe('verifyEmailByToken', () => {
         deleteReason: null,
       },
     });
+  });
+
+  it('não reativa conta desativada com token comum de confirmação de e-mail', async () => {
+    const user = {
+      id: 'user_owner',
+      contaId: 'conta_inativa',
+      email: 'owner@example.com',
+      nome: 'Owner',
+      emailVerifiedAt: null,
+    };
+    consumeAuthActionTokenMock.mockResolvedValueOnce({ tokenId: 'token_verify', user });
+    contaFindUniqueMock.mockResolvedValueOnce({
+      status: 'INATIVO',
+      deletedAt: new Date(),
+      ownerUserId: 'user_owner',
+    });
+
+    const { verifyEmailByToken } = await import('@/lib/auth-email-flow');
+    await verifyEmailByToken('verify-token');
+
+    expect(contaUpdateMock).not.toHaveBeenCalled();
+    expect(invalidateAuthActionTokensMock).toHaveBeenCalledWith(
+      'user_owner',
+      'VERIFY_EMAIL',
+      expect.any(Object),
+    );
   });
 
   it('inclui o callbackUrl no link de confirmação quando o destino é o onboarding', async () => {
@@ -231,6 +260,7 @@ describe('verifyEmailByToken', () => {
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_5',
       contaId: 'conta_5',
+      conta: { ownerUserId: 'user_5' },
     });
     createAuthActionTokenMock.mockResolvedValueOnce({
       token: 'plain-token-2',
@@ -264,5 +294,22 @@ describe('verifyEmailByToken', () => {
         idempotencyKey: 'account_reactivation/token_5',
       }),
     );
+    expect(createAuthActionTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'ACCOUNT_REACTIVATION', userId: 'user_5' }),
+    );
+  });
+
+  it('não emite reativação para usuário que não é proprietário da conta', async () => {
+    usuarioFindFirstMock.mockResolvedValueOnce({
+      id: 'user_member',
+      contaId: 'conta_5',
+      conta: { ownerUserId: 'user_owner' },
+    });
+
+    const { sendAccountReactivationForEmail } = await import('@/lib/auth-email-flow');
+    await sendAccountReactivationForEmail('member@example.com');
+
+    expect(createAuthActionTokenMock).not.toHaveBeenCalled();
+    expect(sendTransactionalEmailMock).not.toHaveBeenCalled();
   });
 });

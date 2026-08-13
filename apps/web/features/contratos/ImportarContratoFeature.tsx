@@ -1,367 +1,94 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircle, DocumentText } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, CheckCircle, DocumentText } from '@/components/icons/icons';
-import { toast } from '@/components/ui/toast';
-import { uploadContratoArquivo, createContratoModelo } from './services/modelos-service';
-import { PDFViewer } from './components/PDFViewer';
-import { cn } from '@/lib/utils';
 import { InfoCallout } from '@/components/ui/info-callout';
+import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+import { PDFViewer } from './components/PDFViewer';
+import { PDFSignatureEditor, type SignatureField } from './components/PDFSignatureEditor';
+import { uploadContratoArquivo, createContratoModelo } from './services/modelos-service';
+
+type Step = 1 | 2 | 3;
 
 export function ImportarContratoFeature() {
   const router = useRouter();
+  const [step, setStep] = useState<Step>(1);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadResult, setUploadResult] = useState<{
-    url: string;
-    hashSha256: string;
-    size: number;
-  } | null>(null);
-
+  const [uploadResult, setUploadResult] = useState<{ url: string; hashSha256: string; size: number } | null>(null);
   const [nome, setNome] = useState('');
   const [descricao, setDescricao] = useState('');
+  const [fields, setFields] = useState<SignatureField[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
-    if (selectedFile.type !== 'application/pdf') {
-      toast.error('Apenas arquivos PDF são permitidos');
-      return;
-    }
-
-    if (selectedFile.size > 25 * 1024 * 1024) {
-      toast.error('Arquivo muito grande. Máximo 25MB');
-      return;
-    }
-
+  const selectFile = useCallback(async (selectedFile: File) => {
+    if (selectedFile.type !== 'application/pdf') return toast.error('Apenas arquivos PDF são permitidos.');
+    if (selectedFile.size > 25 * 1024 * 1024) return toast.error('Arquivo muito grande. Máximo 25MB.');
     setFile(selectedFile);
     setPreviewUrl(URL.createObjectURL(selectedFile));
     setUploadResult(null);
-
-    // Sugerir nome baseado no arquivo
-    const suggestedName = selectedFile.name.replace(/\.pdf$/i, '').replace(/_/g, ' ');
-    if (!nome) {
-      setNome(suggestedName);
-    }
-
-    // Upload automático
+    if (!nome) setNome(selectedFile.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' '));
     try {
       setUploading(true);
-      setUploadProgress(0);
-
       const result = await uploadContratoArquivo(selectedFile, setUploadProgress);
       setUploadResult(result);
-      toast.success('Arquivo enviado com sucesso');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erro ao enviar arquivo';
-      toast.error(message);
-      setFile(null);
-      setPreviewUrl(null);
-    } finally {
-      setUploading(false);
-    }
+      toast.success('Documento enviado. Continue para configurar as assinaturas.');
+    } catch (error) {
+      setFile(null); setPreviewUrl(null);
+      toast.error(error instanceof Error ? error.message : 'Erro ao enviar documento.');
+    } finally { setUploading(false); }
   }, [nome]);
 
-  const handleSave = useCallback(async () => {
-    if (!uploadResult) {
-      toast.error('Faça o upload do arquivo primeiro');
-      return;
-    }
+  const canContinueBasic = Boolean(uploadResult && nome.trim() && !uploading);
+  const hasRequiredFields = fields.some((field) => field.papel === 'ESCOLA' && field.obrigatorio) && fields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO' && field.obrigatorio);
+  const fieldSummary = useMemo(() => fields.map((field) => field.papel === 'ESCOLA' ? 'Escola · assinatura automática' : 'Responsável / aluno · definido na matrícula'), [fields]);
 
-    if (!nome.trim()) {
-      toast.error('Informe o nome do modelo');
-      return;
-    }
-
+  const finish = useCallback(async () => {
+    if (!uploadResult || !nome.trim() || !hasRequiredFields) return;
     try {
       setSaving(true);
-
-      await createContratoModelo({
-        nome: nome.trim(),
-        descricao: descricao.trim() || undefined,
-        arquivoPdfUrl: uploadResult.url,
-        hashSha256: uploadResult.hashSha256,
-        tamanhoBytes: uploadResult.size,
-      });
-
-      toast.success('Modelo de contrato criado com sucesso');
+      await createContratoModelo({ nome: nome.trim(), descricao: descricao.trim() || undefined, arquivoPdfUrl: uploadResult.url, hashSha256: uploadResult.hashSha256, tamanhoBytes: uploadResult.size, campos: fields });
+      toast.success('Modelo de contrato criado com sucesso.');
       router.push('/contratos/modelos');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erro ao salvar modelo';
-      toast.error(message);
-    } finally {
-      setSaving(false);
-    }
-  }, [uploadResult, nome, descricao, router]);
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao salvar modelo.'); }
+    finally { setSaving(false); }
+  }, [descricao, fields, hasRequiredFields, nome, router, uploadResult]);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const droppedFile = e.dataTransfer.files[0];
-      if (droppedFile) {
-        const syntheticEvent = {
-          target: { files: [droppedFile] },
-        } as unknown as React.ChangeEvent<HTMLInputElement>;
-        handleFileSelect(syntheticEvent);
-      }
-    },
-    [handleFileSelect]
-  );
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => { event.preventDefault(); const dropped = event.dataTransfer.files[0]; if (dropped) void selectFile(dropped); }, [selectFile]);
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-  }, []);
-
-  return (
-    <div className="min-h-screen pb-20">
-      {/* Header com estilo padrão */}
-      <div className="sticky top-0 z-10 bg-white">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={() => router.back()}
-                className="-ml-2 text-gray-500 hover:text-gray-900"
-              >
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-              <div className="flex flex-col">
-                <h1 className="text-lg font-semibold text-gray-900 leading-tight">
-                  Importar Novo Modelo
-                </h1>
-                <p className="text-sm text-gray-500">
-                  Adicione um novo modelo de contrato ao sistema
-                </p>
-              </div>
+  return <div className="min-h-screen pb-20">
+    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mb-7">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-950">Importar contrato</h1>
+        <p className="mt-1 text-sm text-slate-500">Adicione um novo modelo de contrato e configure os campos de assinatura.</p>
+      </div>
+      {step === 1 && <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-6">
+          <Card><CardHeader><CardTitle>Documento do contrato</CardTitle><CardDescription>Envie o PDF que será usado como modelo.</CardDescription></CardHeader><CardContent>
+            <div onDrop={handleDrop} onDragOver={(event) => event.preventDefault()} className={cn('rounded-xl border-2 border-dashed p-10 text-center transition-colors', uploading ? 'border-brand-accent bg-brand-accent/5' : uploadResult ? 'border-emerald-300 bg-emerald-50' : 'border-slate-300 hover:border-brand-accent')}>
+              {uploading ? <div className="space-y-3"><div className="mx-auto h-9 w-9 animate-spin rounded-full border-2 border-brand-accent border-t-transparent" /><p className="text-sm font-medium">Enviando documento... {uploadProgress}%</p></div> : uploadResult ? <div className="space-y-3"><CheckCircle className="mx-auto h-10 w-10 text-emerald-600" /><p className="truncate text-sm font-semibold">{file?.name}</p><p className="text-xs text-slate-500">{((file?.size ?? 0) / 1024 / 1024).toFixed(2)} MB · PDF</p><Button type="button" variant="outline" size="sm" onClick={() => document.getElementById('contract-file-input')?.click()}>Substituir arquivo</Button></div> : <label htmlFor="contract-file-input" className="cursor-pointer"><DocumentText className="mx-auto mb-3 h-12 w-12 text-slate-400" /><p className="text-sm font-medium text-slate-700">Arraste um arquivo PDF aqui</p><p className="my-2 text-xs text-slate-400">ou selecione do seu computador</p><Button type="button" variant="outline" asChild><span>Selecionar arquivo</span></Button></label>}
+              <input id="contract-file-input" type="file" accept=".pdf,application/pdf" className="hidden" onChange={(event) => { const selected = event.target.files?.[0]; if (selected) void selectFile(selected); }} />
             </div>
-          </div>
+          </CardContent></Card>
+          <Card><CardHeader><CardTitle>Informações do modelo</CardTitle><CardDescription>Esses dados identificam o modelo na Alusa.</CardDescription></CardHeader><CardContent className="space-y-5"><div className="space-y-2"><Label htmlFor="modelo-nome">Nome do modelo <span className="text-red-500">*</span></Label><Input id="modelo-nome" value={nome} onChange={(event) => setNome(event.target.value)} maxLength={200} placeholder="Ex.: Contrato de matrícula 2026" /></div><div className="space-y-2"><Label htmlFor="modelo-descricao">Descrição <span className="text-xs font-normal text-slate-400">(opcional)</span></Label><Textarea id="modelo-descricao" value={descricao} onChange={(event) => setDescricao(event.target.value)} maxLength={500} rows={4} placeholder="Informe quando este modelo deve ser utilizado." /></div></CardContent></Card>
         </div>
-      </div>
+        <div className="space-y-4 lg:sticky lg:top-24">{previewUrl ? <PDFViewer url={previewUrl} showControls={false} showDownload={false} maxHeight="560px" /> : <div className="flex min-h-[400px] items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-400"><DocumentText className="mr-2 h-5 w-5" />A prévia aparecerá aqui</div>}<InfoCallout title="Sobre o modelo" size="sm" showIcon={false}>O modelo será reutilizado nas matrículas. Os campos de assinatura serão configurados na próxima etapa.</InfoCallout></div>
+      </div>}
 
-      {/* Content */}
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          {/* Upload Section */}
-          <div className="space-y-6">
-            <Card className="overflow-hidden border-gray-200 shadow-sm">
-              <CardHeader className="bg-gray-50/50 border-b border-gray-100 pb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                    <DocumentText className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base font-medium">Arquivo do Contrato</CardTitle>
-                    <CardDescription className="text-xs">
-                      Selecione o arquivo PDF base para este modelo
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="p-6">
-                <div
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
-                  className={cn(
-                    'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
-                    uploading ? 'border-brand-accent bg-purple-50' :
-                    uploadResult ? 'border-green-300 bg-green-50' : 
-                    file ? 'border-blue-300 bg-blue-50' : 
-                    'border-gray-300 hover:border-gray-400'
-                  )}
-                >
-                  {uploading ? (
-                    <div className="space-y-4 py-4">
-                      <div className="relative">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-accent mx-auto" />
-                      </div>
-                      <div className="space-y-2">
-                        <p className="font-medium text-gray-900 text-sm">Enviando arquivo...</p>
-                        <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                          <div 
-                            className="bg-brand-accent h-full rounded-full transition-all duration-300 ease-out" 
-                            style={{ width: `${uploadProgress}%` }}
-                          />
-                        </div>
-                        <p className="text-xs text-gray-500 tabular-nums">{uploadProgress}% concluído</p>
-                      </div>
-                    </div>
-                  ) : uploadResult ? (
-                    <div className="space-y-4 py-2">
-                      <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-2">
-                        <CheckCircle className="h-8 w-8 text-green-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900 truncate px-4" title={file?.name}>{file?.name}</p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          {file ? (file.size / 1024 / 1024).toFixed(2) : 0} MB • PDF
-                        </p>
-                      </div>
-                      <div className="flex justify-center pt-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-xs h-8"
-                          onClick={() => {
-                            setFile(null);
-                            setPreviewUrl(null);
-                            setUploadResult(null);
-                            setNome('');
-                          }}
-                        >
-                          Substituir arquivo
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <label className="cursor-pointer">
-                      <DocumentText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                      <p className="text-gray-600 mb-2">
-                        Arraste um arquivo PDF aqui
-                      </p>
-                      <p className="text-sm text-gray-400 mb-4">ou</p>
-                      <Button variant="outline" asChild>
-                        <span>Selecionar arquivo</span>
-                      </Button>
-                      <input
-                        type="file"
-                        accept=".pdf,application/pdf"
-                        onChange={handleFileSelect}
-                        className="hidden"
-                      />
-                    </label>
-                  )}
-                </div>
+      {step === 2 && uploadResult && <div><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Definir campos de assinatura</h2><p className="text-sm text-slate-500">Posicione os campos no PDF. Nenhuma pessoa real é vinculada nesta etapa.</p></div><PDFSignatureEditor url={uploadResult.url} fields={fields} onFieldsChange={setFields} /></div>}
 
-                {uploadResult && (
-                  <div className="mt-4 p-4 bg-green-50 rounded-lg">
-                    <div className="flex items-center gap-2 text-green-700">
-                      <CheckCircle className="h-5 w-5" />
-                      <span className="font-medium">Arquivo pronto para salvar</span>
-                    </div>
-                    <p className="text-xs text-green-600 mt-1 font-mono truncate">
-                      Hash: {uploadResult.hashSha256}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+      {step === 3 && uploadResult && <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_400px]"><Card><CardHeader><CardTitle>Confirme o modelo</CardTitle><CardDescription>Revise as configurações antes de concluir.</CardDescription></CardHeader><CardContent className="space-y-5"><div><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Nome</p><p className="mt-1 font-semibold text-slate-900">{nome}</p></div><div><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Descrição</p><p className="mt-1 text-sm text-slate-600">{descricao || 'Sem descrição'}</p></div><div><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Campos configurados</p><div className="mt-2 space-y-2">{fieldSummary.map((summary, index) => <div key={`${summary}-${index}`} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><CheckCircle className="h-4 w-4 text-emerald-600" />{summary}</div>)}</div></div><InfoCallout title="Regra da assinatura" size="sm" showIcon={false}>Na matrícula, a Alusa definirá automaticamente se o campo será preenchido pelo responsável financeiro ou pelo aluno maior de idade.</InfoCallout></CardContent></Card><div className="lg:sticky lg:top-24"><PDFViewer url={uploadResult.url} showControls={false} showDownload={false} maxHeight="620px" /></div></div>}
 
-            <Card className="border-gray-200 shadow-sm">
-              <CardHeader className="bg-gray-50/50 border-b border-gray-100 pb-4">
-                 <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gray-100 text-gray-600 rounded-lg">
-                    <DocumentText className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base font-medium">Informações do Modelo</CardTitle>
-                    <CardDescription className="text-xs">
-                      Defina como este contrato será identificado no sistema
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-5 p-6">
-                <div className="space-y-2">
-                  <Label htmlFor="nome md:text-sm">Nome do Modelo <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="nome"
-                    value={nome}
-                    onChange={(e) => setNome(e.target.value)}
-                    placeholder="Ex: Contrato de Prestação de Serviços 2024"
-                    maxLength={200}
-                    disabled={saving}
-                    className="h-10"
-                  />
-                  <p className="text-xs text-gray-500">
-                    Este nome será exibido na lista de modelos e na gestão de matrículas.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="descricao">Descrição (opcional)</Label>
-                  <Textarea
-                    id="descricao"
-                    value={descricao}
-                    onChange={(e) => setDescricao(e.target.value)}
-                    placeholder="Detalhes sobre a finalidade deste contrato, público alvo, etc."
-                    rows={4}
-                    maxLength={500}
-                    disabled={saving}
-                    className="resize-none"
-                  />
-                </div>
-
-                <div className="pt-4 border-t border-gray-100 flex justify-end">
-                   <Button
-                    onClick={handleSave}
-                    disabled={!uploadResult || !nome.trim() || saving}
-                    className="w-full sm:w-auto min-w-[140px]"
-                  >
-                    {saving ? (
-                      <>
-                        <span className="animate-spin mr-2 h-4 w-4 border-b-2 border-white rounded-full inline-block" />
-                        Salvando...
-                      </>
-                    ) : (
-                      'Criar Modelo'
-                    )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Informações técnicas discretas */}
-            {uploadResult && (
-               <div className="px-1 text-center">
-                <p className="text-[10px] text-gray-300 font-mono inline-flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3" />
-                  Integridade verificada (SHA-256)
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Preview Section */}
-          <div className="hidden lg:block relative">
-             {/* Sticky só funciona se o pai tiver altura, mas aqui estamos em grid */}
-             <div className="sticky top-24 space-y-4">
-              {previewUrl ? (
-                <PDFViewer
-                  url={previewUrl}
-                  showDownload={false}
-                  className="w-full"
-                  maxHeight="600px"
-                />
-              ) : (
-                <div className="min-h-[400px] rounded-lg border bg-gray-50 flex items-center justify-center">
-                  <div className="text-center p-8">
-                     <DocumentText className="h-16 w-16 text-gray-300 mx-auto mb-3" />
-                     <p className="text-gray-400 text-sm">Nenhum arquivo selecionado</p>
-                  </div>
-                </div>
-              )}
-              
-              <InfoCallout title="Dica Importante" size="sm" showIcon={false}>
-                Certifique-se de que o PDF contém todos os campos necessários preenchidos ou placeholders
-                claros. O sistema não preenche campos automaticamente dentro do PDF.
-              </InfoCallout>
-             </div>
-          </div>
-
-        </div>
-      </div>
+      <div className="mt-8 flex items-center justify-between border-t border-slate-200 pt-5"><Button type="button" variant="outline" onClick={() => step === 1 ? router.back() : setStep((step - 1) as Step)}>{step === 1 ? 'Cancelar' : 'Voltar'}</Button>{step < 3 ? <Button type="button" disabled={step === 1 ? !canContinueBasic : !hasRequiredFields} onClick={() => setStep((step + 1) as Step)}>{step === 1 ? 'Continuar para campos' : 'Revisar modelo'}</Button> : <Button type="button" disabled={saving || !hasRequiredFields} onClick={() => void finish()}>{saving ? 'Salvando...' : 'Concluir modelo'}</Button>}</div>
     </div>
-  );
+  </div>;
 }

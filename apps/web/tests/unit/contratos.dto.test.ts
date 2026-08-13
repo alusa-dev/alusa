@@ -67,4 +67,34 @@ describe('contratos DTO mappers', () => {
     expect(dto._count?.contratos).toBe(3);
     expect(dto.arquivoOriginalUrl).toBe('/uploads/original.pdf');
   });
+
+  it('mapeia campos de assinatura posicionados no modelo', () => {
+    const dto = mapContratoModeloRecordToDTO({
+      id: 'mod_2',
+      contaId: 'conta_1',
+      nome: 'Modelo com campos',
+      arquivoPdfUrl: '/uploads/modelo.pdf',
+      hashSha256: 'b'.repeat(64),
+      mimeType: 'application/pdf',
+      versao: 1,
+      status: 'ATIVO',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      campos: [{
+        id: 'campo_1',
+        tipo: 'ASSINATURA',
+        papel: 'RESPONSAVEL_OU_ALUNO',
+        pagina: 2,
+        x: 0.4,
+        y: 0.8,
+        largura: 0.3,
+        altura: 0.08,
+        obrigatorio: true,
+        ordem: 1,
+      }],
+    });
+
+    expect(dto.campos).toHaveLength(1);
+    expect(dto.campos[0]).toMatchObject({ papel: 'RESPONSAVEL_OU_ALUNO', pagina: 2, x: 0.4 });
+  });
 });

@@ -83,7 +83,10 @@ async function loadAgreement(
 }
 
 function resolvePayer(agreement: Awaited<ReturnType<typeof loadAgreement>>) {
-  const renewedItems = agreement?.processo.itens.filter((item) => item.decision === 'RENEW') ?? [];
+  const renewedItems = agreement?.processo.itens.filter(
+    (item) => item.decision === 'RENEW'
+      && (!agreement.matriculaFuturaId || item.matriculaFuturaId === agreement.matriculaFuturaId),
+  ) ?? [];
   const firstFuture = renewedItems.find((item) => item.matriculaFutura)?.matriculaFutura ?? null;
   if (!agreement || !firstFuture) return null;
 

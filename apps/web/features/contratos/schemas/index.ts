@@ -24,6 +24,20 @@ export const createContratoModeloSchema = z.object({
   mimeType: z.string().default('application/pdf'),
   hashSha256: z.string().min(64).max(64, 'Hash SHA-256 deve ter 64 caracteres'),
   tamanhoBytes: z.number().int().positive().optional(),
+  campos: z.array(z.object({
+    tipo: z.enum(['ASSINATURA', 'RUBRICA']),
+    papel: z.enum(['ESCOLA', 'RESPONSAVEL_OU_ALUNO']),
+    pagina: z.number().int().positive(),
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    largura: z.number().positive().max(1),
+    altura: z.number().positive().max(1),
+    obrigatorio: z.boolean().default(true),
+    ordem: z.number().int().nonnegative().default(0),
+  })).min(2, 'Configure os campos de assinatura da escola e do responsável/aluno').refine(
+    (fields) => fields.some((field) => field.papel === 'ESCOLA') && fields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO'),
+    'Configure ao menos um campo da escola e um campo do responsável/aluno',
+  ),
 });
 export type CreateContratoModeloInput = z.infer<typeof createContratoModeloSchema>;
 
@@ -32,6 +46,20 @@ export const updateContratoModeloSchema = z
     nome: z.string().min(1).max(200).optional(),
     descricao: z.string().max(500).optional().nullable(),
     status: contratoModeloStatusSchema.optional(),
+    campos: z.array(z.object({
+      tipo: z.enum(['ASSINATURA', 'RUBRICA']),
+      papel: z.enum(['ESCOLA', 'RESPONSAVEL_OU_ALUNO']),
+      pagina: z.number().int().positive(),
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      largura: z.number().positive().max(1),
+      altura: z.number().positive().max(1),
+      obrigatorio: z.boolean().default(true),
+      ordem: z.number().int().nonnegative().default(0),
+    })).min(2, 'Configure os campos de assinatura da escola e do responsável/aluno').refine(
+      (fields) => fields.some((field) => field.papel === 'ESCOLA') && fields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO'),
+      'Configure ao menos um campo da escola e um campo do responsável/aluno',
+    ).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: 'Nenhum campo para atualizar',
@@ -70,6 +98,11 @@ export const publicAssinarContratoSchema = z.object({
     errorMap: () => ({ message: 'Aceite explícito é obrigatório.' }),
   }),
   userAgent: z.string().trim().max(512, 'User agent inválido').optional(),
+  assinatura: z.object({
+    tipo: z.enum(['TEXTO', 'DESENHADA']),
+    valor: z.string().trim().min(1).max(200_000),
+    fonte: z.string().trim().max(80).optional(),
+  }),
 });
 export type PublicAssinarContratoInput = z.infer<typeof publicAssinarContratoSchema>;
 

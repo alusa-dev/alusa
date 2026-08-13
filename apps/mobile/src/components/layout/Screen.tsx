@@ -6,9 +6,10 @@ import { colors, spacing } from '@/theme/tokens';
 type ScreenProps = ViewProps & {
   scroll?: boolean;
   keyboard?: boolean;
+  backgroundColor?: string;
 };
 
-export function Screen({ children, style, scroll = false, keyboard = false, ...props }: ScreenProps) {
+export function Screen({ children, style, scroll = false, keyboard = false, backgroundColor = colors.surfaceSoft, ...props }: ScreenProps) {
   const content = scroll ? (
     <ScrollView contentContainerStyle={[styles.scrollContent, style]} keyboardShouldPersistTaps="handled" {...props}>
       {children}
@@ -28,7 +29,7 @@ export function Screen({ children, style, scroll = false, keyboard = false, ...p
   );
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor }]} edges={['top', 'left', 'right']}>
       {wrapped}
     </SafeAreaView>
   );

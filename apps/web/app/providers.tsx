@@ -9,6 +9,11 @@ import { KycEnforcementProvider } from '@/features/kyc/KycEnforcementProvider';
 import { QueryProvider } from '@/components/providers/query-provider';
 
 export function AppProviders({ children }: { children: ReactNode }) {
+  useEffect(() => {
+    document.documentElement.classList.add('theme-ready');
+    document.body.classList.add('theme-ready');
+  }, []);
+
   // Listeners globais para eventos de toast disparados por componentes isolados (ex.: Wizard)
   useEffect(() => {
     function onSuccess(e: Event) {

@@ -2,6 +2,10 @@ import { type Usuario } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import prisma from '@/lib/prisma';
 
+const DUMMY_PASSWORD_HASH =
+  process.env.AUTH_DUMMY_PASSWORD_HASH ??
+  '$2a$10$Se0.WsOCmOQjfLr0.wqvoe7Q2zlq0fSkzIF5ygArAqBpQRKDcgrRi';
+
 export type AuthFailureReason =
   | 'INVALID_INPUT'
   | 'USER_NOT_FOUND'
@@ -18,6 +22,7 @@ export type AuthUser = {
   role: string;
   contaId?: string;
   emailVerifiedAt: Date | null;
+  sessionVersion: number;
 };
 
 export type VerifyCredentialsDetailedResult =
@@ -25,8 +30,8 @@ export type VerifyCredentialsDetailedResult =
   | { ok: false; reason: AuthFailureReason };
 
 export type SessionAccessResult =
-  | { ok: true; emailVerified: boolean; contaId: string; role: string }
-  | { ok: false; reason: 'USER_INACTIVE' | 'ACCOUNT_DEACTIVATED' | 'ACCOUNT_UNAVAILABLE' };
+  | { ok: true; emailVerified: boolean; contaId: string; role: string; sessionVersion: number }
+  | { ok: false; reason: 'USER_INACTIVE' | 'ACCOUNT_DEACTIVATED' | 'ACCOUNT_UNAVAILABLE' | 'SESSION_REVOKED' };
 
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
@@ -127,6 +132,7 @@ async function resolveUserContaAccess(input: {
 export async function resolveSessionAccess(input: {
   userId?: string | null;
   contaId?: string | null;
+  sessionVersion?: number | null;
 }): Promise<SessionAccessResult> {
   const userId = input.userId?.trim();
 
@@ -136,7 +142,7 @@ export async function resolveSessionAccess(input: {
 
   const user = await prisma.usuario.findUnique({
     where: { id: userId },
-    select: { id: true, status: true, contaId: true, role: true, emailVerifiedAt: true },
+    select: { id: true, status: true, contaId: true, role: true, emailVerifiedAt: true, sessionVersion: true },
   });
 
   if (!user) {
@@ -145,6 +151,12 @@ export async function resolveSessionAccess(input: {
 
   if (user.status && String(user.status).toUpperCase() !== 'ATIVO') {
     return { ok: false, reason: 'USER_INACTIVE' };
+  }
+
+  // JWTs sem versão são anteriores ao mecanismo de revogação e devem ser
+  // reautenticados; aceitar o valor ausente manteria tokens antigos válidos.
+  if (input.sessionVersion !== user.sessionVersion) {
+    return { ok: false, reason: 'SESSION_REVOKED' };
   }
 
   const access = await resolveUserContaAccess({
@@ -162,6 +174,7 @@ export async function resolveSessionAccess(input: {
     emailVerified: Boolean(user.emailVerifiedAt),
     contaId: access.contaId,
     role: access.role,
+    sessionVersion: user.sessionVersion,
   };
 }
 
@@ -177,19 +190,16 @@ export async function verifyCredentialsDetailed(
   }
 
   try {
-    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'role' | 'senhaHash' | 'status' | 'contaId' | 'emailVerifiedAt'>;
+    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'role' | 'senhaHash' | 'status' | 'contaId' | 'emailVerifiedAt' | 'sessionVersion'>;
     const user: SelectedUser | null = await prisma.usuario.findFirst({
       where: { email: { equals: inputEmail, mode: 'insensitive' } },
-      select: { id: true, email: true, nome: true, role: true, senhaHash: true, status: true, contaId: true, emailVerifiedAt: true }
+      select: { id: true, email: true, nome: true, role: true, senhaHash: true, status: true, contaId: true, emailVerifiedAt: true, sessionVersion: true }
     });
     if (!user) {
+      // Equaliza o custo do caminho "usuário inexistente" para reduzir enumeração por timing.
+      await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] user not found', { email: inputEmail });
       return { ok: false, reason: 'USER_NOT_FOUND' };
-    }
-
-    if (user.status && String(user.status).toUpperCase() !== 'ATIVO') {
-      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] user inactive', { email: inputEmail, status: (user as unknown as { status?: string }).status });
-      return { ok: false, reason: 'USER_INACTIVE' };
     }
 
     const pepper = process.env.BCRYPT_PEPPER || '';
@@ -197,6 +207,11 @@ export async function verifyCredentialsDetailed(
     if (!ok && process.env.NODE_ENV !== 'production') {
       ok = await bcrypt.compare(password, user.senhaHash);
       if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] pepper mismatch? tried without pepper', { email: inputEmail, ok });
+    }
+
+    if (user.status && String(user.status).toUpperCase() !== 'ATIVO') {
+      if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] user inactive', { email: inputEmail, status: (user as unknown as { status?: string }).status });
+      return { ok: false, reason: 'USER_INACTIVE' };
     }
     if (!ok) {
       if (process.env.AUTH_DEBUG === 'true') console.debug('[auth] invalid password', { email: inputEmail });
@@ -229,6 +244,7 @@ export async function verifyCredentialsDetailed(
         role: access.role,
         contaId: access.contaId,
         emailVerifiedAt: user.emailVerifiedAt,
+        sessionVersion: user.sessionVersion,
       },
     };
   } catch {

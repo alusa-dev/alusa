@@ -1,12 +1,11 @@
 import NextAuth from 'next-auth';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
+import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
+import { clearAuthCookies } from '@/lib/auth-cookies';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-const RATE_LIMIT_EXEMPT_GET_ACTIONS = new Set(['session', 'csrf', 'providers']);
 
 function getNextAuthAction(req: NextRequest): string | null {
   const prefix = '/api/auth/';
@@ -27,25 +26,29 @@ async function withRateLimit(
 ): Promise<Response> {
   try {
     const action = getNextAuthAction(req);
-    const shouldRateLimit =
-      req.method !== 'GET' || !action || !RATE_LIMIT_EXEMPT_GET_ACTIONS.has(action);
-
-    // 60 reqs / 15min por IP para endpoints de auth
-    if (shouldRateLimit) {
+    // Apenas a confirmação de credenciais é sujeita a limite. Logout, CSRF e
+    // leitura de sessão nunca podem ser bloqueados, pois precisam recuperar o usuário.
+    if (action === 'callback' && req.nextUrl.pathname.endsWith('/credentials')) {
       const ip = ipFromRequest(req as unknown as Request);
-      const rl = rateLimit(`nextauth:${ip}`, 60, 15 * 60 * 1000);
+      const form = await req.clone().formData().catch(() => null);
+      const email = form?.get('email');
+      const callbackIpLimit = await authRateLimitAsync(`nextauth-credentials:ip:${ip}`, 10, 15 * 60 * 1000);
+      const emailLimit = typeof email === 'string'
+        ? await authRateLimitAsync(`nextauth-credentials:email:${await rateLimitSubject(email)}`, 5, 15 * 60 * 1000)
+        : callbackIpLimit;
 
-      if (!rl.ok) {
+      if (!callbackIpLimit.ok || !emailLimit.ok) {
         return NextResponse.json(
           { error: 'Muitas tentativas. Tente novamente mais tarde.' },
-          { status: 429 },
+          { status: 429, headers: { 'Retry-After': '900', 'Cache-Control': 'no-store' } },
         );
       }
     }
 
     // Chama o handler original do NextAuth
     const handler = await resolveHandler();
-    return await handler(req, ctx);
+    const response = await handler(req, ctx);
+    return action === 'signout' ? clearAuthCookies(response, req.headers.get('cookie')) : response;
   } catch (err) {
     // Evita "Unexpected end of JSON input" no cliente
     console.error('[nextauth][route-error]', err);

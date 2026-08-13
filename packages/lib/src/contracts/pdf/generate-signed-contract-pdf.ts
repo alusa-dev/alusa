@@ -21,7 +21,48 @@ type SignedContractPdfInput = {
   presentedPdfHash: string;
   signatureHash: string;
   originalPdfBytes: Uint8Array | Buffer;
+  assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
+  camposAssinatura: Array<{
+    tipo: 'ASSINATURA' | 'RUBRICA';
+    papel: 'ESCOLA' | 'RESPONSAVEL_OU_ALUNO';
+    pagina: number;
+    x: number;
+    y: number;
+    largura: number;
+    altura: number;
+  }>;
 };
+
+function decodeSignatureImage(value: string) {
+  const match = value.match(/^data:image\/(png|jpeg|jpg);base64,(.+)$/i);
+  if (!match) return null;
+  return { type: match[1].toLowerCase() === 'png' ? 'png' as const : 'jpg' as const, bytes: Buffer.from(match[2], 'base64') };
+}
+
+export function calculateSignaturePlacement(input: {
+  pageWidth: number;
+  pageHeight: number;
+  field: Pick<SignedContractPdfInput['camposAssinatura'][number], 'x' | 'y' | 'largura' | 'altura'>;
+  imageWidth: number;
+  imageHeight: number;
+}) {
+  const x = input.field.x * input.pageWidth;
+  const width = input.field.largura * input.pageWidth;
+  const baselineY = input.pageHeight - ((input.field.y + input.field.altura) * input.pageHeight);
+  // The image is the complete transparent drawing canvas, not a crop around
+  // the ink. Mapping its full width to the configured line preserves every
+  // horizontal margin and makes the signed PDF match the signing preview.
+  const scale = width / input.imageWidth;
+  const height = input.imageHeight * scale;
+
+  return {
+    x,
+    y: baselineY - height / 2,
+    width,
+    height,
+    baselineY,
+  };
+}
 
 function splitText(value: string, maxLength: number) {
   const words = value.split(/\s+/).filter(Boolean);
@@ -83,6 +124,67 @@ export async function generateSignedContractEvidencePdf(input: SignedContractPdf
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const mono = await pdf.embedFont(StandardFonts.Courier);
+  const signatureFontName = input.assinatura.fonte?.toLowerCase() ?? '';
+  const signatureFont = await pdf.embedFont(
+    signatureFontName.includes('courier') || signatureFontName.includes('mono')
+      ? StandardFonts.CourierOblique
+      : signatureFontName.includes('arial') || signatureFontName.includes('sans')
+        ? StandardFonts.HelveticaOblique
+        : StandardFonts.TimesRomanItalic,
+  );
+
+  const signerFields = input.camposAssinatura;
+  const signatureImage = input.assinatura.tipo === 'DESENHADA'
+    ? decodeSignatureImage(input.assinatura.valor)
+    : null;
+  const embeddedSignature = signatureImage
+    ? signatureImage.type === 'png'
+      ? await pdf.embedPng(signatureImage.bytes)
+      : await pdf.embedJpg(signatureImage.bytes)
+    : null;
+
+  for (const campo of signerFields) {
+    const targetPage = pdf.getPages()[campo.pagina - 1];
+    if (!targetPage) continue;
+    const pageSize = targetPage.getSize();
+    const x = campo.x * pageSize.width;
+    const width = campo.largura * pageSize.width;
+    // A signature field is a baseline anchor. Its height is only the clickable
+    // area; it must never constrain the natural height of the signature.
+    const baselineY = pageSize.height - ((campo.y + campo.altura) * pageSize.height);
+
+    const isSchoolField = campo.papel === 'ESCOLA';
+    if (embeddedSignature && !isSchoolField) {
+      const imageSize = embeddedSignature.scale(1);
+      const placement = calculateSignaturePlacement({
+        pageWidth: pageSize.width,
+        pageHeight: pageSize.height,
+        field: campo,
+        imageWidth: imageSize.width,
+        imageHeight: imageSize.height,
+      });
+      targetPage.drawImage(embeddedSignature, {
+        x: placement.x,
+        y: placement.y,
+        width: placement.width,
+        height: placement.height,
+      });
+    } else {
+      const text = isSchoolField ? input.contaNome : input.assinatura.valor;
+      const fontSize = Math.max(10, Math.min(18, width / Math.max(text.length * 0.5, 1)));
+      targetPage.drawText(text, {
+        x,
+        // In pdf-lib, `y` is the text baseline. Using the configured field
+        // line directly keeps the automatic school signature resting on the
+        // line instead of crossing through it.
+        y: baselineY + 1,
+        size: fontSize,
+        font: signatureFont,
+        color: rgb(0.08, 0.1, 0.18),
+        maxWidth: Math.max(10, width),
+      });
+    }
+  }
 
   const page = pdf.addPage([595.28, 841.89]);
   const { width, height } = page.getSize();

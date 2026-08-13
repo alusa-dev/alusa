@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { UserAvatar } from '@/components/layout/UserAvatar';
 import Link from 'next/link';
-import { signOut } from 'next-auth/react';
+import { logoutCurrentSession } from '@/lib/client/logout';
 // Heroicons
 import {
   ChevronDownIcon,
@@ -75,7 +75,9 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
         icon={<ArrowRightStartOnRectangleIcon className="h-5 w-5" />}
         onClick={() => {
           onClose();
-          void signOut({ callbackUrl: '/' });
+          void logoutCurrentSession('/').catch(() => {
+            window.alert('Não foi possível encerrar a sessão com segurança. Tente novamente.');
+          });
         }}
       >
         Encerrar sessão

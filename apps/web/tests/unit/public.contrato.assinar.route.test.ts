@@ -43,6 +43,7 @@ describe('POST /api/public/contrato/[token]/assinar', () => {
         nome: 'Responsável',
         cpf: '52998224725',
         email: 'resp@example.com',
+        assinatura: { tipo: 'TEXTO', valor: 'Responsável' },
       }),
       { params: Promise.resolve({ token: 'token-resolvido' }) },
     );
@@ -58,6 +59,7 @@ describe('POST /api/public/contrato/[token]/assinar', () => {
         cpf: '52998224725',
         email: 'resp@example.com',
         aceite: true,
+        assinatura: { tipo: 'TEXTO', valor: 'Responsável' },
       }),
       { params: Promise.resolve({ token: 'token-resolvido' }) },
     );

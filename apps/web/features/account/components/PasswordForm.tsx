@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { signOut } from 'next-auth/react';
+import { logoutCurrentSession } from '@/lib/client/logout';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -60,7 +60,7 @@ export function PasswordForm() {
             onClose={() => toast.dismiss(t)}
           />
         ));
-        await signOut({ callbackUrl: '/auth/login?password=changed' });
+        await logoutCurrentSession('/auth/login?password=changed');
       } catch (error) {
         if (error instanceof ProfileUpdateError) {
           if (error.fieldErrors) {

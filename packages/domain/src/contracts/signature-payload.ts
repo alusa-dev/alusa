@@ -40,6 +40,7 @@ export function buildSignaturePayload(input: {
   assinadoEmIso: string;
   ip?: string | null;
   userAgent?: string | null;
+  assinatura?: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
 }) {
   return {
     v: 1,
@@ -55,5 +56,6 @@ export function buildSignaturePayload(input: {
     matriculaId: input.matriculaId,
     nome: input.nome,
     userAgent: input.userAgent ?? null,
+    assinatura: input.assinatura ?? null,
   };
 }

@@ -33,6 +33,7 @@ import {
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
 import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
+import { EnrollmentContractModelSignatureFieldsError } from '@/src/server/contracts/create-pending-enrollment-contract.service';
 import type {
   MatriculaOperationalWarningDTO,
   MatriculaAsaasSubscriptionSyncDTO,
@@ -578,6 +579,9 @@ export async function POST(req: Request) {
     }
     if (error instanceof MatriculaConflictError) {
       return jsonError(409, error.code, error.message);
+    }
+    if (error instanceof EnrollmentContractModelSignatureFieldsError) {
+      return jsonError(422, 'MODELO_SEM_CAMPOS_ASSINATURA', error.message);
     }
     if (error instanceof Error && error.message === 'PREVIEW_EXPIRADO') {
       return jsonError(

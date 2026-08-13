@@ -18,11 +18,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 type LoginValidationReason =
   | 'INVALID_INPUT'
-  | 'USER_NOT_FOUND'
-  | 'USER_INACTIVE'
-  | 'ACCOUNT_DEACTIVATED'
-  | 'ACCOUNT_UNAVAILABLE'
-  | 'INVALID_PASSWORD'
+  | 'INVALID_CREDENTIALS'
+  | 'RATE_LIMITED'
   | 'UNEXPECTED_ERROR';
 
 const schema = z.object({
@@ -44,11 +41,11 @@ function showLoginErrorToast(reason: LoginValidationReason) {
     return;
   }
 
-  if (reason === 'USER_NOT_FOUND') {
+  if (reason === 'RATE_LIMITED') {
     toast.custom((t) => (
       <CustomToast
-        title="Usuário não encontrado"
-        description={<span>Não existe conta para este e-mail. <a href="/auth/register" className="underline">Criar conta</a>.</span>}
+        title="Muitas tentativas"
+        description="Aguarde alguns minutos antes de tentar novamente."
         variant="error"
         onClose={() => { toast.dismiss(t); }}
       />
@@ -56,47 +53,11 @@ function showLoginErrorToast(reason: LoginValidationReason) {
     return;
   }
 
-  if (reason === 'USER_INACTIVE') {
+  if (reason === 'INVALID_CREDENTIALS') {
     toast.custom((t) => (
       <CustomToast
-        title="Acesso inativo"
-        description="Seu usuário está inativo. Entre em contato com o administrador da conta."
-        variant="error"
-        onClose={() => { toast.dismiss(t); }}
-      />
-    ));
-    return;
-  }
-
-  if (reason === 'ACCOUNT_DEACTIVATED') {
-    toast.custom((t) => (
-      <CustomToast
-        title="Conta desativada"
-        description="Enviamos um link de reativação para o e-mail informado. Confirme o e-mail para voltar a acessar."
-        variant="warning"
-        onClose={() => { toast.dismiss(t); }}
-      />
-    ));
-    return;
-  }
-
-  if (reason === 'ACCOUNT_UNAVAILABLE') {
-    toast.custom((t) => (
-      <CustomToast
-        title="Conta indisponível"
-        description="Esta conta não está disponível para acesso no momento."
-        variant="error"
-        onClose={() => { toast.dismiss(t); }}
-      />
-    ));
-    return;
-  }
-
-  if (reason === 'INVALID_PASSWORD') {
-    toast.custom((t) => (
-      <CustomToast
-        title="Senha incorreta"
-        description={<span>A senha informada está incorreta. <a href="/auth/forgot-password" className="underline">Redefinir senha</a>.</span>}
+        title="Não foi possível entrar"
+        description={<span>E-mail ou senha inválidos, ou acesso indisponível. <a href="/auth/forgot-password" className="underline">Redefinir senha</a>.</span>}
         variant="error"
         onClose={() => { toast.dismiss(t); }}
       />

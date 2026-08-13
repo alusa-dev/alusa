@@ -20,6 +20,7 @@ enum Status {
 enum AuthActionTokenType {
   VERIFY_EMAIL
   RESET_PASSWORD
+  ACCOUNT_REACTIVATION
 }
 
 enum SupportRole {
@@ -1319,6 +1320,7 @@ model Conta {
   eventAudits                       EventAudit[]
   contratoTemplates                 ContratoTemplate[]
   contratoModelos                   ContratoModelo[]
+  contratoModeloCampos              ContratoModeloCampo[]
   contratos                         Contrato[]
   contratoEvidencias                ContractEvidence[]
   contratoDocumentos                ContratoDocumento[]
@@ -1518,6 +1520,8 @@ model Usuario {
   welcomeWizardSeenAt  DateTime?
   senhaHash            String
   passwordChangedAt    DateTime?
+  // Incrementado no logout e em alterações críticas; invalida JWTs emitidos antes disso.
+  sessionVersion       Int       @default(0)
   emailVerifiedAt      DateTime?
   role                 Role      @default(RESPONSAVEL)
   status               Status    @default(ATIVO)
@@ -4866,10 +4870,44 @@ model ContratoModelo {
 
   conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Cascade)
   contratos Contrato[]
+  campos    ContratoModeloCampo[]
 
   @@unique([contaId, nome, versao], name: "uq_contrato_modelo_conta_nome_versao")
   @@index([contaId], name: "idx_contrato_modelo_conta")
   @@index([status], name: "idx_contrato_modelo_status")
+}
+
+enum ContratoModeloCampoTipo {
+  ASSINATURA
+  RUBRICA
+}
+
+enum ContratoModeloCampoPapel {
+  ESCOLA
+  RESPONSAVEL_OU_ALUNO
+}
+
+model ContratoModeloCampo {
+  id          String                       @id @default(cuid())
+  contaId     String
+  modeloId    String
+  tipo        ContratoModeloCampoTipo
+  papel       ContratoModeloCampoPapel
+  pagina      Int
+  x           Float
+  y           Float
+  largura     Float
+  altura      Float
+  obrigatorio Boolean                      @default(true)
+  ordem       Int                          @default(0)
+  createdAt   DateTime                     @default(now())
+  updatedAt   DateTime                     @updatedAt
+
+  conta  Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  modelo ContratoModelo @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+
+  @@index([contaId, modeloId, pagina], name: "idx_contrato_modelo_campo_conta_modelo_pagina")
+  @@index([contaId, papel], name: "idx_contrato_modelo_campo_conta_papel")
 }
 
 // @deprecated - Mantido temporariamente para migração de dados
@@ -4902,6 +4940,8 @@ model Contrato {
   hashPdf               String
   arquivoPdfAssinadoUrl String?
   hashPdfAssinado       String?
+  // Snapshot imutável dos campos usados neste contrato no momento da geração.
+  camposAssinaturaSnapshot Json?
 
   // @deprecated - Campo legado para migração
   conteudoFinal String? @db.Text // HTML renderizado (contratos antigos)

@@ -29,14 +29,21 @@ export async function GET(
       select: {
         id: true,
         contaId: true,
+        conta: { select: { nome: true } },
         arquivoPdfUrl: true,
         hashPdf: true,
+        camposAssinaturaSnapshot: true,
         status: true,
         tokenExpiraEm: true,
         matricula: {
           select: {
             aluno: { select: { nome: true } },
             responsavelFinanceiro: { select: { nome: true } },
+          },
+        },
+        modelo: {
+          select: {
+            campos: { orderBy: { ordem: 'asc' } },
           },
         },
       },

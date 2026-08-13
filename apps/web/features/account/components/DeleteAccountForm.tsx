@@ -5,7 +5,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from '@/components/ui/toast';
-import { signOut } from 'next-auth/react';
+import { logoutCurrentSession } from '@/lib/client/logout';
 
 import { CustomToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
@@ -94,7 +94,7 @@ export function DeleteAccountForm() {
     );
     setOpen(false);
 
-    await signOut({ callbackUrl: '/auth/login?deactivated=1' });
+    await logoutCurrentSession('/auth/login?deactivated=1');
   }
 
   return (

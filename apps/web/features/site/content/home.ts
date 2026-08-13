@@ -27,8 +27,22 @@ export const homePage = {
     label: 'Tudo que sua operação precisa em um único sistema',
     items: ['Matrículas', 'Aulas', 'Família', 'Financeiro', 'Controle', 'Resultados']
   },
+  highlights: [
+    {
+      title: 'Centralize sua operação',
+      description: 'Alunos, responsáveis, turmas, matrículas e contratos no mesmo lugar.'
+    },
+    {
+      title: 'Simplifique as cobranças',
+      description: 'Acompanhe pagamentos e reduza o trabalho manual da sua equipe.'
+    },
+    {
+      title: 'Tenha clareza no dia a dia',
+      description: 'Visualize o que está acontecendo e tome decisões com mais segurança.'
+    }
+  ],
   problem: {
-    title: 'Sua escola não deveria operar em vários sistemas ao mesmo tempo.',
+    title: 'Tudo conectado, do primeiro\ncontato ao pagamento.',
     body: [
       'Cobranças em uma plataforma, alunos em outra, contratos espalhados e processos manuais criam retrabalho, atrasos e perda de controle operacional.',
       'A Alusa centraliza gestão acadêmica, financeira e operacional em uma única experiência integrada.'

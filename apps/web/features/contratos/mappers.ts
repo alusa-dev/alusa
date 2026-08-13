@@ -100,6 +100,23 @@ export function mapContratoModeloRecordToDTO(modelo: Record<string, unknown>) {
           contratos: Number(count.contratos ?? 0),
         }
       : undefined,
+    campos: Array.isArray(modelo.campos)
+      ? modelo.campos.map((campo) => {
+          const item = campo as Record<string, unknown>;
+          return {
+            id: String(item.id ?? ''),
+            tipo: item.tipo,
+            papel: item.papel,
+            pagina: Number(item.pagina ?? 1),
+            x: Number(item.x ?? 0),
+            y: Number(item.y ?? 0),
+            largura: Number(item.largura ?? 0.22),
+            altura: Number(item.altura ?? 0.08),
+            obrigatorio: Boolean(item.obrigatorio ?? true),
+            ordem: Number(item.ordem ?? 0),
+          };
+        })
+      : [],
   });
 }
 
@@ -115,6 +132,15 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
   const matricula = (contrato.matricula as Nullable<Record<string, unknown>>) ?? {};
   const aluno = (matricula.aluno as Nullable<Record<string, unknown>>) ?? {};
   const responsavel = (matricula.responsavelFinanceiro as Nullable<Record<string, unknown>>) ?? null;
+  const conta = (contrato.conta as Nullable<Record<string, unknown>>) ?? {};
+
+  const snapshot = Array.isArray(contrato.camposAssinaturaSnapshot)
+    ? contrato.camposAssinaturaSnapshot
+    : null;
+  const modelFields = Array.isArray((contrato.modelo as Record<string, unknown> | null)?.campos)
+    ? ((contrato.modelo as Record<string, unknown>).campos as Array<Record<string, unknown>>)
+    : [];
+  const fields = snapshot ?? modelFields;
 
   return contratoPublicoDTOSchema.parse({
     id: String(contrato.id ?? ''),
@@ -124,6 +150,7 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
+    escolaNome: String(conta.nome ?? ''),
     matricula: {
       aluno: {
         nome: String(aluno.nome ?? ''),
@@ -134,5 +161,20 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
           }
         : null,
     },
+    camposAssinatura: fields.map((campo) => {
+      const item = campo as Record<string, unknown>;
+      return {
+        id: String(item.id ?? ''),
+        tipo: item.tipo,
+        papel: item.papel,
+        pagina: Number(item.pagina ?? 1),
+        x: Number(item.x ?? 0),
+        y: Number(item.y ?? 0),
+        largura: Number(item.largura ?? 0),
+        altura: Number(item.altura ?? 0),
+        obrigatorio: Boolean(item.obrigatorio),
+        ordem: Number(item.ordem ?? 0),
+      };
+    }),
   });
 }

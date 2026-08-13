@@ -27,18 +27,25 @@ function mapDecision(item: {
   planoId?: string | null;
   comboId?: string | null;
 }) {
-  if (item.decision === 'REMATRICULAR_AGORA') {
+  if (
+    item.decision === 'REMATRICULAR_AGORA' ||
+    item.decision === 'TRANSFERIR_MODALIDADE' ||
+    item.decision === 'ALTERAR_PAGADOR' ||
+    item.decision === 'REMATRICULAR_SEPARADAMENTE'
+  ) {
     if (item.comboId) {
       return {
         decision: 'RENEW' as const,
         sourceEnrollmentId: item.matriculaId,
         target: { type: 'COMBO' as const, targetId: item.comboId, planId: item.planoId ?? item.comboId },
+        separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
       };
     }
     return {
       decision: 'RENEW' as const,
       sourceEnrollmentId: item.matriculaId,
       target: { type: 'CLASS' as const, targetId: item.turmaId ?? '', planId: item.planoId ?? '' },
+      separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
     };
   }
 
@@ -65,6 +72,43 @@ export async function POST(request: Request) {
       return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
     }
 
+    const responsavel = await prisma.responsavel.findFirst({
+      where: { id: body.responsavelId, contaId },
+      select: { id: true },
+    });
+    if (!responsavel) {
+      return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado.');
+    }
+    const holderId = body.novoResponsavelId ?? body.responsavelId;
+    if (body.novoResponsavelId) {
+      const novoResponsavel = await prisma.responsavel.findFirst({
+        where: { id: body.novoResponsavelId, contaId },
+        select: { id: true },
+      });
+      if (!novoResponsavel) {
+        return jsonError(404, 'NOVO_RESPONSAVEL_NAO_ENCONTRADO', 'Novo responsável não encontrado.');
+      }
+    }
+
+    const hasPayerChangeDecision = body.itens.some((item) => item.decision === 'ALTERAR_PAGADOR');
+    if (hasPayerChangeDecision !== Boolean(body.novoResponsavelId)) {
+      return jsonError(
+        422,
+        'RESPONSAVEL_INCONSISTENTE',
+        'A alteração de pagador exige selecionar um novo responsável e só pode ser usada com essa decisão.',
+      );
+    }
+    const renewedDecisions = body.itens
+      .filter((item) => ['REMATRICULAR_AGORA', 'TRANSFERIR_MODALIDADE', 'ALTERAR_PAGADOR', 'REMATRICULAR_SEPARADAMENTE'].includes(item.decision))
+      .map((item) => item.decision);
+    if (hasPayerChangeDecision && renewedDecisions.some((decision) => decision !== 'ALTERAR_PAGADOR')) {
+      return jsonError(
+        422,
+        'ALTERACAO_PAGADOR_MISTA_NAO_SUPORTADA',
+        'A alteração de pagador deve ser confirmada em uma rematrícula separada para não alterar os demais vínculos da família.',
+      );
+    }
+
     const dataInicio = parseRematriculaFamiliarDate(body.dataInicio);
     const targetPeriodId = body.targetPeriodId ?? String(dataInicio.getUTCFullYear());
     const campaignId = body.campaignId ?? null;
@@ -86,7 +130,10 @@ export async function POST(request: Request) {
         campaignId,
         targetPeriodId,
         holderType: 'RESPONSIBLE',
-        holderId: body.responsavelId,
+        holderId,
+        sourceHolderId: body.responsavelId,
+        futureBillingStrategy: body.futureBillingStrategy,
+        descontos: body.descontos,
         items: body.itens.map(mapDecision),
         effectiveAt: dataInicio,
         targetContractEndsAt: parseRematriculaFamiliarDate(body.dataFimContrato),
@@ -100,10 +147,38 @@ export async function POST(request: Request) {
           feeChargeMoment: 'CHARGE_ON_START',
           feeUnit: body.taxaMatricula > 0 ? 'PER_STUDENT' : 'NO_FEE',
           feePurpose: 'ADMINISTRATIVE_FEE',
+          earlyDiscountPercent: body.descontoAntecipado,
+          earlyDiscountDays: body.prazoDesconto,
         },
       },
       { prisma },
     );
+
+    const sourceStudents = await prisma.matricula.findMany({
+      where: {
+        contaId,
+        id: { in: body.itens.map((item) => item.matriculaId) },
+      },
+      select: { id: true, aluno: { select: { nome: true } } },
+    });
+    const studentNameByEnrollmentId = new Map(
+      sourceStudents.map((item) => [item.id, item.aluno.nome]),
+    );
+    const financialGroupsByKey = new Map<string, {
+      totalAmount: number;
+      items: Array<{ sourceEnrollmentId: string; alunoNome: string; amount: number }>;
+    }>();
+    for (const target of preview.targetEnrollments) {
+      const key = target.separateBilling ? `ITEM:${target.sourceEnrollmentId}` : 'SHARED';
+      const group = financialGroupsByKey.get(key) ?? { totalAmount: 0, items: [] };
+      group.totalAmount += target.monthlyAmount;
+      group.items.push({
+        sourceEnrollmentId: target.sourceEnrollmentId,
+        alunoNome: studentNameByEnrollmentId.get(target.sourceEnrollmentId) ?? '',
+        amount: target.monthlyAmount,
+      });
+      financialGroupsByKey.set(key, group);
+    }
 
     return NextResponse.json(
       {
@@ -113,19 +188,12 @@ export async function POST(request: Request) {
         blocks: preview.blockers,
         warnings: preview.warnings,
         sourceBillingAction: 'NONE',
-        financialGroups: preview.futureFinancialAgreement
-          ? [
-              {
-                compatibilityKey: `${body.responsavelId}:${preview.effectiveAt}`,
-                totalAmount: preview.monthlyTotal,
-                items: preview.targetEnrollments.map((item) => ({
-                  sourceEnrollmentId: item.sourceEnrollmentId,
-                  alunoNome: '',
-                  amount: 0,
-                })),
-              },
-            ]
-          : [],
+        financialGroups: Array.from(financialGroupsByKey.entries()).map(([key, group]) => ({
+          compatibilityKey: `${holderId}:${preview.effectiveAt}:${key}`,
+          totalAmount: group.totalAmount,
+          items: group.items,
+        })),
+        futureAgreementCandidates: preview.futureAgreementCandidates,
         reenrollNow: preview.targetEnrollments.map((item) => item.sourceEnrollmentId),
         notContinuing: body.itens
           .filter((item) => item.decision === 'NAO_CONTINUARA')
@@ -137,6 +205,9 @@ export async function POST(request: Request) {
       { status: 201, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
+    if (error instanceof Error && error.message === 'Data inválida.') {
+      return jsonError(400, 'DATA_INVALIDA', 'Informe uma data de rematrícula válida.');
+    }
     if (error instanceof ZodError) {
       return jsonError(
         400,

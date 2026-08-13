@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useTurmas } from '@/features/cadastro/turmas/hooks/use-turmas';
 import { usePlanos } from '@/features/cadastro/planos/hooks/use-planos';
 import { useCombos } from '@/features/cadastro/combos/hooks/use-combos';
+import { useResponsaveis } from '@/features/cadastro/responsaveis/hooks/use-responsaveis';
 import type {
   FormaPagamentoValue,
   RematriculaElegivelItem,
@@ -26,6 +27,7 @@ import {
   createRematriculaFamiliarRequest,
   previewRematriculaFamiliarRequest,
   type CreateRematriculaFamiliarInput,
+  type RematriculaFamiliarPreviewResponse,
   type RematriculaFamiliarDecision,
   type RematriculaFamiliarModoTurmas,
 } from '@/features/cadastro/rematriculas/services/rematriculas-service';
@@ -43,6 +45,7 @@ import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { asaasNotificationPreferencesResultDTOSchema } from '@/features/configuracoes/notificacoes/asaas/dtos';
 import { type CustomerNotificationChannel } from '@/features/configuracoes/notificacoes/asaas/customer-channel-defaults';
 import { cn } from '@/lib/utils';
+import { RematriculaDiscountSelector } from './RematriculaDiscountSelector';
 
 const formaPagamentoOptions: Array<{
   value: Exclude<FormaPagamentoValue, 'INDEFINIDO'>;
@@ -191,8 +194,10 @@ export function RematriculaFamiliarDialog({
   const [jurosMensal, setJurosMensal] = useState('');
   const [descontoAntecipado, setDescontoAntecipado] = useState('');
   const [prazoDesconto, setPrazoDesconto] = useState('');
+  const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
   const [overrideReason, setOverrideReason] = useState('');
   const [configs, setConfigs] = useState<Record<string, ItemConfig>>({});
+  const [novoResponsavelId, setNovoResponsavelId] = useState<string | null>(null);
   const [contratoModeloId, setContratoModeloId] = useState<string | null>(null);
   const [notificationChannels, setNotificationChannels] = useState<CustomerNotificationChannel[]>(
     [],
@@ -202,6 +207,8 @@ export function RematriculaFamiliarDialog({
   // Produto financeiro: plano global (modo turmas) ou combo por aluno (modo combo).
   const [modoTurmas, setModoTurmas] = useState<RematriculaFamiliarModoTurmas>('TURMAS');
   const [planoIdGlobal, setPlanoIdGlobal] = useState<string | null>(null);
+  const [futureBillingStrategy, setFutureBillingStrategy] = useState<CreateRematriculaFamiliarInput['futureBillingStrategy']>(undefined);
+  const [futureAgreementCandidates, setFutureAgreementCandidates] = useState<RematriculaFamiliarPreviewResponse['futureAgreementCandidates']>([]);
 
   const { items: turmasDisponiveis, loading: turmasLoading } = useTurmas({ contaId });
   const { items: planosDisponiveis, loading: planosLoading } = usePlanos({ contaId });
@@ -211,6 +218,9 @@ export function RematriculaFamiliarDialog({
   });
   const { modelos: contratoModelos, loading: contratoModelosLoading } = useModelos({
     activeOnly: true,
+  });
+  const { items: responsaveisDisponiveis, loading: responsaveisLoading } = useResponsaveis({
+    enabled: open,
   });
 
   const turmasAtivas = useMemo(
@@ -285,6 +295,7 @@ export function RematriculaFamiliarDialog({
     setDescontoAntecipado(firstFinanceiro?.descontoAntecipado != null ? String(firstFinanceiro.descontoAntecipado) : '');
     setPrazoDesconto(firstFinanceiro?.prazoDesconto != null ? String(firstFinanceiro.prazoDesconto) : '');
     setOverrideReason('');
+    setNovoResponsavelId(null);
     setConfigs(
       Object.fromEntries(
         itens.map((item) => [
@@ -302,6 +313,11 @@ export function RematriculaFamiliarDialog({
       ),
     );
     setContratoModeloId(null);
+    setFutureBillingStrategy(undefined);
+    setFutureAgreementCandidates([]);
+    // Descontos das matrículas atuais não são herdados automaticamente.
+    // O usuário precisa selecionar explicitamente um desconto ativo para o novo ciclo.
+    setSelectedDiscountIds([]);
 
     // Inicializa modo a partir do estado atual: se algum tem combo, o padrão é COMBO.
     const firstCombo = itens.find((item) => item.combo?.id)?.combo?.id ?? null;
@@ -316,7 +332,14 @@ export function RematriculaFamiliarDialog({
   }, [itens, open]);
 
   const selectedItems = useMemo(
-    () => selectableItems.filter((item) => configs[item.id]?.decision === 'REMATRICULAR_AGORA'),
+    () => selectableItems.filter((item) =>
+      [
+        'REMATRICULAR_AGORA',
+        'TRANSFERIR_MODALIDADE',
+        'ALTERAR_PAGADOR',
+        'REMATRICULAR_SEPARADAMENTE',
+      ].includes(configs[item.id]?.decision ?? ''),
+    ),
     [configs, selectableItems],
   );
 
@@ -333,21 +356,27 @@ export function RematriculaFamiliarDialog({
       item.financeiro.rematriculaActionStatus === 'REQUER_OVERRIDE' &&
       item.financeiro.requiresOverrideReason,
   );
-
-  const descontosHerdados = useMemo(() => {
-    const map = new Map<string, { id: string; nome: string }>();
-    for (const item of selectedItems) {
-      for (const desconto of item.financeiro.descontos) {
-        map.set(desconto.id, desconto);
-      }
-    }
-    return Array.from(map.values());
-  }, [selectedItems]);
+  const requiresPayerChange = selectedItems.some(
+    (item) => configs[item.id]?.decision === 'ALTERAR_PAGADOR',
+  );
+  const mixedPayerChange = requiresPayerChange && selectedItems.some(
+    (item) => configs[item.id]?.decision !== 'ALTERAR_PAGADOR',
+  );
 
   const planoSelecionado = useMemo(
     () => planosAtivos.find((plano) => plano.id === planoIdGlobal) ?? null,
     [planosAtivos, planoIdGlobal],
   );
+  const periodicidadesSelecionadas = useMemo(() => {
+    if (modoTurmas === 'TURMAS') {
+      return planoSelecionado ? [planoSelecionado.periodicidade] : [];
+    }
+    return selectedItems
+      .filter((item) => configs[item.id]?.decision !== 'REMATRICULAR_SEPARADAMENTE')
+      .map((item) => combosDisponiveis.find((combo) => combo.id === configs[item.id]?.comboId)?.periodicidade)
+      .filter(Boolean);
+  }, [modoTurmas, planoSelecionado, selectedItems, combosDisponiveis, configs]);
+  const periodicidadesIncompativeis = new Set(periodicidadesSelecionadas).size > 1;
   const produtoResumo = useMemo(() => {
     if (modoTurmas === 'COMBO') {
       const combosSel = selectedItems
@@ -400,8 +429,11 @@ export function RematriculaFamiliarDialog({
     !dataInicio ||
     !dataFimContrato ||
     !produtoOk ||
+    periodicidadesIncompativeis ||
     !contratoModeloId ||
-    (needsOverride && requiresOverrideReason && !overrideReason.trim());
+    (needsOverride && requiresOverrideReason && !overrideReason.trim()) ||
+    (requiresPayerChange && !novoResponsavelId) ||
+    mixedPayerChange;
 
   function updateConfig(id: string, patch: Partial<ItemConfig>) {
     setConfigs((current) => ({
@@ -446,6 +478,7 @@ export function RematriculaFamiliarDialog({
       campaignId,
       targetPeriodId,
       responsavelId: titular.id,
+      novoResponsavelId: requiresPayerChange ? novoResponsavelId : null,
       modoTurmas,
       planoId: modoTurmas === 'TURMAS' ? planoIdGlobal : null,
       comboId: null,
@@ -465,10 +498,11 @@ export function RematriculaFamiliarDialog({
       formaPagamentoTaxa,
       vencimentoDia,
       taxaIsenta,
-      descontos: descontosHerdados.map((desconto) => ({ id: desconto.id })),
+      descontos: selectedDiscountIds.map((id) => ({ id })),
       notificationChannels: notificationChannelsTouched ? notificationChannels : [],
       notificationChannelsConfigured: notificationChannelsTouched,
       contratoModeloId,
+      futureBillingStrategy,
       uiRequestId,
     };
 
@@ -498,6 +532,12 @@ export function RematriculaFamiliarDialog({
       if (preview.blocks.length > 0) {
         throw new Error(preview.blocks[0]?.message ?? 'O preview possui bloqueios.');
       }
+      const selectableFutureAgreements = preview.futureAgreementCandidates.filter((candidate) => candidate.canUnify);
+      if (selectableFutureAgreements.length > 0 && !futureBillingStrategy) {
+        setFutureAgreementCandidates(preview.futureAgreementCandidates);
+        return;
+      }
+      setFutureAgreementCandidates(preview.futureAgreementCandidates);
       const result = await createRematriculaFamiliarRequest({
         ...payload,
         previewId: preview.previewId,
@@ -632,7 +672,12 @@ export function RematriculaFamiliarDialog({
                 {itens.map((item) => {
                   const blocked = !item.podeRenovar || item.financeiro.rematriculaActionStatus === 'BLOQUEADA';
                   const config = configs[item.id];
-                  const willReenroll = config?.decision === 'REMATRICULAR_AGORA';
+                  const willReenroll = [
+                    'REMATRICULAR_AGORA',
+                    'TRANSFERIR_MODALIDADE',
+                    'ALTERAR_PAGADOR',
+                    'REMATRICULAR_SEPARADAMENTE',
+                  ].includes(config?.decision ?? '');
                   const turmaSelectDisabled = blocked || !willReenroll || turmasLoading;
                   const comboSelectDisabled =
                     blocked || !willReenroll || combosLoading || modoTurmas !== 'COMBO';
@@ -726,8 +771,11 @@ export function RematriculaFamiliarDialog({
                                 <SelectTrigger id={`decision-${item.id}`} className={pairedFieldControlClass}>
                                   <SelectValue />
                                 </SelectTrigger>
-                                <SelectContent>
+                                  <SelectContent>
                                   <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
+                                  <SelectItem value="TRANSFERIR_MODALIDADE">Transferir modalidade</SelectItem>
+                                  <SelectItem value="ALTERAR_PAGADOR">Renovar e alterar pagador</SelectItem>
+                                  <SelectItem value="REMATRICULAR_SEPARADAMENTE">Renovar separadamente</SelectItem>
                                   <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
                                   <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
                                 </SelectContent>
@@ -778,8 +826,11 @@ export function RematriculaFamiliarDialog({
                                 <SelectTrigger id={`decision-${item.id}`} className={pairedFieldControlClass}>
                                   <SelectValue />
                                 </SelectTrigger>
-                                <SelectContent>
+                                  <SelectContent>
                                   <SelectItem value="REMATRICULAR_AGORA">Renovar próximo ciclo</SelectItem>
+                                  <SelectItem value="TRANSFERIR_MODALIDADE">Transferir modalidade</SelectItem>
+                                  <SelectItem value="ALTERAR_PAGADOR">Renovar e alterar pagador</SelectItem>
+                                  <SelectItem value="REMATRICULAR_SEPARADAMENTE">Renovar separadamente</SelectItem>
                                   <SelectItem value="NAO_CONTINUARA">Não continuará</SelectItem>
                                   <SelectItem value="DECIDIR_DEPOIS">Decidir depois</SelectItem>
                                 </SelectContent>
@@ -807,6 +858,41 @@ export function RematriculaFamiliarDialog({
                 })}
               </div>
             </div>
+
+            {requiresPayerChange ? (
+              <div className={sectionClass}>
+                <div>
+                  <span className="text-sm font-semibold text-slate-700">Novo responsável financeiro</span>
+                  <p className="text-xs text-slate-500">
+                    O novo responsável será validado como vínculo do aluno e usado nas cobranças futuras.
+                  </p>
+                </div>
+                <Select
+                  value={novoResponsavelId ?? 'null'}
+                  onValueChange={(value) => setNovoResponsavelId(value === 'null' ? null : value)}
+                  disabled={responsaveisLoading}
+                >
+                  <SelectTrigger className={controlClass}>
+                    <SelectValue placeholder={responsaveisLoading ? 'Carregando responsáveis...' : 'Selecione o novo responsável'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="null">Selecione o novo responsável</SelectItem>
+                    {responsaveisDisponiveis
+                      .filter((responsavel) => responsavel.id !== titular.id)
+                      .map((responsavel) => (
+                        <SelectItem key={responsavel.id} value={responsavel.id}>
+                          {responsavel.nome}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                {mixedPayerChange ? (
+                  <InfoCallout variant="warning" size="sm" showIcon={false}>
+                    Para trocar o pagador com segurança, todos os vínculos renovados nesta confirmação precisam usar essa decisão. Caso contrário, conclua a troca em uma rematrícula separada.
+                  </InfoCallout>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Seção 3 — Produto financeiro do ciclo (plano OU combo), sem card cinza */}
             <div className="space-y-3">
@@ -1010,6 +1096,11 @@ export function RematriculaFamiliarDialog({
                   <Input value={taxaJustificativa} onChange={(event) => setTaxaJustificativa(event.target.value)} className={controlClass} />
                 </div>
               </div>
+              <RematriculaDiscountSelector
+                contaId={contaId}
+                selectedIds={selectedDiscountIds}
+                onChange={setSelectedDiscountIds}
+              />
             </div>
 
             <div className={sectionClass}>
@@ -1091,6 +1182,59 @@ export function RematriculaFamiliarDialog({
               )}
               . Cobrança familiar consolidada para {titular.nome}.
             </p>
+            {periodicidadesIncompativeis ? (
+              <InfoCallout variant="warning" size="sm" showIcon={false}>
+                A cobrança familiar consolidada exige a mesma periodicidade para todos os vínculos. Ajuste os combos selecionados ou use rematrículas separadas.
+              </InfoCallout>
+            ) : null}
+            {futureAgreementCandidates.length > 0 && !futureBillingStrategy ? (
+              <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Cobrança futura já encontrada</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Este responsável já possui uma rematrícula futura para o mesmo período. Escolha se o novo vínculo entra na mesma cobrança ou se terá uma assinatura separada.
+                  </p>
+                </div>
+                {futureAgreementCandidates.map((candidate) => (
+                  <div key={candidate.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-slate-800">
+                          {candidate.studentNames.length > 0 ? candidate.studentNames.join(', ') : 'Outro vínculo'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {currencyFormatter.format(candidate.monthlyTotal)} · {candidate.periodicity ?? 'periodicidade não informada'}
+                        </p>
+                      </div>
+                      <Badge variant={candidate.canUnify ? 'neutral' : 'outline'}>
+                        {candidate.canUnify ? 'Unificação disponível' : 'Exige conferência'}
+                      </Badge>
+                    </div>
+                    {candidate.reason ? <p className="mt-2 text-xs text-amber-700">{candidate.reason}</p> : null}
+                    {candidate.canUnify ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setFutureBillingStrategy({ mode: 'UNIFY_EXISTING', agreementId: candidate.id })}
+                        >
+                          Unificar nesta cobrança
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setFutureBillingStrategy({ mode: 'SEPARATE', agreementId: null })}
+                        >
+                          Cobrar separadamente
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-slate-200 bg-slate-50 px-4 py-4 md:flex-row md:items-center md:justify-end md:gap-3 md:px-8 md:py-4">

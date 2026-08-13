@@ -757,6 +757,65 @@ export interface CreateRematriculaInput {
   descontoAntecipado?: number;
   prazoDesconto?: number;
   overrideReason?: string;
+  futureBillingStrategy?: {
+    mode: 'SEPARATE' | 'UNIFY_EXISTING';
+    agreementId?: string | null;
+  };
+}
+
+export interface IndividualRematriculaPreviewResponse {
+  blockers: Array<{ sourceEnrollmentId: string; code: string; message: string }>;
+  futureAgreementCandidates: Array<{
+    id: string;
+    source: 'FUTURE_AGREEMENT' | 'BILLING_AGREEMENT' | 'LEGACY_FAMILY' | 'CURRENT_INDIVIDUAL';
+    processId: string;
+    status: string;
+    monthlyTotal: number;
+    enrollmentFeeTotal: number;
+    effectiveAt: string;
+    periodicity: string | null;
+    studentNames: string[];
+    canUnify: boolean;
+    reason: string | null;
+  }>;
+}
+
+export async function previewIndividualRematriculaRequest(
+  input: CreateRematriculaInput,
+): Promise<IndividualRematriculaPreviewResponse> {
+  const response = await fetch('/api/rematriculas/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      origin: 'STANDALONE',
+      targetPeriodId: input.targetPeriodId,
+      holderType: input.responsavelFinanceiroId ? 'RESPONSIBLE' : 'STUDENT',
+      holderId: input.responsavelFinanceiroId ?? input.matriculaId,
+      futureBillingStrategy: input.futureBillingStrategy,
+      descontos: input.descontos ?? [],
+      items: [{
+        decision: 'RENEW',
+        sourceEnrollmentId: input.matriculaId,
+        target: {
+          type: input.comboId ? 'COMBO' : 'CLASS',
+          targetId: input.comboId ?? input.turmaId,
+          planId: input.planoId,
+        },
+      }],
+      effectiveAt: input.dataInicio,
+      targetContractEndsAt: input.dataFimContrato,
+      financialTerms: {
+        earlyDiscountPercent: input.descontoAntecipado ?? null,
+        earlyDiscountDays: input.prazoDesconto ?? null,
+      },
+    }),
+  });
+  const payload = await response.json().catch(() => null) as Partial<IndividualRematriculaPreviewResponse> | null;
+  if (!response.ok) throw new Error(String((payload as { error?: { message?: string } } | null)?.error?.message ?? 'Não foi possível verificar cobranças futuras.'));
+  return {
+    blockers: Array.isArray(payload?.blockers) ? payload!.blockers : [],
+    futureAgreementCandidates: Array.isArray(payload?.futureAgreementCandidates) ? payload!.futureAgreementCandidates : [],
+  };
 }
 
 export interface CreateRematriculaResponse {
@@ -843,6 +902,11 @@ export interface CreateRematriculaFamiliarInput {
   campaignId?: string | null;
   targetPeriodId?: string;
   responsavelId: string;
+  novoResponsavelId?: string | null;
+  futureBillingStrategy?: {
+    mode: 'SEPARATE' | 'UNIFY_EXISTING';
+    agreementId?: string | null;
+  };
   /**
    * Define qual produto financeiro vai consolidar a cobrança familiar:
    * - `TURMAS`: requer `planoId` global e `turmaId` por item.
@@ -912,6 +976,19 @@ export interface RematriculaFamiliarPreviewResponse {
     totalAmount: number;
     items: Array<{ sourceEnrollmentId: string; alunoNome: string; amount: number }>;
   }>;
+  futureAgreementCandidates: Array<{
+    id: string;
+    source: 'FUTURE_AGREEMENT' | 'BILLING_AGREEMENT' | 'LEGACY_FAMILY' | 'CURRENT_INDIVIDUAL';
+    processId: string;
+    status: string;
+    monthlyTotal: number;
+    enrollmentFeeTotal: number;
+    effectiveAt: string;
+    periodicity: string | null;
+    studentNames: string[];
+    canUnify: boolean;
+    reason: string | null;
+  }>;
 }
 
 export async function previewRematriculaFamiliarRequest(
@@ -944,6 +1021,9 @@ export async function previewRematriculaFamiliarRequest(
     warnings: Array.isArray(payload.warnings) ? payload.warnings.map(String) : [],
     sourceBillingAction: String(payload.sourceBillingAction ?? ''),
     financialGroups: Array.isArray(payload.financialGroups) ? payload.financialGroups : [],
+    futureAgreementCandidates: Array.isArray(payload.futureAgreementCandidates)
+      ? payload.futureAgreementCandidates as RematriculaFamiliarPreviewResponse['futureAgreementCandidates']
+      : [],
   };
 }
 
@@ -978,6 +1058,8 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
     campaignId: normalizeOptionalId(input.campaignId),
     targetPeriodId: input.targetPeriodId,
     responsavelId: input.responsavelId,
+    novoResponsavelId: normalizeOptionalId(input.novoResponsavelId),
+    futureBillingStrategy: input.futureBillingStrategy ?? { mode: 'SEPARATE', agreementId: null },
     itens: input.itens.map((item) => ({
       matriculaId: item.matriculaId,
       decision: item.decision ?? 'DECIDIR_DEPOIS',

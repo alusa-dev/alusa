@@ -198,6 +198,10 @@ describe('POST /api/contratos', () => {
       tamanhoBytes: 1024,
       mimeType: 'application/pdf',
       status: 'ATIVO',
+      campos: [
+        { papel: 'ESCOLA', obrigatorio: true, ordem: 0 },
+        { papel: 'RESPONSAVEL_OU_ALUNO', obrigatorio: true, ordem: 1 },
+      ],
     });
     prismaMock.subscription.findFirst.mockResolvedValueOnce({
       id: 'sub-local-1',
@@ -309,6 +313,10 @@ describe('POST /api/contratos', () => {
       arquivoPdfUrl: 'https://example.com/contrato.pdf',
       hashSha256: 'hash-1',
       status: 'ATIVO',
+      campos: [
+        { papel: 'ESCOLA', obrigatorio: true, ordem: 0 },
+        { papel: 'RESPONSAVEL_OU_ALUNO', obrigatorio: true, ordem: 1 },
+      ],
     });
 
     materializeSubscriptionPaymentForChargeMock.mockResolvedValueOnce({
@@ -423,6 +431,10 @@ describe('POST /api/contratos', () => {
       arquivoPdfUrl: 'https://example.com/contrato.pdf',
       hashSha256: 'hash-1',
       status: 'ATIVO',
+      campos: [
+        { papel: 'ESCOLA', obrigatorio: true, ordem: 0 },
+        { papel: 'RESPONSAVEL_OU_ALUNO', obrigatorio: true, ordem: 1 },
+      ],
     });
 
     createSubscriptionMock.mockResolvedValueOnce({

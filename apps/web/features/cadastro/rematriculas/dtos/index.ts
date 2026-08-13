@@ -183,6 +183,12 @@ export const createRematriculaInputDTOSchema = z.object({
   comboId: z.string().trim().nullable().optional(),
   contractModelId: z.string().trim().nullable().optional(),
   responsavelFinanceiroId: z.string().trim().nullable().optional(),
+  futureBillingStrategy: z
+    .object({
+      mode: z.enum(['SEPARATE', 'UNIFY_EXISTING']),
+      agreementId: z.string().trim().nullable().optional(),
+    })
+    .optional(),
   formaPagamento: rematriculaFormaPagamentoDTOSchema.optional(),
   formaPagamentoTaxa: rematriculaFormaPagamentoDTOSchema.optional(),
   vencimentoDia: z.union([z.number(), z.string()]).optional(),

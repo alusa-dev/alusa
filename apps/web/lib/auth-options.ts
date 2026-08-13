@@ -18,6 +18,7 @@ declare module 'next-auth/jwt' {
     emailVerified?: boolean;
     accountActive?: boolean;
     passwordChangedAt?: number;
+    sessionVersion?: number;
   }
 }
 
@@ -58,9 +59,9 @@ async function loadContaAuthState(contaId: string | null) {
 }
 
 const creds = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  contaId: z.string().optional().nullable(),
+  email: z.string().email().max(320),
+  password: z.string().min(6).max(256),
+  contaId: z.string().max(191).optional().nullable(),
 });
 const secret =
   process.env.NEXTAUTH_SECRET ?? (process.env.NODE_ENV === 'test' ? 'test-secret' : undefined);
@@ -103,10 +104,21 @@ export const authOptions: NextAuthOptions = {
           contaId: u.contaId,
           emailVerified: Boolean(u.emailVerifiedAt),
           accountActive: true,
+          sessionVersion: u.sessionVersion,
         } as any;
       },
     }) as any,
   ],
+  events: {
+    async signOut({ token }) {
+      const userId = typeof token?.id === 'string' ? token.id : typeof token?.sub === 'string' ? token.sub : null;
+      if (!userId) return;
+      await prisma.usuario.updateMany({
+        where: { id: userId },
+        data: { sessionVersion: { increment: 1 } },
+      });
+    },
+  },
   callbacks: {
     async jwt({ token, user, trigger, session }) {
       // Quando há user (login), garanta que os campos essenciais sejam copiados para o token
@@ -122,17 +134,7 @@ export const authOptions: NextAuthOptions = {
         (token as any).contaId = rawContaId == null || rawContaId === '' ? null : rawContaId;
         (token as any).emailVerified = Boolean((user as any).emailVerified);
         (token as any).accountActive = (user as any).accountActive !== false;
-      }
-
-      if (trigger === 'update') {
-        const updatedEmailVerified =
-          session && typeof session === 'object' && 'user' in session && (session as any).user
-            ? (session as any).user.emailVerified
-            : (session as any)?.emailVerified;
-
-        if (typeof updatedEmailVerified !== 'undefined') {
-          (token as any).emailVerified = Boolean(updatedEmailVerified);
-        }
+        (token as any).sessionVersion = (user as any).sessionVersion;
       }
 
       const tokenUserId =
@@ -149,7 +151,14 @@ export const authOptions: NextAuthOptions = {
       if (tokenUserId) {
         try {
           const isInitialLogin = Boolean(user);
-          const access = await resolveSessionAccess({ userId: tokenUserId, contaId: tokenContaId });
+          const tokenSessionVersion = typeof (token as any).sessionVersion === 'number'
+            ? (token as any).sessionVersion
+            : null;
+          const access = await resolveSessionAccess({
+            userId: tokenUserId,
+            contaId: tokenContaId,
+            sessionVersion: tokenSessionVersion,
+          });
           (token as any).accountActive = access.ok;
 
           const passwordState = await prisma.usuario.findUnique({
@@ -170,6 +179,7 @@ export const authOptions: NextAuthOptions = {
             (token as any).emailVerified = access.emailVerified;
             (token as any).contaId = access.contaId;
             (token as any).role = access.role;
+            (token as any).sessionVersion = access.sessionVersion;
 
             const contaState = await loadContaAuthState(access.contaId);
             (token as any).financeStatus = contaState.financeStatus;
@@ -185,9 +195,13 @@ export const authOptions: NextAuthOptions = {
             (token as any).financeIntegrationMode = 'WHITELABEL_BAAS';
             (token as any).externalAsaasOnboardingStatus = 'NOT_STARTED';
             (token as any).asaasApiKeyStatus = 'MISSING';
+            delete (token as any).sessionVersion;
           }
         } catch {
-          (token as any).accountActive = (token as any).accountActive !== false;
+          // Uma sessão cuja autorização não pôde ser revalidada não deve manter acesso.
+          delete (token as any).id;
+          (token as any).contaId = null;
+          (token as any).accountActive = false;
         }
       }
 

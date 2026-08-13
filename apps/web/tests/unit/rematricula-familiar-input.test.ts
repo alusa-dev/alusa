@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatRematriculaFamiliarValidationMessage,
+  parseRematriculaFamiliarDate,
   rematriculaFamiliarPreviewInputSchema,
 } from '@/lib/api/rematricula-familiar-input';
 
@@ -75,6 +76,25 @@ describe('rematriculaFamiliarPreviewInputSchema', () => {
     if (result.success) {
       expect(result.data.contratoModeloId).toBeNull();
     }
+  });
+
+  it('aceita novo responsável opcional no payload familiar', () => {
+    const result = rematriculaFamiliarPreviewInputSchema.parse({
+      responsavelId: 'resp-1',
+      novoResponsavelId: 'resp-2',
+      itens: [{ matriculaId: 'mat-1', decision: 'ALTERAR_PAGADOR' }],
+      dataInicio: '2026-07-05',
+      dataFimContrato: '2027-07-05',
+      formaPagamento: 'BOLETO',
+      vencimentoDia: 5,
+      uiRequestId: 'req-payer',
+    });
+
+    expect(result.novoResponsavelId).toBe('resp-2');
+  });
+
+  it('rejeita data calendário impossível no formato date-only', () => {
+    expect(() => parseRematriculaFamiliarDate('2026-02-30')).toThrow('Data inválida.');
   });
 });
 

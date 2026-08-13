@@ -32,6 +32,7 @@ export async function GET(request: NextRequest, { params }: Params) {
         _count: {
           select: { contratos: true },
         },
+        campos: { orderBy: { ordem: 'asc' } },
       },
     });
 
@@ -98,9 +99,34 @@ export async function PUT(request: NextRequest, { params }: Params) {
       }
     }
 
-    const modelo = await prisma.contratoModelo.update({
-      where: { id },
-      data: body,
+    const { campos, ...modeloData } = body;
+    const modelo = await prisma.$transaction(async (tx) => {
+      await tx.contratoModelo.update({
+        where: { id },
+        data: modeloData,
+      });
+
+      if (campos !== undefined) {
+        await tx.contratoModeloCampo.deleteMany({
+          where: { modeloId: id, contaId: user.contaId },
+        });
+
+        await tx.contratoModeloCampo.createMany({
+          data: campos.map((campo) => ({
+            contaId: user.contaId,
+            modeloId: id,
+            ...campo,
+          })),
+        });
+      }
+
+      return tx.contratoModelo.findFirstOrThrow({
+        where: { id, contaId: user.contaId },
+        include: {
+          _count: { select: { contratos: true } },
+          campos: { orderBy: { ordem: 'asc' } },
+        },
+      });
     });
 
     return NextResponse.json(mapContratoModeloRecordToDTO(modelo));

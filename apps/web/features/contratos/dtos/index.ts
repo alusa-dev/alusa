@@ -158,6 +158,18 @@ export const contratoModeloDTOSchema = z.object({
   createdAt: dateStringDTOSchema,
   updatedAt: dateStringDTOSchema,
   _count: contratoModeloCountDTOSchema.optional(),
+  campos: z.array(z.object({
+    id: z.string(),
+    tipo: z.enum(['ASSINATURA', 'RUBRICA']),
+    papel: z.enum(['ESCOLA', 'RESPONSAVEL_OU_ALUNO']),
+    pagina: z.number().int().positive(),
+    x: z.number(),
+    y: z.number(),
+    largura: z.number(),
+    altura: z.number(),
+    obrigatorio: z.boolean(),
+    ordem: z.number().int(),
+  })).default([]),
 });
 export type ContratoModeloDTO = z.infer<typeof contratoModeloDTOSchema>;
 
@@ -197,6 +209,7 @@ export const contratoPublicoDTOSchema = z.object({
   tokenExpiraEm: optionalDateStringDTOSchema.default(null),
   acceptanceText: z.string(),
   acceptanceVersion: z.number().int().positive(),
+  escolaNome: z.string(),
   matricula: z.object({
     aluno: z.object({
       nome: z.string(),
@@ -208,6 +221,18 @@ export const contratoPublicoDTOSchema = z.object({
       .nullable()
       .default(null),
   }),
+  camposAssinatura: z.array(z.object({
+    id: z.string(),
+    tipo: z.enum(['ASSINATURA', 'RUBRICA']),
+    papel: z.enum(['ESCOLA', 'RESPONSAVEL_OU_ALUNO']),
+    pagina: z.number().int().positive(),
+    x: z.number(),
+    y: z.number(),
+    largura: z.number(),
+    altura: z.number(),
+    obrigatorio: z.boolean(),
+    ordem: z.number().int(),
+  })).default([]),
 });
 export type ContratoPublicoDTO = z.infer<typeof contratoPublicoDTOSchema>;
 

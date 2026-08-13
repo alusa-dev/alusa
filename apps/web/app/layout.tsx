@@ -2,7 +2,6 @@ import "./globals.css";
 import "@/lib/zod-error-map";
 import { AppProviders } from "./providers";
 import React from "react";
-import Script from "next/script";
 import { Inter } from "next/font/google";
 import { cookies } from "next/headers";
 import type { Metadata, Viewport } from "next";
@@ -59,17 +58,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       data-theme={themeCookie}
       suppressHydrationWarning
     >
-      <head>
-        {/* Renderiza já com o tema certo quando houver cookie (zero flash ao recarregar); auth/onboarding financeiro forçam claro antes do React. */}
-        <Script id="theme-init" strategy="beforeInteractive">
-          {`(function(){try{var d=document.documentElement;var path=typeof location!=="undefined"?location.pathname||"":"";var prefixes=${themeInitPrefixes};var roots=${themeInitRoots};function forceLight(p){for(var i=0;i<prefixes.length;i++){var pr=prefixes[i];if(p===pr||p.indexOf(pr+"/")===0)return true;}for(var j=0;j<roots.length;j++){var r=roots[j];if(p===r||p.indexOf(r+"/")===0)return true;}return false;}if(forceLight(path)){d.setAttribute("data-theme","light");return;}if(d.hasAttribute("data-theme"))return;var t=null;try{t=localStorage.getItem("alusa.theme");}catch(e){}if(!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}d.setAttribute("data-theme",t);}catch(e){}})();`}
-        </Script>
-        {/* Após interatividade, habilita transições já com o tema aplicado */}
-        <Script id="theme-ready" strategy="afterInteractive">
-          {`(function(){try{document.documentElement.classList.add('theme-ready');document.body.classList.add('theme-ready');}catch(e){}})();`}
-        </Script>
-      </head>
+      <head />
       <body className="bg-white text-gray-900 antialiased">
+        {/* Scripts globais ficam no body para o App Router tratar o conteúdo inline sem o interpretar como HTML bruto. */}
+        <script id="theme-init" dangerouslySetInnerHTML={{ __html: `(function(){try{var d=document.documentElement;var path=typeof location!=="undefined"?location.pathname||"":"";var prefixes=${themeInitPrefixes};var roots=${themeInitRoots};function forceLight(p){for(var i=0;i<prefixes.length;i++){var pr=prefixes[i];if(p===pr||p.indexOf(pr+"/")===0)return true;}for(var j=0;j<roots.length;j++){var r=roots[j];if(p===r||p.indexOf(r+"/")===0)return true;}return false;}if(forceLight(path)){d.setAttribute("data-theme","light");return;}if(d.hasAttribute("data-theme"))return;var t=null;try{t=localStorage.getItem("alusa.theme");}catch(e){}if(!t){t=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";}d.setAttribute("data-theme",t);}catch(e){}})();` }} />
         <AppProviders>
           {children}
         </AppProviders>

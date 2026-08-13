@@ -40,12 +40,29 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
   closeDisabled?: boolean;
   /** Classes visuais específicas para o overlay deste diálogo. */
   overlayClass?: string;
+  /**
+   * Remove a superfície visual padrão (fundo, borda, espaçamento, raio e sombra).
+   * Útil quando o conteúdo interno é a única superfície visual do diálogo.
+   */
+  unstyled?: boolean;
 };
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, fullScreenMobile, closeDisabled = false, overlayClass, ...props }, ref) => (
+>(
+  (
+    {
+      className,
+      children,
+      fullScreenMobile,
+      closeDisabled = false,
+      overlayClass,
+      unstyled = false,
+      ...props
+    },
+    ref,
+  ) => (
   <DialogPortal>
     <DialogOverlay className={cn(fullScreenMobile && 'max-md:p-0', overlayClass)} />
     {/* Wrapper flex para centralização perfeita e suportar scroll em telas baixas */}
@@ -58,7 +75,9 @@ const DialogContent = React.forwardRef<
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          'relative z-50 grid w-full max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 sm:rounded-xl',
+          'relative z-50 w-full outline-none ring-0 ring-offset-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
+          !unstyled &&
+            'grid max-w-lg gap-4 border border-gray-200 bg-white p-6 alusa-modal-surface shadow-lg sm:rounded-xl',
           'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
           fullScreenMobile &&
             'max-md:box-border max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:w-full max-md:max-w-none max-md:min-h-0 max-md:rounded-none max-md:border-x-0 max-md:border-t-0 max-md:border-b-0 max-md:shadow-none max-md:pb-[env(safe-area-inset-bottom,0px)] max-md:pl-[env(safe-area-inset-left,0px)] max-md:pr-[env(safe-area-inset-right,0px)]',
@@ -82,7 +101,8 @@ const DialogContent = React.forwardRef<
       </DialogPrimitive.Content>
     </div>
   </DialogPortal>
-));
+  ),
+);
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (

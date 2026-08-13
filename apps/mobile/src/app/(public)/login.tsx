@@ -10,7 +10,7 @@ import { AppText } from '@/components/primitives/AppText';
 import { Button } from '@/components/primitives/Button';
 import { TextField } from '@/components/primitives/TextField';
 import { isApiError } from '@/lib/api/errors';
-import { colors, radius, spacing } from '@/theme/tokens';
+import { colors, spacing } from '@/theme/tokens';
 import { useLogin } from '@/features/auth/hooks/use-login';
 import { loginSchema, type LoginFormValues } from '@/features/auth/schemas/login-schema';
 
@@ -63,7 +63,7 @@ export default function LoginScreen() {
     : null;
 
   return (
-    <Screen scroll keyboard style={styles.screen}>
+    <Screen scroll keyboard backgroundColor={colors.white} style={styles.screen}>
       <View style={styles.logoWrap}>
         <BrandMark centered compact={false} />
       </View>
@@ -75,11 +75,6 @@ export default function LoginScreen() {
         <AppText tone="muted" style={styles.subtitle}>
           Acesse sua conta para acompanhar a gestão escolar com segurança.
         </AppText>
-      </View>
-
-      <View style={styles.tabs} accessibilityRole="tablist">
-        <TabButton active={activeTab === 'login'} label="Entrar" onPress={() => setActiveTab('login')} />
-        <TabButton active={activeTab === 'create'} label="Criar conta" onPress={() => setActiveTab('create')} />
       </View>
 
       <View style={styles.form}>
@@ -200,21 +195,6 @@ export default function LoginScreen() {
   );
 }
 
-function TabButton({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={({ pressed }) => [styles.tabButton, active ? styles.tabButtonActive : null, pressed ? styles.pressed : null]}
-    >
-      <AppText weight="bold" tone={active ? 'primary' : 'muted'} style={styles.tabText}>
-        {label}
-      </AppText>
-    </Pressable>
-  );
-}
-
 function FieldIcon({ symbol }: { symbol: FieldSymbol }) {
   return <SymbolView name={fieldIconNames[symbol]} size={20} tintColor={colors.inkMuted} type="hierarchical" />;
 }
@@ -239,33 +219,6 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     maxWidth: 300,
-    textAlign: 'center',
-  },
-  tabs: {
-    minHeight: 62,
-    borderRadius: radius.lg,
-    backgroundColor: '#F4F4F6',
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 5,
-    gap: 5,
-  },
-  tabButton: {
-    flex: 1,
-    minHeight: 52,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabButtonActive: {
-    backgroundColor: colors.surface,
-    shadowColor: colors.brand,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    elevation: 3,
-  },
-  tabText: {
     textAlign: 'center',
   },
   form: {

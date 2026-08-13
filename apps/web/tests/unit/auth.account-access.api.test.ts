@@ -31,7 +31,7 @@ describe('GET /api/auth/account-access', () => {
   });
 
   it('retorna 403 quando a conta está desativada', async () => {
-    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1' });
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
     resolveSessionAccessMock.mockResolvedValueOnce({ ok: false, reason: 'ACCOUNT_DEACTIVATED' });
 
     const response = await GET(new NextRequest('http://localhost:3000/api/auth/account-access'));
@@ -41,12 +41,23 @@ describe('GET /api/auth/account-access', () => {
   });
 
   it('retorna 200 quando a sessão segue ativa', async () => {
-    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1' });
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
     resolveSessionAccessMock.mockResolvedValueOnce({ ok: true });
 
     const response = await GET(new NextRequest('http://localhost:3000/api/auth/account-access'));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(resolveSessionAccessMock).toHaveBeenCalledWith({ userId: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
+  });
+
+  it('falha fechado quando a validação de acesso fica indisponível', async () => {
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1' });
+    resolveSessionAccessMock.mockRejectedValueOnce(new Error('database unavailable'));
+
+    const response = await GET(new NextRequest('http://localhost:3000/api/auth/account-access'));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ ok: false, reason: 'ACCESS_CHECK_UNAVAILABLE' });
   });
 });

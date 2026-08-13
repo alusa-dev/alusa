@@ -41,18 +41,25 @@ function mapDecision(item: {
   planoId?: string | null;
   comboId?: string | null;
 }) {
-  if (item.decision === 'REMATRICULAR_AGORA') {
+  if (
+    item.decision === 'REMATRICULAR_AGORA' ||
+    item.decision === 'TRANSFERIR_MODALIDADE' ||
+    item.decision === 'ALTERAR_PAGADOR' ||
+    item.decision === 'REMATRICULAR_SEPARADAMENTE'
+  ) {
     if (item.comboId) {
       return {
         decision: 'RENEW' as const,
         sourceEnrollmentId: item.matriculaId,
         target: { type: 'COMBO' as const, targetId: item.comboId, planId: item.planoId ?? item.comboId },
+        separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
       };
     }
     return {
       decision: 'RENEW' as const,
       sourceEnrollmentId: item.matriculaId,
       target: { type: 'CLASS' as const, targetId: item.turmaId ?? '', planId: item.planoId ?? '' },
+      separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
     };
   }
 
@@ -85,6 +92,36 @@ export async function POST(request: Request) {
     });
     if (!responsavel) {
       return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável não encontrado.');
+    }
+
+    const holderId = body.novoResponsavelId ?? body.responsavelId;
+    if (body.novoResponsavelId) {
+      const novoResponsavel = await prisma.responsavel.findFirst({
+        where: { id: body.novoResponsavelId, contaId },
+        select: { id: true },
+      });
+      if (!novoResponsavel) {
+        return jsonError(404, 'NOVO_RESPONSAVEL_NAO_ENCONTRADO', 'Novo responsável não encontrado.');
+      }
+    }
+
+    const hasPayerChangeDecision = body.itens.some((item) => item.decision === 'ALTERAR_PAGADOR');
+    if (hasPayerChangeDecision !== Boolean(body.novoResponsavelId)) {
+      return jsonError(
+        422,
+        'RESPONSAVEL_INCONSISTENTE',
+        'A alteração de pagador exige selecionar um novo responsável e só pode ser usada com essa decisão.',
+      );
+    }
+    const renewedDecisions = body.itens
+      .filter((item) => ['REMATRICULAR_AGORA', 'TRANSFERIR_MODALIDADE', 'ALTERAR_PAGADOR', 'REMATRICULAR_SEPARADAMENTE'].includes(item.decision))
+      .map((item) => item.decision);
+    if (hasPayerChangeDecision && renewedDecisions.some((decision) => decision !== 'ALTERAR_PAGADOR')) {
+      return jsonError(
+        422,
+        'ALTERACAO_PAGADOR_MISTA_NAO_SUPORTADA',
+        'A alteração de pagador deve ser confirmada em uma rematrícula separada para não alterar os demais vínculos da família.',
+      );
     }
 
     if (body.contratoModeloId) {
@@ -121,7 +158,10 @@ export async function POST(request: Request) {
       targetPeriodId,
       targetPeriodStartsAt: dataInicio,
       holderType: 'RESPONSIBLE' as const,
-      holderId: body.responsavelId,
+      holderId,
+      sourceHolderId: body.responsavelId,
+      futureBillingStrategy: body.futureBillingStrategy,
+      descontos: body.descontos,
       items: body.itens.map(mapDecision),
       effectiveAt: dataInicio,
       targetContractEndsAt: dataFimContrato,
@@ -135,13 +175,16 @@ export async function POST(request: Request) {
         feeChargeMoment: 'CHARGE_ON_START' as const,
         feeUnit: body.taxaMatricula > 0 ? ('PER_STUDENT' as const) : ('NO_FEE' as const),
         feePurpose: 'ADMINISTRATIVE_FEE' as const,
+        earlyDiscountPercent: body.descontoAntecipado,
+        earlyDiscountDays: body.prazoDesconto,
       },
     };
     const preview = await previewRenewalProcess(renewalInput, { prisma });
     if (preview.blockers.length > 0) {
       return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
         blockers: preview.blockers,
-        warnings: preview.warnings,
+      warnings: preview.warnings,
+      futureAgreementCandidates: preview.futureAgreementCandidates,
       });
     }
 
@@ -177,6 +220,9 @@ export async function POST(request: Request) {
       },
       orderBy: { createdAt: 'asc' },
     });
+    const requestedDecisionByEnrollmentId = new Map(
+      body.itens.map((item) => [item.matriculaId, item.decision]),
+    );
 
     return NextResponse.json(
       {
@@ -197,7 +243,7 @@ export async function POST(request: Request) {
           alunoNome: item.matriculaOrigem.aluno.nome,
           decision:
             item.decision === 'RENEW'
-              ? 'REMATRICULAR_AGORA'
+              ? requestedDecisionByEnrollmentId.get(item.matriculaOrigemId) ?? 'REMATRICULAR_AGORA'
               : item.decision === 'DECIDE_LATER'
                 ? 'DECIDIR_DEPOIS'
                 : 'NAO_CONTINUARA',
@@ -208,6 +254,9 @@ export async function POST(request: Request) {
       { status: 202, headers: { 'cache-control': 'no-store' } },
     );
   } catch (error) {
+    if (error instanceof Error && error.message === 'Data inválida.') {
+      return jsonError(400, 'DATA_INVALIDA', 'Informe uma data de rematrícula válida.');
+    }
     if (error instanceof ZodError) {
       return jsonError(
         400,

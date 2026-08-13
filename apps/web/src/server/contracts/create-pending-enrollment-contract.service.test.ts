@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createPendingEnrollmentContract,
   EnrollmentContractModelNotFoundError,
+  EnrollmentContractModelSignatureFieldsError,
 } from './create-pending-enrollment-contract.service';
 
 function buildTx(modelExists = true) {
@@ -16,6 +17,10 @@ function buildTx(modelExists = true) {
               hashSha256: 'hash',
               tamanhoBytes: 123,
               mimeType: 'application/pdf',
+              campos: [
+                { papel: 'ESCOLA', obrigatorio: true, ordem: 0 },
+                { papel: 'RESPONSAVEL_OU_ALUNO', obrigatorio: true, ordem: 1 },
+              ],
             }
           : null,
       ),
@@ -42,6 +47,16 @@ describe('createPendingEnrollmentContract', () => {
 
     expect(result).toEqual({ id: 'contrato-1' });
     expect(tx.contrato.create).toHaveBeenCalledOnce();
+    expect(tx.contrato.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          camposAssinaturaSnapshot: expect.arrayContaining([
+            expect.objectContaining({ papel: 'ESCOLA', ordem: 0 }),
+            expect.objectContaining({ papel: 'RESPONSAVEL_OU_ALUNO', ordem: 1 }),
+          ]),
+        }),
+      }),
+    );
     expect(tx.contratoDocumento.create).toHaveBeenCalledOnce();
     expect(tx.contractEvidence.create).toHaveBeenCalledTimes(2);
     expect(tx.matricula.updateMany).toHaveBeenCalledWith(
@@ -61,6 +76,28 @@ describe('createPendingEnrollmentContract', () => {
         actorId: 'usuario-1',
       }),
     ).rejects.toBeInstanceOf(EnrollmentContractModelNotFoundError);
+    expect(tx.contrato.create).not.toHaveBeenCalled();
+  });
+
+  it('falha antes de escrever quando o modelo não possui os campos obrigatórios', async () => {
+    const tx = buildTx();
+    tx.contratoModelo.findFirst.mockResolvedValueOnce({
+      arquivoPdfUrl: 'https://files/modelo.pdf',
+      arquivoOriginalUrl: null,
+      hashSha256: 'hash',
+      tamanhoBytes: 123,
+      mimeType: 'application/pdf',
+      campos: [{ papel: 'ESCOLA', obrigatorio: true, ordem: 0 }],
+    });
+
+    await expect(
+      createPendingEnrollmentContract(tx as never, {
+        contaId: 'conta-1',
+        matriculaId: 'matricula-1',
+        modeloId: 'modelo-1',
+        actorId: 'usuario-1',
+      }),
+    ).rejects.toBeInstanceOf(EnrollmentContractModelSignatureFieldsError);
     expect(tx.contrato.create).not.toHaveBeenCalled();
   });
 });

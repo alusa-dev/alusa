@@ -71,6 +71,7 @@ export async function POST(
       ip: clientIp,
       userAgent,
       baseUrl: request.nextUrl.origin,
+      assinatura: body.assinatura,
     });
 
     void createContractSignedNotification({

@@ -25,6 +25,8 @@ export type RenewalItemInput =
         targetId: string;
         planId: string;
       };
+      /** When true, this item must receive its own future financial agreement. */
+      separateBilling?: boolean;
     }
   | {
       decision: 'DECIDE_LATER' | 'DO_NOT_CONTINUE';
@@ -48,11 +50,13 @@ export type BuildRenewalPreviewInput = {
   targetPeriodStartsAt?: Date | null;
   holderType: RenewalHolderType;
   holderId: string;
+  sourceHolderId?: string | null;
   items: RenewalItemInput[];
   sourceEnrollments: RenewalSourceEnrollment[];
   requestedEffectiveAt?: Date | null;
   requestedFirstDueDate?: Date | null;
   enrollmentFeeAmount?: number | null;
+  enrollmentFeeUnit?: 'NO_FEE' | 'PER_STUDENT' | 'PER_FAMILY' | null;
   dependencyVersion?: string | null;
   dependencySnapshot?: Record<string, unknown> | null;
 };
@@ -80,6 +84,8 @@ export type RenewalPreview = {
     targetType: RenewalTargetType;
     targetId: string;
     planId: string;
+    monthlyAmount: number;
+    separateBilling: boolean;
     effectiveAt: string;
   }>;
   reservations: Array<{
@@ -236,13 +242,20 @@ export function buildRenewalPreview(input: BuildRenewalPreviewInput): RenewalPre
     renewItems.reduce((sum, item) => sum + (sourcesById.get(item.sourceEnrollmentId)?.monthlyAmount ?? 0), 0),
   );
   const enrollmentFeeUnit = roundMoney(input.enrollmentFeeAmount ?? 0);
-  const enrollmentFeeTotal = roundMoney(enrollmentFeeUnit * renewItems.length);
+  const enrollmentFeeTotal =
+    input.enrollmentFeeUnit === 'NO_FEE'
+      ? 0
+      : input.enrollmentFeeUnit === 'PER_FAMILY'
+        ? enrollmentFeeUnit
+        : roundMoney(enrollmentFeeUnit * renewItems.length);
 
   const targetEnrollments = renewItems.map((item) => ({
     sourceEnrollmentId: item.sourceEnrollmentId,
     targetType: item.target.type,
     targetId: item.target.targetId,
     planId: item.target.planId,
+    monthlyAmount: roundMoney(sourcesById.get(item.sourceEnrollmentId)?.monthlyAmount ?? 0),
+    separateBilling: item.separateBilling === true,
     effectiveAt: isoDate(effectiveAt),
   }));
 
@@ -273,6 +286,7 @@ export function buildRenewalPreview(input: BuildRenewalPreviewInput): RenewalPre
     targetPeriodId: input.targetPeriodId,
     holderType: input.holderType,
     holderId: input.holderId,
+    sourceHolderId: input.sourceHolderId ?? null,
     sourceVersion,
     dependencyVersion: input.dependencyVersion ?? null,
     dependencySnapshot: input.dependencySnapshot ?? null,
@@ -282,6 +296,7 @@ export function buildRenewalPreview(input: BuildRenewalPreviewInput): RenewalPre
       sourceEnrollmentId: item.sourceEnrollmentId,
       decision: item.decision,
       target: item.target,
+      separateBilling: item.decision === 'RENEW' ? item.separateBilling === true : false,
     })),
     monthlyTotal,
     enrollmentFeeTotal,

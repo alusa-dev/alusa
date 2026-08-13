@@ -6,6 +6,7 @@ import { isWhitelabelTreasuryPath } from '@/lib/finance/financial-capabilities';
 import { isPublicApiPath } from '@/lib/middleware/public-api-paths';
 import { hasCronSecret, resolveRouteProtection } from '@/lib/security/route-protection-registry';
 import { isTestRouteEnabled } from '@/lib/security/runtime-guards';
+import { clearAuthCookies } from '@/lib/auth-cookies';
 
 type WizardSnapshot = { completedAt?: string | null; step?: number | null };
 type WizardResponse = { data?: { wizard?: WizardSnapshot } };
@@ -32,21 +33,6 @@ const originCheckExemptApiPrefixes = [
   '/api/jobs/',
 ];
 
-function clearAuthSessionCookies(response: NextResponse) {
-  const cookieNames = [
-    'next-auth.session-token',
-    '__Secure-next-auth.session-token',
-    'next-auth.callback-url',
-    '__Secure-next-auth.callback-url',
-    'next-auth.csrf-token',
-    '__Host-next-auth.csrf-token',
-  ];
-
-  for (const name of cookieNames) {
-    response.cookies.set(name, '', { maxAge: 0, path: '/' });
-  }
-}
-
 async function verifyAccountAccess(
   req: NextRequest,
 ): Promise<{ blocked: false } | { blocked: true; reason?: string }> {
@@ -61,14 +47,14 @@ async function verifyAccountAccess(
       cache: 'no-store',
     });
 
-    if (response.ok || response.status >= 500) {
+    if (response.ok) {
       return { blocked: false };
     }
 
     const body = (await response.json().catch(() => null)) as AccountAccessResponse | null;
     return { blocked: true, reason: body?.reason };
   } catch {
-    return { blocked: false };
+    return { blocked: true, reason: 'ACCESS_CHECK_UNAVAILABLE' };
   }
 }
 
@@ -197,7 +183,7 @@ async function handleProtectedPage(req: NextRequest): Promise<NextResponse> {
     }
 
     const response = redirectToSignIn(req, params);
-    clearAuthSessionCookies(response);
+    clearAuthCookies(response, req.headers.get('cookie'));
     return response;
   }
 

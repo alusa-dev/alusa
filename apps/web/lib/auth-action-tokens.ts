@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma';
 const expiryByType: Record<AuthActionTokenType, number> = {
   VERIFY_EMAIL: Number(process.env.AUTH_VERIFY_EMAIL_TTL_MINUTES || 60 * 24),
   RESET_PASSWORD: Number(process.env.AUTH_RESET_PASSWORD_TTL_MINUTES || 60),
+  ACCOUNT_REACTIVATION: Number(process.env.AUTH_ACCOUNT_REACTIVATION_TTL_MINUTES || 60),
 };
 
 export type CreateAuthActionTokenInput = {
@@ -114,6 +115,31 @@ export async function consumeAuthActionToken(
   const tokenHash = hashToken(plainToken);
 
   return prisma.$transaction(async (tx) => {
+    const claimed = await tx.authActionToken.updateMany({
+      where: {
+        tokenHash,
+        type,
+        usedAt: null,
+        invalidatedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: { usedAt: new Date() },
+    });
+
+    if (claimed.count !== 1) {
+      await tx.authActionToken.updateMany({
+        where: {
+          tokenHash,
+          type,
+          usedAt: null,
+          invalidatedAt: null,
+          expiresAt: { lte: new Date() },
+        },
+        data: { invalidatedAt: new Date() },
+      });
+      return null;
+    }
+
     const token = await tx.authActionToken.findUnique({
       where: { tokenHash },
       include: {
@@ -129,22 +155,9 @@ export async function consumeAuthActionToken(
       },
     });
 
-    if (!token || token.type !== type || token.usedAt || token.invalidatedAt) {
+    if (!token || token.type !== type || token.invalidatedAt) {
       return null;
     }
-
-    if (token.expiresAt.getTime() <= Date.now()) {
-      await tx.authActionToken.update({
-        where: { id: token.id },
-        data: { invalidatedAt: new Date() },
-      });
-      return null;
-    }
-
-    await tx.authActionToken.update({
-      where: { id: token.id },
-      data: { usedAt: new Date() },
-    });
 
     return {
       tokenId: token.id,

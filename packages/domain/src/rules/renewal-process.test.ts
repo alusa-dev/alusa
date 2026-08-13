@@ -98,6 +98,74 @@ describe('renewal-process domain rules', () => {
     expect(preview.previewHash).toHaveLength(64);
   });
 
+  it('não multiplica a taxa quando a unidade de cobrança é por família', () => {
+    const preview = buildRenewalPreview({
+      contaId: 'conta-1',
+      origin: 'STANDALONE',
+      targetPeriodId: '2027',
+      targetPeriodStartsAt: new Date('2026-07-01T00:00:00.000Z'),
+      holderType: 'RESPONSIBLE',
+      holderId: 'resp-1',
+      items: [
+        {
+          decision: 'RENEW',
+          sourceEnrollmentId: 'mat-1',
+          target: { type: 'CLASS', targetId: 'turma-1', planId: 'plano-1' },
+        },
+        {
+          decision: 'RENEW',
+          sourceEnrollmentId: 'mat-2',
+          target: { type: 'CLASS', targetId: 'turma-2', planId: 'plano-1' },
+        },
+      ],
+      sourceEnrollments: [source, { ...source, id: 'mat-2' }],
+      enrollmentFeeAmount: 50,
+      enrollmentFeeUnit: 'PER_FAMILY',
+    });
+
+    expect(preview.enrollmentFeeTotal).toBe(50);
+    expect(preview.futureFinancialAgreement?.enrollmentFeeTotal).toBe(50);
+  });
+
+  it('zera a taxa explicitamente quando a unidade é sem cobrança', () => {
+    const preview = buildRenewalPreview({
+      contaId: 'conta-1',
+      origin: 'STANDALONE',
+      targetPeriodId: '2027',
+      holderType: 'RESPONSIBLE',
+      holderId: 'resp-1',
+      items: [
+        {
+          decision: 'RENEW',
+          sourceEnrollmentId: 'mat-1',
+          target: { type: 'CLASS', targetId: 'turma-1', planId: 'plano-1' },
+        },
+      ],
+      sourceEnrollments: [source],
+      enrollmentFeeAmount: 50,
+      enrollmentFeeUnit: 'NO_FEE',
+    });
+
+    expect(preview.enrollmentFeeTotal).toBe(0);
+    expect(preview.futureFinancialAgreement?.enrollmentFeeTotal).toBe(0);
+  });
+
+  it('preserva a separação de faturamento no snapshot e nos destinos', () => {
+    const preview = buildItems([
+      {
+        decision: 'RENEW',
+        sourceEnrollmentId: 'mat-1',
+        target: { type: 'CLASS', targetId: 'turma-1', planId: 'plano-1' },
+        separateBilling: true,
+      },
+    ]);
+
+    expect(preview.targetEnrollments[0]?.separateBilling).toBe(true);
+    expect(preview.snapshot.items).toEqual([
+      expect.objectContaining({ sourceEnrollmentId: 'mat-1', separateBilling: true }),
+    ]);
+  });
+
   it('valida transições canônicas do processo', () => {
     expect(canTransitionRenewalProcess('PREVIEWED', 'CONFIRMED')).toBe(true);
     expect(canTransitionRenewalProcess('CONFIRMED', 'EFFECTIVE')).toBe(true);

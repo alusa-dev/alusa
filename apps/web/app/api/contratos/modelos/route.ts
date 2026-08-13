@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
         _count: {
           select: { contratos: true },
         },
+        campos: { orderBy: { ordem: 'asc' } },
       },
     });
 
@@ -102,6 +103,15 @@ export async function POST(request: NextRequest) {
         tamanhoBytes: body.tamanhoBytes,
         versao: 1,
         status: 'ATIVO',
+        campos: {
+          create: body.campos.map((campo) => ({
+            contaId: user.contaId,
+            ...campo,
+          })),
+        },
+      },
+      include: {
+        campos: { orderBy: { ordem: 'asc' } },
       },
     });
 

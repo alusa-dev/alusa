@@ -27,7 +27,6 @@ type RequestMetadata = {
 
 type AuthEmailOptions = {
   callbackUrl?: string | null;
-  intent?: 'VERIFY_EMAIL' | 'ACCOUNT_REACTIVATION';
 };
 
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
@@ -93,12 +92,9 @@ async function issueAuthEmail(
     throw new Error('Usuário não encontrado.');
   }
 
-  const isReactivationEmail =
-    type === 'VERIFY_EMAIL' &&
-    (options.intent === 'ACCOUNT_REACTIVATION' ||
-      isAccountDeactivated(user.conta?.status, user.conta?.deletedAt));
+  const isReactivationEmail = type === 'ACCOUNT_REACTIVATION';
 
-  if (type === 'VERIFY_EMAIL' && user.emailVerifiedAt && !isReactivationEmail) {
+  if (type === 'VERIFY_EMAIL' && user.emailVerifiedAt) {
     return { delivery: 'sent' as const, emailId: null, actionUrl: null };
   }
 
@@ -111,7 +107,7 @@ async function issueAuthEmail(
   });
 
   const actionUrl =
-    type === 'VERIFY_EMAIL'
+    type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
       ? buildVerifyEmailUrl(
           token,
           isReactivationEmail ? options.callbackUrl ?? '/auth/login?reactivated=1' : options.callbackUrl,
@@ -120,7 +116,7 @@ async function issueAuthEmail(
 
   const expiresInLabel = getAuthActionTokenExpiryLabel(type);
   const template =
-    type === 'VERIFY_EMAIL'
+    type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
       ? isReactivationEmail
         ? buildAccountReactivationTemplate({
             recipientName: user.nome,
@@ -139,7 +135,7 @@ async function issueAuthEmail(
         });
 
   const category =
-    type === 'VERIFY_EMAIL'
+    type === 'VERIFY_EMAIL' || type === 'ACCOUNT_REACTIVATION'
       ? isReactivationEmail
         ? 'account_reactivation'
         : 'verify_email'
@@ -190,19 +186,19 @@ export async function sendAccountReactivationForEmail(
     select: {
       id: true,
       contaId: true,
+      conta: { select: { ownerUserId: true } },
     },
   });
 
-  if (!user?.contaId) {
+  if (!user?.contaId || user.conta.ownerUserId !== user.id) {
     return;
   }
 
   const delivery = await issueAuthEmail(
-    'VERIFY_EMAIL',
+    'ACCOUNT_REACTIVATION',
     user.id,
     metadata,
     {
-      intent: 'ACCOUNT_REACTIVATION',
       callbackUrl: '/auth/login?reactivated=1',
     },
   );
@@ -274,10 +270,17 @@ export async function sendInviteEmail(input: {
 }
 
 export async function verifyEmailByToken(token: string) {
-  const consumed = await consumeAuthActionToken('VERIFY_EMAIL', token);
+  let tokenType: AuthActionTokenType = 'VERIFY_EMAIL';
+  let consumed = await consumeAuthActionToken('VERIFY_EMAIL', token);
+  if (!consumed) {
+    tokenType = 'ACCOUNT_REACTIVATION';
+    consumed = await consumeAuthActionToken('ACCOUNT_REACTIVATION', token);
+  }
 
   if (!consumed) {
-    const existing = await findAuthActionTokenByPlainToken('VERIFY_EMAIL', token);
+    const existing =
+      (await findAuthActionTokenByPlainToken('VERIFY_EMAIL', token)) ??
+      (await findAuthActionTokenByPlainToken('ACCOUNT_REACTIVATION', token));
     if (existing?.usedAt && existing.user.emailVerifiedAt) {
       return existing.user;
     }
@@ -288,7 +291,7 @@ export async function verifyEmailByToken(token: string) {
   await prisma.$transaction(async (tx) => {
     const conta = await tx.conta.findUnique({
       where: { id: consumed.user.contaId },
-      select: { status: true, deletedAt: true },
+      select: { status: true, deletedAt: true, ownerUserId: true },
     });
 
     if (!consumed.user.emailVerifiedAt) {
@@ -298,7 +301,11 @@ export async function verifyEmailByToken(token: string) {
       });
     }
 
-    if (conta && isAccountDeactivated(conta.status, conta.deletedAt)) {
+    if (
+      tokenType === 'ACCOUNT_REACTIVATION' &&
+      conta?.ownerUserId === consumed.user.id &&
+      isAccountDeactivated(conta.status, conta.deletedAt)
+    ) {
       reactivatedAccount = true;
       await tx.conta.update({
         where: { id: consumed.user.contaId },
@@ -311,7 +318,7 @@ export async function verifyEmailByToken(token: string) {
       });
     }
 
-    await invalidateAuthActionTokens(consumed.user.id, 'VERIFY_EMAIL', tx);
+    await invalidateAuthActionTokens(consumed.user.id, tokenType, tx);
   });
 
   if (reactivatedAccount) {

@@ -30,6 +30,13 @@ const previewSchema = z.object({
   targetPeriodStartsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   holderType: z.enum(['STUDENT', 'RESPONSIBLE']),
   holderId: z.string().trim().min(1),
+  futureBillingStrategy: z
+    .object({
+      mode: z.enum(['SEPARATE', 'UNIFY_EXISTING']),
+      agreementId: z.string().trim().nullable().optional(),
+    })
+    .optional(),
+  descontos: z.array(z.object({ id: z.string().trim().min(1), cumulativo: z.boolean().optional() })).optional(),
   items: z.array(renewalItemSchema).min(1),
   effectiveAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   firstDueDate: z.string().datetime().or(z.string().date()).nullable().optional(),
@@ -46,6 +53,8 @@ const previewSchema = z.object({
       feePurpose: z
         .enum(['ADMINISTRATIVE_FEE', 'SEAT_RESERVATION', 'ADVANCE_FIRST_TUITION'])
         .optional(),
+      earlyDiscountPercent: z.number().nonnegative().nullable().optional(),
+      earlyDiscountDays: z.number().int().nonnegative().nullable().optional(),
     })
     .nullable()
     .optional(),
@@ -84,6 +93,8 @@ export async function POST(request: Request) {
         targetPeriodStartsAt: parseDate(body.targetPeriodStartsAt),
         holderType: body.holderType,
         holderId: body.holderId,
+        futureBillingStrategy: body.futureBillingStrategy,
+        descontos: body.descontos,
         items: body.items,
         effectiveAt: parseDate(body.effectiveAt),
         firstDueDate: parseDate(body.firstDueDate),

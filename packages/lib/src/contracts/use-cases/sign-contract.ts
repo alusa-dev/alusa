@@ -20,6 +20,7 @@ type SignPublicContractInput = {
   ip?: string | null;
   userAgent?: string | null;
   baseUrl?: string | null;
+  assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
 };
 
 type SignPublicContractResult = {
@@ -95,6 +96,11 @@ export async function findPublicContractByToken(token: string) {
     },
     include: {
       conta: { select: { id: true, nome: true } },
+      modelo: {
+        include: {
+          campos: { orderBy: { ordem: 'asc' } },
+        },
+      },
       matricula: {
         select: {
           id: true,
@@ -104,6 +110,17 @@ export async function findPublicContractByToken(token: string) {
       },
     },
   });
+}
+
+function getContractSignatureFields(contrato: Awaited<ReturnType<typeof findPublicContractByToken>>) {
+  if (!contrato) return [];
+  if (Array.isArray(contrato.camposAssinaturaSnapshot)) {
+    return contrato.camposAssinaturaSnapshot as Array<{
+      tipo: 'ASSINATURA' | 'RUBRICA'; papel: 'ESCOLA' | 'RESPONSAVEL_OU_ALUNO';
+      pagina: number; x: number; y: number; largura: number; altura: number;
+    }>;
+  }
+  return contrato.modelo?.campos ?? [];
 }
 
 export async function signPublicContract(input: SignPublicContractInput): Promise<SignPublicContractResult> {
@@ -153,6 +170,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     assinadoEmIso: now.toISOString(),
     ip: input.ip ?? null,
     userAgent,
+    assinatura: input.assinatura,
   });
   const signatureHash = hashCanonicalPayload(signaturePayload);
 
@@ -172,6 +190,16 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     presentedPdfHash: contrato.hashPdf,
     signatureHash,
     originalPdfBytes,
+    assinatura: input.assinatura,
+    camposAssinatura: getContractSignatureFields(contrato).map((campo) => ({
+      tipo: campo.tipo,
+      papel: campo.papel,
+      pagina: campo.pagina,
+      x: campo.x,
+      y: campo.y,
+      largura: campo.largura,
+      altura: campo.altura,
+    })),
   });
 
   const signedPdfUrl = `/api/contratos/${contrato.id}/documentos/assinado`;

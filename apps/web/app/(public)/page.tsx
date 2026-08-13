@@ -6,11 +6,13 @@ import { PlatformSection } from '@/features/site/components/sections/PlatformSec
 import { ProblemSection } from '@/features/site/components/sections/ProblemSection';
 import { ProductSection } from '@/features/site/components/sections/ProductSection';
 import { FaqSection } from '@/features/site/components/sections/FaqSection';
+import { HighlightsSection } from '@/features/site/components/sections/HighlightsSection';
 
 export default function HomePage() {
   return (
     <>
       <HeroSection />
+      <HighlightsSection />
       <ProblemSection />
       <ProductSection />
       <PlatformSection />

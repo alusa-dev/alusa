@@ -14,7 +14,7 @@ function isRateLimitBypassedInDev(): boolean {
 }
 
 function shouldTrustProxyHeaders(): boolean {
-  return process.env.TRUST_PROXY_HEADERS === 'true' || process.env.NODE_ENV === 'production';
+  return process.env.TRUST_PROXY_HEADERS === 'true' || process.env.VERCEL === '1';
 }
 
 export function rateLimit(key: string, limit: number, windowMs: number): { ok: boolean; remaining: number; resetAt: number } {
@@ -110,6 +110,48 @@ export async function rateLimitAsync(
   }
 }
 
+/** Rate limit de autenticação: distribuído e fail-closed em produção. */
+export async function authRateLimitAsync(
+  key: string,
+  limit: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  if (isRateLimitBypassedInDev()) {
+    return { ok: true, remaining: limit, resetAt: Date.now() };
+  }
+
+  if (!getRedisRestConfig()) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[rate-limit][auth-unavailable]', { reason: 'redis_not_configured' });
+      return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+    }
+    return rateLimit(key, limit, windowMs);
+  }
+
+  try {
+    const redisKey = buildRedisRateLimitKey(key);
+    const count = Number(await redisCommand<number>(['INCR', redisKey]));
+    if (count === 1) await redisCommand(['PEXPIRE', redisKey, windowMs]);
+    const ttlMs = Number(await redisCommand<number>(['PTTL', redisKey]));
+    return {
+      ok: count <= limit,
+      remaining: Math.max(0, limit - count),
+      resetAt: Date.now() + Math.max(ttlMs, 0),
+    };
+  } catch (error) {
+    console.error('[rate-limit][auth-unavailable]', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { ok: false, remaining: 0, resetAt: Date.now() + windowMs };
+  }
+}
+
+export async function rateLimitSubject(value: string): Promise<string> {
+  const data = new TextEncoder().encode(value.trim().toLowerCase());
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export function ipFromRequest(req: Request): string {
   if (shouldTrustProxyHeaders()) {
     try {
@@ -119,8 +161,10 @@ export function ipFromRequest(req: Request): string {
         if (value) return value;
       }
 
-      const xff = req.headers.get('x-forwarded-for');
-      if (xff) return xff.split(',')[0].trim();
+      if (process.env.TRUST_PROXY_HEADERS === 'true') {
+        const xff = req.headers.get('x-forwarded-for');
+        if (xff) return xff.split(',')[0].trim();
+      }
     } catch {
       /* noop */
     }

@@ -2,12 +2,14 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { verifyCredentialsDetailed } from '@/lib/auth-service';
 import { sendAccountReactivationForEmail } from '@/lib/auth-email-flow';
-import { ipFromRequest } from '@/lib/rate-limit';
+import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-limit';
 
 const bodySchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().max(320),
+  password: z.string().min(1).max(256),
 });
+
+const GENERIC_FAILURE = { ok: false as const, reason: 'INVALID_CREDENTIALS' as const };
 
 export async function POST(req: Request) {
   try {
@@ -18,22 +20,36 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, reason: 'INVALID_INPUT' }, { status: 400 });
     }
 
+    const ip = ipFromRequest(req);
+    const emailSubject = await rateLimitSubject(parsed.data.email);
+    const [ipLimit, emailLimit] = await Promise.all([
+      authRateLimitAsync(`auth-login-validate:ip:${ip}`, 10, 15 * 60 * 1000),
+      authRateLimitAsync(`auth-login-validate:email:${emailSubject}`, 5, 15 * 60 * 1000),
+    ]);
+    if (!ipLimit.ok || !emailLimit.ok) {
+      return NextResponse.json(
+        { ok: false, reason: 'RATE_LIMITED' },
+        { status: 429, headers: { 'Retry-After': '900', 'Cache-Control': 'no-store' } },
+      );
+    }
+
     const result = await verifyCredentialsDetailed(parsed.data.email, parsed.data.password);
     if (!result.ok) {
       if (result.reason === 'ACCOUNT_DEACTIVATED') {
         await sendAccountReactivationForEmail(parsed.data.email, {
-          ip: ipFromRequest(req),
+          ip,
           userAgent: req.headers.get('user-agent'),
         });
       }
 
-      const status = result.reason === 'UNEXPECTED_ERROR'
-        ? 500
-        : result.reason === 'ACCOUNT_UNAVAILABLE' || result.reason === 'USER_INACTIVE' || result.reason === 'ACCOUNT_DEACTIVATED'
-          ? 403
-          : 401;
+      if (result.reason === 'UNEXPECTED_ERROR') {
+        return NextResponse.json({ ok: false, reason: 'UNEXPECTED_ERROR' }, { status: 503 });
+      }
 
-      return NextResponse.json(result, { status });
+      return NextResponse.json(GENERIC_FAILURE, {
+        status: 401,
+        headers: { 'Cache-Control': 'no-store' },
+      });
     }
 
     return NextResponse.json({ ok: true });

@@ -1,10 +1,21 @@
 import type { Prisma } from '@prisma/client';
 import { createContractEvidence, createPublicContractToken } from '@alusa/lib';
+import {
+  getMissingContractSignatureFieldsMessage,
+  hasRequiredContractSignatureFields,
+} from './signature-fields';
 
 export class EnrollmentContractModelNotFoundError extends Error {
   constructor() {
     super('Modelo de contrato ativo não encontrado nesta conta.');
     this.name = 'EnrollmentContractModelNotFoundError';
+  }
+}
+
+export class EnrollmentContractModelSignatureFieldsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EnrollmentContractModelSignatureFieldsError';
   }
 }
 
@@ -23,10 +34,19 @@ export async function createPendingEnrollmentContract(
       contaId: input.contaId,
       status: 'ATIVO',
     },
+    include: {
+      campos: { orderBy: { ordem: 'asc' } },
+    },
   });
 
   if (!modelo) {
     throw new EnrollmentContractModelNotFoundError();
+  }
+
+  if (!hasRequiredContractSignatureFields(modelo.campos)) {
+    throw new EnrollmentContractModelSignatureFieldsError(
+      getMissingContractSignatureFieldsMessage(modelo.campos),
+    );
   }
 
   const existing = await tx.contrato.findFirst({
@@ -58,6 +78,18 @@ export async function createPendingEnrollmentContract(
       modeloId: input.modeloId,
       arquivoPdfUrl: modelo.arquivoPdfUrl,
       hashPdf: modelo.hashSha256,
+      camposAssinaturaSnapshot: modelo.campos.map((campo) => ({
+        id: campo.id,
+        tipo: campo.tipo,
+        papel: campo.papel,
+        pagina: campo.pagina,
+        x: campo.x,
+        y: campo.y,
+        largura: campo.largura,
+        altura: campo.altura,
+        obrigatorio: campo.obrigatorio,
+        ordem: campo.ordem,
+      })),
       status: 'PENDENTE',
       tokenPublico: `hash:${tokenHash}`,
       tokenPublicoHash: tokenHash,

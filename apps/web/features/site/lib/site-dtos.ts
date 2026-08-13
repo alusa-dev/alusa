@@ -31,6 +31,11 @@ export type TrustItemDto = {
   readonly body: string;
 };
 
+export type HighlightDto = {
+  readonly title: string;
+  readonly description: string;
+};
+
 export type FaqItemDto = {
   readonly question: string;
   readonly answer: string;
@@ -57,6 +62,7 @@ export type HomePageDto = {
     readonly label: string;
     readonly items: readonly string[];
   };
+  readonly highlights: readonly HighlightDto[];
   readonly problem: {
     readonly title: string;
     readonly body: readonly string[];

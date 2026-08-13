@@ -19,6 +19,10 @@ import {
   mapPeriodicidadeToCycle,
   resolveChargeableFirstDueDate,
 } from '@/src/server/matriculas/recurring-billing';
+import {
+  getMissingContractSignatureFieldsMessage,
+  hasRequiredContractSignatureFields,
+} from '@/src/server/contracts/signature-fields';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -264,12 +268,22 @@ export async function POST(request: NextRequest) {
 
     const modelo = await prisma.contratoModelo.findFirst({
       where: { id: body.modeloId, contaId: user.contaId, status: 'ATIVO' },
+      include: {
+        campos: { orderBy: { ordem: 'asc' } },
+      },
     });
 
     if (!modelo) {
       return NextResponse.json(
         { error: { message: 'Modelo de contrato não encontrado' } },
         { status: 404 },
+      );
+    }
+
+    if (!hasRequiredContractSignatureFields(modelo.campos)) {
+      return NextResponse.json(
+        { error: { message: getMissingContractSignatureFieldsMessage(modelo.campos) } },
+        { status: 422 },
       );
     }
 
@@ -289,6 +303,18 @@ export async function POST(request: NextRequest) {
           tokenPublico: `hash:${tokenPublicoHash}`,
           tokenPublicoHash,
           tokenExpiraEm,
+          camposAssinaturaSnapshot: modelo.campos.map((campo) => ({
+            id: campo.id,
+            tipo: campo.tipo,
+            papel: campo.papel,
+            pagina: campo.pagina,
+            x: campo.x,
+            y: campo.y,
+            largura: campo.largura,
+            altura: campo.altura,
+            obrigatorio: campo.obrigatorio,
+            ordem: campo.ordem,
+          })),
         },
       });
 

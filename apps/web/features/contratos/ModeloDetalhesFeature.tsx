@@ -1,23 +1,19 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircle, DocumentText, Eye } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import {
-  ArrowLeftIcon,
-  ShareIcon,
-  PencilIcon,
-  CheckBadgeIcon,
-  EyeIcon,
-} from '@heroicons/react/24/outline';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { getContratoModelo, updateContratoModelo, type ContratoModelo } from './services/modelos-service';
+import { PDFSignatureEditor, type SignatureField } from './components/PDFSignatureEditor';
 import { PDFViewer } from './components/PDFViewer';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
+
+type Step = 1 | 2 | 3;
 
 interface ModeloDetalhesFeatureProps {
   modeloId: string;
@@ -27,10 +23,11 @@ export function ModeloDetalhesFeature({ modeloId }: ModeloDetalhesFeatureProps) 
   const router = useRouter();
   const [modelo, setModelo] = useState<ContratoModelo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [step, setStep] = useState<Step>(1);
   const [editNome, setEditNome] = useState('');
   const [editDescricao, setEditDescricao] = useState('');
+  const [editFields, setEditFields] = useState<SignatureField[]>([]);
 
   useEffect(() => {
     getContratoModelo(modeloId)
@@ -38,280 +35,78 @@ export function ModeloDetalhesFeature({ modeloId }: ModeloDetalhesFeatureProps) 
         setModelo(data);
         setEditNome(data.nome);
         setEditDescricao(data.descricao || '');
+        setEditFields(data.campos);
       })
-      .catch((err) => {
+      .catch((error) => {
         toast.error('Erro ao carregar modelo');
-        console.error(err);
+        console.error(error);
       })
       .finally(() => setLoading(false));
   }, [modeloId]);
 
+  const resetChanges = useCallback(() => {
+    if (!modelo) return;
+    setEditNome(modelo.nome);
+    setEditDescricao(modelo.descricao || '');
+    setEditFields(modelo.campos);
+    setStep(1);
+  }, [modelo]);
+
   const handleSave = useCallback(async () => {
     if (!modelo) return;
-
     try {
       setSaving(true);
       const updated = await updateContratoModelo(modelo.id, {
         nome: editNome.trim(),
         descricao: editDescricao.trim() || null,
+        campos: editFields.map(({ id: _id, ...field }) => field),
       });
       setModelo({ ...modelo, ...updated });
-      setEditing(false);
-      toast.success('Modelo atualizado');
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Erro ao salvar');
+      setStep(1);
+      toast.success('Modelo atualizado com sucesso.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Erro ao salvar modelo');
     } finally {
       setSaving(false);
     }
-  }, [modelo, editNome, editDescricao]);
-
-  const handleDownload = useCallback(() => {
-    if (!modelo) return;
-    const link = document.createElement('a');
-    link.href = modelo.arquivoPdfUrl;
-    link.download = `${modelo.nome}.pdf`;
-    link.click();
-  }, [modelo]);
-
-  const handleShare = useCallback(() => {
-    if (!modelo) return;
-    const url = `${window.location.origin}${modelo.arquivoPdfUrl}`;
-    navigator.clipboard.writeText(url);
-    toast.success('Link copiado para a área de transferência');
-  }, [modelo]);
+  }, [modelo, editNome, editDescricao, editFields]);
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-accent"></div>
-      </div>
-    );
+    return <div className="flex min-h-screen items-center justify-center"><div className="h-10 w-10 animate-spin rounded-full border-2 border-brand-accent border-t-transparent" /></div>;
   }
 
   if (!modelo) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600 mb-4">Modelo não encontrado</p>
-          <Button onClick={() => router.push('/contratos/modelos')}>
-            Voltar para modelos
-          </Button>
-        </div>
-      </div>
-    );
+    return <div className="flex min-h-screen items-center justify-center p-6"><div className="text-center"><p className="mb-4 text-slate-600">Modelo não encontrado</p><Button onClick={() => router.push('/contratos/modelos')}>Voltar para modelos</Button></div></div>;
   }
 
+  const hasRequiredRoles = editFields.some((field) => field.papel === 'ESCOLA') && editFields.some((field) => field.papel === 'RESPONSAVEL_OU_ALUNO');
+  const canContinue = step === 1 ? Boolean(editNome.trim()) : hasRequiredRoles;
+
   return (
-    <div className="min-h-screen bg-gray-50/50">
-      {/* Header */}
-      <div className="bg-white border-b px-6 py-4 sticky top-0 z-10">
-        <div className="flex w-full min-w-0 items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => router.back()}
-              className="-ml-2 hover:bg-gray-100"
-            >
-              <ArrowLeftIcon className="h-5 w-5 text-gray-500" />
-            </Button>
-            <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-semibold text-gray-900 tracking-tight">
-                  {modelo.nome}
-                </h1>
-                <Badge status={modelo.status} />
-                <Badge
-                  variant="outline"
-                  className="font-mono text-gray-500 bg-gray-50 text-xs px-2"
-                >
-                  v{modelo.versao}
-                </Badge>
-              </div>
-              <p className="text-sm text-gray-500 mt-0.5">
-                {modelo._count?.contratos || 0} contratos gerados a partir deste
-                modelo
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleShare}
-              className="hidden sm:flex"
-            >
-              <ShareIcon className="h-4 w-4 mr-2" />
-              Compartilhar
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.open(modelo.arquivoPdfUrl, '_blank', 'noopener,noreferrer')}
-              className="hidden sm:flex"
-            >
-              <EyeIcon className="h-4 w-4 mr-2" />
-              Visualizar PDF
-            </Button>
-            <Button size="sm" onClick={() => setEditing(!editing)}>
-              <PencilIcon className="h-4 w-4 mr-2" />
-              Editar
-            </Button>
-          </div>
+    <div className="min-h-screen bg-white text-slate-900">
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-7">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-950">Editar contrato</h1>
+          <p className="mt-1 text-sm text-slate-500">Atualize os dados do modelo e revise os campos de assinatura antes de salvar.</p>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="w-full min-w-0 px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* PDF Viewer */}
-          <div className="lg:col-span-2">
-            <Card className="overflow-hidden border-gray-200 shadow-sm">
-              <CardHeader className="bg-gray-50border-b flex flex-row items-center justify-between py-4">
-                <CardTitle className="text-base font-medium text-gray-900">
-                  Visualização do Documento
-                </CardTitle>
-                <Badge variant="outline" className="bg-white">
-                  PDF
-                </Badge>
-              </CardHeader>
-              <CardContent className="p-0 bg-gray-100">
-                <PDFViewer
-                  url={modelo.arquivoPdfUrl}
-                  title={modelo.nome}
-                  maxHeight="75vh"
-                />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Info Panel */}
+        {step === 1 && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-6">
-            {editing ? (
-              <Card className="shadow-sm border-gray-200">
-                <CardHeader>
-                  <CardTitle className="text-base">Editar Informações</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-nome">Nome do Contrato</Label>
-                    <Input
-                      id="edit-nome"
-                      value={editNome}
-                      onChange={(e) => setEditNome(e.target.value)}
-                      maxLength={200}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-descricao">Descrição Interna</Label>
-                    <Textarea
-                      id="edit-descricao"
-                      value={editDescricao}
-                      onChange={(e) => setEditDescricao(e.target.value)}
-                      rows={4}
-                      maxLength={500}
-                      className="resize-none"
-                    />
-                  </div>
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => {
-                        setEditing(false);
-                        setEditNome(modelo.nome);
-                        setEditDescricao(modelo.descricao || '');
-                      }}
-                      disabled={saving}
-                    >
-                      Cancelar
-                    </Button>
-                    <Button
-                      className="w-full"
-                      onClick={handleSave}
-                      disabled={saving}
-                    >
-                      {saving ? 'Salvando...' : 'Salvar Alterações'}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="shadow-sm border-gray-200">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Detalhes do Modelo</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  {modelo.descricao && (
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                        Descrição
-                      </p>
-                      <p className="text-sm text-gray-700 leading-relaxed">
-                        {modelo.descricao}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 gap-4">
-                    <div>
-                      <p className="text-xs font-medium text-gray-500">
-                        Tamanho do Arquivo
-                      </p>
-                      <p className="text-sm font-medium text-gray-900">
-                        {modelo.tamanhoBytes
-                          ? `${(modelo.tamanhoBytes / 1024 / 1024).toFixed(2)} MB`
-                          : 'Não informado'}
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-xs font-medium text-gray-500">
-                          Data de Criação
-                        </p>
-                        <p className="text-sm text-gray-900">
-                          {new Date(modelo.createdAt).toLocaleDateString(
-                            'pt-BR',
-                            {
-                              day: '2-digit',
-                              month: 'short',
-                              year: 'numeric',
-                            }
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-gray-500">
-                          Última Edição
-                        </p>
-                        <p className="text-sm text-gray-900">
-                          {new Date(modelo.updatedAt).toLocaleDateString(
-                            'pt-BR',
-                            {
-                              day: '2-digit',
-                              month: 'short',
-                              year: 'numeric',
-                            }
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-gray-100">
-                    <div className="flex items-center gap-2 text-green-700 bg-green-50 p-2 rounded-md text-xs font-medium">
-                      <CheckBadgeIcon className="h-4 w-4" />
-                      Documento íntegro e verificado
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            <Card><CardHeader><CardTitle>Documento do contrato</CardTitle><CardDescription>Este é o PDF utilizado como base para o modelo.</CardDescription></CardHeader><CardContent><div className="flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4"><div className="flex min-w-0 items-center gap-3"><div className="rounded-lg bg-white p-2 text-emerald-600"><DocumentText className="h-5 w-5" /></div><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{modelo.nome}.pdf</p><p className="text-xs text-slate-500">{modelo.tamanhoBytes ? `${(modelo.tamanhoBytes / 1024 / 1024).toFixed(2)} MB` : 'PDF'} · Arquivo preservado</p></div></div><Button type="button" variant="outline" size="sm" className="shrink-0 bg-white" onClick={() => window.open(modelo.arquivoPdfUrl, '_blank', 'noopener,noreferrer')}><Eye className="mr-2 h-4 w-4" />Abrir</Button></div></CardContent></Card>
+            <Card><CardHeader><CardTitle>Informações do modelo</CardTitle><CardDescription>Esses dados identificam o modelo na Alusa.</CardDescription></CardHeader><CardContent className="space-y-5"><div className="space-y-2"><Label htmlFor="modelo-edit-nome">Nome do modelo <span className="text-red-500">*</span></Label><Input id="modelo-edit-nome" value={editNome} onChange={(event) => setEditNome(event.target.value)} maxLength={200} /></div><div className="space-y-2"><Label htmlFor="modelo-edit-descricao">Descrição <span className="text-xs font-normal text-slate-400">(opcional)</span></Label><Textarea id="modelo-edit-descricao" value={editDescricao} onChange={(event) => setEditDescricao(event.target.value)} maxLength={500} rows={4} placeholder="Informe quando este modelo deve ser utilizado." /></div></CardContent></Card>
           </div>
-        </div>
-      </div>
+          <div className="space-y-4"><div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50"><PDFViewer url={modelo.arquivoPdfUrl} title={modelo.nome} maxHeight="380px" /></div><div className="rounded-xl bg-[#d8f3f5] px-4 py-3 text-sm text-slate-700"><p className="font-semibold text-slate-900">Sobre o modelo</p><p className="mt-1 text-xs leading-4">O modelo será reutilizado nas matrículas. Os campos de assinatura podem ser revisados na próxima etapa.</p></div></div>
+        </div>}
+
+        {step === 2 && <div><div className="mb-5"><h2 className="text-lg font-semibold text-slate-900">Definir campos de assinatura</h2><p className="text-sm text-slate-500">Posicione os campos no PDF. Você pode ajustar este modelo mesmo que ele já tenha contratos gerados.</p></div><PDFSignatureEditor url={modelo.arquivoPdfUrl} fields={editFields} onFieldsChange={setEditFields} /></div>}
+
+        {step === 3 && <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+          <Card className="border-slate-200 shadow-sm"><CardHeader><CardTitle>Revise as alterações</CardTitle><CardDescription>Confira os dados e a configuração antes de salvar.</CardDescription></CardHeader><CardContent className="space-y-5"><div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Nome do modelo</p><p className="mt-1 font-semibold text-slate-900">{editNome}</p><p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Descrição</p><p className="mt-1 text-sm text-slate-600">{editDescricao || 'Sem descrição'}</p></div><div><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Campos de assinatura</p><div className="mt-2 space-y-2">{editFields.map((field) => <div key={field.id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><span className="flex items-center gap-2"><CheckCircle className="h-4 w-4 text-emerald-600" />{field.papel === 'ESCOLA' ? 'Escola' : 'Responsável / aluno'}</span><span className="text-xs text-slate-500">Página {field.pagina}</span></div>)}</div></div></CardContent></Card>
+          <div className="space-y-4"><PDFViewer url={modelo.arquivoPdfUrl} title={modelo.nome} maxHeight="620px" /><div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-5 text-amber-950">As alterações serão usadas nas próximas matrículas e nos contratos pendentes vinculados a este modelo.</div></div>
+        </div>}
+
+        <div className="mt-8 flex items-center justify-between border-t border-slate-200 pt-5"><Button variant="outline" onClick={() => step === 1 ? resetChanges() : setStep((step - 1) as Step)} disabled={saving}>{step === 1 ? 'Cancelar' : 'Voltar'}</Button>{step < 3 ? <Button onClick={() => canContinue && setStep((step + 1) as Step)} disabled={!canContinue}>{step === 1 ? 'Continuar para campos' : 'Revisar modelo'}</Button> : <Button onClick={() => void handleSave()} disabled={saving || !hasRequiredRoles}>{saving ? 'Salvando...' : 'Salvar alterações'}</Button>}</div>
+      </main>
     </div>
   );
 }

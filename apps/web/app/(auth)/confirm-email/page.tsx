@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { signOut, useSession } from 'next-auth/react';
+import { useSession } from 'next-auth/react';
+import { logoutCurrentSession } from '@/lib/client/logout';
 import { useRouter, useSearchParams } from 'next/navigation';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from '@/components/ui/toast';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
 import AuthShell from '@/components/auth/AuthShell';
@@ -113,7 +114,7 @@ export default function ConfirmEmailPage() {
             <button
               type="button"
               onClick={() => {
-                void signOut({ callbackUrl: '/auth/login' });
+                void logoutCurrentSession('/auth/login');
               }}
               className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base lg:h-12"
             >

@@ -475,6 +475,32 @@ export async function POST(req: Request) {
       return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
     }
 
+    if (body.responsavelFinanceiroId && body.responsavelFinanceiroId !== origem.responsavelFinanceiroId) {
+      const novoResponsavel = await prisma.responsavel.findFirst({
+        where: { id: body.responsavelFinanceiroId, contaId: auth.contaId },
+        select: { id: true },
+      });
+      if (!novoResponsavel) {
+        return jsonError(404, 'RESPONSAVEL_NAO_ENCONTRADO', 'Responsável financeiro não encontrado.');
+      }
+
+      const vinculo = await prisma.alunoResponsavel.findFirst({
+        where: {
+          contaId: auth.contaId,
+          alunoId: origem.alunoId,
+          responsavelId: body.responsavelFinanceiroId,
+        },
+        select: { id: true },
+      });
+      if (!vinculo) {
+        return jsonError(
+          422,
+          'RESPONSAVEL_NAO_VINCULADO',
+          'O novo responsável não está vinculado ao aluno.',
+        );
+      }
+    }
+
     const targetPeriodId = body.targetPeriodId ?? String(dataInicioValue.getUTCFullYear());
     const campaignId = body.campaignId?.trim() || null;
     if (campaignId) {
@@ -509,6 +535,9 @@ export async function POST(req: Request) {
       targetPeriodStartsAt: dataInicioValue,
       holderType: holderType as 'RESPONSIBLE' | 'STUDENT',
       holderId,
+      sourceHolderId: origem.responsavelFinanceiroId,
+      futureBillingStrategy: body.futureBillingStrategy,
+      descontos: body.descontos,
       contractModelId: body.contractModelId ?? null,
       items: [
         {
@@ -531,6 +560,8 @@ export async function POST(req: Request) {
         feeChargeMoment: 'CHARGE_ON_START' as const,
         feeUnit: 'PER_STUDENT' as const,
         feePurpose: 'ADMINISTRATIVE_FEE' as const,
+        earlyDiscountPercent: parseNumber(body.descontoAntecipado),
+        earlyDiscountDays: parseInteger(body.prazoDesconto),
       },
     };
 

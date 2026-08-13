@@ -202,7 +202,7 @@ describe('renewal-process.service', () => {
     const prisma = basePrisma({
       matricula: {
         ...basePrisma().matricula,
-        findMany: vi.fn().mockResolvedValueOnce([source]).mockResolvedValueOnce(chainRows).mockResolvedValueOnce(chainRows),
+        findMany: vi.fn().mockResolvedValueOnce([source]).mockResolvedValueOnce([]).mockResolvedValueOnce(chainRows).mockResolvedValueOnce(chainRows),
       },
     });
 
@@ -231,6 +231,47 @@ describe('renewal-process.service', () => {
         expect.objectContaining({ code: 'TARGET_CLASS_FULL', sourceEnrollmentId: 'mat-1' }),
       ]),
     );
+  });
+
+  it('expõe acordo futuro compatível para escolher unificação ou cobrança separada', async () => {
+    const prisma = basePrisma({
+      acordoFinanceiroFuturo: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'acordo-existente',
+            processoId: 'processo-anterior',
+            status: 'SCHEDULED',
+            monthlyTotal: 300,
+            enrollmentFeeTotal: 0,
+            effectiveAt: new Date('2026-02-01T00:00:00.000Z'),
+            matriculaFuturaId: 'mat-futura-anterior',
+            snapshot: {},
+            processo: {
+              itens: [
+                {
+                  matriculaFutura: {
+                    aluno: { nome: 'Aluno anterior' },
+                    plano: { periodicidade: 'MENSAL' },
+                    combo: null,
+                  },
+                },
+              ],
+            },
+          },
+        ]),
+      },
+    });
+
+    const preview = await previewRenewalProcess(input, { prisma: prisma as never });
+
+    expect(preview.futureAgreementCandidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'acordo-existente',
+        monthlyTotal: 300,
+        canUnify: true,
+        periodicity: 'MENSAL',
+      }),
+    ]));
   });
 
   it('ativa futura e encerra origem como ENCERRADA', async () => {
