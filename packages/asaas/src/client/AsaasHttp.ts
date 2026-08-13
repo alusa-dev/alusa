@@ -33,6 +33,13 @@ export interface AsaasHttpOptions {
   expectedErrorStatuses?: number[];
 }
 
+export class AsaasApiKeyError extends Error {
+  constructor(message = 'API key do Asaas inválida.') {
+    super(message);
+    this.name = 'AsaasApiKeyError';
+  }
+}
+
 export class AsaasHttpError extends Error {
   constructor(
     message: string,
@@ -54,11 +61,18 @@ export class AsaasHttp {
   private readonly accountScope?: string;
 
   constructor(config: AsaasHttpConfig) {
-    this.apiKey = config.apiKey;
-    this.accountKey = createAsaasAccountKey(config.apiKey);
+    const apiKey = config.apiKey.trim();
+    if (!apiKey || [...apiKey].some((character) => character.charCodeAt(0) > 0x7f)) {
+      throw new AsaasApiKeyError(
+        'API key do Asaas inválida. Cole somente a chave original, sem símbolos ou caracteres adicionais.',
+      );
+    }
+
+    this.apiKey = apiKey;
+    this.accountKey = createAsaasAccountKey(apiKey);
     this.accountScope = config.accountScope;
     // A API key define o ambiente efetivo para evitar validar chaves de produção em sandbox e vice-versa.
-    this.baseUrl = getAsaasBaseUrlForApiKeyOrThrow(config.apiKey);
+    this.baseUrl = getAsaasBaseUrlForApiKeyOrThrow(apiKey);
   }
 
   async get<T>(path: string, options?: AsaasHttpOptions): Promise<T> {

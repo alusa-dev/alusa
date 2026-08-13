@@ -7,7 +7,7 @@
  */
 
 // Client
-export { AsaasHttp, AsaasHttpError } from './client/AsaasHttp';
+export { AsaasApiKeyError, AsaasHttp, AsaasHttpError } from './client/AsaasHttp';
 export type { AsaasHttpConfig, AsaasHttpOptions } from './client/AsaasHttp';
 export { createAsaasClient } from './client/AsaasClient';
 export {

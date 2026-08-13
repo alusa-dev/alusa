@@ -62,7 +62,7 @@ export {
   getPaymentResolutionPolicies,
   type PaymentResolutionPolicyName,
 } from './foundation/payment-resolution-policy';
-export { AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
+export { AsaasApiKeyError, AsaasHttpError, AsaasBaseUrlError } from '@alusa/asaas';
 export {
   getAsaasBaseUrlFromEnvOrThrow,
   getAsaasBaseUrlForApiKeyOrThrow,

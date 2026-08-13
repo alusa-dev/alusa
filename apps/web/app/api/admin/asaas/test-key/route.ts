@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import {
+  AsaasApiKeyError,
   AsaasHttpError,
   asaasGetMyAccountCommercialInfo,
   asaasGetMyAccountStatus,
@@ -58,6 +59,13 @@ export async function POST(request: Request) {
         : 'Conexão validada com sucesso.',
     });
   } catch (error) {
+    if (error instanceof AsaasApiKeyError) {
+      return json(400, {
+        success: false,
+        summary: error.message,
+      });
+    }
+
     if (error instanceof AsaasHttpError && (error.status === 401 || error.status === 403)) {
       return json(400, {
         success: false,

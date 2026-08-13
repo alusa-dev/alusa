@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { AsaasHttp } from './AsaasHttp';
+import { AsaasApiKeyError, AsaasHttp } from './AsaasHttp';
 import { globalAsaasHooks } from './asaas-hooks';
 import { getAsaasBaseUrlForApiKeyOrThrow } from './asaasBaseUrl.ts';
 
@@ -50,6 +50,11 @@ describe('AsaasHttp (idempotência + retry)', () => {
     const headers = (init.headers ?? {}) as Record<string, string>;
 
     expect(headers['Idempotency-Key']).toBe('external-123');
+  });
+
+  it('recusa API key com caracteres Unicode antes de montar o header HTTP', () => {
+    expect(() => new AsaasHttp({ apiKey: `${'k'.repeat(565)}✓` })).toThrow(AsaasApiKeyError);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('faz retry em 429 e depois retorna sucesso', async () => {
