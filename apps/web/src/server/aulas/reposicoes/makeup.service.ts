@@ -205,7 +205,7 @@ export async function createMakeupClass(
     throw new AulasError('REPOSICAO_INDIVIDUAL_SEM_ALUNO', 'Reposição individual exige aluno ou matrícula.');
   }
 
-  let alunoId = input.scope === 'INDIVIDUAL' ? input.alunoId ?? null : null;
+  const alunoId = input.scope === 'INDIVIDUAL' ? input.alunoId ?? null : null;
   let matriculaId = input.scope === 'INDIVIDUAL' ? input.matriculaId ?? null : null;
 
   if (input.scope === 'INDIVIDUAL') {

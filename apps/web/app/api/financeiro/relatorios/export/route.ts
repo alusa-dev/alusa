@@ -16,7 +16,10 @@ const EXPORT_LIMIT = 10_000;
 
 export function sanitizeCsvCellValue(value: unknown): string {
   const raw = String(value ?? '');
-  const withoutControls = raw.replace(/[\u0000-\u001F\u007F]/g, ' ');
+  const withoutControls = Array.from(raw, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f ? ' ' : character;
+  }).join('');
   const leftTrimmed = withoutControls.trimStart();
   return /^[=+\-@]/.test(leftTrimmed) ? `'${leftTrimmed}` : withoutControls;
 }
