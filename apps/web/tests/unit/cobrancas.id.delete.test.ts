@@ -84,6 +84,7 @@ vi.mock('@alusa/finance', () => {
     registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
     markPaymentCommandSent: vi.fn(async () => undefined),
     failPaymentCommand: vi.fn(async () => undefined),
+    runAsaasPaymentCommand: vi.fn(async ({ run }: { run: () => Promise<unknown> }) => ({ result: await run(), commandJobId: 'job-1', correlationId: 'corr-1' })),
     deletePayment: vi.fn(async () => {
       throw new KycNotApprovedError('KYC_NAO_APROVADO');
     }),

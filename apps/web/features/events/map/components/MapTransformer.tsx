@@ -46,7 +46,9 @@ export function MapTransformer({
 }: MapTransformerProps) {
   return (
     <Transformer
-      ref={transformerRef as React.Ref<Konva.Transformer>}
+      ref={(instance) => {
+        transformerRef.current = instance as unknown as Konva.Transformer | null;
+      }}
       rotateEnabled={!disableRotateForMixedSmartCorridorSelection}
       resizeEnabled={!disableResizeForMixedSmartCorridorSelection}
       keepRatio={transformerScaleOptions.keepRatio}

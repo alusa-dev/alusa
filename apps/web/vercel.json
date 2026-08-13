@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["gru1"],
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && find packages -name '*.tsbuildinfo' -delete && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/web --force",
+  "buildCommand": "cd ../.. && find packages -name '*.tsbuildinfo' -delete && pnpm prisma:generate && NODE_OPTIONS=--max-old-space-size=4096 pnpm exec turbo run build --filter=@alusa/web --force",
   "crons": [
     {
       "path": "/api/jobs/webhook-scheduler?drainLimit=200&skipArchive=true&skipHealthCheck=true&skipDriftCheck=true",

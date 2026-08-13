@@ -1,8 +1,9 @@
 import type { ComponentType, SVGProps } from 'react';
 
-export type SiteIcon = ComponentType<SVGProps<SVGSVGElement>>;
+type SiteIconProps = Omit<SVGProps<SVGSVGElement>, 'ref'>;
+export type SiteIcon = ComponentType<SiteIconProps>;
 
-function BaseIcon({ children, ...props }: SVGProps<SVGSVGElement>) {
+function BaseIcon({ children, ...props }: SiteIconProps) {
   return (
     <svg
       viewBox="0 0 24 24"

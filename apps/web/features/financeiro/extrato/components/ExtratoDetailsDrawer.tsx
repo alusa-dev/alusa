@@ -179,7 +179,7 @@ function DetailRow({
 }: { 
   label: string; 
   value: string; 
-  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  icon: ComponentType<Omit<SVGProps<SVGSVGElement>, 'ref'>>;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 px-5 py-4" data-testid="detail-row">
@@ -204,7 +204,7 @@ function MetaLine({
 }: {
   label: string;
   value: string;
-  icon?: ComponentType<SVGProps<SVGSVGElement>>;
+  icon?: ComponentType<Omit<SVGProps<SVGSVGElement>, 'ref'>>;
   valueClassName?: string;
 }) {
   return (
