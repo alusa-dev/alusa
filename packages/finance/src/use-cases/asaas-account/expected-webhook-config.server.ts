@@ -5,6 +5,11 @@ import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-to
 export const RECOMMENDED_WEBHOOK_SEND_TYPE = 'SEQUENTIALLY' as const;
 export const RECOMMENDED_WEBHOOK_NAME = 'Alusa - Webhook financeiro';
 
+export function buildRecommendedWebhookName(financeProfileId: string): string {
+  const suffix = financeProfileId.replace(/[^a-zA-Z0-9]/g, '').slice(-18);
+  return suffix ? `${RECOMMENDED_WEBHOOK_NAME} - ${suffix}` : RECOMMENDED_WEBHOOK_NAME;
+}
+
 export function normalizeWebhookUrlBase(url: string): string {
   const trimmed = url.trim();
   try {
@@ -31,9 +36,10 @@ export function buildExpectedWebhookConfig(financeProfileId: string, webhookUrl 
   const authToken = resolveWebhookAuthToken(financeProfileId);
 
   return {
-    name: RECOMMENDED_WEBHOOK_NAME,
+    name: buildRecommendedWebhookName(financeProfileId),
     url: webhookUrl,
     normalizedUrl: normalizeWebhookUrlBase(webhookUrl),
+    apiVersion: 3,
     sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
     events: [...PROVISIONED_WEBHOOK_EVENTS],
     authToken,

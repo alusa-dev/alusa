@@ -393,5 +393,8 @@ export type { ListWebhooksParams, AsaasWebhookConfig, AsaasWebhookListResponse }
 export { updateWebhook } from './webhooks/updateWebhook';
 export type { UpdateWebhookParams } from './webhooks/updateWebhook';
 
+export { deleteWebhook } from './webhooks/deleteWebhook';
+export type { DeleteWebhookParams } from './webhooks/deleteWebhook';
+
 export { removeWebhookBackoff } from './webhooks/removeWebhookBackoff';
 export type { RemoveWebhookBackoffParams, RemoveWebhookBackoffResponse } from './webhooks/removeWebhookBackoff';

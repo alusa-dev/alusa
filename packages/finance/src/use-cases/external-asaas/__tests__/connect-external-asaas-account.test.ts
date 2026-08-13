@@ -5,6 +5,7 @@ const {
   getMyAccountCommercialInfoMock,
   listWebhooksMock,
   createWebhookMock,
+  deleteWebhookMock,
   updateWebhookMock,
   contaUpdateMock,
   financeProfileUpdateMock,
@@ -16,11 +17,13 @@ const {
   getOrCreateByTenantMock,
   auditLogRecordMock,
   encryptMock,
+  resolveWebhookNotificationEmailMock,
 } = vi.hoisted(() => ({
   getMyAccountStatusMock: vi.fn(),
   getMyAccountCommercialInfoMock: vi.fn(),
   listWebhooksMock: vi.fn(),
   createWebhookMock: vi.fn(),
+  deleteWebhookMock: vi.fn(),
   updateWebhookMock: vi.fn(),
   contaUpdateMock: vi.fn(),
   financeProfileUpdateMock: vi.fn(),
@@ -32,6 +35,7 @@ const {
   getOrCreateByTenantMock: vi.fn(),
   auditLogRecordMock: vi.fn(),
   encryptMock: vi.fn(),
+  resolveWebhookNotificationEmailMock: vi.fn(),
 }));
 
 vi.mock('@alusa/asaas', () => ({
@@ -39,6 +43,7 @@ vi.mock('@alusa/asaas', () => ({
   getMyAccountCommercialInfo: getMyAccountCommercialInfoMock,
   listWebhooks: listWebhooksMock,
   createWebhook: createWebhookMock,
+  deleteWebhook: deleteWebhookMock,
   updateWebhook: updateWebhookMock,
 }));
 
@@ -82,11 +87,16 @@ vi.mock('../../../foundation/credential-vault', () => ({
   },
 }));
 
+vi.mock('../../asaas-account/webhook-notification-email.server', () => ({
+  resolveWebhookNotificationEmail: resolveWebhookNotificationEmailMock,
+}));
+
 vi.mock('../../asaas-account/expected-webhook-config.server', () => ({
   buildExpectedWebhookConfig: vi.fn(() => ({
     name: 'Webhook Alusa',
     url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
     normalizedUrl: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
+    apiVersion: 3,
     authToken: 'token_1',
     authTokenHash: 'hash_1',
     sendType: 'SEQUENTIALLY',
@@ -94,6 +104,7 @@ vi.mock('../../asaas-account/expected-webhook-config.server', () => ({
   })),
   hasSameWebhookEvents: vi.fn(() => true),
   normalizeWebhookUrlBase: vi.fn((value: string) => value),
+  buildRecommendedWebhookName: vi.fn(() => 'Webhook Alusa'),
 }));
 
 import { connectExternalAsaasAccount } from '../connect-external-asaas-account';
@@ -105,9 +116,24 @@ describe('connectExternalAsaasAccount', () => {
     getOrCreateByTenantMock.mockResolvedValue({ id: 'profile_1' });
     getMyAccountStatusMock.mockResolvedValue({ id: 'acc_external_1', general: 'APPROVED' });
     getMyAccountCommercialInfoMock.mockResolvedValue({ email: 'financeiro@escola.com' });
-    listWebhooksMock.mockResolvedValue({ data: [] });
+    listWebhooksMock
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValue({
+        data: [{
+          id: 'wh_1',
+          name: 'Webhook Alusa',
+          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
+          enabled: true,
+          interrupted: false,
+          apiVersion: 3,
+          hasAuthToken: true,
+          sendType: 'SEQUENTIALLY',
+          events: ['PAYMENT_RECEIVED'],
+        }],
+      });
     createWebhookMock.mockResolvedValue({ id: 'wh_1' });
     encryptMock.mockReturnValue('encrypted_key');
+    resolveWebhookNotificationEmailMock.mockResolvedValue('financeiro@escola.com');
 
     asaasAccountFindUniqueMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     asaasAccountUpsertMock.mockResolvedValue({ id: 'asaas_account_local_1' });

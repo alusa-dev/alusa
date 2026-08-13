@@ -1,5 +1,6 @@
 import {
   createWebhook,
+  deleteWebhook,
   getMyAccountCommercialInfo,
   getMyAccountStatus,
   listWebhooks,
@@ -14,9 +15,11 @@ import { credentialVault } from '../../foundation/credential-vault';
 import { financeProfileService } from '../../foundation/finance-profile.service';
 import {
   buildExpectedWebhookConfig,
+  buildRecommendedWebhookName,
   hasSameWebhookEvents,
   normalizeWebhookUrlBase,
 } from '../asaas-account/expected-webhook-config.server';
+import { resolveWebhookNotificationEmail } from '../asaas-account/webhook-notification-email.server';
 
 type ExternalWebhookAction = 'created' | 'updated' | 'unchanged' | 'pending';
 
@@ -301,17 +304,42 @@ export async function connectExternalAsaasAccount(input: {
 
   if (expectedWebhook) {
     try {
-      const webhookList = await listWebhooks({ apiKey, limit: 100, offset: 0 });
-      const matchedWebhook = (webhookList.data ?? []).find(
-        (item) => normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl,
+      const webhookNotificationEmail = await resolveWebhookNotificationEmail({
+        contaId: input.contaId,
+        financeProfileId: financeProfile.id,
+      });
+      if (!webhookNotificationEmail) throw new Error('Email do webhook não configurado.');
+
+      const webhooks: Awaited<ReturnType<typeof listWebhooks>>['data'] = [];
+      for (let page = 0; page < 100; page += 1) {
+        const response = await listWebhooks({ apiKey, limit: 100, offset: page * 100 });
+        webhooks.push(...(response.data ?? []));
+        if (!response.hasMore || response.data.length < 100) break;
+      }
+
+      let matchedWebhook = webhooks.find(
+        (item) =>
+          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl ||
+          item.name === expectedWebhook.name ||
+          item.name === buildRecommendedWebhookName(financeProfile.id),
       );
+      let targetWebhookId = matchedWebhook?.id ?? null;
+
+      // O contrato do Asaas não permite alterar apiVersion via PUT. Para
+      // garantir V3, recriamos somente o webhook determinístico da Alusa.
+      if (matchedWebhook && matchedWebhook.apiVersion !== expectedWebhook.apiVersion) {
+        await deleteWebhook({ apiKey, webhookId: matchedWebhook.id });
+        matchedWebhook = undefined;
+        targetWebhookId = null;
+      }
 
       if (!matchedWebhook) {
-        await createWebhook({
+        const created = await createWebhook({
           apiKey,
           data: {
             name: expectedWebhook.name,
             url: expectedWebhook.url,
+            email: webhookNotificationEmail,
             enabled: true,
             interrupted: false,
             authToken: expectedWebhook.authToken,
@@ -319,6 +347,7 @@ export async function connectExternalAsaasAccount(input: {
             events: expectedWebhook.events,
           },
         });
+        targetWebhookId = created.id;
         webhookAction = 'created';
       } else {
         const needsUpdate =
@@ -336,6 +365,7 @@ export async function connectExternalAsaasAccount(input: {
             data: {
               name: expectedWebhook.name,
               url: expectedWebhook.url,
+              email: webhookNotificationEmail,
               enabled: true,
               interrupted: false,
               authToken: expectedWebhook.authToken,
@@ -348,6 +378,31 @@ export async function connectExternalAsaasAccount(input: {
           webhookAction = 'unchanged';
         }
       }
+
+      const finalWebhooks: Awaited<ReturnType<typeof listWebhooks>>['data'] = [];
+      for (let page = 0; page < 100; page += 1) {
+        const response = await listWebhooks({ apiKey, limit: 100, offset: page * 100 });
+        finalWebhooks.push(...(response.data ?? []));
+        if (!response.hasMore || response.data.length < 100) break;
+      }
+
+      const finalWebhook = finalWebhooks.find((item) => {
+        const sameIdentity = targetWebhookId
+          ? item.id === targetWebhookId
+          : normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl;
+        return (
+          sameIdentity &&
+          item.name === expectedWebhook.name &&
+          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl &&
+          item.enabled === true &&
+          item.interrupted !== true &&
+          item.apiVersion === expectedWebhook.apiVersion &&
+          item.hasAuthToken === true &&
+          item.sendType === expectedWebhook.sendType &&
+          hasSameWebhookEvents(item.events, expectedWebhook.events)
+        );
+      });
+      if (!finalWebhook) throw new Error('Webhook do Asaas não confirmou a configuração esperada.');
 
       onboardingStatus = 'READY';
       webhookAuthTokenHash = expectedWebhook.authTokenHash;
