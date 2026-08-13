@@ -89,4 +89,27 @@ describe('API /finance/external-onboarding', () => {
     );
     expect(body.status).toBe('WEBHOOK_PENDING');
   });
+
+  it('retorna 409 quando a conta Asaas já está vinculada a outro tenant', async () => {
+    connectExternalAsaasAccountMock.mockResolvedValueOnce({
+      success: false,
+      summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa.',
+      status: 'FAILED',
+      errorCode: 'ACCOUNT_ALREADY_LINKED',
+    });
+
+    const { POST } = await import('@/app/api/finance/external-onboarding/route');
+    const response = await POST(
+      new Request('http://localhost/api/finance/external-onboarding', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schoolName: 'Escola Piloto',
+          apiKey: '$aact_hmlg_test_key',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+  });
 });

@@ -234,4 +234,31 @@ describe('connectExternalAsaasAccount', () => {
       }),
     );
   });
+
+  it('bloqueia vínculo cross-tenant antes de criar ou atualizar webhook', async () => {
+    asaasAccountFindUniqueMock.mockReset();
+    asaasAccountFindUniqueMock.mockResolvedValue({
+      id: 'asaas_account_other_tenant',
+      financeProfileId: 'profile_other',
+      financeProfile: { contaId: 'conta_other' },
+    });
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_valid_external_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      summary: expect.stringContaining('já está vinculada'),
+      status: 'FAILED',
+      errorCode: 'ACCOUNT_ALREADY_LINKED',
+    });
+    expect(listWebhooksMock).not.toHaveBeenCalled();
+    expect(createWebhookMock).not.toHaveBeenCalled();
+    expect(updateWebhookMock).not.toHaveBeenCalled();
+    expect(deleteWebhookMock).not.toHaveBeenCalled();
+  });
 });

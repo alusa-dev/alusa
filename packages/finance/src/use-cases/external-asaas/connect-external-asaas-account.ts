@@ -38,7 +38,7 @@ export type ConnectExternalAsaasAccountResult =
       success: false;
       summary: string;
       status: 'FAILED';
-      errorCode: 'INVALID_API_KEY' | 'UNEXPECTED_ERROR';
+      errorCode: 'INVALID_API_KEY' | 'ACCOUNT_ALREADY_LINKED' | 'UNEXPECTED_ERROR';
     };
 
 function normalizeDigits(value: string | undefined): string | null {
@@ -290,6 +290,34 @@ export async function connectExternalAsaasAccount(input: {
   }
 
   const financeProfile = await financeProfileService.getOrCreateByTenant(input.contaId);
+  const existingByAsaasAccountId = await prisma.asaasAccount.findUnique({
+    where: { asaasAccountId },
+    select: {
+      id: true,
+      financeProfileId: true,
+      financeProfile: { select: { contaId: true } },
+    },
+  });
+
+  if (existingByAsaasAccountId && existingByAsaasAccountId.financeProfileId !== financeProfile.id) {
+    await prisma.conta.update({
+      where: { id: input.contaId },
+      data: {
+        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+        financeStatus: 'FINANCE_ONBOARDING_STARTED',
+        externalAsaasOnboardingStatus: 'FAILED',
+      },
+      select: { id: true },
+    });
+
+    return {
+      success: false,
+      summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa. Entre em contato com o suporte para regularizar o vínculo.',
+      status: 'FAILED',
+      errorCode: 'ACCOUNT_ALREADY_LINKED',
+    };
+  }
+
   const expectedWebhook = (() => {
     try {
       return buildExpectedWebhookConfig(financeProfile.id);
@@ -301,6 +329,35 @@ export async function connectExternalAsaasAccount(input: {
   let webhookAction: ExternalWebhookAction = 'pending';
   let onboardingStatus: 'READY' | 'WEBHOOK_PENDING' = 'WEBHOOK_PENDING';
   let webhookAuthTokenHash: string | undefined;
+  const apiKeyEncrypted = credentialVault.encrypt(apiKey);
+
+  // Persiste a credencial antes de qualquer efeito remoto. Se o Asaas falhar,
+  // a integração fica pendente e pode ser reparada/repetida sem perder a chave.
+  try {
+    await upsertLocalExternalConnection({
+      contaId: input.contaId,
+      financeProfileId: financeProfile.id,
+      schoolName,
+      cpfCnpj,
+      phone,
+      apiKeyEncrypted,
+      asaasAccountId,
+      asaasEmail,
+      actor: input.actor,
+      onboardingStatus: 'WEBHOOK_PENDING',
+      webhookAction: 'pending',
+    });
+  } catch (error) {
+    if ((error as { code?: string })?.code === 'P2002') {
+      return {
+        success: false,
+        summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa. Entre em contato com o suporte para regularizar o vínculo.',
+        status: 'FAILED',
+        errorCode: 'ACCOUNT_ALREADY_LINKED',
+      };
+    }
+    throw error;
+  }
 
   if (expectedWebhook) {
     try {
@@ -411,8 +468,6 @@ export async function connectExternalAsaasAccount(input: {
       onboardingStatus = 'WEBHOOK_PENDING';
     }
   }
-
-  const apiKeyEncrypted = credentialVault.encrypt(apiKey);
 
   await upsertLocalExternalConnection({
     contaId: input.contaId,

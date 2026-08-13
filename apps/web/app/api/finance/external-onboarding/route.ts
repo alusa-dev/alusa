@@ -80,7 +80,13 @@ export async function POST(request: Request) {
       actor: { id: user.id ?? null, type: 'ADMIN' },
     });
 
-    const status = result.success ? (result.status === 'READY' ? 200 : 202) : 400;
+    const status = result.success
+      ? result.status === 'READY'
+        ? 200
+        : 202
+      : result.errorCode === 'ACCOUNT_ALREADY_LINKED'
+        ? 409
+        : 400;
     return json(status, result);
   } catch (error) {
     console.error('[External Asaas Onboarding][POST]', error);
