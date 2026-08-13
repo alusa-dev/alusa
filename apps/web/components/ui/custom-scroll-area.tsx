@@ -20,9 +20,7 @@ export const CustomScrollArea = React.forwardRef<HTMLDivElement, CustomScrollAre
   ) => {
     return (
       <>
-        {/* Next.js supports the `jsx` styled-jsx attribute, which is not in React's intrinsic type definitions. */}
-        {/* @ts-expect-error Next.js styled-jsx intrinsic attribute. */}
-        <style jsx>{`
+        <style>{`
           .custom-scroll-area {
             overflow-y: auto;
             overflow-x: hidden;
@@ -67,8 +65,6 @@ export const CustomScrollArea = React.forwardRef<HTMLDivElement, CustomScrollAre
 );
 
 CustomScrollArea.displayName = 'CustomScrollArea';
-
-
 
 
 
