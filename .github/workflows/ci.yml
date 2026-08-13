@@ -27,6 +27,7 @@ jobs:
     env:
       # Banco de desenvolvimento para testes/integrações
       DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa', 'postgresql') }}
+      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa', 'postgresql') }}
       CI: true
     steps:
       - name: Checkout
