@@ -1377,7 +1377,7 @@ export async function loadFinancialReportProjections(params: {
     },
   } satisfies Prisma.CobrancaSelect;
 
-  let academicRows: FinancialReportProjection[] = [];
+  const academicRows: FinancialReportProjection[] = [];
   let inconsistentOwnership = 0;
   let academicWithoutCanonicalPaidAt = 0;
   const academicDateWhere: Prisma.CobrancaWhereInput =

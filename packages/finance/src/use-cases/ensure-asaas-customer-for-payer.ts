@@ -591,24 +591,20 @@ export async function ensureAsaasCustomerForPayer(
         }
       }
 
-      try {
-        const updateResult = await pushExistingCustomerUpdate({
-          apiKey,
-          customerId: existingCustomer.id,
-          payload,
-          strictUpdate: input.strictCustomerUpdate,
-          step,
-          logContext: {
-            contaId: input.contaId,
-            payerType: input.payer.type,
-            payerId: input.payer.id,
-          },
-        });
-        if (!updateResult.ok) {
-          return updateResult;
-        }
-      } catch (updateError) {
-        throw updateError;
+      const updateResult = await pushExistingCustomerUpdate({
+        apiKey,
+        customerId: existingCustomer.id,
+        payload,
+        strictUpdate: input.strictCustomerUpdate,
+        step,
+        logContext: {
+          contaId: input.contaId,
+          payerType: input.payer.type,
+          payerId: input.payer.id,
+        },
+      });
+      if (!updateResult.ok) {
+        return updateResult;
       }
 
       if (input.persist !== false) {
