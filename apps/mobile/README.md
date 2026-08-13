@@ -36,6 +36,10 @@ App iOS/Android da Alusa, criado dentro do monorepo existente com Expo Router.
 - Tokens visuais da Alusa ficam em `src/theme`.
 - Estados reutilizáveis de loading, erro e vazio ficam em `src/components/feedback`.
 
+Os diretórios vazios preservados com `.gitkeep` fazem parte da estrutura planejada do app. Eles
+reservam os pontos de extensão para componentes de autenticação, stores, hooks, constantes,
+componentes de UI e testes que serão implementados nas próximas etapas do desenvolvimento mobile.
+
 ## Contrato de autenticação mobile
 
 O app não simula login. Por padrão, `EXPO_PUBLIC_MOBILE_AUTH_ENABLED=false` e a tentativa de login retorna um erro explícito informando que o contrato mobile ainda não está habilitado no backend.

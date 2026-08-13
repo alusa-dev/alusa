@@ -8,7 +8,17 @@ const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
 if (!connectionString) {
   throw new Error('Missing required database configuration.');
 }
-const financeProfileId = 'cmkwwmok10034j141utlfpkqt';
+
+const financeProfileId = process.env.FINANCE_PROFILE_ID;
+if (!financeProfileId) {
+  throw new Error('Missing FINANCE_PROFILE_ID.');
+}
+
+if (process.env.CONFIRM_FORCE_DOCUMENTS_PENDING !== financeProfileId) {
+  throw new Error(
+    'Set CONFIRM_FORCE_DOCUMENTS_PENDING to the same value as FINANCE_PROFILE_ID to confirm this operation.'
+  );
+}
 
 const documentsCache = {
   version: 1,
@@ -46,17 +56,38 @@ const documentsCache = {
 
 async function main() {
   const client = new Client({ connectionString });
-  await client.connect();
-  await client.query(
-    'UPDATE "AsaasAccount" SET "documentsCache" = $1 WHERE "financeProfileId" = $2',
-    [JSON.stringify(documentsCache), financeProfileId]
-  );
-  await client.query(
-    'UPDATE "FinanceProfile" SET "isOnboardingCompleted" = false, "onboardingCompletedAt" = NULL WHERE id = $1',
-    [financeProfileId]
-  );
-  await client.end();
-  console.log('Pendência de envio de documentos forçada com sucesso!');
+  try {
+    await client.connect();
+    await client.query('BEGIN');
+
+    const financeProfileResult = await client.query(
+      'SELECT id FROM "FinanceProfile" WHERE id = $1 FOR UPDATE',
+      [financeProfileId]
+    );
+    if (financeProfileResult.rowCount !== 1) {
+      throw new Error('FinanceProfile not found.');
+    }
+
+    const asaasAccountResult = await client.query(
+      'UPDATE "AsaasAccount" SET "documentsCache" = $1 WHERE "financeProfileId" = $2',
+      [JSON.stringify(documentsCache), financeProfileId]
+    );
+    if (asaasAccountResult.rowCount !== 1) {
+      throw new Error('Expected exactly one AsaasAccount for the FinanceProfile.');
+    }
+
+    await client.query(
+      'UPDATE "FinanceProfile" SET "isOnboardingCompleted" = false, "onboardingCompletedAt" = NULL WHERE id = $1',
+      [financeProfileId]
+    );
+    await client.query('COMMIT');
+    console.log('Pendência de envio de documentos forçada com sucesso.');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
 }
 
 main().catch(err => {
