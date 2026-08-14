@@ -17,7 +17,7 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: alusa
+          POSTGRES_DB: alusa_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
@@ -25,9 +25,9 @@ jobs:
         options: >-
           --health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
     env:
-      # Banco de desenvolvimento para testes/integrações
-      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa', 'postgresql') }}
-      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa', 'postgresql') }}
+      # Banco isolado de testes; não usar o nome do banco de desenvolvimento.
+      DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
+      DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
       CI: true
     steps:
       - name: Checkout
