@@ -917,6 +917,7 @@ export function mapTicketSale(
     updatedAt: sale.updatedAt.toISOString(),
     source,
     eventMapOrderId: sale.eventMapOrderId,
+    paymentProvider: sale.paymentProvider,
     asaasPaymentId: sale.asaasPaymentId,
     paymentStatus: sale.paymentStatus,
     chargeDetailUrl,
@@ -1338,6 +1339,18 @@ export async function refundTicketSale(ctx: EventsContext, saleId: string, reaso
     const current = await tx.eventTicketSale.findFirst({ where: { id: saleId, contaId: ctx.contaId } });
     if (!current) throw new EventsError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
 
+    // A venda vinculada ao Asaas deve passar pelo endpoint financeiro. O
+    // webhook é a fonte da verdade para o estado final e também atualiza os
+    // ingressos/lançamentos relacionados. Nunca confirme o estorno localmente
+    // antes da confirmação do provedor.
+    if (current.asaasPaymentId || current.paymentProvider === 'ASAAS') {
+      throw new EventsError(
+        'ESTORNO_ASAAS_PENDENTE',
+        'Esta venda possui pagamento Asaas. Solicite o estorno pela cobrança para aguardar a confirmação do webhook.',
+        409,
+      );
+    }
+
     const transition = validateTicketSaleStatusTransition(current.status, 'REFUNDED');
     if (!transition.ok) throw new EventsError('TRANSICAO_INVALIDA', transition.reason, 409);
 
@@ -1367,6 +1380,70 @@ export async function refundTicketSale(ctx: EventsContext, saleId: string, reaso
     });
 
     return getTicketSaleDto(tx, ctx.contaId, saleId);
+  });
+}
+
+/**
+ * Applies the final Asaas refund state to legacy/direct ticket-sale payments.
+ * Public map orders are synchronized by the map-order webhook flow; this
+ * fallback covers EventTicketSale records that have an Asaas payment but no
+ * EventMapOrder relation.
+ */
+export async function refundTicketSalesByAsaasPayment(params: {
+  contaId: string;
+  asaasPaymentId: string;
+  paymentStatus: string;
+  isFinalRefund: boolean;
+  refundedAmount?: number | null;
+}) {
+  return prisma.$transaction(async (tx) => {
+    const sales = await tx.eventTicketSale.findMany({
+      where: {
+        contaId: params.contaId,
+        asaasPaymentId: params.asaasPaymentId,
+        eventMapOrderId: null,
+      },
+    });
+    if (sales.length === 0) return null;
+
+    const now = new Date();
+    const { releaseSeatsForTicketSale } = await import('./map/staff-map-sales.service');
+    for (const sale of sales) {
+      if (!params.isFinalRefund) {
+        await tx.eventTicketSale.update({
+          where: { id: sale.id },
+          data: { paymentStatus: params.paymentStatus },
+        });
+        continue;
+      }
+
+      const refundedAmount = params.refundedAmount == null
+        ? toMoney(sale.totalAmount)
+        : Math.min(toMoney(sale.totalAmount), Math.max(params.refundedAmount, 0));
+      await tx.eventTicketSale.update({
+        where: { id: sale.id },
+        data: {
+          status: 'REFUNDED',
+          refundedAt: now,
+          refundedAmount: decimal(refundedAmount),
+          paymentStatus: params.paymentStatus,
+        },
+      });
+      await tx.eventFinancialEntry.updateMany({
+        where: { contaId: params.contaId, originType: 'TICKET_SALE', originId: sale.id },
+        data: {
+          status: 'REFUNDED',
+          refundedAt: now,
+          refundedAmount: decimal(refundedAmount),
+          netAmount: decimal(Math.max(toMoney(sale.totalAmount) - refundedAmount, 0)),
+          paymentStatus: params.paymentStatus,
+        },
+      });
+      await syncLotQuantity(tx, params.contaId, sale.lotId);
+      await releaseSeatsForTicketSale(tx, params.contaId, sale.id);
+    }
+
+    return { count: sales.length, status: params.isFinalRefund ? 'REFUNDED' : params.paymentStatus };
   });
 }
 

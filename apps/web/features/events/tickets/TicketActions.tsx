@@ -43,8 +43,12 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
     ]);
   };
 
-  const refundPublic = useMutation({
-    mutationFn: () => refundEventCharge(`event-map-order:${sale.eventMapOrderId ?? sale.id}`),
+  const refundAsaas = useMutation({
+    mutationFn: () => refundEventCharge(
+      sale.eventMapOrderId
+        ? `event-map-order:${sale.eventMapOrderId}`
+        : `event-ticket-sale:${sale.id}`,
+    ),
     onSuccess: async () => {
       await invalidate();
       toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado automaticamente via webhook do Asaas.' });
@@ -66,10 +70,12 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
     onError: (err) => toast.error({ title: 'Erro ao excluir', description: err.message }),
   });
 
-  if (sale.source === 'PUBLIC_ORDER') {
+  const isAsaasSale = Boolean(sale.asaasPaymentId || sale.paymentProvider === 'ASAAS');
+
+  if (sale.source === 'PUBLIC_ORDER' || isAsaasSale) {
     const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
-    const canRefundPublic = sale.status === 'PAID' && Boolean(sale.eventMapOrderId) && !isRefundProcessing;
-    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundPublic);
+    const canRefundAsaas = sale.status === 'PAID' && Boolean(sale.asaasPaymentId) && !isRefundProcessing;
+    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundAsaas);
     if (!hasActions) return <span className="text-slate-400">-</span>;
 
     return (
@@ -96,7 +102,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
                 <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
               </DropdownMenuItem>
             ) : null}
-            {canRefundPublic ? (
+            {canRefundAsaas ? (
               <>
                 {(sale.ticketsUrl || sale.invoiceUrl || sale.chargeDetailUrl) ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
@@ -118,8 +124,8 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
           confirmText="Solicitar estorno"
           cancelText="Cancelar"
           variant="destructive"
-          onConfirm={() => refundPublic.mutate()}
-          loading={refundPublic.isPending}
+          onConfirm={() => refundAsaas.mutate()}
+          loading={refundAsaas.isPending}
         />
       </>
     );

@@ -191,6 +191,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         );
       }
 
+      if (body.value !== undefined && paymentLookup.operational?.kind === 'event-ticket-sale') {
+        return NextResponse.json(
+          {
+            error: 'Estorno parcial de venda de ingresso não é permitido.',
+            correlationId,
+            code: 'EVENT_TICKET_SALE_PARTIAL_REFUND_NOT_SUPPORTED',
+            hint: 'Solicite o estorno total da venda para manter ingressos, lote e lançamento financeiro consistentes.',
+          },
+          { status: 400 },
+        );
+      }
+
       if (body.value !== undefined && !policy.canPartialRefund) {
         const decision = policy.actions.PARTIAL_REFUND;
         return NextResponse.json(

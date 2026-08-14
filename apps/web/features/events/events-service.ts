@@ -92,6 +92,7 @@ export type TicketSaleDTO = {
   source?: 'MANUAL_SALE' | 'PUBLIC_ORDER';
   eventMapOrderId?: string | null;
   asaasPaymentId?: string | null;
+  paymentProvider?: string | null;
   reservationExpiresAt?: string | null;
   invoiceUrl?: string | null;
   chargeDetailUrl?: string | null;

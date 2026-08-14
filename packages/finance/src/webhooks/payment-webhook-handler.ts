@@ -1,6 +1,9 @@
 import { prisma } from '@alusa/database';
 import type { PaymentStatus } from '@alusa/asaas';
 import {
+  refundTicketSalesByAsaasPayment,
+} from '@alusa/lib';
+import {
   cancelPublicEventMapOrderByPayment,
   confirmPublicEventMapOrderPayment,
   markPublicEventMapOrderRefundProcessingByPayment,
@@ -1172,6 +1175,13 @@ async function handlePaymentWebhookCore(
           externalReference: payload.payment.externalReference,
           refundedAmount: payload.payment.value,
         });
+        await refundTicketSalesByAsaasPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          paymentStatus: effectiveAsaasStatus,
+          isFinalRefund: true,
+          refundedAmount: payload.payment.value,
+        });
       } else if (payload.event === 'PAYMENT_PARTIALLY_REFUNDED') {
         await refundPublicEventMapOrderByPayment({
           contaId,
@@ -1180,12 +1190,25 @@ async function handlePaymentWebhookCore(
           refundedAmount: payload.payment.value,
           partial: true,
         });
+        await refundTicketSalesByAsaasPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          paymentStatus: effectiveAsaasStatus,
+          isFinalRefund: false,
+          refundedAmount: payload.payment.value,
+        });
       } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
         await markPublicEventMapOrderRefundProcessingByPayment({
           contaId,
           asaasPaymentId: payload.payment.id,
           externalReference: payload.payment.externalReference,
           paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
+        });
+        await refundTicketSalesByAsaasPayment({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
+          isFinalRefund: false,
         });
       } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
         await cancelPublicEventMapOrderByPayment({
