@@ -120,6 +120,15 @@ async function canReadStorageKey(key: string, user: SessionUser): Promise<boolea
   }
 
   if (key.startsWith('uploads/contratos/')) {
+    // A importação do modelo ocorre em duas etapas: o PDF é enviado primeiro
+    // e só depois de posicionar os campos de assinatura o ContratoModelo é
+    // persistido. Durante essa janela, não existe registro no banco para
+    // autorizar a leitura. O upload já recebe um nome escopado por conta e
+    // usuário (`contaId-userId-...`); liberar somente esse prefixo permite a
+    // pré-visualização sem expor arquivos de outra conta ou de outro usuário.
+    const scopedPendingUploadPrefix = `${user.contaId}-${user.id}-`;
+    if (filename.startsWith(scopedPendingUploadPrefix)) return true;
+
     const contrato = await prisma.contrato.findFirst({
       where: {
         arquivoPdfUrl: url,

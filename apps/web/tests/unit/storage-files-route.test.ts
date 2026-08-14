@@ -68,4 +68,27 @@ describe('/api/files/[...key]', () => {
     expect(response.status).toBe(404);
     expect(storageMock.getStorageObject).not.toHaveBeenCalled();
   });
+
+  it('serve PDF de contrato pendente somente para o usuário que iniciou o upload', async () => {
+    const key = 'uploads/contratos/conta-1-user-1-upload-1.pdf';
+    const response = await GET(
+      new Request(`http://localhost/api/files/${key}`) as never,
+      { params: Promise.resolve({ key: key.split('/') }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(storageMock.getStorageObject).toHaveBeenCalledWith(key);
+    expect(prismaMock.contratoModelo.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('nega PDF de contrato pendente de outro usuário', async () => {
+    const key = 'uploads/contratos/conta-1-user-2-upload-1.pdf';
+    const response = await GET(
+      new Request(`http://localhost/api/files/${key}`) as never,
+      { params: Promise.resolve({ key: key.split('/') }) },
+    );
+
+    expect(response.status).toBe(404);
+    expect(storageMock.getStorageObject).not.toHaveBeenCalled();
+  });
 });
