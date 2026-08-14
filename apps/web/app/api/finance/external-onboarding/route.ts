@@ -90,7 +90,7 @@ export async function POST(request: Request) {
 
     const status = result.success
       ? 200
-      : result.errorCode === 'ACCOUNT_ALREADY_LINKED' || result.errorCode === 'ACCOUNT_MISMATCH'
+      : result.errorCode === 'ACCOUNT_ALREADY_LINKED'
         ? 409
         : result.errorCode === 'WEBHOOK_CONFIGURATION_INVALID' || result.errorCode === 'WEBHOOK_LIMIT_REACHED'
           ? 422

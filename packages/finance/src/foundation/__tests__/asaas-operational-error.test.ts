@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AsaasHttpError } from '@alusa/asaas';
+import { AsaasApiKeyError, AsaasHttpError } from '@alusa/asaas';
 
 import { classifyAsaasOperationalError } from '../asaas-operational-error';
 
@@ -9,6 +9,13 @@ describe('classifyAsaasOperationalError', () => {
     const error = new AsaasHttpError('Unauthorized', 401, { errors: [] });
 
     const result = classifyAsaasOperationalError(error, 'subaccount');
+
+    expect(result.category).toBe('invalid_subaccount_credentials');
+    expect(result.retryable).toBe(false);
+  });
+
+  it('classifica API key rejeitada antes da requisição HTTP', () => {
+    const result = classifyAsaasOperationalError(new AsaasApiKeyError('invalid key'), 'subaccount');
 
     expect(result.category).toBe('invalid_subaccount_credentials');
     expect(result.retryable).toBe(false);

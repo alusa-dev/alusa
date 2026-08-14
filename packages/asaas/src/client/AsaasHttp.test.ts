@@ -57,6 +57,11 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('recusa API key com caracteres de controle antes de montar o header HTTP', () => {
+    expect(() => new AsaasHttp({ apiKey: 'valid-\nkey' })).toThrow(AsaasApiKeyError);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('faz retry em 429 e depois retorna sucesso', async () => {
     vi.useFakeTimers();
 

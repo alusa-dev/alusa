@@ -62,7 +62,13 @@ export class AsaasHttp {
 
   constructor(config: AsaasHttpConfig) {
     const apiKey = config.apiKey.trim();
-    if (!apiKey || [...apiKey].some((character) => character.charCodeAt(0) > 0x7f)) {
+    if (
+      !apiKey ||
+      [...apiKey].some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 0x20 || code === 0x7f || code > 0x7f;
+      })
+    ) {
       throw new AsaasApiKeyError(
         'API key do Asaas inválida. Cole somente a chave original, sem símbolos ou caracteres adicionais.',
       );

@@ -62,6 +62,16 @@ function classifyRateLimit(details: ErrorDetail[]): AsaasOperationalErrorCategor
 }
 
 export function classifyAsaasOperationalError(error: unknown, context: Context): AsaasOperationalErrorInfo {
+  if (error instanceof Error && error.name === 'AsaasApiKeyError') {
+    return {
+      category: context === 'master' ? 'invalid_master_credentials' : 'invalid_subaccount_credentials',
+      status: null,
+      message: error.message,
+      details: [],
+      retryable: false,
+    };
+  }
+
   const status = extractStatus(error);
   const details = extractDetails(error);
   const message = error instanceof Error ? error.message : String(error);
