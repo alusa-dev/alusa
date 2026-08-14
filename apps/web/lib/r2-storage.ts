@@ -16,7 +16,10 @@ let client: S3Client | null | undefined;
 
 function getR2Config(): R2Config | null {
   const bucket = process.env.R2_BUCKET_NAME?.trim();
-  const endpoint = process.env.R2_ENDPOINT?.trim();
+  const accountId = process.env.R2_ACCOUNT_ID?.trim();
+  const endpoint = process.env.R2_ENDPOINT?.trim() || (
+    accountId ? `https://${accountId}.r2.cloudflarestorage.com` : undefined
+  );
   const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
 
@@ -57,7 +60,12 @@ export function storageUrlForKey(key: string): string {
 export function storageKeyFromUrl(url: string): string | null {
   const prefix = '/api/files/';
   if (!url.startsWith(prefix)) return null;
-  const key = decodeURI(url.slice(prefix.length));
+  let key: string;
+  try {
+    key = decodeURI(url.slice(prefix.length));
+  } catch {
+    return null;
+  }
   if (!isAllowedStorageKey(key)) return null;
   return key;
 }

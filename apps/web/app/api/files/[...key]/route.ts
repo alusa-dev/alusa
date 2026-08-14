@@ -19,6 +19,42 @@ async function canReadStorageKey(key: string, user: SessionUser): Promise<boolea
   const url = storageUrlForRequestKey(key);
   const filename = key.split('/').pop() ?? '';
 
+  // Avatares de pessoas são gravados em pastas separadas por entidade. A
+  // autorização deve consultar o registro dentro da conta ativa, nunca
+  // confiar apenas no caminho enviado pelo cliente.
+  const avatarMatch = /^uploads\/(alunos|responsaveis|colaboradores)\/([^/]+)\/([^/]+)\/avatar\.[a-z0-9]+$/i.exec(key);
+  if (avatarMatch) {
+    const [, folder, keyContaId, entityId] = avatarMatch;
+    if (keyContaId !== user.contaId) return false;
+    const entity = folder === 'alunos'
+      ? 'aluno'
+      : folder === 'responsaveis'
+        ? 'responsavel'
+        : 'colaborador';
+
+    if (entity === 'aluno') {
+      const record = await prisma.aluno.findFirst({
+        where: { id: entityId, contaId: user.contaId, foto: url },
+        select: { id: true },
+      });
+      return Boolean(record);
+    }
+
+    if (entity === 'responsavel') {
+      const record = await prisma.responsavel.findFirst({
+        where: { id: entityId, contaId: user.contaId, foto: url },
+        select: { id: true },
+      });
+      return Boolean(record);
+    }
+
+    const record = await prisma.colaborador.findFirst({
+      where: { id: entityId, contaId: user.contaId, foto: url },
+      select: { id: true },
+    });
+    return Boolean(record);
+  }
+
   if (key.startsWith('uploads/avatars/')) {
     const scopedPrefix = `${user.contaId}-${user.id}-`;
     if (filename.startsWith(scopedPrefix)) return true;
@@ -106,12 +142,13 @@ async function canReadStorageKey(key: string, user: SessionUser): Promise<boolea
   return false;
 }
 
-export async function GET(_req: NextRequest, context: { params: { key?: string[] } }) {
+export async function GET(_req: NextRequest, context: { params: Promise<{ key?: string[] }> }) {
   if (!isR2Configured()) {
     return NextResponse.json({ error: 'Storage indisponivel.' }, { status: 404 });
   }
 
-  const key = (context.params.key ?? []).join('/');
+  const params = await context.params;
+  const key = (params.key ?? []).join('/');
   if (!isAllowedStorageKey(key)) {
     return NextResponse.json({ error: 'Arquivo invalido.' }, { status: 400 });
   }
