@@ -394,7 +394,7 @@ export async function createStandaloneCharge(
 ): Promise<Result<CreateStandaloneChargeOutput, CreateStandaloneChargeError>> {
   try {
     // 1. Validar KYC
-    const kyc = await requireKycApproved(input.contaId);
+    const kyc = await requireKycApproved(input.contaId, { allowPendingBankAccount: true });
     if (!kyc.success) return err('KYC_NAO_APROVADO');
 
     const allowedBillingTypes = allowedBillingTypesByChargeType[input.chargeType] ?? [];

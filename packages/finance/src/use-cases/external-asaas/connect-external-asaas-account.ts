@@ -58,16 +58,32 @@ function mapRegulatoryStatus(value: unknown): {
   onboarding: FinancialOnboardingStatus;
   finance: FinanceStatus;
   profile: FinanceProfileRegulatoryStatus;
+  operational: 'OPERATIONAL' | 'KYC_PENDING' | 'REJECTED';
 } {
   switch (value) {
     case 'APPROVED':
-      return { onboarding: 'APPROVED', finance: 'FINANCE_APPROVED', profile: 'APPROVED' };
+      return {
+        onboarding: 'APPROVED',
+        finance: 'FINANCE_APPROVED',
+        profile: 'APPROVED',
+        operational: 'OPERATIONAL',
+      };
     case 'REJECTED':
-      return { onboarding: 'REJECTED', finance: 'FINANCE_REJECTED', profile: 'REJECTED' };
+      return {
+        onboarding: 'REJECTED',
+        finance: 'FINANCE_REJECTED',
+        profile: 'REJECTED',
+        operational: 'REJECTED',
+      };
     case 'PENDING':
     case 'AWAITING_APPROVAL':
     default:
-      return { onboarding: 'UNDER_REVIEW', finance: 'FINANCE_IN_ANALYSIS', profile: 'PENDING' };
+      return {
+        onboarding: 'UNDER_REVIEW',
+        finance: 'FINANCE_IN_ANALYSIS',
+        profile: 'PENDING',
+        operational: 'KYC_PENDING',
+      };
   }
 }
 
@@ -397,8 +413,7 @@ export async function connectExternalAsaasAccount(input: {
         apiKeyStatus: 'CONNECTED',
         webhookId: webhook.webhookId,
         webhookStatus: 'ACTIVE',
-        operationalStatus:
-          regulatory.onboarding === 'REJECTED' ? 'REJECTED' : 'OPERATIONAL',
+        operationalStatus: regulatory.operational,
         asaasAccountEmail: asaasEmail,
         webhookAuthTokenHash: webhook.authTokenHash,
         previousWebhookAuthTokenHash: null,

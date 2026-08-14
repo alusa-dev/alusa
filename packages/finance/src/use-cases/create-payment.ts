@@ -45,7 +45,7 @@ export async function createAsaasPaymentDetailed(
   input: CreatePaymentInput,
 ): Promise<Result<{ id: string; externalReference: string; invoiceUrl?: string }, CreateAsaasPaymentFailure>> {
   try {
-    const kyc = await requireKycApproved(input.contaId);
+    const kyc = await requireKycApproved(input.contaId, { allowPendingBankAccount: true });
     if (!kyc.success) {
       return err({
         code: 'KYC_NOT_APPROVED',

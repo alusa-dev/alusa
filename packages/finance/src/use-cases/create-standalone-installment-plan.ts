@@ -92,7 +92,7 @@ export async function createStandaloneInstallmentPlan(
     const enabled = await featureFlagsService.isEnabled(input.contaId, 'enableInstallments');
     if (!enabled) return err('FEATURE_DISABLED');
 
-    const kyc = await requireKycApproved(input.contaId);
+    const kyc = await requireKycApproved(input.contaId, { allowPendingBankAccount: true });
     if (!kyc.success) return err('KYC_NAO_APROVADO');
 
     try {

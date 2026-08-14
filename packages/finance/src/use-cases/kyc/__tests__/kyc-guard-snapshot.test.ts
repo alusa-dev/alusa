@@ -88,6 +88,19 @@ describe('requireKycSnapshotApproved', () => {
     }
   });
 
+  it('permite cobrança quando somente bankAccountInfo está pendente', async () => {
+    const snapshot = makeSnapshot({
+      hasBlockingPending: true,
+      bankAccountStatus: 'PENDING',
+    });
+    mockGetKycSnapshot.mockResolvedValue(snapshot);
+
+    const result = await requireKycSnapshotApproved('conta_001', { allowPendingBankAccount: true });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.bankAccountStatus).toBe('PENDING');
+  });
+
   it('retorna err KYC_REQUIRED quando snapshot é null (subconta indisponível)', async () => {
     mockGetKycSnapshot.mockResolvedValue(null);
 

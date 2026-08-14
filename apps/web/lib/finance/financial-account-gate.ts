@@ -126,7 +126,10 @@ export async function guardFinancialAccountOr412(
   const summary = opts.bypassCache ? await getKycSummaryFresh(contaId) : await getKycSummary(contaId);
 
   if (summary.asaasConnection.status === 'CONNECTED') {
-    const kyc = await requireKycSnapshotApproved(contaId);
+    // Cobranças exigem a aprovação geral/documental, API key e webhook ativo.
+    // bankAccountInfo é uma capacidade separada do Asaas e não impede a criação
+    // de cobranças; transferências/liquidações podem aplicar uma regra própria.
+    const kyc = await requireKycSnapshotApproved(contaId, { allowPendingBankAccount: true });
     if (kyc.success) {
       approvedGateCache.set(contaId, {
         expiresAt: Date.now() + APPROVED_GATE_CACHE_TTL_MS,

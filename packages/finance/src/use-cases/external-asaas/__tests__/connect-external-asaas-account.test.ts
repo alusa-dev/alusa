@@ -141,6 +141,27 @@ describe('connectExternalAsaasAccount', () => {
     expect(result).toMatchObject({ success: true, status: 'READY', webhookAction: 'created' });
   });
 
+  it('não marca como operacional uma conta Asaas ainda pendente', async () => {
+    mocks.getMyAccountStatus.mockResolvedValueOnce({ id: 'acc_external_pending', general: 'PENDING' });
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Em Análise',
+      apiKey: '$aact_hmlg_pending_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toMatchObject({ success: true, status: 'READY' });
+    expect(mocks.asaasAccountUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        status: 'UNDER_REVIEW',
+        operationalStatus: 'KYC_PENDING',
+        apiKeyStatus: 'CONNECTED',
+        webhookStatus: 'ACTIVE',
+      }),
+    }));
+  });
+
   it('preserva a credencial anterior quando a substituição falha no Asaas', async () => {
     mocks.asaasAccountFindUnique.mockReset();
     mocks.asaasAccountFindUnique

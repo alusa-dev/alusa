@@ -12,8 +12,11 @@ export type RequireKycApprovedError = 'KYC_NAO_APROVADO' | 'ERRO_INTERNO';
  * Guard legado — verifica status via AsaasAccount.status.
  * Mantido para compatibilidade, mas delega para o snapshot canônico.
  */
-export async function requireKycApproved(contaId: string): Promise<Result<true, RequireKycApprovedError>> {
-  const result = await requireKycSnapshotApproved(contaId);
+export async function requireKycApproved(
+  contaId: string,
+  options: RequireKycSnapshotApprovedOptions = {},
+): Promise<Result<true, RequireKycApprovedError>> {
+  const result = await requireKycSnapshotApproved(contaId, options);
   if (result.success) return ok(true);
   if (result.error.code === 'ERRO_INTERNO') {
     return err('ERRO_INTERNO');
@@ -28,14 +31,26 @@ export type RequireKycSnapshotApprovedError =
   | { code: 'COMMERCIAL_INFO_EXPIRED'; reasons: string[]; snapshot: KycSnapshot }
   | { code: 'ERRO_INTERNO' };
 
+export type RequireKycSnapshotApprovedOptions = {
+  /**
+   * Permite operar cobranças quando apenas a análise da conta bancária está
+   * pendente. Essa área não é pré-requisito para criar cobranças no Asaas;
+   * continua sendo exibida separadamente para recursos de liquidação.
+   */
+  allowPendingBankAccount?: boolean;
+};
+
 /**
  * Guard canônico baseado em KycSnapshot.
- * Bloqueia se general/documentation/bankAccountInfo !== APPROVED.
+ * Por padrão, bloqueia se general/documentation/bankAccountInfo !== APPROVED.
+ * Operações que não dependem de liquidação bancária podem permitir a pendência
+ * de bankAccountInfo via allowPendingBankAccount.
  *
  * @returns ok(snapshot) quando aprovado; err com reasons quando pendente.
  */
 export async function requireKycSnapshotApproved(
   contaId: string,
+  options: RequireKycSnapshotApprovedOptions = {},
 ): Promise<Result<KycSnapshot, RequireKycSnapshotApprovedError>> {
   try {
     const fp = await financeProfileService.getOrCreateByTenant(contaId);
@@ -73,9 +88,14 @@ export async function requireKycSnapshotApproved(
     }
 
     // Fast-path: onboarding já completo
+    const coreKycApproved = (snapshot: KycSnapshot) =>
+      snapshot.generalStatus === 'APPROVED' && snapshot.documentationStatus === 'APPROVED';
+    const isApprovedForOperation = (snapshot: KycSnapshot) =>
+      !snapshot.hasBlockingPending || (options.allowPendingBankAccount === true && coreKycApproved(snapshot));
+
     if (fp.isOnboardingCompleted) {
       const snapshot = await getKycSnapshot(fp.id);
-      if (snapshot && !snapshot.hasBlockingPending) return ok(snapshot);
+      if (snapshot && isApprovedForOperation(snapshot)) return ok(snapshot);
       // Se snapshot diz blocking mesmo com onboarding completo, reconcilia
     }
 
@@ -100,6 +120,10 @@ export async function requireKycSnapshotApproved(
 
     if (snapshot.commercialInfoStatus === 'EXPIRED') {
       return err({ code: 'COMMERCIAL_INFO_EXPIRED', reasons: ['commercialInfo: EXPIRED'], snapshot });
+    }
+
+    if (snapshot.hasBlockingPending && options.allowPendingBankAccount === true && coreKycApproved(snapshot)) {
+      return ok(snapshot);
     }
 
     if (snapshot.hasBlockingPending) {
