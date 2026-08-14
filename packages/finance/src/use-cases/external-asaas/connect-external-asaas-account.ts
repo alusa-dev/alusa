@@ -252,63 +252,60 @@ export async function connectExternalAsaasAccount(input: {
     };
   }
 
-  if (currentAccount?.asaasAccountId && currentAccount.asaasAccountId !== asaasAccountId) {
-    return {
-      success: false,
-      summary: 'A nova API key pertence a outra conta Asaas. A substituição deve usar uma chave da conta já vinculada.',
-      status: 'FAILED',
-      errorCode: 'ACCOUNT_MISMATCH',
-    };
-  }
-
   const preserveExistingConnection = Boolean(
     currentAccount?.apiKeyEncrypted && currentAccount.apiKeyStatus === 'CONNECTED',
   );
+  const replacedExistingAccount = Boolean(
+    currentAccount?.asaasAccountId && currentAccount.asaasAccountId !== asaasAccountId,
+  );
   const desiredExternalReference = `financeProfile:${financeProfile.id}`;
 
-  try {
-    await prisma.asaasAccount.upsert({
-      where: { financeProfileId: financeProfile.id },
-      create: {
-        financeProfileId: financeProfile.id,
-        asaasAccountId,
-        asaasAccountEmail: asaasEmail,
-        externalReference: desiredExternalReference,
-        status: regulatory.onboarding,
-        statusUpdatedAt: new Date(),
-        provisionedAt: new Date(),
-        apiKeyStatus: 'MISSING',
-        webhookStatus: 'PENDING',
-        operationalStatus: 'WEBHOOK_REQUIRED',
-        provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
-      },
-      update: {
-        asaasAccountId,
-        asaasAccountEmail: asaasEmail ?? undefined,
-        externalReference: desiredExternalReference,
-        status: regulatory.onboarding,
-        statusUpdatedAt: new Date(),
-        provisionedAt: currentAccount?.provisionedAt ?? new Date(),
-        provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
-        ...(preserveExistingConnection
-          ? {}
-          : {
-              webhookStatus: 'PENDING' as const,
-              operationalStatus: 'WEBHOOK_REQUIRED' as const,
-            }),
-      },
-      select: { id: true },
-    });
-  } catch (error) {
-    if ((error as { code?: string })?.code === 'P2002') {
-      return {
-        success: false,
-        summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa.',
-        status: 'FAILED',
-        errorCode: 'ACCOUNT_ALREADY_LINKED',
-      };
+  // For a first connection, create the local placeholder before provisioning
+  // the webhook. When replacing a stale or existing connection, leave the
+  // current row untouched until the remote webhook is verified; otherwise a
+  // failed replacement could leave the tenant pointing at a new account while
+  // still holding the old credential.
+  if (!currentAccount) {
+    try {
+      await prisma.asaasAccount.upsert({
+        where: { financeProfileId: financeProfile.id },
+        create: {
+          financeProfileId: financeProfile.id,
+          asaasAccountId,
+          asaasAccountEmail: asaasEmail,
+          externalReference: desiredExternalReference,
+          status: regulatory.onboarding,
+          statusUpdatedAt: new Date(),
+          provisionedAt: new Date(),
+          apiKeyStatus: 'MISSING',
+          webhookStatus: 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+          provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
+        },
+        update: {
+          asaasAccountId,
+          asaasAccountEmail: asaasEmail ?? undefined,
+          externalReference: desiredExternalReference,
+          status: regulatory.onboarding,
+          statusUpdatedAt: new Date(),
+          provisionedAt: new Date(),
+          provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
+          webhookStatus: 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+        },
+        select: { id: true },
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'P2002') {
+        return {
+          success: false,
+          summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa.',
+          status: 'FAILED',
+          errorCode: 'ACCOUNT_ALREADY_LINKED',
+        };
+      }
+      throw error;
     }
-    throw error;
   }
 
   let webhook: Awaited<ReturnType<typeof ensureAsaasWebhookConfiguration>>;
@@ -441,12 +438,15 @@ export async function connectExternalAsaasAccount(input: {
 
   await auditLogService.record({
     contaId: input.contaId,
-    action: preserveExistingConnection
-      ? 'finance.external-asaas.credential_replaced'
-      : 'finance.external-asaas.connected',
+    action: replacedExistingAccount
+      ? 'finance.external-asaas.account_replaced'
+      : preserveExistingConnection
+        ? 'finance.external-asaas.credential_replaced'
+        : 'finance.external-asaas.connected',
     entity: { type: 'AsaasAccount', id: persisted.id },
     metadata: {
       asaasAccountId,
+      previousAsaasAccountId: replacedExistingAccount ? currentAccount?.asaasAccountId : null,
       asaasEmail,
       webhookId: webhook.webhookId,
       webhookAction: webhook.action,

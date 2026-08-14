@@ -200,7 +200,7 @@ describe('connectExternalAsaasAccount', () => {
     }));
   });
 
-  it('impede substituir a integração por uma API key de outra conta Asaas', async () => {
+  it('permite substituir a conta Asaas local quando a nova conta não pertence a outro tenant', async () => {
     mocks.asaasAccountFindUnique.mockReset();
     mocks.asaasAccountFindUnique
       .mockResolvedValueOnce({
@@ -219,8 +219,44 @@ describe('connectExternalAsaasAccount', () => {
       actor: { type: 'ADMIN', id: 'user_1' },
     });
 
-    expect(result).toMatchObject({ success: false, errorCode: 'ACCOUNT_MISMATCH' });
-    expect(mocks.ensureWebhook).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ success: true, status: 'READY' });
+    expect(mocks.ensureWebhook).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: '$aact_hmlg_other_account_key',
+      persistResult: false,
+    }));
+    expect(mocks.asaasAccountUpsert).not.toHaveBeenCalled();
+    expect(mocks.asaasAccountUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ asaasAccountId: 'acc_external_1' }),
+    }));
+  });
+
+  it('preserva a conta antiga quando a reconexão de uma conta substituta falha', async () => {
+    mocks.asaasAccountFindUnique.mockReset();
+    mocks.asaasAccountFindUnique
+      .mockResolvedValueOnce({
+        id: 'local_account_1',
+        asaasAccountId: 'acc_original',
+        apiKeyEncrypted: 'encrypted_old_key',
+        apiKeyStatus: 'CONNECTED',
+        status: 'APPROVED',
+        provisionedAt: new Date('2026-01-01'),
+        webhookStatus: 'ACTIVE',
+        operationalStatus: 'OPERATIONAL',
+      })
+      .mockResolvedValueOnce(null);
+    mocks.ensureWebhook.mockRejectedValueOnce(Object.assign(new Error('asaas unavailable'), { status: 503 }));
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_replacement_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toMatchObject({ success: false, errorCode: 'TEMPORARY_ASAAS_ERROR' });
+    expect(mocks.encrypt).not.toHaveBeenCalled();
+    expect(mocks.credentialUpsert).not.toHaveBeenCalled();
+    expect(mocks.asaasAccountUpdate).not.toHaveBeenCalled();
   });
 
   it('bloqueia vínculo cross-tenant antes de provisionar o webhook', async () => {

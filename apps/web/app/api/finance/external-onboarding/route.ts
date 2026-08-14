@@ -80,6 +80,14 @@ export async function POST(request: Request) {
       actor: { id: user.id ?? null, type: 'ADMIN' },
     });
 
+    if (!result.success) {
+      console.warn('[External Asaas Onboarding][RESULT]', {
+        contaId: user.contaId,
+        errorCode: result.errorCode,
+        retryable: result.retryable ?? false,
+      });
+    }
+
     const status = result.success
       ? 200
       : result.errorCode === 'ACCOUNT_ALREADY_LINKED' || result.errorCode === 'ACCOUNT_MISMATCH'
