@@ -179,7 +179,9 @@ export type KycSnapshot = {
 
   /**
    * true quando qualquer uma das 3 áreas (general/documentation/bankAccount) não é APPROVED.
-   * Usado como gate obrigatório para mutações financeiras.
+   * É um indicador bruto de pendência. Cada operação deve aplicar sua própria
+   * capacidade: cobranças exigem general/documentation; saques e liquidações
+   * também exigem bankAccountInfo.
    */
   hasBlockingPending: boolean;
 

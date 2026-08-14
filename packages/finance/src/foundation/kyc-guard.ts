@@ -9,12 +9,14 @@ import type { KycSnapshot } from '../dtos/kyc/kyc-snapshot.dto';
 export type RequireKycApprovedError = 'KYC_NAO_APROVADO' | 'ERRO_INTERNO';
 
 /**
- * Guard legado — verifica status via AsaasAccount.status.
- * Mantido para compatibilidade, mas delega para o snapshot canônico.
+ * Guard legado para operações financeiras que não exigem liquidação bancária
+ * (cobranças, clientes e assinaturas). Mantido para compatibilidade, mas
+ * delega para o snapshot canônico. Saques/transferências usam o guard de
+ * snapshot diretamente e continuam exigindo bankAccountInfo aprovado.
  */
 export async function requireKycApproved(
   contaId: string,
-  options: RequireKycSnapshotApprovedOptions = {},
+  options: RequireKycSnapshotApprovedOptions = { allowPendingBankAccount: true },
 ): Promise<Result<true, RequireKycApprovedError>> {
   const result = await requireKycSnapshotApproved(contaId, options);
   if (result.success) return ok(true);

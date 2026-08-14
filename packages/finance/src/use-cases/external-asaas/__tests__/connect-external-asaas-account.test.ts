@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   getMyAccountStatus: vi.fn(),
   getMyAccountCommercialInfo: vi.fn(),
+  getMyAccountDocuments: vi.fn(),
+  syncKycModels: vi.fn(),
   ensureWebhook: vi.fn(),
   getOrCreateByTenant: vi.fn(),
   asaasAccountFindUnique: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('@alusa/asaas', () => ({
   },
   getMyAccountStatus: mocks.getMyAccountStatus,
   getMyAccountCommercialInfo: mocks.getMyAccountCommercialInfo,
+  getMyAccountDocuments: mocks.getMyAccountDocuments,
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -69,6 +72,10 @@ vi.mock('../../../webhooks/ensure-asaas-webhook-configuration', () => ({
   ensureAsaasWebhookConfiguration: mocks.ensureWebhook,
 }));
 
+vi.mock('../../kyc/kyc-persistence.service', () => ({
+  syncKycModels: mocks.syncKycModels,
+}));
+
 import { connectExternalAsaasAccount } from '../connect-external-asaas-account';
 
 describe('connectExternalAsaasAccount', () => {
@@ -76,6 +83,8 @@ describe('connectExternalAsaasAccount', () => {
     vi.clearAllMocks();
     mocks.getMyAccountStatus.mockResolvedValue({ id: 'acc_external_1', general: 'APPROVED' });
     mocks.getMyAccountCommercialInfo.mockResolvedValue({ email: 'financeiro@escola.com' });
+    mocks.getMyAccountDocuments.mockResolvedValue({ data: [], rejectReasons: [] });
+    mocks.syncKycModels.mockResolvedValue(undefined);
     mocks.getOrCreateByTenant.mockResolvedValue({ id: 'profile_1' });
     mocks.asaasAccountFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     mocks.asaasAccountUpsert.mockResolvedValue({ id: 'local_account_1' });

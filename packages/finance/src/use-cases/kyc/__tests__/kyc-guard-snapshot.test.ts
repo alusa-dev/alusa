@@ -32,7 +32,7 @@ vi.mock('../../asaas-account/reconcile-asaas-account', () => ({
   reconcileAsaasAccount: vi.fn(async () => undefined),
 }));
 
-import { requireKycSnapshotApproved } from '../../../foundation/kyc-guard';
+import { requireKycApproved, requireKycSnapshotApproved } from '../../../foundation/kyc-guard';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -99,6 +99,18 @@ describe('requireKycSnapshotApproved', () => {
 
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.bankAccountStatus).toBe('PENDING');
+  });
+
+  it('o guard legado de operações financeiras também ignora pendência bancária', async () => {
+    const snapshot = makeSnapshot({
+      hasBlockingPending: true,
+      bankAccountStatus: 'PENDING',
+    });
+    mockGetKycSnapshot.mockResolvedValue(snapshot);
+
+    const result = await requireKycApproved('conta_001');
+
+    expect(result).toEqual({ success: true, data: true });
   });
 
   it('retorna err KYC_REQUIRED quando snapshot é null (subconta indisponível)', async () => {

@@ -1,4 +1,4 @@
-import { getMyAccountCommercialInfo, getMyAccountStatus } from '@alusa/asaas';
+import { getMyAccountCommercialInfo, getMyAccountDocuments, getMyAccountStatus } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
 import type {
   AuditActorType,
@@ -16,6 +16,8 @@ import {
   ensureAsaasWebhookConfiguration,
   type EnsureAsaasWebhookAction,
 } from '../../webhooks/ensure-asaas-webhook-configuration';
+import { buildCacheV2 } from '../kyc/kyc-cache-utils';
+import { syncKycModels } from '../kyc/kyc-persistence.service';
 
 export type ConnectExternalAsaasAccountErrorCode =
   | 'INVALID_API_KEY'
@@ -373,6 +375,31 @@ export async function connectExternalAsaasAccount(input: {
   const oldStatus = currentAccount?.status ?? null;
   const profileCompanyName = resolveCompanyName(schoolName, cpfCnpj);
 
+  // O primeiro vínculo precisa deixar também o read model KYC coerente.
+  // Sem essa leitura, a conta fica com status regulatório aprovado, mas com
+  // cache/documentos antigos ou ausentes até alguma tela disparar uma
+  // reconciliação posterior.
+  let documents: Awaited<ReturnType<typeof getMyAccountDocuments>> | null = null;
+  try {
+    documents = await getMyAccountDocuments({ apiKey });
+  } catch (error) {
+    // A conexão da API/webhook já foi validada. Se o endpoint de documentos
+    // estiver temporariamente indisponível, o snapshot fresh fará retry depois.
+    console.warn('[connectExternalAsaasAccount] Falha ao sincronizar documentos iniciais', {
+      contaId: input.contaId,
+      asaasAccountId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const documentsCache = documents
+    ? buildCacheV2({
+        myAccountStatus,
+        documents,
+        fetchedAt: now.toISOString(),
+      })
+    : null;
+
   const persisted = await prisma.$transaction(async (tx) => {
     await tx.conta.update({
       where: { id: input.contaId },
@@ -423,6 +450,9 @@ export async function connectExternalAsaasAccount(input: {
         lastHealthCheckAt: now,
         provisionLastStage: 'EXTERNAL_READY',
         provisionLastError: null,
+        ...(documentsCache
+          ? { documentsCache: documentsCache as unknown as object, documentsCacheUpdatedAt: now }
+          : {}),
       },
       select: { id: true },
     });
@@ -449,6 +479,21 @@ export async function connectExternalAsaasAccount(input: {
 
     return asaasAccount;
   });
+
+  if (documents) {
+    await syncKycModels({
+      asaasAccountId: persisted.id,
+      myAccountStatus,
+      documents,
+      source: 'READ_MODEL',
+    }).catch((error) => {
+      console.warn('[connectExternalAsaasAccount] Falha ao persistir modelos KYC iniciais', {
+        contaId: input.contaId,
+        asaasAccountId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   await auditLogService.record({
     contaId: input.contaId,
