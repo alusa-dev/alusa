@@ -5,6 +5,7 @@
  */
 
 import { AsaasHttp } from '../client/AsaasHttp';
+import type { AsaasWebhookEventType, AsaasWebhookSendType } from '../types/asaas';
 import type { AsaasWebhookConfig } from './listWebhooks';
 
 export interface CreateWebhookParams {
@@ -12,13 +13,13 @@ export interface CreateWebhookParams {
   data: {
     name: string;
     url: string;
-    email?: string;
-    enabled?: boolean;
-    interrupted?: boolean;
-    apiVersion?: number;
-    authToken?: string;
-    sendType?: 'NON_SEQUENTIALLY' | 'SEQUENTIALLY';
-    events: string[];
+    email: string;
+    enabled: boolean;
+    interrupted: boolean;
+    apiVersion: 3;
+    authToken: string;
+    sendType: AsaasWebhookSendType;
+    events: AsaasWebhookEventType[];
   };
 }
 

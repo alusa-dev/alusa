@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
+import { ASAAS_WEBHOOK_EVENTS } from '@alusa/asaas';
 
 import {
   ASAAS_EVENT_REGISTRY,
@@ -323,8 +324,11 @@ describe('Asaas Event Registry', () => {
       expect(unhandledCritical.length, 'Todos os eventos críticos devem ter handler').toBe(0);
     });
 
-    it('todos os eventos handled devem ser provisionados no webhook da subconta', () => {
-      expect(PROVISIONED_WEBHOOK_EVENTS).toEqual(getHandledEvents());
+    it('todos os eventos oficiais registrados devem ser provisionados no webhook da subconta', () => {
+      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).toEqual(new Set(ASAAS_WEBHOOK_EVENTS));
+      expect(new Set(PROVISIONED_WEBHOOK_EVENTS)).toEqual(new Set(Object.keys(ASAAS_EVENT_REGISTRY)));
+      expect(PROVISIONED_WEBHOOK_EVENTS).toHaveLength(111);
+      expect(PROVISIONED_WEBHOOK_EVENTS).toEqual(expect.arrayContaining(getHandledEvents()));
     });
 
     it('todos os eventos registrados devem ter política operacional canônica', () => {

@@ -1,10 +1,7 @@
 import {
   createSubaccount,
   createSubaccountAccessToken,
-  createWebhook,
   listSubaccounts,
-  listWebhooks,
-  updateWebhook,
 } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import { Prisma, type AuditActorType, type FinancialOnboardingStatus } from '@prisma/client';
@@ -23,13 +20,9 @@ import { AsaasSandboxSubaccountDailyLimitError } from '../../errors/asaas-sandbo
 import { getMasterAsaasApiKey, resolveWebhookUrlOrNull } from './asaas-env';
 import {
   buildExpectedWebhookConfig,
-  hasSameWebhookEvents,
-  normalizeWebhookUrlBase,
-  RECOMMENDED_WEBHOOK_NAME,
-  RECOMMENDED_WEBHOOK_SEND_TYPE,
 } from './expected-webhook-config.server';
 import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
-import { buildWebhookAuthTokenRotationData } from '../../webhooks/asaas-webhook-auth';
+import { ensureAsaasWebhookConfiguration } from '../../webhooks/ensure-asaas-webhook-configuration';
 import { refreshKycReadModel } from '../kyc/refresh-kyc-read-model';
 import { reconcileAsaasAccount } from './reconcile-asaas-account';
 import {
@@ -691,111 +684,10 @@ async function ensureExistingWebhookConfig(params: {
   const credentials = await loadAsaasCredentials(params.contaId);
   if (!credentials?.apiKey) return;
 
-  const webhookUrl = resolveWebhookUrlOrNull();
-  if (!webhookUrl) {
-    throw new Error(
-      'ASAAS_WEBHOOK_PUBLIC_BASE_URL ou NEXT_PUBLIC_APP_URL deve apontar para uma URL pública https para configurar o webhook do Asaas.',
-    );
-  }
-
-  const expectedWebhook = buildExpectedWebhookConfig(params.financeProfileId, webhookUrl);
-  const webhookNotificationEmail = await resolveWebhookNotificationEmail({
+  await ensureAsaasWebhookConfiguration({
     contaId: params.contaId,
     financeProfileId: params.financeProfileId,
-  });
-  if (!webhookNotificationEmail) {
-    throw new Error('Não foi possível resolver o email do webhook do Asaas.');
-  }
-  const webhooks = await listWebhooks({ apiKey: credentials.apiKey, limit: 100, offset: 0 });
-  const webhook = webhooks.data.find(
-    (item) =>
-      normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl ||
-      item.name === RECOMMENDED_WEBHOOK_NAME,
-  );
-
-  if (!webhook) {
-    // Webhook não existe na subconta — cria em vez de falhar (subconta pode ter sido criada antes da configuração do webhook)
-    await createWebhook({
-      apiKey: credentials.apiKey,
-      data: {
-        name: RECOMMENDED_WEBHOOK_NAME,
-        url: webhookUrl,
-        email: webhookNotificationEmail,
-        enabled: true,
-        authToken: expectedWebhook.authToken,
-        sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
-        events: expectedWebhook.events,
-      },
-    });
-
-    if (params.webhookAuthTokenHash !== expectedWebhook.authTokenHash) {
-      await prisma.asaasAccount.update({
-        where: { financeProfileId: params.financeProfileId },
-        data: buildWebhookAuthTokenRotationData({
-          currentHash: params.webhookAuthTokenHash,
-          nextHash: expectedWebhook.authTokenHash,
-        }),
-        select: { id: true },
-      });
-    }
-
-    await auditLogService.record({
-      contaId: params.contaId,
-      action: 'finance.onboarding.create_webhook_config',
-      entity: { type: 'AsaasAccount', id: params.asaasAccountId },
-      metadata: { asaasAccountId: params.asaasAccountId, webhookCreated: true },
-      actor: params.actor,
-    });
-    return;
-  }
-
-  const shouldRepairRemote =
-    params.webhookAuthTokenHash !== expectedWebhook.authTokenHash ||
-    webhook.enabled === false ||
-    webhook.interrupted === true ||
-    webhook.hasAuthToken === false ||
-    webhook.sendType !== RECOMMENDED_WEBHOOK_SEND_TYPE ||
-    !hasSameWebhookEvents(webhook.events, expectedWebhook.events);
-
-  if (!shouldRepairRemote) return;
-
-  await updateWebhook({
     apiKey: credentials.apiKey,
-    webhookId: webhook.id,
-    data: {
-      name: RECOMMENDED_WEBHOOK_NAME,
-      url: webhookUrl,
-      email: webhookNotificationEmail,
-      enabled: true,
-      interrupted: false,
-      authToken: expectedWebhook.authToken,
-      sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
-      events: expectedWebhook.events,
-    },
-  });
-
-  if (params.webhookAuthTokenHash !== expectedWebhook.authTokenHash) {
-    await prisma.asaasAccount.update({
-      where: { financeProfileId: params.financeProfileId },
-      data: buildWebhookAuthTokenRotationData({
-        currentHash: params.webhookAuthTokenHash,
-        nextHash: expectedWebhook.authTokenHash,
-      }),
-      select: { id: true },
-    });
-  }
-
-  await auditLogService.record({
-    contaId: params.contaId,
-    action: 'finance.onboarding.repair_webhook_config',
-    entity: { type: 'AsaasAccount', id: params.asaasAccountId },
-    metadata: {
-      webhookId: webhook.id,
-      asaasAccountId: params.asaasAccountId,
-      repairedInterrupted: webhook.interrupted === true,
-      repairedMissingToken: webhook.hasAuthToken === false,
-      repairedHashDrift: params.webhookAuthTokenHash !== expectedWebhook.authTokenHash,
-    },
     actor: params.actor,
   });
 }
@@ -1423,14 +1315,14 @@ async function createAsaasAccountInternal(params: {
     externalReference,
     webhooks: [
       {
-        name: RECOMMENDED_WEBHOOK_NAME,
+        name: expectedWebhook.name,
         url: webhookUrl,
         email: webhookNotificationEmail,
         enabled: true,
         interrupted: false,
         apiVersion: 3,
         authToken: expectedWebhook.authToken,
-        sendType: RECOMMENDED_WEBHOOK_SEND_TYPE,
+        sendType: expectedWebhook.sendType,
         events: expectedWebhook.events,
       },
     ],

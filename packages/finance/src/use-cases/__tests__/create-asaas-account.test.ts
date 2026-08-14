@@ -94,6 +94,28 @@ vi.mock('@alusa/asaas', async () => {
   };
 });
 
+vi.mock('../../webhooks/ensure-asaas-webhook-configuration', () => ({
+  ensureAsaasWebhookConfiguration: vi.fn(async ({ financeProfileId }: { financeProfileId: string }) => {
+    const { prisma } = await import('@alusa/database');
+    await prisma.asaasAccount.update({
+      where: { financeProfileId },
+      data: {
+        webhookId: 'webhook-1',
+        webhookStatus: 'ACTIVE',
+        operationalStatus: 'OPERATIONAL',
+        webhookAuthTokenHash: 'test-webhook-hash',
+      },
+    });
+    return {
+      webhookId: 'webhook-1',
+      action: 'created',
+      authTokenHash: 'test-webhook-hash',
+      eventsCount: 111,
+      duplicateWebhookIdsRemoved: [],
+    };
+  }),
+}));
+
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?? '0'.repeat(64);
 process.env.ASAAS_API_KEY = process.env.ASAAS_API_KEY || '$aact_master_test';
 process.env.ASAAS_BASE_URL = process.env.ASAAS_BASE_URL ?? 'https://api-sandbox.asaas.com/v3';
@@ -172,10 +194,10 @@ describe('createAsaasAccount', () => {
       expect(call?.data).not.toHaveProperty('loginEmail');
       expect(call?.data?.webhooks).toHaveLength(1);
       expect(call?.data?.webhooks?.[0]).toMatchObject({
-        name: 'Alusa - Webhook financeiro',
         enabled: true,
         sendType: 'SEQUENTIALLY',
       });
+      expect(call?.data?.webhooks?.[0]?.name).toMatch(/^Alusa - Webhook financeiro - /);
 
       const profile = await prisma.financeProfile.findUnique({ where: { contaId: conta.id } });
       expect(profile).not.toBeNull();

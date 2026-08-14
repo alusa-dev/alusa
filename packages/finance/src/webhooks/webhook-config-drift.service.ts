@@ -1,17 +1,18 @@
-import { createWebhook, listWebhooks, removeWebhookBackoff, updateWebhook } from '@alusa/asaas';
+import { listWebhooks } from '@alusa/asaas';
 import type { AsaasWebhookConfig } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
 import type { AuditActorType } from '@prisma/client';
 
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
-import { auditLogService } from '../foundation/audit-log.service';
 import {
   buildExpectedWebhookConfig,
   hasSameWebhookEvents,
   normalizeWebhookUrlBase,
 } from '../use-cases/asaas-account/expected-webhook-config.server';
-import { resolveWebhookNotificationEmail } from '../use-cases/asaas-account/webhook-notification-email.server';
-import { buildWebhookAuthTokenRotationData } from './asaas-webhook-auth';
+import {
+  ensureAsaasWebhookConfiguration,
+  selectAlusaWebhookCandidate,
+} from './ensure-asaas-webhook-configuration';
 import {
   buildFinanceReconciliationIssueDedupeKey,
   resolveFinanceReconciliationIssueByDedupe,
@@ -132,16 +133,14 @@ export interface RepairWebhookConfigDriftResult {
   failureStatus?: number | null;
 }
 
-function selectCandidateWebhook(webhooks: AsaasWebhookConfig[], expected: ReturnType<typeof buildExpectedWebhookConfig>) {
-  return (
-    webhooks.find((item) => normalizeWebhookUrlBase(item.url) === expected.normalizedUrl) ??
-    webhooks.find((item) => item.name === expected.name) ??
-    null
-  );
-}
-
 function computeDrift(params: {
-  account: { contaId: string; asaasAccountId: string; financeProfileId: string; webhookAuthTokenHash: string | null };
+  account: {
+    contaId: string;
+    asaasAccountId: string;
+    financeProfileId: string;
+    webhookId: string | null;
+    webhookAuthTokenHash: string | null;
+  };
   expected: ReturnType<typeof buildExpectedWebhookConfig>;
   webhook: AsaasWebhookConfig | null;
 }): WebhookConfigDriftStatus {
@@ -191,22 +190,6 @@ function computeDrift(params: {
   };
 }
 
-async function updateWebhookAuthHashWithRotation(financeProfileId: string, nextHash: string): Promise<void> {
-  const account = await prisma.asaasAccount.findUnique({
-    where: { financeProfileId },
-    select: { webhookAuthTokenHash: true },
-  });
-
-  await prisma.asaasAccount.update({
-    where: { financeProfileId },
-    data: buildWebhookAuthTokenRotationData({
-      currentHash: account?.webhookAuthTokenHash,
-      nextHash,
-    }),
-    select: { id: true },
-  });
-}
-
 export async function getWebhookConfigDriftStatus(contaId: string): Promise<WebhookConfigDriftStatus | null> {
   const account = await prisma.asaasAccount.findFirst({
     where: {
@@ -217,6 +200,7 @@ export async function getWebhookConfigDriftStatus(contaId: string): Promise<Webh
       id: true,
       asaasAccountId: true,
       financeProfileId: true,
+      webhookId: true,
       webhookAuthTokenHash: true,
       financeProfile: { select: { contaId: true } },
     },
@@ -229,13 +213,19 @@ export async function getWebhookConfigDriftStatus(contaId: string): Promise<Webh
 
   const expected = buildExpectedWebhookConfig(account.financeProfileId);
   const allWebhooks = await listAllWebhooks(credentials.apiKey);
-  const webhook = selectCandidateWebhook(allWebhooks, expected);
+  const webhook = selectAlusaWebhookCandidate({
+    webhooks: allWebhooks,
+    persistedWebhookId: account.webhookId,
+    financeProfileId: account.financeProfileId,
+    expectedName: expected.name,
+  });
 
   return computeDrift({
     account: {
       contaId: account.financeProfile.contaId,
       asaasAccountId: account.asaasAccountId,
       financeProfileId: account.financeProfileId,
+      webhookId: account.webhookId,
       webhookAuthTokenHash: account.webhookAuthTokenHash,
     },
     expected,
@@ -270,125 +260,19 @@ export async function repairWebhookConfigDrift(params: {
     }
 
     await recordWebhookConfigDriftIssue(before);
-
-    if (!before.canRepair || !before.remote.webhookId) {
-      const credentials = await loadAsaasCredentials(params.contaId);
-      if (!credentials?.apiKey) {
-        return { repaired: false, reason: 'CREDENTIALS_MISSING', before, after: before };
-      }
-
-    const expected = buildExpectedWebhookConfig(before.financeProfileId);
-    const webhookNotificationEmail = await resolveWebhookNotificationEmail({
-      contaId: params.contaId,
-      financeProfileId: before.financeProfileId,
-    });
-
-    if (!webhookNotificationEmail) {
-      throw new Error('Não foi possível resolver o email do webhook do Asaas.');
-    }
-
-      const created = await createWebhook({
-        apiKey: credentials.apiKey,
-        data: {
-          name: expected.name,
-          url: expected.url,
-          email: webhookNotificationEmail,
-          enabled: true,
-          interrupted: false,
-          apiVersion: 3,
-          authToken: expected.authToken,
-          sendType: expected.sendType,
-          events: expected.events,
-        },
-      });
-
-      if (before.drift.localHashMismatch) {
-        await updateWebhookAuthHashWithRotation(before.financeProfileId, expected.authTokenHash);
-      }
-
-      const after = await getWebhookConfigDriftStatus(params.contaId);
-
-      await auditLogService.record({
-        contaId: params.contaId,
-        action: 'finance.webhook.config_created',
-        entity: { type: 'AsaasAccount', id: before.asaasAccountId },
-        metadata: {
-          webhookId: created.id,
-          url: expected.url,
-          eventsCount: expected.events.length,
-          rotatedWebhookAuthToken: before.drift.localHashMismatch,
-        },
-        actor: params.actor,
-      });
-
-      if (after && !hasWebhookConfigDrift(after) && after.drift.missingEvents.length === 0 && after.drift.extraEvents.length === 0) {
-        await resolveWebhookConfigDriftIssue(after);
-      }
-
-      return { repaired: true, reason: 'REPAIRED', before, after };
-    }
-
     const credentials = await loadAsaasCredentials(params.contaId);
     if (!credentials?.apiKey) {
       return { repaired: false, reason: 'CREDENTIALS_MISSING', before, after: before };
     }
 
-    const expected = buildExpectedWebhookConfig(before.financeProfileId);
-    const webhookNotificationEmail = await resolveWebhookNotificationEmail({
+    await ensureAsaasWebhookConfiguration({
       contaId: params.contaId,
       financeProfileId: before.financeProfileId,
-    });
-
-    if (!webhookNotificationEmail) {
-      throw new Error('Não foi possível resolver o email do webhook do Asaas.');
-    }
-
-    if (before.drift.penalized) {
-      await removeWebhookBackoff({
-        apiKey: credentials.apiKey,
-        webhookId: before.remote.webhookId,
-      });
-    }
-
-    await updateWebhook({
       apiKey: credentials.apiKey,
-      webhookId: before.remote.webhookId,
-      data: {
-        name: expected.name,
-        url: expected.url,
-        email: webhookNotificationEmail,
-        enabled: true,
-        interrupted: false,
-        authToken: expected.authToken,
-        sendType: expected.sendType,
-        events: expected.events,
-      },
-    });
-
-    if (before.drift.localHashMismatch) {
-      await updateWebhookAuthHashWithRotation(before.financeProfileId, expected.authTokenHash);
-    }
-
-    const after = await getWebhookConfigDriftStatus(params.contaId);
-
-    await auditLogService.record({
-      contaId: params.contaId,
-      action: 'finance.webhook.config_repaired',
-      entity: { type: 'AsaasAccount', id: before.asaasAccountId },
-      metadata: {
-        webhookId: before.remote.webhookId,
-        missingEvents: before.drift.missingEvents,
-        extraEvents: before.drift.extraEvents,
-        repairedDisabled: before.drift.disabled,
-        repairedInterrupted: before.drift.interrupted,
-        repairedMissingAuthToken: before.drift.missingAuthToken,
-        repairedSendTypeMismatch: before.drift.sendTypeMismatch,
-        repairedUrlMismatch: before.drift.urlMismatch,
-        repairedLocalHashMismatch: before.drift.localHashMismatch,
-        rotatedWebhookAuthToken: before.drift.localHashMismatch,
-      },
       actor: params.actor,
     });
+
+    const after = await getWebhookConfigDriftStatus(params.contaId);
 
     if (after && !hasWebhookConfigDrift(after) && after.drift.missingEvents.length === 0 && after.drift.extraEvents.length === 0) {
       await resolveWebhookConfigDriftIssue(after);

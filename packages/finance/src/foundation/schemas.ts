@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { AsaasWebhookEventType } from '@alusa/asaas';
 
 function isValidDateOnly(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -234,12 +235,14 @@ export const createWebhookPayloadDto = z.object({
   url: z.string().url(),
   email: z.string().email(),
   enabled: z.boolean().default(true),
-  interrupted: z.boolean().optional(),
-  apiVersion: z.number().int().optional(),
+  interrupted: z.boolean().default(false),
+  apiVersion: z.literal(3).default(3),
   // O contrato oficial de POST /v3/webhooks exige no mínimo 32 caracteres.
   authToken: z.string().min(32),
-  sendType: z.enum(['SEQUENTIALLY', 'NON_SEQUENTIALLY']).optional(),
-  events: z.array(z.string().min(1)).min(1),
+  sendType: z.enum(['SEQUENTIALLY', 'NON_SEQUENTIALLY']).default('SEQUENTIALLY'),
+  events: z.array(z.custom<AsaasWebhookEventType>(
+    (value) => typeof value === 'string' && value.length > 0,
+  )).min(1),
 });
 
 const createAsaasSubaccountPayloadBase = z.object({

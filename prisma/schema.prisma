@@ -5358,9 +5358,12 @@ model AsaasAccount {
   lastAccountStatusEventAt   DateTime?
 
   // Webhook (Fase 2): authToken configurado no Asaas (persistido como hash)
+  webhookId                         String?   @unique
   webhookAuthTokenHash              String?   @unique
   previousWebhookAuthTokenHash      String?   @unique
   previousWebhookAuthTokenExpiresAt DateTime?
+  webhookProvisionLockToken         String?
+  webhookProvisionLockedAt          DateTime?
 
   // ==================== Delete Account (external-first) ====================
   deletionState          AsaasAccountDeletionState @default(NOT_REQUESTED)
@@ -5387,6 +5390,7 @@ model AsaasAccount {
   @@index([status])
   @@index([apiKeyStatus])
   @@index([webhookStatus])
+  @@index([webhookProvisionLockedAt])
   @@index([operationalStatus])
   @@index([sandboxApprovalRequestedAt])
   @@index([deletionState])

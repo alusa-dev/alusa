@@ -1,34 +1,38 @@
-import {
-  createWebhook,
-  deleteWebhook,
-  getMyAccountCommercialInfo,
-  getMyAccountStatus,
-  listWebhooks,
-  updateWebhook,
-} from '@alusa/asaas';
+import { getMyAccountCommercialInfo, getMyAccountStatus } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
-import type { AuditActorType, FinancialOnboardingStatus } from '@prisma/client';
+import type {
+  AuditActorType,
+  FinanceProfileRegulatoryStatus,
+  FinanceStatus,
+  FinancialOnboardingStatus,
+} from '@prisma/client';
 
 import { classifyAsaasOperationalError } from '../../foundation/asaas-operational-error';
 import { auditLogService } from '../../foundation/audit-log.service';
 import { credentialVault } from '../../foundation/credential-vault';
 import { financeProfileService } from '../../foundation/finance-profile.service';
 import {
-  buildExpectedWebhookConfig,
-  buildRecommendedWebhookName,
-  hasSameWebhookEvents,
-  normalizeWebhookUrlBase,
-} from '../asaas-account/expected-webhook-config.server';
-import { resolveWebhookNotificationEmail } from '../asaas-account/webhook-notification-email.server';
+  AsaasWebhookConfigurationError,
+  ensureAsaasWebhookConfiguration,
+  type EnsureAsaasWebhookAction,
+} from '../../webhooks/ensure-asaas-webhook-configuration';
 
-type ExternalWebhookAction = 'created' | 'updated' | 'unchanged' | 'pending';
+export type ConnectExternalAsaasAccountErrorCode =
+  | 'INVALID_API_KEY'
+  | 'ACCOUNT_ALREADY_LINKED'
+  | 'ACCOUNT_MISMATCH'
+  | 'WEBHOOK_CONFIGURATION_INVALID'
+  | 'WEBHOOK_LIMIT_REACHED'
+  | 'PROVISIONING_IN_PROGRESS'
+  | 'TEMPORARY_ASAAS_ERROR'
+  | 'UNEXPECTED_ERROR';
 
 export type ConnectExternalAsaasAccountResult =
   | {
       success: true;
       summary: string;
-      status: 'READY' | 'WEBHOOK_PENDING';
-      webhookAction: ExternalWebhookAction;
+      status: 'READY';
+      webhookAction: EnsureAsaasWebhookAction;
       account: {
         asaasAccountId: string;
         asaasEmail: string | null;
@@ -38,7 +42,8 @@ export type ConnectExternalAsaasAccountResult =
       success: false;
       summary: string;
       status: 'FAILED';
-      errorCode: 'INVALID_API_KEY' | 'ACCOUNT_ALREADY_LINKED' | 'UNEXPECTED_ERROR';
+      errorCode: ConnectExternalAsaasAccountErrorCode;
+      retryable?: boolean;
     };
 
 function normalizeDigits(value: string | undefined): string | null {
@@ -50,149 +55,107 @@ function resolveCompanyName(schoolName: string, cpfCnpj: string | null): string 
   return cpfCnpj?.length === 14 ? schoolName : null;
 }
 
-async function upsertLocalExternalConnection(params: {
+function mapRegulatoryStatus(value: unknown): {
+  onboarding: FinancialOnboardingStatus;
+  finance: FinanceStatus;
+  profile: FinanceProfileRegulatoryStatus;
+} {
+  switch (value) {
+    case 'APPROVED':
+      return { onboarding: 'APPROVED', finance: 'FINANCE_APPROVED', profile: 'APPROVED' };
+    case 'REJECTED':
+      return { onboarding: 'REJECTED', finance: 'FINANCE_REJECTED', profile: 'REJECTED' };
+    case 'PENDING':
+    case 'AWAITING_APPROVAL':
+    default:
+      return { onboarding: 'UNDER_REVIEW', finance: 'FINANCE_IN_ANALYSIS', profile: 'PENDING' };
+  }
+}
+
+function mapWebhookFailure(error: unknown): {
+  errorCode: ConnectExternalAsaasAccountErrorCode;
+  summary: string;
+  retryable: boolean;
+} {
+  if (error instanceof AsaasWebhookConfigurationError) {
+    switch (error.code) {
+      case 'CONFIGURATION_INVALID':
+        return {
+          errorCode: 'WEBHOOK_CONFIGURATION_INVALID',
+          summary: error.message,
+          retryable: false,
+        };
+      case 'WEBHOOK_LIMIT_REACHED':
+        return {
+          errorCode: 'WEBHOOK_LIMIT_REACHED',
+          summary: error.message,
+          retryable: false,
+        };
+      case 'PROVISIONING_IN_PROGRESS':
+        return {
+          errorCode: 'PROVISIONING_IN_PROGRESS',
+          summary: error.message,
+          retryable: true,
+        };
+      default:
+        break;
+    }
+  }
+
+  const failure = classifyAsaasOperationalError(error, 'subaccount');
+  if (failure.category === 'invalid_subaccount_credentials') {
+    return {
+      errorCode: 'INVALID_API_KEY',
+      summary: 'API key inválida, expirada, desabilitada ou sem permissão no Asaas.',
+      retryable: false,
+    };
+  }
+  if (failure.retryable) {
+    return {
+      errorCode: 'TEMPORARY_ASAAS_ERROR',
+      summary: 'O Asaas está temporariamente indisponível. Tente novamente em alguns instantes.',
+      retryable: true,
+    };
+  }
+  return {
+    errorCode: 'UNEXPECTED_ERROR',
+    summary: 'Não foi possível concluir a configuração automática do webhook do Asaas.',
+    retryable: false,
+  };
+}
+
+async function markConnectionFailure(params: {
   contaId: string;
-  financeProfileId: string;
-  schoolName: string;
-  cpfCnpj: string | null;
-  phone: string | null;
-  apiKeyEncrypted: string;
-  asaasAccountId: string;
-  asaasEmail: string | null;
-  webhookAuthTokenHash?: string;
-  actor: { id?: string | null; type: AuditActorType };
-  onboardingStatus: 'READY' | 'WEBHOOK_PENDING';
-  webhookAction: ExternalWebhookAction;
-}) {
-  const now = new Date();
-  const existingAsaasAccount = await prisma.asaasAccount.findUnique({
-    where: { financeProfileId: params.financeProfileId },
-    select: {
-      id: true,
-      status: true,
-      externalReference: true,
-      webhookAuthTokenHash: true,
-      provisionedAt: true,
-    },
-  });
+  financeProfileId?: string;
+  preserveExistingConnection: boolean;
+  errorCode: ConnectExternalAsaasAccountErrorCode;
+  stage?: string;
+}): Promise<void> {
+  if (params.preserveExistingConnection) return;
 
-  const desiredExternalReference = `financeProfile:${params.financeProfileId}`;
-  const externalReferenceConflict = await prisma.asaasAccount.findUnique({
-    where: { externalReference: desiredExternalReference },
-    select: { id: true },
-  });
-  const canSetExternalReference =
-    !externalReferenceConflict || externalReferenceConflict.id === existingAsaasAccount?.id;
-
-  const oldStatus = existingAsaasAccount?.status ?? null;
-  const nextStatus: FinancialOnboardingStatus = 'APPROVED';
-  const nextWebhookHash = params.webhookAuthTokenHash ?? existingAsaasAccount?.webhookAuthTokenHash ?? undefined;
-  const nextWebhookStatus = params.onboardingStatus === 'READY' ? 'ACTIVE' : 'PENDING';
-  const nextOperationalStatus = params.onboardingStatus === 'READY' ? 'OPERATIONAL' : 'WEBHOOK_REQUIRED';
-
-  const profileCompanyName = resolveCompanyName(params.schoolName, params.cpfCnpj);
-
-  const upserted = await prisma.$transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     await tx.conta.update({
       where: { id: params.contaId },
       data: {
-        nome: params.schoolName,
-        cpfCnpj: params.cpfCnpj,
-        financeStatus: params.onboardingStatus === 'READY' ? 'FINANCE_APPROVED' : 'FINANCE_ONBOARDING_STARTED',
         financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-        externalAsaasOnboardingStatus: params.onboardingStatus,
+        financeStatus: 'FINANCE_ONBOARDING_STARTED',
+        externalAsaasOnboardingStatus: 'FAILED',
       },
       select: { id: true },
     });
 
-    await tx.financeProfile.update({
-      where: { id: params.financeProfileId },
-      data: {
-        asaasAccountId: params.asaasAccountId,
-        status: 'APPROVED',
-        isOnboardingCompleted: true,
-        onboardingCompletedAt: now,
-        lastAsaasSyncAt: now,
-        asaasName: params.schoolName,
-        asaasOwnerName: params.schoolName,
-        asaasCompanyName: profileCompanyName,
-        asaasLoginEmail: params.asaasEmail,
-        mobilePhone: params.phone,
-      },
-      select: { id: true },
-    });
-
-    const asaasAccount = await tx.asaasAccount.upsert({
-      where: { financeProfileId: params.financeProfileId },
-      create: {
-        financeProfileId: params.financeProfileId,
-        asaasAccountId: params.asaasAccountId,
-        status: nextStatus,
-        statusUpdatedAt: now,
-        provisionedAt: now,
-        apiKeyEncrypted: params.apiKeyEncrypted,
-        apiKeyStatus: 'CONNECTED',
-        webhookStatus: nextWebhookStatus,
-        operationalStatus: nextOperationalStatus,
-        asaasAccountEmail: params.asaasEmail,
-        webhookAuthTokenHash: nextWebhookHash,
-        ...(canSetExternalReference ? { externalReference: desiredExternalReference } : {}),
-      },
-      update: {
-        asaasAccountId: params.asaasAccountId,
-        status: nextStatus,
-        statusUpdatedAt: now,
-        provisionedAt: existingAsaasAccount?.provisionedAt ?? now,
-        apiKeyEncrypted: params.apiKeyEncrypted,
-        apiKeyStatus: 'CONNECTED',
-        webhookStatus: nextWebhookStatus,
-        operationalStatus: nextOperationalStatus,
-        asaasAccountEmail: params.asaasEmail,
-        webhookAuthTokenHash: nextWebhookHash,
-        ...(canSetExternalReference ? { externalReference: desiredExternalReference } : {}),
-      },
-      select: { id: true },
-    });
-
-    await tx.asaasCredential.upsert({
-      where: { financeProfileId: params.financeProfileId },
-      create: {
-        financeProfileId: params.financeProfileId,
-        apiKeyEncrypted: params.apiKeyEncrypted,
-      },
-      update: {
-        apiKeyEncrypted: params.apiKeyEncrypted,
-      },
-      select: { id: true },
-    });
-
-    if (oldStatus !== nextStatus) {
-      await tx.asaasAccountStatusHistory.create({
+    if (params.financeProfileId) {
+      await tx.asaasAccount.updateMany({
+        where: { financeProfileId: params.financeProfileId },
         data: {
-          asaasAccountId: asaasAccount.id,
-          oldStatus,
-          newStatus: nextStatus,
-          event: 'EXTERNAL_ONBOARDING_CONNECTED',
-          payloadId: `asaasAccount:${params.asaasAccountId}`,
+          webhookStatus:
+            params.errorCode === 'WEBHOOK_CONFIGURATION_INVALID' ? 'INVALID_URL' : 'PENDING',
+          operationalStatus: 'WEBHOOK_REQUIRED',
+          provisionLastStage: params.stage ?? 'EXTERNAL_WEBHOOK_FAILED',
+          provisionLastError: params.errorCode,
         },
-        select: { id: true },
       });
     }
-
-    return asaasAccount;
-  });
-
-  await auditLogService.record({
-    contaId: params.contaId,
-    action: 'finance.external-asaas.connected',
-    entity: { type: 'AsaasAccount', id: upserted.id },
-    metadata: {
-      asaasAccountId: params.asaasAccountId,
-      asaasEmail: params.asaasEmail,
-      onboardingStatus: params.onboardingStatus,
-      webhookAction: params.webhookAction,
-    },
-    actor: params.actor.id ? { ...params.actor, id: params.actor.id } : { type: params.actor.type },
   });
 }
 
@@ -218,68 +181,30 @@ export async function connectExternalAsaasAccount(input: {
     };
   }
 
-  let myAccountStatus;
+  let myAccountStatus: Awaited<ReturnType<typeof getMyAccountStatus>>;
   try {
     myAccountStatus = await getMyAccountStatus({ apiKey });
   } catch (error) {
-    const failure = classifyAsaasOperationalError(error, 'subaccount');
-    if (failure.category === 'invalid_subaccount_credentials') {
-      await prisma.conta.update({
-        where: { id: input.contaId },
-        data: {
-          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-          financeStatus: 'FINANCE_ONBOARDING_STARTED',
-          externalAsaasOnboardingStatus: 'FAILED',
-        },
-        select: { id: true },
-      });
-
-      return {
-        success: false,
-        summary: 'API key inválida ou sem permissão para acessar a conta do Asaas.',
-        status: 'FAILED',
-        errorCode: 'INVALID_API_KEY',
-      };
-    }
-
-    return {
-      success: false,
-      summary: 'Não foi possível validar a conta do Asaas agora.',
-      status: 'FAILED',
-      errorCode: 'UNEXPECTED_ERROR',
-    };
+    const mapped = mapWebhookFailure(error);
+    return { success: false, status: 'FAILED', ...mapped };
   }
 
   const asaasAccountId = typeof myAccountStatus?.id === 'string' ? myAccountStatus.id.trim() : '';
-
   if (!asaasAccountId) {
     return {
       success: false,
-      summary: 'A conta do Asaas retornou um identificador inválido.',
+      summary: 'A conta do Asaas não retornou um identificador válido.',
       status: 'FAILED',
       errorCode: 'UNEXPECTED_ERROR',
     };
   }
 
-  let asaasEmail: string | null = null;
-
+  let commercialInfo: Awaited<ReturnType<typeof getMyAccountCommercialInfo>> | null = null;
   try {
-    const commercialInfo = await getMyAccountCommercialInfo({ apiKey });
-    asaasEmail = typeof commercialInfo?.email === 'string' ? commercialInfo.email.trim() || null : null;
+    commercialInfo = await getMyAccountCommercialInfo({ apiKey });
   } catch (error) {
     const failure = classifyAsaasOperationalError(error, 'subaccount');
-
     if (failure.category === 'invalid_subaccount_credentials') {
-      await prisma.conta.update({
-        where: { id: input.contaId },
-        data: {
-          financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-          financeStatus: 'FINANCE_ONBOARDING_STARTED',
-          externalAsaasOnboardingStatus: 'FAILED',
-        },
-        select: { id: true },
-      });
-
       return {
         success: false,
         summary: 'API key inválida ou sem permissão para acessar a conta do Asaas.',
@@ -289,69 +214,96 @@ export async function connectExternalAsaasAccount(input: {
     }
   }
 
+  const asaasEmail =
+    typeof commercialInfo?.email === 'string' ? commercialInfo.email.trim() || null : null;
+  const regulatory = mapRegulatoryStatus(myAccountStatus.general);
   const financeProfile = await financeProfileService.getOrCreateByTenant(input.contaId);
-  const existingByAsaasAccountId = await prisma.asaasAccount.findUnique({
-    where: { asaasAccountId },
-    select: {
-      id: true,
-      financeProfileId: true,
-      financeProfile: { select: { contaId: true } },
-    },
-  });
+
+  const [currentAccount, existingByAsaasAccountId] = await Promise.all([
+    prisma.asaasAccount.findUnique({
+      where: { financeProfileId: financeProfile.id },
+      select: {
+        id: true,
+        asaasAccountId: true,
+        apiKeyEncrypted: true,
+        apiKeyStatus: true,
+        status: true,
+        provisionedAt: true,
+        webhookStatus: true,
+        operationalStatus: true,
+      },
+    }),
+    prisma.asaasAccount.findUnique({
+      where: { asaasAccountId },
+      select: {
+        id: true,
+        financeProfileId: true,
+        financeProfile: { select: { contaId: true } },
+      },
+    }),
+  ]);
 
   if (existingByAsaasAccountId && existingByAsaasAccountId.financeProfileId !== financeProfile.id) {
-    await prisma.conta.update({
-      where: { id: input.contaId },
-      data: {
-        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-        financeStatus: 'FINANCE_ONBOARDING_STARTED',
-        externalAsaasOnboardingStatus: 'FAILED',
-      },
-      select: { id: true },
-    });
-
     return {
       success: false,
-      summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa. Entre em contato com o suporte para regularizar o vínculo.',
+      summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa.',
       status: 'FAILED',
       errorCode: 'ACCOUNT_ALREADY_LINKED',
     };
   }
 
-  const expectedWebhook = (() => {
-    try {
-      return buildExpectedWebhookConfig(financeProfile.id);
-    } catch {
-      return null;
-    }
-  })();
+  if (currentAccount?.asaasAccountId && currentAccount.asaasAccountId !== asaasAccountId) {
+    return {
+      success: false,
+      summary: 'A nova API key pertence a outra conta Asaas. A substituição deve usar uma chave da conta já vinculada.',
+      status: 'FAILED',
+      errorCode: 'ACCOUNT_MISMATCH',
+    };
+  }
 
-  let webhookAction: ExternalWebhookAction = 'pending';
-  let onboardingStatus: 'READY' | 'WEBHOOK_PENDING' = 'WEBHOOK_PENDING';
-  let webhookAuthTokenHash: string | undefined;
-  const apiKeyEncrypted = credentialVault.encrypt(apiKey);
+  const preserveExistingConnection = Boolean(
+    currentAccount?.apiKeyEncrypted && currentAccount.apiKeyStatus === 'CONNECTED',
+  );
+  const desiredExternalReference = `financeProfile:${financeProfile.id}`;
 
-  // Persiste a credencial antes de qualquer efeito remoto. Se o Asaas falhar,
-  // a integração fica pendente e pode ser reparada/repetida sem perder a chave.
   try {
-    await upsertLocalExternalConnection({
-      contaId: input.contaId,
-      financeProfileId: financeProfile.id,
-      schoolName,
-      cpfCnpj,
-      phone,
-      apiKeyEncrypted,
-      asaasAccountId,
-      asaasEmail,
-      actor: input.actor,
-      onboardingStatus: 'WEBHOOK_PENDING',
-      webhookAction: 'pending',
+    await prisma.asaasAccount.upsert({
+      where: { financeProfileId: financeProfile.id },
+      create: {
+        financeProfileId: financeProfile.id,
+        asaasAccountId,
+        asaasAccountEmail: asaasEmail,
+        externalReference: desiredExternalReference,
+        status: regulatory.onboarding,
+        statusUpdatedAt: new Date(),
+        provisionedAt: new Date(),
+        apiKeyStatus: 'MISSING',
+        webhookStatus: 'PENDING',
+        operationalStatus: 'WEBHOOK_REQUIRED',
+        provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
+      },
+      update: {
+        asaasAccountId,
+        asaasAccountEmail: asaasEmail ?? undefined,
+        externalReference: desiredExternalReference,
+        status: regulatory.onboarding,
+        statusUpdatedAt: new Date(),
+        provisionedAt: currentAccount?.provisionedAt ?? new Date(),
+        provisionLastStage: 'EXTERNAL_CONFIGURE_WEBHOOK',
+        ...(preserveExistingConnection
+          ? {}
+          : {
+              webhookStatus: 'PENDING' as const,
+              operationalStatus: 'WEBHOOK_REQUIRED' as const,
+            }),
+      },
+      select: { id: true },
     });
   } catch (error) {
     if ((error as { code?: string })?.code === 'P2002') {
       return {
         success: false,
-        summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa. Entre em contato com o suporte para regularizar o vínculo.',
+        summary: 'Esta conta Asaas já está vinculada a outra conta da Alusa.',
         status: 'FAILED',
         errorCode: 'ACCOUNT_ALREADY_LINKED',
       };
@@ -359,155 +311,158 @@ export async function connectExternalAsaasAccount(input: {
     throw error;
   }
 
-  if (expectedWebhook) {
-    try {
-      const webhookNotificationEmail = await resolveWebhookNotificationEmail({
-        contaId: input.contaId,
-        financeProfileId: financeProfile.id,
-      });
-      if (!webhookNotificationEmail) throw new Error('Email do webhook não configurado.');
+  let webhook: Awaited<ReturnType<typeof ensureAsaasWebhookConfiguration>>;
+  try {
+    webhook = await ensureAsaasWebhookConfiguration({
+      contaId: input.contaId,
+      financeProfileId: financeProfile.id,
+      apiKey,
+      notificationEmail: asaasEmail,
+      actor: input.actor.id
+        ? { type: input.actor.type, id: input.actor.id }
+        : { type: input.actor.type },
+      persistResult: false,
+      persistFailure: false,
+      forceAuthTokenRefresh: true,
+    });
+  } catch (error) {
+    const mapped = mapWebhookFailure(error);
+    await markConnectionFailure({
+      contaId: input.contaId,
+      financeProfileId: financeProfile.id,
+      preserveExistingConnection,
+      errorCode: mapped.errorCode,
+      stage:
+        error instanceof AsaasWebhookConfigurationError
+          ? `EXTERNAL_WEBHOOK_${error.stage}`
+          : 'EXTERNAL_WEBHOOK_REMOTE',
+    });
 
-      const webhooks: Awaited<ReturnType<typeof listWebhooks>>['data'] = [];
-      for (let page = 0; page < 100; page += 1) {
-        const response = await listWebhooks({ apiKey, limit: 100, offset: page * 100 });
-        webhooks.push(...(response.data ?? []));
-        if (!response.hasMore || response.data.length < 100) break;
-      }
+    await auditLogService.record({
+      contaId: input.contaId,
+      action: 'finance.external-asaas.connection_failed',
+      entity: { type: 'AsaasAccount', id: currentAccount?.id ?? asaasAccountId },
+      metadata: {
+        asaasAccountId,
+        errorCode: mapped.errorCode,
+        retryable: mapped.retryable,
+        preservedExistingConnection: preserveExistingConnection,
+      },
+      actor: input.actor.id
+        ? { type: input.actor.type, id: input.actor.id }
+        : { type: input.actor.type },
+    });
 
-      let matchedWebhook = webhooks.find(
-        (item) =>
-          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl ||
-          item.name === expectedWebhook.name ||
-          item.name === buildRecommendedWebhookName(financeProfile.id),
-      );
-      let targetWebhookId = matchedWebhook?.id ?? null;
-
-      // O contrato do Asaas não permite alterar apiVersion via PUT. Para
-      // garantir V3, recriamos somente o webhook determinístico da Alusa.
-      if (matchedWebhook && matchedWebhook.apiVersion !== expectedWebhook.apiVersion) {
-        await deleteWebhook({ apiKey, webhookId: matchedWebhook.id });
-        matchedWebhook = undefined;
-        targetWebhookId = null;
-      }
-
-      if (!matchedWebhook) {
-        const created = await createWebhook({
-          apiKey,
-          data: {
-            name: expectedWebhook.name,
-            url: expectedWebhook.url,
-            email: webhookNotificationEmail,
-            enabled: true,
-            interrupted: false,
-            authToken: expectedWebhook.authToken,
-            sendType: expectedWebhook.sendType,
-            events: expectedWebhook.events,
-          },
-        });
-        targetWebhookId = created.id;
-        webhookAction = 'created';
-      } else {
-        // O Asaas não devolve o authToken, apenas hasAuthToken. Portanto não
-        // é possível saber se o token remoto ainda corresponde ao hash local.
-        // Sempre reaplicamos a configuração completa para eliminar drift de
-        // autenticação (que faria o Asaas receber 403).
-        const needsUpdate = true;
-
-        if (needsUpdate) {
-          await updateWebhook({
-            apiKey,
-            webhookId: matchedWebhook.id,
-            data: {
-              name: expectedWebhook.name,
-              url: expectedWebhook.url,
-              email: webhookNotificationEmail,
-              enabled: true,
-              interrupted: false,
-              authToken: expectedWebhook.authToken,
-              sendType: expectedWebhook.sendType,
-              events: expectedWebhook.events,
-            },
-          });
-          webhookAction = 'updated';
-        } else {
-          webhookAction = 'unchanged';
-        }
-      }
-
-      const finalWebhooks: Awaited<ReturnType<typeof listWebhooks>>['data'] = [];
-      for (let page = 0; page < 100; page += 1) {
-        const response = await listWebhooks({ apiKey, limit: 100, offset: page * 100 });
-        finalWebhooks.push(...(response.data ?? []));
-        if (!response.hasMore || response.data.length < 100) break;
-      }
-
-      const finalWebhook = finalWebhooks.find((item) => {
-        const sameIdentity = targetWebhookId
-          ? item.id === targetWebhookId
-          : normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl;
-        return (
-          sameIdentity &&
-          item.name === expectedWebhook.name &&
-          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl &&
-          item.enabled === true &&
-          item.interrupted !== true &&
-          item.apiVersion === expectedWebhook.apiVersion &&
-          item.hasAuthToken === true &&
-          item.sendType === expectedWebhook.sendType &&
-          hasSameWebhookEvents(item.events, expectedWebhook.events)
-        );
-      });
-      if (!finalWebhook) throw new Error('Webhook do Asaas não confirmou a configuração esperada.');
-
-      // O onboarding deve deixar exatamente um webhook canônico da Alusa.
-      // Só removemos duplicatas depois que o webhook alvo foi confirmado ativo,
-      // com V3, eventos, envio sequencial e token reaplicado.
-      const duplicateWebhooks = finalWebhooks.filter((item) => {
-        if (item.id === targetWebhookId) return false;
-        return (
-          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl ||
-          item.name === expectedWebhook.name ||
-          item.name === buildRecommendedWebhookName(financeProfile.id)
-        );
-      });
-      for (const duplicate of duplicateWebhooks) {
-        await deleteWebhook({ apiKey, webhookId: duplicate.id });
-      }
-
-      onboardingStatus = 'READY';
-      webhookAuthTokenHash = expectedWebhook.authTokenHash;
-    } catch {
-      webhookAction = 'pending';
-      onboardingStatus = 'WEBHOOK_PENDING';
-    }
+    return { success: false, status: 'FAILED', ...mapped };
   }
 
-  await upsertLocalExternalConnection({
+  const apiKeyEncrypted = credentialVault.encrypt(apiKey);
+  const now = new Date();
+  const oldStatus = currentAccount?.status ?? null;
+  const profileCompanyName = resolveCompanyName(schoolName, cpfCnpj);
+
+  const persisted = await prisma.$transaction(async (tx) => {
+    await tx.conta.update({
+      where: { id: input.contaId },
+      data: {
+        nome: schoolName,
+        cpfCnpj,
+        financeStatus: regulatory.finance,
+        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+        externalAsaasOnboardingStatus: 'READY',
+      },
+      select: { id: true },
+    });
+
+    await tx.financeProfile.update({
+      where: { id: financeProfile.id },
+      data: {
+        asaasAccountId,
+        status: regulatory.profile,
+        isOnboardingCompleted: true,
+        onboardingCompletedAt: now,
+        lastAsaasSyncAt: now,
+        asaasName: schoolName,
+        asaasOwnerName: schoolName,
+        asaasCompanyName: profileCompanyName,
+        asaasLoginEmail: asaasEmail,
+        mobilePhone: phone,
+      },
+      select: { id: true },
+    });
+
+    const asaasAccount = await tx.asaasAccount.update({
+      where: { financeProfileId: financeProfile.id },
+      data: {
+        asaasAccountId,
+        status: regulatory.onboarding,
+        statusUpdatedAt: now,
+        apiKeyEncrypted,
+        apiKeyStatus: 'CONNECTED',
+        webhookId: webhook.webhookId,
+        webhookStatus: 'ACTIVE',
+        operationalStatus:
+          regulatory.onboarding === 'REJECTED' ? 'REJECTED' : 'OPERATIONAL',
+        asaasAccountEmail: asaasEmail,
+        webhookAuthTokenHash: webhook.authTokenHash,
+        previousWebhookAuthTokenHash: null,
+        previousWebhookAuthTokenExpiresAt: null,
+        lastWebhookCheckAt: now,
+        lastApiKeyCheckAt: now,
+        lastHealthCheckAt: now,
+        provisionLastStage: 'EXTERNAL_READY',
+        provisionLastError: null,
+      },
+      select: { id: true },
+    });
+
+    await tx.asaasCredential.upsert({
+      where: { financeProfileId: financeProfile.id },
+      create: { financeProfileId: financeProfile.id, apiKeyEncrypted },
+      update: { apiKeyEncrypted },
+      select: { id: true },
+    });
+
+    if (oldStatus !== regulatory.onboarding) {
+      await tx.asaasAccountStatusHistory.create({
+        data: {
+          asaasAccountId: asaasAccount.id,
+          oldStatus,
+          newStatus: regulatory.onboarding,
+          event: 'EXTERNAL_ONBOARDING_CONNECTED',
+          payloadId: `asaasAccount:${asaasAccountId}`,
+        },
+        select: { id: true },
+      });
+    }
+
+    return asaasAccount;
+  });
+
+  await auditLogService.record({
     contaId: input.contaId,
-    financeProfileId: financeProfile.id,
-    schoolName,
-    cpfCnpj,
-    phone,
-    apiKeyEncrypted,
-    asaasAccountId,
-    asaasEmail,
-    webhookAuthTokenHash,
-    actor: input.actor,
-    onboardingStatus,
-    webhookAction,
+    action: preserveExistingConnection
+      ? 'finance.external-asaas.credential_replaced'
+      : 'finance.external-asaas.connected',
+    entity: { type: 'AsaasAccount', id: persisted.id },
+    metadata: {
+      asaasAccountId,
+      asaasEmail,
+      webhookId: webhook.webhookId,
+      webhookAction: webhook.action,
+      eventsCount: webhook.eventsCount,
+      regulatoryStatus: regulatory.onboarding,
+    },
+    actor: input.actor.id
+      ? { type: input.actor.type, id: input.actor.id }
+      : { type: input.actor.type },
   });
 
   return {
     success: true,
-    summary:
-      onboardingStatus === 'READY'
-        ? 'Conta do Asaas conectada e webhook validado com sucesso.'
-        : 'Conta do Asaas conectada, mas o webhook ainda precisa ser concluído.',
-    status: onboardingStatus,
-    webhookAction,
-    account: {
-      asaasAccountId,
-      asaasEmail,
-    },
+    summary: 'Conta do Asaas conectada e webhook configurado com sucesso.',
+    status: 'READY',
+    webhookAction: webhook.action,
+    account: { asaasAccountId, asaasEmail },
   };
 }

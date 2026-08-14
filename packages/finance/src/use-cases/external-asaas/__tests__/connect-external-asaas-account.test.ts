@@ -1,110 +1,72 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const {
-  getMyAccountStatusMock,
-  getMyAccountCommercialInfoMock,
-  listWebhooksMock,
-  createWebhookMock,
-  deleteWebhookMock,
-  updateWebhookMock,
-  contaUpdateMock,
-  financeProfileUpdateMock,
-  asaasAccountFindUniqueMock,
-  asaasAccountUpsertMock,
-  asaasCredentialUpsertMock,
-  asaasAccountStatusHistoryCreateMock,
-  transactionMock,
-  getOrCreateByTenantMock,
-  auditLogRecordMock,
-  encryptMock,
-  resolveWebhookNotificationEmailMock,
-} = vi.hoisted(() => ({
-  getMyAccountStatusMock: vi.fn(),
-  getMyAccountCommercialInfoMock: vi.fn(),
-  listWebhooksMock: vi.fn(),
-  createWebhookMock: vi.fn(),
-  deleteWebhookMock: vi.fn(),
-  updateWebhookMock: vi.fn(),
-  contaUpdateMock: vi.fn(),
-  financeProfileUpdateMock: vi.fn(),
-  asaasAccountFindUniqueMock: vi.fn(),
-  asaasAccountUpsertMock: vi.fn(),
-  asaasCredentialUpsertMock: vi.fn(),
-  asaasAccountStatusHistoryCreateMock: vi.fn(),
-  transactionMock: vi.fn(),
-  getOrCreateByTenantMock: vi.fn(),
-  auditLogRecordMock: vi.fn(),
-  encryptMock: vi.fn(),
-  resolveWebhookNotificationEmailMock: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  getMyAccountStatus: vi.fn(),
+  getMyAccountCommercialInfo: vi.fn(),
+  ensureWebhook: vi.fn(),
+  getOrCreateByTenant: vi.fn(),
+  asaasAccountFindUnique: vi.fn(),
+  asaasAccountUpsert: vi.fn(),
+  asaasAccountUpdate: vi.fn(),
+  asaasAccountUpdateMany: vi.fn(),
+  contaUpdate: vi.fn(),
+  financeProfileUpdate: vi.fn(),
+  credentialUpsert: vi.fn(),
+  historyCreate: vi.fn(),
+  transaction: vi.fn(),
+  auditRecord: vi.fn(),
+  encrypt: vi.fn(),
 }));
 
 vi.mock('@alusa/asaas', () => ({
-  getMyAccountStatus: getMyAccountStatusMock,
-  getMyAccountCommercialInfo: getMyAccountCommercialInfoMock,
-  listWebhooks: listWebhooksMock,
-  createWebhook: createWebhookMock,
-  deleteWebhook: deleteWebhookMock,
-  updateWebhook: updateWebhookMock,
+  AsaasHttpError: class AsaasHttpError extends Error {
+    constructor(message: string, public status: number) {
+      super(message);
+    }
+  },
+  getMyAccountStatus: mocks.getMyAccountStatus,
+  getMyAccountCommercialInfo: mocks.getMyAccountCommercialInfo,
 }));
 
 vi.mock('@alusa/database', () => ({
   prisma: {
-    conta: {
-      update: contaUpdateMock,
-    },
-    financeProfile: {
-      update: financeProfileUpdateMock,
-    },
     asaasAccount: {
-      findUnique: asaasAccountFindUniqueMock,
-      upsert: asaasAccountUpsertMock,
+      findUnique: mocks.asaasAccountFindUnique,
+      upsert: mocks.asaasAccountUpsert,
+      update: mocks.asaasAccountUpdate,
+      updateMany: mocks.asaasAccountUpdateMany,
     },
-    asaasCredential: {
-      upsert: asaasCredentialUpsertMock,
-    },
-    asaasAccountStatusHistory: {
-      create: asaasAccountStatusHistoryCreateMock,
-    },
-    $transaction: transactionMock,
+    conta: { update: mocks.contaUpdate },
+    financeProfile: { update: mocks.financeProfileUpdate },
+    asaasCredential: { upsert: mocks.credentialUpsert },
+    asaasAccountStatusHistory: { create: mocks.historyCreate },
+    $transaction: mocks.transaction,
   },
 }));
 
 vi.mock('../../../foundation/finance-profile.service', () => ({
-  financeProfileService: {
-    getOrCreateByTenant: getOrCreateByTenantMock,
-  },
+  financeProfileService: { getOrCreateByTenant: mocks.getOrCreateByTenant },
 }));
 
 vi.mock('../../../foundation/audit-log.service', () => ({
-  auditLogService: {
-    record: auditLogRecordMock,
-  },
+  auditLogService: { record: mocks.auditRecord },
 }));
 
 vi.mock('../../../foundation/credential-vault', () => ({
-  credentialVault: {
-    encrypt: encryptMock,
+  credentialVault: { encrypt: mocks.encrypt },
+}));
+
+vi.mock('../../../webhooks/ensure-asaas-webhook-configuration', () => ({
+  AsaasWebhookConfigurationError: class AsaasWebhookConfigurationError extends Error {
+    constructor(
+      public code: string,
+      public stage: string,
+      message: string,
+    ) {
+      super(message);
+    }
   },
-}));
-
-vi.mock('../../asaas-account/webhook-notification-email.server', () => ({
-  resolveWebhookNotificationEmail: resolveWebhookNotificationEmailMock,
-}));
-
-vi.mock('../../asaas-account/expected-webhook-config.server', () => ({
-  buildExpectedWebhookConfig: vi.fn(() => ({
-    name: 'Webhook Alusa',
-    url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
-    normalizedUrl: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
-    apiVersion: 3,
-    authToken: 'token_1',
-    authTokenHash: 'hash_1',
-    sendType: 'SEQUENTIALLY',
-    events: ['PAYMENT_RECEIVED'],
-  })),
-  hasSameWebhookEvents: vi.fn(() => true),
-  normalizeWebhookUrlBase: vi.fn((value: string) => value),
-  buildRecommendedWebhookName: vi.fn(() => 'Webhook Alusa'),
+  ensureAsaasWebhookConfiguration: mocks.ensureWebhook,
 }));
 
 import { connectExternalAsaasAccount } from '../connect-external-asaas-account';
@@ -112,98 +74,40 @@ import { connectExternalAsaasAccount } from '../connect-external-asaas-account';
 describe('connectExternalAsaasAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-
-    getOrCreateByTenantMock.mockResolvedValue({ id: 'profile_1' });
-    getMyAccountStatusMock.mockResolvedValue({ id: 'acc_external_1', general: 'APPROVED' });
-    getMyAccountCommercialInfoMock.mockResolvedValue({ email: 'financeiro@escola.com' });
-    listWebhooksMock
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValue({
-        data: [{
-          id: 'wh_1',
-          name: 'Webhook Alusa',
-          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
-          enabled: true,
-          interrupted: false,
-          apiVersion: 3,
-          hasAuthToken: true,
-          sendType: 'SEQUENTIALLY',
-          events: ['PAYMENT_RECEIVED'],
-        }],
-      });
-    createWebhookMock.mockResolvedValue({ id: 'wh_1' });
-    encryptMock.mockReturnValue('encrypted_key');
-    resolveWebhookNotificationEmailMock.mockResolvedValue('financeiro@escola.com');
-
-    asaasAccountFindUniqueMock.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
-    asaasAccountUpsertMock.mockResolvedValue({ id: 'asaas_account_local_1' });
-    asaasCredentialUpsertMock.mockResolvedValue({ id: 'cred_1' });
-    asaasAccountStatusHistoryCreateMock.mockResolvedValue({ id: 'hist_1' });
-    contaUpdateMock.mockResolvedValue({ id: 'conta_1' });
-    financeProfileUpdateMock.mockResolvedValue({ id: 'profile_1' });
-
-    transactionMock.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
-      const tx = {
-        conta: { update: contaUpdateMock },
-        financeProfile: { update: financeProfileUpdateMock },
-        asaasAccount: { upsert: asaasAccountUpsertMock },
-        asaasCredential: { upsert: asaasCredentialUpsertMock },
-        asaasAccountStatusHistory: { create: asaasAccountStatusHistoryCreateMock },
-      };
-
-      return callback(tx);
+    mocks.getMyAccountStatus.mockResolvedValue({ id: 'acc_external_1', general: 'APPROVED' });
+    mocks.getMyAccountCommercialInfo.mockResolvedValue({ email: 'financeiro@escola.com' });
+    mocks.getOrCreateByTenant.mockResolvedValue({ id: 'profile_1' });
+    mocks.asaasAccountFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.asaasAccountUpsert.mockResolvedValue({ id: 'local_account_1' });
+    mocks.asaasAccountUpdate.mockResolvedValue({ id: 'local_account_1' });
+    mocks.asaasAccountUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.contaUpdate.mockResolvedValue({ id: 'conta_1' });
+    mocks.financeProfileUpdate.mockResolvedValue({ id: 'profile_1' });
+    mocks.credentialUpsert.mockResolvedValue({ id: 'credential_1' });
+    mocks.historyCreate.mockResolvedValue({ id: 'history_1' });
+    mocks.encrypt.mockReturnValue('encrypted_new_key');
+    mocks.ensureWebhook.mockResolvedValue({
+      webhookId: 'wh_1',
+      action: 'created',
+      authTokenHash: 'hash_1',
+      eventsCount: 111,
+      duplicateWebhookIdsRemoved: [],
     });
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('usa myAccount/status para id da conta e commercialInfo para email', async () => {
-    const result = await connectExternalAsaasAccount({
-      contaId: 'conta_1',
-      schoolName: 'Escola Externa',
-      cpfCnpj: '12.345.678/0001-99',
-      phone: '(11) 99999-9999',
-      apiKey: '$aact_hmlg_valid_external_key',
-      actor: { type: 'ADMIN', id: 'user_1' },
-    });
-
-    expect(getMyAccountStatusMock).toHaveBeenCalledWith({ apiKey: '$aact_hmlg_valid_external_key' });
-    expect(getMyAccountCommercialInfoMock).toHaveBeenCalledWith({ apiKey: '$aact_hmlg_valid_external_key' });
-    expect(createWebhookMock).toHaveBeenCalledTimes(1);
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        status: 'READY',
-        account: {
-          asaasAccountId: 'acc_external_1',
-          asaasEmail: 'financeiro@escola.com',
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        conta: { update: mocks.contaUpdate },
+        financeProfile: { update: mocks.financeProfileUpdate },
+        asaasAccount: {
+          update: mocks.asaasAccountUpdate,
+          updateMany: mocks.asaasAccountUpdateMany,
         },
-      }),
-    );
-    expect(financeProfileUpdateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          asaasAccountId: 'acc_external_1',
-          asaasLoginEmail: 'financeiro@escola.com',
-        }),
-      }),
-    );
-    expect(auditLogRecordMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: 'finance.external-asaas.connected',
-        metadata: expect.objectContaining({
-          asaasAccountId: 'acc_external_1',
-          asaasEmail: 'financeiro@escola.com',
-        }),
+        asaasCredential: { upsert: mocks.credentialUpsert },
+        asaasAccountStatusHistory: { create: mocks.historyCreate },
       }),
     );
   });
 
-  it('não marca conta externa como operacional quando o webhook remoto fica pendente', async () => {
-    createWebhookMock.mockRejectedValueOnce(new Error('webhook unavailable'));
-
+  it('só promove a credencial depois de confirmar o webhook remoto', async () => {
     const result = await connectExternalAsaasAccount({
       contaId: 'conta_1',
       schoolName: 'Escola Externa',
@@ -213,96 +117,155 @@ describe('connectExternalAsaasAccount', () => {
       actor: { type: 'ADMIN', id: 'user_1' },
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        success: true,
-        status: 'WEBHOOK_PENDING',
-        webhookAction: 'pending',
-      }),
-    );
-
-    expect(asaasAccountUpsertMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({
-          webhookStatus: 'PENDING',
-          operationalStatus: 'WEBHOOK_REQUIRED',
-        }),
-        update: expect.objectContaining({
-          webhookStatus: 'PENDING',
-          operationalStatus: 'WEBHOOK_REQUIRED',
-        }),
-      }),
-    );
-  });
-
-  it('bloqueia vínculo cross-tenant antes de criar ou atualizar webhook', async () => {
-    asaasAccountFindUniqueMock.mockReset();
-    asaasAccountFindUniqueMock.mockResolvedValue({
-      id: 'asaas_account_other_tenant',
-      financeProfileId: 'profile_other',
-      financeProfile: { contaId: 'conta_other' },
-    });
-
-    const result = await connectExternalAsaasAccount({
+    expect(mocks.ensureWebhook).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta_1',
-      schoolName: 'Escola Externa',
-      apiKey: '$aact_hmlg_valid_external_key',
-      actor: { type: 'ADMIN', id: 'user_1' },
-    });
-
-    expect(result).toEqual({
-      success: false,
-      summary: expect.stringContaining('já está vinculada'),
-      status: 'FAILED',
-      errorCode: 'ACCOUNT_ALREADY_LINKED',
-    });
-    expect(listWebhooksMock).not.toHaveBeenCalled();
-    expect(createWebhookMock).not.toHaveBeenCalled();
-    expect(updateWebhookMock).not.toHaveBeenCalled();
-    expect(deleteWebhookMock).not.toHaveBeenCalled();
+      financeProfileId: 'profile_1',
+      persistResult: false,
+      forceAuthTokenRefresh: true,
+    }));
+    expect(mocks.ensureWebhook.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.encrypt.mock.invocationCallOrder[0]!,
+    );
+    expect(mocks.credentialUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: { apiKeyEncrypted: 'encrypted_new_key' },
+    }));
+    expect(mocks.asaasAccountUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        asaasAccountId: 'acc_external_1',
+        webhookId: 'wh_1',
+        webhookStatus: 'ACTIVE',
+        apiKeyStatus: 'CONNECTED',
+        operationalStatus: 'OPERATIONAL',
+      }),
+    }));
+    expect(result).toMatchObject({ success: true, status: 'READY', webhookAction: 'created' });
   });
 
-  it('reaplica o auth token quando o webhook existente informa apenas hasAuthToken', async () => {
-    listWebhooksMock.mockReset();
-    listWebhooksMock
+  it('preserva a credencial anterior quando a substituição falha no Asaas', async () => {
+    mocks.asaasAccountFindUnique.mockReset();
+    mocks.asaasAccountFindUnique
       .mockResolvedValueOnce({
-        data: [{
-          id: 'wh_existing',
-          name: 'Webhook Alusa',
-          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
-          enabled: true,
-          interrupted: false,
-          apiVersion: 3,
-          hasAuthToken: true,
-          sendType: 'SEQUENTIALLY',
-          events: ['PAYMENT_RECEIVED'],
-        }],
+        id: 'local_account_1',
+        asaasAccountId: 'acc_external_1',
+        apiKeyEncrypted: 'encrypted_old_key',
+        apiKeyStatus: 'CONNECTED',
+        status: 'APPROVED',
+        provisionedAt: new Date('2026-01-01'),
+        webhookStatus: 'ACTIVE',
+        operationalStatus: 'OPERATIONAL',
       })
       .mockResolvedValueOnce({
-        data: [{
-          id: 'wh_existing',
-          name: 'Webhook Alusa',
-          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
-          enabled: true,
-          interrupted: false,
-          apiVersion: 3,
-          hasAuthToken: true,
-          sendType: 'SEQUENTIALLY',
-          events: ['PAYMENT_RECEIVED'],
-        }],
+        id: 'local_account_1',
+        financeProfileId: 'profile_1',
+        financeProfile: { contaId: 'conta_1' },
       });
+    const remoteError = Object.assign(new Error('asaas unavailable'), { status: 503 });
+    mocks.ensureWebhook.mockRejectedValueOnce(remoteError);
 
     const result = await connectExternalAsaasAccount({
       contaId: 'conta_1',
       schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_replacement_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'TEMPORARY_ASAAS_ERROR',
+      retryable: true,
+    });
+    expect(mocks.encrypt).not.toHaveBeenCalled();
+    expect(mocks.credentialUpsert).not.toHaveBeenCalled();
+    expect(mocks.contaUpdate).not.toHaveBeenCalled();
+  });
+
+  it('não persiste a nova API key quando a primeira configuração do webhook falha', async () => {
+    mocks.ensureWebhook.mockRejectedValueOnce(Object.assign(new Error('timeout'), { status: 503 }));
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_first_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toMatchObject({ success: false, errorCode: 'TEMPORARY_ASAAS_ERROR' });
+    expect(mocks.encrypt).not.toHaveBeenCalled();
+    expect(mocks.credentialUpsert).not.toHaveBeenCalled();
+    expect(mocks.asaasAccountUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        webhookStatus: 'PENDING',
+        operationalStatus: 'WEBHOOK_REQUIRED',
+      }),
+    }));
+  });
+
+  it('impede substituir a integração por uma API key de outra conta Asaas', async () => {
+    mocks.asaasAccountFindUnique.mockReset();
+    mocks.asaasAccountFindUnique
+      .mockResolvedValueOnce({
+        id: 'local_account_1',
+        asaasAccountId: 'acc_original',
+        apiKeyEncrypted: 'encrypted_old_key',
+        apiKeyStatus: 'CONNECTED',
+        status: 'APPROVED',
+      })
+      .mockResolvedValueOnce(null);
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_other_account_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result).toMatchObject({ success: false, errorCode: 'ACCOUNT_MISMATCH' });
+    expect(mocks.ensureWebhook).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia vínculo cross-tenant antes de provisionar o webhook', async () => {
+    mocks.asaasAccountFindUnique.mockReset();
+    mocks.asaasAccountFindUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'account_tenant_b',
+        financeProfileId: 'profile_b',
+        financeProfile: { contaId: 'conta_b' },
+      });
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_a',
+      schoolName: 'Escola A',
+      apiKey: '$aact_hmlg_tenant_b_key',
+      actor: { type: 'ADMIN', id: 'user_a' },
+    });
+
+    expect(result).toMatchObject({ success: false, errorCode: 'ACCOUNT_ALREADY_LINKED' });
+    expect(mocks.ensureWebhook).not.toHaveBeenCalled();
+    expect(mocks.asaasAccountUpsert).not.toHaveBeenCalled();
+  });
+
+  it('persiste o estado regulatório real retornado pelo Asaas', async () => {
+    mocks.getMyAccountStatus.mockResolvedValueOnce({
+      id: 'acc_external_1',
+      general: 'AWAITING_APPROVAL',
+    });
+
+    await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Em Análise',
       apiKey: '$aact_hmlg_valid_external_key',
       actor: { type: 'ADMIN', id: 'user_1' },
     });
 
-    expect(result.status).toBe('READY');
-    expect(updateWebhookMock).toHaveBeenCalledWith(expect.objectContaining({
-      webhookId: 'wh_existing',
-      data: expect.objectContaining({ authToken: 'token_1' }),
+    expect(mocks.contaUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ financeStatus: 'FINANCE_IN_ANALYSIS' }),
+    }));
+    expect(mocks.financeProfileUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING' }),
+    }));
+    expect(mocks.asaasAccountUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'UNDER_REVIEW' }),
     }));
   });
 });

@@ -52,16 +52,13 @@ describe('API /finance/external-onboarding', () => {
     expect(body.data.schoolName).toBe('Escola Piloto');
   });
 
-  it('retorna 202 quando a conta conecta mas ainda depende de webhook', async () => {
+  it('retorna erro operacional quando o webhook obrigatório não foi concluído', async () => {
     connectExternalAsaasAccountMock.mockResolvedValueOnce({
-      success: true,
-      summary: 'Conta conectada, mas o webhook ainda precisa ser concluído.',
-      status: 'WEBHOOK_PENDING',
-      webhookAction: 'pending',
-      account: {
-        asaasAccountId: 'acc_123',
-        asaasEmail: 'financeiro@escola.com',
-      },
+      success: false,
+      summary: 'O Asaas está temporariamente indisponível. Tente novamente em alguns instantes.',
+      status: 'FAILED',
+      errorCode: 'TEMPORARY_ASAAS_ERROR',
+      retryable: true,
     });
 
     const { POST } = await import('@/app/api/finance/external-onboarding/route');
@@ -79,7 +76,7 @@ describe('API /finance/external-onboarding', () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(202);
+    expect(response.status).toBe(503);
     expect(connectExternalAsaasAccountMock).toHaveBeenCalledWith(
       expect.objectContaining({
         contaId: 'conta_ext',
@@ -87,7 +84,7 @@ describe('API /finance/external-onboarding', () => {
         apiKey: '$aact_hmlg_test_key',
       }),
     );
-    expect(body.status).toBe('WEBHOOK_PENDING');
+    expect(body.status).toBe('FAILED');
   });
 
   it('retorna 409 quando a conta Asaas já está vinculada a outro tenant', async () => {

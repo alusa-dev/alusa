@@ -14,7 +14,6 @@ export interface UpdateWebhookParams {
   data: {
     name?: AsaasWebhookConfigInput['name'];
     url: AsaasWebhookConfigInput['url'];
-    email?: AsaasWebhookConfigInput['email'];
     enabled?: AsaasWebhookConfigInput['enabled'];
     interrupted?: AsaasWebhookConfigInput['interrupted'];
     authToken?: AsaasWebhookConfigInput['authToken'];

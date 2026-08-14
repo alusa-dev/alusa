@@ -23,7 +23,7 @@ const externalOnboardingSchema = z.object({
   schoolName: z.string().min(2),
   cpfCnpj: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
-  apiKey: z.string().min(10),
+  apiKey: z.string().min(10).max(512),
 });
 
 function json(status: number, body: unknown) {
@@ -81,12 +81,18 @@ export async function POST(request: Request) {
     });
 
     const status = result.success
-      ? result.status === 'READY'
-        ? 200
-        : 202
-      : result.errorCode === 'ACCOUNT_ALREADY_LINKED'
+      ? 200
+      : result.errorCode === 'ACCOUNT_ALREADY_LINKED' || result.errorCode === 'ACCOUNT_MISMATCH'
         ? 409
-        : 400;
+        : result.errorCode === 'WEBHOOK_CONFIGURATION_INVALID' || result.errorCode === 'WEBHOOK_LIMIT_REACHED'
+          ? 422
+          : result.errorCode === 'PROVISIONING_IN_PROGRESS'
+            ? 409
+            : result.errorCode === 'TEMPORARY_ASAAS_ERROR'
+              ? 503
+              : result.errorCode === 'UNEXPECTED_ERROR'
+                ? 502
+                : 400;
     return json(status, result);
   } catch (error) {
     console.error('[External Asaas Onboarding][POST]', error);

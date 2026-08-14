@@ -119,6 +119,7 @@ export type {
   AsaasWebhookEventType,
   AsaasWebhookPayload,
 } from './types/asaas';
+export { ASAAS_WEBHOOK_EVENTS } from './types/asaas';
 
 // Invoices (NFS-e)
 export { createInvoice } from './invoices/createInvoice';
@@ -389,6 +390,9 @@ export type { CreateWebhookParams } from './webhooks/createWebhook';
 
 export { listWebhooks } from './webhooks/listWebhooks';
 export type { ListWebhooksParams, AsaasWebhookConfig, AsaasWebhookListResponse } from './webhooks/listWebhooks';
+
+export { getWebhook } from './webhooks/getWebhook';
+export type { GetWebhookParams } from './webhooks/getWebhook';
 
 export { updateWebhook } from './webhooks/updateWebhook';
 export type { UpdateWebhookParams } from './webhooks/updateWebhook';

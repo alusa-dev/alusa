@@ -1,5 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+const mockEnsureWebhook = vi.hoisted(() => vi.fn(async () => ({
+  webhookId: 'wh_1',
+  action: 'updated' as const,
+  authTokenHash: 'hash123',
+  eventsCount: 111,
+  duplicateWebhookIdsRemoved: [],
+})));
+
+vi.mock('../../webhooks/ensure-asaas-webhook-configuration', () => ({
+  ensureAsaasWebhookConfiguration: mockEnsureWebhook,
+}));
+
 vi.mock('@alusa/asaas', async () => {
   return {
     createSubaccount: vi.fn(async () => ({
@@ -185,7 +197,7 @@ describe('createAsaasAccount - idempotência', () => {
 
   it('deve retornar conta existente sem criar nova quando já está conectada', async () => {
     const { prisma } = await import('@alusa/database');
-    const { createSubaccount, updateWebhook } = await import('@alusa/asaas');
+    const { createSubaccount } = await import('@alusa/asaas');
     const { loadAsaasCredentials } = await import('@alusa/database');
 
     vi.mocked(loadAsaasCredentials).mockResolvedValue({
@@ -216,7 +228,11 @@ describe('createAsaasAccount - idempotência', () => {
 
     // Não deve chamar createSubaccount
     expect(vi.mocked(createSubaccount)).not.toHaveBeenCalled();
-    expect(vi.mocked(updateWebhook)).toHaveBeenCalledTimes(1);
+    expect(mockEnsureWebhook).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'c1',
+      financeProfileId: 'fp1',
+      apiKey: '$aact_sub_existing',
+    }));
   });
 
   it('deve criar conta quando não existe', async () => {

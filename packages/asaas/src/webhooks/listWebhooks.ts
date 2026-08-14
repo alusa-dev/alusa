@@ -5,6 +5,7 @@
  */
 
 import { AsaasHttp } from '../client/AsaasHttp';
+import type { AsaasWebhookEventType, AsaasWebhookSendType } from '../types/asaas';
 
 export interface ListWebhooksParams {
   apiKey: string;
@@ -22,9 +23,9 @@ export type AsaasWebhookConfig = {
   interrupted?: boolean;
   apiVersion?: number;
   hasAuthToken?: boolean;
-  sendType?: 'NON_SEQUENTIALLY' | 'SEQUENTIALLY';
+  sendType?: AsaasWebhookSendType;
   penalizedRequestsCount?: number;
-  events?: string[];
+  events?: AsaasWebhookEventType[];
 };
 
 export type AsaasWebhookListResponse = {
