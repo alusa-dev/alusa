@@ -407,13 +407,11 @@ export async function connectExternalAsaasAccount(input: {
         targetWebhookId = created.id;
         webhookAction = 'created';
       } else {
-        const needsUpdate =
-          matchedWebhook.enabled === false ||
-          matchedWebhook.interrupted === true ||
-          matchedWebhook.name !== expectedWebhook.name ||
-          matchedWebhook.sendType !== expectedWebhook.sendType ||
-          matchedWebhook.hasAuthToken !== true ||
-          !hasSameWebhookEvents(matchedWebhook.events, expectedWebhook.events);
+        // O Asaas não devolve o authToken, apenas hasAuthToken. Portanto não
+        // é possível saber se o token remoto ainda corresponde ao hash local.
+        // Sempre reaplicamos a configuração completa para eliminar drift de
+        // autenticação (que faria o Asaas receber 403).
+        const needsUpdate = true;
 
         if (needsUpdate) {
           await updateWebhook({
@@ -460,6 +458,21 @@ export async function connectExternalAsaasAccount(input: {
         );
       });
       if (!finalWebhook) throw new Error('Webhook do Asaas não confirmou a configuração esperada.');
+
+      // O onboarding deve deixar exatamente um webhook canônico da Alusa.
+      // Só removemos duplicatas depois que o webhook alvo foi confirmado ativo,
+      // com V3, eventos, envio sequencial e token reaplicado.
+      const duplicateWebhooks = finalWebhooks.filter((item) => {
+        if (item.id === targetWebhookId) return false;
+        return (
+          normalizeWebhookUrlBase(item.url) === expectedWebhook.normalizedUrl ||
+          item.name === expectedWebhook.name ||
+          item.name === buildRecommendedWebhookName(financeProfile.id)
+        );
+      });
+      for (const duplicate of duplicateWebhooks) {
+        await deleteWebhook({ apiKey, webhookId: duplicate.id });
+      }
 
       onboardingStatus = 'READY';
       webhookAuthTokenHash = expectedWebhook.authTokenHash;

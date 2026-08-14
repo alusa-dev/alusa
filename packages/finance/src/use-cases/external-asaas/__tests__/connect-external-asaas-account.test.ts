@@ -261,4 +261,48 @@ describe('connectExternalAsaasAccount', () => {
     expect(updateWebhookMock).not.toHaveBeenCalled();
     expect(deleteWebhookMock).not.toHaveBeenCalled();
   });
+
+  it('reaplica o auth token quando o webhook existente informa apenas hasAuthToken', async () => {
+    listWebhooksMock.mockReset();
+    listWebhooksMock
+      .mockResolvedValueOnce({
+        data: [{
+          id: 'wh_existing',
+          name: 'Webhook Alusa',
+          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
+          enabled: true,
+          interrupted: false,
+          apiVersion: 3,
+          hasAuthToken: true,
+          sendType: 'SEQUENTIALLY',
+          events: ['PAYMENT_RECEIVED'],
+        }],
+      })
+      .mockResolvedValueOnce({
+        data: [{
+          id: 'wh_existing',
+          name: 'Webhook Alusa',
+          url: 'https://app.alusa.com/api/webhooks/asaas?tenant=profile_1',
+          enabled: true,
+          interrupted: false,
+          apiVersion: 3,
+          hasAuthToken: true,
+          sendType: 'SEQUENTIALLY',
+          events: ['PAYMENT_RECEIVED'],
+        }],
+      });
+
+    const result = await connectExternalAsaasAccount({
+      contaId: 'conta_1',
+      schoolName: 'Escola Externa',
+      apiKey: '$aact_hmlg_valid_external_key',
+      actor: { type: 'ADMIN', id: 'user_1' },
+    });
+
+    expect(result.status).toBe('READY');
+    expect(updateWebhookMock).toHaveBeenCalledWith(expect.objectContaining({
+      webhookId: 'wh_existing',
+      data: expect.objectContaining({ authToken: 'token_1' }),
+    }));
+  });
 });
