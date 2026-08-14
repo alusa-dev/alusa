@@ -29,7 +29,7 @@ import {
   type EventCostumeAssignmentStatus,
 } from '@alusa/shared';
 
-import { formatCurrency, formatDate, formatDateTime } from '@/features/events/events-service';
+import { formatCurrency, formatDate, formatDateTime, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -54,6 +54,7 @@ import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
 import { exportPaidReceiptsPdf } from '@/features/financeiro/pagamentos/paid-receipts-pdf';
 import { loadPaidReceiptSchoolProfile } from '@/features/financeiro/pagamentos/receipt-school-profile';
 import { buildEventFeeReceiptInput } from './event-fee-receipt';
+import { CompartilharContratoDialog } from '@/features/contratos/components/CompartilharContratoDialog';
 
 type EditSection = 'cadastro' | 'figurinos' | null;
 
@@ -310,6 +311,9 @@ export function ParticipantDetailsFeature({
   const ticketSales = data?.ticketSales ?? [];
   const financialEntries = data?.financialEntries ?? [];
   const charges = data?.charges ?? [];
+  const eventContracts = (data?.eventContracts ?? []) as EventContractDTO[];
+  const [shareContract, setShareContract] = useState<{ token: string; alunoNome: string } | null>(null);
+  const [sharingContractId, setSharingContractId] = useState<string | null>(null);
 
   const feeEntry = useMemo(() => {
     if (!participant?.revenueEntryId) return null;
@@ -619,6 +623,19 @@ export function ParticipantDetailsFeature({
       });
     },
   });
+
+  async function handleShareEventContract(contract: EventContractDTO) {
+    if (sharingContractId) return;
+    try {
+      setSharingContractId(contract.id);
+      const refreshed = await regenerateEventContract(contract.id);
+      setShareContract({ token: refreshed.tokenPublico, alunoNome: participant?.displayName ?? 'Aluno' });
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSharingContractId(null);
+    }
+  }
 
   const handleGeneralSave = () => {
     updateMutation.mutate({
@@ -1314,6 +1331,72 @@ export function ParticipantDetailsFeature({
             </div>
           )}
 
+          {/* Contratos específicos desta inscrição no evento */}
+          <section className={sectionClass}>
+            <div className="mb-4 flex items-start justify-between">
+              <span className="text-sm font-semibold text-slate-700">Contratos</span>
+            </div>
+            {eventContracts.length === 0 ? (
+              <EmptyState title="Nenhum contrato gerado." description="Este evento não possui modelo de contrato ou o contrato ainda não foi criado." />
+            ) : (
+              <TablePanel>
+                <DataTable
+                  columns={[
+                    {
+                      id: 'name',
+                      header: 'Nome',
+                      align: 'left',
+                      width: 'w-[35%]',
+                      render: (contract: EventContractDTO) => <span className="font-semibold text-slate-900 text-xs sm:text-sm">{contract.modelo?.nome ?? 'Contrato do evento'}</span>,
+                    },
+                    {
+                      id: 'status',
+                      header: 'Status',
+                      align: 'left',
+                      width: 'w-[25%]',
+                      render: (contract: EventContractDTO) => {
+                        const tone = contract.status === 'ASSINADO' ? 'success' : contract.status === 'CANCELADO' ? 'danger' : contract.status === 'EXPIRADO' ? 'warning' : 'info';
+                        return <SoftBadge tone={tone as any}>{contract.status}</SoftBadge>;
+                      },
+                    },
+                    {
+                      id: 'createdAt',
+                      header: 'Gerado em',
+                      align: 'left',
+                      width: 'w-[20%]',
+                      render: (contract: EventContractDTO) => <span className="text-xs text-slate-500">{formatDate(contract.createdAt)}</span>,
+                    },
+                    {
+                      id: 'actions',
+                      header: 'Ações',
+                      align: 'right',
+                      width: 'w-[20%]',
+                      render: (contract: EventContractDTO) => (
+                        <div className="flex justify-end">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon" title="Ações do contrato"><MoreHorizontal className="h-4 w-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => router.push(`/contratos/evento/${contract.id}`)}>
+                                <ExternalLink className="mr-2 h-4 w-4" /> Ver contrato
+                              </DropdownMenuItem>
+                              <DropdownMenuItem disabled={sharingContractId === contract.id} onClick={() => void handleShareEventContract(contract)}>
+                                <ExternalLink className="mr-2 h-4 w-4" /> {sharingContractId === contract.id ? 'Gerando link...' : 'Compartilhar contrato'}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      ),
+                    },
+                  ]}
+                  data={eventContracts}
+                  rowKey={(contract) => contract.id}
+                />
+              </TablePanel>
+            )}
+          </section>
+
           {/* Seção 3: Figurinos Vinculados */}
           {participant.event.hasCostumes && (
             <section className={sectionClass}>
@@ -1456,6 +1539,14 @@ export function ParticipantDetailsFeature({
         onConfirm={async () => {
           await unregisterMutation.mutateAsync();
         }}
+      />
+
+      <CompartilharContratoDialog
+        open={shareContract !== null}
+        onOpenChange={(open) => !open && setShareContract(null)}
+        tokenPublico={shareContract?.token ?? ''}
+        alunoNome={shareContract?.alunoNome ?? participant.displayName}
+        publicPath="/p/evento-contrato"
       />
 
       <Dialog open={quitarConfirmOpen !== null} onOpenChange={(o) => !o && setQuitarConfirmOpen(null)}>

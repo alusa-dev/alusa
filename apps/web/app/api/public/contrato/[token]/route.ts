@@ -49,9 +49,7 @@ export async function GET(
       },
     });
 
-    if (!contrato) {
-      return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
-    }
+    if (!contrato) return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
 
     if (contrato.status === 'CANCELADO') {
       return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });

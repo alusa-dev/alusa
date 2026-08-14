@@ -17,6 +17,7 @@ interface CompartilharContratoDialogProps {
   onOpenChange: (_open: boolean) => void;
   tokenPublico: string;
   alunoNome: string;
+  publicPath?: string;
 }
 
 export function CompartilharContratoDialog({
@@ -24,9 +25,10 @@ export function CompartilharContratoDialog({
   onOpenChange,
   tokenPublico,
   alunoNome,
+  publicPath = '/p/contrato',
 }: CompartilharContratoDialogProps) {
   const link = typeof window !== 'undefined' && tokenPublico
-    ? `${window.location.origin}/p/contrato/${tokenPublico}`
+    ? `${window.location.origin}${publicPath}/${tokenPublico}`
     : '';
 
   const handleCopy = () => {

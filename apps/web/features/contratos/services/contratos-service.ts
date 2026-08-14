@@ -83,6 +83,29 @@ export async function getContratosByAluno(
   return parseResponse(res, listContratosResultDTOSchema, 'Erro ao carregar contratos');
 }
 
+export type EventoContrato = {
+  id: string;
+  origin: 'EVENT';
+  eventId: string;
+  alunoId: string;
+  aluno: { id: string; nome: string; cpf: string | null } | null;
+  responsavel: { id: string; nome: string; cpf: string } | null;
+  evento: { id: string; name: string; startsAt: string } | null;
+  modelo: { id: string; nome: string; versao: number } | null;
+  status: string;
+  tokenPublico: string;
+  arquivoPdfUrl: string;
+  arquivoPdfAssinadoUrl: string | null;
+  createdAt: string;
+};
+
+export async function getEventContractsByAluno(alunoId: string): Promise<EventoContrato[]> {
+  const res = await fetch(`/api/event-contracts?alunoId=${encodeURIComponent(alunoId)}`, { cache: 'no-store' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error?.message ?? 'Erro ao carregar contratos de eventos');
+  return (json?.data ?? []) as EventoContrato[];
+}
+
 export interface ListAlunosComContratosParams {
   q?: string;
   status?: ContratoStatus;

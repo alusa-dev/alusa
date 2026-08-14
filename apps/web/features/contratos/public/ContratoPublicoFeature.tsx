@@ -234,7 +234,7 @@ function PublicStepIndicator({ step }: { step: 1 | 2 | 3 }) {
   );
 }
 
-export function ContratoPublicoFeature({ token }: { token: string }) {
+export function ContratoPublicoFeature({ token, kind = 'academic' }: { token: string; kind?: 'academic' | 'event' }) {
   const [contrato, setContrato] = useState<ContratoPublico | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMSG, setErrorMSG] = useState<string | null>(null);
@@ -253,7 +253,7 @@ export function ContratoPublicoFeature({ token }: { token: string }) {
   const [signedSuccess, setSignedSuccess] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/public/contrato/${token}`).then(async (res) => { if (!res.ok) throw new Error((await res.json()).error?.message || 'Erro ao carregar contrato'); return res.json(); }).then((data: ContratoPublico) => { setContrato(data); setNome(data.matricula.responsavelFinanceiro?.nome || data.matricula.aluno.nome); }).catch((error: unknown) => setErrorMSG(error instanceof Error ? error.message : 'Erro ao carregar contrato')).finally(() => setLoading(false));
+    fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}`).then(async (res) => { if (!res.ok) throw new Error((await res.json()).error?.message || 'Erro ao carregar contrato'); return res.json(); }).then((data: ContratoPublico) => { setContrato(data); setNome(data.matricula.responsavelFinanceiro?.nome || data.matricula.aluno.nome); }).catch((error: unknown) => setErrorMSG(error instanceof Error ? error.message : 'Erro ao carregar contrato')).finally(() => setLoading(false));
   }, [token]);
 
   useEffect(() => {
@@ -279,7 +279,7 @@ export function ContratoPublicoFeature({ token }: { token: string }) {
 
   const submit = async () => {
     if (!signature || !nome.trim() || cpf.replace(/\D/g, '').length !== 11 || !aceite) return toast.error('Revise seus dados, assinatura e aceite antes de finalizar.');
-    try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`/api/public/contrato/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), email: email.trim() || undefined, aceite: true, assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
+    try { setAssinando(true); const assinatura = { ...signature, fonte: signature.fonte || typedFont }; const res = await fetch(`${kind === 'event' ? '/api/public/event-contrato' : '/api/public/contrato'}/${token}/assinar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: nome.trim(), cpf: cpf.replace(/\D/g, ''), email: email.trim() || undefined, aceite: true, assinatura, userAgent: navigator.userAgent }) }); const data = await res.json(); if (!res.ok) throw new Error(data.error?.message || 'Erro ao assinar contrato'); setSignedSuccess(true); toast.success('Contrato assinado com sucesso!'); } catch (error) { toast.error(error instanceof Error ? error.message : 'Erro ao assinar contrato'); } finally { setAssinando(false); }
   };
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Carregando contrato...</div>;

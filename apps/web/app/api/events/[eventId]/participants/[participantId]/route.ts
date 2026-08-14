@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@alusa/database';
 import { unregisterEventParticipant, calculateParticipantPayment } from '@alusa/lib/events/events.service';
+import { listEventContractsByStudent } from '@alusa/lib';
 import { ensureEventAsaasPaymentProviderRegistered } from '@/src/server/events/register-event-asaas-payment-provider';
 import { getEventsContext, handleEventsRouteError } from '../../../_helpers';
 
@@ -49,6 +50,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         { status: 404 }
       );
     }
+
+    const eventContracts = participant.alunoId
+      ? (await listEventContractsByStudent(ctx.contaId, participant.alunoId)).filter((contract) => contract.eventId === eventId)
+      : [];
 
     let costumes: any[] = [];
     let ticketSales: any[] = [];
@@ -370,6 +375,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           value: c.value ? c.value.toNumber() : null,
         })),
         asaasInstallmentId,
+        eventContracts,
       },
     });
   } catch (error) {

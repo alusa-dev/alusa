@@ -48,16 +48,23 @@ export async function GET(request: NextRequest) {
               ],
             }
           : {}),
-        matriculas: {
-          some: {
-            ...(turmaId ? { turmaId } : {}),
-            contratos: {
-              some: {
-                ...(status ? { status } : {}),
+        ...(turmaId
+          ? {
+              matriculas: {
+                some: {
+                  turmaId,
+                  contratos: { some: { ...(status ? { status } : {}) } },
+                },
               },
-            },
-          },
-        },
+            }
+          : {
+              AND: [{
+                OR: [
+                  { matriculas: { some: { contratos: { some: { ...(status ? { status } : {}) } } } } },
+                  { contratosEvento: { some: { ...(status ? { status } : {}) } } },
+                ],
+              }],
+            }),
       },
       select: {
         id: true,

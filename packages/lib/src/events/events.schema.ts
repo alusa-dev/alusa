@@ -70,6 +70,7 @@ const schoolEventBaseSchema = z
     hasCostumes: z.coerce.boolean().optional().default(false),
     hasFinancialControl: z.coerce.boolean().optional().default(true),
     registrationFee: z.preprocess(emptyToUndefined, moneySchema.optional().nullable()),
+    contratoModeloId: optionalId,
     notes: optionalText,
   });
 

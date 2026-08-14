@@ -9,6 +9,8 @@ import {
 type SignedContractPdfInput = {
   contratoId: string;
   matriculaId: string;
+  contextLabel?: string;
+  contextId?: string;
   contaNome: string;
   alunoNome: string;
   signerName: string;
@@ -211,7 +213,7 @@ export async function generateSignedContractEvidencePdf(input: SignedContractPdf
 
   const rows = [
     ['Contrato', input.contratoId],
-    ['Matricula', input.matriculaId],
+    [input.contextLabel ?? 'Matricula', input.contextId ?? input.matriculaId],
     ['Escola/conta', input.contaNome],
     ['Aluno', input.alunoNome],
     ['Assinante', input.signerName],

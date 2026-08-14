@@ -12,6 +12,8 @@ import { Badge, type StatusType } from '@/components/ui/badge';
 import {
   cancelContrato as cancelContratoService,
   getContratosByAluno,
+  getEventContractsByAluno,
+  type EventoContrato,
   type Contrato,
 } from './services/contratos-service';
 
@@ -28,21 +30,26 @@ function contratoTipoTurmaLine(c: Contrato): string {
 export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProps) {
   const router = useRouter();
   const [contratos, setContratos] = useState<Contrato[]>([]);
+  const [eventContracts, setEventContracts] = useState<EventoContrato[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelTarget, setCancelTarget] = useState<Contrato | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    getContratosByAluno(alunoId)
-      .then((data) => setContratos(Array.isArray(data) ? data : []))
+    Promise.all([getContratosByAluno(alunoId), getEventContractsByAluno(alunoId)])
+      .then(([academic, event]) => {
+        setContratos(Array.isArray(academic) ? academic : []);
+        setEventContracts(Array.isArray(event) ? event : []);
+      })
       .catch((err) => {
         toast.error((err as Error).message);
         setContratos([]);
+        setEventContracts([]);
       })
       .finally(() => setLoading(false));
   }, [alunoId]);
 
-  const alunoNome = contratos[0]?.matricula?.aluno?.nome ?? null;
+  const alunoNome = contratos[0]?.matricula?.aluno?.nome ?? eventContracts[0]?.aluno?.nome ?? null;
 
   const columns: DataTableColumn<Contrato>[] = useMemo(
     () => [
@@ -206,6 +213,28 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
           emptyMessage="Nenhum contrato encontrado para este aluno."
         />
       </div>
+
+      <section className="mt-8 space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Contratos de eventos</h2>
+          <p className="text-sm text-gray-500">Contratos gerados a partir da participação deste aluno em eventos.</p>
+        </div>
+        <div className="overflow-hidden rounded-xl border bg-white">
+          <DataTable
+            data={eventContracts}
+            loading={loading}
+            rowKey={(row) => row.id}
+            columns={[
+              { id: 'name', header: 'Nome', align: 'left', render: (row) => <span className="font-medium text-gray-900">{row.modelo?.nome ?? 'Contrato do evento'}</span> },
+              { id: 'event', header: 'Evento', align: 'left', render: (row) => <span className="text-sm text-gray-600">{row.evento?.name ?? 'Evento indisponível'}</span> },
+              { id: 'status', header: 'Status', align: 'center', render: (row) => <Badge status={row.status as StatusType} size="sm" /> },
+              { id: 'createdAt', header: 'Gerado em', align: 'center', render: (row) => <span className="text-xs text-gray-500">{new Date(row.createdAt).toLocaleDateString('pt-BR')}</span> },
+              { id: 'actions', header: 'Ações', align: 'right', render: (row) => <Button variant="ghost" size="icon" onClick={() => router.push(`/contratos/evento/${row.id}`)} title="Ver contrato"><Eye className="h-4 w-4 text-gray-500" /></Button> },
+            ]}
+            emptyMessage="Nenhum contrato de evento encontrado para este aluno."
+          />
+        </div>
+      </section>
 
       <ConfirmDeleteDialog
         open={!!cancelTarget}

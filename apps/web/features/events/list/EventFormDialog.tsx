@@ -88,6 +88,7 @@ export function EventFormDialog({
       hasCostumes: booleanValue(formData, 'hasCostumes'),
       hasFinancialControl: booleanValue(formData, 'hasFinancialControl'),
       registrationFee,
+      contratoModeloId: nullableString(formData, 'contratoModeloId'),
       notes: nullableString(formData, 'notes'),
     });
   }
@@ -156,6 +157,25 @@ export function EventFormDialog({
                 <Field label="Descrição">
                   <Textarea name="description" defaultValue={event?.description ?? ''} className="min-h-20 rounded-lg border-slate-200 shadow-none" />
                 </Field>
+              </div>
+            </section>
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">
+              <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Contrato do evento</span>
+              <div className="mt-4 max-w-xl">
+                <Field label="Modelo de contrato (opcional)">
+                  <NativeSelect
+                    name="contratoModeloId"
+                    defaultValue={event?.contratoModeloId ?? ''}
+                    placeholder="Sem contrato para este evento"
+                    options={(resources.data?.contratoModelos ?? []).map((modelo) => ({
+                      value: modelo.id,
+                      label: `${modelo.nome} · versão ${modelo.versao}`,
+                    }))}
+                  />
+                </Field>
+                <p className="mt-2 text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
+                  Quando selecionado, o contrato será gerado automaticamente para cada aluno inscrito.
+                </p>
               </div>
             </section>
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]">

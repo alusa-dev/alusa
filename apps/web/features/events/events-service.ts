@@ -37,6 +37,7 @@ export type EventResources = {
   responsaveis: Array<{ id: string; nome: string }>;
   turmas: Array<{ id: string; nome: string }>;
   events: Array<{ id: string; name: string; startsAt: string; status: SchoolEventStatus }>;
+  contratoModelos: Array<{ id: string; nome: string; versao: number }>;
 };
 
 export type EventScopedPerson = { id: string; nome: string };
@@ -578,6 +579,33 @@ export type EventParticipantDTO = {
     totalSpent: number;
   };
 };
+
+export type EventContractDTO = {
+  id: string;
+  origin: 'EVENT';
+  eventId: string;
+  participantId: string;
+  alunoId: string;
+  aluno: { id: string; nome: string; cpf: string | null } | null;
+  responsavelId: string | null;
+  responsavel: { id: string; nome: string; cpf: string } | null;
+  evento: { id: string; name: string; startsAt: string } | null;
+  modelo: { id: string; nome: string; versao: number } | null;
+  arquivoPdfUrl: string;
+  arquivoPdfAssinadoUrl: string | null;
+  status: string;
+  tokenPublico: string;
+  tokenExpiraEm: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function regenerateEventContract(id: string): Promise<EventContractDTO> {
+  const response = await fetch(`/api/event-contracts/${id}/regenerar`, { method: 'PATCH' });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error?.message ?? 'Não foi possível gerar o link do contrato.');
+  return body.data as EventContractDTO;
+}
 
 export async function listEventParticipants(eventId: string) {
   return (await parseResponse<JsonEnvelope<EventParticipantDTO[]>>(await fetch(`/api/events/${eventId}/participants`, { cache: "no-store" }))).data;

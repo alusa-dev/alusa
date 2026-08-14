@@ -72,6 +72,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         if (!billingResult.success) {
           // Deleta participante criado (Rollback manual)
+          await prisma.eventoContrato.deleteMany({
+            where: { contaId: ctx.contaId, participantId: participant.id, status: 'PENDENTE' },
+          });
           await prisma.eventParticipant.delete({
             where: { id: participant.id },
           });
@@ -123,6 +126,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
       } catch (billingError) {
         // Rollback caso ocorra exceção
+        await prisma.eventoContrato.deleteMany({
+          where: { contaId: ctx.contaId, participantId: participant.id, status: 'PENDENTE' },
+        });
         await prisma.eventParticipant.delete({
           where: { id: participant.id },
         });

@@ -21,6 +21,7 @@ import {
 import { prisma } from '../prisma';
 import { loadDecryptedAsaasCredentials } from '../services/integracoes/asaas-credentials-service';
 import { getEventAsaasPaymentProvider } from './event-asaas-payment-provider';
+import { createEventContractForParticipant } from './event-contracts.service';
 import {
   canRemoveEventParticipant,
   type EventParticipantRemovalDecision,
@@ -269,6 +270,7 @@ export function mapSchoolEvent(record: SchoolEventRecord, paymentSnapshots?: Map
     hasFinancialControl: record.hasFinancialControl,
     notes: record.notes,
     registrationFee: toMoney(record.registrationFee),
+    contratoModeloId: record.contratoModeloId ?? null,
     createdByUserId: record.createdByUserId,
     createdBy: record.createdBy,
     createdAt: record.createdAt.toISOString(),
@@ -508,6 +510,13 @@ export async function getSchoolEvent(ctx: Pick<EventsContext, 'contaId'>, eventI
 
 export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolEventInput) {
   return prisma.$transaction(async (tx) => {
+    if (input.contratoModeloId) {
+      const modelo = await tx.contratoModelo.findFirst({
+        where: { id: input.contratoModeloId, contaId: ctx.contaId, status: 'ATIVO' },
+        select: { id: true },
+      });
+      if (!modelo) throw new EventsError('MODELO_CONTRATO_NAO_ENCONTRADO', 'Modelo de contrato não encontrado.', 422);
+    }
     const ticketSettings = resolveTicketSettings(input);
     const created = await tx.schoolEvent.create({
       data: {
@@ -527,6 +536,7 @@ export async function createSchoolEvent(ctx: EventsContext, input: CreateSchoolE
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
         registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
+        contratoModeloId: input.contratoModeloId ?? null,
         notes: input.notes,
         createdByUserId: ctx.userId,
       },
@@ -553,6 +563,13 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
     if (current.status === 'ARCHIVED') {
       throw new EventsError('EVENTO_ARQUIVADO', 'Evento arquivado não pode ser editado.', 409);
     }
+    if (input.contratoModeloId) {
+      const modelo = await tx.contratoModelo.findFirst({
+        where: { id: input.contratoModeloId, contaId: ctx.contaId, status: 'ATIVO' },
+        select: { id: true },
+      });
+      if (!modelo) throw new EventsError('MODELO_CONTRATO_NAO_ENCONTRADO', 'Modelo de contrato não encontrado.', 422);
+    }
     const ticketSettings = resolveTicketSettings(input, current);
 
     const updated = await tx.schoolEvent.update({
@@ -572,6 +589,7 @@ export async function updateSchoolEvent(ctx: EventsContext, eventId: string, inp
         hasCostumes: input.hasCostumes,
         hasFinancialControl: input.hasFinancialControl,
         registrationFee: input.registrationFee != null ? decimal(input.registrationFee) : null,
+        contratoModeloId: input.contratoModeloId,
         notes: input.notes,
       },
     });
@@ -641,7 +659,7 @@ export async function getEventScopedResources(
 }
 
 export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
-  const [users, alunos, responsaveis, turmas, events] = await Promise.all([
+  const [users, alunos, responsaveis, turmas, events, contratoModelos] = await Promise.all([
     prisma.usuario.findMany({
       where: {
         OR: [{ contaId: ctx.contaId }, { acessosConta: { some: { contaId: ctx.contaId, status: 'ATIVO' } } }],
@@ -675,6 +693,12 @@ export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
       orderBy: { startsAt: 'desc' },
       take: 200,
     }),
+    prisma.contratoModelo.findMany({
+      where: { contaId: ctx.contaId, status: 'ATIVO' },
+      select: { id: true, nome: true, versao: true },
+      orderBy: [{ nome: 'asc' }, { versao: 'desc' }],
+      take: 200,
+    }),
   ]);
 
   return {
@@ -686,6 +710,7 @@ export async function listEventResources(ctx: Pick<EventsContext, 'contaId'>) {
       ...event,
       startsAt: event.startsAt.toISOString(),
     })),
+    contratoModelos,
   };
 }
 
@@ -2418,6 +2443,14 @@ export async function registerEventParticipant(ctx: EventsContext, input: Create
       },
     });
 
+    await createEventContractForParticipant(tx, {
+      contaId: ctx.contaId,
+      userId: ctx.userId,
+      eventId: input.eventId,
+      participantId: participant.id,
+      alunoId: input.alunoId,
+    });
+
     await recordEventAudit(tx, {
       contaId: ctx.contaId,
       actorUserId: ctx.userId,
@@ -2503,6 +2536,16 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
         cancelledAt: new Date(),
       },
     });
+
+    if (participant.alunoId) {
+      await createEventContractForParticipant(tx, {
+        contaId: ctx.contaId,
+        userId: ctx.userId,
+        eventId,
+        participantId,
+        alunoId: participant.alunoId,
+      });
+    }
 
     if (openCharges.length > 0) {
       await tx.charge.updateMany({
