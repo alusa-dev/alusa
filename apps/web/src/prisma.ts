@@ -21,7 +21,10 @@ function hasRequiredDelegates(client: PrismaClient | undefined): client is Prism
       'function' &&
     typeof (client as PrismaClient & Record<string, { findMany?: unknown }>).aulasOperationLog?.findMany ===
       'function' &&
-    typeof (client as PrismaClient & Record<string, unknown>).contratoModeloCampo === 'object'
+    typeof (client as PrismaClient & Record<string, unknown>).contratoModeloCampo === 'object' &&
+    // O client antigo, mantido pelo hot-reload, não conhece os contratos de eventos.
+    // Recriá-lo aqui evita que o Next/Turbopack use um DMMF anterior ao schema atual.
+    typeof (client as PrismaClient & Record<string, unknown>).eventoContrato === 'object'
   );
 }
 
