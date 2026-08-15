@@ -1,6 +1,6 @@
-import { EventoContratoDetalhesFeature } from '@/features/contratos/EventoContratoDetalhesFeature';
+import { ContratoDetalhesFeature } from '@/features/contratos/ContratoDetalhesFeature';
 
 export default async function EventoContratoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <EventoContratoDetalhesFeature contratoId={id} />;
+  return <ContratoDetalhesFeature contratoId={id} origem="EVENTO" />;
 }

@@ -21,11 +21,17 @@ interface ContratosDoAlunoFeatureProps {
   alunoId: string;
 }
 
-function contratoTipoTurmaLine(c: Contrato): string {
-  const tipo = c.modelo?.nome || 'Personalizado';
-  const turma = c.matricula.turma?.nome;
-  return turma ? `${tipo} · ${turma}` : tipo;
-}
+type ContratoListaItem = {
+  id: string;
+  nome: string;
+  tipo: 'Matrícula' | 'Evento';
+  contexto: string;
+  status: string;
+  createdAt: string;
+  detalhePath: string;
+  podeCancelar: boolean;
+  contratoMatricula?: Contrato;
+};
 
 export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProps) {
   const router = useRouter();
@@ -51,62 +57,93 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
 
   const alunoNome = contratos[0]?.matricula?.aluno?.nome ?? eventContracts[0]?.aluno?.nome ?? null;
 
-  const columns: DataTableColumn<Contrato>[] = useMemo(
+  const listaContratos = useMemo<ContratoListaItem[]>(
     () => [
+      ...contratos.map((contrato) => ({
+        id: contrato.id,
+        nome: contrato.modelo?.nome || 'Contrato personalizado',
+        tipo: 'Matrícula' as const,
+        contexto: contrato.matricula.turma?.nome || 'Sem turma',
+        status: contrato.status,
+        createdAt: contrato.createdAt,
+        detalhePath: `/contratos/${contrato.id}`,
+        podeCancelar: contrato.status === 'PENDENTE',
+        contratoMatricula: contrato,
+      })),
+      ...eventContracts.map((contrato) => ({
+        id: contrato.id,
+        nome: contrato.modelo?.nome || 'Contrato do evento',
+        tipo: 'Evento' as const,
+        contexto: contrato.evento?.name || 'Evento indisponível',
+        status: contrato.status,
+        createdAt: contrato.createdAt,
+        detalhePath: `/contratos/evento/${contrato.id}`,
+        podeCancelar: false,
+      })),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    [contratos, eventContracts],
+  );
+
+  const columns: DataTableColumn<ContratoListaItem>[] = useMemo(
+    () => [
+      {
+        id: 'nome',
+        header: 'Nome',
+        align: 'left',
+        render: (item) => <div className="text-sm text-gray-600">{item.nome}</div>,
+      },
       {
         id: 'tipo',
         header: 'Tipo',
         align: 'left',
-        render: (c) => <div className="text-sm text-gray-600">{c.modelo?.nome || 'Personalizado'}</div>,
+        width: 'w-[120px]',
+        render: (item) => <div className="text-sm text-gray-600">{item.tipo}</div>,
       },
       {
-        id: 'turma',
-        header: 'Turma',
+        id: 'contexto',
+        header: 'Turma / Evento',
         align: 'left',
-        render: (c) => <div className="text-sm text-gray-600">{c.matricula.turma?.nome || 'Sem turma'}</div>,
-      },
-      {
-        id: 'status',
-        header: 'Status',
-        align: 'center',
-        width: 'w-[130px]',
-        render: (c) => (
-          <div className="flex justify-center">
-            <Badge status={c.status as StatusType} size="sm" />
-          </div>
-        ),
+        render: (item) => <div className="text-sm text-gray-600">{item.contexto}</div>,
       },
       {
         id: 'criadoEm',
         header: 'Gerado em',
         align: 'center',
         width: 'w-[120px]',
-        render: (c) => (
+        headerClassName: 'whitespace-nowrap',
+        render: (item) => (
           <span className="text-xs text-gray-500">
-            {new Date(c.createdAt).toLocaleDateString('pt-BR')}
+            {new Date(item.createdAt).toLocaleDateString('pt-BR')}
           </span>
         ),
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        align: 'center',
+        width: 'w-[130px]',
+        render: (item) => <Badge status={item.status as StatusType} size="sm" />,
       },
       {
         id: 'acoes',
         header: 'Ações',
         align: 'right',
         width: 'w-[120px]',
-        render: (c) => (
+        render: (item) => (
           <div className="flex justify-end gap-2">
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => router.push(`/contratos/${c.id}`)}
+              onClick={() => router.push(item.detalhePath)}
               title="Ver detalhes"
             >
               <Eye className="h-4 w-4 text-gray-500" />
             </Button>
-            {c.status === 'PENDENTE' && (
+            {item.podeCancelar && item.contratoMatricula && (
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setCancelTarget(c)}
+                onClick={() => setCancelTarget(item.contratoMatricula!)}
                 title="Cancelar"
                 className="text-red-500 hover:bg-red-50 hover:text-red-600"
               >
@@ -153,26 +190,21 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
               </li>
             ))}
           </ul>
-        ) : contratos.length === 0 ? (
+        ) : listaContratos.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-gray-500">
             Nenhum contrato encontrado para este aluno.
           </div>
         ) : (
           <ul className="m-0 list-none divide-y divide-gray-100 p-0" role="list">
-            {contratos.map((c) => (
-              <li key={c.id} className="flex items-start gap-3 px-4 py-4">
+            {listaContratos.map((item) => (
+              <li key={item.id} className="flex items-start gap-3 px-4 py-4">
                 <div className="min-w-0 flex-1 space-y-2">
-                  <p className="text-[13px] font-semibold leading-snug text-gray-900">
-                    {contratoTipoTurmaLine(c)}
-                  </p>
+                  <p className="text-[13px] font-semibold leading-snug text-gray-900">{item.nome}</p>
+                  <p className="text-xs text-gray-500">{item.tipo} · {item.contexto}</p>
                   <p className="text-xs tabular-nums text-gray-500">
-                    Gerado em {new Date(c.createdAt).toLocaleDateString('pt-BR')}
+                    Gerado em {new Date(item.createdAt).toLocaleDateString('pt-BR')}
                   </p>
-                  <Badge
-                    status={c.status as StatusType}
-                    size="sm"
-                    className="w-fit max-w-full whitespace-normal leading-tight"
-                  />
+                  <Badge status={item.status as StatusType} size="sm" className="w-fit max-w-full whitespace-normal leading-tight" />
                 </div>
                 <div className="flex shrink-0 items-start">
                   <div className="flex items-center gap-0.5">
@@ -180,17 +212,17 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
                       variant="ghost"
                       size="icon"
                       className="h-9 w-9 shrink-0"
-                      onClick={() => router.push(`/contratos/${c.id}`)}
+                      onClick={() => router.push(item.detalhePath)}
                       title="Ver detalhes"
                     >
                       <Eye className="h-4 w-4 text-gray-500" />
                     </Button>
-                    {c.status === 'PENDENTE' ? (
+                    {item.podeCancelar && item.contratoMatricula ? (
                       <Button
                         variant="ghost"
                         size="icon"
                         className="h-9 w-9 shrink-0 text-red-500 hover:bg-red-50 hover:text-red-600"
-                        onClick={() => setCancelTarget(c)}
+                        onClick={() => setCancelTarget(item.contratoMatricula!)}
                         title="Cancelar"
                       >
                         <Trash className="h-4 w-4" />
@@ -206,35 +238,13 @@ export function ContratosDoAlunoFeature({ alunoId }: ContratosDoAlunoFeatureProp
 
       <div className="hidden overflow-hidden rounded-xl border bg-white lg:block">
         <DataTable
-          data={contratos}
+          data={listaContratos}
           columns={columns}
           loading={loading}
           rowKey={(row) => row.id}
           emptyMessage="Nenhum contrato encontrado para este aluno."
         />
       </div>
-
-      <section className="mt-8 space-y-3">
-        <div>
-          <h2 className="text-base font-semibold text-gray-900">Contratos de eventos</h2>
-          <p className="text-sm text-gray-500">Contratos gerados a partir da participação deste aluno em eventos.</p>
-        </div>
-        <div className="overflow-hidden rounded-xl border bg-white">
-          <DataTable
-            data={eventContracts}
-            loading={loading}
-            rowKey={(row) => row.id}
-            columns={[
-              { id: 'name', header: 'Nome', align: 'left', render: (row) => <span className="font-medium text-gray-900">{row.modelo?.nome ?? 'Contrato do evento'}</span> },
-              { id: 'event', header: 'Evento', align: 'left', render: (row) => <span className="text-sm text-gray-600">{row.evento?.name ?? 'Evento indisponível'}</span> },
-              { id: 'status', header: 'Status', align: 'center', render: (row) => <Badge status={row.status as StatusType} size="sm" /> },
-              { id: 'createdAt', header: 'Gerado em', align: 'center', render: (row) => <span className="text-xs text-gray-500">{new Date(row.createdAt).toLocaleDateString('pt-BR')}</span> },
-              { id: 'actions', header: 'Ações', align: 'right', render: (row) => <Button variant="ghost" size="icon" onClick={() => router.push(`/contratos/evento/${row.id}`)} title="Ver contrato"><Eye className="h-4 w-4 text-gray-500" /></Button> },
-            ]}
-            emptyMessage="Nenhum contrato de evento encontrado para este aluno."
-          />
-        </div>
-      </section>
 
       <ConfirmDeleteDialog
         open={!!cancelTarget}

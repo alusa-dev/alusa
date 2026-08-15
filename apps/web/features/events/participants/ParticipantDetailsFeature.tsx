@@ -31,6 +31,7 @@ import {
 
 import { formatCurrency, formatDate, formatDateTime, regenerateEventContract, type EventContractDTO } from '@/features/events/events-service';
 import { Button } from '@/components/ui/button';
+import { Badge, type StatusType } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -1346,31 +1347,36 @@ export function ParticipantDetailsFeature({
                       id: 'name',
                       header: 'Nome',
                       align: 'left',
-                      width: 'w-[35%]',
+                      width: 'w-[30%]',
                       render: (contract: EventContractDTO) => <span className="font-semibold text-slate-900 text-xs sm:text-sm">{contract.modelo?.nome ?? 'Contrato do evento'}</span>,
-                    },
-                    {
-                      id: 'status',
-                      header: 'Status',
-                      align: 'left',
-                      width: 'w-[25%]',
-                      render: (contract: EventContractDTO) => {
-                        const tone = contract.status === 'ASSINADO' ? 'success' : contract.status === 'CANCELADO' ? 'danger' : contract.status === 'EXPIRADO' ? 'warning' : 'info';
-                        return <SoftBadge tone={tone as any}>{contract.status}</SoftBadge>;
-                      },
                     },
                     {
                       id: 'createdAt',
                       header: 'Gerado em',
                       align: 'left',
-                      width: 'w-[20%]',
+                      width: 'w-[15%]',
+                      headerClassName: 'whitespace-nowrap',
                       render: (contract: EventContractDTO) => <span className="text-xs text-slate-500">{formatDate(contract.createdAt)}</span>,
+                    },
+                    {
+                      id: 'signedAt',
+                      header: 'Assinado em',
+                      align: 'left',
+                      width: 'w-[20%]',
+                      render: (contract: EventContractDTO) => <span className="text-xs text-slate-500">{contract.assinadoEm ? formatDate(contract.assinadoEm) : '—'}</span>,
+                    },
+                    {
+                      id: 'status',
+                      header: 'Status',
+                      align: 'left',
+                      width: 'w-[20%]',
+                      render: (contract: EventContractDTO) => <Badge status={contract.status as StatusType} size="sm" />,
                     },
                     {
                       id: 'actions',
                       header: 'Ações',
                       align: 'right',
-                      width: 'w-[20%]',
+                      width: 'w-[15%]',
                       render: (contract: EventContractDTO) => (
                         <div className="flex justify-end">
                           <DropdownMenu>

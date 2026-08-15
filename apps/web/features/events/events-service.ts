@@ -595,6 +595,7 @@ export type EventContractDTO = {
   arquivoPdfUrl: string;
   arquivoPdfAssinadoUrl: string | null;
   status: string;
+  assinadoEm: string | null;
   tokenPublico: string;
   tokenExpiraEm: string | null;
   createdAt: string;

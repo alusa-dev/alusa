@@ -219,7 +219,7 @@ export async function regenerateEventContractToken(ctx: EventContractContext, id
     const current = await tx.eventoContrato.findFirst({ where: { id, contaId: ctx.contaId } });
     if (!current) throw new Error('CONTRATO_EVENTO_NAO_ENCONTRADO');
     if (current.status === 'ASSINADO' || current.status === 'CANCELADO') throw new Error('CONTRATO_EVENTO_NAO_REGENERAVEL');
-    const { tokenHash } = createPublicContractToken();
+    const { token, tokenHash } = createPublicContractToken();
     await tx.eventoContrato.update({
       where: { id },
       data: { tokenPublico: `hash:${tokenHash}`, tokenPublicoHash: tokenHash, tokenExpiraEm: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), status: 'PENDENTE' },
@@ -227,7 +227,7 @@ export async function regenerateEventContractToken(ctx: EventContractContext, id
     await recordEvidence(tx, { contaId: ctx.contaId, eventoContratoId: id, type: 'PUBLIC_LINK_CREATED', actorType: 'USER', actorId: ctx.userId, payload: { regenerated: true } });
     const record = await getEventContractRecord(tx, ctx.contaId, id);
     if (!record) throw new Error('CONTRATO_EVENTO_NAO_ENCONTRADO');
-    return { ...mapEventContract(record), tokenPublico: tokenHash };
+    return { ...mapEventContract(record), tokenPublico: token };
   });
 }
 

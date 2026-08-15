@@ -93,9 +93,14 @@ export type EventoContrato = {
   evento: { id: string; name: string; startsAt: string } | null;
   modelo: { id: string; nome: string; versao: number } | null;
   status: string;
+  assinadoPor: string | null;
+  assinadoCpf: string | null;
+  assinadoEm: string | null;
+  hashAssinatura: string | null;
   tokenPublico: string;
   arquivoPdfUrl: string;
   arquivoPdfAssinadoUrl: string | null;
+  tokenExpiraEm: string | null;
   createdAt: string;
 };
 
@@ -104,6 +109,20 @@ export async function getEventContractsByAluno(alunoId: string): Promise<EventoC
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(json?.error?.message ?? 'Erro ao carregar contratos de eventos');
   return (json?.data ?? []) as EventoContrato[];
+}
+
+export async function getEventContract(id: string): Promise<EventoContrato> {
+  const res = await fetch(`/api/event-contracts/${encodeURIComponent(id)}`, { cache: 'no-store' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error?.message ?? 'Erro ao carregar contrato de evento');
+  return json.data as EventoContrato;
+}
+
+export async function regenerateEventContract(id: string): Promise<EventoContrato> {
+  const res = await fetch(`/api/event-contracts/${encodeURIComponent(id)}/regenerar`, { method: 'PATCH' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error?.message ?? 'Erro ao gerar link do contrato de evento');
+  return json.data as EventoContrato;
 }
 
 export interface ListAlunosComContratosParams {
