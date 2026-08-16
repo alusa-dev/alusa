@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import {
-  AsaasApiKeyError,
-  AsaasHttpError,
   asaasGetMyAccountCommercialInfo,
   asaasGetMyAccountStatus,
 } from '@alusa/finance';
+import { AsaasApiKeyError, AsaasHttpError, isValidAsaasApiKey } from '@alusa/asaas';
 
 import { authOptions } from '@/lib/auth-options';
 
@@ -34,7 +33,7 @@ export async function POST(request: Request) {
     const payload = (await request.json().catch(() => null)) as { apiKey?: string } | null;
     const apiKey = payload?.apiKey?.trim() ?? '';
 
-    if (apiKey.length < 10) {
+    if (apiKey.length < 10 || !isValidAsaasApiKey(apiKey)) {
       return json(400, { success: false, summary: 'API key inválida.' });
     }
 

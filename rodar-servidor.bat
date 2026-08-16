@@ -32,7 +32,7 @@ echo.
 
 cd /d "%ROOT%apps\web"
 
-call "%NODE_DIR%\pnpm.cmd" exec dotenv -o -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev
+call "%NODE_DIR%\pnpm.cmd" exec dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- node ../../scripts/validate-db-env.mjs dev
 if errorlevel 1 (
   echo.
   echo Falha na validacao do ambiente.
@@ -40,6 +40,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-call "%NODE_DIR%\pnpm.cmd" exec dotenv -o -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --turbo -p %APP_PORT%
+call "%NODE_DIR%\pnpm.cmd" exec dotenv -o -e ../../.env -e ../../.env.local -e .env.local -- cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev --turbo -p %APP_PORT%
 
 endlocal

@@ -5,7 +5,10 @@ vi.mock('@alusa/asaas', () => ({
 }));
 
 vi.mock('../../../foundation/credential-vault', () => ({
-  credentialVault: { encrypt: vi.fn(() => 'encrypted:manual-key') },
+  credentialVault: {
+    encrypt: vi.fn(() => 'encrypted:manual-key'),
+    verifyRoundTrip: vi.fn(),
+  },
 }));
 
 vi.mock('../../../foundation/audit-log.service', () => ({

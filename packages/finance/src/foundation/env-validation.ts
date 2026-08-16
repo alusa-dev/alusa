@@ -11,6 +11,12 @@ export interface EnvValidationResult {
   warnings: string[];
 }
 
+const KEY_VERSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function parseEncryptionKey(raw: string): Buffer {
+  return /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, 'hex') : Buffer.from(raw, 'base64');
+}
+
 /**
  * Valida que ENCRYPTION_KEY existe e tem tamanho adequado para AES-256.
  * AES-256-GCM requer chave de 32 bytes (256 bits).
@@ -46,10 +52,47 @@ export function validateEncryptionKey(): EnvValidationResult {
 }
 
 /**
+ * Valida a versão ativa e as chaves antigas usadas durante uma rotação.
+ * ENCRYPTION_KEYRING é um objeto JSON { "versao": "chave" }.
+ */
+export function validateEncryptionKeyRing(): EnvValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const activeVersion = process.env.ENCRYPTION_KEY_VERSION?.trim() || '1';
+
+  if (!KEY_VERSION_PATTERN.test(activeVersion)) {
+    errors.push('ENCRYPTION_KEY_VERSION inválida. Use apenas letras, números, ponto, hífen ou sublinhado.');
+  }
+
+  const ring = process.env.ENCRYPTION_KEYRING?.trim();
+  if (!ring) return { valid: errors.length === 0, errors, warnings };
+
+  try {
+    const parsed = JSON.parse(ring) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('objeto esperado');
+    }
+
+    for (const [version, value] of Object.entries(parsed)) {
+      if (!KEY_VERSION_PATTERN.test(version) || typeof value !== 'string') {
+        throw new Error('versão ou chave inválida');
+      }
+      if (parseEncryptionKey(value.trim()).length !== 32) {
+        throw new Error(`chave inválida na versão ${version}`);
+      }
+    }
+  } catch (error) {
+    errors.push(`ENCRYPTION_KEYRING inválido: ${error instanceof Error ? error.message : 'objeto JSON esperado'}.`);
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+/**
  * Valida todas as variáveis de ambiente críticas para o módulo financeiro.
  */
 export function validateFinanceEnv(): EnvValidationResult {
-  const results: EnvValidationResult[] = [validateEncryptionKey()];
+  const results: EnvValidationResult[] = [validateEncryptionKey(), validateEncryptionKeyRing()];
 
   const errors = results.flatMap((r) => r.errors);
   const warnings = results.flatMap((r) => r.warnings);

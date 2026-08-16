@@ -3,8 +3,12 @@ import { fileURLToPath } from 'url';
 import { withSentryConfig } from '@sentry/nextjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const turbopackRoot = resolvePath(__dirname, '../..');
 const packageDistPath = (packageName, relativePath) =>
   `../../packages/${packageName}/dist/${relativePath}`;
+const packageSourcePath = (packageName, relativePath) =>
+  `../../packages/${packageName}/src/${relativePath}`;
+const webSourcePath = (relativePath) => `./${relativePath}`;
 
 const scriptSrc = [
   "script-src 'self'",
@@ -80,6 +84,10 @@ const nextConfig = {
     'konva',
   ],
   turbopack: {
+    // Resolve workspace packages from the monorepo root. Without an explicit
+    // root, aliases that point outside apps/web are treated as unavailable by
+    // Turbopack even when their dist files exist.
+    root: turbopackRoot,
     resolveAlias: {
       '@alusa/asaas': packageDistPath('asaas', 'index.js'),
       '@alusa/asaas/*': packageDistPath('asaas', '*.js'),
@@ -88,7 +96,7 @@ const nextConfig = {
       '@alusa/domain': packageDistPath('domain', 'index.js'),
       '@alusa/domain/*': packageDistPath('domain', '*.js'),
       '@alusa/finance': {
-        browser: './lib/stubs/server-only-finance.ts',
+        browser: webSourcePath('lib/stubs/server-only-finance.ts'),
         default: packageDistPath('finance', 'index.js'),
       },
       '@alusa/finance/*': packageDistPath('finance', '*.js'),
@@ -103,8 +111,13 @@ const nextConfig = {
       // O build do pacote UI produz artefatos aninhados por causa dos paths
       // herdados do tsconfig raiz; o código-fonte é a resolução canônica para
       // os subpaths usados pelo app e já está em transpilePackages.
-      '@alusa/ui': '../../packages/ui/src/index.ts',
-      '@alusa/ui/*': '../../packages/ui/src/*',
+      '@alusa/ui': packageSourcePath('ui', 'index.ts'),
+      '@alusa/ui/*': packageSourcePath('ui', '*'),
+      // Estes subpaths não seguem o mapeamento direto dist/<subpath>.js:
+      // no pacote lib eles são emitidos em utils/ ou na raiz.
+      '@alusa/lib/cpf-cnpj': packageDistPath('lib', 'utils/cpf-cnpj.js'),
+      '@alusa/lib/date-only': packageDistPath('lib', 'utils/date-only.js'),
+      '@alusa/lib/zod-error-map': packageDistPath('lib', 'zod-error-map.js'),
     },
   },
   experimental: {

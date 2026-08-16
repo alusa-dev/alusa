@@ -1,6 +1,5 @@
 'use client';
 
-import React from 'react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -247,11 +246,18 @@ export function SupportAsaasRepairPanel({ contaId }: SupportAsaasRepairPanelProp
           </div>
           <div>
             <span className="font-medium text-slate-700">API Key:</span>{' '}
-            {diagnosis.needsApiKeyRecovery
-              ? diagnosis.integrationOperational
-                ? 'inválida'
-                : 'ausente'
-              : 'CONNECTED'}
+            {diagnosis.credentialHealth === 'DECRYPTION_FAILED'
+              ? 'não descriptografável (ENCRYPTION_KEY divergente)'
+              : diagnosis.needsApiKeyRecovery
+                ? diagnosis.integrationOperational
+                  ? 'inválida'
+                  : 'ausente'
+                : 'CONNECTED'}
+          </div>
+          <div>
+            <span className="font-medium text-slate-700">Fonte da credencial:</span>{' '}
+            {diagnosis.credentialSource}
+            {diagnosis.credentialFallbackUsed ? ' (fallback legado)' : ''}
           </div>
           <div>
             <span className="font-medium text-slate-700">Webhook:</span>{' '}

@@ -282,15 +282,29 @@ async function exportTransfersPdf(data: TransfersResponse) {
 
 async function readJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, { cache: 'no-store', ...init });
-  const json = (await response.json().catch(() => ({}))) as { data?: T; error?: unknown };
+  const json = (await response.json().catch(() => ({}))) as {
+    data?: T;
+    error?: unknown;
+    code?: string;
+    reasons?: string[];
+  };
 
   if (!response.ok) {
+    const gateMessage =
+      response.status === 412 && json.reasons?.[0]
+        ? json.reasons[0]
+        : response.status === 412 && json.code === 'FINANCIAL_ACCOUNT_NOT_READY'
+          ? 'A conta financeira ainda não está pronta. Reconecte a integração Asaas.'
+          : response.status === 412 && json.code === 'FINANCIAL_ACCOUNT_UNAVAILABLE'
+            ? 'A conta financeira está indisponível no momento. Verifique a integração Asaas.'
+            : null;
     const errorMessage =
-      typeof json.error === 'string'
+      gateMessage ??
+      (typeof json.error === 'string'
         ? json.error
         : typeof json.error === 'object' && json.error && 'message' in json.error
           ? String((json.error as { message?: string }).message)
-          : `Erro ${response.status}`;
+          : `Erro ${response.status}`);
     throw new Error(errorMessage);
   }
 

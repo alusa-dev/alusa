@@ -1392,6 +1392,25 @@ model Conta {
   @@index([externalAsaasOnboardingStatus])
 }
 
+/// Lead capturado pela página pública de acesso antecipado.
+/// Não é tenant-scoped: ainda não representa uma Conta criada na plataforma.
+model EarlyAccessLead {
+  id              String   @id @default(cuid())
+  institutionName String
+  contactName     String
+  role            String?
+  email           String   @unique
+  phone           String?
+  studentsRange   String?
+  mainChallenge   String?
+  source          String   @default("acesso-antecipado")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([source, createdAt])
+}
+
 model ContaFinancialPolicy {
   id                                 String                @id @default(cuid())
   contaId                            String                @unique
@@ -1737,7 +1756,9 @@ model AlunoResponsavel {
 
   conta       Conta       @relation(fields: [contaId], references: [id], onDelete: Restrict)
   aluno       Aluno       @relation(fields: [alunoId], references: [id], onDelete: Cascade)
-  responsavel Responsavel @relation(fields: [responsavelId], references: [id], onDelete: Cascade)
+  // Um responsável não pode ser apagado enquanto houver vínculo com aluno;
+  // a exclusão física deve falhar na camada do banco como última defesa.
+  responsavel Responsavel @relation(fields: [responsavelId], references: [id], onDelete: Restrict)
 
   @@unique([contaId, alunoId, responsavelId], name: "uq_aluno_responsavel_conta_aluno_responsavel", map: "uq_aluno_responsavel_conta_aluno_responsavel")
   @@index([contaId, alunoId], name: "idx_aluno_responsavel_conta_aluno")
@@ -2671,22 +2692,22 @@ model RematriculaAuditLog {
 }
 
 model RematriculaOutbox {
-  id          String                  @id @default(cuid())
-  contaId     String
-  processoId  String?
-  eventType   String
-  payload     Json
-  status      RematriculaOutboxStatus @default(PENDING)
-  attempts    Int                     @default(0)
-  availableAt DateTime                @default(now())
-  lockedAt    DateTime?
+  id             String                  @id @default(cuid())
+  contaId        String
+  processoId     String?
+  eventType      String
+  payload        Json
+  status         RematriculaOutboxStatus @default(PENDING)
+  attempts       Int                     @default(0)
+  availableAt    DateTime                @default(now())
+  lockedAt       DateTime?
   leaseExpiresAt DateTime?
-  lockToken   String?
-  processedAt DateTime?
-  lastError   String?
-  dedupeKey   String?
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @updatedAt
+  lockToken      String?
+  processedAt    DateTime?
+  lastError      String?
+  dedupeKey      String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
 
   conta    Conta                @relation(fields: [contaId], references: [id], onDelete: Cascade)
   processo RematriculaProcesso? @relation(fields: [processoId], references: [id], onDelete: Cascade)
@@ -3236,15 +3257,15 @@ model Cobranca {
 
   // Fase 4: dimensões separadas da máquina de estados financeira.
   providerStatus       String?
-  processingStatus     String   @default("PENDING")
-  reconciliationStatus String   @default("UNKNOWN")
+  processingStatus     String    @default("PENDING")
+  reconciliationStatus String    @default("UNKNOWN")
   providerUpdatedAt    DateTime?
   lastWebhookAt        DateTime?
   lastProviderCheckAt  DateTime?
   lastReconciledAt     DateTime?
   lastAppliedEventId   String?
   localStateUpdatedAt  DateTime?
-  version              Int      @default(0)
+  version              Int       @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3257,6 +3278,7 @@ model Cobranca {
   charge               Charge?
   asaasIntegrationJobs AsaasIntegrationJob[]
 
+  @@unique([contaId, asaasPaymentId], name: "uq_cobranca_conta_asaas_payment")
   @@index([contaId], name: "idx_cobranca_conta")
   @@index([contaId, status], name: "idx_cobranca_conta_status")
   @@index([contaId, status, vencimento], name: "idx_cobranca_conta_status_vencimento")
@@ -3266,7 +3288,6 @@ model Cobranca {
   @@index([contaId, tipo], name: "idx_cobranca_conta_tipo")
   @@index([contaId, formaPagamento], name: "idx_cobranca_conta_forma")
   @@index([contaId, liquidacaoStatus], name: "idx_cobranca_conta_liquidacao")
-  @@unique([contaId, asaasPaymentId], name: "uq_cobranca_conta_asaas_payment")
   @@index([matriculaId], name: "idx_cobranca_matricula")
   @@index([status], name: "idx_cobranca_status")
   @@index([status, vencimento], name: "idx_cobranca_status_vencimento")
@@ -3373,10 +3394,10 @@ model Pagamento {
   conta    Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
   cobranca Cobranca @relation(fields: [cobrancaId], references: [id], onDelete: Restrict)
 
+  @@unique([contaId, asaasPaymentId], name: "uq_pagamento_conta_asaas_payment")
   @@index([contaId], name: "idx_pagamento_conta")
   @@index([contaId, status, dataPagamento], name: "idx_pagamento_conta_status_data")
   @@index([contaId, cobrancaId], name: "idx_pagamento_conta_cobranca")
-  @@unique([contaId, asaasPaymentId], name: "uq_pagamento_conta_asaas_payment")
   @@index([contaId, createdAt], name: "idx_pagamento_conta_created")
   @@index([cobrancaId], name: "idx_pagamento_cobranca")
   @@index([status, dataPagamento], name: "idx_pagamento_status_data_pagamento")
@@ -3645,22 +3666,22 @@ model WebhookJobLock {
 }
 
 model FinanceWebhookSideEffectOutbox {
-  id            String                         @id @default(cuid())
-  contaId       String
-  effectType    String
-  dedupeKey     String
-  payload       Json
-  status        FinanceWebhookSideEffectStatus @default(PENDING)
-  attempts      Int                            @default(0)
-  availableAt   DateTime                       @default(now())
-  lockedAt      DateTime?
+  id             String                         @id @default(cuid())
+  contaId        String
+  effectType     String
+  dedupeKey      String
+  payload        Json
+  status         FinanceWebhookSideEffectStatus @default(PENDING)
+  attempts       Int                            @default(0)
+  availableAt    DateTime                       @default(now())
+  lockedAt       DateTime?
   leaseExpiresAt DateTime?
-  lockToken     String?
-  processedAt   DateTime?
-  lastAttemptAt DateTime?
-  lastError     String?
-  createdAt     DateTime                       @default(now())
-  updatedAt     DateTime                       @updatedAt
+  lockToken      String?
+  processedAt    DateTime?
+  lastAttemptAt  DateTime?
+  lastError      String?
+  createdAt      DateTime                       @default(now())
+  updatedAt      DateTime                       @updatedAt
 
   conta Conta @relation(fields: [contaId], references: [id], onDelete: Cascade)
 
@@ -4029,12 +4050,12 @@ model Lancamento {
   estornos     Lancamento[]         @relation("LancamentoEstorno")
   createdBy    Usuario?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
+  @@unique([contaId, idempotencyKey], name: "uq_lancamento_conta_idempotency")
   @@index([contaId, tipo, status], name: "idx_lancamento_conta_tipo_status")
   @@index([contaId, dataEfetiva], name: "idx_lancamento_conta_data")
   @@index([contaId, status, dataPrevista], name: "idx_lancamento_conta_status_prevista")
   @@index([contaId, createdAt], name: "idx_lancamento_conta_created")
   @@index([externalRef], name: "idx_lancamento_external_ref")
-  @@unique([contaId, idempotencyKey], name: "uq_lancamento_conta_idempotency")
 }
 
 model CentroCusto {
@@ -4196,7 +4217,7 @@ model SchoolEvent {
   conta            Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   responsibleUser  Usuario?                 @relation("SchoolEventResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: SetNull)
   createdBy        Usuario?                 @relation("SchoolEventCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
-  contratoModelo    ContratoModelo?          @relation(fields: [contratoModeloId], references: [id], onDelete: SetNull)
+  contratoModelo   ContratoModelo?          @relation(fields: [contratoModeloId], references: [id], onDelete: SetNull)
   maps             EventMap[]
   mapPublicSeats   EventMapPublicSeat[]
   mapReservations  EventMapReservation[]
@@ -4823,11 +4844,11 @@ model EventParticipant {
   createdAt               DateTime             @default(now())
   updatedAt               DateTime             @updatedAt
 
-  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  event       SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  aluno       Aluno?       @relation(fields: [alunoId], references: [id], onDelete: SetNull)
-  turma       Turma?       @relation(fields: [turmaId], references: [id], onDelete: SetNull)
-  responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
+  conta       Conta            @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event       SchoolEvent      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  aluno       Aluno?           @relation(fields: [alunoId], references: [id], onDelete: SetNull)
+  turma       Turma?           @relation(fields: [turmaId], references: [id], onDelete: SetNull)
+  responsavel Responsavel?     @relation(fields: [responsavelId], references: [id], onDelete: SetNull)
   contratos   EventoContrato[]
 
   @@index([contaId], name: "idx_event_participant_conta")
@@ -4899,11 +4920,11 @@ model ContratoModelo {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  conta     Conta      @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  contratos Contrato[]
+  conta           Conta                 @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  contratos       Contrato[]
   contratosEvento EventoContrato[]
-  schoolEvents SchoolEvent[]
-  campos    ContratoModeloCampo[]
+  schoolEvents    SchoolEvent[]
+  campos          ContratoModeloCampo[]
 
   @@unique([contaId, nome, versao], name: "uq_contrato_modelo_conta_nome_versao")
   @@index([contaId], name: "idx_contrato_modelo_conta")
@@ -4921,7 +4942,7 @@ enum ContratoModeloCampoPapel {
 }
 
 model ContratoModeloCampo {
-  id          String                       @id @default(cuid())
+  id          String                   @id @default(cuid())
   contaId     String
   modeloId    String
   tipo        ContratoModeloCampoTipo
@@ -4931,10 +4952,10 @@ model ContratoModeloCampo {
   y           Float
   largura     Float
   altura      Float
-  obrigatorio Boolean                      @default(true)
-  ordem       Int                          @default(0)
-  createdAt   DateTime                     @default(now())
-  updatedAt   DateTime                     @updatedAt
+  obrigatorio Boolean                  @default(true)
+  ordem       Int                      @default(0)
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
 
   conta  Conta          @relation(fields: [contaId], references: [id], onDelete: Cascade)
   modelo ContratoModelo @relation(fields: [modeloId], references: [id], onDelete: Cascade)
@@ -4969,10 +4990,10 @@ model Contrato {
   contratoOrigemId String?
 
   // PDF apresentado ao assinante. Mantido por compatibilidade com o fluxo legado.
-  arquivoPdfUrl         String
-  hashPdf               String
-  arquivoPdfAssinadoUrl String?
-  hashPdfAssinado       String?
+  arquivoPdfUrl            String
+  hashPdf                  String
+  arquivoPdfAssinadoUrl    String?
+  hashPdfAssinado          String?
   // Snapshot imutável dos campos usados neste contrato no momento da geração.
   camposAssinaturaSnapshot Json?
 
@@ -5027,7 +5048,7 @@ model Contrato {
 // Contratos operacionais gerados para a participação de um aluno em um evento.
 // Mantido separado de Contrato para não alterar o ciclo de vida acadêmico da matrícula.
 model EventoContrato {
-  id                       String             @id @default(cuid())
+  id                       String           @id @default(cuid())
   contaId                  String
   eventId                  String
   participantId            String
@@ -5039,7 +5060,7 @@ model EventoContrato {
   arquivoPdfAssinadoUrl    String?
   hashPdfAssinado          String?
   camposAssinaturaSnapshot Json?
-  status                   StatusAssinatura  @default(PENDENTE)
+  status                   StatusAssinatura @default(PENDENTE)
   assinadoPor              String?
   assinadoEmail            String?
   assinadoCpf              String?
@@ -5047,20 +5068,20 @@ model EventoContrato {
   assinadoEm               DateTime?
   assinadoUserAgent        String?
   hashAssinatura           String?
-  tokenPublico             String             @unique @default(cuid())
+  tokenPublico             String           @unique @default(cuid())
   tokenPublicoHash         String?
   tokenExpiraEm            DateTime?
   createdByUserId          String?
-  createdAt                DateTime           @default(now())
-  updatedAt                DateTime           @updatedAt
+  createdAt                DateTime         @default(now())
+  updatedAt                DateTime         @updatedAt
 
-  conta       Conta        @relation(fields: [contaId], references: [id], onDelete: Restrict)
-  evento      SchoolEvent  @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  participant EventParticipant @relation(fields: [participantId], references: [id], onDelete: Restrict)
-  aluno       Aluno        @relation(fields: [alunoId], references: [id], onDelete: Restrict)
-  responsavel Responsavel? @relation(fields: [responsavelId], references: [id], onDelete: Restrict)
-  modelo      ContratoModelo @relation(fields: [modeloId], references: [id], onDelete: Restrict)
-  createdBy   Usuario?     @relation("EventoContratoCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  conta       Conta                     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  evento      SchoolEvent               @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  participant EventParticipant          @relation(fields: [participantId], references: [id], onDelete: Restrict)
+  aluno       Aluno                     @relation(fields: [alunoId], references: [id], onDelete: Restrict)
+  responsavel Responsavel?              @relation(fields: [responsavelId], references: [id], onDelete: Restrict)
+  modelo      ContratoModelo            @relation(fields: [modeloId], references: [id], onDelete: Restrict)
+  createdBy   Usuario?                  @relation("EventoContratoCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   documentos  EventoContratoDocumento[]
   evidencias  EventoContratoEvidence[]
 
@@ -5073,15 +5094,15 @@ model EventoContrato {
 }
 
 model EventoContratoDocumento {
-  id              String                @id @default(cuid())
-  contaId         String
+  id               String                @id @default(cuid())
+  contaId          String
   eventoContratoId String
-  tipo            ContratoDocumentoTipo
-  arquivoUrl      String
-  hashSha256      String
-  tamanhoBytes    Int?
-  mimeType        String                @default("application/pdf")
-  createdAt       DateTime              @default(now())
+  tipo             ContratoDocumentoTipo
+  arquivoUrl       String
+  hashSha256       String
+  tamanhoBytes     Int?
+  mimeType         String                @default("application/pdf")
+  createdAt        DateTime              @default(now())
 
   conta          Conta          @relation(fields: [contaId], references: [id], onDelete: Restrict)
   eventoContrato EventoContrato @relation(fields: [eventoContratoId], references: [id], onDelete: Cascade)
@@ -5091,17 +5112,17 @@ model EventoContratoDocumento {
 }
 
 model EventoContratoEvidence {
-  id              String             @id @default(cuid())
-  contaId         String
+  id               String               @id @default(cuid())
+  contaId          String
   eventoContratoId String
-  type            ContractEvidenceType
-  actorType       String?
-  actorId         String?
-  ip              String?
-  userAgent       String?
-  payload         Json
-  payloadHash     String
-  createdAt       DateTime           @default(now())
+  type             ContractEvidenceType
+  actorType        String?
+  actorId          String?
+  ip               String?
+  userAgent        String?
+  payload          Json
+  payloadHash      String
+  createdAt        DateTime             @default(now())
 
   conta          Conta          @relation(fields: [contaId], references: [id], onDelete: Restrict)
   eventoContrato EventoContrato @relation(fields: [eventoContratoId], references: [id], onDelete: Cascade)
@@ -5412,28 +5433,28 @@ model AsaasAccount {
   provisionedAt DateTime?
 
   // Observabilidade: tentativas de provisionamento
-  provisionAttempts       Int       @default(0)
-  provisionLastAttemptAt  DateTime?
-  provisionLastError      String?
-  provisionLastHttpStatus Int?
+  provisionAttempts             Int       @default(0)
+  provisionLastAttemptAt        DateTime?
+  provisionLastError            String?
+  provisionLastHttpStatus       Int?
   // Avaliação regulatória do provedor; não é inferida como aprovada localmente.
   regulatoryEvaluationStartedAt DateTime?
-  regulatoryBlockedAt            DateTime?
-  regulatoryBlockCode            String?
-  regulatoryBlockReason          String?
+  regulatoryBlockedAt           DateTime?
+  regulatoryBlockCode           String?
+  regulatoryBlockReason         String?
 
   // Status da confirmação anual de dados comerciais (webhooks COMMERCIAL_INFO_*).
   commercialInfoStatus        AsaasCommercialInfoStatus?
   commercialInfoScheduledDate String?
 
   // API key da subconta (criptografada). Usada para autenticação com /myAccount.
-  apiKeyEncrypted String?
-  apiKeyStatus    AsaasApiKeyStatus @default(MISSING)
+  apiKeyEncrypted             String?
+  apiKeyStatus                AsaasApiKeyStatus @default(MISSING)
   // Metadados não secretos da chave emitida pelo Asaas.
-  apiKeyId                         String?
-  apiKeyCreatedAt                  DateTime?
-  apiKeyExpiresAt                  DateTime?
-  apiKeyProjectedExpirationAt      DateTime?
+  apiKeyId                    String?
+  apiKeyCreatedAt             DateTime?
+  apiKeyExpiresAt             DateTime?
+  apiKeyProjectedExpirationAt DateTime?
 
   // Estado operacional local. CREATED significa apenas "subconta remota existe";
   // operationalStatus=OPERATIONAL é o que libera mutações financeiras externas.
@@ -5687,15 +5708,15 @@ model Charge {
 
   // Fase 4: dimensões separadas da máquina de estados financeira.
   providerStatus       String?
-  processingStatus     String   @default("PENDING")
-  reconciliationStatus String   @default("UNKNOWN")
+  processingStatus     String    @default("PENDING")
+  reconciliationStatus String    @default("UNKNOWN")
   providerUpdatedAt    DateTime?
   lastWebhookAt        DateTime?
   lastProviderCheckAt  DateTime?
   lastReconciledAt     DateTime?
   lastAppliedEventId   String?
   localStateUpdatedAt  DateTime?
-  version              Int      @default(0)
+  version              Int       @default(0)
 
   // Campos para listagem de standalone charges (sem vínculo com Cobranca)
   // Preenchidos na criação para evitar consultas externas
@@ -5729,6 +5750,7 @@ model Charge {
   sale                       Sale?
 
   @@unique([contaId, id], name: "uq_charge_conta_id")
+  @@unique([contaId, asaasPaymentId], name: "uq_charge_conta_asaas_payment")
   @@index([contaId])
   @@index([status])
   @@index([contaId, status, dueDate], name: "idx_charge_conta_status_due")
@@ -5737,7 +5759,6 @@ model Charge {
   @@index([contaId, status, createdAt], name: "idx_charge_conta_status_created")
   @@index([contaId, asaasStatus], name: "idx_charge_conta_asaas_status")
   @@index([contaId, liquidacaoStatus], name: "idx_charge_conta_liquidacao")
-  @@unique([contaId, asaasPaymentId], name: "uq_charge_conta_asaas_payment")
   @@index([asaasPaymentId])
   @@index([customerId])
   @@index([standaloneInstallmentPlanId])
@@ -5748,7 +5769,7 @@ model Charge {
 /// Histórico append-only das decisões da máquina de estados financeira.
 /// A chave composta torna replay e reprocessamento idempotentes por tenant.
 model FinancePaymentStateTransition {
-  id                   String   @id @default(cuid())
+  id                   String    @id @default(cuid())
   contaId              String
   entityType           String
   entityId             String
@@ -5763,11 +5784,11 @@ model FinancePaymentStateTransition {
   decision             String
   reason               String
   providerOccurredAt   DateTime?
-  receivedAt           DateTime @default(now())
+  receivedAt           DateTime  @default(now())
   localVersion         Int?
   correlationId        String?
   metadata             Json?
-  createdAt            DateTime @default(now())
+  createdAt            DateTime  @default(now())
 
   conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
 
@@ -6761,8 +6782,8 @@ model Notification {
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 
-  conta      Conta                   @relation(fields: [contaId], references: [id], onDelete: Cascade)
-  recipients NotificationRecipient[]
+  conta        Conta                     @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  recipients   NotificationRecipient[]
   digestEvents NotificationDigestEvent[]
 
   @@unique([contaId, dedupeKey])
@@ -6799,11 +6820,11 @@ model NotificationRecipient {
 }
 
 model NotificationDigestEvent {
-  id             String       @id @default(cuid())
+  id             String   @id @default(cuid())
   notificationId String
   contaId        String
   eventKey       String
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime @default(now())
 
   notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
   conta        Conta        @relation(fields: [contaId], references: [id], onDelete: Cascade)

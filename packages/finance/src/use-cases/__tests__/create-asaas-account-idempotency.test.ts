@@ -1,12 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const mockEnsureWebhook = vi.hoisted(() => vi.fn(async () => ({
-  webhookId: 'wh_1',
-  action: 'updated' as const,
-  authTokenHash: 'hash123',
-  eventsCount: 111,
-  duplicateWebhookIdsRemoved: [],
-})));
+const mockEnsureWebhook = vi.hoisted(() =>
+  vi.fn(async () => ({
+    webhookId: 'wh_1',
+    action: 'updated' as const,
+    authTokenHash: 'hash123',
+    eventsCount: 111,
+    duplicateWebhookIdsRemoved: [],
+  })),
+);
 
 vi.mock('../../webhooks/ensure-asaas-webhook-configuration', () => ({
   ensureAsaasWebhookConfiguration: mockEnsureWebhook,
@@ -27,6 +29,7 @@ vi.mock('@alusa/asaas', async () => {
       id: 'token_1',
       apiKey: '$aact_sub_123',
     })),
+    deleteSubaccountAccessToken: vi.fn(),
     listSubaccounts: vi.fn(async () => ({
       data: [],
       hasMore: false,
@@ -155,6 +158,7 @@ vi.mock('../../foundation/credential-vault', async () => {
     credentialVault: {
       encrypt: vi.fn((v: string) => `encrypted:${v}`),
       decrypt: vi.fn((v: string) => v.replace('encrypted:', '')),
+      verifyRoundTrip: vi.fn(),
     },
   };
 });
@@ -228,11 +232,13 @@ describe('createAsaasAccount - idempotência', () => {
 
     // Não deve chamar createSubaccount
     expect(vi.mocked(createSubaccount)).not.toHaveBeenCalled();
-    expect(mockEnsureWebhook).toHaveBeenCalledWith(expect.objectContaining({
-      contaId: 'c1',
-      financeProfileId: 'fp1',
-      apiKey: '$aact_sub_existing',
-    }));
+    expect(mockEnsureWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contaId: 'c1',
+        financeProfileId: 'fp1',
+        apiKey: '$aact_sub_existing',
+      }),
+    );
   });
 
   it('deve criar conta quando não existe', async () => {
@@ -334,7 +340,7 @@ describe('createAsaasAccount - idempotência', () => {
     ]);
 
     // Pelo menos uma deve ser idempotente
-    const idempotentResults = [result1, result2].filter(r => r.idempotent);
+    const idempotentResults = [result1, result2].filter((r) => r.idempotent);
     expect(idempotentResults.length).toBeGreaterThanOrEqual(1);
 
     // createSubaccount deve ser chamado no máximo 1 vez

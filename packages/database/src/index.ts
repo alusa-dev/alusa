@@ -2,7 +2,22 @@
 export { prisma } from './client';
 
 // Repositories
-export { loadAsaasCredentials, isAsaasEnabled } from './repositories/conta.repository';
+export {
+  inspectAsaasCredentials,
+  loadAsaasCredentials,
+  isAsaasEnabled,
+} from './repositories/conta.repository';
+export type {
+  AsaasCredentialHealth,
+  AsaasCredentialInspection,
+  AsaasCredentialSource,
+} from './repositories/conta.repository';
 
 // Security
-export { encryptSecret, decryptSecret } from './security/encryption';
+export {
+  decryptSecret,
+  decryptSecretWithMetadata,
+  encryptSecret,
+  validateEncryptionConfiguration,
+} from './security/encryption';
+export type { DecryptedSecret } from './security/encryption';

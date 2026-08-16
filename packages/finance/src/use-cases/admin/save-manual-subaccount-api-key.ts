@@ -8,7 +8,10 @@ import {
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { credentialVault } from '../../foundation/credential-vault';
-import { ensureWebhookReady, syncAsaasOperationalStatus } from '../../foundation/asaas-operational-guard';
+import {
+  ensureWebhookReady,
+  syncAsaasOperationalStatus,
+} from '../../foundation/asaas-operational-guard';
 import { reconcileAsaasAccount } from '../asaas-account/reconcile-asaas-account';
 
 export type SaveManualSubaccountApiKeyWarningCode =
@@ -179,7 +182,17 @@ export async function saveManualSubaccountApiKey(input: {
     };
   }
 
-  const encryptedApiKey = credentialVault.encrypt(apiKey);
+  let encryptedApiKey: string;
+  try {
+    encryptedApiKey = credentialVault.encrypt(apiKey);
+    credentialVault.verifyRoundTrip(encryptedApiKey, apiKey);
+  } catch {
+    return {
+      ok: false,
+      summary: 'A chave foi validada, mas não pôde ser armazenada com segurança neste ambiente.',
+      errorCode: 'SAVE_FAILED',
+    };
+  }
 
   try {
     await prisma.$transaction(async (tx) => {

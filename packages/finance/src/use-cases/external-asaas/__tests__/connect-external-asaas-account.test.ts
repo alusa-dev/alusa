@@ -56,7 +56,10 @@ vi.mock('../../../foundation/audit-log.service', () => ({
 }));
 
 vi.mock('../../../foundation/credential-vault', () => ({
-  credentialVault: { encrypt: mocks.encrypt },
+  credentialVault: {
+    encrypt: mocks.encrypt,
+    verifyRoundTrip: vi.fn(),
+  },
 }));
 
 vi.mock('../../../webhooks/ensure-asaas-webhook-configuration', () => ({

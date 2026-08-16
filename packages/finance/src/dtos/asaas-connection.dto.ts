@@ -2,6 +2,7 @@ export type AsaasConnectionStatus = 'CONNECTED' | 'NOT_CONNECTED' | 'MISCONFIGUR
 
 export type AsaasConnectionReasonCode =
   | 'MISSING_CREDENTIALS'
+  | 'CREDENTIAL_DECRYPTION_FAILED'
   | 'INVALID_BASE_URL'
   | 'MISSING_API_KEY'
   | 'MISSING_ACCOUNT_ID';

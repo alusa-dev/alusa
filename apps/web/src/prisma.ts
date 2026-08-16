@@ -8,6 +8,18 @@ function createPrismaClient() {
   });
 }
 
+function hasEventContractRelation(client: PrismaClient): boolean {
+  const runtimeDataModel = (client as PrismaClient & {
+    _runtimeDataModel?: {
+      models?: Record<string, { fields?: Array<{ name: string }> }>;
+    };
+  })._runtimeDataModel;
+
+  return runtimeDataModel?.models?.Aluno?.fields?.some(
+    (field) => field.name === 'contratosEvento',
+  ) === true;
+}
+
 function hasRequiredDelegates(client: PrismaClient | undefined): client is PrismaClient {
   if (!client) return false;
   return (
@@ -24,7 +36,8 @@ function hasRequiredDelegates(client: PrismaClient | undefined): client is Prism
     typeof (client as PrismaClient & Record<string, unknown>).contratoModeloCampo === 'object' &&
     // O client antigo, mantido pelo hot-reload, não conhece os contratos de eventos.
     // Recriá-lo aqui evita que o Next/Turbopack use um DMMF anterior ao schema atual.
-    typeof (client as PrismaClient & Record<string, unknown>).eventoContrato === 'object'
+    typeof (client as PrismaClient & Record<string, unknown>).eventoContrato === 'object' &&
+    hasEventContractRelation(client)
   );
 }
 

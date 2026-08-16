@@ -178,7 +178,14 @@ export async function guardFinancialAccountOr412(
 
   const payload: FinancialAccountGatePayload =
     summary.asaasConnection.status === 'NOT_CONNECTED'
-      ? { code: 'FINANCIAL_ACCOUNT_NOT_READY', financialAccount: { status: 'PENDING_ACTIVATION' } }
+      ? {
+          code: 'FINANCIAL_ACCOUNT_NOT_READY',
+          financialAccount: { status: 'PENDING_ACTIVATION' },
+          reasons:
+            summary.asaasConnection.reasonCode === 'CREDENTIAL_DECRYPTION_FAILED'
+              ? ['A credencial Asaas armazenada não pôde ser validada. Reconecte a conta financeira.']
+              : ['A conta financeira ainda não possui uma credencial Asaas válida.'],
+        }
       : { code: 'FINANCIAL_ACCOUNT_UNAVAILABLE', financialAccount: { status: 'UNAVAILABLE' } };
 
   return { ok: false, response: json(412, payload) };

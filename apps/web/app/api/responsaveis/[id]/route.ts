@@ -320,6 +320,7 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       familiasIds,
       rematriculasIds,
       alunosVinculados,
+      alunosAtivos,
       matriculasFinanceirasAtivas,
       matriculaFamiliarPendente,
       rematriculaFamiliarPendente,
@@ -341,7 +342,12 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
         where: { contaId, responsavelId },
         select: { id: true },
       }),
-      prisma.alunoResponsavel.count({ where: { responsavelId } }),
+      prisma.alunoResponsavel.count({
+        where: { responsavelId, aluno: { contaId } },
+      }),
+      prisma.alunoResponsavel.count({
+        where: { responsavelId, aluno: { contaId, status: 'ATIVO' } },
+      }),
       prisma.matricula.count({
         where: {
           responsavelFinanceiroId: responsavelId,
@@ -398,8 +404,10 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
           });
 
     const conflitos: string[] = [];
-    if (alunosVinculados > 0) {
-      conflitos.push('existem alunos vinculados a este responsável');
+    if (alunosAtivos > 0) {
+      conflitos.push('existem alunos ativos vinculados a este responsável');
+    } else if (alunosVinculados > 0) {
+      conflitos.push('existem vínculos históricos com alunos inativos');
     }
     if (cobrancasPendentes > 0) {
       conflitos.push('existem cobranças em aberto ou pendentes vinculadas a este responsável');
@@ -433,6 +441,15 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
 
     return NextResponse.json({ ok: true });
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2003') {
+      return NextResponse.json(
+        {
+          error: 'Não é possível excluir: existem vínculos dependentes deste responsável.',
+          code: 'EXCLUSAO_RESPONSAVEL_CONFLITO',
+        },
+        { status: 409 },
+      );
+    }
     console.error('[DELETE /api/responsaveis/[id]]', error);
     return NextResponse.json({ error: 'Erro ao excluir responsável' }, { status: 500 });
   }

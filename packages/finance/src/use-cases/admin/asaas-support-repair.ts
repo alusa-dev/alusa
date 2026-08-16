@@ -1,5 +1,5 @@
 import { getSubaccount } from '@alusa/asaas';
-import { prisma } from '@alusa/database';
+import { inspectAsaasCredentials, prisma } from '@alusa/database';
 import { normalizeCpfCnpjDigits } from '@alusa/lib';
 import { FinanceIntegrationMode, type AuditActorType } from '@prisma/client';
 
@@ -50,6 +50,7 @@ export type AsaasSupportRepairPhase =
   | 'NEED_MANUAL_SUBACCOUNT_LINK'
   | 'READY_TO_ENQUEUE_PROVISION'
   | 'API_KEY_OR_SUBACCOUNT_RECOVERY'
+  | 'CREDENTIAL_DECRYPTION_FAILED'
   | 'WEBHOOK_DRIFT'
   | 'CONNECTED_HEALTHY';
 
@@ -75,6 +76,9 @@ export type AsaasSupportDiagnosis = {
   provisionJob: { status: string; type: string } | null;
   webhookJob: { status: string; type: string } | null;
   needsApiKeyRecovery: boolean;
+  credentialHealth: 'CONNECTED' | 'MISSING' | 'DISCONNECTED' | 'DECRYPTION_FAILED';
+  credentialSource: string;
+  credentialFallbackUsed: boolean;
   integrationOperational: boolean;
   webhookDrift: boolean | null;
   recoveryStuckWithoutSubaccountId: boolean;
@@ -141,6 +145,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       provisionJob: null,
       webhookJob: null,
       needsApiKeyRecovery: false,
+      credentialHealth: 'MISSING',
+      credentialSource: 'none',
+      credentialFallbackUsed: false,
       integrationOperational: false,
       webhookDrift: null,
       recoveryStuckWithoutSubaccountId: false,
@@ -164,6 +171,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
       provisionJob: null,
       webhookJob: null,
       needsApiKeyRecovery: false,
+      credentialHealth: 'MISSING',
+      credentialSource: 'none',
+      credentialFallbackUsed: false,
       integrationOperational: false,
       webhookDrift: null,
       recoveryStuckWithoutSubaccountId: false,
@@ -199,15 +209,14 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     }),
   ]);
 
-  const integrationOperational = Boolean(
-    asaasRow?.apiKeyEncrypted && asaasRow.apiKeyStatus === 'CONNECTED',
-  );
+  const credentialInspection = await inspectAsaasCredentials(contaId);
+  const integrationOperational = credentialInspection.health === 'CONNECTED';
 
   const needsApiKeyRecovery = asaasRow
     ? needsSubaccountKeyRecovery({
         apiKeyEncrypted: asaasRow.apiKeyEncrypted,
         apiKeyStatus: asaasRow.apiKeyStatus,
-      })
+      }) || credentialInspection.health !== 'CONNECTED'
     : true;
 
   const recoveryStuckWithoutSubaccountId =
@@ -253,6 +262,11 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     recommendedAction = 'LINK_SUBACCOUNT';
     hint =
       'O provisionamento exige intervenção manual: vincule o ID da subconta criada no Asaas (com conferência de CPF/CNPJ).';
+  } else if (credentialInspection.health === 'DECRYPTION_FAILED') {
+    phase = 'CREDENTIAL_DECRYPTION_FAILED';
+    recommendedAction = 'SAVE_MANUAL_API_KEY';
+    hint =
+      'A credencial está registrada como conectada, mas não pode ser descriptografada. Verifique a ENCRYPTION_KEY do ambiente ou gere uma nova API Key da subconta e salve-a novamente.';
   } else if (
     effectiveAsaasAccountId &&
     (needsApiKeyRecovery ||
@@ -288,6 +302,9 @@ export async function diagnoseAsaasSupportRepair(contaId: string): Promise<Asaas
     provisionJob,
     webhookJob,
     needsApiKeyRecovery,
+    credentialHealth: credentialInspection.health,
+    credentialSource: credentialInspection.source,
+    credentialFallbackUsed: credentialInspection.fallbackUsed,
     integrationOperational,
     webhookDrift,
     recoveryStuckWithoutSubaccountId,

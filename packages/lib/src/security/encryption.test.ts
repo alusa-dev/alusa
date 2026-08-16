@@ -17,7 +17,7 @@ describe('security/encryption', () => {
     const secret = 'asaas_test_token_123';
     const encrypted = encryptSecret(secret);
 
-    expect(encrypted.startsWith('v2:')).toBe(true);
+    expect(encrypted.startsWith('v3:1:')).toBe(true);
     expect(decryptSecret(encrypted)).toBe(secret);
   });
 

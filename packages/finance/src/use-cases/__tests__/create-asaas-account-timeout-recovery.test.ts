@@ -7,6 +7,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const {
   mockCreateSubaccount,
   mockCreateSubaccountAccessToken,
+  mockDeleteSubaccountAccessToken,
+  mockVerifyCredentialRoundTrip,
   mockListSubaccounts,
   mockListSubaccountAccessTokens,
   mockAsaasAccountUpdate,
@@ -15,6 +17,8 @@ const {
 } = vi.hoisted(() => ({
   mockCreateSubaccount: vi.fn(),
   mockCreateSubaccountAccessToken: vi.fn(),
+  mockDeleteSubaccountAccessToken: vi.fn(),
+  mockVerifyCredentialRoundTrip: vi.fn(),
   mockListSubaccounts: vi.fn(),
   mockListSubaccountAccessTokens: vi.fn(),
   mockAsaasAccountUpdate: vi.fn(async () => ({ id: 'aa1' })),
@@ -30,6 +34,7 @@ vi.mock('@alusa/asaas', async () => {
   return {
     createSubaccount: mockCreateSubaccount,
     createSubaccountAccessToken: mockCreateSubaccountAccessToken,
+    deleteSubaccountAccessToken: mockDeleteSubaccountAccessToken,
     listSubaccounts: mockListSubaccounts,
     listSubaccountAccessTokens: mockListSubaccountAccessTokens,
     updateSubaccount: vi.fn(),
@@ -110,6 +115,7 @@ vi.mock('../../foundation/credential-vault', async () => {
     credentialVault: {
       encrypt: vi.fn((v: string) => `encrypted:${v}`),
       decrypt: vi.fn((v: string) => v.replace('encrypted:', '')),
+      verifyRoundTrip: mockVerifyCredentialRoundTrip,
     },
   };
 });
@@ -149,6 +155,7 @@ describe('createAsaasAccount - timeout e recovery', () => {
     mockAsaasAccountFindUnique.mockResolvedValue(null);
     mockListSubaccounts.mockResolvedValue({ data: [] });
     mockListSubaccountAccessTokens.mockResolvedValue({ data: [] });
+    mockVerifyCredentialRoundTrip.mockImplementation(() => undefined);
   });
 
   it('deve reaproveitar subconta remota já existente antes de tentar novo POST', async () => {
@@ -212,19 +219,17 @@ describe('createAsaasAccount - timeout e recovery', () => {
     mockCreateSubaccount.mockRejectedValueOnce(timeoutError);
 
     // Recovery encontra subconta criada
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            id: 'acc_recovered',
-            email: 'owner@test.com',
-            loginEmail: 'owner@test.com',
-            cpfCnpj: '12345678909',
-            name: 'Conta Recuperada',
-          },
-        ],
-      });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'acc_recovered',
+          email: 'owner@test.com',
+          loginEmail: 'owner@test.com',
+          cpfCnpj: '12345678909',
+          name: 'Conta Recuperada',
+        },
+      ],
+    });
 
     // Access token para obter apiKey
     mockCreateSubaccountAccessToken.mockResolvedValueOnce({
@@ -247,9 +252,7 @@ describe('createAsaasAccount - timeout e recovery', () => {
     mockCreateSubaccount.mockRejectedValueOnce(timeoutError);
 
     // Recovery não encontra subconta
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] });
 
     await expect(createAsaasAccount({ contaId: 'c1' })).rejects.toThrow('connection reset');
     expect(mockListSubaccounts).toHaveBeenCalledTimes(2);
@@ -270,9 +273,7 @@ describe('createAsaasAccount - timeout e recovery', () => {
     mockCreateSubaccount.mockRejectedValueOnce(serverError);
 
     // Recovery não encontra
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] });
 
     await expect(createAsaasAccount({ contaId: 'c1' })).rejects.toThrow('Internal server error');
     expect(mockListSubaccounts).toHaveBeenCalledTimes(2);
@@ -283,19 +284,17 @@ describe('createAsaasAccount - timeout e recovery', () => {
     (conflictError as unknown as { status: number }).status = 409;
     mockCreateSubaccount.mockRejectedValueOnce(conflictError);
 
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({
-        data: [
-          {
-            id: 'acc_conflict',
-            email: 'owner@test.com',
-            loginEmail: 'owner@test.com',
-            cpfCnpj: '12345678909',
-            name: 'Conta Conflito',
-          },
-        ],
-      });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'acc_conflict',
+          email: 'owner@test.com',
+          loginEmail: 'owner@test.com',
+          cpfCnpj: '12345678909',
+          name: 'Conta Conflito',
+        },
+      ],
+    });
     mockCreateSubaccountAccessToken.mockResolvedValueOnce({
       id: 'token_conflict',
       apiKey: '$aact_conflict_key',
@@ -322,9 +321,7 @@ describe('createAsaasAccount - timeout e recovery', () => {
     const timeoutError = new Error('timeout');
     (timeoutError as unknown as { code: string }).code = 'ETIMEDOUT';
     mockCreateSubaccount.mockRejectedValueOnce(timeoutError);
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] });
 
     await expect(createAsaasAccount({ contaId: 'c1' })).rejects.toThrow();
 
@@ -363,6 +360,30 @@ describe('createAsaasAccount - timeout e recovery', () => {
     expect(result.asaasAccountId).toBe('acc_success');
     expect(result.created).toBe(true);
     expect(mockListSubaccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('deve revogar token recém-criado quando a chave não puder ser armazenada', async () => {
+    mockCreateSubaccount.mockResolvedValueOnce({
+      object: 'account',
+      id: 'acc_encryption_failure',
+      name: 'Conta Nova',
+      email: 'new@test.com',
+      cpfCnpj: '12345678909',
+      accessToken: { id: 'token_orphan', apiKey: '$aact_new_key' },
+      walletId: 'wallet-1',
+    });
+    mockVerifyCredentialRoundTrip.mockImplementationOnce(() => {
+      throw new Error('encryption failed');
+    });
+
+    const result = await createAsaasAccount({ contaId: 'c1' });
+
+    expect(result.requiresManualApiKeyRecovery).toBe(true);
+    expect(mockDeleteSubaccountAccessToken).toHaveBeenCalledWith({
+      apiKey: 'master_key',
+      accountId: 'acc_encryption_failure',
+      accessTokenId: 'token_orphan',
+    });
   });
 });
 
@@ -415,9 +436,7 @@ describe('createAsaasAccount - observabilidade', () => {
     const longError = new Error('A'.repeat(1000));
     (longError as unknown as { code: string }).code = 'ETIMEDOUT';
     mockCreateSubaccount.mockRejectedValueOnce(longError);
-    mockListSubaccounts
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValueOnce({ data: [] });
+    mockListSubaccounts.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [] });
 
     await expect(createAsaasAccount({ contaId: 'c1' })).rejects.toThrow();
 

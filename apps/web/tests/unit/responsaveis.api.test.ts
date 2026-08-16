@@ -171,4 +171,39 @@ describe('/api/responsaveis', () => {
       }),
     );
   });
+
+  it('reutiliza responsável existente sem criar duplicata', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({
+      user: { id: 'u1', contaId: 'conta-1' },
+    } as never);
+    prismaMock.responsavel.findFirst.mockResolvedValueOnce({
+      id: 'r-existing',
+      nome: 'Maria Existente',
+      cpf: '52998224725',
+      email: 'maria.existente@example.com',
+      telefone: '92999999999',
+      financeiro: true,
+      _count: { alunos: 2 },
+    });
+
+    const response = await POST(
+      new NextRequest('http://localhost/api/responsaveis', {
+        method: 'POST',
+        body: JSON.stringify({
+          nome: 'Maria Nova Formatação',
+          cpf: '529.982.247-25',
+          email: 'maria.existente@example.com',
+          telefone: '(92) 99999-9999',
+          financeiro: true,
+          endereco: validResponsavelEndereco,
+        }),
+      }),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.reused).toBe(true);
+    expect(json.id).toBe('r-existing');
+    expect(prismaMock.responsavel.create).not.toHaveBeenCalled();
+  });
 });

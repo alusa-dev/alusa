@@ -3,7 +3,7 @@ import {
   type AsaasMyAccountDocumentsResponse,
   type AsaasMyAccountStatus,
 } from '@alusa/asaas';
-import { prisma, loadAsaasCredentials } from '@alusa/database';
+import { inspectAsaasCredentials, loadAsaasCredentials, prisma } from '@alusa/database';
 
 import { getOnboardingStatus } from '../get-onboarding-status';
 import { financeProfileService } from '../../foundation/finance-profile.service';
@@ -78,9 +78,16 @@ async function getKycSummaryInternal(
 
   const creds = await loadAsaasCredentials(contaId);
   if (!creds) {
+    const credentialInspection = await inspectAsaasCredentials(contaId);
     return {
       onboarding,
-      asaasConnection: { status: 'NOT_CONNECTED', reasonCode: 'MISSING_CREDENTIALS' },
+      asaasConnection: {
+        status: 'NOT_CONNECTED',
+        reasonCode:
+          credentialInspection.health === 'DECRYPTION_FAILED'
+            ? 'CREDENTIAL_DECRYPTION_FAILED'
+            : 'MISSING_CREDENTIALS',
+      },
       myAccountStatus: null,
       documents: null,
       documentsRequired: false,

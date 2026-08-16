@@ -82,6 +82,14 @@ function normalizeEmail(value?: string | null): string | undefined {
   return trimmed ? trimmed.toLowerCase() : undefined;
 }
 
+function isMockPaymentsMode() {
+  return (
+    process.env.PAYMENTS_PROVIDER_MODE === 'mock' ||
+    process.env.PLAYWRIGHT_TEST === 'true' ||
+    process.env.NODE_ENV === 'test'
+  );
+}
+
 function maskCpfCnpj(value?: string | null): string {
   if (!value) return '***';
   const digitsOnly = digits(value) ?? '';
@@ -407,17 +415,6 @@ export async function ensureAsaasCustomerForPayer(
     strictCustomerUpdate?: boolean;
   },
 ): Promise<EnsureAsaasCustomerResult> {
-  let step: EnsureStep = 'GET_LOCAL_CUSTOMER';
-  const keyResult = await loadAndValidateSubaccountKey(input.contaId);
-  if (!keyResult.ok) {
-    return {
-      ok: false,
-      error: keyResult.code,
-      message: keyResult.message,
-    };
-  }
-  const apiKey = keyResult.apiKey;
-
   const cpfCnpj = digits(input.payer.cpfCnpj);
   const name = normalizeString(input.payer.name);
 
@@ -446,6 +443,33 @@ export async function ensureAsaasCustomerForPayer(
   }
 
   const externalReference = buildExternalReference(input.contaId, input.payer);
+
+  // O mock de pagamentos precisa ser resolvido antes da leitura das
+  // credenciais, pois o ambiente de teste não provisiona subconta real.
+  if (isMockPaymentsMode()) {
+    const customerId = `mock-customer-${input.payer.type.toLowerCase()}-${input.payer.id}`;
+    if (input.persist !== false) {
+      await persistCustomerId(input.payer, customerId, externalReference);
+    }
+    return {
+      ok: true,
+      customerId,
+      externalReference,
+      reused: false,
+    };
+  }
+
+  let step: EnsureStep = 'GET_LOCAL_CUSTOMER';
+  const keyResult = await loadAndValidateSubaccountKey(input.contaId);
+  if (!keyResult.ok) {
+    return {
+      ok: false,
+      error: keyResult.code,
+      message: keyResult.message,
+    };
+  }
+  const apiKey = keyResult.apiKey;
+
   const notificationSyncMode = input.notificationSyncMode ?? 'blocking';
 
   // Montar payload completo conforme doc Asaas (não usar placeholders)

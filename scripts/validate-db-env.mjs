@@ -69,9 +69,52 @@ function canConnect(host, port, timeoutMs = 1500) {
 
 const databaseUrl = parseConnectionString(process.env.DATABASE_URL);
 const directUrl = parseConnectionString(process.env.DIRECT_URL);
+const encryptionKey = String(process.env.ENCRYPTION_KEY ?? '').trim();
+const encryptionKeyVersion = String(process.env.ENCRYPTION_KEY_VERSION ?? '1').trim();
+const encryptionKeyRing = String(process.env.ENCRYPTION_KEYRING ?? '').trim();
 
 if (!databaseUrl) {
   fail(`DATABASE_URL ausente para o modo ${mode}.`);
+}
+
+if (!encryptionKey) {
+  fail('ENCRYPTION_KEY ausente. Configure uma chave AES-256 estável antes de iniciar a aplicação.');
+}
+
+const encryptionKeyBytes = /^[0-9a-f]{64}$/i.test(encryptionKey)
+  ? Buffer.from(encryptionKey, 'hex')
+  : Buffer.from(encryptionKey, 'base64');
+
+if (encryptionKeyBytes.length !== 32) {
+  fail('ENCRYPTION_KEY inválida. Use exatamente 32 bytes em base64 ou 64 caracteres hexadecimais.');
+}
+
+if (!/^[A-Za-z0-9._-]+$/.test(encryptionKeyVersion)) {
+  fail('ENCRYPTION_KEY_VERSION inválida. Use apenas letras, números, ponto, hífen ou sublinhado.');
+}
+
+if (encryptionKeyRing) {
+  let parsedRing;
+  try {
+    parsedRing = JSON.parse(encryptionKeyRing);
+  } catch {
+    fail('ENCRYPTION_KEYRING inválido. Use um objeto JSON no formato {"versao":"chave"}.');
+  }
+
+  if (!parsedRing || typeof parsedRing !== 'object' || Array.isArray(parsedRing)) {
+    fail('ENCRYPTION_KEYRING inválido. Use um objeto JSON no formato {"versao":"chave"}.');
+  }
+
+  for (const [version, rawKey] of Object.entries(parsedRing)) {
+    if (!/^[A-Za-z0-9._-]+$/.test(version) || typeof rawKey !== 'string') {
+      fail('ENCRYPTION_KEYRING contém versão ou chave inválida.');
+    }
+    const keyValue = String(rawKey).trim();
+    const bytes = /^[0-9a-f]{64}$/i.test(keyValue) ? Buffer.from(keyValue, 'hex') : Buffer.from(keyValue, 'base64');
+    if (bytes.length !== 32) {
+      fail(`ENCRYPTION_KEYRING contém chave inválida na versão ${version}.`);
+    }
+  }
 }
 
 if (isProductionLike(databaseUrl) || isProductionLike(directUrl)) {

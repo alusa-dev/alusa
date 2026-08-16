@@ -52,6 +52,19 @@ export class AsaasHttpError extends Error {
   }
 }
 
+/**
+ * API keys are sent in the `access_token` HTTP header. Fetch requires header
+ * values to be ByteStrings, so reject pasted Unicode/control characters
+ * before a request can reach the network layer.
+ */
+export function isValidAsaasApiKey(value: string): boolean {
+  const apiKey = value.trim();
+  return Boolean(apiKey) && [...apiKey].every((character) => {
+    const code = character.charCodeAt(0);
+    return code >= 0x20 && code !== 0x7f && code <= 0x7f;
+  });
+}
+
 // Base URL validada/normalizada via helper central.
 
 export class AsaasHttp {
@@ -62,13 +75,7 @@ export class AsaasHttp {
 
   constructor(config: AsaasHttpConfig) {
     const apiKey = config.apiKey.trim();
-    if (
-      !apiKey ||
-      [...apiKey].some((character) => {
-        const code = character.charCodeAt(0);
-        return code < 0x20 || code === 0x7f || code > 0x7f;
-      })
-    ) {
+    if (!isValidAsaasApiKey(apiKey)) {
       throw new AsaasApiKeyError(
         'API key do Asaas inválida. Cole somente a chave original, sem símbolos ou caracteres adicionais.',
       );

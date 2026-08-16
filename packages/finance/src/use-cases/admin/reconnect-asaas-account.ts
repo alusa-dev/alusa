@@ -8,7 +8,11 @@ import { validateSubaccountApiKey } from '../../foundation/asaas-api-key';
 
 export type ReconnectAsaasResult =
   | { success: true; summary: string; apiKeyStatus: AsaasApiKeyStatus }
-  | { success: false; summary: string; errorCode: 'INVALID_API_KEY' | 'NOT_LINKED' | 'ACCOUNT_MISMATCH' | 'UNEXPECTED_ERROR' };
+  | {
+      success: false;
+      summary: string;
+      errorCode: 'INVALID_API_KEY' | 'NOT_LINKED' | 'ACCOUNT_MISMATCH' | 'UNEXPECTED_ERROR';
+    };
 
 export async function reconnectAsaasAccount(input: {
   contaId: string;
@@ -26,12 +30,20 @@ export async function reconnectAsaasAccount(input: {
   });
 
   if (!profile?.asaasAccount?.id) {
-    return { success: false, summary: 'Subconta do Asaas não está vinculada.', errorCode: 'NOT_LINKED' };
+    return {
+      success: false,
+      summary: 'Subconta do Asaas não está vinculada.',
+      errorCode: 'NOT_LINKED',
+    };
   }
 
   const apiKeyStatus = await validateSubaccountApiKey(apiKey);
   if (apiKeyStatus !== 'CONNECTED') {
-    return { success: false, summary: 'API key inválida ou sem permissão.', errorCode: 'INVALID_API_KEY' };
+    return {
+      success: false,
+      summary: 'API key inválida ou sem permissão.',
+      errorCode: 'INVALID_API_KEY',
+    };
   }
 
   if (profile.asaasAccount.asaasAccountId) {
@@ -45,7 +57,17 @@ export async function reconnectAsaasAccount(input: {
     }
   }
 
-  const encryptedApiKey = credentialVault.encrypt(apiKey);
+  let encryptedApiKey: string;
+  try {
+    encryptedApiKey = credentialVault.encrypt(apiKey);
+    credentialVault.verifyRoundTrip(encryptedApiKey, apiKey);
+  } catch {
+    return {
+      success: false,
+      summary: 'A chave foi validada, mas não pôde ser armazenada com segurança neste ambiente.',
+      errorCode: 'UNEXPECTED_ERROR',
+    };
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.asaasAccount.update({
@@ -75,5 +97,9 @@ export async function reconnectAsaasAccount(input: {
     actor: input.actor.id ? { ...input.actor, id: input.actor.id } : { type: input.actor.type },
   });
 
-  return { success: true, summary: 'Conta Asaas reconectada com sucesso.', apiKeyStatus: 'CONNECTED' };
+  return {
+    success: true,
+    summary: 'Conta Asaas reconectada com sucesso.',
+    apiKeyStatus: 'CONNECTED',
+  };
 }

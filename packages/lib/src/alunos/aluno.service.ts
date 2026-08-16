@@ -191,6 +191,27 @@ type AlunoExtraFields = Partial<{
   foto: string;
 }>;
 
+type AlunoCadastroConflict = Error & {
+  code?: 'ALUNO_DUPLICADO' | 'ALUNO_IDENTIDADE_AMBIGUA' | 'RESPONSAVEL_DUPLICADO';
+};
+
+function cadastroConflict(
+  message: string,
+  code: NonNullable<AlunoCadastroConflict['code']>,
+): AlunoCadastroConflict {
+  const error = new Error(message) as AlunoCadastroConflict;
+  error.code = code;
+  return error;
+}
+
+function dataNascRange(dataNasc: Date) {
+  const start = new Date(dataNasc);
+  start.setUTCHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { gte: start, lt: end };
+}
+
 export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
   const idade = calcIdade(data.dataNasc);
   const isMenor = idade < 18;
@@ -231,6 +252,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     ...data,
     responsavelExistenteId: nullifyEmpty(data.responsavelExistenteId ?? undefined),
     cpf: digits(data.cpf),
+    email: data.email?.trim().toLowerCase() || undefined,
     telefone: digits(data.telefone),
     contatoEmergenciaTelefone: digits(data.contatoEmergenciaTelefone),
     endereco: enderecoObj
@@ -243,6 +265,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       ? {
         ...data.responsavel,
         cpf: digits(data.responsavel.cpf),
+        email: data.responsavel.email?.trim().toLowerCase(),
         telefone: digits(data.responsavel.telefone),
         endereco: responsavelEnderecoObj
           ? {
@@ -301,29 +324,17 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       throw new Error(`Conta com ID ${normalizedData.contaId} não encontrada`);
     }
 
-    // 2. Verificar duplicatas de CPF por conta se fornecido
-    if (normalizedData.cpf) {
-      const existingAluno = await tx.aluno.findUnique({
-        where: { contaId_cpf: { contaId: normalizedData.contaId, cpf: normalizedData.cpf } },
-      });
-      if (existingAluno) {
-        throw new Error(`Aluno com CPF ${normalizedData.cpf} já existe nesta conta`);
-      }
-    }
+    // Serializa cadastros equivalentes dentro da conta. As constraints de CPF/email
+    // continuam sendo a última linha de defesa para corridas entre requisições.
+    const identityLock = normalizedData.cpf || normalizedData.email
+      ? `${normalizedData.cpf ?? ''}:${normalizedData.email ?? ''}`
+      : `${normalizedData.nome.trim().toLocaleLowerCase('pt-BR')}:${normalizedData.dataNasc.toISOString().slice(0, 10)}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aluno-cadastro:${normalizedData.contaId}:${identityLock}`}, 0))`;
 
-    // 3. Verificar duplicatas de email por conta se fornecido
-    if (normalizedData.email) {
-      const existingEmail = await tx.aluno.findUnique({
-        where: { contaId_email: { contaId: normalizedData.contaId, email: normalizedData.email } },
-      });
-      if (existingEmail) {
-        throw new Error(`Email ${normalizedData.email} já está em uso nesta conta`);
-      }
-    }
-
-    // 4. Processar responsável se obrigatório
+    // 2. Processar/reutilizar responsável antes de resolver aluno sem CPF.
     let responsavelId: string | undefined;
     let createdResponsavelId: string | null = null;
+    let responsavelAnterior: Prisma.ResponsavelUpdateInput | null = null;
     if (responsavelObrigatorio && normalizedData.responsavelExistenteId) {
       const existingById = await tx.responsavel.findFirst({
         where: {
@@ -361,17 +372,48 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       }
 
       responsavelId = existingById.id;
-    } else if (responsavelObrigatorio && normalizedData.responsavel && normalizedData.responsavel.cpf) {
-      const existing = await tx.responsavel.findFirst({
-        where: { contaId: normalizedData.contaId, cpf: normalizedData.responsavel.cpf },
-      });
+    } else if (responsavelObrigatorio && normalizedData.responsavel) {
+      const [existingByCpf, existingByEmail] = await Promise.all([
+        normalizedData.responsavel.cpf
+          ? tx.responsavel.findUnique({
+              where: { contaId_cpf: { contaId: normalizedData.contaId, cpf: normalizedData.responsavel.cpf } },
+            })
+          : null,
+        normalizedData.responsavel.email
+          ? tx.responsavel.findUnique({
+              where: { contaId_email: { contaId: normalizedData.contaId, email: normalizedData.responsavel.email.trim().toLowerCase() } },
+            })
+          : null,
+      ]);
+
+      if (existingByCpf && existingByEmail && existingByCpf.id !== existingByEmail.id) {
+        throw cadastroConflict(
+          'CPF e email do responsável pertencem a cadastros diferentes nesta conta.',
+          'RESPONSAVEL_DUPLICADO',
+        );
+      }
+
+      const existing = existingByCpf ?? existingByEmail;
       if (existing) {
+        responsavelAnterior = {
+          nome: existing.nome,
+          email: existing.email,
+          telefone: existing.telefone,
+          enderecoCep: existing.enderecoCep,
+          enderecoLogradouro: existing.enderecoLogradouro,
+          enderecoNumero: existing.enderecoNumero,
+          enderecoComplemento: existing.enderecoComplemento,
+          enderecoBairro: existing.enderecoBairro,
+          enderecoCidade: existing.enderecoCidade,
+          enderecoUf: existing.enderecoUf,
+          financeiro: existing.financeiro,
+        };
         // Atualizar dados do responsável existente se necessário
         await tx.responsavel.update({
           where: { id: existing.id },
           data: {
             nome: normalizedData.responsavel.nome!,
-            email: normalizedData.responsavel.email!,
+            email: normalizedData.responsavel.email!.trim().toLowerCase(),
             telefone: normalizedData.responsavel.telefone!,
             // Campos de endereço estruturados
             enderecoCep: normalizedData.responsavel.endereco?.cep || existing.enderecoCep,
@@ -388,18 +430,6 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
         });
         responsavelId = existing.id;
       } else {
-        // Verificar se email do responsável já existe nesta conta
-        if (normalizedData.responsavel.email) {
-          const existingRespEmail = await tx.responsavel.findFirst({
-            where: { contaId: normalizedData.contaId, email: normalizedData.responsavel.email },
-          });
-          if (existingRespEmail) {
-            throw new Error(
-              `Email do responsável ${normalizedData.responsavel.email} já está em uso nesta conta`,
-            );
-          }
-        }
-
         const resp = await tx.responsavel.create({
           data: {
             contaId: normalizedData.contaId,
@@ -423,9 +453,76 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       }
     }
 
-    // 5. Gerar código interno sequencial se não fornecido
+    // 3. Resolver aluno existente. Para menores sem CPF, a combinação exige
+    // responsável e nunca usa o CPF do responsável isoladamente.
+    const [alunoPorCpf, alunoPorEmail] = await Promise.all([
+      normalizedData.cpf
+        ? tx.aluno.findUnique({
+            where: { contaId_cpf: { contaId: normalizedData.contaId, cpf: normalizedData.cpf } },
+          })
+        : null,
+      normalizedData.email
+        ? tx.aluno.findUnique({
+            where: { contaId_email: { contaId: normalizedData.contaId, email: normalizedData.email } },
+          })
+        : null,
+    ]);
+
+    if (alunoPorCpf && alunoPorEmail && alunoPorCpf.id !== alunoPorEmail.id) {
+      throw cadastroConflict(
+        'CPF e email pertencem a alunos diferentes nesta conta.',
+        'ALUNO_DUPLICADO',
+      );
+    }
+
+    let alunoExistente = alunoPorCpf ?? alunoPorEmail;
+    if (!alunoExistente && !normalizedData.cpf && !normalizedData.email && responsavelId) {
+      const candidatos = await tx.aluno.findMany({
+        where: {
+          contaId: normalizedData.contaId,
+          status: 'INATIVO',
+          nome: { equals: normalizedData.nome.trim(), mode: 'insensitive' },
+          dataNasc: dataNascRange(normalizedData.dataNasc),
+          responsaveis: { some: { contaId: normalizedData.contaId, responsavelId } },
+        },
+        select: {
+          id: true,
+          status: true,
+          motivoInativacao: true,
+          dataInativacao: true,
+        },
+      });
+
+      if (candidatos.length > 1) {
+        throw cadastroConflict(
+          'Há mais de um aluno inativo compatível. O cadastro não foi alterado para evitar associação incorreta.',
+          'ALUNO_IDENTIDADE_AMBIGUA',
+        );
+      }
+      alunoExistente = candidatos[0]
+        ? await tx.aluno.findUnique({ where: { id: candidatos[0].id } })
+        : null;
+    }
+
+    if (alunoExistente?.status === 'ATIVO') {
+      throw cadastroConflict(
+        'Aluno já existe e está ativo nesta conta.',
+        'ALUNO_DUPLICADO',
+      );
+    }
+
+    const alunoAnterior = alunoExistente
+      ? {
+          status: alunoExistente.status,
+          motivoInativacao: alunoExistente.motivoInativacao,
+          dataInativacao: alunoExistente.dataInativacao,
+        }
+      : null;
+
+    // 4. Gerar código interno sequencial se não fornecido
     let codigoInterno = normalizedData.codigoInterno;
     if (!codigoInterno) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`aluno-codigo:${normalizedData.contaId}`}, 0))`;
       const last = await tx.aluno.findFirst({
         where: { contaId: normalizedData.contaId, codigoInterno: { not: null } },
         orderBy: { createdAt: 'desc' },
@@ -437,7 +534,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       codigoInterno = String(nextNumber).padStart(5, '0');
     }
 
-    // 6. Verificar se código interno já existe por conta
+    // 5. Verificar se código interno já existe por conta
     if (codigoInterno) {
       const existingCodigo = await tx.aluno.findUnique({
         where: { contaId_codigoInterno: { contaId: normalizedData.contaId, codigoInterno } },
@@ -456,7 +553,7 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       }
     }
 
-    // 7. Preparar dados do aluno com defaults seguros
+    // 6. Preparar dados do aluno com defaults seguros
     const alunoData = {
       contaId: normalizedData.contaId,
       nome: normalizedData.nome.trim(),
@@ -492,20 +589,59 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       status: (normalizedData.status as 'ATIVO' | 'INATIVO') ?? 'ATIVO',
     };
 
-    // 8. Criar o aluno
-    const aluno = await tx.aluno.create({ data: alunoData });
+    // 7. Criar ou reativar o aluno. A reativação mantém o id e o histórico.
+    const aluno = alunoExistente
+      ? await tx.aluno.update({
+          where: { id: alunoExistente.id },
+          data: {
+            ...(() => {
+              const { contaId: _contaId, codigoInterno: _codigoInterno, ...updateData } = alunoData;
+              return updateData;
+            })(),
+            status: 'ATIVO',
+            motivoInativacao: null,
+            dataInativacao: null,
+          },
+        })
+      : await tx.aluno.create({ data: alunoData });
 
-    // 9. Vincular responsável se necessário
+    // 8. Vincular responsável se necessário, sem duplicar o vínculo.
+    let createdAlunoResponsavelId: string | null = null;
     if (responsavelId) {
-      await tx.alunoResponsavel.create({
-        data: {
-          contaId: normalizedData.contaId,
-          alunoId: aluno.id,
-          responsavelId,
-          tipoVinculo: 'PRINCIPAL',
+      const vinculoExistente = await tx.alunoResponsavel.findUnique({
+        where: {
+          uq_aluno_responsavel_conta_aluno_responsavel: {
+            contaId: normalizedData.contaId,
+            alunoId: aluno.id,
+            responsavelId,
+          },
         },
       });
-      console.log('🔗 Responsável vinculado ao aluno');
+      if (!vinculoExistente) {
+        const vinculo = await tx.alunoResponsavel.create({
+          data: {
+            contaId: normalizedData.contaId,
+            alunoId: aluno.id,
+            responsavelId,
+            tipoVinculo: 'PRINCIPAL',
+          },
+        });
+        createdAlunoResponsavelId = vinculo.id;
+        console.log('🔗 Responsável vinculado ao aluno');
+      }
+    }
+
+    if (alunoExistente) {
+      await tx.auditLog.create({
+        data: {
+          contaId: normalizedData.contaId,
+          actorType: 'SYSTEM',
+          action: 'ALUNO_REATIVADO_AUTOMATICAMENTE',
+          entityType: 'ALUNO',
+          entityId: aluno.id,
+          metadata: { origem: 'cadastro', responsavelId: responsavelId ?? null },
+        },
+      });
     }
 
     console.log('✅ Aluno criado com sucesso:', {
@@ -514,10 +650,26 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
       nome: aluno.nome,
     });
 
-    return { aluno, responsavelId, createdResponsavelId };
+    return {
+      aluno,
+      responsavelId,
+      createdResponsavelId,
+      createdAlunoResponsavelId,
+      alunoExistenteId: alunoExistente?.id ?? null,
+      alunoAnterior,
+      responsavelAnterior,
+    };
   });
 
-  const { aluno, responsavelId, createdResponsavelId } = creation;
+  const {
+    aluno,
+    responsavelId,
+    createdResponsavelId,
+    createdAlunoResponsavelId,
+    alunoExistenteId,
+    alunoAnterior,
+    responsavelAnterior,
+  } = creation;
 
   const responsavelPayer = responsavelObrigatorio && responsavelId
     ? await prisma.responsavel.findFirst({
@@ -601,9 +753,29 @@ export async function createAluno(data: AlunoCreateInput & AlunoExtraFields) {
     });
   } catch (error) {
     await prisma.$transaction(async (tx) => {
-      if (aluno?.id) {
+      if (alunoExistenteId && alunoAnterior) {
+        await tx.aluno.update({
+          where: { id: alunoExistenteId },
+          data: alunoAnterior,
+        });
+        if (createdAlunoResponsavelId) {
+          await tx.alunoResponsavel.delete({ where: { id: createdAlunoResponsavelId } });
+        }
+        if (responsavelId && responsavelAnterior) {
+          await tx.responsavel.update({
+            where: { id: responsavelId },
+            data: responsavelAnterior,
+          });
+        }
+      } else if (aluno?.id) {
         await tx.alunoResponsavel.deleteMany({ where: { alunoId: aluno.id } });
         await tx.aluno.delete({ where: { id: aluno.id } });
+        if (responsavelId && responsavelAnterior) {
+          await tx.responsavel.update({
+            where: { id: responsavelId },
+            data: responsavelAnterior,
+          });
+        }
       }
       if (createdResponsavelId) {
         await tx.responsavel.delete({ where: { id: createdResponsavelId } });

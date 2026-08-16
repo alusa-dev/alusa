@@ -54,7 +54,7 @@ export default defineConfig({
     viewport: { width: 1280, height: 720 },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
+  webServer: process.env.SKIP_WEB_SERVER === 'true' ? undefined : {
     command:
       'node -e "require(\'fs\').rmSync(\'.next\', { recursive: true, force: true })" && ' +
       'pnpm -C ../.. prisma:generate && ' +
@@ -62,7 +62,7 @@ export default defineConfig({
       'pnpm -C ../.. --filter @alusa/database build && ' +
       'pnpm -C ../.. --filter @alusa/lib build && ' +
       'pnpm -C ../.. --filter @alusa/finance build && ' +
-      'cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p ${PORT}',
+      `cross-env NODE_OPTIONS=--max-old-space-size=8192 NEXT_TELEMETRY_DISABLED=1 next dev -p ${port}`,
     url: baseURL,
     timeout: 120_000,
     reuseExistingServer: !process.env.CI,

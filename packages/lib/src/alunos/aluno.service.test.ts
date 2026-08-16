@@ -216,6 +216,107 @@ describe('Aluno Service', () => {
     expect(responsavelDb?.asaasCustomerId).toBeTruthy();
   });
 
+  it('reativa automaticamente o mesmo aluno maior de idade pelo CPF', async () => {
+    const alunoOriginal = await createAluno({
+      contaId,
+      nome: 'Aluno Reativado Adulto',
+      cpf: '39053344705',
+      dataNasc: new Date('2000-01-01'),
+    });
+
+    await prisma.aluno.update({
+      where: { id: alunoOriginal.id },
+      data: { status: 'INATIVO', motivoInativacao: 'Pausa', dataInativacao: new Date() },
+    });
+
+    const alunoRecadastrado = await createAluno({
+      contaId,
+      nome: 'Aluno Reativado Adulto Atualizado',
+      cpf: '39053344705',
+      dataNasc: new Date('2000-01-01'),
+    });
+
+    expect(alunoRecadastrado.id).toBe(alunoOriginal.id);
+    expect(alunoRecadastrado.status).toBe('ATIVO');
+    expect(
+      await prisma.aluno.count({ where: { contaId, cpf: '39053344705' } }),
+    ).toBe(1);
+    expect(
+      await prisma.auditLog.count({
+        where: { entityType: 'ALUNO', entityId: alunoOriginal.id, action: 'ALUNO_REATIVADO_AUTOMATICAMENTE' },
+      }),
+    ).toBe(1);
+  });
+
+  it('reativa menor sem CPF por nome, data de nascimento e responsável', async () => {
+    const endereco = {
+      cep: '01001000',
+      logradouro: 'Rua A',
+      numero: '10',
+      bairro: 'Centro',
+      cidade: 'São Paulo',
+      uf: 'SP',
+    };
+    const alunoOriginal = await createAluno({
+      contaId,
+      nome: 'Menor Reativado',
+      dataNasc: new Date('2015-05-15'),
+      responsavel: {
+        nome: 'Responsável Reutilizado',
+        cpf: '11144477735',
+        email: 'responsavel.reativado@example.com',
+        telefone: '11999999999',
+        endereco,
+        financeiro: true,
+      },
+    });
+
+    await prisma.aluno.update({
+      where: { id: alunoOriginal.id },
+      data: { status: 'INATIVO', motivoInativacao: 'Pausa', dataInativacao: new Date() },
+    });
+
+    const alunoRecadastrado = await createAluno({
+      contaId,
+      nome: 'Menor Reativado',
+      dataNasc: new Date('2015-05-15'),
+      responsavel: {
+        nome: 'Responsável Reutilizado Atualizado',
+        cpf: '11144477735',
+        email: 'responsavel.reativado@example.com',
+        telefone: '11999999999',
+        endereco,
+        financeiro: true,
+      },
+    });
+
+    expect(alunoRecadastrado.id).toBe(alunoOriginal.id);
+    expect(alunoRecadastrado.status).toBe('ATIVO');
+    expect(await prisma.aluno.count({ where: { contaId, nome: 'Menor Reativado' } })).toBe(1);
+    expect(await prisma.responsavel.count({ where: { contaId, cpf: '11144477735' } })).toBe(1);
+    expect(
+      await prisma.alunoResponsavel.count({ where: { contaId, alunoId: alunoOriginal.id } }),
+    ).toBe(1);
+  });
+
+  it('não cria outro aluno quando o cadastro original ainda está ativo', async () => {
+    await createAluno({
+      contaId,
+      nome: 'Aluno Ativo Duplicado',
+      cpf: '52998224725',
+      dataNasc: new Date('2000-01-01'),
+    });
+
+    await expect(
+      createAluno({
+        contaId,
+        nome: 'Aluno Ativo Duplicado',
+        cpf: '52998224725',
+        dataNasc: new Date('2000-01-01'),
+      }),
+    ).rejects.toMatchObject({ code: 'ALUNO_DUPLICADO' });
+  });
+
   it('hard delete aluno quando não há histórico financeiro', async () => {
     const endereco = { cep: '01001000', logradouro: 'Rua A', numero: '10', bairro: 'Centro', cidade: 'SP', uf: 'SP' };
     const aluno = await createAluno({

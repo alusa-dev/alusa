@@ -72,6 +72,64 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Landing page de captação — mantém o foco no cadastro e não depende do shell do site. */
+.early-access-page {
+	--early-purple: #260744;
+	--early-purple-dark: #16052c;
+	--early-lilac: #d9ccff;
+	min-height: 100svh;
+	position: relative;
+	overflow: hidden;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 32px 20px;
+	background: radial-gradient(circle at 20% 15%, #4f1c85 0, transparent 30%), radial-gradient(circle at 90% 88%, #351063 0, transparent 34%), var(--early-purple-dark);
+	color: #fff;
+}
+
+.early-access-shell { width: min(100%, 1060px); position: relative; z-index: 1; }
+.early-access-brand { margin: 0 0 44px; }
+.early-access-brand svg { display: block; width: 110px; height: auto; }
+.early-access-card { display: grid; grid-template-columns: .9fr 1.1fr; gap: clamp(32px, 6vw, 88px); align-items: center; }
+.early-access-eyebrow { margin: 0 0 20px; color: var(--early-lilac); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.early-access-intro h1 { max-width: 440px; margin: 0; font-size: clamp(38px, 5vw, 68px); line-height: .98; letter-spacing: -.055em; font-weight: 700; }
+.early-access-description { max-width: 390px; margin: 24px 0 0; color: rgba(255,255,255,.68); font-size: 17px; line-height: 1.55; }
+.early-access-form { padding: clamp(24px, 4vw, 38px); border: 1px solid rgba(255,255,255,.15); border-radius: 24px; background: rgba(255,255,255,.97); color: #20132e; box-shadow: 0 24px 80px rgba(8, 0, 24, .28); }
+.early-access-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 17px 14px; }
+.early-access-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 700; color: #4a3a57; }
+.early-access-form input, .early-access-form select, .early-access-form textarea { width: 100%; min-height: 46px; padding: 12px 13px; border: 1px solid #e5ddeb; border-radius: 10px; background: #fff; color: #20132e; font: inherit; font-size: 14px; font-weight: 400; outline: none; transition: border-color .2s, box-shadow .2s; }
+.early-access-form textarea { resize: vertical; min-height: 74px; }
+.early-access-form input::placeholder, .early-access-form textarea::placeholder { color: #a99db2; }
+.early-access-form input:focus, .early-access-form select:focus, .early-access-form textarea:focus { border-color: #7743b4; box-shadow: 0 0 0 3px rgba(119,67,180,.14); }
+.early-access-full-field { margin-top: 17px; }
+.early-access-form button { width: 100%; display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin-top: 22px; padding: 0 17px 0 19px; border: 0; border-radius: 11px; background: #5c2694; color: #fff; cursor: pointer; font: inherit; font-size: 14px; font-weight: 700; transition: transform .2s, background .2s; }
+.early-access-form button:hover:not(:disabled) { background: #451879; transform: translateY(-1px); }
+.early-access-form button:disabled { cursor: wait; opacity: .65; }
+.early-access-form button span { font-size: 20px; font-weight: 400; }
+.early-access-privacy { margin: 13px 0 0; color: #94869d; font-size: 11px; line-height: 1.4; text-align: center; }
+.early-access-form-error { margin: 15px 0 -8px; color: #b42318; font-size: 12px; }
+.early-access-honeypot { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; opacity: 0 !important; }
+.early-access-success { min-height: 360px; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
+.early-access-success-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 20px; border-radius: 50%; background: #5c2694; color: #fff; font-size: 28px; }
+.early-access-success h2 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
+.early-access-success p { max-width: 300px; margin: 12px 0 0; color: #76677f; font-size: 14px; line-height: 1.5; }
+.early-access-footer { margin: 38px 0 0; color: rgba(255,255,255,.35); font-size: 11px; letter-spacing: .04em; }
+.early-access-glow { position: absolute; width: 360px; height: 360px; border-radius: 50%; filter: blur(80px); opacity: .18; pointer-events: none; }
+.early-access-glow-one { top: -180px; right: -80px; background: #9b6dff; }
+.early-access-glow-two { bottom: -220px; left: -100px; background: #7442bc; }
+
+@media (max-width: 760px) {
+	.early-access-page { align-items: flex-start; padding: 28px 16px; }
+	.early-access-brand { margin-bottom: 44px; }
+	.early-access-card { display: block; }
+	.early-access-intro h1 { font-size: clamp(38px, 12vw, 54px); }
+	.early-access-description { margin-top: 18px; font-size: 15px; }
+	.early-access-form { margin-top: 28px; border-radius: 20px; padding: 20px 17px; }
+	.early-access-form-grid { grid-template-columns: 1fr; gap: 15px; }
+	.early-access-footer { margin-top: 28px; }
+}
+
 /* iOS Safari: altura útil da barra dinâmica */
 @supports (-webkit-touch-callout: none) {
 

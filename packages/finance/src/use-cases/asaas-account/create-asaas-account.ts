@@ -1,6 +1,7 @@
 import {
   createSubaccount,
   createSubaccountAccessToken,
+  deleteSubaccountAccessToken,
   listSubaccounts,
 } from '@alusa/asaas';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
@@ -9,18 +10,22 @@ import { detectPersonType } from '@alusa/shared';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { validateSubaccountApiKey } from '../../foundation/asaas-api-key';
-import { ensureWebhookReady, syncAsaasOperationalStatus } from '../../foundation/asaas-operational-guard';
+import {
+  ensureWebhookReady,
+  syncAsaasOperationalStatus,
+} from '../../foundation/asaas-operational-guard';
 import { credentialVault } from '../../foundation/credential-vault';
 import { financeProfileService } from '../../foundation/finance-profile.service';
-import { createAsaasAccountSchema, createAsaasSubaccountPayloadDto } from '../../foundation/schemas';
+import {
+  createAsaasAccountSchema,
+  createAsaasSubaccountPayloadDto,
+} from '../../foundation/schemas';
 import { withAdvisoryLock } from '../../foundation/advisory-lock';
 import { MissingBirthDateError } from '../../errors/missing-birth-date-error';
 import { MissingCompanyTypeError } from '../../errors/missing-company-type-error';
 import { AsaasSandboxSubaccountDailyLimitError } from '../../errors/asaas-sandbox-subaccount-daily-limit-error';
 import { getMasterAsaasApiKey, resolveWebhookUrlOrNull } from './asaas-env';
-import {
-  buildExpectedWebhookConfig,
-} from './expected-webhook-config.server';
+import { buildExpectedWebhookConfig } from './expected-webhook-config.server';
 import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
 import { ensureAsaasWebhookConfiguration } from '../../webhooks/ensure-asaas-webhook-configuration';
 import { refreshKycReadModel } from '../kyc/refresh-kyc-read-model';
@@ -50,15 +55,24 @@ function isNonDeterministicError(error: unknown): boolean {
   if (errorAsAny.name === 'AbortError' || errorAsAny.name === 'TimeoutError') return true;
 
   // HTTP 5xx errors
-  if (typeof errorAsAny.status === 'number' && errorAsAny.status >= 500 && errorAsAny.status < 600) {
+  if (
+    typeof errorAsAny.status === 'number' &&
+    errorAsAny.status >= 500 &&
+    errorAsAny.status < 600
+  ) {
     return true;
   }
 
   // Verificar mensagens comuns
-  const message = 'message' in error && typeof (error as { message?: unknown }).message === 'string'
-    ? ((error as { message: string }).message).toLowerCase()
-    : '';
-  if (message.includes('timeout') || message.includes('network') || message.includes('econnreset')) {
+  const message =
+    'message' in error && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message.toLowerCase()
+      : '';
+  if (
+    message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('econnreset')
+  ) {
     return true;
   }
 
@@ -113,9 +127,17 @@ function resolveSubaccountApiKey(subaccount: {
   return subaccount.accessToken?.apiKey ?? subaccount.apiKey ?? null;
 }
 
-function extractProviderErrorDetails(error: unknown): { text: string; code: string | null; description: string | null } {
+function extractProviderErrorDetails(error: unknown): {
+  text: string;
+  code: string | null;
+  description: string | null;
+} {
   if (!error || typeof error !== 'object') {
-    return { text: String(error ?? '').toLowerCase(), code: null, description: String(error ?? '') || null };
+    return {
+      text: String(error ?? '').toLowerCase(),
+      code: null,
+      description: String(error ?? '') || null,
+    };
   }
 
   const value = error as {
@@ -154,7 +176,8 @@ function extractProviderErrorDetails(error: unknown): { text: string; code: stri
   return {
     text: parts.filter(Boolean).join(' ').toLowerCase(),
     code: codes.find(Boolean) ?? null,
-    description: descriptions.find(Boolean) ?? (typeof value.message === 'string' ? value.message : null),
+    description:
+      descriptions.find(Boolean) ?? (typeof value.message === 'string' ? value.message : null),
   };
 }
 
@@ -396,6 +419,30 @@ async function createProvisioningAccessToken(params: {
   };
 }
 
+async function revokeProvisioningAccessToken(params: {
+  accountId: string;
+  accessTokenId?: string | null;
+  reason: string;
+}) {
+  const accessTokenId = params.accessTokenId?.trim();
+  if (!accessTokenId) return;
+
+  try {
+    await deleteSubaccountAccessToken({
+      apiKey: getMasterAsaasApiKey(),
+      accountId: params.accountId,
+      accessTokenId,
+    });
+  } catch (error) {
+    console.error('[finance.createAsaasAccount] Falha ao revogar token não persistido', {
+      accountId: params.accountId,
+      accessTokenId,
+      reason: params.reason,
+      error: extractErrorInfo(error).message,
+    });
+  }
+}
+
 function isAutomaticAccessTokenRecoveryEnabled(): boolean {
   return process.env.ASAAS_ACCESS_TOKEN_RECOVERY_ENABLED === 'true';
 }
@@ -420,7 +467,8 @@ async function markRemoteSubaccountRequiresApiKeyRecovery(params: {
       create: {
         financeProfileId: params.financeProfileId,
         asaasAccountId: params.recoveredAccount.id,
-        walletId: 'walletId' in params.recoveredAccount ? params.recoveredAccount.walletId ?? null : null,
+        walletId:
+          'walletId' in params.recoveredAccount ? (params.recoveredAccount.walletId ?? null) : null,
         asaasAccountEmail: params.recoveredAccount.email ?? null,
         externalReference: params.externalReference,
         status: 'PROVISIONING_FAILED',
@@ -528,7 +576,32 @@ async function persistRecoveredSubaccount(params: {
     accountId: params.recoveredAccount.id,
   });
 
-  const encryptedApiKey = credentialVault.encrypt(accessToken.apiKey);
+  let encryptedApiKey: string;
+  try {
+    encryptedApiKey = credentialVault.encrypt(accessToken.apiKey);
+    credentialVault.verifyRoundTrip(encryptedApiKey, accessToken.apiKey);
+  } catch {
+    await revokeProvisioningAccessToken({
+      accountId: params.recoveredAccount.id,
+      accessTokenId: accessToken.id,
+      reason: 'encryption_round_trip_failed',
+    });
+    return markRemoteSubaccountRequiresApiKeyRecovery({
+      contaId: params.contaId,
+      financeProfileId: params.financeProfileId,
+      recoveredAccount: params.recoveredAccount,
+      externalReference: params.externalReference,
+      webhookAuthTokenHash: params.webhookAuthTokenHash,
+      actor: params.actor,
+      auditAction: params.auditAction,
+      auditMetadata: {
+        encryptionRoundTripFailed: true,
+        ...params.auditMetadata,
+      },
+      created: params.created,
+      idempotent: params.idempotent,
+    });
+  }
   const apiKeyStatus = await validateSubaccountApiKey(accessToken.apiKey);
   const now = new Date();
 
@@ -733,15 +806,19 @@ async function tryResolveContaIdentity(
 
   const ownerUser = conta.ownerUserId
     ? await prisma.usuario
-      .findUnique({ where: { id: conta.ownerUserId }, select: { email: true, birthDate: true } })
-      .then((u) => u ?? null)
+        .findUnique({ where: { id: conta.ownerUserId }, select: { email: true, birthDate: true } })
+        .then((u) => u ?? null)
     : null;
 
   const fallbackUser = ownerUser
     ? ownerUser
     : await prisma.usuario
-      .findFirst({ where: { contaId }, select: { email: true, birthDate: true }, orderBy: { createdAt: 'asc' } })
-      .then((u) => u ?? null);
+        .findFirst({
+          where: { contaId },
+          select: { email: true, birthDate: true },
+          orderBy: { createdAt: 'asc' },
+        })
+        .then((u) => u ?? null);
 
   if (!fallbackUser?.email) {
     return null;
@@ -749,7 +826,13 @@ async function tryResolveContaIdentity(
 
   const profile = await prisma.financeProfile.findUnique({
     where: { id: financeProfileId },
-    select: { asaasOwnerName: true, asaasCompanyName: true, asaasName: true, draftCpfCnpj: true, draftBirthDate: true },
+    select: {
+      asaasOwnerName: true,
+      asaasCompanyName: true,
+      asaasName: true,
+      draftCpfCnpj: true,
+      draftBirthDate: true,
+    },
   });
 
   const ownerName = profile?.asaasOwnerName?.trim() ?? profile?.asaasName?.trim();
@@ -765,7 +848,7 @@ async function tryResolveContaIdentity(
   // Data de nascimento: prioriza Usuario.birthDate, fallback para FinanceProfile.draftBirthDate (wizard)
   const birthDate = fallbackUser.birthDate
     ? toDateOnlyUtcString(fallbackUser.birthDate)
-    : profile?.draftBirthDate ?? null;
+    : (profile?.draftBirthDate ?? null);
 
   const subaccountEmail = resolveCanonicalSubaccountEmail(fallbackUser.email);
   if (!subaccountEmail) {
@@ -825,7 +908,8 @@ function getRequiredOnboardingData(profile: {
 } {
   const missing: string[] = [];
   if (!profile.mobilePhone) missing.push('mobilePhone');
-  if (profile.incomeValue === null || profile.incomeValue === undefined) missing.push('incomeValue');
+  if (profile.incomeValue === null || profile.incomeValue === undefined)
+    missing.push('incomeValue');
   if (!profile.address) missing.push('address');
   if (!profile.addressNumber) missing.push('addressNumber');
   if (!profile.province) missing.push('province');
@@ -839,7 +923,9 @@ function getRequiredOnboardingData(profile: {
   const incomeValue =
     typeof rawIncomeValue === 'number'
       ? rawIncomeValue
-      : typeof rawIncomeValue === 'object' && rawIncomeValue !== null && 'toNumber' in rawIncomeValue
+      : typeof rawIncomeValue === 'object' &&
+          rawIncomeValue !== null &&
+          'toNumber' in rawIncomeValue
         ? (rawIncomeValue as { toNumber: () => number }).toNumber()
         : NaN;
 
@@ -911,7 +997,9 @@ export async function createAsaasAccount(params: {
     // AVISO DE DEBUG: Se o usuário reclama que "não criou no Asaas", é provável que
     // exista um registro aqui (banco local) mas não no Asaas (sandbox resetado?).
     if (process.env.NODE_ENV !== 'production') {
-      console.warn('⚠️ [finance.createAsaasAccount] Retornando conta existente LOCALMENTE. Verifique se ela existe no painel do Asaas Sandbox!');
+      console.warn(
+        '⚠️ [finance.createAsaasAccount] Retornando conta existente LOCALMENTE. Verifique se ela existe no painel do Asaas Sandbox!',
+      );
     }
 
     return {
@@ -1010,7 +1098,9 @@ async function createAsaasAccountInternal(params: {
 }): Promise<CreateAsaasAccountResult> {
   const financeProfile = params.financeProfile;
 
-  let existing = await prisma.asaasAccount.findUnique({ where: { financeProfileId: financeProfile.id } });
+  let existing = await prisma.asaasAccount.findUnique({
+    where: { financeProfileId: financeProfile.id },
+  });
 
   if (existing?.asaasAccountId) {
     try {
@@ -1073,9 +1163,11 @@ async function createAsaasAccountInternal(params: {
           contaId: params.contaId,
           financeProfileId: financeProfile.id,
           recoveredAccount: { id: existing.asaasAccountId, email: existing.asaasAccountEmail },
-          externalReference: existing.externalReference ?? financeProfileExternalReference(financeProfile.id),
+          externalReference:
+            existing.externalReference ?? financeProfileExternalReference(financeProfile.id),
           webhookAuthTokenHash:
-            existing.webhookAuthTokenHash ?? hashWebhookAuthToken(resolveWebhookAuthToken(financeProfile.id)),
+            existing.webhookAuthTokenHash ??
+            hashWebhookAuthToken(resolveWebhookAuthToken(financeProfile.id)),
           actor: params.actor,
           auditAction: 'finance.onboarding.requires_manual_subaccount_api_key',
           auditMetadata: {
@@ -1092,7 +1184,35 @@ async function createAsaasAccountInternal(params: {
         accountId: existing.asaasAccountId,
       });
 
-      const encryptedApiKey = credentialVault.encrypt(accessToken.apiKey);
+      let encryptedApiKey: string;
+      try {
+        encryptedApiKey = credentialVault.encrypt(accessToken.apiKey);
+        credentialVault.verifyRoundTrip(encryptedApiKey, accessToken.apiKey);
+      } catch {
+        await revokeProvisioningAccessToken({
+          accountId: existing.asaasAccountId,
+          accessTokenId: accessToken.id,
+          reason: 'encryption_round_trip_failed',
+        });
+        return markRemoteSubaccountRequiresApiKeyRecovery({
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          recoveredAccount: { id: existing.asaasAccountId, email: existing.asaasAccountEmail },
+          externalReference:
+            existing.externalReference ?? financeProfileExternalReference(financeProfile.id),
+          webhookAuthTokenHash:
+            existing.webhookAuthTokenHash ??
+            hashWebhookAuthToken(resolveWebhookAuthToken(financeProfile.id)),
+          actor: params.actor,
+          auditAction: 'finance.onboarding.subaccount_api_key_encryption_failed',
+          auditMetadata: {
+            reason: 'encryption_round_trip_failed',
+            automaticAccessTokenRecoveryEnabled: true,
+          },
+          created: false,
+          idempotent: true,
+        });
+      }
       const apiKeyStatus = await validateSubaccountApiKey(accessToken.apiKey);
       const existingId = existing.id;
       const existingAsaasAccountId = existing.asaasAccountId;
@@ -1221,10 +1341,13 @@ async function createAsaasAccountInternal(params: {
 
   if (!identity) {
     if (process.env.NODE_ENV !== 'production') {
-      console.warn('[finance.createAsaasAccount] Falha em identity. Usuário dono não encontrado ou sem email.', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-      });
+      console.warn(
+        '[finance.createAsaasAccount] Falha em identity. Usuário dono não encontrado ou sem email.',
+        {
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+        },
+      );
     }
 
     const placeholder = await prisma.asaasAccount.findUnique({
@@ -1259,7 +1382,8 @@ async function createAsaasAccountInternal(params: {
     throw new MissingBirthDateError();
   }
 
-  const companyType = personType === 'PJ' ? normalizeCompanyType(profileData.companyType) : undefined;
+  const companyType =
+    personType === 'PJ' ? normalizeCompanyType(profileData.companyType) : undefined;
   if (personType === 'PJ' && !companyType) {
     throw new MissingCompanyTypeError();
   }
@@ -1302,8 +1426,12 @@ async function createAsaasAccountInternal(params: {
     name: createAccountPayload.name,
     email: createAccountPayload.email,
     cpfCnpj: createAccountPayload.cpfCnpj,
-    ...(personType === 'PF' && createAccountPayload.birthDate ? { birthDate: createAccountPayload.birthDate } : {}),
-    ...(personType === 'PJ' && createAccountPayload.companyType ? { companyType: createAccountPayload.companyType } : {}),
+    ...(personType === 'PF' && createAccountPayload.birthDate
+      ? { birthDate: createAccountPayload.birthDate }
+      : {}),
+    ...(personType === 'PJ' && createAccountPayload.companyType
+      ? { companyType: createAccountPayload.companyType }
+      : {}),
     ...(createAccountPayload.phone ? { phone: createAccountPayload.phone } : {}),
     mobilePhone: createAccountPayload.mobilePhone,
     incomeValue: createAccountPayload.incomeValue,
@@ -1421,12 +1549,15 @@ async function createAsaasAccountInternal(params: {
     // Recovery: reconciliar subconta remota quando a criação pode ter acontecido
     // ou quando o provedor informa conflito por conta já existente.
     if (shouldTryRemoteRecovery) {
-      console.warn('[finance.createAsaasAccount] Tentando reconciliar subconta remota após falha de criação', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        errorCode: errorInfo.code,
-        httpStatus: errorInfo.status,
-      });
+      console.warn(
+        '[finance.createAsaasAccount] Tentando reconciliar subconta remota após falha de criação',
+        {
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          errorCode: errorInfo.code,
+          httpStatus: errorInfo.status,
+        },
+      );
 
       try {
         const recovered = await tryRecoverExistingRemoteSubaccount({
@@ -1474,7 +1605,30 @@ async function createAsaasAccountInternal(params: {
     });
   }
 
-  const encryptedApiKey = credentialVault.encrypt(subaccountApiKey);
+  let encryptedApiKey: string;
+  try {
+    encryptedApiKey = credentialVault.encrypt(subaccountApiKey);
+    credentialVault.verifyRoundTrip(encryptedApiKey, subaccountApiKey);
+  } catch {
+    await revokeProvisioningAccessToken({
+      accountId: subaccount.id,
+      accessTokenId: subaccount.accessToken?.id,
+      reason: 'encryption_round_trip_failed',
+    });
+    return markRemoteSubaccountRequiresApiKeyRecovery({
+      contaId: params.contaId,
+      financeProfileId: financeProfile.id,
+      recoveredAccount: subaccount,
+      externalReference,
+      webhookAuthTokenHash,
+      actor: params.actor,
+      auditAction: 'finance.onboarding.subaccount_api_key_encryption_failed',
+      auditMetadata: {
+        reason: 'encryption_round_trip_failed',
+      },
+      created: true,
+    });
+  }
   const apiKeyStatus = await validateSubaccountApiKey(subaccountApiKey);
 
   try {
@@ -1556,11 +1710,14 @@ async function createAsaasAccountInternal(params: {
     try {
       await ensureWebhookReady(params.contaId);
     } catch (webhookError) {
-      console.warn('[finance.createAsaasAccount] Webhook ainda nao operacional apos criacao da subconta', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        error: webhookError instanceof Error ? webhookError.message : String(webhookError),
-      });
+      console.warn(
+        '[finance.createAsaasAccount] Webhook ainda nao operacional apos criacao da subconta',
+        {
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          error: webhookError instanceof Error ? webhookError.message : String(webhookError),
+        },
+      );
       await syncAsaasOperationalStatus(params.contaId);
     }
 
@@ -1571,23 +1728,29 @@ async function createAsaasAccountInternal(params: {
         reason: 'post-create-subaccount',
       });
     } catch (reconcileError) {
-      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao reconciliar status apos criacao', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        asaasAccountId: created.asaasAccountId,
-        error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
-      });
+      console.warn(
+        '[finance.createAsaasAccount] Falha nao bloqueante ao reconciliar status apos criacao',
+        {
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          asaasAccountId: created.asaasAccountId,
+          error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
+        },
+      );
     }
 
     try {
       await refreshKycReadModel(params.contaId);
     } catch (refreshError) {
-      console.warn('[finance.createAsaasAccount] Falha nao bloqueante ao atualizar read model KYC apos criacao', {
-        contaId: params.contaId,
-        financeProfileId: financeProfile.id,
-        asaasAccountId: created.asaasAccountId,
-        error: refreshError instanceof Error ? refreshError.message : String(refreshError),
-      });
+      console.warn(
+        '[finance.createAsaasAccount] Falha nao bloqueante ao atualizar read model KYC apos criacao',
+        {
+          contaId: params.contaId,
+          financeProfileId: financeProfile.id,
+          asaasAccountId: created.asaasAccountId,
+          error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+        },
+      );
     }
 
     const latest = await prisma.asaasAccount.findUnique({
@@ -1602,7 +1765,9 @@ async function createAsaasAccountInternal(params: {
       created: true,
     };
   } catch (error) {
-    const alreadyCreated = await prisma.asaasAccount.findUnique({ where: { financeProfileId: financeProfile.id } });
+    const alreadyCreated = await prisma.asaasAccount.findUnique({
+      where: { financeProfileId: financeProfile.id },
+    });
     if (alreadyCreated?.asaasAccountId) {
       return {
         financeProfileId: financeProfile.id,

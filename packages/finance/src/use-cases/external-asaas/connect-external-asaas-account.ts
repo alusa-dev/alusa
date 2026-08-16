@@ -1,4 +1,8 @@
-import { getMyAccountCommercialInfo, getMyAccountDocuments, getMyAccountStatus } from '@alusa/asaas';
+import {
+  getMyAccountCommercialInfo,
+  getMyAccountDocuments,
+  getMyAccountStatus,
+} from '@alusa/asaas';
 import { prisma } from '@alusa/database';
 import type {
   AuditActorType,
@@ -370,7 +374,18 @@ export async function connectExternalAsaasAccount(input: {
     return { success: false, status: 'FAILED', ...mapped };
   }
 
-  const apiKeyEncrypted = credentialVault.encrypt(apiKey);
+  let apiKeyEncrypted: string;
+  try {
+    apiKeyEncrypted = credentialVault.encrypt(apiKey);
+    credentialVault.verifyRoundTrip(apiKeyEncrypted, apiKey);
+  } catch {
+    return {
+      success: false,
+      summary: 'A chave foi validada, mas não pôde ser armazenada com segurança neste ambiente.',
+      status: 'FAILED',
+      errorCode: 'UNEXPECTED_ERROR',
+    };
+  }
   const now = new Date();
   const oldStatus = currentAccount?.status ?? null;
   const profileCompanyName = resolveCompanyName(schoolName, cpfCnpj);

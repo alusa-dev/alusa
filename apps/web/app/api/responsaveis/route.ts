@@ -118,15 +118,31 @@ export async function POST(req: NextRequest) {
     const existente = await prisma.responsavel.findFirst({
       where: {
         contaId,
-        OR: [{ cpf: cpfDigits }, ...(data.email ? [{ email: data.email }] : [])],
+        OR: [{ cpf: cpfDigits }, ...(data.email ? [{ email: data.email.trim().toLowerCase() }] : [])],
+      },
+      select: {
+        id: true,
+        nome: true,
+        cpf: true,
+        email: true,
+        telefone: true,
+        financeiro: true,
+        _count: { select: { alunos: true } },
       },
     });
 
     if (existente) {
-      if (existente.cpf === cpfDigits) {
-        return NextResponse.json({ error: 'CPF já cadastrado nesta conta' }, { status: 409 });
-      }
-      return NextResponse.json({ error: 'Email já cadastrado nesta conta' }, { status: 409 });
+      const dto = createResponsavelResultDTOSchema.parse(
+        mapResponsavelRecordToSummaryDTO(existente),
+      );
+      return NextResponse.json(
+        {
+          ...dto,
+          reused: true,
+          asaasSync: { status: 'SKIPPED', message: 'Responsável já existente nesta conta.' },
+        },
+        { status: 200 },
+      );
     }
 
     // Criar responsável com contaId
@@ -170,6 +186,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...dto, asaasSync }, { status: 201 });
   } catch (error) {
     console.error('[API /api/responsaveis POST]', error);
+    if ((error as { code?: string }).code === 'P2002') {
+      return NextResponse.json(
+        { error: 'CPF ou email do responsável já está cadastrado nesta conta.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Erro ao criar responsável' }, { status: 500 });
   }
 }

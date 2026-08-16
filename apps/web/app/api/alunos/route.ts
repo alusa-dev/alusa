@@ -337,7 +337,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: message }, { status });
     }
     const msg: string = (error as Error).message || '';
-    if (msg.includes('já existe') || msg.includes('já está em uso')) {
+    const code = (error as { code?: string }).code;
+    if (code === 'P2002') {
+      return NextResponse.json(
+        { error: 'Já existe um cadastro com os mesmos dados nesta conta.' },
+        { status: 409 },
+      );
+    }
+    if (
+      code === 'ALUNO_DUPLICADO' ||
+      code === 'ALUNO_IDENTIDADE_AMBIGUA' ||
+      code === 'RESPONSAVEL_DUPLICADO' ||
+      msg.includes('já existe') ||
+      msg.includes('já está em uso')
+    ) {
       return NextResponse.json({ error: msg }, { status: 409 });
     }
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
