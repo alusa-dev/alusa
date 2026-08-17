@@ -64,6 +64,8 @@ interface ActionsColumnOptions<T extends object> {
   deleteButtonAriaLabel?: (_item: T) => string;
   editIcon?: React.ReactNode;
   deleteIcon?: React.ReactNode | ((_item: T) => React.ReactNode);
+  editDisabled?: boolean | ((_item: T) => boolean);
+  deleteDisabled?: boolean | ((_item: T) => boolean);
   skeleton?: React.ReactNode;
 }
 
@@ -78,6 +80,8 @@ export function actionsColumn<T extends object>({
   deleteButtonAriaLabel,
   editIcon = <Edit3 className="h-4 w-4" />,
   deleteIcon = <Trash2 className="h-4 w-4" />,
+  editDisabled = false,
+  deleteDisabled = false,
   skeleton = (
     <div className="flex justify-center gap-2">
       <div className="h-8 w-8 bg-gray-200 rounded" />
@@ -99,6 +103,7 @@ export function actionsColumn<T extends object>({
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-gray-600 hover:text-gray-800 hover:bg-gray-50"
+            disabled={typeof editDisabled === 'function' ? editDisabled(item) : editDisabled}
             aria-label={editButtonAriaLabel ? editButtonAriaLabel(item) : editLabel}
             onClick={(e) => {
               e.stopPropagation();
@@ -113,6 +118,7 @@ export function actionsColumn<T extends object>({
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
+            disabled={typeof deleteDisabled === 'function' ? deleteDisabled(item) : deleteDisabled}
             aria-label={deleteButtonAriaLabel ? deleteButtonAriaLabel(item) : typeof deleteLabel === 'function' ? deleteLabel(item) : deleteLabel}
             title={typeof deleteLabel === 'function' ? deleteLabel(item) : deleteLabel}
             onClick={(e) => {

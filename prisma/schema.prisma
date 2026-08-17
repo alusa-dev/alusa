@@ -141,6 +141,23 @@ enum PlatformBillingWebhookEventStatus {
   IGNORED
 }
 
+enum PlatformBillingPaymentMethodStatus {
+  MISSING
+  PRESENT
+  UNKNOWN
+}
+
+enum PlatformBillingRestrictionReason {
+  TRIAL_EXPIRED
+  FIRST_PAYMENT_INCOMPLETE
+  PAYMENT_PAST_DUE
+  PAYMENT_UNPAID
+  SUBSCRIPTION_PAUSED
+  SUBSCRIPTION_CANCELED
+  PAYMENT_METHOD_MISSING
+  UNKNOWN
+}
+
 // Formas de pagamento compatíveis com Asaas billingType
 // Referência: https://docs.asaas.com/reference/criar-nova-cobranca
 // Apenas 4 tipos suportados pelo Asaas em pagamentos básicos
@@ -3764,6 +3781,18 @@ model PlatformBillingAccount {
   restrictedAt             DateTime?
   canceledAt               DateTime?
   lastPaymentFailedAt      DateTime?
+  firstPaidAt              DateTime?
+  lastSuccessfulPaymentAt  DateTime?
+  paymentMethodStatus      PlatformBillingPaymentMethodStatus @default(UNKNOWN)
+  paymentMethodType        String?
+  paymentMethodBrand       String?
+  paymentMethodLast4       String?
+  paymentMethodExpMonth    Int?
+  paymentMethodExpYear     Int?
+  restrictionReason        PlatformBillingRestrictionReason?
+  gracePeriodStartedAt     DateTime?
+  accessStateVersion       Int                            @default(0)
+  lastProviderEventCreatedAt DateTime?
   lastReconciledAt         DateTime?
   pendingPlanCode          PlatformBillingPlanCode?
   pendingChangeType        PlatformBillingPlanChangeType?

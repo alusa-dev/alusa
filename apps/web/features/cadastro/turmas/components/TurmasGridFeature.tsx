@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTurmas } from '../hooks/use-turmas';
 import { TurmaCard } from './TurmaCard';
@@ -13,27 +12,32 @@ import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import TableLayout from '@/components/layout/TableLayout';
 import EntityFiltersBar, { type StatusValue, type SortOrder } from '@/components/layout/EntityFiltersBar';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 export default function TurmasGridFeature() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useCurrentUser();
+  const {
+    canWrite,
+    loading: billingLoading,
+  } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId;
   const [search, setSearch] = useState('');
   const [statusValue, setStatusValue] = useState<StatusValue>('TODOS');
   const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
   const [wizardOpen, setWizardOpen] = useState(false);
+  const autoOpenAttemptedRef = useRef(false);
   const shouldOpenWizard = searchParams.get('new') === '1';
 
-  const handleOpenWizard = async () => {
-    setWizardOpen(true);
-  };
+  const handleOpenWizard = () => setWizardOpen(true);
 
   useEffect(() => {
-    if (shouldOpenWizard && contaId) {
-      setWizardOpen(true);
+    if (shouldOpenWizard && contaId && !billingLoading && canWrite && !autoOpenAttemptedRef.current) {
+      autoOpenAttemptedRef.current = true;
+      void handleOpenWizard();
     }
-  }, [shouldOpenWizard, contaId]);
+  }, [billingLoading, canWrite, contaId, handleOpenWizard, shouldOpenWizard]);
 
   const { items, loading } = useTurmas({ contaId });
 
@@ -72,7 +76,7 @@ export default function TurmasGridFeature() {
           onClick={handleOpenWizard}
           className="h-10 px-4 bg-brand-accent hover:bg-brand-accent/90 text-white shadow-none"
           aria-label="Cadastrar matrícula"
-          disabled={!contaId}
+          disabled={!contaId || billingLoading || !canWrite}
         >
           Nova matrícula
         </Button>
@@ -112,9 +116,15 @@ export default function TurmasGridFeature() {
       )}
 
       <MatriculaWizardDialog
-        open={wizardOpen}
+        open={wizardOpen && canWrite && !billingLoading}
         contaId={contaId ?? undefined}
-        onOpenChange={setWizardOpen}
+        onOpenChange={(open) => {
+          if (open && (!canWrite || billingLoading)) {
+            setWizardOpen(false);
+            return;
+          }
+          setWizardOpen(open);
+        }}
         onCreated={() => {
           toast.custom((t) => (
             <CustomToast

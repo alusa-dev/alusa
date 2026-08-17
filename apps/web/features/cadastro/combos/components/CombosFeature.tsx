@@ -26,9 +26,11 @@ import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
 import { useDeleteDialog } from '@/hooks/use-delete-dialog';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 export function CombosFeature() {
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
   const { items, loading, reload } = useCombos({ contaId, search: undefined });
 
@@ -203,6 +205,8 @@ export function CombosFeature() {
         onDelete: (c) => deleteDialog.openDialog(c),
         editButtonAriaLabel: (c) => `Editar combo ${c.nome}`,
         deleteButtonAriaLabel: (c) => `Excluir combo ${c.nome}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,
@@ -248,7 +252,7 @@ export function CombosFeature() {
         actions={
           <Button
             onClick={openCreate}
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
           >
             <Plus className="h-4 w-4 mr-2" /> Novo combo

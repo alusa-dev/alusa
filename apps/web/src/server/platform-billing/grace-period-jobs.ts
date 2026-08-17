@@ -53,6 +53,8 @@ export async function expirePlatformBillingGracePeriods(input: {
           accessStatus: 'RESTRICTED',
           restrictedAt: now,
           pendingChangeType: 'PAYMENT_RECOVERY',
+          restrictionReason: 'PAYMENT_PAST_DUE',
+          accessStateVersion: { increment: 1 },
         },
       });
 

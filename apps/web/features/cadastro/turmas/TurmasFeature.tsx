@@ -22,6 +22,7 @@ import { type TurmaListItem } from './services/turmas-service';
 import { useTurmas, type UseTurmasFilters } from './hooks/use-turmas';
 import { cn } from '@/lib/utils';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 6;
 
@@ -31,12 +32,14 @@ interface TurmasTableProps {
   onEdit: (_turma: TurmaListItem) => void;
   onDelete: (_turma: TurmaListItem) => void;
   onViewAgenda: (_turma: TurmaListItem) => void;
+  canWrite: boolean;
   loading: boolean;
 }
 
 export function TurmasFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
 
   const { items, loading, reload, remove, setItems } = useTurmas({ contaId });
@@ -122,9 +125,11 @@ export function TurmasFeature() {
         subtitle="Gerencie turmas, horários e capacidades."
         actions={
           <Button
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
-            onClick={() => setDialogState({ open: true, mode: 'create', turma: null })}
+            onClick={() => {
+              setDialogState({ open: true, mode: 'create', turma: null });
+            }}
           >
             <Plus className="h-4 w-4 mr-2" /> Nova turma
           </Button>
@@ -158,6 +163,7 @@ export function TurmasFeature() {
             onViewAgenda={(turma) => {
               router.push(`/aulas/agenda?turmaId=${encodeURIComponent(turma.id)}`);
             }}
+            canWrite={canWrite}
             loading={loading || userLoading}
           />
           {total > pageSize ? (
@@ -266,6 +272,7 @@ function TurmasTable({
   onEdit,
   onDelete,
   onViewAgenda,
+  canWrite,
   loading,
 }: TurmasTableProps) {
   if (accountMissing) {
@@ -418,6 +425,7 @@ function TurmasTable({
             size="icon"
             className="h-8 w-8 shrink-0 text-gray-600 hover:bg-gray-50 hover:text-gray-800"
             aria-label="Editar turma"
+            disabled={!canWrite}
             onClick={() => onEdit(t)}
           >
             <Edit3 className="h-4 w-4" />
@@ -427,6 +435,7 @@ function TurmasTable({
             size="icon"
             className="h-8 w-8 shrink-0 text-red-600 hover:bg-red-50 hover:text-red-700"
             aria-label="Excluir turma"
+            disabled={!canWrite}
             onClick={() => onDelete(t)}
           >
             <Trash2 className="h-4 w-4" />

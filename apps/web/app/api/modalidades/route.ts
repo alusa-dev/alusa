@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { modalidadeSchema, createModalidade, listModalidades } from '@alusa/lib';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'MODALITY_WRITE' });
     const parsed = modalidadeSchema.safeParse({
       nome: body.nome,
       // Normaliza null -> undefined para não quebrar validação

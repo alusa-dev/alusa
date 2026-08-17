@@ -128,6 +128,17 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
     updateAccountFromStripeSubscription: async (input) => {
       const now = new Date();
       const account = await runWithOptionalTransaction(db, async (tx) => {
+        const current = await tx.platformBillingAccount.findUniqueOrThrow({
+          where: { id: input.accountId },
+        });
+        if (
+          input.lastProviderEventCreatedAt &&
+          current.lastProviderEventCreatedAt &&
+          current.lastProviderEventCreatedAt.getTime() > input.lastProviderEventCreatedAt.getTime()
+        ) {
+          return current;
+        }
+
         await tx.platformBillingAccount.update({
           where: { id: input.accountId },
           data: {
@@ -143,11 +154,25 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
             restrictedAt: input.restrictedAt,
             canceledAt: input.canceledAt,
             lastPaymentFailedAt: input.lastPaymentFailedAt,
+            firstPaidAt: input.firstPaidAt,
+            lastSuccessfulPaymentAt: input.lastSuccessfulPaymentAt,
+            paymentMethodStatus: input.paymentMethodStatus,
+            paymentMethodType: input.paymentMethodType,
+            paymentMethodBrand: input.paymentMethodBrand,
+            paymentMethodLast4: input.paymentMethodLast4,
+            paymentMethodExpMonth: input.paymentMethodExpMonth,
+            paymentMethodExpYear: input.paymentMethodExpYear,
+            restrictionReason: input.restrictionReason,
+            gracePeriodStartedAt: input.gracePeriodStartedAt,
+            lastProviderEventCreatedAt: input.lastProviderEventCreatedAt,
             trialWillEndNotifiedAt: input.trialWillEndNotifiedAt,
             pendingPlanCode: input.pendingPlanCode,
             pendingChangeType: input.pendingChangeType,
             pendingChangeEffectiveAt: input.pendingChangeEffectiveAt,
             lastStripeEventId: input.lastStripeEventId,
+            ...(input.accessStatus && input.accessStatus !== current.accessStatus
+              ? { accessStateVersion: { increment: 1 } }
+              : {}),
           },
         });
 
@@ -486,6 +511,18 @@ function toAccountRecord(account: {
   restrictedAt: Date | null;
   canceledAt: Date | null;
   lastPaymentFailedAt: Date | null;
+  firstPaidAt: Date | null;
+  lastSuccessfulPaymentAt: Date | null;
+  paymentMethodStatus: string;
+  paymentMethodType: string | null;
+  paymentMethodBrand: string | null;
+  paymentMethodLast4: string | null;
+  paymentMethodExpMonth: number | null;
+  paymentMethodExpYear: number | null;
+  restrictionReason: string | null;
+  gracePeriodStartedAt: Date | null;
+  accessStateVersion: number;
+  lastProviderEventCreatedAt: Date | null;
   lastReconciledAt: Date | null;
   pendingPlanCode: string | null;
   pendingChangeType: string | null;
@@ -509,6 +546,18 @@ function toAccountRecord(account: {
     restrictedAt: account.restrictedAt,
     canceledAt: account.canceledAt,
     lastPaymentFailedAt: account.lastPaymentFailedAt,
+    firstPaidAt: account.firstPaidAt,
+    lastSuccessfulPaymentAt: account.lastSuccessfulPaymentAt,
+    paymentMethodStatus: account.paymentMethodStatus as PlatformBillingAccountRecord['paymentMethodStatus'],
+    paymentMethodType: account.paymentMethodType,
+    paymentMethodBrand: account.paymentMethodBrand,
+    paymentMethodLast4: account.paymentMethodLast4,
+    paymentMethodExpMonth: account.paymentMethodExpMonth,
+    paymentMethodExpYear: account.paymentMethodExpYear,
+    restrictionReason: account.restrictionReason as PlatformBillingAccountRecord['restrictionReason'],
+    gracePeriodStartedAt: account.gracePeriodStartedAt,
+    accessStateVersion: account.accessStateVersion,
+    lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
     lastReconciledAt: account.lastReconciledAt,
     pendingPlanCode: account.pendingPlanCode as PlatformBillingAccountRecord['pendingPlanCode'],
     pendingChangeType: account.pendingChangeType as PlatformBillingAccountRecord['pendingChangeType'],

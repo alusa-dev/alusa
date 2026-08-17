@@ -23,6 +23,7 @@ import useCurrentUser from '@/hooks/use-current-user';
 import { formatFirstLast } from '@alusa/lib/client';
 import SalaDialog from '@/components/salas/SalaDialog';
 import { cn } from '@/lib/utils';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 import { useSalas } from './hooks/use-salas';
 import {
   updateSala,
@@ -43,11 +44,13 @@ interface SalasTableProps {
   accountMissing: boolean;
   onEdit: (_sala: SalaListItem) => void;
   onDelete: (_sala: SalaListItem) => void;
+  canWrite: boolean;
   loading: boolean;
 }
 
 export function SalasFeature() {
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
 
   const { items, loading, reload, setItems } = useSalas({ contaId });
@@ -121,7 +124,7 @@ export function SalasFeature() {
             setDialogOpen(true);
           }}
           className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
-          disabled={!contaId}
+          disabled={!contaId || billingLoading || !canWrite}
         >
           <Plus className="h-4 w-4 mr-2" /> Nova sala
         </Button>
@@ -153,6 +156,7 @@ export function SalasFeature() {
           onDelete={(sala) => {
             deleteDialog.openDialog(sala);
           }}
+          canWrite={canWrite}
           loading={loading || userLoading}
         />
         {total > PAGE_SIZE ? (
@@ -316,7 +320,7 @@ export function SalasFeature() {
   );
 }
 
-function SalasTable({ salas, accountMissing, onEdit, onDelete, loading }: SalasTableProps) {
+function SalasTable({ salas, accountMissing, onEdit, onDelete, canWrite, loading }: SalasTableProps) {
   if (accountMissing) {
     return (
       <div className="px-6 py-12 text-center text-gray-500">
@@ -393,6 +397,8 @@ function SalasTable({ salas, accountMissing, onEdit, onDelete, loading }: SalasT
         onDelete,
         editButtonAriaLabel: (sala) => `Editar sala ${sala.nome}`,
         deleteButtonAriaLabel: (sala) => `Inativar sala ${sala.nome}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,

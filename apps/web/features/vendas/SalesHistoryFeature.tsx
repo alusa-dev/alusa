@@ -1,7 +1,6 @@
 'use client';
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { formatFirstLast } from '@alusa/lib/client';
@@ -24,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 import { SaleStatusBadge } from './components/SaleStatusBadge';
 import {
@@ -93,6 +93,7 @@ function formatPaymentSummary(sale: StoreSaleDTO): string {
 }
 
 export function SalesHistoryFeature() {
+  const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const router = useRouter();
   const [items, setItems] = useState<StoreSaleDTO[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,10 +284,13 @@ export function SalesHistoryFeature() {
         subtitle="Acompanhe os registros da Loja, filtre por período e abra os detalhes sempre que precisar."
         actions={
           <Button
-            asChild
+            disabled={billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
+            onClick={() => {
+              window.location.assign('/vendas/nova');
+            }}
           >
-            <Link href="/vendas/nova">Nova venda</Link>
+            Nova venda
           </Button>
         }
         filtersBar={

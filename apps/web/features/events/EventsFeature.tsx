@@ -16,12 +16,14 @@ import { EventsFilters } from './list/EventsFilters';
 import { EventsTable } from './list/EventsTable';
 import { eventQueryKeys } from './shared/event-query-keys';
 import { PRIMARY_BUTTON_CLASS } from './shared/event-form-utils';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 export { EventDetailFeature } from './EventDetailFeature';
 export { EventOperationsFeature } from './EventOperationsFeature';
 
 export function EventsFeature() {
   const router = useRouter();
+  const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('ALL');
   const [type, setType] = useState('ALL');
@@ -44,7 +46,10 @@ export function EventsFeature() {
       actions={
         <EventFormDialog
           trigger={
-            <Button className={cn(PRIMARY_BUTTON_CLASS, 'w-full md:w-auto')}>
+            <Button
+              className={cn(PRIMARY_BUTTON_CLASS, 'w-full md:w-auto')}
+              disabled={billingLoading || !canWrite}
+            >
               <Plus className="mr-2 h-4 w-4 transition-none" />
               Novo evento
             </Button>

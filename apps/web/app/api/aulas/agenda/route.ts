@@ -7,7 +7,7 @@ import {
   handleAulasRouteError,
   json,
 } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } from '@/src/server/aulas/session';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser, resolveAulasAccessScope } from '@/src/server/aulas/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -23,7 +23,6 @@ export async function GET(request: NextRequest) {
 
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
-
     mark = performance.now();
     const scope = await resolveAulasAccessScope(user);
     const { searchParams } = new URL(request.url);
@@ -57,6 +56,7 @@ export async function POST(request: NextRequest) {
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
+    await assertAulasWriteAccess(user);
 
     const body = createCalendarEventInputSchema.parse(await request.json());
 

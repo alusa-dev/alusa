@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 import {
   createSubscription,
   createSubscriptionDTOSchema,
@@ -32,6 +33,13 @@ export async function POST(req: NextRequest) {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    try {
+      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'CHARGE_CREATE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return json(blocked.status, blocked.body);
+      throw error;
+    }
 
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) return gate.response;

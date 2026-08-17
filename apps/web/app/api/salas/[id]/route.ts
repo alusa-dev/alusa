@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { updateSala, deleteSala, salaSchema } from '@alusa/lib';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -19,6 +20,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     const body = await req.json();
     const contaId = sessionContaId; // Usar contaId da sessão, ignorar body.contaId
+    await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
     if (
       body.nome !== undefined ||
       body.capacidade !== undefined ||
@@ -62,6 +64,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     if (!contaId) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
 
     try {
       const sala = await deleteSala(ctxParams.id, contaId);

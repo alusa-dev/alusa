@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Menu, X } from '@/features/site/components/icons/icons';
 import { SiteSectionLink } from '@/features/site/components/navigation/SiteSectionLink';
@@ -44,7 +44,21 @@ function PrimaryNavItem({
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
+  const [floatingVisible, setFloatingVisible] = useState(false);
+  const originalHeaderRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+
+  useEffect(() => {
+    const originalHeader = originalHeaderRef.current;
+    if (!originalHeader) return;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      setFloatingVisible(!entry.isIntersecting);
+    });
+
+    observer.observe(originalHeader);
+    return () => observer.disconnect();
+  }, []);
 
   const isLegalPage =
     pathname === '/legal' ||
@@ -60,9 +74,9 @@ export function SiteHeader() {
       '/direitos-lgpd/solicitar',
     ].includes(pathname || '');
 
-  return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-[var(--alusa-purple-dark)]">
-      <div className="mx-auto flex h-[4.5rem] max-w-7xl items-center justify-between gap-6 px-6 sm:px-8">
+  const headerContent = (
+    <>
+      <div className="figma-site-header-inner">
         <Link
           href="/"
           onClick={(event) => {
@@ -71,27 +85,27 @@ export function SiteHeader() {
               scrollToSiteTop();
             }
           }}
-          className="flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
+          className="figma-site-logo flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
           aria-label="Alusa"
         >
           <Logo className="h-7 w-auto text-white" />
         </Link>
 
         {!isLegalPage && (
-          <nav className="hidden items-center gap-8 lg:flex" aria-label="Principal">
+            <nav className="figma-site-nav hidden items-center gap-8 lg:flex" aria-label="Principal">
             {primaryNavigation.map((item) => (
               <PrimaryNavItem
                 key={`${item.label}-${siteNavItemKey(item)}`}
                 item={item}
-                className="text-sm font-medium text-white transition-opacity hover:opacity-70"
+                className="figma-nav-link text-sm font-medium text-white transition-opacity hover:opacity-70"
               />
             ))}
           </nav>
         )}
 
         {!isLegalPage && (
-          <div className="hidden items-center gap-2 lg:flex">
-            <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" className="h-10 px-4 text-white">
+          <div className="figma-site-actions hidden items-center gap-2 lg:flex">
+            <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" showArrow={false} className="figma-header-login text-white">
               Entrar
             </ButtonLink>
             <ButtonLink
@@ -99,9 +113,10 @@ export function SiteHeader() {
               variant="primary"
               tone="dark"
               event="hero_cta_clicked"
-              className="h-10 bg-white text-[var(--alusa-purple-dark)] shadow-sm"
+              showArrow={false}
+              className="figma-header-signup bg-white text-[var(--alusa-purple-dark)] shadow-sm"
             >
-              Criar conta grátis
+              Teste grátis por 14 dias
             </ButtonLink>
           </div>
         )}
@@ -109,7 +124,7 @@ export function SiteHeader() {
         {!isLegalPage && (
           <button
             type="button"
-            className="grid h-10 w-10 place-items-center rounded-lg border border-white/20 text-white lg:hidden"
+            className="figma-menu-button grid h-10 w-10 place-items-center rounded-lg border border-white/20 text-white lg:hidden"
             aria-label={open ? 'Fechar menu' : 'Abrir menu'}
             aria-expanded={open}
             onClick={() => setOpen((current) => !current)}
@@ -141,6 +156,23 @@ export function SiteHeader() {
           </nav>
         </div>
       )}
-    </header>
+    </>
+  );
+
+  return (
+    <>
+      <header ref={originalHeaderRef} className="figma-site-header figma-original-header">
+        {headerContent}
+      </header>
+      <header
+        aria-hidden={!floatingVisible}
+        className={cn(
+          'figma-site-header figma-floating-header',
+          floatingVisible && 'figma-floating-header--visible',
+        )}
+      >
+        {headerContent}
+      </header>
+    </>
   );
 }

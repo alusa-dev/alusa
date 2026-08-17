@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { EventsError, type EventsContext } from '@alusa/lib/events/events.service';
 
 import { safeGetServerSession } from '@/lib/safe-server-session';
+import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 
 export type EventsPermission =
   | 'events.view'
@@ -122,10 +123,26 @@ export async function getEventsContext(permission: EventsPermission): Promise<Ev
     throw new EventsError('SEM_PERMISSAO', 'Você não tem permissão para esta ação.', 403);
   }
 
+  const readOnlyPermissions = new Set<EventsPermission>([
+    'events.view',
+    'eventTickets.view',
+    'eventMaps.view',
+    'eventCostumes.view',
+    'eventFinance.view',
+    'eventReports.view',
+    'eventAudit.view',
+  ]);
+  if (!readOnlyPermissions.has(permission)) {
+    await assertPlatformAccessForConta({ contaId, capability: 'EVENT_WRITE' });
+  }
+
   return { contaId, userId, role };
 }
 
 export function handleEventsRouteError(error: unknown, fallbackCode: string) {
+  const billing = platformBillingAccessResponse(error);
+  if (billing) return NextResponse.json(billing.body, { status: billing.status });
+
   if (error instanceof EventsError) {
     return jsonError(error.status, error.code, error.message, error.details);
   }

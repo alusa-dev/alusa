@@ -4,6 +4,7 @@ import { ZodError, z } from 'zod';
 
 import { authOptions } from '@/lib/auth-options';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { assertPlatformAccessForConta, platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 import { createStandaloneCharge, listStandaloneCharges } from '@alusa/finance';
 
 type SessionUser = { id?: string; role?: string; contaId?: string };
@@ -141,6 +142,13 @@ export async function GET(req: NextRequest) {
     }
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Acesso negado' });
+    }
+    try {
+      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'CHARGE_CREATE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return json(blocked.status, blocked.body);
+      throw error;
     }
 
     const { searchParams } = new URL(req.url);

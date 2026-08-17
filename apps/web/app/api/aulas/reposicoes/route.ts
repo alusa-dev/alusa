@@ -9,7 +9,7 @@ import {
   listMakeupClasses,
 } from '@/src/server/aulas/reposicoes/makeup.service';
 import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,7 +19,6 @@ export async function GET(request: NextRequest) {
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
-
     const { searchParams } = new URL(request.url);
     const query = listMakeupClassesQuerySchema.parse({
       turmaId: searchParams.get('turmaId') ?? undefined,
@@ -40,6 +39,7 @@ export async function POST(request: NextRequest) {
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
+    await assertAulasWriteAccess(user);
 
     const body = createMakeupClassInputSchema.parse(await request.json());
 

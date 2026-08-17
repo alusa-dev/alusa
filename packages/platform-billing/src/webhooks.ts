@@ -184,6 +184,9 @@ async function processCheckoutCompleted(
     cancelAtPeriodEnd: account.cancelAtPeriodEnd,
     trialEndsAt: account.trialEndsAt,
     lastStripeEventId: input.event.id,
+    firstPaidAt: session.payment_status === 'paid' ? new Date() : undefined,
+    lastSuccessfulPaymentAt: session.payment_status === 'paid' ? new Date() : undefined,
+    lastProviderEventCreatedAt: readUnixDate(input.event.created),
   });
 
   await store.createAuditLog({
@@ -237,6 +240,7 @@ async function processSubscriptionEvent(
 
   const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
   const status = mapSubscriptionStatus(readString(subscription.status));
+  const paymentMethod = readPaymentMethodFromSubscription(subscription);
   const shouldCommitPlan = shouldCommitPlanFromSubscriptionStatus(status);
   const accountPlanCode = shouldCommitPlan ? planCode : account.planCode;
   const shouldClearPendingPlan = Boolean(shouldCommitPlan && account.pendingPlanCode && planCode === account.pendingPlanCode);
@@ -254,6 +258,13 @@ async function processSubscriptionEvent(
     canceledAt: readUnixDate(subscription.canceled_at),
     restrictedAt: status === 'PAUSED' ? new Date() : null,
     trialWillEndNotifiedAt: input.event.type === 'customer.subscription.trial_will_end' ? new Date() : undefined,
+    paymentMethodStatus: paymentMethod.status,
+    paymentMethodType: paymentMethod.type,
+    paymentMethodBrand: paymentMethod.brand,
+    paymentMethodLast4: paymentMethod.last4,
+    paymentMethodExpMonth: paymentMethod.expMonth,
+    paymentMethodExpYear: paymentMethod.expYear,
+    lastProviderEventCreatedAt: readUnixDate(input.event.created),
     pendingPlanCode: shouldClearPendingPlan ? null : undefined,
     pendingChangeType: shouldClearPendingPlan ? null : undefined,
     pendingChangeEffectiveAt: shouldClearPendingPlan ? null : undefined,
@@ -368,7 +379,7 @@ async function processInvoiceEvent(
   const subscriptionToPersist = subscriptionId ?? account.stripeSubscriptionId;
   if (subscriptionToPersist && (isPaymentFailedEvent || isPaymentPaidEvent)) {
     const paymentStateChangedAt = failedAt ?? new Date();
-    const graceEligible = isPaymentPaidSubscriptionEligible(account.status);
+    const graceEligible = isPaymentPaidSubscriptionEligible(account);
     const nextStatus = resolveInvoicePaymentAccountStatus({
       accountStatus: account.status,
       trialEndsAt: account.trialEndsAt,
@@ -376,9 +387,7 @@ async function processInvoiceEvent(
       graceEligible,
     });
     const nextAccessStatus = isPaymentFailedEvent && !graceEligible
-      ? account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now()
-        ? 'RESTRICTED'
-        : mapAccessStatusFromSubscription(nextStatus)
+      ? 'RESTRICTED'
       : mapAccessStatusFromSubscription(nextStatus);
     await store.updateAccountFromStripeSubscription({
       accountId: account.id,
@@ -395,6 +404,18 @@ async function processInvoiceEvent(
         : null,
       restrictedAt: isPaymentFailedEvent && !graceEligible ? paymentStateChangedAt : null,
       lastPaymentFailedAt: isPaymentFailedEvent ? paymentStateChangedAt : null,
+      firstPaidAt: isPaymentPaidEvent ? account.firstPaidAt ?? paymentStateChangedAt : undefined,
+      lastSuccessfulPaymentAt: isPaymentPaidEvent ? paymentStateChangedAt : undefined,
+      restrictionReason: isPaymentFailedEvent && !graceEligible
+        ? account.firstPaidAt || account.lastSuccessfulPaymentAt
+          ? account.paymentMethodStatus === 'MISSING'
+            ? 'PAYMENT_METHOD_MISSING'
+            : 'PAYMENT_PAST_DUE'
+          : 'FIRST_PAYMENT_INCOMPLETE'
+        : null,
+      gracePeriodStartedAt: isPaymentFailedEvent && graceEligible ? paymentStateChangedAt : null,
+      paymentMethodStatus: isPaymentPaidEvent ? 'PRESENT' : undefined,
+      lastProviderEventCreatedAt: readUnixDate(input.event.created),
       pendingChangeType: isPaymentFailedEvent && graceEligible
         ? 'PAYMENT_RECOVERY'
         : account.pendingChangeType === 'PAYMENT_RECOVERY'
@@ -425,11 +446,20 @@ function resolveInvoicePaymentAccountStatus(input: {
   return 'ACTIVE';
 }
 
-function isPaymentPaidSubscriptionEligible(status: PlatformBillingAccountStatus): boolean {
+function isPaymentPaidSubscriptionEligible(account: {
+  status: PlatformBillingAccountStatus;
+  firstPaidAt: Date | null;
+  lastSuccessfulPaymentAt: Date | null;
+  paymentMethodStatus: 'MISSING' | 'PRESENT' | 'UNKNOWN';
+}): boolean {
   // Trial accounts never receive the commercial grace period. A failed invoice
   // during/at the end of a trial must be regularized before operational access
   // is restored. ACTIVE/PAST_DUE are states of an already paid subscription.
-  return status === 'ACTIVE' || status === 'PAST_DUE';
+  return Boolean(
+    (account.status === 'ACTIVE' || account.status === 'PAST_DUE') &&
+    (account.firstPaidAt || account.lastSuccessfulPaymentAt) &&
+    account.paymentMethodStatus === 'PRESENT',
+  );
 }
 
 function resolveInvoiceAuditAction(eventType: string): string {
@@ -513,6 +543,30 @@ function resolvePlanCodeSafely(
 function parsePlanCode(value: string | undefined): PlatformPlanCode | null {
   if (value === 'STARTER' || value === 'PREMIUM' || value === 'PRO' || value === 'CUSTOM') return value;
   return null;
+}
+
+function readPaymentMethodFromSubscription(subscription: StripeObject): {
+  status: 'MISSING' | 'PRESENT' | 'UNKNOWN';
+  type?: string;
+  brand?: string | null;
+  last4?: string | null;
+  expMonth?: number | null;
+  expYear?: number | null;
+} {
+  const raw = subscription.default_payment_method;
+  if (raw === null) return { status: 'MISSING' };
+  if (!raw) return { status: 'UNKNOWN' };
+
+  const method = readRecord(raw);
+  const card = readRecord(method.card);
+  return {
+    status: 'PRESENT',
+    type: readString(method.type) ?? undefined,
+    brand: readString(card.brand),
+    last4: readString(card.last4),
+    expMonth: readNumber(card.exp_month),
+    expYear: readNumber(card.exp_year),
+  };
 }
 
 function readMetadata(value: StripeObject): Record<string, string | undefined> {

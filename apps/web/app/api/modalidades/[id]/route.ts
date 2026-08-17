@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { updateModalidade, deleteModalidade, modalidadeSchema } from '@alusa/lib';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -23,6 +24,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'MODALITY_WRITE' });
     if (body.nome !== undefined || body.descricao !== undefined) {
       const parsed = modalidadeSchema.pick({ nome: true, descricao: true }).safeParse({
         nome: body.nome,
@@ -64,6 +66,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'MODALITY_WRITE' });
     try {
       const modalidade = await deleteModalidade(ctxParams.id, contaId);
       return NextResponse.json({ data: modalidade });

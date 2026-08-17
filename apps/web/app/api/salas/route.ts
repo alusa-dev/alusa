@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { salaSchema, createSala, listSalas } from '@alusa/lib';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
     if (!contaId) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'ROOM_WRITE' });
     const page = Number(url.searchParams.get('page') || '1');
     const pageSize = Number(url.searchParams.get('pageSize') || '50');
     const q = url.searchParams.get('q') || undefined;

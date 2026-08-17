@@ -11,6 +11,7 @@ import {
   cargoEnum,
 } from '../../../../../packages/lib/src/schemas/colaborador';
 import { create as createColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 export async function GET(req: NextRequest) {
   // MULTI-TENANT: validar sessão e usar contaId da sessão
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
     if (!contaId) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
     const body = (await req.json()) as Record<string, unknown>;
     console.log('📥 DADOS RECEBIDOS:', JSON.stringify(body, null, 2));

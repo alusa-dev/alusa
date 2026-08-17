@@ -5,9 +5,9 @@ export { appLoginUrl, appUrl } from '@/features/site/lib/urls';
 
 export const primaryNavigation = [
   { label: 'Produto', sectionId: 'modulos' },
-  { label: 'Financeiro', sectionId: 'financeiro' },
-  { label: 'Demonstração', sectionId: 'demonstracao' },
-  { label: 'Contato', sectionId: 'contato' },
+  { label: 'Solução', sectionId: 'financeiro' },
+  { label: 'Dúvidas', sectionId: 'contato' },
+  { label: 'Fale conosco', href: 'mailto:contato@alusa.app' },
 ] as const satisfies readonly SiteNavItem[];
 
 export const footerGroups = [

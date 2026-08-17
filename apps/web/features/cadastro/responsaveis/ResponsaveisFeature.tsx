@@ -27,6 +27,7 @@ import { formatInitials, maskCpf, maskPhone } from '@alusa/lib/client';
 import { actionsColumn } from '@alusa/ui/datatable/columns';
 import { cn } from '@/lib/utils';
 import { table } from '@/components/layout/TableStyles';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 import { useResponsaveis } from './hooks/use-responsaveis';
 import { createResponsavel, type ResponsavelListItem } from './services/responsaveis-service';
@@ -62,6 +63,7 @@ const initialFormState: ResponsavelFormState = {
 export function ResponsaveisFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -156,7 +158,7 @@ export function ResponsaveisFeature() {
           <Button
             onClick={() => setDialogOpen(true)}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
-            disabled={!user?.contaId}
+            disabled={!user?.contaId || billingLoading || !canWrite}
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Novo responsável

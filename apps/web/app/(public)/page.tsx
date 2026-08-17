@@ -1,25 +1,5 @@
-import { AutomationSection } from '@/features/site/components/sections/AutomationSection';
-import { BenefitsSection } from '@/features/site/components/sections/BenefitsSection';
-import { FlowSection } from '@/features/site/components/sections/FlowSection';
-import { HeroSection } from '@/features/site/components/sections/HeroSection';
-import { PlatformSection } from '@/features/site/components/sections/PlatformSection';
-import { ProblemSection } from '@/features/site/components/sections/ProblemSection';
-import { ProductSection } from '@/features/site/components/sections/ProductSection';
-import { FaqSection } from '@/features/site/components/sections/FaqSection';
-import { HighlightsSection } from '@/features/site/components/sections/HighlightsSection';
+import { FigmaLanding } from '@/features/site/components/FigmaLanding';
 
 export default function HomePage() {
-  return (
-    <>
-      <HeroSection />
-      <HighlightsSection />
-      <ProblemSection />
-      <ProductSection />
-      <PlatformSection />
-      <AutomationSection />
-      <FlowSection />
-      <BenefitsSection />
-      <FaqSection />
-    </>
-  );
+  return <FigmaLanding />;
 }

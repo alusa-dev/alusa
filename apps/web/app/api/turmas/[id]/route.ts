@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { updateTurma, deleteTurma } from '@alusa/lib';
 import { turmaSchema } from '@alusa/lib';
 import { authOptions } from '@/lib/auth-options';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -27,6 +28,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
     const merge = { ...body };
     // valida conjunto parcial mesclando id/contaId para garantir shape
     const parsed = turmaSchema.safeParse(merge);
@@ -59,6 +61,7 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+    await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
     try {
       const turma = await deleteTurma(ctxParams.id, contaId);
       return NextResponse.json({ data: turma });

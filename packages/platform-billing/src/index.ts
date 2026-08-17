@@ -2,12 +2,24 @@ export { PlatformBillingError } from './errors';
 export type { PlatformBillingErrorCode } from './errors';
 export {
   DEFAULT_PLATFORM_BILLING_GRACE_PERIOD_DAYS,
+  PLATFORM_BILLING_CAPABILITIES,
   assertPlatformAccess,
   canUsePlatformCapability,
   computeGracePeriodEnd,
+  derivePlatformBillingCommunication,
+  derivePlatformRestrictionReason,
   derivePlatformAccessStatus,
 } from './access-policy';
-export type { PlatformBillingAccessStatus, PlatformBillingCapability } from './access-policy';
+export type {
+  PlatformBillingAccessStatus,
+  PlatformBillingCapability,
+  PlatformBillingCommunication,
+  PlatformBillingCommunicationLevel,
+} from './access-policy';
+export type {
+  PlatformBillingPaymentMethodStatus,
+  PlatformBillingRestrictionReason,
+} from './types';
 export {
   PLATFORM_PLANS,
   getMaxActiveStudents,

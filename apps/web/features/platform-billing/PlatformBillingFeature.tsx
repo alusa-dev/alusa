@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -19,10 +19,10 @@ import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { cn } from '@/lib/cn';
 import { Check, ChevronRight, Download, ExternalLink } from '@/components/icons/icons';
 import {
-  platformBillingSummaryDTOSchema,
   type PlatformBillingSummaryDTO,
   type PublicPlatformPlanDTO,
 } from './dtos/platform-billing-summary';
+import { usePlatformBilling } from './PlatformBillingContext';
 
 type PlanCode = 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM';
 type BillingStatus =
@@ -115,8 +115,7 @@ type PendingPlanAction = {
 } | null;
 
 export function PlatformBillingFeature({ checkoutState }: { checkoutState?: CheckoutState }) {
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { summary, loading, refresh } = usePlatformBilling();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -124,29 +123,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const [noticeDialog, setNoticeDialog] = useState<NoticeDialogState>(null);
   const [pendingPlanAction, setPendingPlanAction] = useState<PendingPlanAction>(null);
   const [pendingCancellationAction, setPendingCancellationAction] = useState<'cancel_at_period_end' | 'undo_cancel' | null>(null);
-
-  const loadSummary = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/platform-billing/summary', {
-        headers: { accept: 'application/json' },
-        cache: 'no-store',
-      });
-      if (!response.ok) throw new Error('Falha ao carregar plano e faturamento.');
-      const parsed = platformBillingSummaryDTOSchema.safeParse(await response.json());
-      if (!parsed.success) throw new Error('Os dados de plano e faturamento estão incompletos.');
-      setSummary(parsed.data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falha ao carregar plano e faturamento.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
 
   useEffect(() => {
     if (checkoutState === 'cancel') {
@@ -347,7 +323,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         title: payload.message ?? 'Plano alterado com sucesso',
         description: payload.detail ?? 'A alteração foi registrada.',
       });
-      await loadSummary();
+      await refresh(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao solicitar mudança de plano.';
       setError(message);
@@ -383,7 +359,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
           ? 'A assinatura continuará ativa.'
           : 'A conta mantém acesso até o fim do período atual.',
       });
-      await loadSummary();
+      await refresh(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Falha ao atualizar cancelamento.';
       setError(message);

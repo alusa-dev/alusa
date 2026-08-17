@@ -134,7 +134,75 @@ function redirectToSignIn(req: NextRequest, params: Record<string, string>) {
   return NextResponse.redirect(signInUrl);
 }
 
-function handleApiRequest(req: NextRequest): NextResponse | null {
+function platformBillingCapabilityForMutation(pathname: string, method: string) {
+  if (!unsafeMethods.has(method.toUpperCase())) return null;
+
+  const excluded = [
+    '/api/auth/',
+    '/api/developer/auth/',
+    '/api/global-admin/auth/',
+    '/api/webhooks/',
+    '/api/jobs/',
+    '/api/admin/',
+    '/api/platform-billing/',
+    '/api/conta/forma-pagamento',
+    '/api/finance/transfers',
+    '/api/finance/balance',
+    '/api/finance/account-status',
+    '/api/finance/realtime/',
+  ];
+  if (excluded.some((prefix) => pathname.startsWith(prefix))) return null;
+
+  if (pathname === '/api/alunos' || pathname.startsWith('/api/alunos/')) return 'STUDENT_WRITE' as const;
+  if (pathname === '/api/responsaveis' || pathname.startsWith('/api/responsaveis/')) return 'RESPONSIBLE_WRITE' as const;
+  if (pathname === '/api/colaboradores' || pathname.startsWith('/api/colaboradores/')) return 'STAFF_WRITE' as const;
+  if (pathname === '/api/turmas' || pathname.startsWith('/api/turmas/')) return 'CLASS_WRITE' as const;
+  if (pathname === '/api/modalidades' || pathname.startsWith('/api/modalidades/')) return 'MODALITY_WRITE' as const;
+  if (pathname === '/api/salas' || pathname.startsWith('/api/salas/')) return 'ROOM_WRITE' as const;
+  if (pathname === '/api/aulas' || pathname.startsWith('/api/aulas/')) return 'LESSON_WRITE' as const;
+  if (pathname === '/api/events' || pathname.startsWith('/api/events/')) return 'EVENT_WRITE' as const;
+  if (pathname === '/api/vendas' || pathname.startsWith('/api/vendas/')) return 'STORE_WRITE' as const;
+  if (pathname === '/api/matriculas' || pathname.startsWith('/api/matriculas/')) return 'ENROLLMENT_WRITE' as const;
+  if (pathname === '/api/rematriculas' || pathname.startsWith('/api/rematriculas/')) return 'ENROLLMENT_WRITE' as const;
+  if (pathname === '/api/contratos' || pathname.startsWith('/api/contratos/')) return 'CONTRACT_WRITE' as const;
+  if (pathname === '/api/event-contracts' || pathname.startsWith('/api/event-contracts/')) return 'CONTRACT_WRITE' as const;
+  if (pathname === '/api/billing-agreements' || pathname.startsWith('/api/billing-agreements/')) return 'ENROLLMENT_WRITE' as const;
+  if (pathname === '/api/combos' || pathname.startsWith('/api/combos/')) return 'ADMIN_WRITE' as const;
+  if (pathname === '/api/planos' || pathname.startsWith('/api/planos/')) return 'ADMIN_WRITE' as const;
+  if (pathname === '/api/professores' || pathname.startsWith('/api/professores/')) return 'STAFF_WRITE' as const;
+  if (pathname === '/api/users' || pathname.startsWith('/api/users/')) return 'ADMIN_WRITE' as const;
+  if (pathname === '/api/descontos' || pathname.startsWith('/api/descontos/')) return 'FINANCIAL_CONFIG_WRITE' as const;
+  if (pathname === '/api/configuracoes' || pathname.startsWith('/api/configuracoes/')) return 'FINANCIAL_CONFIG_WRITE' as const;
+  if (
+    pathname.startsWith('/api/finance/charges') ||
+    pathname.startsWith('/api/finance/installments') ||
+    pathname.startsWith('/api/finance/subscriptions') ||
+    pathname.startsWith('/api/finance/invoices')
+  ) return 'CHARGE_CREATE' as const;
+  if (
+    pathname.startsWith('/api/financeiro/relatorios') ||
+    pathname.startsWith('/api/financeiro/extrato') ||
+    pathname === '/api/financeiro/pagamentos' ||
+    pathname.startsWith('/api/financeiro/pagamentos/') ||
+    pathname.startsWith('/api/financeiro/saldo') ||
+    pathname.startsWith('/api/financeiro/kpis') ||
+    pathname.startsWith('/api/financeiro/indicadores')
+  ) return null;
+  if (pathname.startsWith('/api/financeiro/')) return 'FINANCIAL_CONFIG_WRITE' as const;
+  if (
+    pathname.startsWith('/api/cobrancas/') &&
+    (pathname.endsWith('/resend') ||
+      pathname.endsWith('/asaas-notify') ||
+      pathname.endsWith('/sync-asaas') ||
+      pathname.endsWith('/arquivos') ||
+      pathname.endsWith('/forma-pagamento'))
+  ) return null;
+  if (pathname === '/api/cobrancas' || pathname.startsWith('/api/cobrancas/')) return 'CHARGE_CREATE' as const;
+
+  return null;
+}
+
+async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> {
   const pathname = req.nextUrl.pathname;
 
   if (shouldValidateApiOrigin(pathname, req.method)) {
@@ -158,6 +226,40 @@ function handleApiRequest(req: NextRequest): NextResponse | null {
 
   if (isPublicApiPath(pathname)) {
     return NextResponse.next();
+  }
+
+  const capability = platformBillingCapabilityForMutation(pathname, req.method);
+  if (capability) {
+    try {
+      const accessUrl = new URL('/api/platform-billing/access', req.nextUrl.origin);
+      accessUrl.searchParams.set('capability', capability);
+      const response = await fetch(accessUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          cookie: req.headers.get('cookie') ?? '',
+        },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({
+          error: 'PLATFORM_BILLING_ACCESS_RESTRICTED',
+          message: 'Regularize o plano e faturamento para continuar.',
+        }));
+        return NextResponse.json(body, {
+          status: response.status,
+          headers: { 'cache-control': 'no-store' },
+        });
+      }
+    } catch {
+      return NextResponse.json(
+        {
+          error: 'PLATFORM_BILLING_ACCESS_CHECK_UNAVAILABLE',
+          message: 'Não foi possível validar o acesso da conta. Tente novamente.',
+        },
+        { status: 503, headers: { 'cache-control': 'no-store' } },
+      );
+    }
   }
 
   return null;
@@ -283,7 +385,7 @@ export default async function proxy(req: NextRequest) {
   }
 
   if (pathname.startsWith('/api/')) {
-    const apiResponse = handleApiRequest(req);
+    const apiResponse = await handleApiRequest(req);
     if (apiResponse) {
       return apiResponse;
     }

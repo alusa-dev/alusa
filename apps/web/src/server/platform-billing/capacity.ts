@@ -3,6 +3,7 @@ import {
   assertPlatformAccess,
   assertStudentCapacityDomain,
   derivePlatformAccessStatus,
+  derivePlatformRestrictionReason,
   type PlatformBillingCapability,
 } from '@alusa/platform-billing';
 import type { PlatformPlanCode } from '@alusa/platform-billing';
@@ -26,6 +27,22 @@ export async function assertPlatformAccessForConta(input: {
       capability: input.capability,
     });
   });
+}
+
+/**
+ * Shared route-handler adapter. Returning a response from this helper keeps
+ * every API route consistent without exposing billing internals to clients.
+ */
+export async function platformBillingAccessResponseForConta(input: {
+  contaId: string;
+  capability: PlatformBillingCapability;
+}) {
+  try {
+    await assertPlatformAccessForConta(input);
+    return null;
+  } catch (error) {
+    return platformBillingAccessResponse(error);
+  }
 }
 
 export function isPlatformBillingAccessError(error: unknown): error is PlatformBillingError {
@@ -60,22 +77,36 @@ export async function assertPlatformAccessForCapability(input: {
     },
   });
 
-  if (!account) return;
+  if (!account) {
+    assertPlatformAccess({
+      contaId: input.contaId,
+      account: null,
+      capability: input.capability,
+    });
+    return;
+  }
 
-  const accessStatus = derivePlatformAccessStatus({ account });
-  if (accessStatus !== account.accessStatus) {
+  const now = new Date();
+  const effectiveAccessStatus = derivePlatformAccessStatus({
+    account,
+    now,
+  });
+  const restrictionReason = derivePlatformRestrictionReason({ account, now });
+  if (effectiveAccessStatus !== account.accessStatus || restrictionReason !== account.restrictionReason) {
     await input.tx.platformBillingAccount.update({
       where: { id: account.id },
       data: {
-        accessStatus,
-        restrictedAt: accessStatus === 'RESTRICTED' ? new Date() : account.restrictedAt,
+        accessStatus: effectiveAccessStatus,
+        restrictedAt: effectiveAccessStatus === 'RESTRICTED' ? new Date() : account.restrictedAt,
+        restrictionReason,
+        accessStateVersion: { increment: 1 },
       },
     });
   }
 
   assertPlatformAccess({
     contaId: input.contaId,
-    account: { ...account, accessStatus },
+    account: { ...account, accessStatus: effectiveAccessStatus, restrictionReason },
     capability: input.capability,
   });
 }

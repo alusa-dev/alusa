@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
 
     try {
-      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ADMIN_WRITE' });
+      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'CHARGE_CREATE' });
     } catch (error) {
       const blocked = platformBillingAccessResponse(error);
       if (blocked) return json(blocked.status, blocked.body);

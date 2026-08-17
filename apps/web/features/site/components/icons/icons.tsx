@@ -27,6 +27,13 @@ export const ArrowRight: SiteIcon = (props) => (
   </BaseIcon>
 );
 
+export const ArrowLeft: SiteIcon = (props) => (
+  <BaseIcon {...props}>
+    <path d="M19 12H5" />
+    <path d="m11 6-6 6 6 6" />
+  </BaseIcon>
+);
+
 export const Menu: SiteIcon = (props) => (
   <BaseIcon {...props}>
     <path d="M4 7h16" />

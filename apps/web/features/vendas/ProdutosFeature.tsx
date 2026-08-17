@@ -21,6 +21,7 @@ import useCurrentUser from '@/hooks/use-current-user';
 import { useProducts } from './hooks/use-products';
 import { type ProductListItem } from './services/products-service';
 import { formatMarginPercent } from './pricing-utils';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 20;
 
@@ -105,6 +106,7 @@ interface ProdutosTableProps {
   searchTerm: string;
   viewMode: ProductViewMode;
   pendingIds: Set<string>;
+  canWrite: boolean;
   onEdit: (_product: ProductListItem) => void;
   onDelete: (_product: ProductListItem) => void;
   onToggleStatus: (_product: ProductListItem, _active: boolean) => void;
@@ -117,6 +119,7 @@ function ProdutosTable({
   searchTerm,
   viewMode,
   pendingIds,
+  canWrite,
   onEdit,
   onDelete,
   onToggleStatus,
@@ -141,7 +144,7 @@ function ProdutosTable({
               variant="ghost"
               size="sm"
               className="h-8 max-lg:px-2 max-lg:text-[11px] rounded-lg px-3 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
-              disabled={isPending}
+              disabled={isPending || !canWrite}
               onClick={() => onRestore(row)}
             >
               <ArchiveRestore className="mr-1.5 h-3.5 w-3.5" />
@@ -159,6 +162,7 @@ function ProdutosTable({
             size="icon"
             className="h-8 w-8 rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 alusa-dark:text-[color:var(--color-text-secondary)] alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] alusa-dark:hover:text-[color:var(--color-text-primary)]"
             aria-label={`Editar produto ${row.name}`}
+            disabled={!canWrite}
             onClick={() => onEdit(row)}
           >
             <Edit3 className="h-4 w-4" />
@@ -168,7 +172,7 @@ function ProdutosTable({
             variant="ghost"
             size="icon"
             className="h-8 w-8 rounded-lg text-amber-600 hover:bg-amber-50 hover:text-amber-700 alusa-dark:text-amber-300 alusa-dark:hover:bg-amber-500/10 alusa-dark:hover:text-amber-200"
-            disabled={isPending}
+            disabled={isPending || !canWrite}
             aria-label={`Arquivar produto ${row.name}`}
             onClick={() => onDelete(row)}
           >
@@ -350,7 +354,7 @@ function ProdutosTable({
           <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
             <Switch
               checked={row.isActive}
-              disabled={isPending}
+              disabled={isPending || !canWrite}
               aria-label={
                 row.isActive ? `Inativar produto ${row.name}` : `Ativar produto ${row.name}`
               }
@@ -373,7 +377,7 @@ function ProdutosTable({
       loading={loading}
       skeletonRows={8}
       ariaLabel="Tabela de produtos"
-      onRowClick={viewMode === 'catalog' ? onEdit : undefined}
+      onRowClick={viewMode === 'catalog' && canWrite ? onEdit : undefined}
       emptyMessage={
         <div className="px-6 py-12 text-center text-gray-500 text-sm alusa-dark:text-[color:var(--color-text-secondary)]">
           {searchTerm
@@ -388,6 +392,7 @@ function ProdutosTable({
 }
 
 export function ProdutosFeature() {
+  const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const router = useRouter();
   const { user: _user } = useCurrentUser();
 
@@ -451,6 +456,7 @@ export function ProdutosFeature() {
   }, [searchTerm, page, reload, viewMode]);
 
   function handleEdit(product: ProductListItem) {
+    if (!canWrite) return;
     router.push(`/vendas/produtos/${product.id}/editar`);
   }
 
@@ -501,6 +507,7 @@ export function ProdutosFeature() {
         actions={
           <Button
             onClick={() => router.push('/vendas/produtos/novo')}
+            disabled={billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
           >
             <Plus className="h-4 w-4" />
@@ -541,6 +548,7 @@ export function ProdutosFeature() {
             searchTerm={searchTerm}
             viewMode={viewMode}
             pendingIds={pendingIds}
+            canWrite={canWrite}
             onEdit={handleEdit}
             onDelete={(product) => deleteDialog.openDialog(product)}
             onToggleStatus={handleToggleStatus}

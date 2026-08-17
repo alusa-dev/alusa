@@ -5,6 +5,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { prisma } from '@/prisma/client';
 import { editRenewalFutureLink } from '@/src/server/matriculas/renewal-process.service';
 import { hasRenewalPermission } from '@/src/server/matriculas/renewal-permissions.service';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 const futureLinkSchema = z.object({
   targetClassId: z.string().trim().nullable().optional(),
@@ -53,6 +54,11 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   if (!hasRenewalPermission(user.role, 'renewal.process.edit_future')) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para editar próximo ciclo.');
+  }
+  try {
+    await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  } catch {
+    return jsonError(402, 'PLATFORM_BILLING_ACCESS_RESTRICTED', 'Regularize o plano e faturamento para continuar.');
   }
 
   try {

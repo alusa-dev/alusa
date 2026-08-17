@@ -11,6 +11,7 @@ import {
   update as updateColab,
   remove as removeColab,
 } from '../../../../../../packages/lib/src/server/services/colaborador-service';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -48,6 +49,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
     const { contaId } = user;
+    await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
     const json = await req.json();
     if (json && typeof json === 'object' && 'cpf' in json) {
@@ -118,6 +120,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ id: str
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     }
     const { contaId } = user;
+    await assertPlatformAccessForConta({ contaId, capability: 'STAFF_WRITE' });
 
     // Soft delete (inativar) para preservar auditoria - MULTI-TENANT: passar contaId
     await removeColab(ctxParams.id, contaId);

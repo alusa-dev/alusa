@@ -6,6 +6,7 @@ import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { Button } from '@/components/ui/button';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useRematriculas } from './hooks/use-rematriculas';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 import type { RematriculaElegivelItem } from './services/rematriculas-service';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -388,6 +389,7 @@ function buildEditProcessItem(process: RematriculaProcessSummary | null): Rematr
 }
 
 export default function RematriculasFeature() {
+  const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const router = useRouter();
   const { user } = useCurrentUser();
   const contaId = user?.contaId ?? null;
@@ -1158,6 +1160,7 @@ export default function RematriculasFeature() {
               type="button"
               variant="outline"
               className="h-10 w-full rounded-lg border-slate-200 bg-white px-4 text-slate-700 shadow-none hover:bg-slate-50 md:w-auto"
+              disabled={billingLoading || !canWrite}
               onClick={() => {
                 setStandaloneSearch('');
                 setSelectedStandaloneGroupId(null);
@@ -1169,6 +1172,7 @@ export default function RematriculasFeature() {
             <Button
               type="button"
               className="h-10 w-full rounded-lg bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+              disabled={billingLoading || !canWrite}
               onClick={() => {
                 setQuickFilter('CAMPANHAS');
                 resetCampaignForm();

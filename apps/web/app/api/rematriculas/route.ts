@@ -29,6 +29,7 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -323,6 +324,7 @@ export async function POST(req: Request) {
     if (!auth.user?.id || !auth.user.role || !allowedRoles.has(auth.user.role.toUpperCase())) {
       return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematricular.');
     }
+    await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
 
     const paymentSelection = resolveWizardPaymentSelection({
       formaPagamento: body.formaPagamento,

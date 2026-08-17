@@ -28,11 +28,11 @@ type Props = {
 /** Itens do menu de usuário — reutilizado no dropdown desktop e no drawer mobile. */
 export function UserMenuPanel({ onClose }: { onClose: () => void }) {
   const { isDark, toggleTheme } = useTheme();
-  const { summary } = usePlatformBilling();
+  const { summary, access } = usePlatformBilling();
   const menuUser = useUserStore((state: UserState) => state.user);
   const role = (menuUser as { role?: string } | null)?.role?.toUpperCase();
   const showPlatformBilling = role === 'ADMIN' || role === 'FINANCEIRO';
-  const planBadge = getPlanBadge(summary);
+  const planBadge = getPlanBadge(summary, access);
   const myAccountLocked = false;
 
   return (
@@ -96,13 +96,23 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function getPlanBadge(summary: ReturnType<typeof usePlatformBilling>['summary']) {
+function getPlanBadge(
+  summary: ReturnType<typeof usePlatformBilling>['summary'],
+  access: ReturnType<typeof usePlatformBilling>['access'],
+) {
   const account = summary?.account;
-  if (!account) return null;
-  if (account.status === 'TRIALING') return 'Trial';
-  if (account.planCode === 'STARTER') return 'Starter';
-  if (account.planCode === 'PREMIUM') return 'Premium';
-  if (account.planCode === 'PRO') return 'Premium+';
+  const billingStatus = account?.status ?? access?.billingStatus;
+  const accessStatus = summary?.access.accessStatus ?? access?.accessStatus;
+  const planCode = account?.planCode ?? access?.planCode;
+
+  if (accessStatus === 'RESTRICTED') return 'Suspensa';
+  if (accessStatus === 'GRACE_PERIOD') return 'Pagamento pendente';
+  if (accessStatus === 'CANCELED') return 'Cancelada';
+  if (billingStatus === 'TRIALING') return 'Trial';
+  if (planCode === 'STARTER') return 'Starter';
+  if (planCode === 'PREMIUM') return 'Premium';
+  if (planCode === 'PRO') return 'Premium+';
+  if (billingStatus === 'NOT_STARTED') return 'Sem plano';
   return null;
 }
 

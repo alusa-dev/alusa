@@ -13,6 +13,7 @@ import {
   confirmRenewalProcess,
   previewRenewalProcess,
 } from '@/src/server/matriculas/renewal-process.service';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -75,6 +76,11 @@ export async function POST(request: Request) {
   if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   if (!allowedRoles.has(String(user.role).toUpperCase())) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematrícula familiar.');
+  }
+  try {
+    await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  } catch {
+    return jsonError(402, 'PLATFORM_BILLING_ACCESS_RESTRICTED', 'Regularize o plano e faturamento para continuar.');
   }
 
   try {

@@ -20,6 +20,7 @@ import useCurrentUser from '@/hooks/use-current-user';
 import { formatFirstLast } from '@alusa/lib/client';
 import ModalidadeDialog from '@/components/modalidades/ModalidadeDialog';
 import { cn } from '@/lib/utils';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 import {
   type ModalidadeListItem,
   type UpdateModalidadePayload,
@@ -35,11 +36,13 @@ interface ModalidadesTableProps {
   accountMissing: boolean;
   onEdit: (_modalidade: ModalidadeListItem) => void;
   onDelete: (_modalidade: ModalidadeListItem) => void;
+  canWrite: boolean;
   loading: boolean;
 }
 
 export function ModalidadesFeature() {
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
 
   const { items, loading, reload, remove, setItems } = useModalidades({ contaId });
@@ -111,7 +114,7 @@ export function ModalidadesFeature() {
         subtitle="Gerencie cadastros e informações das modalidades."
         actions={
           <Button
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             onClick={() => {
               editDialog.closeDialog();
@@ -143,6 +146,7 @@ export function ModalidadesFeature() {
             accountMissing={accountMissing}
             onEdit={(modalidade) => editDialog.openDialog(modalidade)}
             onDelete={(modalidade) => deleteDialog.openDialog(modalidade)}
+            canWrite={canWrite}
             loading={loading || userLoading}
           />
           {total > pageSize ? (
@@ -301,6 +305,7 @@ function ModalidadesTable({
   accountMissing,
   onEdit,
   onDelete,
+  canWrite,
   loading,
 }: ModalidadesTableProps) {
   if (accountMissing) {
@@ -374,6 +379,8 @@ function ModalidadesTable({
         onDelete,
         editButtonAriaLabel: (modalidade) => `Editar modalidade ${modalidade.nome}`,
         deleteButtonAriaLabel: (modalidade) => `Excluir modalidade ${modalidade.nome}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,

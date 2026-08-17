@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createTurma, listTurmas, turmaSchema } from '@alusa/lib';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -77,6 +78,8 @@ export async function POST(req: Request) {
         'A conta informada não pertence ao usuário autenticado.',
       );
     }
+
+    await assertPlatformAccessForConta({ contaId, capability: 'CLASS_WRITE' });
 
     console.log('[API /turmas] Dados validados, tentando criar turma...');
     try {

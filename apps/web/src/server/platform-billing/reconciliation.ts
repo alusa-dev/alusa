@@ -2,13 +2,15 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import {
   computeGracePeriodEnd,
   createDefaultPlatformBillingStripeGateway,
+  derivePlatformAccessStatus,
+  derivePlatformRestrictionReason,
   resolvePlanCodeFromStripePriceId,
   type PlatformBillingAccessStatus,
   type PlatformBillingAccountStatus,
   type PlatformBillingEnvironment,
   type PlatformPlanCode,
 } from '@alusa/platform-billing';
-import type { StripeSubscriptionRecord } from '@alusa/stripe';
+import { getStripeClient, retrieveStripeDefaultPaymentMethod, type StripeSubscriptionRecord } from '@alusa/stripe';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
 
 type ReconciliationAccount = {
@@ -27,6 +29,17 @@ type ReconciliationAccount = {
   gracePeriodEndsAt: Date | null;
   restrictedAt: Date | null;
   lastPaymentFailedAt: Date | null;
+  firstPaidAt: Date | null;
+  lastSuccessfulPaymentAt: Date | null;
+  paymentMethodStatus: 'MISSING' | 'PRESENT' | 'UNKNOWN';
+  paymentMethodType: string | null;
+  paymentMethodBrand: string | null;
+  paymentMethodLast4: string | null;
+  paymentMethodExpMonth: number | null;
+  paymentMethodExpYear: number | null;
+  restrictionReason: string | null;
+  gracePeriodStartedAt: Date | null;
+  accessStateVersion: number;
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: string | null;
   pendingChangeEffectiveAt: Date | null;
@@ -100,6 +113,7 @@ export async function reconcilePlatformBilling(input: {
 
     try {
       const subscription = await gateway.retrieveSubscription(account.stripeSubscriptionId);
+      const paymentMethod = await resolvePaymentMethod(account, subscription.customerId);
       if (subscription.priceId && account.stripePriceId && subscription.priceId !== account.stripePriceId) {
         await upsertIssue(input.prisma, {
           contaId: account.contaId,
@@ -164,6 +178,7 @@ export async function reconcilePlatformBilling(input: {
           subscription,
           planCode: resolvedPlanCode,
           environment,
+          paymentMethod,
         });
         if (corrected) {
           console.info('[platform-billing][reconciliation]', {
@@ -238,10 +253,21 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   subscription: StripeSubscriptionRecord;
   planCode: PlatformPlanCode;
   environment: PlatformBillingEnvironment;
+  paymentMethod: Awaited<ReturnType<typeof resolvePaymentMethod>>;
 }): Promise<boolean> {
   const now = new Date();
   const desiredStatus = mapStripeSubscriptionStatus(input.subscription.status);
-  const desiredAccessStatus = deriveReconciledAccessStatus(desiredStatus, input.account.accessStatus);
+  const policyAccount = {
+    ...input.account,
+    status: desiredStatus,
+    planCode: input.planCode,
+    currentPeriodEnd: input.subscription.currentPeriodEnd,
+    cancelAtPeriodEnd: input.subscription.cancelAtPeriodEnd,
+    trialEndsAt: input.subscription.trialEndsAt,
+    paymentMethodStatus: input.paymentMethod?.status ?? input.account.paymentMethodStatus,
+  };
+  const desiredAccessStatus = derivePlatformAccessStatus({ account: policyAccount, now });
+  const restrictionReason = derivePlatformRestrictionReason({ account: policyAccount, now });
   const shouldClearPendingPlan = Boolean(
     input.account.pendingPlanCode &&
     input.account.pendingPlanCode === input.planCode &&
@@ -254,6 +280,7 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
 
   if (input.account.status !== desiredStatus) update.status = desiredStatus;
   if (input.account.accessStatus !== desiredAccessStatus) update.accessStatus = desiredAccessStatus;
+  if (input.account.restrictionReason !== restrictionReason) update.restrictionReason = restrictionReason;
   if (input.account.planCode !== input.planCode) update.planCode = input.planCode;
   if (input.subscription.customerId && input.account.stripeCustomerId !== input.subscription.customerId) {
     update.stripeCustomerId = input.subscription.customerId;
@@ -269,14 +296,26 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   if (!sameInstant(input.account.trialEndsAt, input.subscription.trialEndsAt)) {
     update.trialEndsAt = input.subscription.trialEndsAt;
   }
+  if (input.paymentMethod) {
+    if (input.account.paymentMethodStatus !== input.paymentMethod.status) {
+      update.paymentMethodStatus = input.paymentMethod.status;
+    }
+    if (input.account.paymentMethodType !== input.paymentMethod.type) update.paymentMethodType = input.paymentMethod.type;
+    if (input.account.paymentMethodBrand !== input.paymentMethod.brand) update.paymentMethodBrand = input.paymentMethod.brand;
+    if (input.account.paymentMethodLast4 !== input.paymentMethod.last4) update.paymentMethodLast4 = input.paymentMethod.last4;
+    if (input.account.paymentMethodExpMonth !== input.paymentMethod.expMonth) update.paymentMethodExpMonth = input.paymentMethod.expMonth;
+    if (input.account.paymentMethodExpYear !== input.paymentMethod.expYear) update.paymentMethodExpYear = input.paymentMethod.expYear;
+  }
 
   if (desiredAccessStatus === 'ACTIVE') {
     if (input.account.gracePeriodEndsAt) update.gracePeriodEndsAt = null;
     if (input.account.restrictedAt) update.restrictedAt = null;
     if (input.account.lastPaymentFailedAt) update.lastPaymentFailedAt = null;
+    if (input.account.gracePeriodStartedAt) update.gracePeriodStartedAt = null;
   } else if (desiredAccessStatus === 'GRACE_PERIOD') {
     if (!input.account.lastPaymentFailedAt) update.lastPaymentFailedAt = failedAt;
     if (!input.account.gracePeriodEndsAt) update.gracePeriodEndsAt = computeGracePeriodEnd({ failedAt });
+    if (!input.account.gracePeriodStartedAt) update.gracePeriodStartedAt = failedAt;
     if (input.account.restrictedAt) update.restrictedAt = null;
   } else if (desiredAccessStatus === 'RESTRICTED') {
     if (!input.account.restrictedAt) update.restrictedAt = now;
@@ -383,6 +422,28 @@ async function correctAccountFromStripeSubscription(prisma: PrismaClient, input:
   return true;
 }
 
+async function resolvePaymentMethod(account: ReconciliationAccount, subscriptionCustomerId?: string | null) {
+  const customerId = account.stripeCustomerId ?? subscriptionCustomerId ?? null;
+  if (!customerId) return null;
+  try {
+    const paymentMethod = await retrieveStripeDefaultPaymentMethod(getStripeClient(process.env), {
+      customerId,
+      subscriptionId: account.stripeSubscriptionId,
+    });
+    if (!paymentMethod) return { status: 'MISSING' as const, type: null, brand: null, last4: null, expMonth: null, expYear: null };
+    return {
+      status: 'PRESENT' as const,
+      type: paymentMethod.type,
+      brand: paymentMethod.brand,
+      last4: paymentMethod.last4,
+      expMonth: paymentMethod.expMonth,
+      expYear: paymentMethod.expYear,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function mapStripeSubscriptionStatus(status: string): PlatformBillingAccountStatus {
   switch (status) {
     case 'active':
@@ -404,18 +465,6 @@ function mapStripeSubscriptionStatus(status: string): PlatformBillingAccountStat
     default:
       return 'UNKNOWN';
   }
-}
-
-function deriveReconciledAccessStatus(
-  status: PlatformBillingAccountStatus,
-  currentAccessStatus: PlatformBillingAccessStatus,
-): PlatformBillingAccessStatus {
-  if (status === 'ACTIVE' || status === 'TRIALING') return 'ACTIVE';
-  if (status === 'PAUSED') return 'RESTRICTED';
-  if (status === 'PAST_DUE') return currentAccessStatus === 'RESTRICTED' ? 'RESTRICTED' : 'GRACE_PERIOD';
-  if (status === 'UNPAID') return 'RESTRICTED';
-  if (status === 'CANCELED' || status === 'INCOMPLETE_EXPIRED') return 'CANCELED';
-  return 'PENDING';
 }
 
 function sameInstant(left: Date | null, right: Date | null): boolean {

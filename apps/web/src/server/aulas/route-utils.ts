@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
 import { AulasError } from '@/src/server/aulas/aulas-error';
+import { platformBillingAccessResponse } from '@/src/server/platform-billing/capacity';
 
 const SERVER_TIMING_SAFE = /^[a-z0-9_-]+$/i;
 
@@ -30,6 +31,9 @@ export function json(status: number, body: unknown, extraHeaders?: Record<string
 }
 
 export function handleAulasRouteError(error: unknown, fallbackCode: string) {
+  const billing = platformBillingAccessResponse(error);
+  if (billing) return json(billing.status, billing.body);
+
   if (error instanceof ZodError) {
     return json(422, { error: 'VALIDACAO_INVALIDA', details: error.flatten() });
   }

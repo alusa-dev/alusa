@@ -67,6 +67,7 @@ import { cn } from '@/lib/cn';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { DocumentTextIcon } from '@heroicons/react/24/outline';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
@@ -140,15 +141,16 @@ interface MatriculasFeatureProps {
 export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureProps) {
   const router = useRouter();
   const { user } = useCurrentUser();
+  const {
+    canWrite,
+    loading: billingLoading,
+  } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
 
   const [search, setSearch] = useState('');
   const [statusValue, setStatusValue] = useState<StatusValue>('TODOS');
   const [wizardOpen, setWizardOpen] = useState(false);
-
-  const handleOpenWizard = useCallback(async () => {
-    setWizardOpen(true);
-  }, []);
+  const handleOpenWizard = useCallback(() => setWizardOpen(true), []);
   const [cancelTarget, setCancelTarget] = useState<MatriculaListItem | null>(null);
   const [pauseTarget, setPauseTarget] = useState<MatriculaListItem | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<MatriculaListItem | null>(null);
@@ -731,7 +733,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setPauseTarget(m);
                       }}
                       data-testid={`matricula-action-pausar-${m.id}`}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !canWrite}
                     >
                       <PauseIcon className="mr-2 h-4 w-4" />
                       Pausar matrícula
@@ -744,7 +746,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setReactivateTarget(m);
                       }}
                       data-testid={`matricula-action-retomar-${m.id}`}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !canWrite}
                     >
                       <PlayIcon className="mr-2 h-4 w-4" />
                       Retomar matrícula
@@ -757,7 +759,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setCancelTarget(m);
                       }}
                       data-testid={`matricula-action-cancelar-${m.id}`}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !canWrite}
                     >
                       <XMarkIcon className="mr-2 h-4 w-4 text-orange-600" />
                       Cancelar matrícula
@@ -771,7 +773,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                         setDeleteTarget(m);
                       }}
                       data-testid={`matricula-action-excluir-${m.id}`}
-                      disabled={actionLoading}
+                      disabled={actionLoading || !canWrite}
                       className="text-red-600 focus:text-red-700"
                       title={deleteHint}
                     >
@@ -856,7 +858,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
             onClick={handleOpenWizard}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar matrícula"
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
           >
             Nova matrícula
           </Button>
@@ -894,9 +896,13 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
 
       {/* Wizard de criação de matrícula */}
       <MatriculaWizardDialog
-        open={wizardOpen}
+        open={wizardOpen && canWrite && !billingLoading}
         contaId={contaId ?? undefined}
         onOpenChange={(open: boolean) => {
+          if (open && (!canWrite || billingLoading)) {
+            setWizardOpen(false);
+            return;
+          }
           setWizardOpen(open);
           if (!open) {
             reload();

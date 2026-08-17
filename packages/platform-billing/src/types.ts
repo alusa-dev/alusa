@@ -41,6 +41,16 @@ export type PlatformBillingWebhookEventStatus =
   | 'IGNORED';
 
 export type PlatformBillingAccessStatus = 'PENDING' | 'ACTIVE' | 'GRACE_PERIOD' | 'RESTRICTED' | 'CANCELED';
+export type PlatformBillingPaymentMethodStatus = 'MISSING' | 'PRESENT' | 'UNKNOWN';
+export type PlatformBillingRestrictionReason =
+  | 'TRIAL_EXPIRED'
+  | 'FIRST_PAYMENT_INCOMPLETE'
+  | 'PAYMENT_PAST_DUE'
+  | 'PAYMENT_UNPAID'
+  | 'SUBSCRIPTION_PAUSED'
+  | 'SUBSCRIPTION_CANCELED'
+  | 'PAYMENT_METHOD_MISSING'
+  | 'UNKNOWN';
 export type PlatformBillingPlanChangeType =
   | 'UPGRADE'
   | 'DOWNGRADE'
@@ -76,6 +86,18 @@ export interface PlatformBillingAccountRecord {
   restrictedAt: Date | null;
   canceledAt: Date | null;
   lastPaymentFailedAt: Date | null;
+  firstPaidAt: Date | null;
+  lastSuccessfulPaymentAt: Date | null;
+  paymentMethodStatus: PlatformBillingPaymentMethodStatus;
+  paymentMethodType: string | null;
+  paymentMethodBrand: string | null;
+  paymentMethodLast4: string | null;
+  paymentMethodExpMonth: number | null;
+  paymentMethodExpYear: number | null;
+  restrictionReason: PlatformBillingRestrictionReason | null;
+  gracePeriodStartedAt: Date | null;
+  accessStateVersion: number;
+  lastProviderEventCreatedAt: Date | null;
   lastReconciledAt: Date | null;
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: PlatformBillingPlanChangeType | null;
@@ -205,6 +227,17 @@ export interface UpdatePlatformBillingAccountFromStripeSubscriptionInput {
   restrictedAt?: Date | null;
   canceledAt?: Date | null;
   lastPaymentFailedAt?: Date | null;
+  firstPaidAt?: Date | null;
+  lastSuccessfulPaymentAt?: Date | null;
+  paymentMethodStatus?: PlatformBillingPaymentMethodStatus;
+  paymentMethodType?: string | null;
+  paymentMethodBrand?: string | null;
+  paymentMethodLast4?: string | null;
+  paymentMethodExpMonth?: number | null;
+  paymentMethodExpYear?: number | null;
+  restrictionReason?: PlatformBillingRestrictionReason | null;
+  gracePeriodStartedAt?: Date | null;
+  lastProviderEventCreatedAt?: Date | null;
   trialWillEndNotifiedAt?: Date | null;
   pendingPlanCode?: PlatformPlanCode | null;
   pendingChangeType?: PlatformBillingPlanChangeType | null;

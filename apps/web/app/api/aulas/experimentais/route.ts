@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 import { createExperimentalClassInputSchema } from '@/features/aulas/dtos';
 import { createExperimentalClass } from '@/src/server/aulas/experimentais/experimental.service';
 import { handleAulasRouteError, json } from '@/src/server/aulas/route-utils';
-import { canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/aulas/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
+    await assertAulasWriteAccess(user);
 
     const body = createExperimentalClassInputSchema.parse(await request.json());
 

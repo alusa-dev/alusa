@@ -29,6 +29,7 @@ export async function expirePlatformBillingTrials(input: {
       status: 'TRIALING',
       trialEndsAt: { lte: now },
       accessStatus: { not: 'CANCELED' },
+      OR: [{ firstPaidAt: null, lastSuccessfulPaymentAt: null }],
     },
     orderBy: { trialEndsAt: 'asc' },
     take: limit,
@@ -38,6 +39,8 @@ export async function expirePlatformBillingTrials(input: {
       planCode: true,
       stripeSubscriptionId: true,
       trialEndsAt: true,
+      firstPaidAt: true,
+      lastSuccessfulPaymentAt: true,
     },
   });
 
@@ -52,10 +55,13 @@ export async function expirePlatformBillingTrials(input: {
           status: 'TRIALING',
           trialEndsAt: { lte: now },
           accessStatus: { not: 'CANCELED' },
+          OR: [{ firstPaidAt: null, lastSuccessfulPaymentAt: null }],
         },
         data: {
           accessStatus: 'RESTRICTED',
           restrictedAt: now,
+          restrictionReason: 'TRIAL_EXPIRED',
+          accessStateVersion: { increment: 1 },
         },
       });
 

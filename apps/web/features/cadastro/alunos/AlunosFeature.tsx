@@ -35,7 +35,7 @@ import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering
 import { reactivateAluno, type AlunoListItem } from './services/alunos-service';
 import { pushToast } from '@/components/ui/toast';
 import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
-import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 6;
 
@@ -48,6 +48,7 @@ interface AlunosTableProps {
   onDelete: (_aluno: AlunoListItem) => void;
   onReactivate: (_aluno: AlunoListItem) => void;
   onOpenDetail: (_aluno: AlunoListItem) => void;
+  canWrite: boolean;
   loading: boolean;
 }
 
@@ -57,9 +58,8 @@ export function AlunosFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
   const contaId = user?.contaId ?? null;
-  const { summary: billingSummary, loading: billingLoading } = usePlatformBilling();
-  const billingAccessStatus = billingSummary?.account?.accessStatus ?? null;
-  const isBillingRestricted = billingAccessStatus === 'RESTRICTED' || billingAccessStatus === 'CANCELED';
+  const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
+  const isBillingWriteBlocked = billingLoading || !canWrite;
 
   const {
     search: searchTerm,
@@ -86,6 +86,7 @@ export function AlunosFeature() {
     sortOrder: sort as SortOrder,
   });
   const handleReactivate = useCallback(async (aluno: AlunoListItem) => {
+    if (!canWrite) return;
     try {
       await reactivateAluno(aluno.id);
       pushToast({ title: 'Aluno reativado', variant: 'success' });
@@ -98,7 +99,7 @@ export function AlunosFeature() {
         variant: 'error',
       });
     }
-  }, [reload]);
+  }, [canWrite, reload]);
   const editDialog = useEditDialog<EditAluno>();
   const deleteDialog = useDeleteDialog<AlunoListItem>({
     onDelete: async (aluno, reason) => {
@@ -131,13 +132,9 @@ export function AlunosFeature() {
   }, [sort]);
 
   const handleOpenWizard = useCallback(() => {
-    if (!contaId || billingLoading) return;
-    if (isBillingRestricted) {
-      router.push('/conta/plano-faturamento');
-      return;
-    }
+    if (!contaId || isBillingWriteBlocked) return;
     setWizardOpen(true);
-  }, [billingLoading, contaId, isBillingRestricted, router]);
+  }, [contaId, isBillingWriteBlocked]);
 
   return (
     <TableLayout
@@ -150,8 +147,8 @@ export function AlunosFeature() {
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar aluno"
             data-testid="abrir-wizard-aluno"
-            disabled={!contaId || billingLoading || isBillingRestricted}
-            title={isBillingRestricted ? 'Regularize o plano para cadastrar alunos.' : undefined}
+            disabled={!contaId || isBillingWriteBlocked}
+            title={isBillingWriteBlocked ? 'Regularize o plano para cadastrar alunos.' : undefined}
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Cadastrar aluno
@@ -186,6 +183,7 @@ export function AlunosFeature() {
           }}
           onReactivate={handleReactivate}
           onOpenDetail={(aluno) => router.push(`/alunos/${aluno.id}`)}
+          canWrite={canWrite}
           loading={loading || userLoading}
         />
         {total > PAGE_SIZE ? (
@@ -272,6 +270,7 @@ function AlunosTable({
   onDelete,
   onReactivate,
   onOpenDetail,
+  canWrite,
   loading,
 }: AlunosTableProps) {
   const columns: DataTableColumn<AlunoListItem>[] = [
@@ -408,6 +407,8 @@ function AlunosTable({
           ),
         deleteButtonAriaLabel: (aluno: AlunoListItem) =>
           `${aluno.status === 'INATIVO' ? 'Reativar' : 'Excluir'} aluno ${aluno.nome ?? ''}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,

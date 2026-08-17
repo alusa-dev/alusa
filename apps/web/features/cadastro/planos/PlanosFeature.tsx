@@ -24,6 +24,7 @@ import {
   type PlanoPeriodicidade,
 } from './services/planos-service';
 import { usePlanos, type UsePlanosFilters } from './hooks/use-planos';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 6;
 
@@ -37,6 +38,7 @@ interface WizardState {
 
 export function PlanosFeature() {
   const { user, loading: userLoading } = useCurrentUser();
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const contaId = user?.contaId ?? null;
 
   const { items, loading, error, reload, remove } = usePlanos({ contaId });
@@ -120,7 +122,7 @@ export function PlanosFeature() {
         actions={
           <Button
             data-testid="novo-plano"
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             onClick={openCreateDialog}
           >
@@ -153,6 +155,7 @@ export function PlanosFeature() {
           loading={loading || userLoading}
           onEdit={openEditDialog}
           onDelete={deleteDialog.openDialog}
+          canWrite={canWrite}
           sortDirection={sort as SortDirection}
           footer={
             total > pageSize ? (
@@ -228,11 +231,12 @@ interface PlanosTableProps {
   loading: boolean;
   onEdit: (_plano: PlanoListItem) => void;
   onDelete: (_plano: PlanoListItem) => void;
+  canWrite: boolean;
   sortDirection: SortDirection;
   footer?: ReactNode;
 }
 
-function PlanosTable({ data, accountMissing, loading, onEdit, onDelete, footer }: PlanosTableProps) {
+function PlanosTable({ data, accountMissing, loading, onEdit, onDelete, canWrite, footer }: PlanosTableProps) {
   if (accountMissing) {
     return (
       <div className={cn(table.container, 'px-6 py-12 text-center text-gray-500')}>
@@ -321,6 +325,8 @@ function PlanosTable({ data, accountMissing, loading, onEdit, onDelete, footer }
         onDelete,
         editButtonAriaLabel: (plano) => `Editar plano ${plano.nome}`,
         deleteButtonAriaLabel: (plano) => `Excluir plano ${plano.nome}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,

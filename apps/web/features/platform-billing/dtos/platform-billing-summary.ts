@@ -2,6 +2,48 @@ import { z } from 'zod';
 
 const planCodeSchema = z.enum(['STARTER', 'PREMIUM', 'PRO', 'CUSTOM']);
 const publicPlanCodeSchema = z.enum(['STARTER', 'PREMIUM', 'PRO']);
+const capabilitySchema = z.record(z.boolean());
+const accessStatusSchema = z.enum(['PENDING', 'ACTIVE', 'GRACE_PERIOD', 'RESTRICTED', 'CANCELED']);
+const billingStatusSchema = z.enum([
+  'NOT_STARTED',
+  'CHECKOUT_PENDING',
+  'ACTIVE',
+  'TRIALING',
+  'PAST_DUE',
+  'CANCELED',
+  'INCOMPLETE',
+  'INCOMPLETE_EXPIRED',
+  'UNPAID',
+  'PAUSED',
+  'UNKNOWN',
+]);
+const restrictionReasonSchema = z.enum([
+  'TRIAL_EXPIRED',
+  'FIRST_PAYMENT_INCOMPLETE',
+  'PAYMENT_PAST_DUE',
+  'PAYMENT_UNPAID',
+  'SUBSCRIPTION_PAUSED',
+  'SUBSCRIPTION_CANCELED',
+  'PAYMENT_METHOD_MISSING',
+  'UNKNOWN',
+]).nullable();
+
+export const platformBillingAccessDTOSchema = z.object({
+  accountId: z.string().min(1).nullable(),
+  billingStatus: billingStatusSchema.nullable(),
+  accessStatus: accessStatusSchema,
+  planCode: planCodeSchema.nullable(),
+  restrictionReason: restrictionReasonSchema,
+  trialEndsAt: z.string().datetime().nullable(),
+  gracePeriodEndsAt: z.string().datetime().nullable(),
+  hasPaymentMethod: z.boolean(),
+  communication: z.object({
+    level: z.enum(['NONE', 'TRIAL_WARNING', 'PAYMENT_PENDING', 'RESTRICTED', 'RENEWED']),
+    noticeKey: z.string().nullable(),
+  }),
+  capabilities: capabilitySchema,
+  generatedAt: z.string().datetime(),
+});
 
 export const publicPlatformPlanDTOSchema = z.object({
   code: publicPlanCodeSchema,
@@ -17,20 +59,8 @@ export const publicPlatformPlanDTOSchema = z.object({
 
 const billingAccountSchema = z.object({
   id: z.string().min(1),
-  status: z.enum([
-    'NOT_STARTED',
-    'CHECKOUT_PENDING',
-    'ACTIVE',
-    'TRIALING',
-    'PAST_DUE',
-    'CANCELED',
-    'INCOMPLETE',
-    'INCOMPLETE_EXPIRED',
-    'UNPAID',
-    'PAUSED',
-    'UNKNOWN',
-  ]),
-  accessStatus: z.enum(['PENDING', 'ACTIVE', 'GRACE_PERIOD', 'RESTRICTED', 'CANCELED']),
+  status: billingStatusSchema,
+  accessStatus: accessStatusSchema,
   planCode: planCodeSchema.nullable(),
   stripeCustomerId: z.string().nullable(),
   stripeSubscriptionId: z.string().nullable(),
@@ -42,6 +72,18 @@ const billingAccountSchema = z.object({
   restrictedAt: z.string().datetime().nullable(),
   canceledAt: z.string().datetime().nullable(),
   lastPaymentFailedAt: z.string().datetime().nullable(),
+  firstPaidAt: z.string().datetime().nullable(),
+  lastSuccessfulPaymentAt: z.string().datetime().nullable(),
+  paymentMethodStatus: z.enum(['MISSING', 'PRESENT', 'UNKNOWN']),
+  paymentMethodType: z.string().nullable(),
+  paymentMethodBrand: z.string().nullable(),
+  paymentMethodLast4: z.string().nullable(),
+  paymentMethodExpMonth: z.number().int().nullable(),
+  paymentMethodExpYear: z.number().int().nullable(),
+  restrictionReason: restrictionReasonSchema,
+  gracePeriodStartedAt: z.string().datetime().nullable(),
+  accessStateVersion: z.number().int().nonnegative(),
+  lastProviderEventCreatedAt: z.string().datetime().nullable(),
   lastReconciledAt: z.string().datetime().nullable(),
   pendingPlanCode: planCodeSchema.nullable(),
   pendingChangeType: z
@@ -94,6 +136,21 @@ export const platformBillingSummaryDTOSchema = z.object({
   }),
   activeStudents: z.number().int().nonnegative(),
   account: billingAccountSchema.nullable(),
+  access: z.object({
+    accountId: z.string().min(1).nullable(),
+    billingStatus: billingAccountSchema.shape.status.nullable(),
+    accessStatus: billingAccountSchema.shape.accessStatus,
+    planCode: planCodeSchema.nullable(),
+    restrictionReason: billingAccountSchema.shape.restrictionReason,
+    trialEndsAt: z.string().datetime().nullable(),
+    gracePeriodEndsAt: z.string().datetime().nullable(),
+    currentPeriodEnd: z.string().datetime().nullable(),
+    hasPaymentMethod: z.boolean(),
+    firstPaidAt: z.string().datetime().nullable(),
+    capabilities: capabilitySchema,
+    communication: platformBillingAccessDTOSchema.shape.communication,
+    generatedAt: z.string().datetime(),
+  }),
   paymentMethod: paymentMethodSummarySchema,
   plans: z.array(publicPlatformPlanDTOSchema).min(1),
   invoices: z.array(billingInvoiceSchema),
@@ -142,4 +199,5 @@ export const platformBillingSummaryDTOSchema = z.object({
 });
 
 export type PlatformBillingSummaryDTO = z.infer<typeof platformBillingSummaryDTOSchema>;
+export type PlatformBillingAccessDTO = z.infer<typeof platformBillingAccessDTOSchema>;
 export type PublicPlatformPlanDTO = z.infer<typeof publicPlatformPlanDTOSchema>;

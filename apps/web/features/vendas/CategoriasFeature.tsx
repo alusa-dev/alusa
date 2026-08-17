@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 import {
   createCategory,
@@ -25,6 +26,7 @@ import {
 } from './services/categories-service';
 
 export function CategoriasFeature() {
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
   const [items, setItems] = useState<CategoryDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -140,6 +142,7 @@ export function CategoriasFeature() {
             type="button"
             title="Excluir categoria"
             onClick={() => setToDelete(row)}
+            disabled={!canWrite}
             className="flex size-7 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500"
           >
             <Trash2 className="size-4" />
@@ -156,8 +159,12 @@ export function CategoriasFeature() {
         subtitle="Organize seus produtos por categoria para facilitar a gestão e as vendas."
         actions={
           <Button
+            disabled={billingLoading || !canWrite}
             className="h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
-            onClick={() => { setCreateError(null); setCreateOpen(true); }}
+            onClick={() => {
+              setCreateError(null);
+              setCreateOpen(true);
+            }}
           >
             <Plus className="mr-2 h-4 w-4" />
             Nova categoria
@@ -278,7 +285,7 @@ export function CategoriasFeature() {
             <Button
               variant="destructive"
               onClick={() => void handleDelete()}
-              disabled={deleting}
+              disabled={deleting || !canWrite}
             >
               {deleting ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
               Excluir

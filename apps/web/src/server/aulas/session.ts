@@ -1,5 +1,6 @@
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { prisma } from '@/src/prisma';
+import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 
 export type AulasSessionUser = {
   id: string;
@@ -39,6 +40,10 @@ export async function getAulasSessionUser(): Promise<AulasSessionUser | null> {
 
 export function canAccessAulas(user: Pick<AulasSessionUser, 'role'> | null): boolean {
   return Boolean(user?.role && AULAS_ALLOWED_ROLES.has(user.role.toUpperCase()));
+}
+
+export async function assertAulasWriteAccess(user: AulasSessionUser): Promise<void> {
+  await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'LESSON_WRITE' });
 }
 
 export async function resolveAulasAccessScope(user: AulasSessionUser): Promise<AulasAccessScope> {

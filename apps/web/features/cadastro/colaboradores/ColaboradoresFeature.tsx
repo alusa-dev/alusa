@@ -32,6 +32,7 @@ import { cn } from '@/lib/utils';
 import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
 import { toast } from '@/components/ui/toast';
 import useCurrentUser from '@/hooks/use-current-user';
+import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
 
 const PAGE_SIZE = 6;
 
@@ -68,6 +69,7 @@ function resolveColaboradorCargoBadge(cargo: string | null | undefined):
 export function ColaboradoresFeature() {
   const { user, loading: userLoading } = useCurrentUser();
   const contaId = user?.contaId ?? null;
+const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
 
   const { items, loading, reload, remove } = useColaboradores({ contaId });
   const editDialog = useEditDialog<ColaboradorEdit>();
@@ -138,7 +140,7 @@ export function ColaboradoresFeature() {
             onClick={() => setWizardOpen(true)}
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar colaborador"
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || !canWrite}
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Novo colaborador
@@ -166,6 +168,7 @@ export function ColaboradoresFeature() {
           onDelete={(colaborador) => {
             deleteDialog.openDialog(colaborador);
           }}
+          canWrite={canWrite}
           loading={loading || userLoading}
         />
         {ordered.length > PAGE_SIZE ? (
@@ -247,11 +250,13 @@ function ColaboradoresTable({
   colaboradores,
   onEdit,
   onDelete,
+  canWrite,
   loading,
 }: {
   colaboradores: ColaboradorListItem[];
   onEdit: (_colaborador: ColaboradorListItem) => void;
   onDelete: (_colaborador: ColaboradorListItem) => void;
+  canWrite: boolean;
   loading: boolean;
 }) {
   const columns: DataTableColumn<ColaboradorListItem>[] = [
@@ -403,6 +408,8 @@ function ColaboradoresTable({
         onDelete,
         editButtonAriaLabel: (c) => `Editar colaborador ${c.nome ?? ''}`,
         deleteButtonAriaLabel: (c) => `Excluir colaborador ${c.nome ?? ''}`,
+        editDisabled: !canWrite,
+        deleteDisabled: !canWrite,
       });
       return {
         ...col,
