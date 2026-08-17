@@ -2,16 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-options';
 import { reativarAlunoCompleto } from '@alusa/lib';
-import { z } from 'zod';
 import {
-  assertStudentCapacity,
-  isPlatformBillingCapacityError,
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
 } from '@/src/server/platform-billing/capacity';
-
-const reativarSchema = z.object({
-  reativarMatriculas: z.boolean().optional().default(false),
-  matriculasIds: z.array(z.string()).optional(),
-});
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
@@ -30,62 +24,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    // 3. Validar input
-    const body = await req.json();
-    const parsed = reativarSchema.parse(body);
-
-    // 4. Validar contaId
+    // A rota reativa somente o cadastro do aluno. Matrículas e financeiro têm
+    // fluxos próprios e não podem ser alterados por esta operação.
     if (!session.user.contaId) {
       return NextResponse.json({ error: 'Conta não encontrada' }, { status: 400 });
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: session.user.contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
     }
 
     // 5. Reativar aluno
     const result = await reativarAlunoCompleto({
       id: rawParams.id,
       contaId: session.user.contaId,
-      reativarMatriculas: parsed.reativarMatriculas,
-      matriculasIds: parsed.matriculasIds,
       actorId: session.user.id,
-      beforeReactivate: async (tx, { id, contaId }) => {
-        const activeEnrollment = await tx.matricula.findFirst({
-          where: {
-            contaId,
-            alunoId: id,
-            status: 'ATIVA',
-          },
-          select: { id: true },
-        });
-
-        await assertStudentCapacity({
-          tx,
-          contaId,
-          additionalActiveStudents: activeEnrollment ? 1 : 0,
-          operation: 'aluno.reactivate',
-        });
-      },
     });
 
     return NextResponse.json(result);
   } catch (error) {
     console.error('[API] Erro ao reativar aluno:', error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Dados inválidos', details: error.errors },
-        { status: 400 },
-      );
-    }
-
-    if (isPlatformBillingCapacityError(error)) {
-      return NextResponse.json(
-        {
-          error: error.code,
-          message: error.message,
-          details: error.details,
-        },
-        { status: 422 },
-      );
-    }
 
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 400 });

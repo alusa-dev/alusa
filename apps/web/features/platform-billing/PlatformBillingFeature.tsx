@@ -177,7 +177,8 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const planUsageLabel = currentPlanMax
     ? `${summary?.activeStudents ?? 0} de ${currentPlanMax} alunos ativos`
     : `${summary?.activeStudents ?? 0} alunos ativos`;
-  const renewalLabel = getRenewalLabel(summary?.account ?? null);
+  const paymentMethod = summary?.paymentMethod ?? { status: 'missing' as const };
+  const renewalLabel = getRenewalLabel(summary?.account ?? null, paymentMethod);
   const currentAccessStatus = summary?.account?.accessStatus ?? 'PENDING';
   const hasActiveSubscription = Boolean(summary?.account?.stripeSubscriptionId && summary.account.planCode);
   const isCanceledSubscription = summary?.account?.status === 'CANCELED' || summary?.account?.accessStatus === 'CANCELED';
@@ -197,7 +198,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     summary?.account?.status === 'UNPAID' ||
     summary?.account?.status === 'INCOMPLETE',
   );
-  const paymentMethod = summary?.paymentMethod ?? { status: 'missing' as const };
   const paymentTitle = getPaymentMethodTitle(paymentMethod);
   const paymentDescription = getPaymentMethodDescription(paymentMethod);
   const paymentActionLabel = paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
@@ -210,45 +210,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     hasManageableSubscription,
     canStartTrial,
   });
-
-  useEffect(() => {
-    const account = summary?.account;
-    if (!account) return;
-
-    const key = `platform-billing:notice:${account.id}:${account.accessStatus}:${account.gracePeriodEndsAt ?? account.canceledAt ?? ''}`;
-    if (typeof window === 'undefined' || window.sessionStorage.getItem(key)) return;
-
-    if (account.accessStatus === 'GRACE_PERIOD') {
-      window.sessionStorage.setItem(key, '1');
-      setNoticeDialog({
-        title: 'Pagamento pendente',
-        description: `A conta está em regularização até ${formatDate(account.gracePeriodEndsAt)}. Atualize o pagamento para evitar restrições.`,
-        actionLabel: 'Regularizar pagamento',
-        action: 'portal',
-      });
-    }
-
-    if (account.accessStatus === 'RESTRICTED') {
-      window.sessionStorage.setItem(key, '1');
-      setNoticeDialog({
-        title: 'Conta restrita',
-        description: 'Algumas ações estão bloqueadas até a regularização da assinatura. O suporte continua disponível.',
-        tone: 'destructive',
-        actionLabel: 'Regularizar pagamento',
-        action: 'portal',
-      });
-    }
-
-    const trialNotice = getTrialEndingNotice(account, paymentMethod);
-    if (trialNotice && shouldShowTrialEndingDialog(account)) {
-      setNoticeDialog({
-        title: 'Teste gratuito terminando',
-        description: trialNotice,
-        actionLabel: 'Cadastrar pagamento',
-        action: 'portal',
-      });
-    }
-  }, [summary?.account, paymentMethod]);
 
   async function startCheckout(planCode: PublicPlan['code']) {
     setActionLoading(`checkout:${planCode}`);
@@ -838,73 +799,6 @@ function BillingHistoryDialog({
   );
 }
 
-function BillingHealthDialog({
-  open,
-  onOpenChange,
-  summary,
-}: {
-  open: boolean;
-  onOpenChange: (_open: boolean) => void;
-  summary: BillingSummary;
-}) {
-  const rows = [
-    { label: 'Conta Alusa', value: summary.billingInfo.contaName },
-    { label: 'Customer Stripe', value: summary.health.stripeCustomerId ?? 'Não criado' },
-    { label: 'Subscription Stripe', value: summary.health.stripeSubscriptionId ?? 'Não criada' },
-    {
-      label: 'Último webhook',
-      value: summary.health.lastWebhook
-        ? `${formatStripeEventLabel(summary.health.lastWebhook.eventType)} em ${formatDateTime(summary.health.lastWebhook.receivedAt)}`
-        : 'Nenhum webhook registrado',
-    },
-    {
-      label: 'Última reconciliação',
-      value: summary.health.lastReconciliation ? formatDateTime(summary.health.lastReconciliation) : 'Ainda não executada',
-    },
-    { label: 'Pendências locais', value: String(summary.health.pendingChanges) },
-    { label: 'Alertas abertos', value: String(summary.health.openIssues) },
-    {
-      label: 'Fila de webhooks',
-      value: formatWebhookStats(summary.health.webhookStats),
-    },
-  ];
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[620px] gap-5 rounded-2xl p-6 sm:p-7">
-        <DialogHeader className="space-y-1.5">
-          <DialogTitle className="text-xl font-semibold text-gray-950 alusa-dark:text-[color:var(--color-text-primary)]">
-            Saúde da assinatura
-          </DialogTitle>
-          <DialogDescription className="text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-            Consulte os sinais operacionais da assinatura da conta.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="rounded-xl border border-gray-200 alusa-dark:border-[color:var(--color-border-default)]">
-          {rows.map((row) => (
-            <div
-              key={row.label}
-              className="grid grid-cols-[170px_1fr] gap-4 border-b border-gray-100 px-4 py-3 text-sm last:border-b-0 alusa-dark:border-[color:var(--color-border-subtle)]"
-            >
-              <span className="text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">{row.label}</span>
-              <span className="min-w-0 break-words font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                {row.value}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {summary.health.lastWebhook?.lastErrorCode ? (
-          <InfoCallout variant="warning" size="sm" showIcon>
-            Último webhook com alerta: {summary.health.lastWebhook.lastErrorCode}.
-          </InfoCallout>
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function BillingNoticeDialog({
   notice,
   onOpenChange,
@@ -1214,22 +1108,19 @@ function formatLongDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function formatDateTime(value: string | null) {
-  if (!value) return '-';
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(new Date(value));
-}
-
-function getRenewalLabel(account: BillingAccount | null) {
+function getRenewalLabel(account: BillingAccount | null, paymentMethod: PaymentMethodSummary) {
   if (!account) return 'Assinatura ainda não iniciada.';
   if (account.status === 'CANCELED') return 'Assinatura cancelada.';
   const trialDate = formatLongDate(account.trialEndsAt);
-  if (account.status === 'TRIALING' && trialDate) return `Teste gratuito ativo até ${trialDate}.`;
+  if (account.status === 'TRIALING' && trialDate) {
+    return paymentMethod.status === 'present'
+      ? `Seu plano será renovado automaticamente em ${trialDate}.`
+      : 'Cadastre um cartão para ativar a renovação automática do seu plano.';
+  }
   const date = formatLongDate(account.currentPeriodEnd);
   if (account.cancelAtPeriodEnd && date) return `Sua assinatura será encerrada em ${date}.`;
-  if (date) return `Seu plano será renovado automaticamente em ${date}.`;
+  if (date && paymentMethod.status === 'present') return `Seu plano será renovado automaticamente em ${date}.`;
+  if (date) return 'Cadastre um cartão para ativar a renovação automática do seu plano.';
   return getBillingStatusLabel(account.status);
 }
 
@@ -1349,62 +1240,6 @@ function getTrialEndingNotice(account: BillingAccount | null, paymentMethod: Pay
   if (daysUntilEnd > 3) return null;
 
   return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'}. Cadastre um cartão para evitar pausa no acesso.`;
-}
-
-function shouldShowTrialEndingDialog(account: BillingAccount) {
-  if (typeof window === 'undefined' || !account.trialEndsAt) return false;
-
-  const now = new Date();
-  const hour = now.getHours();
-  if (hour < 8 || hour > 20) return false;
-
-  const trialEndsAt = new Date(account.trialEndsAt);
-  const msUntilEnd = trialEndsAt.getTime() - now.getTime();
-  if (msUntilEnd > 3 * 24 * 60 * 60 * 1000) return false;
-
-  const minIntervalMs = msUntilEnd <= 24 * 60 * 60 * 1000
-    ? 6 * 60 * 60 * 1000
-    : 24 * 60 * 60 * 1000;
-  const key = `platform-billing:trial-ending:${account.id}`;
-  const previous = Number(window.localStorage.getItem(key) ?? '0');
-  if (Number.isFinite(previous) && now.getTime() - previous < minIntervalMs) return false;
-
-  window.localStorage.setItem(key, String(now.getTime()));
-  return true;
-}
-
-function formatWebhookStats(stats: Record<string, number>) {
-  const total = Object.values(stats).reduce((sum, value) => sum + value, 0);
-  if (total === 0) return 'Sem pendências';
-
-  const parts = [
-    stats.PENDING ? `${stats.PENDING} pendente${stats.PENDING === 1 ? '' : 's'}` : null,
-    stats.PROCESSING ? `${stats.PROCESSING} em processamento` : null,
-    stats.FAILED ? `${stats.FAILED} falha${stats.FAILED === 1 ? '' : 's'}` : null,
-    stats.EXHAUSTED ? `${stats.EXHAUSTED} esgotado${stats.EXHAUSTED === 1 ? '' : 's'}` : null,
-  ].filter(Boolean);
-
-  return parts.join(', ');
-}
-
-function formatStripeEventLabel(eventType: string) {
-  switch (eventType) {
-    case 'checkout.session.completed':
-      return 'Checkout concluído';
-    case 'invoice.paid':
-    case 'invoice.payment_succeeded':
-      return 'Pagamento confirmado';
-    case 'invoice.payment_failed':
-      return 'Pagamento falhou';
-    case 'customer.subscription.trial_will_end':
-      return 'Teste terminando';
-    case 'customer.subscription.deleted':
-      return 'Assinatura encerrada';
-    case 'customer.subscription.updated':
-      return 'Assinatura atualizada';
-    default:
-      return eventType;
-  }
 }
 
 

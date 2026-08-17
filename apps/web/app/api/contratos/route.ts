@@ -23,6 +23,10 @@ import {
   getMissingContractSignatureFieldsMessage,
   hasRequiredContractSignatureFields,
 } from '@/src/server/contracts/signature-fields';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export function replaceMentionSpans(html: string) {
   const mentionRegex = /<span\s+[^>]*?data-type=["']mention["'][^>]*?>[^<]*?<\/span>/g;
@@ -154,6 +158,14 @@ export async function POST(request: NextRequest) {
     const json = await request.json();
     const body = createContratoInputDTOSchema.parse(json);
     const { contaId } = user;
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json({ error: blocked.body }, { status: blocked.status });
+      throw error;
+    }
 
     const matricula = await prisma.matricula.findFirst({
       where: { id: body.matriculaId, aluno: { contaId } },

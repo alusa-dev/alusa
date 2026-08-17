@@ -68,11 +68,12 @@ export function ResponsaveisFeature() {
   const [form, setForm] = useState<ResponsavelFormState>(initialFormState);
   const [sortOrder, setSortOrder] = useState<SortOrder>('ASC');
   const [serverQuery, setServerQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'TODOS' | 'ATIVO' | 'INATIVO'>('ATIVO');
   const { items, loading, reload } = useResponsaveis({
     enabled: Boolean(user?.contaId),
     query: serverQuery,
+    status: statusFilter,
   });
-
   const {
     search,
     setSearch,
@@ -131,6 +132,7 @@ export function ResponsaveisFeature() {
       });
       setDialogOpen(false);
       setForm(initialFormState);
+      setStatusFilter('ATIVO');
       resetFilters();
       await reload();
       router.push(`/responsaveis/${responsavel.id}`);
@@ -165,12 +167,11 @@ export function ResponsaveisFeature() {
         <EntityFiltersBar
           searchValue={search}
           onSearchChange={setSearch}
-          statusValue="TODOS"
-          onStatusChange={() => undefined}
+          statusValue={statusFilter}
+          onStatusChange={(value) => setStatusFilter(value)}
           sortOrder={sortOrder as SortOrderEF}
           onSortChange={(value) => setSortOrder(value as SortOrder)}
           searchPlaceholder="Buscar por nome, CPF, e-mail ou telefone..."
-          hideStatusFilter
         />
       }
     >

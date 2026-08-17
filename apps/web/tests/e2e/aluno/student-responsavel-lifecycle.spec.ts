@@ -85,6 +85,7 @@ test.describe('ciclo de vida de aluno e responsável', () => {
     });
     const alunoIds = testAlunos.map((aluno) => aluno.id);
     if (alunoIds.length > 0) {
+      await prisma.matricula.deleteMany({ where: { alunoId: { in: alunoIds } } });
       await prisma.alunoResponsavel.deleteMany({ where: { alunoId: { in: alunoIds } } });
       await prisma.customer.deleteMany({ where: { payerType: 'ALUNO', payerId: { in: alunoIds } } });
       await prisma.aluno.deleteMany({ where: { id: { in: alunoIds } } });
@@ -176,5 +177,56 @@ test.describe('ciclo de vida de aluno e responsável', () => {
     expect(
       await prisma.aluno.findUnique({ where: { id: aluno.id }, select: { status: true } }),
     ).toEqual({ status: 'ATIVO' });
+  });
+
+  test('remove definitivamente aluno sem histórico e mantém operação idempotente', async ({ page }) => {
+    await registerAndLoginForLifecycle(page);
+    const payload = adultPayload((Date.now() + 3) % 900000000);
+    const createResponse = await page.request.post('/api/alunos', { data: payload });
+    expect(createResponse.status()).toBe(201);
+    const aluno = await createResponse.json() as { id: string };
+
+    const deleteResponse = await page.request.delete(`/api/alunos/${aluno.id}`, {
+      headers: { 'x-correlation-id': 'e2e-hard-delete' },
+    });
+    expect(deleteResponse.status()).toBe(200);
+    const deleted = await deleteResponse.json() as {
+      deletion: { outcome: string };
+    };
+    expect(deleted.deletion.outcome).toBe('HARD_DELETED');
+    expect(await prisma.aluno.findUnique({ where: { id: aluno.id } })).toBeNull();
+
+    const repeatedDelete = await page.request.delete(`/api/alunos/${aluno.id}`);
+    expect(repeatedDelete.status()).toBe(404);
+  });
+
+  test('bloqueia arquivamento com matrícula pendente e preserva o vínculo', async ({ page }) => {
+    await registerAndLoginForLifecycle(page);
+    const payload = adultPayload((Date.now() + 4) % 900000000);
+    const createResponse = await page.request.post('/api/alunos', { data: payload });
+    expect(createResponse.status()).toBe(201);
+    const aluno = await createResponse.json() as { id: string };
+    const contaId = await getContaId(page);
+
+    const matricula = await prisma.matricula.create({
+      data: {
+        contaId,
+        alunoId: aluno.id,
+        dataInicio: new Date('2026-01-01'),
+        dataFimContrato: new Date('2026-12-31'),
+        taxaMatricula: 0,
+        status: 'ATIVA',
+      },
+      select: { id: true },
+    });
+
+    const deleteResponse = await page.request.delete(`/api/alunos/${aluno.id}`);
+    expect(deleteResponse.status()).toBe(409);
+    const blocked = await deleteResponse.json() as { code: string };
+    expect(blocked.code).toBe('ALUNO_HAS_MATRICULAS');
+    expect(await prisma.aluno.findUnique({ where: { id: aluno.id }, select: { status: true } }))
+      .toEqual({ status: 'ATIVO' });
+    expect(await prisma.matricula.findUnique({ where: { id: matricula.id }, select: { status: true } }))
+      .toEqual({ status: 'ATIVA' });
   });
 });

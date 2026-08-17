@@ -29,14 +29,17 @@ function parseErrorPayload(payload: unknown, fallback: string) {
 export async function listResponsaveis({
   signal,
   query,
+  status = 'ATIVO',
 }: {
   signal?: AbortSignal;
   query?: string;
+  status?: 'TODOS' | 'ATIVO' | 'INATIVO';
 } = {}): Promise<ResponsavelListItem[]> {
   const searchParams = new URLSearchParams();
   if (query?.trim()) {
     searchParams.set('q', query.trim());
   }
+  searchParams.set('status', status);
 
   const res = await fetch(`/api/responsaveis${searchParams.size ? `?${searchParams.toString()}` : ''}`, {
     cache: 'no-store',

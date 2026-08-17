@@ -30,13 +30,11 @@ export function InativarAlunoDialog({
   onInativado,
 }: Props) {
   const [motivo, setMotivo] = React.useState('');
-  const [acao, setAcao] = React.useState<'PAUSAR' | 'CANCELAR'>('PAUSAR');
   const [submitting, setSubmitting] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
       setMotivo('');
-      setAcao('PAUSAR');
     }
   }, [open]);
 
@@ -50,10 +48,8 @@ export function InativarAlunoDialog({
 
     try {
       setSubmitting(true);
-      const res = await fetch(`/api/alunos/${alunoId}/inativar`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ motivo: motivo.trim(), acao }),
+      const res = await fetch(`/api/alunos/${alunoId}?motivo=${encodeURIComponent(motivo.trim())}`, {
+        method: 'DELETE',
       });
 
       if (!res.ok) {
@@ -66,7 +62,7 @@ export function InativarAlunoDialog({
 
       toast.success(
         result.message ||
-          `Aluno inativado com sucesso (${result.data?.matriculasProcessadas?.length || 0} matrículas processadas)`,
+          'Aluno arquivado com sucesso. Matrículas e cobranças não são alteradas por este fluxo.',
       );
 
       try {
@@ -117,24 +113,10 @@ export function InativarAlunoDialog({
             </p>
           </div>
 
-          {/* Ação */}
-          <div className="space-y-2">
-            <Label htmlFor="acao">O que fazer com as matrículas ativas?</Label>
-            <select
-              id="acao"
-              value={acao}
-              onChange={(e) => setAcao(e.target.value as 'PAUSAR' | 'CANCELAR')}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <option value="PAUSAR">Pausar (pode reativar depois)</option>
-              <option value="CANCELAR">Cancelar definitivamente</option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              {acao === 'PAUSAR'
-                ? '✅ As assinaturas serão pausadas. Pode reativar no futuro.'
-                : '⚠️ As assinaturas serão canceladas permanentemente. Ação irreversível.'}
-            </p>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Matrículas, assinaturas e cobranças não serão pausadas, reativadas ou canceladas aqui.
+            Resolva esses itens no fluxo correspondente antes de arquivar o aluno.
+          </p>
         </div>
 
         <DialogFooter>
@@ -150,7 +132,7 @@ export function InativarAlunoDialog({
             type="button"
             onClick={handleConfirm}
             disabled={submitting || motivo.trim().length < 10}
-            variant={acao === 'CANCELAR' ? 'destructive' : 'default'}
+            variant="destructive"
           >
             {submitting ? 'Inativando...' : 'Inativar Aluno'}
           </Button>

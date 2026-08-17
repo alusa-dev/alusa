@@ -8,6 +8,9 @@ export type PlatformBillingCapability =
   | 'BILLING_MANAGE'
   | 'SUPPORT'
   | 'ESSENTIAL_EXPORT'
+  | 'MONEY_READ'
+  | 'MONEY_TRANSFER'
+  | 'MONEY_WITHDRAW'
   | 'STUDENT_WRITE'
   | 'ENROLLMENT_WRITE'
   | 'ADMIN_WRITE';
@@ -19,6 +22,9 @@ const RESTRICTED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
   'BILLING_MANAGE',
   'SUPPORT',
   'ESSENTIAL_EXPORT',
+  'MONEY_READ',
+  'MONEY_TRANSFER',
+  'MONEY_WITHDRAW',
 ]);
 
 export function computeGracePeriodEnd(input: { failedAt: Date; gracePeriodDays?: number }): Date {

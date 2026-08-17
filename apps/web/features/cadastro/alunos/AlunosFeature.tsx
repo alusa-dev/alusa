@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 // Skeleton manual substituído pelos skeletons do DataTable
-import { Plus } from '@/components/icons/icons';
+import { Plus, RotateCcw, Trash2 } from '@/components/icons/icons';
 // Dropdown de ordenação substituído pelo EntityFiltersBar
 import dynamic from 'next/dynamic';
 
@@ -32,9 +32,10 @@ import { useEditDialog } from '@/hooks/use-edit-dialog';
 import useCurrentUser from '@/hooks/use-current-user';
 import { useAlunos } from './hooks/use-alunos';
 import { useEntityListFiltering } from '@/hooks/entity/use-entity-list-filtering';
-import type { AlunoListItem } from './services/alunos-service';
+import { reactivateAluno, type AlunoListItem } from './services/alunos-service';
 import { pushToast } from '@/components/ui/toast';
 import { statusColumn, actionsColumn } from '@alusa/ui/datatable/columns';
+import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 
 const PAGE_SIZE = 6;
 
@@ -45,6 +46,7 @@ interface AlunosTableProps {
   alunos: AlunoListItem[];
   onEdit: (_aluno: AlunoListItem) => void;
   onDelete: (_aluno: AlunoListItem) => void;
+  onReactivate: (_aluno: AlunoListItem) => void;
   onOpenDetail: (_aluno: AlunoListItem) => void;
   loading: boolean;
 }
@@ -55,6 +57,9 @@ export function AlunosFeature() {
   const router = useRouter();
   const { user, loading: userLoading } = useCurrentUser();
   const contaId = user?.contaId ?? null;
+  const { summary: billingSummary, loading: billingLoading } = usePlatformBilling();
+  const billingAccessStatus = billingSummary?.account?.accessStatus ?? null;
+  const isBillingRestricted = billingAccessStatus === 'RESTRICTED' || billingAccessStatus === 'CANCELED';
 
   const {
     search: searchTerm,
@@ -69,6 +74,7 @@ export function AlunosFeature() {
     nameAccessor: (a: AlunoListItem) => a.nome ?? '',
     statusAccessor: (a: AlunoListItem) => (a.status as StatusFilter) ?? 'ATIVO',
     searchPredicate: () => true,
+    initialStatus: 'ATIVO',
     initialSort: 'ASC',
   });
 
@@ -79,23 +85,25 @@ export function AlunosFeature() {
     pageSize: PAGE_SIZE,
     sortOrder: sort as SortOrder,
   });
+  const handleReactivate = useCallback(async (aluno: AlunoListItem) => {
+    try {
+      await reactivateAluno(aluno.id);
+      pushToast({ title: 'Aluno reativado', variant: 'success' });
+      await reload();
+      window.dispatchEvent(new CustomEvent('alunos:changed'));
+    } catch (error) {
+      pushToast({
+        title: 'Não foi possível reativar',
+        description: (error as Error).message,
+        variant: 'error',
+      });
+    }
+  }, [reload]);
   const editDialog = useEditDialog<EditAluno>();
   const deleteDialog = useDeleteDialog<AlunoListItem>({
     onDelete: async (aluno, reason) => {
-      try {
-        await remove({ id: aluno.id, reason });
-        pushToast({
-          title: 'Aluno excluído',
-          variant: 'success',
-        });
-        window.dispatchEvent(new CustomEvent('alunos:changed'));
-      } catch (error) {
-        pushToast({
-          title: 'Não foi possível excluir',
-          description: (error as Error).message || 'Erro ao excluir aluno',
-          variant: 'error',
-        });
-      }
+      await remove({ id: aluno.id, reason });
+      window.dispatchEvent(new CustomEvent('alunos:changed'));
     },
   });
 
@@ -122,10 +130,14 @@ export function AlunosFeature() {
     setSortOrder(sort);
   }, [sort]);
 
-  const handleOpenWizard = useCallback(async () => {
-    if (!contaId) return;
+  const handleOpenWizard = useCallback(() => {
+    if (!contaId || billingLoading) return;
+    if (isBillingRestricted) {
+      router.push('/conta/plano-faturamento');
+      return;
+    }
     setWizardOpen(true);
-  }, [contaId]);
+  }, [billingLoading, contaId, isBillingRestricted, router]);
 
   return (
     <TableLayout
@@ -138,7 +150,8 @@ export function AlunosFeature() {
             className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
             aria-label="Cadastrar aluno"
             data-testid="abrir-wizard-aluno"
-            disabled={!contaId}
+            disabled={!contaId || billingLoading || isBillingRestricted}
+            title={isBillingRestricted ? 'Regularize o plano para cadastrar alunos.' : undefined}
           >
             <Plus className="h-4 w-4 mr-2 transition-none" />
             Cadastrar aluno
@@ -165,8 +178,13 @@ export function AlunosFeature() {
             void loadAlunoDetails(aluno.id, editDialog.setEntity);
           }}
           onDelete={(aluno) => {
+            if (aluno.status === 'INATIVO') {
+              void handleReactivate(aluno);
+              return;
+            }
             deleteDialog.openDialog(aluno);
           }}
+          onReactivate={handleReactivate}
           onOpenDetail={(aluno) => router.push(`/alunos/${aluno.id}`)}
           loading={loading || userLoading}
         />
@@ -205,31 +223,30 @@ export function AlunosFeature() {
 
       <ConfirmDeleteDialog
         open={deleteDialog.open}
-        title="Excluir aluno"
+        title="Remover aluno"
         description={(() => {
           if (!deleteDialog.entity) {
-            return 'Tem certeza que deseja excluir este aluno? Esta ação é permanente.';
+            return 'Com histórico acadêmico ou financeiro, o aluno será arquivado. A remoção definitiva só ocorre quando não houver vínculos.';
           }
           const rawName = deleteDialog.entity.nome ?? '';
           const shortName = formatFirstLast(rawName) || rawName || 'este aluno';
           return (
             <span>
-              Tem certeza que deseja excluir <strong>{shortName}</strong>? Esta ação é permanente.
+              Confirme a remoção de <strong>{shortName}</strong>. Com histórico, o cadastro será arquivado e preservado.
             </span>
           );
         })()}
-        confirmLabel={deleteDialog.loading ? 'Excluindo...' : 'Excluir'}
-        loadingLabel="Excluindo..."
+        confirmLabel={deleteDialog.loading ? 'Processando...' : 'Confirmar'}
+        loadingLabel="Processando..."
         cancelLabel="Cancelar"
         onOpenChange={deleteDialog.onOpenChange}
         onConfirm={async () => {
           try {
             await deleteDialog.confirm();
             pushToast({
-              title: 'Aluno excluído',
+              title: 'Operação concluída',
               variant: 'success',
             });
-            await reload();
           } catch (error) {
             pushToast({
               title: 'Não foi possível excluir',
@@ -253,6 +270,7 @@ function AlunosTable({
   alunos,
   onEdit,
   onDelete,
+  onReactivate,
   onOpenDetail,
   loading,
 }: AlunosTableProps) {
@@ -373,9 +391,23 @@ function AlunosTable({
     (() => {
       const col = actionsColumn<AlunoListItem>({
         onEdit,
-        onDelete,
+        onDelete: (aluno) => {
+          if (aluno.status === 'INATIVO') {
+            onReactivate(aluno);
+            return;
+          }
+          onDelete(aluno);
+        },
         editButtonAriaLabel: (aluno: AlunoListItem) => `Editar aluno ${aluno.nome ?? ''}`,
-        deleteButtonAriaLabel: (aluno: AlunoListItem) => `Excluir aluno ${aluno.nome ?? ''}`,
+        deleteLabel: (aluno: AlunoListItem) => (aluno.status === 'INATIVO' ? 'Reativar' : 'Excluir'),
+        deleteIcon: (aluno: AlunoListItem) =>
+          aluno.status === 'INATIVO' ? (
+            <RotateCcw className="h-4 w-4" />
+          ) : (
+            <Trash2 className="h-4 w-4" />
+          ),
+        deleteButtonAriaLabel: (aluno: AlunoListItem) =>
+          `${aluno.status === 'INATIVO' ? 'Reativar' : 'Excluir'} aluno ${aluno.nome ?? ''}`,
       });
       return {
         ...col,

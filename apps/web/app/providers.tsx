@@ -7,6 +7,7 @@ import { toast, Toaster } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { KycEnforcementProvider } from '@/features/kyc/KycEnforcementProvider';
 import { QueryProvider } from '@/components/providers/query-provider';
+import { PlatformBillingProvider } from '@/features/platform-billing/PlatformBillingContext';
 
 export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
@@ -56,12 +57,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
       refetchWhenOffline={false}
     >
       <QueryProvider>
-        <ThemeProvider>
-          <KycEnforcementProvider>
-            {children}
-            <Toaster />
-          </KycEnforcementProvider>
-        </ThemeProvider>
+        <PlatformBillingProvider>
+          <ThemeProvider>
+            <KycEnforcementProvider>
+              {children}
+              <Toaster />
+            </KycEnforcementProvider>
+          </ThemeProvider>
+        </PlatformBillingProvider>
       </QueryProvider>
     </SessionProvider>
   );

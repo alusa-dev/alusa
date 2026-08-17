@@ -16,6 +16,7 @@ import {
 } from '@/components/icons/icons';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
+import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 
 type Props = {
   name: string;
@@ -27,9 +28,11 @@ type Props = {
 /** Itens do menu de usuário — reutilizado no dropdown desktop e no drawer mobile. */
 export function UserMenuPanel({ onClose }: { onClose: () => void }) {
   const { isDark, toggleTheme } = useTheme();
+  const { summary } = usePlatformBilling();
   const menuUser = useUserStore((state: UserState) => state.user);
   const role = (menuUser as { role?: string } | null)?.role?.toUpperCase();
   const showPlatformBilling = role === 'ADMIN' || role === 'FINANCEIRO';
+  const planBadge = getPlanBadge(summary);
   const myAccountLocked = false;
 
   return (
@@ -56,6 +59,13 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
           href="/conta/plano-faturamento"
           icon={<CreditCard className="h-5 w-5" />}
           onClick={onClose}
+          trailing={
+            planBadge ? (
+              <span className="ml-auto rounded-full bg-[#f0e5ff] px-2 py-0.5 text-[11px] font-semibold text-[#61318f] alusa-dark:bg-[rgba(142,91,214,0.22)] alusa-dark:text-[color:var(--color-brand-300)]">
+                {planBadge}
+              </span>
+            ) : null
+          }
         >
           Plano e faturamento
         </MenuLink>
@@ -84,6 +94,16 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
       </MenuButton>
     </nav>
   );
+}
+
+function getPlanBadge(summary: ReturnType<typeof usePlatformBilling>['summary']) {
+  const account = summary?.account;
+  if (!account) return null;
+  if (account.status === 'TRIALING') return 'Trial';
+  if (account.planCode === 'STARTER') return 'Starter';
+  if (account.planCode === 'PREMIUM') return 'Premium';
+  if (account.planCode === 'PRO') return 'Premium+';
+  return null;
 }
 
 export default function UserMenu({ name, email, initials, foto }: Props) {
@@ -188,11 +208,13 @@ function MenuLink({
   icon,
   children,
   onClick,
+  trailing,
 }: {
   href: string;
   icon: React.ReactNode;
   children: React.ReactNode;
   onClick?: () => void;
+  trailing?: React.ReactNode;
 }) {
   return (
     <Link
@@ -202,7 +224,8 @@ function MenuLink({
       className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/[0.06]"
     >
       <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">{icon}</span>
-      <span>{children}</span>
+      <span className="min-w-0">{children}</span>
+      {trailing}
     </Link>
   );
 }

@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { ShieldCheck } from '@/components/icons/icons';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type FormState = 'idle' | 'submitting' | 'success' | 'error';
 
@@ -14,19 +16,26 @@ const initialForm = {
   studentsRange: '',
   mainChallenge: '',
   website: '',
+  marketingConsent: false,
 };
 
 export function EarlyAccessForm() {
   const [form, setForm] = useState(initialForm);
   const [status, setStatus] = useState<FormState>('idle');
 
-  function updateField(field: keyof typeof initialForm, value: string) {
+  function updateField<Field extends keyof typeof initialForm>(field: Field, value: (typeof initialForm)[Field]) {
     setForm((current) => ({ ...current, [field]: value }));
     if (status === 'error') setStatus('idle');
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!form.marketingConsent || !form.studentsRange) {
+      setStatus('error');
+      return;
+    }
+
     setStatus('submitting');
 
     try {
@@ -48,14 +57,16 @@ export function EarlyAccessForm() {
     return (
       <div className="early-access-success" role="status">
         <span className="early-access-success-mark" aria-hidden="true">✓</span>
-        <h2>Cadastro confirmado.</h2>
-        <p>Você entrou na lista de acesso antecipado da Alusa. Em breve, falaremos com você.</p>
+        <h2>Muito obrigado!</h2>
+        <p>Em breve, você receberá mais informações sobre o acesso antecipado da Alusa.</p>
       </div>
     );
   }
 
   return (
-    <form className="early-access-form" onSubmit={handleSubmit} noValidate>
+    <form className="early-access-form" onSubmit={handleSubmit}>
+      <h2 className="early-access-form-title">Preencha o formulário</h2>
+      <div className="early-access-form-divider" aria-hidden="true" />
       <div className="early-access-form-grid">
         <label>
           <span>Nome da instituição</span>
@@ -63,7 +74,7 @@ export function EarlyAccessForm() {
         </label>
         <label>
           <span>Seu nome</span>
-          <input required name="contactName" value={form.contactName} onChange={(event) => updateField('contactName', event.target.value)} placeholder="Como podemos chamar você?" autoComplete="name" />
+          <input required name="contactName" value={form.contactName} onChange={(event) => updateField('contactName', event.target.value)} placeholder="Nome e Sobrenome" autoComplete="name" />
         </label>
         <label>
           <span>E-mail</span>
@@ -71,21 +82,29 @@ export function EarlyAccessForm() {
         </label>
         <label>
           <span>WhatsApp</span>
-          <input name="phone" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} placeholder="(00) 00000-0000" autoComplete="tel" />
+          <input required name="phone" value={form.phone} onChange={(event) => updateField('phone', event.target.value)} placeholder="(00) 00000-0000" autoComplete="tel" />
         </label>
         <label>
           <span>Cargo</span>
-          <input name="role" value={form.role} onChange={(event) => updateField('role', event.target.value)} placeholder="Ex.: Direção" autoComplete="organization-title" />
+          <input required name="role" value={form.role} onChange={(event) => updateField('role', event.target.value)} placeholder="Ex.: Direção" autoComplete="organization-title" />
         </label>
         <label>
           <span>Número de alunos</span>
-          <select name="studentsRange" value={form.studentsRange} onChange={(event) => updateField('studentsRange', event.target.value)}>
-            <option value="">Selecione uma faixa</option>
-            <option value="ate-200">Até 200</option>
-            <option value="201-500">201 a 500</option>
-            <option value="501-1000">501 a 1.000</option>
-            <option value="mais-de-1000">Mais de 1.000</option>
-          </select>
+          <Select value={form.studentsRange} onValueChange={(value) => updateField('studentsRange', value)}>
+            <SelectTrigger
+              aria-label="Número de alunos"
+              aria-required="true"
+              className="early-access-students-select"
+            >
+              <SelectValue placeholder="Selecione uma faixa" />
+            </SelectTrigger>
+            <SelectContent className="early-access-students-content">
+              <SelectItem value="ate-200">Até 200</SelectItem>
+              <SelectItem value="201-500">201 a 500</SelectItem>
+              <SelectItem value="501-1000">501 a 1.000</SelectItem>
+              <SelectItem value="mais-de-1000">Mais de 1.000</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
       </div>
 
@@ -97,11 +116,24 @@ export function EarlyAccessForm() {
       <input className="early-access-honeypot" name="website" value={form.website} onChange={(event) => updateField('website', event.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true" />
 
       {status === 'error' && <p className="early-access-form-error" role="alert">Não foi possível concluir agora. Verifique os dados e tente novamente.</p>}
+      <label className="early-access-consent">
+        <input
+          required
+          type="checkbox"
+          name="marketingConsent"
+          checked={form.marketingConsent}
+          onChange={(event) => updateField('marketingConsent', event.target.checked)}
+        />
+        <span>Aceito receber comunicações promocionais da Alusa.</span>
+      </label>
       <button type="submit" disabled={status === 'submitting'}>
         {status === 'submitting' ? 'Confirmando…' : 'Quero acesso antecipado'}
         <span aria-hidden="true">↗</span>
       </button>
-      <p className="early-access-privacy">Ao enviar, você autoriza a Alusa a entrar em contato sobre o acesso antecipado.</p>
+      <p className="early-access-privacy">
+        <ShieldCheck aria-hidden="true" />
+        <span>Seus dados estão protegidos.</span>
+      </p>
     </form>
   );
 }

@@ -20,6 +20,7 @@ describe('responsaveis DTOs', () => {
       contaId: 'conta-1',
       search: 'Maria',
       cpfDigits: undefined,
+      status: 'ATIVO',
       take: 50,
     });
   });
@@ -31,6 +32,14 @@ describe('responsaveis DTOs', () => {
       email: 'maria@example.com',
       telefone: '(92) 99999-9999',
       financeiro: true,
+      endereco: {
+        cep: '01001000',
+        logradouro: 'Praça da Sé',
+        numero: '123',
+        bairro: 'Sé',
+        cidade: 'São Paulo',
+        uf: 'SP',
+      },
     });
 
     expect(mapCreateResponsavelDTOToData(dto, 'conta-1')).toEqual({
@@ -40,6 +49,13 @@ describe('responsaveis DTOs', () => {
       email: 'maria@example.com',
       telefone: '92999999999',
       financeiro: true,
+      enderecoCep: '01001000',
+      enderecoLogradouro: 'Praça da Sé',
+      enderecoNumero: '123',
+      enderecoComplemento: null,
+      enderecoBairro: 'Sé',
+      enderecoCidade: 'São Paulo',
+      enderecoUf: 'SP',
     });
   });
 

@@ -12,7 +12,16 @@ export default [
   reactPlugin.configs.flat.recommended,
   reactPlugin.configs.flat['jsx-runtime'],
   prettier,
-  { ignores: ['**/dist/**', '**/.next/**', '**/node_modules/**', '**/coverage/**', '**/next-env.d.ts'] },
+  {
+    ignores: [
+      '**/dist/**',
+      '**/.next/**',
+      '**/.next-playwright/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/next-env.d.ts',
+    ],
+  },
   {
     files: ['**/tailwind.config.js','**/postcss.config.cjs','**/*.config.{js,cjs,mjs}', '**/scripts/**/*.{js,mjs,ts}'],
     languageOptions: { globals: { module: true, require: true, process: true, console: true, fetch: true, setTimeout: true } },

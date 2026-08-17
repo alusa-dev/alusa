@@ -1,6 +1,6 @@
 import { Prisma, PrismaClient, StatusMatricula, Status } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 export const prisma = new PrismaClient();
 
@@ -9,18 +9,29 @@ export const TEST_ADMIN_EMAIL = 'primeiro@example.com';
 export const TEST_ADMIN_PASSWORD = 'SenhaFort3!';
 
 export async function registerAndLogin(page: Page) {
-  await page.goto('/register');
-  await page.fill('[data-testid="register-escolaNome"]', 'Escola Teste');
-  await page.fill('[data-testid="register-cpfCnpj"]', TEST_CONTA_CPF);
-  await page.fill('[data-testid="register-nome"]', 'Admin Teste');
-  await page.fill('[data-testid="register-email"]', TEST_ADMIN_EMAIL);
-  await page.fill('[data-testid="register-senha"]', TEST_ADMIN_PASSWORD);
-  await page.click('[data-testid="register-submit"]');
-  await page.waitForURL('**/dashboard');
+  await page.goto('/auth/register');
+  await page.getByTestId('register-nome-first').fill('Admin');
+  await page.getByTestId('register-nome-last').fill(`E2E ${randomUUID().slice(0, 8)}`);
+  await page.getByTestId('register-email').fill(`admin-${randomUUID()}@example.com`);
+  await page.getByTestId('register-senha').fill(TEST_ADMIN_PASSWORD);
+  await page.getByTestId('register-senha-confirmar').fill(TEST_ADMIN_PASSWORD);
+  await page.getByTestId('register-termos-checkbox').click();
+  await page.getByTestId('legal-acceptance-inner-checkbox').click();
+  await page.getByTestId('legal-acceptance-confirm').click();
+  await page.getByTestId('register-submit').click();
+  await expect.poll(async () => {
+    const response = await page.request.get('/api/auth/session');
+    if (!response.ok()) return null;
+    const session = (await response.json()) as { user?: { contaId?: string } };
+    return session.user?.contaId ?? null;
+  }, { timeout: 15000 }).not.toBeNull();
 }
 
 export async function getContaId() {
-  const conta = await prisma.conta.findFirst({ where: { cpfCnpj: TEST_CONTA_CPF }, select: { id: true } });
+  const conta = await prisma.conta.findFirst({
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
   if (!conta) throw new Error('Conta não encontrada');
   return conta.id;
 }
@@ -44,6 +55,7 @@ export async function createAlunoWithMatriculaAndSubscription(params: {
 
   const matricula = await prisma.matricula.create({
     data: {
+      contaId: params.contaId,
       alunoId: aluno.id,
       dataInicio: new Date(),
       dataFimContrato: new Date(Date.now() + 1000 * 60 * 60 * 24 * 365),
@@ -122,13 +134,14 @@ export async function createResponsavelWithTwoAlunos(params: { contaId: string; 
 
   await prisma.alunoResponsavel.createMany({
     data: [
-      { alunoId: alunoA.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
-      { alunoId: alunoB.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
+      { contaId: params.contaId, alunoId: alunoA.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
+      { contaId: params.contaId, alunoId: alunoB.id, responsavelId: responsavel.id, tipoVinculo: 'RESPONSAVEL' },
     ],
   });
 
   const matriculaA = await prisma.matricula.create({
     data: {
+      contaId: params.contaId,
       alunoId: alunoA.id,
       responsavelFinanceiroId: responsavel.id,
       dataInicio: new Date(),
@@ -141,6 +154,7 @@ export async function createResponsavelWithTwoAlunos(params: { contaId: string; 
 
   const matriculaB = await prisma.matricula.create({
     data: {
+      contaId: params.contaId,
       alunoId: alunoB.id,
       responsavelFinanceiroId: responsavel.id,
       dataInicio: new Date(),
@@ -201,6 +215,7 @@ export async function createTurmaWithMatricula(params: { contaId: string; capaci
 
   const matricula = await prisma.matricula.create({
     data: {
+      contaId: params.contaId,
       alunoId: aluno.id,
       turmaId: turma.id,
       dataInicio: new Date(),

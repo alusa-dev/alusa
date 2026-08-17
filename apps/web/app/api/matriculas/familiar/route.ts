@@ -6,6 +6,10 @@ import {
   executeCreateFamilyEnrollment,
 } from '@/src/server/matriculas/create-family-enrollment.use-case';
 import { createMatriculaFamiliarInputSchema } from '@/src/server/matriculas/family-enrollment.schema';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 
@@ -44,6 +48,14 @@ export async function POST(request: Request) {
   const contaId = parsed.data.contaId?.trim() || user.contaId;
   if (contaId !== user.contaId) {
     return jsonError(403, 'CONTA_INVALIDA', 'Conta informada não pertence ao usuário.');
+  }
+
+  try {
+    await assertPlatformAccessForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+  } catch (error) {
+    const blocked = platformBillingAccessResponse(error);
+    if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+    throw error;
   }
 
   return executeCreateFamilyEnrollment({

@@ -614,7 +614,7 @@ export function AlunoEditDialog({ open, onOpenChange, aluno, onSaved }: Props) {
                   </div>
                   <div className="space-y-1">
                     <label className={labelClass}>Status</label>
-                    <Select value={status} onValueChange={(v) => setStatus(v as StatusAluno)}>
+                    <Select value={status} onValueChange={(value) => setStatus(value as StatusAluno)}>
                       <SelectTrigger className={controlClass}>
                         <SelectValue placeholder="Status" />
                       </SelectTrigger>

@@ -17,6 +17,10 @@ import { ManualSyncError, syncMatriculaStatus } from '@/src/server/matriculas/ma
 import { notifyMatriculaAction } from '@alusa/lib';
 import { updateMatriculaStatusSyncInputDTOSchema } from '@/features/cadastro/matriculas/dtos';
 import { mapMatriculaStatusSyncResultToDTO } from '@/features/cadastro/matriculas/mappers';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +40,14 @@ export async function PATCH(
     if (!user?.id || !user?.contaId) {
       console.warn('[MATRICULA_STATUS] Usuário não autenticado');
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
     }
 
     const rawParams = await params;

@@ -56,7 +56,7 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: process.env.SKIP_WEB_SERVER === 'true' ? undefined : {
     command:
-      'node -e "require(\'fs\').rmSync(\'.next\', { recursive: true, force: true })" && ' +
+      'node -e "require(\'fs\').rmSync(process.env.NEXT_DIST_DIR || \'.next\', { recursive: true, force: true })" && ' +
       'pnpm -C ../.. prisma:generate && ' +
       'pnpm -C ../.. --filter @alusa/ui build && ' +
       'pnpm -C ../.. --filter @alusa/database build && ' +
@@ -78,6 +78,7 @@ export default defineConfig({
       NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ?? 'testsecret',
       CRON_SECRET: process.env.CRON_SECRET ?? 'test-cron-secret',
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? '',
+      NEXT_DIST_DIR: '.next-playwright',
     },
   },
 });

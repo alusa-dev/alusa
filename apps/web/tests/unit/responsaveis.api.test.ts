@@ -13,6 +13,11 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  assertPlatformAccessForConta: vi.fn(),
+  platformBillingAccessResponse: vi.fn(() => null),
+}));
+
 const prismaMock = {
   responsavel: {
     findMany: vi.fn(),
@@ -94,6 +99,41 @@ describe('/api/responsaveis', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           contaId: 'conta-1',
+          alunos: {
+            some: {
+              contaId: 'conta-1',
+              aluno: { contaId: 'conta-1', status: 'ATIVO' },
+            },
+          },
+        }),
+      }),
+    );
+  });
+
+  it('permite solicitar explicitamente responsáveis sem aluno ativo', async () => {
+    vi.mocked(getServerSession).mockResolvedValueOnce({
+      user: { id: 'u1', contaId: 'conta-1' },
+    } as never);
+    prismaMock.responsavel.findMany.mockResolvedValueOnce([]);
+
+    const response = await GET(
+      new NextRequest('http://localhost/api/responsaveis?status=INATIVO'),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.responsavel.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          alunos: {
+            some: {
+              contaId: 'conta-1',
+              aluno: { contaId: 'conta-1', status: 'INATIVO' },
+            },
+            none: {
+              contaId: 'conta-1',
+              aluno: { contaId: 'conta-1', status: 'ATIVO' },
+            },
+          },
         }),
       }),
     );

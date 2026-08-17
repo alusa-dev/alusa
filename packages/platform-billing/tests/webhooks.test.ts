@@ -243,6 +243,48 @@ describe('@alusa/platform-billing webhooks', () => {
     expect(store.invoices[0]?.failedAt).toBeInstanceOf(Date);
   });
 
+  it('nao concede grace period quando uma fatura falha durante o trial', async () => {
+    const store = createMemoryStore([
+      buildAccount({
+        status: 'TRIALING',
+        accessStatus: 'ACTIVE',
+        planCode: 'PREMIUM',
+        stripeCustomerId: 'cus_1',
+        stripeSubscriptionId: 'sub_1',
+        stripePriceId: 'price_premium_test',
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'),
+      }),
+    ]);
+
+    await processPlatformBillingWebhookEvent(
+      {
+        event: stripeEvent('evt_trial_invoice_failed_1', 'invoice.payment_failed', {
+          id: 'in_trial_failed_1',
+          customer: 'cus_1',
+          subscription: 'sub_1',
+          status: 'open',
+          amount_due: 27_900,
+          amount_paid: 0,
+          currency: 'brl',
+          attempted: true,
+          attempt_count: 1,
+          lines: { data: [{ price: { id: 'price_premium_test' } }] },
+        }),
+        environment: 'TEST',
+        envSource,
+      },
+      store,
+    );
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'TRIALING',
+      accessStatus: 'RESTRICTED',
+      gracePeriodEndsAt: null,
+      pendingChangeType: null,
+    });
+    expect(store.accounts[0]?.restrictedAt).toBeInstanceOf(Date);
+  });
+
   it('trata autenticacao pendente como regularizacao de pagamento', async () => {
     const store = createMemoryStore([
       buildAccount({

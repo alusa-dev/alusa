@@ -48,6 +48,7 @@ export type ListResponsaveisFilters = {
   contaId: string;
   search?: string;
   cpfDigits?: string;
+  status: 'TODOS' | 'ATIVO' | 'INATIVO';
   take: number;
 };
 
@@ -65,6 +66,7 @@ export function mapListResponsaveisQueryToFilters(
     contaId,
     search: search || undefined,
     cpfDigits: cpfDigits || undefined,
+    status: dto.status,
     take: 50,
   };
 }

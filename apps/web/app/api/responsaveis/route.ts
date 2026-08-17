@@ -15,6 +15,10 @@ import {
   mapResponsavelRecordToMaskedSummaryDTO,
   mapResponsavelRecordToSummaryDTO,
 } from '@/features/responsaveis/mappers';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 /**
  * GET /api/responsaveis
@@ -31,6 +35,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const parsedQuery = listResponsaveisQueryDTOSchema.safeParse({
       q: searchParams.get('q') ?? undefined,
+      status: searchParams.get('status') ?? undefined,
     });
     if (!parsedQuery.success) {
       return NextResponse.json(
@@ -47,6 +52,29 @@ export async function GET(req: NextRequest) {
     const responsaveis = await prisma.responsavel.findMany({
       where: {
         contaId: filters.contaId,
+        ...(filters.status === 'ATIVO'
+          ? {
+              alunos: {
+                some: {
+                  contaId,
+                  aluno: { contaId, status: 'ATIVO' },
+                },
+              },
+            }
+          : filters.status === 'INATIVO'
+            ? {
+                alunos: {
+                  some: {
+                    contaId,
+                    aluno: { contaId, status: 'INATIVO' },
+                  },
+                  none: {
+                    contaId,
+                    aluno: { contaId, status: 'ATIVO' },
+                  },
+                },
+              }
+            : {}),
         ...(filters.search
           ? {
               OR: [
@@ -98,6 +126,13 @@ export async function POST(req: NextRequest) {
     }
 
     const contaId = session.user.contaId;
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
     const raw = await req.json().catch(() => null);
 
     const validation = createResponsavelInputDTOSchema.safeParse(raw);

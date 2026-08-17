@@ -25,6 +25,14 @@ const GlobalQuickCreatePortals = dynamic(
   { ssr: false },
 );
 
+const PlatformBillingPersistentModal = dynamic(
+  () =>
+    import('@/components/platform-billing/PlatformBillingPersistentModal').then((m) => ({
+      default: m.PlatformBillingPersistentModal,
+    })),
+  { ssr: false },
+);
+
 /** Espaçamentos já validados por você */
 const CONTENT_GAP_PX = 20;
 const OUTER_PADDING_TOP_PX = 20;
@@ -118,6 +126,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {children}
             </div>
             <ExternalAsaasOnboardingPersistentModal />
+            <PlatformBillingPersistentModal />
             <GlobalQuickCreatePortals />
           </div>
         </div>

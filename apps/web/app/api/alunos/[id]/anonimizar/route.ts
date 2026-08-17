@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { anonimizarAluno } from '@alusa/lib';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
@@ -13,6 +17,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     if (String(user.role || '').toUpperCase() !== 'ADMIN') {
       return NextResponse.json({ error: 'Sem permissão' }, { status: 403 });
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
     }
 
     const body = await req.json().catch(() => ({}));

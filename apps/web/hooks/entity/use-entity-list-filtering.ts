@@ -11,6 +11,7 @@ export interface UseEntityListFilteringParams<T> {
   nameAccessor?: (_item: T) => string | null | undefined; // usado para ordenação padrão
   searchPredicate?: (_item: T, _search: string, _digits: string) => boolean; // se não passar, usa nameAccessor
   statusFilterEnabled?: boolean; // default true
+  initialStatus?: StatusValue;
   initialSort?: SortOrder;
 }
 
@@ -45,11 +46,12 @@ export function useEntityListFiltering<T>(
     nameAccessor,
     searchPredicate,
     statusFilterEnabled = true,
+    initialStatus = 'TODOS',
     initialSort = 'ASC',
   } = params;
 
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<StatusValue>('TODOS');
+  const [status, setStatus] = useState<StatusValue>(initialStatus);
   const [sort, setSort] = useState<SortOrder>(initialSort);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -104,7 +106,7 @@ export function useEntityListFiltering<T>(
 
   function resetFilters() {
     setSearch('');
-    setStatus('TODOS');
+    setStatus(initialStatus);
     setSort('ASC');
     setPage(1);
   }

@@ -20,6 +20,7 @@ export {
   UserPlusIcon as UserPlus,
   // Estados / Feedback
   CheckCircleIcon as CheckCircle,
+  ShieldCheckIcon as ShieldCheck,
   ExclamationCircleIcon as AlertCircle,
   ExclamationTriangleIcon as Warning,
   InformationCircleIcon as InfoCircle,

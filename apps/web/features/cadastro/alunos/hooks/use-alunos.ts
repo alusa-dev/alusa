@@ -31,7 +31,7 @@ const INITIAL_STATE: UseAlunosState = {
 export function useAlunos({
   contaId,
   q = '',
-  status = 'TODOS',
+  status = 'ATIVO',
   pageSize = 6,
   sortOrder = 'ASC',
 }: UseAlunosOptions) {
@@ -113,13 +113,10 @@ export function useAlunos({
   );
 
   const remove = useCallback(async ({ id, reason }: { id: string; reason?: string }) => {
-    await deleteAluno({ id, reason });
-    setState((prev) => ({
-      ...prev,
-      items: prev.items.filter((aluno) => aluno.id !== id),
-      total: Math.max(0, prev.total - 1),
-    }));
-  }, []);
+    const result = await deleteAluno({ id, reason });
+    await load({ page: state.page, pageSize: state.pageSize });
+    return result;
+  }, [load, state.page, state.pageSize]);
 
   return {
     items: state.items,

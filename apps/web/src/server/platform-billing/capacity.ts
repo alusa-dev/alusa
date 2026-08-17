@@ -7,12 +7,43 @@ import {
 } from '@alusa/platform-billing';
 import type { PlatformPlanCode } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   countActivePlatformBillingStudents,
   resolvePlatformBillingEnvironment,
 } from './platform-billing-server';
 
 type PlatformBillingTx = TenantTransactionClient;
+
+export async function assertPlatformAccessForConta(input: {
+  contaId: string;
+  capability: PlatformBillingCapability;
+}): Promise<void> {
+  await runWithTenant(input.contaId, async (tx) => {
+    await assertPlatformAccessForCapability({
+      tx,
+      contaId: input.contaId,
+      capability: input.capability,
+    });
+  });
+}
+
+export function isPlatformBillingAccessError(error: unknown): error is PlatformBillingError {
+  return error instanceof PlatformBillingError && error.code === 'PLATFORM_BILLING_ACCESS_RESTRICTED';
+}
+
+export function platformBillingAccessResponse(error: unknown) {
+  if (!isPlatformBillingAccessError(error)) return null;
+
+  return {
+    status: 402,
+    body: {
+      error: 'PLATFORM_BILLING_ACCESS_RESTRICTED',
+      message: 'A conta está restrita. Regularize o plano e faturamento para realizar esta operação.',
+      details: error.details,
+    },
+  } as const;
+}
 
 export async function assertPlatformAccessForCapability(input: {
   tx: PlatformBillingTx;

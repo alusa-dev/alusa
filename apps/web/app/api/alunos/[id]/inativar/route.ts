@@ -1,18 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth-options';
-import { inativarAluno } from '@alusa/lib';
-import { z } from 'zod';
-
-const inativarSchema = z.object({
-  motivo: z.string().min(10, 'Motivo deve ter no mínimo 10 caracteres'),
-  acao: z.enum(['PAUSAR', 'CANCELAR'], {
-    errorMap: () => ({ message: 'Ação deve ser PAUSAR ou CANCELAR' }),
-  }),
-});
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const rawParams = await params;
   try {
     // 1. Autenticação
     const session = await getServerSession(authOptions);
@@ -28,34 +18,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
-    // 3. Validar input
-    const body = await req.json();
-    const parsed = inativarSchema.parse(body);
-
-    // 4. Validar contaId
+    // O endpoint antigo permitia escolher pausa/cancelamento de matrícula a
+    // partir do cadastro do aluno. Essa decisão pertence exclusivamente ao
+    // fluxo de Matrículas e não pode mais ser executada aqui.
     if (!session.user.contaId) {
       return NextResponse.json({ error: 'Conta não encontrada' }, { status: 400 });
     }
 
-    // 5. Inativar aluno
-    const result = await inativarAluno({
-      id: rawParams.id,
-      contaId: session.user.contaId,
-      motivo: parsed.motivo,
-      acao: parsed.acao,
-      actorId: session.user.id,
-    });
-
-    return NextResponse.json(result);
+    return NextResponse.json(
+      {
+        error: 'FLUXO_DEPRECADO',
+        code: 'ALUNO_STATUS_USE_DELETE',
+        message: 'Use a operação de arquivamento do aluno. Matrículas são gerenciadas no fluxo de Matrículas.',
+      },
+      { status: 410 },
+    );
   } catch (error) {
     console.error('[API] Erro ao inativar aluno:', error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Dados inválidos', details: error.errors },
-        { status: 400 },
-      );
-    }
 
     if (error instanceof Error) {
       return NextResponse.json({ error: error.message }, { status: 400 });

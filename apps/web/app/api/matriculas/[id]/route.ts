@@ -30,6 +30,10 @@ import {
   resolveMatriculaFinancialContext,
   updateFamilyFinancialLocalState,
 } from '@/src/server/matriculas/financial-context.service';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -439,6 +443,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     if (!contaCtx.contaId) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
     }
 
     if (parsedBody.data.status) {

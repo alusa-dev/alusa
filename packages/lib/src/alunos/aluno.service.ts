@@ -30,6 +30,16 @@ const prisma: PrismaClient = shared as unknown as PrismaClient;
 type AlunoDeletionSummary = {
   matriculas: number;
   inscricoesEvento: number;
+  aulasExperimentais: number;
+  presencas: number;
+  reposicoes: number;
+  vendas: number;
+  vendasIngressos: number;
+  atribuicoesFigurino: number;
+  participantesEvento: number;
+  alocacoesFinanceiras: number;
+  operacoesCriacaoMatricula: number;
+  contratosEvento: number;
   cobrancas: number;
   pagamentos: number;
   subscriptions: number;
@@ -96,6 +106,16 @@ async function getAlunoDeletionDependencies(aluno: {
   const [
     matriculas,
     inscricoesEvento,
+    aulasExperimentais,
+    presencas,
+    reposicoes,
+    vendas,
+    vendasIngressos,
+    atribuicoesFigurino,
+    participantesEvento,
+    alocacoesFinanceiras,
+    operacoesCriacaoMatricula,
+    contratosEvento,
     cobrancas,
     pagamentos,
     subscriptions,
@@ -105,13 +125,33 @@ async function getAlunoDeletionDependencies(aluno: {
     customersResponsavel,
     webhooks,
   ] = await Promise.all([
-    prisma.matricula.count({ where: { alunoId: aluno.id } }),
-    prisma.portalEventoInscricao.count({ where: { alunoId: aluno.id } }),
-    prisma.cobranca.count({ where: { matricula: { alunoId: aluno.id } } }),
-    prisma.pagamento.count({ where: { cobranca: { matricula: { alunoId: aluno.id } } } }),
-    prisma.subscription.count({ where: { matricula: { alunoId: aluno.id } } }),
-    prisma.installmentPlan.count({ where: { matricula: { alunoId: aluno.id } } }),
-    prisma.contrato.count({ where: { matricula: { alunoId: aluno.id } } }),
+    prisma.matricula.count({ where: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } }),
+    prisma.portalEventoInscricao.count({ where: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } }),
+    prisma.aulaExperimental.count({ where: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } }),
+    prisma.attendanceRecord.count({ where: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } }),
+    prisma.makeupClass.count({ where: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } }),
+    prisma.sale.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.eventTicketSale.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.eventCostumeAssignment.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.eventParticipant.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.billingAllocation.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.enrollmentCreationOperation.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.eventoContrato.count({ where: { alunoId: aluno.id, contaId: aluno.contaId } }),
+    prisma.cobranca.count({
+      where: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } },
+    }),
+    prisma.pagamento.count({
+      where: { cobranca: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } } },
+    }),
+    prisma.subscription.count({
+      where: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } },
+    }),
+    prisma.installmentPlan.count({
+      where: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } },
+    }),
+    prisma.contrato.count({
+      where: { matricula: { alunoId: aluno.id, aluno: { contaId: aluno.contaId } } },
+    }),
     prisma.customer.count({ where: { contaId: aluno.contaId, payerType: 'ALUNO', payerId: aluno.id } }),
     responsavelIds.length
       ? prisma.customer.count({
@@ -130,6 +170,16 @@ async function getAlunoDeletionDependencies(aluno: {
   const summary: AlunoDeletionSummary = {
     matriculas,
     inscricoesEvento,
+    aulasExperimentais,
+    presencas,
+    reposicoes,
+    vendas,
+    vendasIngressos,
+    atribuicoesFigurino,
+    participantesEvento,
+    alocacoesFinanceiras,
+    operacoesCriacaoMatricula,
+    contratosEvento,
     cobrancas,
     pagamentos,
     subscriptions,
@@ -144,6 +194,16 @@ async function getAlunoDeletionDependencies(aluno: {
   const canHardDelete =
     matriculas === 0 &&
     inscricoesEvento === 0 &&
+    aulasExperimentais === 0 &&
+    presencas === 0 &&
+    reposicoes === 0 &&
+    vendas === 0 &&
+    vendasIngressos === 0 &&
+    atribuicoesFigurino === 0 &&
+    participantesEvento === 0 &&
+    alocacoesFinanceiras === 0 &&
+    operacoesCriacaoMatricula === 0 &&
+    contratosEvento === 0 &&
     cobrancas === 0 &&
     pagamentos === 0 &&
     subscriptions === 0 &&
@@ -1102,12 +1162,45 @@ export async function deleteAluno(
     dependencies.summary.contratos === 0 &&
     dependencies.summary.webhooks === 0;
 
+  const sharedResponsavelIds = aluno.responsaveis.length > 0
+    ? aluno.responsaveis.map((item) => item.responsavel.id)
+    : [];
+  const sharedWithActiveAlunos = sharedResponsavelIds.length > 0
+    ? await prisma.alunoResponsavel.count({
+        where: {
+          responsavelId: { in: sharedResponsavelIds },
+          aluno: { contaId, id: { not: id }, status: 'ATIVO' },
+        },
+      }) > 0
+    : false;
+  const sharedWithActiveMatriculas = sharedResponsavelIds.length > 0
+    ? await prisma.matricula.count({
+        where: {
+          responsavelFinanceiroId: { in: sharedResponsavelIds },
+          aluno: {
+            contaId,
+            id: { not: id },
+            status: 'ATIVO',
+          },
+          status: { in: ['ATIVA', 'PAUSADA', 'AGUARDANDO_CONFIRMACAO', 'PENDENTE_TAXA'] },
+        },
+      }) > 0
+    : false;
+
   const inativacaoResult = shouldInactivateCustomer
     ? await syncAlunoInativacaoToAsaas({ alunoId: id, contaId }).catch((err) => {
         console.error('⚠️ [Asaas Inativação] Erro não capturado:', err);
         return { success: false, action: 'ERROR' as const, error: err instanceof Error ? err.message : 'UNKNOWN' };
       })
-    : { success: true, action: 'SKIPPED' as const, reason: 'HAS_DEPENDENCIES' };
+    : {
+        success: true,
+        action: 'SKIPPED' as const,
+        reason: sharedWithActiveAlunos
+          ? 'SHARED_WITH_ACTIVE_ALUNOS'
+          : sharedWithActiveMatriculas
+            ? 'SHARED_WITH_ACTIVE_MATRICULAS'
+            : 'HAS_DEPENDENCIES',
+      };
 
   // Registrar resultado da inativação do customer
   if (inativacaoResult.action !== 'ERROR') {
@@ -1137,9 +1230,9 @@ export async function deleteAluno(
   });
 }
 
-export async function reactivateAluno(id: string) {
-  return prisma.aluno.update({
-    where: { id },
+export async function reactivateAluno(id: string, contaId: string) {
+  return prisma.aluno.updateMany({
+    where: { id, contaId },
     data: {
       status: 'ATIVO',
       motivoInativacao: null,

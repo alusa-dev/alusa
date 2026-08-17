@@ -83,23 +83,27 @@ export function AlunoDeleteDialog({ open, onOpenChange, alunoId, alunoNome, onDe
   async function handleConfirm() {
     if (!alunoId) return;
     
-    const loadingToast = toast.message(
-      conflictInfo 
-        ? 'Arquivando aluno e cancelando vínculos...' 
-        : 'Arquivando aluno e verificando vínculos...'
-    );
+    const loadingToast = toast.message('Arquivando aluno e verificando vínculos...');
     
     try {
       setSubmitting(true);
       const params = new URLSearchParams();
       if (motivo.trim()) params.set('motivo', motivo.trim());
-      if (conflictInfo) params.set('forceDelete', 'true');
       const qs = params.toString() ? `?${params.toString()}` : '';
       
       const res = await fetch(`/api/alunos/${alunoId}${qs}`, { method: 'DELETE' });
       
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Erro ao excluir' }));
+
+        if (res.status === 409 && data.code === 'ALUNO_HAS_MATRICULAS') {
+          toast.dismiss(loadingToast);
+          toast.warning(
+            data.error ||
+              'Resolva as matrículas vinculadas no fluxo de Matrículas antes de remover o aluno.',
+          );
+          return;
+        }
         
         // 409 = conflito com matrículas/subscriptions ativas
         if (res.status === 409 && data.activeMatriculas !== undefined) {
@@ -129,7 +133,7 @@ export function AlunoDeleteDialog({ open, onOpenChange, alunoId, alunoNome, onDe
       const result: DeletionResult = await res.json().catch(() => null);
       
       if (result?.deletion) {
-        const { outcome, blockers, customerInactivation, impact, gatewaySync } = result.deletion;
+        const { outcome, blockers, customerInactivation } = result.deletion;
         
         // Toast principal de sucesso
         if (outcome === 'ARCHIVED') {
@@ -138,34 +142,8 @@ export function AlunoDeleteDialog({ open, onOpenChange, alunoId, alunoNome, onDe
           toast.success('Aluno excluído permanentemente.');
         }
         
-        // Toast informativo sobre matrículas canceladas (baseado em impact)
-        const cancelledMatriculas = impact?.matriculas?.cancelled ?? 0;
-        if (cancelledMatriculas > 0) {
-          toast.info(`${cancelledMatriculas} matrícula(s) foram canceladas automaticamente.`);
-        }
-        
-        // Toast informativo sobre subscriptions deletadas no gateway
-        const deletedSubscriptions = impact?.subscriptions?.deleted ?? 0;
-        if (deletedSubscriptions > 0) {
-          toast.info(`${deletedSubscriptions} assinatura(s) foram canceladas no processador.`);
-        }
-        
-        // Toast informativo se havia blockers mas não foram cancelados
-        const summary = buildBlockersSummary(blockers);
-        if (summary && cancelledMatriculas === 0) {
-          toast.info(`Vínculos encontrados: ${summary}`);
-        }
-        
-        // Toast de erro parcial se houve erros ao cancelar matrículas
-        const matriculaErrors = impact?.matriculas?.errors ?? 0;
-        if (matriculaErrors > 0) {
-          toast.warning(`${matriculaErrors} matrícula(s) não puderam ser canceladas. Verifique manualmente.`);
-        }
-        
-        // Toast de warning se gateway sync falhou
-        if (gatewaySync && !gatewaySync.ok) {
-          toast.warning('Algumas cobranças podem não ter sido canceladas no processador. Verifique manualmente.');
-        }
+        // O arquivamento não altera matrículas, assinaturas ou cobranças.
+        // Esses ciclos de vida são tratados nos módulos próprios.
         
         // Toast sobre customer
         if (customerInactivation?.action === 'SKIPPED') {
@@ -202,7 +180,7 @@ export function AlunoDeleteDialog({ open, onOpenChange, alunoId, alunoNome, onDe
     : 'Tem certeza que deseja arquivar este aluno? O histórico será mantido.';
 
   const conflictDescription = conflictInfo
-    ? `⚠️ ${alunoNome ?? 'Este aluno'} possui ${buildBlockersSummary(conflictInfo)}. Ao confirmar, as matrículas serão inativadas e as cobranças pendentes serão canceladas.`
+    ? `⚠️ ${alunoNome ?? 'Este aluno'} possui ${buildBlockersSummary(conflictInfo)}. Resolva os vínculos no fluxo de Matrículas/Financeiro antes de arquivar.`
     : baseDescription;
 
   return (
@@ -224,10 +202,10 @@ export function AlunoDeleteDialog({ open, onOpenChange, alunoId, alunoNome, onDe
             </p>
             <ul className="mt-1 list-inside list-disc text-xs text-amber-700">
               {conflictInfo.activeMatriculas > 0 && (
-                <li>Inativar {conflictInfo.activeMatriculas} matrícula(s)</li>
+                <li>Resolver {conflictInfo.activeMatriculas} matrícula(s) no fluxo de Matrículas</li>
               )}
               {conflictInfo.activeSubscriptions > 0 && (
-                <li>Cancelar {conflictInfo.activeSubscriptions} assinatura(s) recorrente(s)</li>
+                <li>Resolver {conflictInfo.activeSubscriptions} assinatura(s) no fluxo Financeiro</li>
               )}
               {(conflictInfo.cobrancas?.pending ?? 0) + (conflictInfo.cobrancas?.processing ?? 0) > 0 && (
                 <li>Cancelar cobranças pendentes</li>

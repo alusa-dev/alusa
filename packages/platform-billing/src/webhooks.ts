@@ -368,30 +368,39 @@ async function processInvoiceEvent(
   const subscriptionToPersist = subscriptionId ?? account.stripeSubscriptionId;
   if (subscriptionToPersist && (isPaymentFailedEvent || isPaymentPaidEvent)) {
     const paymentStateChangedAt = failedAt ?? new Date();
+    const graceEligible = isPaymentPaidSubscriptionEligible(account.status);
     const nextStatus = resolveInvoicePaymentAccountStatus({
       accountStatus: account.status,
       trialEndsAt: account.trialEndsAt,
       isPaymentFailed: isPaymentFailedEvent,
+      graceEligible,
     });
+    const nextAccessStatus = isPaymentFailedEvent && !graceEligible
+      ? account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now()
+        ? 'RESTRICTED'
+        : mapAccessStatusFromSubscription(nextStatus)
+      : mapAccessStatusFromSubscription(nextStatus);
     await store.updateAccountFromStripeSubscription({
       accountId: account.id,
       status: nextStatus,
-      accessStatus: mapAccessStatusFromSubscription(nextStatus),
+      accessStatus: nextAccessStatus,
       planCode,
       stripeSubscriptionId: subscriptionToPersist,
       stripePriceId: priceId,
       currentPeriodEnd: account.currentPeriodEnd,
       cancelAtPeriodEnd: account.cancelAtPeriodEnd,
       trialEndsAt: account.trialEndsAt,
-      gracePeriodEndsAt: isPaymentFailedEvent ? computeGracePeriodEnd({ failedAt: paymentStateChangedAt }) : null,
-      restrictedAt: isPaymentFailedEvent ? account.restrictedAt : null,
+      gracePeriodEndsAt: isPaymentFailedEvent && graceEligible
+        ? computeGracePeriodEnd({ failedAt: paymentStateChangedAt })
+        : null,
+      restrictedAt: isPaymentFailedEvent && !graceEligible ? paymentStateChangedAt : null,
       lastPaymentFailedAt: isPaymentFailedEvent ? paymentStateChangedAt : null,
-      pendingChangeType: isPaymentFailedEvent
+      pendingChangeType: isPaymentFailedEvent && graceEligible
         ? 'PAYMENT_RECOVERY'
         : account.pendingChangeType === 'PAYMENT_RECOVERY'
           ? null
           : undefined,
-      pendingChangeEffectiveAt: isPaymentFailedEvent
+      pendingChangeEffectiveAt: isPaymentFailedEvent && graceEligible
         ? nextPaymentAttempt
         : account.pendingChangeType === 'PAYMENT_RECOVERY'
           ? null
@@ -407,11 +416,20 @@ function resolveInvoicePaymentAccountStatus(input: {
   accountStatus: PlatformBillingAccountStatus;
   trialEndsAt: Date | null;
   isPaymentFailed: boolean;
+  graceEligible: boolean;
 }): PlatformBillingAccountStatus {
-  if (input.isPaymentFailed) return 'PAST_DUE';
+  if (input.isPaymentFailed && input.graceEligible) return 'PAST_DUE';
+  if (input.isPaymentFailed) return input.accountStatus;
   if (input.accountStatus === 'CANCELED') return 'CANCELED';
   if (input.trialEndsAt && input.trialEndsAt.getTime() > Date.now()) return 'TRIALING';
   return 'ACTIVE';
+}
+
+function isPaymentPaidSubscriptionEligible(status: PlatformBillingAccountStatus): boolean {
+  // Trial accounts never receive the commercial grace period. A failed invoice
+  // during/at the end of a trial must be regularized before operational access
+  // is restored. ACTIVE/PAST_DUE are states of an already paid subscription.
+  return status === 'ACTIVE' || status === 'PAST_DUE';
 }
 
 function resolveInvoiceAuditAction(eventType: string): string {

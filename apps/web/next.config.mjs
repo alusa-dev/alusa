@@ -63,6 +63,9 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Permite que o Playwright use um diretório de desenvolvimento isolado sem
+  // disputar o lock do servidor local do workspace.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   poweredByHeader: false,
   // Sentry no servidor via require() real — evita vendor-chunks webpack desencontrados após mudanças de deps / cache .next
   serverExternalPackages: [

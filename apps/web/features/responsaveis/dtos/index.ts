@@ -5,6 +5,7 @@ import { responsavelEnderecoInputSchema } from '@alusa/lib/client';
 
 export const listResponsaveisQueryDTOSchema = z.object({
   q: z.string().trim().max(120).optional(),
+  status: z.enum(['TODOS', 'ATIVO', 'INATIVO']).default('ATIVO'),
 });
 
 export type ListResponsaveisQueryDTO = z.infer<typeof listResponsaveisQueryDTOSchema>;

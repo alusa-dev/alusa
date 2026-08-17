@@ -1,4 +1,9 @@
-import { listAlunosResultDTOSchema, type AlunoListItemDTO } from '../dtos';
+import {
+  alunoDeleteResultDTOSchema,
+  listAlunosResultDTOSchema,
+  type AlunoListItemDTO,
+  type AlunoDeleteResultDTO,
+} from '../dtos';
 
 export type AlunoListItem = AlunoListItemDTO;
 
@@ -53,7 +58,7 @@ export async function listAlunos({
   };
 }
 
-export async function deleteAluno({ id, reason }: { id: string; reason?: string }) {
+export async function deleteAluno({ id, reason }: { id: string; reason?: string }): Promise<AlunoDeleteResultDTO> {
   const search = reason?.trim() ? `?motivo=${encodeURIComponent(reason.trim())}` : '';
   const res = await fetch(`/api/alunos/${id}${search}`, { method: 'DELETE' });
   if (!res.ok) {
@@ -64,4 +69,22 @@ export async function deleteAluno({ id, reason }: { id: string; reason?: string 
         : error?.error?.message ?? error?.message ?? 'Erro ao excluir aluno';
     throw new Error(message);
   }
+  return alunoDeleteResultDTOSchema.parse(await res.json());
+}
+
+export async function reactivateAluno(id: string) {
+  const res = await fetch(`/api/alunos/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'ATIVO' }),
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    const message =
+      typeof error?.error === 'string'
+        ? error.error
+        : error?.error?.message ?? error?.message ?? 'Erro ao reativar aluno';
+    throw new Error(message);
+  }
+  return res.json();
 }

@@ -15,6 +15,14 @@ describe('@alusa/platform-billing access policy', () => {
       .toThrowError(/restricted/i);
   });
 
+  it('mantem saldo, historico e transferencias disponiveis em RESTRICTED', () => {
+    const account = buildAccount({ accessStatus: 'RESTRICTED', status: 'UNPAID' });
+
+    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_READ' })).toBe('RESTRICTED');
+    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_TRANSFER' })).toBe('RESTRICTED');
+    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_WITHDRAW' })).toBe('RESTRICTED');
+  });
+
   it('move grace expirado para RESTRICTED', () => {
     const account = buildAccount({
       status: 'PAST_DUE',

@@ -8,6 +8,10 @@ import {
   vincularResponsavelAoAluno,
   VinculoAlunoResponsavelError,
 } from '@/src/server/alunos/aluno-responsavel.service';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export async function POST(
   request: NextRequest,
@@ -17,6 +21,14 @@ export async function POST(
   const user = await getSessionUser();
   if (!user) {
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
+  }
+
+  try {
+    await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'STUDENT_WRITE' });
+  } catch (error) {
+    const blocked = platformBillingAccessResponse(error);
+    if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+    throw error;
   }
 
   const alunoId = ctxParams.id?.trim();

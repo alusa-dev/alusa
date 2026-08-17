@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth-options';
 import { comboUpdateSchema, updateCombo, deleteCombo } from '@alusa/lib';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -26,6 +30,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const contaCtx = await resolveContaId((body as { contaId?: string }).contaId ?? null);
     if (contaCtx.mismatch) return jsonError(403, 'CONTA_INVALIDA', 'Conta inválida');
     if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+    try {
+      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
+    }
     const parsed = comboUpdateSchema.safeParse({
       ...body,
       id: rawParams.id,
@@ -52,6 +63,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
     const contaCtx = await resolveContaId((body as { contaId?: string } | null)?.contaId ?? null);
     if (contaCtx.mismatch) return jsonError(403, 'CONTA_INVALIDA', 'Conta inválida');
     if (!contaCtx.contaId) return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+    try {
+      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
+    }
     try {
       const combo = await deleteCombo(rawParams.id, contaCtx.contaId);
       return NextResponse.json({ data: combo });

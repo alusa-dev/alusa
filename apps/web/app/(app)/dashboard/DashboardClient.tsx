@@ -22,6 +22,7 @@ import {
   useDashboardFinanceKpisQuery,
   useDashboardMetricsQuery,
 } from '@/hooks/use-dashboard-queries';
+import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 
 const FORCE_PERSISTENT_WELCOME_WIZARD = process.env.NODE_ENV !== 'production';
 
@@ -72,6 +73,11 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
   const [welcomeWizardOpen, setWelcomeWizardOpen] = useState(false);
   const [welcomeWizardCheckedForUserId, setWelcomeWizardCheckedForUserId] = useState<string | null>(null);
   const { verification, loading: verificationLoading, isApproved } = useKycEnforcement();
+  const { summary: billingSummary, loading: billingLoading } = usePlatformBilling();
+  const billingNeedsAttention =
+    billingSummary?.account?.accessStatus === 'GRACE_PERIOD' ||
+    billingSummary?.account?.accessStatus === 'RESTRICTED' ||
+    billingSummary?.account?.accessStatus === 'CANCELED';
 
   const metricsQuery = useDashboardMetricsQuery(initialData?.metrics ?? null);
   const financeKpisQuery = useDashboardFinanceKpisQuery(initialData?.financeKpis ?? null);
@@ -117,15 +123,20 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
   }, [verification, verificationLoading, isApproved]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    if (FORCE_PERSISTENT_WELCOME_WIZARD) {
-      setWelcomeWizardOpen(true);
-    }
-  }, [user?.id]);
+    if (billingNeedsAttention) setWelcomeWizardOpen(false);
+  }, [billingNeedsAttention]);
 
   useEffect(() => {
     if (!user?.id) return;
-    if (FORCE_PERSISTENT_WELCOME_WIZARD) return;
+    if (billingLoading || billingNeedsAttention) return;
+    if (FORCE_PERSISTENT_WELCOME_WIZARD) {
+      setWelcomeWizardOpen(true);
+    }
+  }, [billingLoading, billingNeedsAttention, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (FORCE_PERSISTENT_WELCOME_WIZARD || billingLoading || billingNeedsAttention) return;
     if (welcomeWizardCheckedForUserId === user.id) return;
 
     const isExternalMode = user.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
@@ -150,10 +161,13 @@ export default function DashboardClient({ initialData = null }: DashboardClientP
       controller.abort();
     };
   }, [
+    user,
     user?.asaasApiKeyStatus,
     user?.externalAsaasOnboardingStatus,
     user?.financeIntegrationMode,
     user?.id,
+    billingLoading,
+    billingNeedsAttention,
     welcomeWizardCheckedForUserId,
   ]);
 

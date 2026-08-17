@@ -31,7 +31,11 @@ import {
   isSupportedAsaasBillingType,
   resolveWizardPaymentSelection,
 } from '@/src/server/matriculas/payment-selection';
-import { isPlatformBillingCapacityError } from '@/src/server/platform-billing/capacity';
+import {
+  assertPlatformAccessForConta,
+  isPlatformBillingCapacityError,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 import { EnrollmentContractModelSignatureFieldsError } from '@/src/server/contracts/create-pending-enrollment-contract.service';
 import type {
   MatriculaOperationalWarningDTO,
@@ -288,6 +292,14 @@ export async function POST(req: Request) {
         'PERMISSAO_NEGADA',
         `UsuÃ¡rio com papel "${auth.user.role}" nÃ£o tem permissÃ£o para criar matrÃ­culas.`,
       );
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
     }
 
     const paymentSelection = resolveWizardPaymentSelection({

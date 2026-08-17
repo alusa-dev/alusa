@@ -22,6 +22,10 @@ import {
   maskEmail as privacyMaskEmail,
   maskPhone as privacyMaskPhone,
 } from '@alusa/shared';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 
 // Util simples para limpar dígitos
@@ -34,7 +38,9 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const q = (searchParams.get('q') || '').trim().toLowerCase();
-    const status = (searchParams.get('status') || '').trim().toUpperCase();
+    // A listagem sem filtro explícito mostra somente alunos ativos. O histórico
+    // continua disponível quando o cliente solicita TODOS ou INATIVO.
+    const status = (searchParams.get('status') || 'ATIVO').trim().toUpperCase();
     const pageParam = searchParams.get('page');
     const page = pageParam ? Math.max(1, Number(pageParam) || 1) : 1;
     const pageSize = Math.min(
@@ -185,6 +191,14 @@ export async function POST(request: NextRequest) {
     const contaId = (session as { user?: { contaId?: string } })?.user?.contaId;
     if (!contaId) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
     }
 
     const raw = await request.json();

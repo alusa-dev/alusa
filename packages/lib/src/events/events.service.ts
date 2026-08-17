@@ -3304,6 +3304,15 @@ export async function deleteSchoolEvent(ctx: EventsContext, eventId: string) {
       after: null,
     });
 
+    // EventoContrato intentionally uses RESTRICT for indirect deletions
+    // (participant/student), but deleting an event is an explicit destructive
+    // action that also promises to remove all event-owned data. Remove the
+    // contracts first so their RESTRICT foreign key does not block the event.
+    // Their documents and evidences are removed by their own CASCADE links.
+    await tx.eventoContrato.deleteMany({
+      where: { contaId: ctx.contaId, eventId },
+    });
+
     await tx.schoolEvent.delete({
       where: { id: eventId, contaId: ctx.contaId },
     });

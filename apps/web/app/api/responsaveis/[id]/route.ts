@@ -18,6 +18,10 @@ import {
   auditSensitiveAccess,
   canViewSensitivePersonData,
 } from '@/lib/privacy/sensitive-access';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +60,7 @@ async function resolveResponsavelId(params: IdParams) {
 
 async function getResponsavelMetrics(id: string, contaId: string) {
   const [alunos, matriculasFinanceiras, vendas] = await Promise.all([
-    prisma.alunoResponsavel.count({ where: { responsavelId: id } }),
+    prisma.alunoResponsavel.count({ where: { responsavelId: id, aluno: { contaId } } }),
     prisma.matricula.count({
       where: {
         responsavelFinanceiroId: id,
@@ -158,6 +162,14 @@ export async function PATCH(req: NextRequest, context: { params: IdParams }) {
 
     if (!contaId) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
     }
 
     if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'RESPONSAVEL_EDIT' })) {
@@ -301,6 +313,14 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
+
     const responsavelId = await resolveResponsavelRouteId(id, contaId);
     if (!responsavelId) {
       return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
@@ -435,9 +455,13 @@ export async function DELETE(_req: NextRequest, context: { params: IdParams }) {
       );
     }
 
-    await prisma.responsavel.delete({
-      where: { id: responsavelId },
+    const deleted = await prisma.responsavel.deleteMany({
+      where: { id: responsavelId, contaId },
     });
+
+    if (deleted.count === 0) {
+      return NextResponse.json({ error: 'Responsável não encontrado' }, { status: 404 });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

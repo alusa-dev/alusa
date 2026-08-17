@@ -5,9 +5,11 @@ import { listResponsaveis, type ResponsavelListItem } from '../services/responsa
 export function useResponsaveis({
   enabled = true,
   query,
+  status = 'ATIVO',
 }: {
   enabled?: boolean;
   query?: string;
+  status?: 'TODOS' | 'ATIVO' | 'INATIVO';
 } = {}) {
   const [items, setItems] = useState<ResponsavelListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -27,7 +29,7 @@ export function useResponsaveis({
     setError(null);
 
     try {
-      const data = await listResponsaveis({ signal: controller.signal, query });
+      const data = await listResponsaveis({ signal: controller.signal, query, status });
       setItems(data);
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') {
@@ -38,7 +40,7 @@ export function useResponsaveis({
     } finally {
       setLoading(false);
     }
-  }, [enabled, query]);
+  }, [enabled, query, status]);
 
   useEffect(() => {
     void load();

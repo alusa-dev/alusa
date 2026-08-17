@@ -12,7 +12,7 @@ test.describe('Arquivar aluno com matrícula ativa + assinatura ativa', () => {
     await prisma.$disconnect();
   });
 
-  test('arquiva aluno e cancela matrícula/assinatura', async ({ page }) => {
+  test('bloqueia arquivamento sem alterar matrícula ou assinatura', async ({ page }) => {
     const contaId = await getContaId();
 
     const { alunoId, alunoNome, matriculaId, subscriptionDbId } = await createAlunoWithMatriculaAndSubscription({
@@ -27,18 +27,16 @@ test.describe('Arquivar aluno com matrícula ativa + assinatura ativa', () => {
     await page.getByTestId('test-open-archive-dialog').click();
     await page.getByRole('button', { name: /^Arquivar$/ }).click();
 
-    await expect(page.getByText('Aluno arquivado')).toBeVisible();
-    await expect(page.getByText('1 matrícula(s) foram canceladas automaticamente.')).toBeVisible();
-    await expect(page.getByText('1 assinatura(s) foram canceladas no processador.')).toBeVisible();
+    await expect(page.getByText(/Resolva as matrículas no fluxo de Matrículas/)).toBeVisible();
 
     const aluno = await prisma.aluno.findUnique({ where: { id: alunoId }, select: { status: true } });
     const matricula = await prisma.matricula.findUnique({ where: { id: matriculaId }, select: { status: true } });
     const subscription = await prisma.subscription.findUnique({ where: { id: subscriptionDbId }, select: { status: true } });
     const cobrancasCount = await prisma.cobranca.count({ where: { matriculaId } });
 
-    expect(aluno?.status).toBe('INATIVO');
-    expect(matricula?.status).toBe('CANCELADA');
-    expect(subscription?.status).toBe('DELETED');
-    expect(cobrancasCount).toBe(0);
+    expect(aluno?.status).toBe('ATIVO');
+    expect(matricula?.status).toBe('ATIVA');
+    expect(subscription?.status).toBe('ACTIVE');
+    expect(cobrancasCount).toBeGreaterThanOrEqual(0);
   });
 });

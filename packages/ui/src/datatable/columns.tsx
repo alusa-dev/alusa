@@ -59,11 +59,11 @@ interface ActionsColumnOptions<T extends object> {
   onEdit?: (_item: T) => void;
   onDelete?: (_item: T) => void;
   editLabel?: string;
-  deleteLabel?: string;
+  deleteLabel?: string | ((_item: T) => string);
   editButtonAriaLabel?: (_item: T) => string;
   deleteButtonAriaLabel?: (_item: T) => string;
   editIcon?: React.ReactNode;
-  deleteIcon?: React.ReactNode;
+  deleteIcon?: React.ReactNode | ((_item: T) => React.ReactNode);
   skeleton?: React.ReactNode;
 }
 
@@ -113,13 +113,14 @@ export function actionsColumn<T extends object>({
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
-            aria-label={deleteButtonAriaLabel ? deleteButtonAriaLabel(item) : deleteLabel}
+            aria-label={deleteButtonAriaLabel ? deleteButtonAriaLabel(item) : typeof deleteLabel === 'function' ? deleteLabel(item) : deleteLabel}
+            title={typeof deleteLabel === 'function' ? deleteLabel(item) : deleteLabel}
             onClick={(e) => {
               e.stopPropagation();
               onDelete(item);
             }}
           >
-            {deleteIcon}
+            {typeof deleteIcon === 'function' ? deleteIcon(item) : deleteIcon}
           </Button>
         ) : null}
       </div>

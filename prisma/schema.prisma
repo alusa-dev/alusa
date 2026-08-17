@@ -1403,6 +1403,10 @@ model EarlyAccessLead {
   phone           String?
   studentsRange   String?
   mainChallenge   String?
+  marketingConsent Boolean  @default(false)
+  marketingConsentAt DateTime?
+  marketingConsentIp String?
+  marketingConsentUserAgent String?
   source          String   @default("acesso-antecipado")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -85,6 +85,12 @@ function renderMessageFull(text: string): React.ReactNode {
   ));
 }
 
+function resolveNotificationPath(path: string | null): string | null {
+  // Compatibilidade com notificações antigas que apontavam para uma rota
+  // financeira removida.
+  return path === '/financeiro' ? '/financeiro/pagamentos' : path;
+}
+
 function getSeverityMeta(severity: NotificationSeverity) {
   if (severity === 'SUCCESS') {
     return {
@@ -197,8 +203,9 @@ export function NotificationsInboxPage() {
 
     const isBillingNotification = selectedItem.entityType === 'Cobranca' && selectedItem.entityId;
     if (!isBillingNotification) {
-      if (selectedItem.relatedPath) {
-        router.push(selectedItem.relatedPath);
+      const relatedPath = resolveNotificationPath(selectedItem.relatedPath);
+      if (relatedPath) {
+        router.push(relatedPath);
       }
       return;
     }
@@ -230,8 +237,9 @@ export function NotificationsInboxPage() {
       router.push(`/cobrancas/${selectedItem.entityId}`);
     } catch (error) {
       console.error('[Notifications][openContext]', error);
-      if (selectedItem.relatedPath) {
-        router.push(selectedItem.relatedPath);
+      const relatedPath = resolveNotificationPath(selectedItem.relatedPath);
+      if (relatedPath) {
+        router.push(relatedPath);
       }
     } finally {
       setOpeningContext(false);

@@ -10,6 +10,10 @@ import {
   updatePlano,
   deletePlano,
 } from '@alusa/lib';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -93,6 +97,14 @@ export async function POST(req: Request) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
+    }
+
     const parsed = planoCreateSchema.safeParse({ ...body, contaId });
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação', parsed.error.flatten());
@@ -136,6 +148,14 @@ export async function PATCH(req: Request) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
     }
 
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
+    }
+
     const parsed = planoUpdateSchema.safeParse({ ...body, id, contaId });
     if (!parsed.success) {
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação', parsed.error.flatten());
@@ -177,6 +197,14 @@ export async function DELETE(req: Request) {
     const contaId = contaContext.contaId;
     if (!contaId) {
       return jsonError(400, 'CONTA_OBRIGATORIA', 'contaId é obrigatório');
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'ADMIN_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
     }
 
     try {

@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import ConfirmDeleteDialog from '@/components/dialogs/ConfirmDeleteDialog';
+import { ReativarAlunoDialog } from '@/components/alunos/ReativarAlunoDialog';
 import ReasonField from '@/components/shared/ReasonField';
 import { pushToast } from '@/components/ui/toast';
 import { CustomerNotificationsEditor } from '@/features/cadastro/shared/CustomerNotificationsEditor';
@@ -518,6 +519,7 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
   const [cropSource, setCropSource] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [reactivateOpen, setReactivateOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [openPanels, setOpenPanels] = useState({
     assinaturas: false,
@@ -1059,14 +1061,25 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
           </FinancialAccordion>
 
           <div className={cn('border-t border-gray-200 pt-6', DETAIL_SECTION_MAX)}>
-            <Button
-              type="button"
-              onClick={() => setDeleteOpen(true)}
-              className="h-10 w-full rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700 md:w-auto"
-            >
-              <Trash className="mr-2 h-4 w-4" />
-              Remover aluno
-            </Button>
+            {aluno.status === 'INATIVO' ? (
+              <Button
+                type="button"
+                onClick={() => setReactivateOpen(true)}
+                className="h-10 w-full rounded-md bg-brand-accent px-4 text-sm font-medium text-white shadow-none hover:bg-brand-accent/90 md:w-auto"
+              >
+                <Refresh className="mr-2 h-4 w-4" />
+                Reativar aluno
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="h-10 w-full rounded-md bg-red-600 px-4 text-sm font-medium text-white shadow-none hover:bg-red-700 md:w-auto"
+              >
+                <Trash className="mr-2 h-4 w-4" />
+                Remover aluno
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -1095,6 +1108,16 @@ export function AlunoDetalhesFeature({ alunoId }: { alunoId: string }) {
           onChange={(event) => setDeleteReason(event.target.value)}
         />
       </ConfirmDeleteDialog>
+
+      <ReativarAlunoDialog
+        open={reactivateOpen}
+        onOpenChange={setReactivateOpen}
+        alunoId={aluno.id}
+        alunoNome={aluno.nome}
+        onReativado={async () => {
+          await load();
+        }}
+      />
 
       <ImageCropDialog
         open={cropOpen && Boolean(cropSource)}

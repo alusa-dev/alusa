@@ -1,4 +1,6 @@
-import { NextResponse } from 'next/server';
+// Este módulo também é carregado por jobs/tsx fora do bundler do Next.
+// O sufixo explícito mantém a resolução ESM válida nesses dois ambientes.
+import { NextResponse } from 'next/server.js';
 import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
 import type { PlatformPlanCode } from '@alusa/platform-billing';
 import { evaluateStudentCapacity } from '@alusa/platform-billing';

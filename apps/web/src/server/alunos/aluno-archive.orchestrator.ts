@@ -60,8 +60,10 @@ export async function executeAlunoArchivePlan(
   const results: MatriculaActionResult[] = [];
   const errors: GatewaySyncError[] = [];
 
+  // Fase 1: cancelar todas as assinaturas externas. Nenhuma matrícula é
+  // alterada localmente enquanto ainda houver uma falha nessa fase.
   for (const action of plan.matriculaActions) {
-    const result = await executeMatriculaAction(action, plan, deps);
+    const result = await executeMatriculaGatewayAction(action, plan, deps);
     results.push(result);
 
     if (result.asaasAction === 'ERROR' && result.error) {
@@ -70,6 +72,27 @@ export async function executeAlunoArchivePlan(
         message: result.error,
         matriculaId: result.matriculaId,
       });
+    }
+  }
+
+  if (errors.length === 0) {
+    // Fase 2: somente após a confirmação do gateway, aplicar as alterações
+    // locais. Se uma escrita local falhar, a operação permanece retentável:
+    // o gateway trata o cancelamento repetido como idempotente.
+    for (let index = 0; index < plan.matriculaActions.length; index += 1) {
+      const action = plan.matriculaActions[index];
+      const gatewayResult = results[index];
+      if (!action || !gatewayResult) continue;
+
+      const result = await commitMatriculaLocalAction(action, plan, gatewayResult);
+      results[index] = result;
+      if (result.asaasAction === 'ERROR' && result.error) {
+        errors.push({
+          code: 'MATRICULA_LOCAL_UPDATE_FAILED',
+          message: result.error,
+          matriculaId: result.matriculaId,
+        });
+      }
     }
   }
 
@@ -93,7 +116,7 @@ export async function executeAlunoArchivePlan(
   };
 }
 
-async function executeMatriculaAction(
+async function executeMatriculaGatewayAction(
   action: MatriculaArchiveAction,
   plan: AlunoArchivePlan,
   deps: ExecuteAlunoArchivePlanDeps
@@ -102,10 +125,17 @@ async function executeMatriculaAction(
   let subscriptionDeleted = false;
 
   try {
+    if (requiredAction === 'DELETE_SUBSCRIPTION' && !deps.paymentsProvider) {
+      throw new Error('Processador de pagamentos não configurado para cancelar a assinatura.');
+    }
+
     if (requiredAction === 'DELETE_SUBSCRIPTION' && deps.paymentsProvider) {
       // Buscar assinatura para obter subscriptionId
       const subscription = await prisma.subscription.findFirst({
-        where: { matriculaId },
+        where: {
+          matriculaId,
+          matricula: { aluno: { contaId: plan.contaId } },
+        },
         select: { id: true, asaasSubscriptionId: true, status: true },
       });
 
@@ -131,56 +161,14 @@ async function executeMatriculaAction(
             }
           }
 
-          // Atualizar subscription local - MULTI-TENANT: validar conta via matricula->aluno
-          await prisma.subscription.updateMany({
-            where: {
-              id: subscription.id,
-              matricula: { aluno: { contaId: plan.contaId } }
-            },
-            data: { status: 'DELETED', statusUpdatedAt: new Date() },
-          });
         }
       }
     }
 
-    // Atualizar status da matrícula - MULTI-TENANT: validar conta via aluno
-    const updateResult = await prisma.matricula.updateMany({
-      where: {
-        id: matriculaId,
-        aluno: { contaId: plan.contaId }
-      },
-      data: { status: 'CANCELADA' },
-    });
-
-    if (updateResult.count === 0) {
-      // Se não atualizou, pode ser que matrícula não exista ou não pertença à conta
-      // Como isso é parte de uma orquestração maior, logamos erro ou lançamos para ser capturado
-      throw new Error('Matrícula não encontrada ou não pertence à conta do plano de arquivamento.');
-    }
-
-    // Auditoria
-    await prisma.auditLog.create({
-      data: {
-        contaId: plan.contaId,
-        actorType: plan.actorId === 'system' ? 'SYSTEM' : 'USER',
-        actorId: plan.actorId !== 'system' ? plan.actorId : undefined,
-        action: 'MATRICULA_CANCELLED_VIA_ARCHIVE',
-        entityType: 'MATRICULA',
-        entityId: matriculaId,
-        metadata: {
-          alunoId: plan.alunoId,
-          previousStatus: currentStatus,
-          motivo: plan.motivo,
-          requiredAction,
-          subscriptionDeleted,
-        },
-      },
-    });
-
     return {
       matriculaId,
       previousStatus: currentStatus,
-      cancelled: true,
+      cancelled: false,
       subscriptionDeleted,
       asaasAction: requiredAction === 'DELETE_SUBSCRIPTION' ? 'DELETE_SUBSCRIPTION' : 'LOCAL_ONLY',
     };
@@ -212,6 +200,82 @@ async function executeMatriculaAction(
   }
 }
 
+async function commitMatriculaLocalAction(
+  action: MatriculaArchiveAction,
+  plan: AlunoArchivePlan,
+  gatewayResult: MatriculaActionResult,
+): Promise<MatriculaActionResult> {
+  const { matriculaId, currentStatus, requiredAction } = action;
+
+  try {
+    if (requiredAction === 'DELETE_SUBSCRIPTION' && gatewayResult.subscriptionDeleted) {
+      await prisma.subscription.updateMany({
+        where: {
+          matriculaId,
+          matricula: { aluno: { contaId: plan.contaId } },
+        },
+        data: { status: 'DELETED', statusUpdatedAt: new Date() },
+      });
+    }
+
+    const updateResult = await prisma.matricula.updateMany({
+      where: { id: matriculaId, aluno: { contaId: plan.contaId } },
+      data: { status: 'CANCELADA' },
+    });
+
+    if (updateResult.count === 0) {
+      throw new Error('Matrícula não encontrada ou não pertence à conta do plano de arquivamento.');
+    }
+
+    await prisma.auditLog.create({
+      data: {
+        contaId: plan.contaId,
+        actorType: plan.actorId === 'system' ? 'SYSTEM' : 'USER',
+        actorId: plan.actorId !== 'system' ? plan.actorId : undefined,
+        action: 'MATRICULA_CANCELLED_VIA_ARCHIVE',
+        entityType: 'MATRICULA',
+        entityId: matriculaId,
+        metadata: {
+          alunoId: plan.alunoId,
+          previousStatus: currentStatus,
+          motivo: plan.motivo,
+          requiredAction,
+          subscriptionDeleted: gatewayResult.subscriptionDeleted,
+        },
+      },
+    });
+
+    return {
+      ...gatewayResult,
+      cancelled: true,
+    };
+  } catch (error) {
+    await prisma.auditLog.create({
+      data: {
+        contaId: plan.contaId,
+        actorType: 'SYSTEM',
+        action: 'MATRICULA_CANCEL_FAILED',
+        entityType: 'MATRICULA',
+        entityId: matriculaId,
+        metadata: {
+          alunoId: plan.alunoId,
+          previousStatus: currentStatus,
+          error: error instanceof Error ? error.message : 'Erro desconhecido',
+        },
+      },
+    });
+
+    return {
+      matriculaId,
+      previousStatus: currentStatus,
+      cancelled: false,
+      subscriptionDeleted: gatewayResult.subscriptionDeleted,
+      asaasAction: 'ERROR',
+      error: error instanceof Error ? error.message : 'Erro desconhecido',
+    };
+  }
+}
+
 /**
  * Helper para buscar dados necessários para construir o plano
  */
@@ -230,7 +294,7 @@ export async function fetchAlunoDataForPlan(alunoId: string, contaId: string) {
   }
 
   const matriculas = await prisma.matricula.findMany({
-    where: { alunoId },
+    where: { alunoId, aluno: { contaId } },
     select: {
       id: true,
       status: true,

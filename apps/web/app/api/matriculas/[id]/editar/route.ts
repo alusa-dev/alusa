@@ -19,6 +19,10 @@ import {
 } from '@/src/server/matriculas/financial-context.service';
 import { mapPeriodicidadeToCycle } from '@/src/server/matriculas/recurring-billing';
 import type { PeriodicidadePlano } from '@prisma/client';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -302,6 +306,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     }
     if (!contaCtx.contaId || !contaCtx.sessionUserId) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId: contaCtx.contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return jsonError(blocked.status, blocked.body.error, blocked.body.message, blocked.body.details);
+      throw error;
     }
 
     const currentMatricula = await prisma.matricula.findFirst({

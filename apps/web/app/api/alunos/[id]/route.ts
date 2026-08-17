@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
+import { randomUUID } from 'node:crypto';
 import { StatusCobranca, StatusMatricula } from '@prisma/client';
 import { authOptions } from '@/lib/auth-options';
 import prisma from '@/lib/prisma';
@@ -29,6 +30,10 @@ import {
   auditSensitiveAccess,
   canViewSensitivePersonData,
 } from '@/lib/privacy/sensitive-access';
+import {
+  assertPlatformAccessForConta,
+  platformBillingAccessResponse,
+} from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -57,8 +62,7 @@ function hasDeletionBlockers(blockers: AlunoDeletionBlockers) {
     blockers.activeSubscriptions > 0 ||
     blockers.cobrancas.pending > 0 ||
     blockers.cobrancas.processing > 0 ||
-    blockers.cobrancas.overdue > 0 ||
-    blockers.cobrancas.paid > 0
+    blockers.cobrancas.overdue > 0
   );
 }
 
@@ -214,6 +218,14 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: 'Sessão inválida.' }, { status: 401 });
     }
 
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
+
     if (!canViewSensitivePersonData({ user: user ?? {}, contaId, purpose: 'STUDENT_EDIT' })) {
       return NextResponse.json({ error: 'Acesso negado para alterar dados sensíveis do aluno.' }, { status: 403 });
     }
@@ -313,9 +325,17 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       return NextResponse.json({ error: 'Sessão inválida.' }, { status: 401 });
     }
 
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'STUDENT_WRITE' });
+    } catch (error) {
+      const blocked = platformBillingAccessResponse(error);
+      if (blocked) return NextResponse.json(blocked.body, { status: blocked.status });
+      throw error;
+    }
+
     const url = new URL(req.url);
     const motivo = url.searchParams.get('motivo') || undefined;
-    const forceDelete = url.searchParams.get('forceDelete') === 'true';
+    const correlationId = req.headers.get('x-correlation-id')?.trim() || randomUUID();
 
     // 1) Carregar aluno + matrículas para montar o plano
     const alunoData = await prisma.aluno.findFirst({
@@ -332,6 +352,30 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       select: { id: true, status: true, asaasSubscriptionId: true },
     });
 
+    // A exclusão do aluno não pode decidir o ciclo de vida de uma matrícula.
+    // Matrículas ainda não resolvidas, inclusive pendentes, devem ser tratadas
+    // no fluxo de Matrículas, que também é o responsável por eventual
+    // recálculo familiar. Matrículas históricas encerradas/canceladas são
+    // preservadas e não impedem o arquivamento.
+    const matriculasNaoResolvidas = matriculasData.filter((matricula) =>
+      activeMatriculaStatuses.includes(matricula.status),
+    );
+    if (matriculasNaoResolvidas.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            'Não é possível remover este aluno enquanto houver matrículas vinculadas. Resolva as matrículas no fluxo de Matrículas.',
+          code: 'ALUNO_HAS_MATRICULAS',
+          matriculas: matriculasNaoResolvidas.map((matricula) => ({
+            id: matricula.id,
+            status: matricula.status,
+          })),
+          matriculasCount: matriculasNaoResolvidas.length,
+        },
+        { status: 409 },
+      );
+    }
+
     // 2) Montar plano puro (domínio)
     const plan = buildAlunoArchivePlan({
       aluno: { id: alunoData.id, nome: alunoData.nome, status: alunoData.status },
@@ -345,10 +389,13 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       actorId,
     });
 
-    // 3) Executar no gateway (não abortar se falhar)
+    // 3) Sincronizar o gateway antes da alteração local. Sem confirmação externa,
+    // não cancelamos a matrícula localmente e não arquivamos o aluno.
     let execution: AlunoArchiveExecutionResult;
     try {
-      const paymentsProvider = await getPaymentsProviderForConta(contaId);
+      const paymentsProvider = plan.subscriptionsToCancel > 0
+        ? await getPaymentsProviderForConta(contaId)
+        : undefined;
       execution = await executeAlunoArchivePlan(plan, { paymentsProvider });
     } catch (err) {
       console.error('[alunos][delete] Erro ao sincronizar com gateway:', err);
@@ -372,22 +419,43 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
           entityType: 'Aluno',
           entityId: rawParams.id,
           metadata: {
+            correlationId,
             error: err instanceof Error ? err.message : 'Erro desconhecido',
           },
         },
       });
     }
 
+    if (!execution.ok) {
+      console.warn('[alunos][delete] Sincronização incompleta; aluno não arquivado', {
+        alunoId: rawParams.id,
+        contaId,
+        correlationId,
+        errors: execution.errors.map(({ code, matriculaId }) => ({ code, matriculaId })),
+      });
+      return NextResponse.json(
+        {
+          error: 'Não foi possível concluir a sincronização financeira. O aluno não foi arquivado; repita a operação após verificar o processador.',
+          code: 'ALUNO_ARCHIVE_SYNC_FAILED',
+          correlationId,
+          impact: execution.impact,
+          gatewaySync: {
+            ok: false,
+            errors: execution.errors.map(({ code, matriculaId }) => ({ code, matriculaId })),
+          },
+        },
+        { status: 502 },
+      );
+    }
+
     // 4) Aplicar operação local (arquivar/hard delete + customer safety)
-    const alunoResult = await deleteAluno(rawParams.id, contaId, motivo, forceDelete, actorId);
+    const alunoResult = await deleteAluno(rawParams.id, contaId, motivo, false, actorId);
     
     // 5) Calcular blockers depois (podem ter mudado)
     const blockers = await getAlunoDeletionBlockers({ alunoId: rawParams.id, contaId });
-    const outcome = forceDelete
-      ? (await prisma.aluno.findFirst({ where: { id: rawParams.id, contaId }, select: { id: true } }))
-        ? 'ARCHIVED'
-        : 'HARD_DELETED'
-      : 'ARCHIVED';
+    const outcome = (await prisma.aluno.findFirst({ where: { id: rawParams.id, contaId }, select: { id: true } }))
+      ? 'ARCHIVED'
+      : 'HARD_DELETED';
 
     if (outcome === 'ARCHIVED' && hasDeletionBlockers(blockers)) {
       console.info('[alunos][delete] Arquivado com vínculos ativos', {

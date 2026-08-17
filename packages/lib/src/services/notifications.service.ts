@@ -456,7 +456,7 @@ async function createPaymentDigestNotification(params: {
           title: input.title,
           message: buildPaymentDigestMessage([payment]),
           dedupeKey: input.dedupeKey,
-          relatedPath: '/financeiro',
+          relatedPath: '/financeiro/pagamentos',
           entityType: 'PaymentDigest',
           entityId: input.dedupeKey,
           sourceType: 'INBOX_DIGEST',

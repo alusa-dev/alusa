@@ -74,58 +74,103 @@
 
 /* Landing page de captação — mantém o foco no cadastro e não depende do shell do site. */
 .early-access-page {
-	--early-purple: #260744;
-	--early-purple-dark: #16052c;
+	--early-purple: #340e63;
+	--early-purple-dark: #340e63;
 	--early-lilac: #d9ccff;
-	min-height: 100svh;
+	box-sizing: border-box;
+	height: 100dvh;
+	min-height: 100dvh;
 	position: relative;
 	overflow: hidden;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	padding: 32px 20px;
-	background: radial-gradient(circle at 20% 15%, #4f1c85 0, transparent 30%), radial-gradient(circle at 90% 88%, #351063 0, transparent 34%), var(--early-purple-dark);
+	padding: clamp(20px, 4vh, 32px) clamp(20px, 2.8vw, 32px);
+	background: var(--early-purple-dark);
 	color: #fff;
 }
 
-.early-access-shell { width: min(100%, 1060px); position: relative; z-index: 1; }
-.early-access-brand { margin: 0 0 44px; }
-.early-access-brand svg { display: block; width: 110px; height: auto; }
-.early-access-card { display: grid; grid-template-columns: .9fr 1.1fr; gap: clamp(32px, 6vw, 88px); align-items: center; }
-.early-access-eyebrow { margin: 0 0 20px; color: var(--early-lilac); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-.early-access-intro h1 { max-width: 440px; margin: 0; font-size: clamp(38px, 5vw, 68px); line-height: .98; letter-spacing: -.055em; font-weight: 700; }
-.early-access-description { max-width: 390px; margin: 24px 0 0; color: rgba(255,255,255,.68); font-size: 17px; line-height: 1.55; }
-.early-access-form { padding: clamp(24px, 4vw, 38px); border: 1px solid rgba(255,255,255,.15); border-radius: 24px; background: rgba(255,255,255,.97); color: #20132e; box-shadow: 0 24px 80px rgba(8, 0, 24, .28); }
-.early-access-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 17px 14px; }
-.early-access-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 700; color: #4a3a57; }
-.early-access-form input, .early-access-form select, .early-access-form textarea { width: 100%; min-height: 46px; padding: 12px 13px; border: 1px solid #e5ddeb; border-radius: 10px; background: #fff; color: #20132e; font: inherit; font-size: 14px; font-weight: 400; outline: none; transition: border-color .2s, box-shadow .2s; }
-.early-access-form textarea { resize: vertical; min-height: 74px; }
+.early-access-shell { width: min(100%, 1060px); height: 100%; min-height: 0; position: relative; z-index: 1; display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+.early-access-brand { margin: 0 0 clamp(20px, 3.5vh, 34px); }
+.early-access-brand img { display: block; width: 110px; height: auto; }
+.early-access-card { display: grid; width: 100%; height: fit-content; min-height: 0; align-self: center; grid-template-columns: minmax(0, 480px) minmax(0, 340px); gap: clamp(40px, 10vw, 105px); align-items: start; justify-content: center; }
+.early-access-intro { grid-column: 2; grid-row: 1; height: 100%; display: flex; flex-direction: column; justify-self: start; }
+.early-access-intro-copy { margin-top: auto; }
+.early-access-eyebrow { display: inline-flex; align-items: center; width: fit-content; margin: 0 0 18px; padding: 6px 10px; border: 1px solid rgba(217, 204, 255, .28); border-radius: 999px; background: rgba(217, 204, 255, .12); color: var(--early-lilac); font-size: 11px; font-weight: 700; letter-spacing: .12em; line-height: 1; text-transform: uppercase; }
+.early-access-intro h1 { max-width: 340px; margin: 0; font-family: var(--font-inter), Inter, system-ui, sans-serif; font-size: clamp(30px, 3vw, 34px); line-height: 1.2; letter-spacing: -.02em; font-weight: 400; }
+.early-access-highlight { color: #c7a1ff; font-weight: 700; }
+.early-access-description { max-width: 245px; margin: 16px 0 0; color: rgba(255,255,255,.68); font-size: clamp(15px, 1.4vw, 16px); line-height: 1.5; }
+.early-access-mobile-cta { display: none; }
+.early-access-form { --form-pad-x: 30px; grid-column: 1; grid-row: 1; box-sizing: border-box; width: min(100%, 480px); justify-self: start; padding: clamp(18px, 2.4vw, 24px) var(--form-pad-x); border: 1px solid rgba(255,255,255,.15); border-radius: 24px; background: rgba(255,255,255,.97); color: #20132e; box-shadow: 0 24px 80px rgba(8, 0, 24, .28); }
+.early-access-form-title { margin: 0; color: #20132e; font-size: 15px; font-weight: 700; letter-spacing: -.01em; line-height: 1.2; }
+.early-access-form-divider { width: calc(100% + var(--form-pad-x) + var(--form-pad-x)); height: 1px; margin: 14px 0 20px calc(var(--form-pad-x) * -1); background: #e5ddeb; }
+.early-access-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.early-access-form label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; color: #4a3a57; }
+.early-access-form input, .early-access-form select, .early-access-form textarea { box-sizing: border-box; width: 100%; min-height: 43px; padding: 10px 13px; border: 1px solid #e5ddeb; border-radius: 10px; background: #fff; color: #20132e; font: inherit; font-size: 14px; font-weight: 400; outline: none; transition: border-color .2s, box-shadow .2s; }
+.early-access-form select { appearance: none; padding-right: 38px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2320132e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-position: right 12px center; background-repeat: no-repeat; background-size: 16px 16px; }
+.early-access-form .early-access-students-select { box-sizing: border-box; width: 100%; height: 43px; min-height: 43px; border: 1px solid #e5ddeb !important; border-radius: 10px; background-color: #fff !important; padding: 10px 13px; color: #20132e; font-family: inherit; font-size: 12px !important; font-weight: 400; line-height: 1.35; box-shadow: none !important; outline: none; }
+.early-access-form .early-access-students-select > span { color: #a99db2; font-family: inherit; font-size: 12px !important; font-weight: 400; line-height: 1.35; }
+.early-access-form .early-access-students-select > span:not([data-placeholder]) { color: #20132e; }
+.early-access-students-select:hover { border-color: #d7c9e2; }
+.early-access-students-select:focus-visible, .early-access-students-select[data-state='open'] { border-color: #e5ddeb; box-shadow: none; outline: none; }
+.early-access-students-content { min-width: var(--radix-select-trigger-width); border: 1px solid #e5ddeb; border-radius: 10px; background: #fff; padding: 6px; box-shadow: 0 12px 28px rgba(32,19,46,.14); }
+.early-access-students-content [data-radix-select-item] { min-height: 32px; border-radius: 7px; padding: 7px 10px; color: #4a3a57; font-family: inherit; font-size: 13px; font-weight: 400; line-height: 1.35; }
+.early-access-students-content [data-radix-select-item][data-highlighted], .early-access-students-content [data-radix-select-item][data-state='checked'] { background: #f1ebf7; color: #20132e; }
+.early-access-form textarea { resize: none; min-height: 62px; }
 .early-access-form input::placeholder, .early-access-form textarea::placeholder { color: #a99db2; }
-.early-access-form input:focus, .early-access-form select:focus, .early-access-form textarea:focus { border-color: #7743b4; box-shadow: 0 0 0 3px rgba(119,67,180,.14); }
-.early-access-full-field { margin-top: 17px; }
-.early-access-form button { width: 100%; display: flex; align-items: center; justify-content: space-between; min-height: 52px; margin-top: 22px; padding: 0 17px 0 19px; border: 0; border-radius: 11px; background: #5c2694; color: #fff; cursor: pointer; font: inherit; font-size: 14px; font-weight: 700; transition: transform .2s, background .2s; }
+.early-access-form input:focus, .early-access-form select:focus, .early-access-form textarea:focus { border-color: #e5ddeb; box-shadow: none; }
+.early-access-form input:focus-visible, .early-access-form select:focus-visible, .early-access-form textarea:focus-visible { border-color: #7743b4; box-shadow: 0 0 0 3px rgba(119,67,180,.14); }
+.early-access-full-field { margin-top: 16px; }
+.early-access-form button { width: 100%; display: flex; align-items: center; justify-content: space-between; min-height: 48px; margin-top: 16px; padding: 0 17px 0 19px; border: 0; border-radius: 10px; background: #5c2694; color: #fff; cursor: pointer; font: inherit; font-size: 14px; font-weight: 700; transition: transform .2s, background .2s; }
 .early-access-form button:hover:not(:disabled) { background: #451879; transform: translateY(-1px); }
 .early-access-form button:disabled { cursor: wait; opacity: .65; }
 .early-access-form button span { font-size: 20px; font-weight: 400; }
-.early-access-privacy { margin: 13px 0 0; color: #94869d; font-size: 11px; line-height: 1.4; text-align: center; }
+.early-access-privacy { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 12px 0 0; color: #94869d; font-size: 11px; line-height: 1.4; text-align: center; }
+.early-access-privacy svg { width: 13px; height: 13px; flex: 0 0 auto; color: #94869d; stroke-width: 1.8; }
 .early-access-form-error { margin: 15px 0 -8px; color: #b42318; font-size: 12px; }
+.early-access-consent { display: flex !important; grid-template-columns: none !important; align-items: center; gap: 8px !important; margin-top: 16px; color: #94869d !important; font-size: 11px !important; font-weight: 400 !important; line-height: 16px; }
+.early-access-consent input[type='checkbox'] { width: 16px; min-width: 16px; height: 16px; min-height: 16px; margin: 0; padding: 0; accent-color: #84738f; }
 .early-access-honeypot { position: absolute !important; left: -9999px !important; width: 1px !important; height: 1px !important; opacity: 0 !important; }
-.early-access-success { min-height: 360px; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
-.early-access-success-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 20px; border-radius: 50%; background: #5c2694; color: #fff; font-size: 28px; }
-.early-access-success h2 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
-.early-access-success p { max-width: 300px; margin: 12px 0 0; color: #76677f; font-size: 14px; line-height: 1.5; }
-.early-access-footer { margin: 38px 0 0; color: rgba(255,255,255,.35); font-size: 11px; letter-spacing: .04em; }
-.early-access-glow { position: absolute; width: 360px; height: 360px; border-radius: 50%; filter: blur(80px); opacity: .18; pointer-events: none; }
+.early-access-success { grid-column: 1; grid-row: 1; min-height: 360px; display: grid; align-content: center; justify-items: center; padding: 30px; text-align: center; }
+.early-access-card:has(.early-access-success) { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.early-access-card:has(.early-access-success) .early-access-intro { display: none; }
+.early-access-card:has(.early-access-success) .early-access-success { grid-column: 1; width: min(100%, 480px); }
+.early-access-success-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 20px; border-radius: 50%; background: #7d43b8; color: #fff; font-size: 28px; }
+.early-access-success h2 { margin: 0; color: #fff; font-size: 28px; letter-spacing: -.03em; }
+.early-access-success p { max-width: 300px; margin: 12px 0 0; color: rgba(255,255,255,.72); font-size: 14px; line-height: 1.5; }
+.early-access-footer { margin: 18px 0 0; color: rgba(255,255,255,.35); font-size: 11px; letter-spacing: .04em; }
+.early-access-glow { display: none; }
 .early-access-glow-one { top: -180px; right: -80px; background: #9b6dff; }
 .early-access-glow-two { bottom: -220px; left: -100px; background: #7442bc; }
 
 @media (max-width: 760px) {
-	.early-access-page { align-items: flex-start; padding: 28px 16px; }
-	.early-access-brand { margin-bottom: 44px; }
-	.early-access-card { display: block; }
-	.early-access-intro h1 { font-size: clamp(38px, 12vw, 54px); }
+	.early-access-page { align-items: stretch; padding: 22px 16px; }
+	.early-access-shell { overflow-y: auto; scrollbar-width: none; }
+	.early-access-shell::-webkit-scrollbar { display: none; }
+	.early-access-brand { margin-bottom: 28px; }
+	.early-access-card { display: block; height: auto; align-self: stretch; }
+	.early-access-intro { width: min(100%, 340px); height: auto; display: block; margin-inline: auto; text-align: left; }
+	.early-access-success { grid-column: auto; grid-row: auto; min-height: 280px; }
+	.early-access-card:has(.early-access-success) { width: 100%; }
+	.early-access-card:has(.early-access-success) { display: grid; height: 100%; align-content: center; }
+	.early-access-card:has(.early-access-success) .early-access-success { min-height: 0; }
+	.early-access-brand img { margin-inline: 0; }
+	.early-access-intro-copy { margin-top: 32px; }
+	.early-access-intro h1, .early-access-description { margin-left: 0; margin-right: auto; }
+	.early-access-intro h1 { font-size: clamp(26px, 8vw, 32px); }
 	.early-access-description { margin-top: 18px; font-size: 15px; }
-	.early-access-form { margin-top: 28px; border-radius: 20px; padding: 20px 17px; }
+	.early-access-page:not(.mobile-form-open) .early-access-card { height: 100%; }
+	.early-access-page:not(.mobile-form-open) .early-access-form { display: none; }
+	.early-access-page:not(.mobile-form-open) .early-access-intro { min-height: 100%; display: flex; flex-direction: column; justify-content: center; }
+	.early-access-page:not(.mobile-form-open) .early-access-intro-copy { margin-top: 32px; }
+	.early-access-mobile-cta { display: inline-flex; align-items: center; justify-content: space-between; width: min(100%, 280px); min-height: 48px; margin: 24px 0 0; padding: 0 16px 0 18px; border: 0; border-radius: 10px; background: #5c2694; color: #fff; cursor: pointer; font: inherit; font-size: 14px; font-weight: 700; text-align: left; }
+	.early-access-mobile-cta span { font-size: 20px; font-weight: 400; }
+	.early-access-page.mobile-form-open .early-access-intro { display: none; }
+	.early-access-page.mobile-form-open { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); background: #fff; }
+	.early-access-page.mobile-form-open .early-access-shell { width: 100%; }
+	.early-access-page.mobile-form-open .early-access-card { display: block; width: 100%; height: auto; }
+	.early-access-page.mobile-form-open .early-access-form { display: block; width: 100%; min-height: 100%; margin-top: 0; border: 0; border-radius: 0; box-shadow: none; }
+	.early-access-form { --form-pad-x: 17px; width: 100%; margin-top: 24px; border-radius: 20px; padding: 20px var(--form-pad-x); }
 	.early-access-form-grid { grid-template-columns: 1fr; gap: 15px; }
 	.early-access-footer { margin-top: 28px; }
 }
