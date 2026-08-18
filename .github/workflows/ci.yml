@@ -28,6 +28,8 @@ jobs:
       # Banco isolado de testes; não usar o nome do banco de desenvolvimento.
       DATABASE_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
       DIRECT_URL: ${{ format('{0}://postgres:postgres@localhost:5432/alusa_test', 'postgresql') }}
+      # Chave descartável e exclusiva do banco efêmero do CI; nunca usada fora dos testes.
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
       CI: true
     steps:
       - name: Checkout
