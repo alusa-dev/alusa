@@ -2576,7 +2576,7 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
   assertOperationalEvent(participant.event.status);
 
   if (participant.cancelledAt) {
-    return { ok: true };
+    return { ok: true, canceledChargeIds: [] as string[] };
   }
 
   const entry = participant.revenueEntryId
@@ -2687,7 +2687,7 @@ export async function unregisterEventParticipant(ctx: EventsContext, eventId: st
       },
     });
 
-    return { ok: true };
+    return { ok: true, canceledChargeIds: openCharges.map((charge) => charge.id) };
   });
 }
 

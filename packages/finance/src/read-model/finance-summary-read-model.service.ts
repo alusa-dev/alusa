@@ -32,6 +32,51 @@ function roundCurrency(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+type ReadModelRow = {
+  value: unknown;
+  sourceKind: string;
+  sourceId: string;
+};
+
+/**
+ * A projeção é otimização de leitura, não a fonte de verdade financeira.
+ * Quando uma inscrição é cancelada, o Charge local pode estar atualizado
+ * antes do snapshot do Asaas. Nunca conte esse snapshot como pendente.
+ */
+async function excludeLocallyCanceledRows<T extends ReadModelRow>(
+  contaId: string,
+  rows: T[],
+): Promise<T[]> {
+  const chargeIds = rows.filter((row) => row.sourceKind === 'CHARGE').map((row) => row.sourceId);
+  const cobrancaIds = rows.filter((row) => row.sourceKind === 'COBRANCA').map((row) => row.sourceId);
+
+  const [charges, cobrancas] = await Promise.all([
+    chargeIds.length > 0
+      ? prisma.charge.findMany({
+          where: { contaId, id: { in: chargeIds }, status: 'CANCELED' },
+          select: { id: true },
+        })
+      : [],
+    cobrancaIds.length > 0
+      ? prisma.cobranca.findMany({
+          where: {
+            contaId,
+            id: { in: cobrancaIds },
+            status: { in: ['CANCELADO', 'CANCELAMENTO_PENDENTE'] },
+          },
+          select: { id: true },
+        })
+      : [],
+  ]);
+
+  const canceledIds = new Set([
+    ...charges.map((charge) => `CHARGE:${charge.id}`),
+    ...cobrancas.map((cobranca) => `COBRANCA:${cobranca.id}`),
+  ]);
+
+  return rows.filter((row) => !canceledIds.has(`${row.sourceKind}:${row.sourceId}`));
+}
+
 function mapSnapshot(row: {
   contaId: string;
   pendingAmountCurrentWindow: unknown;
@@ -78,23 +123,23 @@ export async function refreshFinanceSummaryReadModel(params: {
           { dueDate: null },
         ],
       },
-      select: { value: true },
-    }),
+      select: { value: true, sourceKind: true, sourceId: true },
+    }).then((rows) => excludeLocallyCanceledRows(params.contaId, rows)),
     prisma.chargeReadModel.findMany({
       where: {
         contaId: params.contaId,
         status: 'OVERDUE',
       },
-      select: { value: true },
-    }),
+      select: { value: true, sourceKind: true, sourceId: true },
+    }).then((rows) => excludeLocallyCanceledRows(params.contaId, rows)),
     prisma.chargeReadModel.findMany({
       where: {
         contaId: params.contaId,
         status: 'PAID',
         updatedAt: { gte: params.window.start, lte: params.window.end },
       },
-      select: { value: true },
-    }),
+      select: { value: true, sourceKind: true, sourceId: true },
+    }).then((rows) => excludeLocallyCanceledRows(params.contaId, rows)),
   ]);
 
   const data = {

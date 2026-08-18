@@ -565,7 +565,35 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     }
 
     const result = await unregisterEventParticipant(ctx, eventId, participantId);
-    return NextResponse.json({ data: result });
+
+    // O cancelamento altera a fonte operacional (Charge). Reprojete os itens
+    // afetados antes de responder para que o dashboard não leia um snapshot
+    // pendente antigo do Asaas.
+    if (result.canceledChargeIds.length > 0) {
+      try {
+        const { chargeReadModelService, refreshFinanceSummaryReadModel } = await import('@alusa/finance');
+        await Promise.all(result.canceledChargeIds.map((chargeId) => chargeReadModelService.projectChargeReadModelByChargeId(chargeId)));
+
+        const now = new Date();
+        const windowStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const windowEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        await refreshFinanceSummaryReadModel({
+          contaId: ctx.contaId,
+          window: { start: windowStart, end: windowEnd },
+          now,
+        });
+      } catch (projectionError) {
+        // A falha de projeção não desfaz um cancelamento já persistido. A
+        // leitura do KPI também valida o status operacional local.
+        console.error('[events][participant-cancel] read model projection failed', {
+          contaId: ctx.contaId,
+          participantId,
+          error: projectionError instanceof Error ? projectionError.message : String(projectionError),
+        });
+      }
+    }
+
+    return NextResponse.json({ data: { ok: result.ok } });
   } catch (error) {
     return handleEventsRouteError(error, 'ERRO_DESINSCREVER_PARTICIPANTE');
   }

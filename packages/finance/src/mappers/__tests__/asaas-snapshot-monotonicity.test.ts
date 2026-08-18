@@ -79,6 +79,21 @@ describe('hasAsaasSnapshotDrift', () => {
 });
 
 describe('resolveChargeDisplayStatus with stale asaas snapshot', () => {
+  it('mantém cancelamento local mesmo quando o snapshot do Asaas está pendente', () => {
+    expect(
+      resolveChargeDisplayStatus({
+        localStatus: 'CANCELED',
+        asaasStatus: 'PENDING',
+        liquidacaoStatus: 'PENDENTE',
+        hasAsaasLink: true,
+      }),
+    ).toMatchObject({
+      status: 'CANCELED',
+      label: 'Cancelada',
+      source: 'local',
+    });
+  });
+
   it('ignora asaasStatus PENDING stale e usa fallback de pagamento local', () => {
     expect(
       resolveChargeDisplayStatus({
