@@ -349,4 +349,57 @@ describe('listChargesAggregated', () => {
     expect(hasPlaceholder).toBe(false);
     delete process.env.FINANCE_GROUP_INSTALLMENTS_V2;
   });
+
+  it('deve recuperar o vínculo legado pelo externalReference e exibir a primeira parcela do grupo', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    const firstInstallment = {
+      ...mockStandaloneCharge,
+      id: 'charge-first',
+      externalReference: 'alusa:installment:sp1:payment:first',
+      standaloneInstallmentPlanId: null,
+      description: 'Parcela 1 de 2 - Taxa de inscrição',
+      dueDate: new Date('2026-09-04T00:00:00.000Z'),
+      createdAt: new Date('2026-08-18T10:00:00.000Z'),
+    };
+    const secondInstallment = {
+      ...mockStandaloneCharge,
+      id: 'charge-second',
+      externalReference: 'alusa:installment:sp1:payment:second',
+      standaloneInstallmentPlanId: 'sp1',
+      description: 'Parcela 2 de 2 - Taxa de inscrição',
+      dueDate: new Date('2026-10-04T00:00:00.000Z'),
+      createdAt: new Date('2026-08-18T10:01:00.000Z'),
+    };
+
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.charge.findMany)
+      .mockResolvedValueOnce([firstInstallment, secondInstallment] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.cobranca.count).mockResolvedValueOnce(0 as never);
+    vi.mocked(prisma.charge.count).mockResolvedValueOnce(2 as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValueOnce([
+      {
+        id: 'sp1',
+        installmentCount: 2,
+        value: 80,
+        billingType: 'BOLETO',
+        firstDueDate: new Date('2026-09-04T00:00:00.000Z'),
+        createdAt: new Date('2026-08-18T10:00:00.000Z'),
+        customer: { payerType: 'ALUNO', payerId: 'a1' },
+      },
+    ] as never);
+    vi.mocked(prisma.aluno.findMany).mockResolvedValueOnce([{ id: 'a1', nome: 'Maria' }] as never);
+
+    const result = await listChargesAggregated({ contaId: 'c1' });
+    const group = result.items.find((item) => item.isGroup);
+
+    expect(group).toMatchObject({
+      installmentPlanId: 'sp1',
+      installmentCount: 2,
+      dueDate: '2026-09-04T00:00:00.000Z',
+    });
+    expect(group?.installments).toHaveLength(2);
+    expect(group?.installments?.[0]?.id).toBe('charge-first');
+  });
 });

@@ -170,10 +170,7 @@ export async function listChargesAggregated(
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, statusFilter, statusView = 'open', tipoFilter, search, origin = 'all' } = input;
-  const enableV2InstallmentGrouping = process.env.FINANCE_GROUP_INSTALLMENTS_V2 === 'true';
-
-  // Calcular limite extra para merge (buscar o dobro para garantir ordenação correta)
-  const fetchLimit = pageSize * 2;
+  const auxiliaryFetchLimit = pageSize * 2;
 
   // Skip queries based on origin filter
   const includeAcademic = origin === 'all' || origin === 'ACADEMIC';
@@ -312,8 +309,9 @@ export async function listChargesAggregated(
     includeAcademic
       ? _db.cobranca.findMany({
           where: academicWhere,
-          orderBy: { createdAt: 'desc' },
-          take: fetchLimit,
+          // Parcelamentos precisam ser carregados completos antes do agrupamento.
+          // Limitar por createdAt aqui pode remover a primeira parcela do plano.
+          orderBy: [{ vencimento: 'asc' }, { createdAt: 'desc' }],
           include: {
             matricula: {
               select: {
@@ -327,8 +325,9 @@ export async function listChargesAggregated(
     includeStandalone
       ? _db.charge.findMany({
           where: standaloneWhere,
-          orderBy: { createdAt: 'desc' },
-          take: fetchLimit,
+          // O agrupamento ocorre depois da consulta; limitar antes dele quebra
+          // a integridade do parcelamento e pode exibir uma parcela posterior.
+          orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
           select: {
             id: true,
             contaId: true,
@@ -356,12 +355,11 @@ export async function listChargesAggregated(
     shouldGroup && includeAcademic
       ? _db.charge.findMany({
           where: {
+            contaId,
             cobrancaId: { not: null },
             OR: [
               { externalReference: { startsWith: 'installmentPlan:' } },
-              ...(enableV2InstallmentGrouping
-                ? [{ externalReference: { startsWith: 'alusa:installment:' } }]
-                : []),
+              { externalReference: { startsWith: 'alusa:installment:' } },
             ],
           },
           select: {
@@ -376,7 +374,7 @@ export async function listChargesAggregated(
       ? _db.standaloneSubscription.findMany({
           where: standaloneSubscriptionWhere,
           orderBy: { createdAt: 'desc' },
-          take: fetchLimit,
+          take: auxiliaryFetchLimit,
           select: {
             id: true,
             status: true,
@@ -395,7 +393,7 @@ export async function listChargesAggregated(
     _db.eventFinancialEntry.findMany({
       where: eventFinancialEntryWhere,
       orderBy: { createdAt: 'desc' },
-      take: fetchLimit,
+      take: auxiliaryFetchLimit,
       select: {
         id: true,
         eventId: true,
@@ -413,7 +411,7 @@ export async function listChargesAggregated(
     _db.eventTicketSale.findMany({
       where: eventTicketSaleWhere,
       orderBy: { createdAt: 'desc' },
-      take: fetchLimit,
+      take: auxiliaryFetchLimit,
       select: {
         id: true,
         eventId: true,
@@ -432,7 +430,7 @@ export async function listChargesAggregated(
     _db.eventMapOrder.findMany({
       where: eventMapOrderWhere,
       orderBy: { createdAt: 'desc' },
-      take: fetchLimit,
+      take: auxiliaryFetchLimit,
       select: {
         id: true,
         eventId: true,
@@ -457,11 +455,7 @@ export async function listChargesAggregated(
       const planId = extractInstallmentPlanId(charge.externalReference);
       if (planId) {
         cobrancaToInstallmentPlan.set(charge.cobrancaId, planId);
-      } else if (
-        enableV2InstallmentGrouping &&
-        charge.externalReference &&
-        charge.externalReference.includes('installment')
-      ) {
+      } else if (charge.externalReference && charge.externalReference.includes('installment')) {
         if (process.env.NODE_ENV !== 'test') {
           console.warn('[finance][listChargesAggregated] installmentPlanId não resolvido', {
             cobrancaId: charge.cobrancaId,
@@ -507,14 +501,12 @@ export async function listChargesAggregated(
 
   // Para standalone, usar os campos de snapshot salvos na criação
   const standaloneItems: ChargeListItemDTO[] = [];
-  let standaloneExcludedCount = 0;
+  // Registros legados podem não ter o FK preenchido, mas ainda possuem o plano
+  // no externalReference. O identificador resolvido será usado para agrupá-los.
 
   for (const c of standaloneResult) {
-    const hasInstallmentReference = !!extractInstallmentPlanId(c.externalReference);
-    if (hasInstallmentReference && !c.standaloneInstallmentPlanId) {
-      standaloneExcludedCount += 1;
-      continue;
-    }
+    const resolvedInstallmentPlanId =
+      c.standaloneInstallmentPlanId ?? extractInstallmentPlanId(c.externalReference);
 
     standaloneItems.push({
       id: c.id,
@@ -543,8 +535,8 @@ export async function listChargesAggregated(
       matriculaId: null,
       alunoId: null,
       asaasPaymentId: c.asaasPaymentId,
-      tipo: c.standaloneInstallmentPlanId ? 'PARCELADA' : 'AVULSA',
-      installmentPlanId: c.standaloneInstallmentPlanId ?? null,
+      tipo: resolvedInstallmentPlanId ? 'PARCELADA' : 'AVULSA',
+      installmentPlanId: resolvedInstallmentPlanId,
     });
   }
 
@@ -693,6 +685,8 @@ export async function listChargesAggregated(
 
   // ==================== Agrupar parcelamentos (se habilitado) ====================
   let processedItems: ChargeListItemDTO[];
+  let groupedAcademicCount = 0;
+  let groupedStandaloneCount = 0;
 
   if (shouldGroup) {
     // Separar itens por tipo
@@ -860,7 +854,13 @@ export async function listChargesAggregated(
 
     for (const [planId, parcelas] of groupedStandalone) {
       const plan = standalonePlanMap.get(planId);
-      if (!plan) continue;
+      // Não descarte uma cobrança legítima se o plano local ainda não foi
+      // reconciliado. Ela permanece visível individualmente até a correção do
+      // vínculo, evitando que a primeira parcela desapareça da operação.
+      if (!plan) {
+        standaloneOtherItems.push(...parcelas);
+        continue;
+      }
 
       parcelas.sort((a, b) => {
         if (!a.dueDate || !b.dueDate) return 0;
@@ -915,6 +915,8 @@ export async function listChargesAggregated(
     }
 
     // Combinar grupos + outros itens + standalone não-parceladas
+    groupedAcademicCount = groupItems.length;
+    groupedStandaloneCount = standaloneGroupItems.length;
     processedItems = [
       ...groupItems,
       ...standaloneGroupItems,
@@ -938,21 +940,18 @@ export async function listChargesAggregated(
   const paginatedItems = processedItems.slice(skip, skip + pageSize);
 
   // Calcular total corretamente (considerando agrupamento)
-  const academicGroupCount = shouldGroup ? new Set(Array.from(cobrancaToInstallmentPlan.values())).size : 0;
+  const academicGroupCount = shouldGroup ? groupedAcademicCount : 0;
   const academicInstallmentItemsCount = shouldGroup
     ? academicItems.filter((i) => i.tipo === 'PARCELADA' && i.installmentPlanId).length
     : 0;
   const standaloneInstallmentItemsCount = shouldGroup
     ? standaloneItems.filter((i) => i.tipo === 'PARCELADA' && i.installmentPlanId).length
     : 0;
-  const standaloneGroupCount = shouldGroup
-    ? new Set(standaloneItems.filter((i) => i.installmentPlanId).map((i) => i.installmentPlanId!)).size
-    : 0;
+  const standaloneGroupCount = shouldGroup ? groupedStandaloneCount : 0;
 
   const adjustedTotal =
     academicCount +
     standaloneCount -
-    standaloneExcludedCount -
     academicInstallmentItemsCount -
     standaloneInstallmentItemsCount +
     academicGroupCount +
@@ -961,7 +960,7 @@ export async function listChargesAggregated(
     eventItems.length;
 
   const ungroupedTotal =
-    academicCount + standaloneCount - standaloneExcludedCount + standaloneSubscriptionItems.length + eventItems.length;
+    academicCount + standaloneCount + standaloneSubscriptionItems.length + eventItems.length;
 
   return {
     items: paginatedItems,

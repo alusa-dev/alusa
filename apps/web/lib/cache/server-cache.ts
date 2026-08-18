@@ -18,10 +18,9 @@ function getMemoryFallback() {
 }
 
 function getRedisRestConfig() {
-  const url = process.env.UPSTASH_REDIS_REST_URL ?? (
-    process.env.REDIS_URL?.startsWith('http') ? process.env.REDIS_URL : undefined
-  );
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_TOKEN;
+  const configuredUrl = process.env.UPSTASH_REDIS_REST_URL?.trim() || process.env.REDIS_URL?.trim();
+  const url = configuredUrl?.startsWith('http') ? configuredUrl : undefined;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() || process.env.REDIS_TOKEN?.trim();
 
   if (!url || !token) return null;
   return { url, token };

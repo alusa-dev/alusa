@@ -16,8 +16,8 @@ function resolveRedisTimeoutMs(): number {
 export function getAsaasRedisConfig(): AsaasRedisConfig | null {
   if (process.env.ASAAS_REDIS_ENABLED === 'false') return null;
 
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
   if (!url || !token) return null;
 
   return { url: url.replace(/\/+$/, ''), token };

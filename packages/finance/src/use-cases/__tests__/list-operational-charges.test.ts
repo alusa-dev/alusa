@@ -735,7 +735,9 @@ describe('listOperationalCharges', () => {
         description: 'Parcela 2/3',
         status: 'OPEN',
         dueDate: new Date('2025-08-05T12:00:00.000Z'),
-        createdAt: new Date('2025-06-14T09:00:00.000Z'),
+        // O provedor persiste as parcelas em sequência; a parcela futura
+        // pode ter createdAt posterior à primeira.
+        createdAt: new Date('2025-06-14T09:00:00.050Z'),
         standaloneInstallmentPlanId: 'splan_1',
       }),
     ]);

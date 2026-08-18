@@ -271,7 +271,7 @@ function applyRecentlyCreatedPins(params: {
   }
 
   for (const [, groupItems] of subscriptionGroups) {
-    groupItems.sort((a, b) => compareOperationalItems(a, b));
+    groupItems.sort(compareNextOpenItem);
     const nextOpen = groupItems[0];
     if (!nextOpen) continue;
     selectedIds.add(nextOpen.id);
@@ -287,7 +287,7 @@ function applyRecentlyCreatedPins(params: {
   }
 
   for (const [, groupItems] of installmentGroups) {
-    groupItems.sort((a, b) => compareOperationalItems(a, b));
+    groupItems.sort(compareNextOpenItem);
     const firstOpen = groupItems[0];
     if (!firstOpen) continue;
     selectedIds.add(firstOpen.id);
@@ -318,6 +318,34 @@ function compareOperationalItems(
   const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
   const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
   return aDate - bDate;
+}
+
+/**
+ * Escolhe a cobrança que deve representar um plano/assinatura na fila.
+ *
+ * A data de criação não representa a ordem das parcelas: integrações como
+ * Asaas normalmente persistem todas no mesmo lote e a última gravada pode
+ * ser uma parcela futura. Para a operação, a próxima obrigação é sempre a
+ * de menor vencimento aberto (mantendo vencidas como prioridade).
+ */
+function compareNextOpenItem(
+  a: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
+  b: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
+): number {
+  if (a.status === 'OVERDUE' && b.status !== 'OVERDUE') return -1;
+  if (b.status === 'OVERDUE' && a.status !== 'OVERDUE') return 1;
+
+  const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+  const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+  if (aDate !== bDate) return aDate - bDate;
+
+  const aCreated = new Date(a.createdAt).getTime();
+  const bCreated = new Date(b.createdAt).getTime();
+  if (!Number.isNaN(aCreated) && !Number.isNaN(bCreated) && aCreated !== bCreated) {
+    return aCreated - bCreated;
+  }
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1245,7 +1273,7 @@ async function buildOperationalChargesCollection(
   }
 
   for (const [, groupItems] of subscriptionGroups) {
-    groupItems.sort(compareOperationalItems);
+    groupItems.sort(compareNextOpenItem);
     const nextOpen = groupItems[0];
     if (nextOpen) markOperational(nextOpen.id);
   }

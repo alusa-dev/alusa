@@ -23,8 +23,8 @@ describe('checkAsaasDistributedRateLimit', () => {
 
   it('usa uma reserva atômica EVAL e interpreta a resposta do Redis', async () => {
     process.env.ASAAS_REDIS_ENABLED = 'true';
-    process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.com';
-    process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
+    process.env.UPSTASH_REDIS_REST_URL = '  https://redis.example.com  ';
+    process.env.UPSTASH_REDIS_REST_TOKEN = '  test-token\n';
 
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ result: [1, 199, 59_000] }), { status: 200 }),
@@ -43,6 +43,10 @@ describe('checkAsaasDistributedRateLimit', () => {
       backend: 'redis',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://redis.example.com');
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer test-token',
+    });
     const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(requestBody[0]).toBe('EVAL');
     expect(String(requestBody[3])).toContain('conta-1');

@@ -24,7 +24,7 @@ const RATE_LIMITS: Record<RateLimitProfile, { limit: number; windowMs: number }>
 };
 
 export function isPersistentRateLimitConfigured(): boolean {
-  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+  return Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim() && process.env.UPSTASH_REDIS_REST_TOKEN?.trim());
 }
 
 export function checkSecurityRateLimit(req: Request, profile: RateLimitProfile, scope?: string) {
